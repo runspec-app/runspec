@@ -5,6 +5,7 @@ import { inferScript, effectiveAutonomy } from './inference';
 import { coerce } from './types';
 import { validateArgs, validateGroups, raiseIfErrors } from './validator';
 import { RunSpecError } from './errors';
+import { configureLogging } from './logging_setup';
 import type { ParsedArgs, ScriptSpec, ArgSpec } from './models';
 
 export interface ParseOptions {
@@ -30,7 +31,27 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
     throw new RunSpecError(`✗  Runnable '${name}' not found.\n   Available: ${available}\n   Config: ${configPath}`);
   }
 
-  const rawScript = inferScript(raw.runnables[name], config.autonomyDefault);
+  let rawScript = inferScript(raw.runnables[name], config.autonomyDefault);
+
+  // Auto-inject --log-level when [config.logging] is present
+  if (config.logging && !('log-level' in rawScript.args)) {
+    rawScript = {
+      ...rawScript,
+      args: {
+        ...rawScript.args,
+        'log-level': {
+          name: 'log-level',
+          type: 'choice',
+          options: ['debug', 'info', 'warning', 'error', 'critical'],
+          default: config.logging.level,
+          required: false,
+          description: 'Override the console log level for this invocation.',
+          multiple: false,
+          env: 'RUNSPEC_LOG_LEVEL',
+        },
+      },
+    };
+  }
 
   let argv = argvOverride ?? process.argv.slice(2);
   let activeScript = rawScript;
@@ -65,6 +86,22 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
 
   const agent = ['1', 'true', 'yes'].includes((process.env['RUNSPEC_AGENT'] ?? '').toLowerCase());
 
+  const logLevelOverride = config.logging
+    ? (coercedValues['log_level'] as string | undefined) ?? undefined
+    : undefined;
+
+  try {
+    configureLogging({
+      logCfg: config.logging,
+      agent,
+      runnableName: name,
+      configPath,
+      logLevelOverride,
+    });
+  } catch (e) {
+    throw new RunSpecError((e as Error).message);
+  }
+
   return {
     ...coercedValues,
     __runspec_agent__: agent,
@@ -75,6 +112,7 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
     __runspec_spec__: activeScript,
     get runspec_command() { return commandPath.length > 0 ? commandPath[commandPath.length - 1] : undefined; },
     get runspec_command_path() { return commandPath; },
+    get runspec_prefix() { return path.dirname(configPath); },
   } as ParsedArgs;
 }
 

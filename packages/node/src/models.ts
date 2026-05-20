@@ -8,11 +8,18 @@ export interface JumpHostConfig {
   sshOptions?: string[];
 }
 
+export interface LoggingConfig {
+  level: string;
+  rotate: string;
+  keep: number;
+}
+
 export interface RawConfig {
   autonomyDefault: string;
   lang?: string;
   version: string;
   jumpHosts: Record<string, JumpHostConfig>;
+  logging?: LoggingConfig;
 }
 
 export interface ArgSpec {
@@ -71,4 +78,5 @@ export interface ParsedArgs {
   readonly __runspec_spec__: ScriptSpec;
   readonly runspec_command: string | undefined;
   readonly runspec_command_path: string[];
+  readonly runspec_prefix: string;
 }
