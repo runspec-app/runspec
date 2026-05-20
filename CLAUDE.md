@@ -147,6 +147,10 @@ ruff format --check .
 mypy runspec/
 ```
 
+`[config.logging]` (0.10.0+): `logger = logging.getLogger(__name__)` just works.
+Extra fields (0.11.0): `logger.info('msg', extra={'user_id': '42'})` — standard stdlib
+`extra=` API; fields appear nested under `"extra"` in JSON, appended as `{key=value}` on console.
+
 ---
 
 ## Do Not
@@ -185,6 +189,7 @@ npm run typecheck
 Node mirrors the Python public API: `parse()`, `loadSpec()`, `registerType()`, `getLogger()`.
 CLI commands: `init`, `local`, `jump`, `serve` (renamed in 0.8.0 to mirror Python).
 `[config.logging]` implemented in 0.9.0 — runnables call `getLogger(name)` from `runspec-node`.
+Extra fields (0.10.0): `logger.info('msg', { user_id: '42' })` — `error` key extracts an Error; all other keys appear under `"extra"` in the JSON log.
 
 ---
 
