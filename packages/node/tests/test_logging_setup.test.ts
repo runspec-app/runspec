@@ -16,7 +16,6 @@ function tmpDir(): string {
 function makeCfg(dir: string, overrides: Record<string, unknown> = {}): Parameters<typeof configureLogging>[0] {
   return {
     logCfg: { level: 'info', rotate: 'midnight', keep: 7, ...overrides },
-    agent: false,
     runnableName: 'myscript',
     configPath: path.join(dir, 'runspec.toml'),
   };
@@ -44,7 +43,7 @@ test('getLogger returns different instances for different names', () => {
 
 test('no-op when logCfg is undefined', () => {
   const dir = tmpDir();
-  configureLogging({ logCfg: undefined, agent: false, runnableName: 'x', configPath: path.join(dir, 'runspec.toml') });
+  configureLogging({ logCfg: undefined, runnableName: 'x', configPath: path.join(dir, 'runspec.toml') });
   // no log file created
   expect(fs.existsSync(path.join(dir, 'logs', 'x.log'))).toBe(false);
 });
@@ -122,57 +121,118 @@ test('error field included when Error passed', () => {
   expect(parsed.exc).toContain('something broke');
 });
 
-// ── agent mode ────────────────────────────────────────────────────────────────
+// ── stdout/stderr routing ─────────────────────────────────────────────────────
 
-test('agent mode: no console output to stderr', () => {
-  const dir = tmpDir();
-  const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
-  configureLogging({ ...makeCfg(dir), agent: true });
-  getLogger('test').info('silent');
-  expect(stderrWrite).not.toHaveBeenCalled();
-  stderrWrite.mockRestore();
-});
-
-test('non-agent mode: writes to stderr', () => {
-  const dir = tmpDir();
-  const lines: string[] = [];
-  const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-    lines.push(String(chunk));
+function captureStreams() {
+  const stdoutLines: string[] = [];
+  const stderrLines: string[] = [];
+  const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+    stdoutLines.push(String(chunk));
     return true;
   });
+  const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderrLines.push(String(chunk));
+    return true;
+  });
+  return {
+    stdoutLines, stderrLines,
+    restore() { stdoutSpy.mockRestore(); stderrSpy.mockRestore(); },
+  };
+}
+
+test('info routes to stdout (plain print, no prefix)', () => {
+  const dir = tmpDir();
+  const cap = captureStreams();
+  configureLogging(makeCfg(dir));
+  getLogger('test').info('hello from info');
+  expect(cap.stdoutLines.some(l => l.includes('hello from info'))).toBe(true);
+  expect(cap.stderrLines.some(l => l.includes('hello from info'))).toBe(false);
+  // INFO format is a plain print — message only, no level prefix, no timestamp
+  const line = cap.stdoutLines.find(l => l.includes('hello from info'))!;
+  expect(line.trim()).toBe('hello from info');
+  cap.restore();
+});
+
+test('warning routes to stderr with WARNING prefix', () => {
+  const dir = tmpDir();
+  const cap = captureStreams();
+  configureLogging(makeCfg(dir));
+  getLogger('test').warning('heads up');
+  expect(cap.stderrLines.some(l => l.includes('heads up'))).toBe(true);
+  expect(cap.stdoutLines.some(l => l.includes('heads up'))).toBe(false);
+  expect(cap.stderrLines.find(l => l.includes('heads up'))!.trim()).toBe('WARNING: heads up');
+  cap.restore();
+});
+
+test('error routes to stderr with ERROR prefix', () => {
+  const dir = tmpDir();
+  const cap = captureStreams();
+  configureLogging(makeCfg(dir));
+  getLogger('test').error('broke');
+  expect(cap.stderrLines.some(l => l.includes('broke'))).toBe(true);
+  expect(cap.stdoutLines.some(l => l.includes('broke'))).toBe(false);
+  expect(cap.stderrLines.find(l => l.includes('broke'))!.trim()).toBe('ERROR: broke');
+  cap.restore();
+});
+
+test('critical routes to stderr with CRITICAL prefix', () => {
+  const dir = tmpDir();
+  const cap = captureStreams();
+  configureLogging(makeCfg(dir));
+  getLogger('test').critical('dead');
+  expect(cap.stderrLines.find(l => l.includes('dead'))!.trim()).toBe('CRITICAL: dead');
+  cap.restore();
+});
+
+test('debug below threshold is silent on both streams', () => {
+  const dir = tmpDir();
+  const cap = captureStreams();
   configureLogging(makeCfg(dir, { level: 'info' }));
-  getLogger('test').info('visible');
-  expect(lines.some(l => l.includes('visible'))).toBe(true);
-  stderrWrite.mockRestore();
+  getLogger('test').debug('not shown');
+  expect(cap.stdoutLines).toHaveLength(0);
+  expect(cap.stderrLines).toHaveLength(0);
+  cap.restore();
 });
 
-test('console output not written for messages below configured level', () => {
+test('debug appears on stdout when configured level is debug', () => {
   const dir = tmpDir();
-  const lines: string[] = [];
-  const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-    lines.push(String(chunk));
-    return true;
-  });
+  const cap = captureStreams();
+  configureLogging(makeCfg(dir, { level: 'debug' }));
+  getLogger('test').debug('low-level detail');
+  expect(cap.stdoutLines.some(l => l.includes('low-level detail'))).toBe(true);
+  // DEBUG prefix is emitted so it's distinguishable from plain INFO output
+  expect(cap.stdoutLines.find(l => l.includes('low-level detail'))!).toMatch(/DEBUG/);
+  cap.restore();
+});
+
+test('warnings still reach stderr even when configured level is critical', () => {
+  // Warnings must not be silenced by a high configured level.
+  const dir = tmpDir();
+  const cap = captureStreams();
+  configureLogging(makeCfg(dir, { level: 'critical' }));
+  getLogger('test').warning('audible');
+  expect(cap.stderrLines.some(l => l.includes('audible'))).toBe(true);
+  cap.restore();
+});
+
+test('info below configured level is suppressed on stdout', () => {
+  const dir = tmpDir();
+  const cap = captureStreams();
   configureLogging(makeCfg(dir, { level: 'warning' }));
-  getLogger('test').debug('below threshold');
-  getLogger('test').info('also below');
-  expect(lines).toHaveLength(0);
-  stderrWrite.mockRestore();
+  getLogger('test').info('quiet');
+  expect(cap.stdoutLines.some(l => l.includes('quiet'))).toBe(false);
+  cap.restore();
 });
 
 // ── log level override ────────────────────────────────────────────────────────
 
-test('logLevelOverride sets console level', () => {
+test('logLevelOverride lowers stdout threshold', () => {
   const dir = tmpDir();
-  const lines: string[] = [];
-  const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-    lines.push(String(chunk));
-    return true;
-  });
+  const cap = captureStreams();
   configureLogging({ ...makeCfg(dir, { level: 'warning' }), logLevelOverride: 'debug' });
   getLogger('test').debug('now visible');
-  expect(lines.some(l => l.includes('now visible'))).toBe(true);
-  stderrWrite.mockRestore();
+  expect(cap.stdoutLines.some(l => l.includes('now visible'))).toBe(true);
+  cap.restore();
 });
 
 // ── sensitive data redaction ──────────────────────────────────────────────────
@@ -377,12 +437,12 @@ test('extra integer fields pass through unredacted', () => {
 test('extra fields appear in console output', () => {
   const dir = tmpDir();
   const lines: string[] = [];
-  const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+  const stdoutWrite = jest.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
     lines.push(String(chunk));
     return true;
   });
   configureLogging(makeCfg(dir, { level: 'info' }));
   getLogger('test').info('connected', { user_id: '42' });
   expect(lines.some(l => l.includes('user_id=42'))).toBe(true);
-  stderrWrite.mockRestore();
+  stdoutWrite.mockRestore();
 });

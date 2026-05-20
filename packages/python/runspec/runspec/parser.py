@@ -150,7 +150,6 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     try:
         configure_logging(
             config.get("logging"),
-            agent=agent,
             runnable_name=name,
             config_path=config_path,
             log_level_override=log_level_override,

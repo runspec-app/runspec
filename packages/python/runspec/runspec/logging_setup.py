@@ -75,7 +75,6 @@ _SENSITIVE: list[tuple[re.Pattern[str], str]] = [
 def configure_logging(
     log_cfg: dict[str, Any] | None,
     *,
-    agent: bool,
     runnable_name: str,
     config_path: Path,
     log_level_override: str | None = None,
@@ -84,8 +83,14 @@ def configure_logging(
     Configure root logger from normalised [config.logging].
     No-op when log_cfg is None. Idempotent — second call is silently ignored.
 
-    In agent mode stderr is reserved for the MCP/SSH streaming side-channel,
-    so no console handler is added; all output goes to the file.
+    Console routing follows Unix stream conventions so a single `logger.X` call
+    works in both CLI mode (terminal output) and agent mode (captured by
+    `runspec serve` as the MCP tool response):
+
+      DEBUG, INFO → stdout (plain message, no timestamp — reads like print())
+      WARNING+    → stderr (prefixed with the level name)
+
+    File handler is always JSON at DEBUG level — the full audit trail.
     """
     global _configured
     if log_cfg is None or _configured:
@@ -93,17 +98,24 @@ def configure_logging(
 
     effective_level_name = log_level_override or log_cfg["level"]
     effective_level = _LEVEL_MAP[effective_level_name]
+    show_tracebacks = effective_level_name == "debug"
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
     root.addFilter(_SensitiveFilter())
 
-    # Console handler: only in non-agent mode
-    if not agent:
-        ch = logging.StreamHandler(sys.stderr)
-        ch.setLevel(effective_level)
-        ch.setFormatter(_HumanFormatter(show_tracebacks=(effective_level_name == "debug")))
-        root.addHandler(ch)
+    # INFO and below → stdout (treated as the runnable's primary output)
+    out_handler = logging.StreamHandler(sys.stdout)
+    out_handler.setLevel(effective_level)
+    out_handler.addFilter(lambda r: r.levelno < logging.WARNING)
+    out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=show_tracebacks))
+    root.addHandler(out_handler)
+
+    # WARNING and above → stderr (Unix convention for diagnostics)
+    err_handler = logging.StreamHandler(sys.stderr)
+    err_handler.setLevel(max(effective_level, logging.WARNING))
+    err_handler.setFormatter(_ConsoleFormatter(show_tracebacks=show_tracebacks))
+    root.addHandler(err_handler)
 
     # File handler: always active, always DEBUG, always JSON
     log_dir = _resolve_log_dir(config_path)
@@ -195,35 +207,38 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(obj)
 
 
-class _HumanFormatter(logging.Formatter):
+class _ConsoleFormatter(logging.Formatter):
     """
-    Minimal human-readable console formatter.
-      INFO+: HH:MM:SS LEVEL    logger: message
-      DEBUG: HH:MM:SS DEBUG    logger file.py:42: message
+    Minimal console formatter — INFO reads like a print() call; higher levels
+    are clearly flagged so they stand out in a stream of normal output.
+
+      DEBUG    → "DEBUG file.py:42: message"  (file/line aids debugging)
+      INFO     → "message"                    (plain print — most common case)
+      WARNING  → "WARNING: message"
+      ERROR    → "ERROR: message"
+      CRITICAL → "CRITICAL: message"
+
     Tracebacks shown only when show_tracebacks=True (level == debug).
     """
 
-    _FMT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
-    _FMT_DBG = "%(asctime)s %(levelname)-8s %(name)s %(filename)s:%(lineno)d: %(message)s"
-    _DATEFMT = "%H:%M:%S"
-
     def __init__(self, show_tracebacks: bool = False) -> None:
-        super().__init__(datefmt=self._DATEFMT)
+        super().__init__()
         self._show_tb = show_tracebacks
 
     def format(self, record: logging.LogRecord) -> str:
-        fmt = self._FMT_DBG if record.levelno == logging.DEBUG else self._FMT
-        self._style = logging.PercentStyle(fmt)
-        self._fmt = fmt
-        saved_exc, saved_text = record.exc_info, record.exc_text
-        if not self._show_tb:
-            record.exc_info = None
-            record.exc_text = None
-        try:
-            line = super().format(record)
-            extra = _collect_extra(record)
-            if extra:
-                line = f"{line}  {{{' '.join(f'{k}={v}' for k, v in extra.items())}}}"
-            return line
-        finally:
-            record.exc_info, record.exc_text = saved_exc, saved_text
+        msg = record.getMessage()
+        if record.levelno == logging.DEBUG:
+            line = f"DEBUG {record.filename}:{record.lineno}: {msg}"
+        elif record.levelno == logging.INFO:
+            line = msg
+        else:
+            line = f"{record.levelname}: {msg}"
+
+        extra = _collect_extra(record)
+        if extra:
+            line += f"  {{{' '.join(f'{k}={v}' for k, v in extra.items())}}}"
+
+        if record.exc_info and self._show_tb:
+            line += "\n" + self.formatException(record.exc_info)
+
+        return line

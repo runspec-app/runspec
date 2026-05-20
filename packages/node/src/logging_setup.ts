@@ -124,13 +124,17 @@ function formatJson(record: LogRecord): string {
   return JSON.stringify(obj);
 }
 
-function formatHuman(record: LogRecord, showTracebacks: boolean): string {
-  const hh = String(record.ts.getHours()).padStart(2, '0');
-  const mm = String(record.ts.getMinutes()).padStart(2, '0');
-  const ss = String(record.ts.getSeconds()).padStart(2, '0');
-  const time = `${hh}:${mm}:${ss}`;
-  const label = (LEVEL_LABEL[record.levelNum] ?? String(record.levelNum)).padEnd(8);
-  let line = `${time} ${label} ${record.loggerName}: ${record.message}`;
+function formatConsole(record: LogRecord, showTracebacks: boolean): string {
+  // INFO is plain print; higher levels get a prefix so they stand out.
+  // DEBUG (when shown) prepends "DEBUG" so the level is unambiguous on stdout.
+  let line: string;
+  if (record.levelNum <= 10) {
+    line = `DEBUG ${record.loggerName}: ${record.message}`;
+  } else if (record.levelNum <= 20) {
+    line = record.message;
+  } else {
+    line = `${LEVEL_LABEL[record.levelNum] ?? String(record.levelNum)}: ${record.message}`;
+  }
   if (record.extra) {
     const pairs = Object.entries(record.extra).map(([k, v]) => `${k}=${v}`).join(' ');
     line += `  {${pairs}}`;
@@ -139,14 +143,40 @@ function formatHuman(record: LogRecord, showTracebacks: boolean): string {
   return line;
 }
 
-// ── console handler ───────────────────────────────────────────────────────────
+// ── console handlers ──────────────────────────────────────────────────────────
 
-class ConsoleHandler implements Handler {
+/**
+ * Routes DEBUG/INFO records (i.e. below WARNING) to stdout.
+ * Treated as the runnable's primary output — captured as the response body
+ * when `runspec serve` invokes the runnable as a subprocess.
+ */
+class StdoutHandler implements Handler {
   constructor(public readonly level: number, private readonly showTracebacks: boolean) {}
 
   emit(record: LogRecord): void {
+    if (record.levelNum >= 30) return; // WARNING+ belongs on stderr
     try {
-      process.stderr.write(formatHuman(record, this.showTracebacks) + '\n');
+      process.stdout.write(formatConsole(record, this.showTracebacks) + '\n');
+    } catch {
+      // never disrupt
+    }
+  }
+}
+
+/**
+ * Routes WARNING+ records to stderr (Unix convention for diagnostics).
+ * Floor is always WARNING regardless of the configured level — warnings and
+ * errors must not be silenced even if the runnable raises the threshold above.
+ */
+class StderrHandler implements Handler {
+  readonly level = 30; // WARNING
+
+  constructor(private readonly showTracebacks: boolean) {}
+
+  emit(record: LogRecord): void {
+    if (record.levelNum < 30) return;
+    try {
+      process.stderr.write(formatConsole(record, this.showTracebacks) + '\n');
     } catch {
       // never disrupt
     }
@@ -280,21 +310,33 @@ function resolveLogDir(configPath: string): string {
 
 export interface ConfigureLoggingOptions {
   logCfg: LoggingConfig | undefined;
-  agent: boolean;
   runnableName: string;
   configPath: string;
   logLevelOverride?: string;
 }
 
+/**
+ * Configure handlers from normalised [config.logging]. No-op when logCfg is
+ * undefined. Idempotent — second call is silently ignored.
+ *
+ * Console routing follows Unix stream conventions so a single `logger.X` call
+ * works in both CLI mode (terminal output) and agent mode (captured by
+ * `runspec serve` as the MCP tool response):
+ *
+ *   DEBUG, INFO → stdout (plain message — reads like a print() call)
+ *   WARNING+    → stderr (prefixed with the level name)
+ *
+ * File handler is always JSON at DEBUG level — the full audit trail.
+ */
 export function configureLogging(opts: ConfigureLoggingOptions): void {
   if (!opts.logCfg || _configured) return;
 
   const effectiveLevelName = opts.logLevelOverride ?? opts.logCfg.level;
   const effectiveLevel = LEVEL_NUM[effectiveLevelName] ?? LEVEL_NUM['info'];
+  const showTracebacks = effectiveLevelName === 'debug';
 
-  if (!opts.agent) {
-    _handlers.push(new ConsoleHandler(effectiveLevel, effectiveLevelName === 'debug'));
-  }
+  _handlers.push(new StdoutHandler(effectiveLevel, showTracebacks));
+  _handlers.push(new StderrHandler(showTracebacks));
 
   const logDir = resolveLogDir(opts.configPath);
   const logPath = path.join(logDir, `${opts.runnableName}.log`);

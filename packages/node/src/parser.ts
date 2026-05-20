@@ -93,7 +93,6 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
   try {
     configureLogging({
       logCfg: config.logging,
-      agent,
       runnableName: name,
       configPath,
       logLevelOverride,
