@@ -68,19 +68,21 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     # 4. Infer defaults for the script
     raw_script = infer_script(raw["runnables"][name], config["autonomy_default"])
 
-    # 4.5. Auto-inject log-level arg when [config.logging] is present
-    if config.get("logging") and "log-level" not in raw_script["args"]:
-        raw_script["args"]["log-level"] = {
-            "name": "log-level",
-            "type": "choice",
-            "options": ["debug", "info", "warning", "error", "critical"],
-            "default": config["logging"]["level"],
+    # 4.5. Auto-inject --debug flag when [config.logging] is present.
+    # Without --debug: stdout = INFO+, stderr = WARNING+ (file always = DEBUG).
+    # With --debug:    stdout also includes DEBUG records and tracebacks.
+    if config.get("logging") and "debug" not in raw_script["args"]:
+        raw_script["args"]["debug"] = {
+            "name": "debug",
+            "type": "flag",
+            "options": None,
+            "default": False,
             "required": False,
-            "description": "Override the console log level for this invocation.",
+            "description": "Show DEBUG records and tracebacks on stdout.",
             "multiple": False,
             "delimiter": None,
             "short": None,
-            "env": "RUNSPEC_LOG_LEVEL",
+            "env": "RUNSPEC_DEBUG",
             "deprecated": None,
             "autonomy": None,
             "ui": None,
@@ -142,18 +144,17 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     )
 
     # 16. Configure logging (no-op when [config.logging] absent)
-    log_level_override = None
+    debug = False
     if config.get("logging"):
-        pair = coerced_values.get("log_level")  # stores (value, source) tuples
+        pair = coerced_values.get("debug")  # stores (value, source) tuples
         if pair and pair[0] is not None:
-            log_level_override = str(pair[0])
+            debug = bool(pair[0])
     try:
         configure_logging(
             config.get("logging"),
-            agent=agent,
             runnable_name=name,
             config_path=config_path,
-            log_level_override=log_level_override,
+            debug=debug,
         )
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e

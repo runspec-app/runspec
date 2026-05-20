@@ -150,6 +150,13 @@ mypy runspec/
 `[config.logging]` (0.10.0+): `logger = logging.getLogger(__name__)` just works.
 Extra fields (0.11.0): `logger.info('msg', extra={'user_id': '42'})` — standard stdlib
 `extra=` API; fields appear nested under `"extra"` in JSON, appended as `{key=value}` on console.
+Console routing (0.12.0): INFO → stdout (plain message, reads like `print()`);
+WARNING+ → stderr with level prefix. Same in CLI and agent mode — in agent
+mode `runspec serve` captures stdout as the MCP tool response, so `logger.info`
+lines reach the agent automatically. File handler (JSON, DEBUG) is always on
+as the audit trail. No `level` knob — silencing INFO would break agent
+responses. `[config.logging]` auto-adds a `--debug` flag (also `RUNSPEC_DEBUG=1`)
+that includes DEBUG records and tracebacks on stdout for in-terminal debugging.
 
 ---
 
@@ -190,6 +197,7 @@ Node mirrors the Python public API: `parse()`, `loadSpec()`, `registerType()`, `
 CLI commands: `init`, `local`, `jump`, `serve` (renamed in 0.8.0 to mirror Python).
 `[config.logging]` implemented in 0.9.0 — runnables call `getLogger(name)` from `runspec-node`.
 Extra fields (0.10.0): `logger.info('msg', { user_id: '42' })` — `error` key extracts an Error; all other keys appear under `"extra"` in the JSON log.
+Console routing (0.11.0) mirrors Python: INFO → stdout; WARNING+ → stderr with level prefix. No `level` knob. `[config.logging]` auto-adds a `--debug` flag (`RUNSPEC_DEBUG=1`) that shows DEBUG records on stdout.
 
 ---
 
@@ -199,8 +207,8 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm |
 |---|---|---|
-| `runspec` | 0.11.0 | PyPI |
-| `runspec-node` | 0.10.0 | npm |
+| `runspec` | 0.12.0 | PyPI |
+| `runspec-node` | 0.11.0 | npm |
 | `runspec-registry` | 0.1.1 | PyPI (archived — registry was removed from `runspec serve` in favour of the SSH+MCP jump-host model) |
 
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").

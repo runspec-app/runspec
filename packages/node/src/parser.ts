@@ -33,21 +33,22 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
 
   let rawScript = inferScript(raw.runnables[name], config.autonomyDefault);
 
-  // Auto-inject --log-level when [config.logging] is present
-  if (config.logging && !('log-level' in rawScript.args)) {
+  // Auto-inject --debug flag when [config.logging] is present.
+  // Without --debug: stdout = INFO+, stderr = WARNING+ (file always = DEBUG).
+  // With --debug:    stdout also includes DEBUG records and tracebacks.
+  if (config.logging && !('debug' in rawScript.args)) {
     rawScript = {
       ...rawScript,
       args: {
         ...rawScript.args,
-        'log-level': {
-          name: 'log-level',
-          type: 'choice',
-          options: ['debug', 'info', 'warning', 'error', 'critical'],
-          default: config.logging.level,
+        'debug': {
+          name: 'debug',
+          type: 'flag',
+          default: false,
           required: false,
-          description: 'Override the console log level for this invocation.',
+          description: 'Show DEBUG records and tracebacks on stdout.',
           multiple: false,
-          env: 'RUNSPEC_LOG_LEVEL',
+          env: 'RUNSPEC_DEBUG',
         },
       },
     };
@@ -86,17 +87,16 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
 
   const agent = ['1', 'true', 'yes'].includes((process.env['RUNSPEC_AGENT'] ?? '').toLowerCase());
 
-  const logLevelOverride = config.logging
-    ? (coercedValues['log_level'] as string | undefined) ?? undefined
-    : undefined;
+  const debug = config.logging
+    ? Boolean(coercedValues['debug'] ?? false)
+    : false;
 
   try {
     configureLogging({
       logCfg: config.logging,
-      agent,
       runnableName: name,
       configPath,
-      logLevelOverride,
+      debug,
     });
   } catch (e) {
     throw new RunSpecError((e as Error).message);

@@ -210,34 +210,64 @@ just works.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `level` | string | `"info"` | Console log level. One of `debug`, `info`, `warning`, `error`, `critical`. |
 | `rotate` | string | `"midnight"` | Rotation policy: `"N MB"`, `"N KB"`, `"N GB"` (size-based), `"daily"`, `"midnight"`, `"weekly"` (time-based). |
 | `keep` | int | `7` | Number of rotated backup files to retain. |
+
+There is no `level` knob. Console routing is fixed (see below); the file
+handler is always at DEBUG. Silencing INFO on the console would break
+agent responses (stdout is the MCP tool response body), so the threshold is
+not configurable. Use the auto-added `--debug` flag to *raise* verbosity.
 
 Log file path is always: `{package_dir}/logs/{runnable_name}.log`  
 Fallback when the package directory is not writable: `{home}/logs/{runnable_name}.log`
 
-#### Console vs file behaviour
+#### Console routing
 
-| Context | Console handler | Console level | File handler | File level |
-|---|---|---|---|---|
-| `agent = false` | stderr, human-readable | `level` (overridable) | JSON | DEBUG |
-| `agent = true` | **none** (stderr reserved for streaming) | — | JSON | DEBUG |
+A single `logger.X` call works in both CLI mode and agent mode — the language
+pack routes by record level so the dev never has to branch on context:
 
-In agent mode (`RUNSPEC_AGENT=1`), stderr carries the MCP/SSH streaming side-channel,
-so console logging is suppressed. The file log at DEBUG level is the debugging interface.
+| Level | Stream | Format | Notes |
+|---|---|---|---|
+| `DEBUG` | stdout | `DEBUG file.py:42: message` | Only shown when `--debug` is passed |
+| `INFO` | stdout | `message` | Plain — reads like `print()` |
+| `WARNING` | stderr | `WARNING: message` | Prefixed so it stands out |
+| `ERROR` | stderr | `ERROR: message` | Prefixed so it stands out |
+| `CRITICAL` | stderr | `CRITICAL: message` | Prefixed so it stands out |
 
-#### Runtime log level override
+The file handler is unconditional — always JSON, always DEBUG — and is the
+full audit trail regardless of console behaviour.
 
-When `[config.logging]` is present, a `--log-level` argument is automatically
-added to every runnable. It accepts the same values as `level`, defaults to the
-configured level, and can also be set via `RUNSPEC_LOG_LEVEL`. This allows
-per-invocation overrides without editing the spec:
+The split matches Unix stream conventions, which makes the same `logger.info()`
+call do the right thing in two very different contexts:
+
+* **CLI mode** — stdout shows the human-readable output and remains pipeable;
+  stderr carries warnings/errors that wouldn't corrupt a downstream pipe.
+* **Agent mode** (`RUNSPEC_AGENT=1`) — `runspec serve` captures stdout as the
+  MCP tool response, so `logger.info` calls appear in the response the agent
+  sees. Stderr is captured separately and surfaced when the runnable exits
+  non-zero.
+
+> **Pipe-emitting runnables.** A runnable that writes machine-readable data on
+> stdout for piping (e.g. `my-tool | jq`) must keep stdout clean. Use `print()`
+> (or its equivalent) for the data payload, and only call `logger.warning` and
+> above — those go to stderr and don't corrupt the pipe. `logger.info` would
+> land on stdout and mix with the data.
+
+#### `--debug` flag
+
+When `[config.logging]` is present, a `--debug` flag is auto-added to every
+runnable (also settable via `RUNSPEC_DEBUG=1`). Passing it includes DEBUG
+records and tracebacks on stdout — useful for in-terminal debugging without
+having to tail the log file:
 
 ```
-my-script --log-level debug
-RUNSPEC_LOG_LEVEL=debug my-script
+my-script --debug
+RUNSPEC_DEBUG=1 my-script
 ```
+
+The flag only *adds* visibility; it never silences anything. The `debug` name
+is reserved when `[config.logging]` is present — your runnable cannot define
+its own argument by that name.
 
 #### Sensitive data filtering
 
@@ -250,7 +280,6 @@ Filter errors are silent — a failing pattern never suppresses the log record.
 
 ```toml
 [config.logging]
-level  = "info"
 rotate = "midnight"
 keep   = 7
 ```

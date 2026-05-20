@@ -34,17 +34,14 @@ function normaliseConfig(raw: Record<string, unknown>): RawConfig {
   };
 }
 
-const VALID_LOG_LEVELS = new Set(['debug', 'info', 'warning', 'error', 'critical']);
-
 function normaliseLogging(raw: Record<string, unknown> | undefined): LoggingConfig | undefined {
+  // Console routing is fixed: INFO+ → stdout, WARNING+ → stderr. DEBUG is
+  // file-only unless the caller passes `--debug`. There is no `level` knob —
+  // silencing INFO would break agent responses (stdout is the MCP tool
+  // response body), and verbosity for debugging is handled by the `--debug`
+  // flag injected at parse time.
   if (raw === undefined) return undefined;
-  const level = String(raw['level'] ?? 'info').toLowerCase();
-  if (!VALID_LOG_LEVELS.has(level)) {
-    const sorted = [...VALID_LOG_LEVELS].sort().join(', ');
-    throw new Error(`✗  [config.logging] level must be one of: ${sorted}. Got: ${JSON.stringify(level)}`);
-  }
   return {
-    level,
     rotate: String(raw['rotate'] ?? 'midnight'),
     keep: Number(raw['keep'] ?? 7),
   };

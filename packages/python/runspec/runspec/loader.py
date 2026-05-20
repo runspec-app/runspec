@@ -78,18 +78,18 @@ def _normalise_jump_hosts(raw: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-_VALID_LOG_LEVELS = {"debug", "info", "warning", "error", "critical"}
-
-
 def _normalise_logging(raw: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Normalise [config.logging]. Returns None if section is absent."""
+    """Normalise [config.logging]. Returns None if section is absent.
+
+    Console routing is fixed: INFO+ → stdout, WARNING+ → stderr. DEBUG is
+    file-only unless the caller passes `--debug`. There is no `level` knob —
+    silencing INFO would break agent responses (stdout is the MCP tool
+    response body), and verbosity for debugging is handled by the `--debug`
+    flag injected at parse time.
+    """
     if raw is None:
         return None
-    level = str(raw.get("level", "info")).lower()
-    if level not in _VALID_LOG_LEVELS:
-        raise ValueError(f"✗  [config.logging] level must be one of: {', '.join(sorted(_VALID_LOG_LEVELS))}. Got: {level!r}")
     return {
-        "level": level,
         "rotate": str(raw.get("rotate", "midnight")),
         "keep": int(raw.get("keep", 7)),
     }
