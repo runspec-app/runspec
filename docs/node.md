@@ -1,8 +1,12 @@
 # Node Library
 
-The Node package (`runspec-node`) brings the same interface specification to Node.js
-and TypeScript projects. Install it, call `parse()`, and you get a fully validated,
-type-coerced argument object back — same spec format, same CLI, same MCP server.
+The Node package (`runspec-node`) brings the same interface specification to
+Node.js and TypeScript projects. Same TOML format, same CLI, same MCP server
+— just `parse()` returning a `ParsedArgs` object instead of a Python `RunSpec`.
+
+!!! info "Version"
+    This page documents **runspec-node 0.10.0**. Node 18+ is required; CI
+    covers 18, 20, and 22.
 
 ---
 
@@ -12,8 +16,10 @@ type-coerced argument object back — same spec format, same CLI, same MCP serve
 npm install runspec-node
 ```
 
-**Node 18+.** One runtime dependency: `smol-toml` (TOML parsing — Node has no
-stdlib TOML parser). TypeScript types are bundled — no separate `@types/` package.
+One runtime dependency: `smol-toml` (TOML parsing — Node has no stdlib TOML
+parser). TypeScript types are bundled — no separate `@types/` package. The
+`runspec` binary is installed alongside the library — see
+[CLI Reference](cli.md).
 
 ---
 
@@ -34,25 +40,29 @@ parses `process.argv`, validates, coerces, and returns a `ParsedArgs`.
 function parse(opts?: ParseOptions): ParsedArgs
 
 interface ParseOptions {
-  scriptName?: string;  // runnable name — inferred from config if omitted
+  scriptName?: string;  // override runnable name (inferred from script filename otherwise)
   argv?: string[];      // override process.argv.slice(2)
   cwd?: string;         // start directory for config search (default: process.cwd())
+  configPath?: string;  // explicit path to runspec.toml (overrides cwd walk)
 }
 ```
 
 ### What it does
 
-1. Walks up from `cwd` to find `runspec.toml`
-2. Infers the runnable name from the script filename
-3. Applies inference rules to fill in `type` and `required`
-4. Resolves any subcommand from `argv`
-5. Intercepts `--help` / `-h` and prints usage, then exits
-6. Parses `argv` into raw values
-7. Applies environment variable fallbacks
-8. Applies spec defaults
-9. Validates individual args, then group constraints
-10. Coerces values to native JavaScript types
-11. Returns a `ParsedArgs`
+1. Resolves the config file (`configPath` → `RUNSPEC_CONFIG` env → walk up
+   from `cwd`).
+2. Infers the runnable name from the script filename.
+3. Applies inference rules to fill in `type` and `required`.
+4. Resolves any subcommand from `argv`.
+5. Intercepts `--help` / `-h` and prints usage, then exits.
+6. **If `[config.logging]` is present, configures the logger** and injects
+   `--log-level` (see [Logging](logging.md)).
+7. Parses `argv` into raw values.
+8. Applies environment variable fallbacks.
+9. Applies spec defaults.
+10. Validates individual args, then group constraints.
+11. Coerces values to native JavaScript types.
+12. Returns a `ParsedArgs`.
 
 ### Errors
 
@@ -64,9 +74,12 @@ interface ParseOptions {
 | `OutOfRange` | Numeric value outside declared `range` |
 | `UnknownArg` | An arg was passed that isn't in the spec |
 | `GroupViolation` | A group constraint was violated |
+| `AutonomyViolation` | Per-arg autonomy escalation was attempted unsafely |
 
-All errors inherit from `RunSpecError`. Error messages are human-first — they
-include what was expected, what was received, and a fuzzy suggestion where possible.
+All errors inherit from `RunSpecError`. Error messages include what was
+expected, what was received, and a fuzzy suggestion where possible. For
+project-wide validation use `runspec local`, which surfaces the same errors
+at spec-load time (handy in CI).
 
 ### Testing
 
@@ -77,8 +90,8 @@ import { parse } from 'runspec-node';
 
 test('greet with --loud', () => {
   const args = parse({ argv: ['--name', 'Alice', '--loud'] });
-  expect(args['name']).toBe('Alice');
-  expect(args['loud']).toBe(true);
+  expect(args.name).toBe('Alice');
+  expect(args.loud).toBe(true);
 });
 ```
 
@@ -86,81 +99,93 @@ test('greet with --loud', () => {
 
 ## ParsedArgs
 
-`parse()` returns a `ParsedArgs` — a plain object where argument values are already
-coerced to their native JavaScript types.
-
-### Accessing arguments
-
-Hyphens in arg names become underscores. Access them by key:
+`parse()` returns a `ParsedArgs` — a plain object with coerced argument
+values. Hyphens in arg names become underscores; access values by key:
 
 ```typescript
 const args = parse();
 
-const name = args['name'] as string;
-const workers = args['workers'] as number;
-const inputDir = args['input_dir'] as string;   // --input-dir → input_dir
-const format = args['format'] as string;
-const tags = (args['tag'] as string[]) ?? [];   // multiple=true → string[]
-const dryRun = args['dry_run'] as boolean;
+const name     = args.name as string;
+const workers  = args.workers as number;
+const inputDir = args.input_dir as string;   // --input-dir → input_dir
+const format   = args.format as string;
+const tags     = (args.tag as string[]) ?? [];
+const dryRun   = args.dry_run as boolean;
 ```
 
-Unlike the Python library, there is no transparent proxy — `args['name']` IS the
-coerced string value, not a wrapper. Cast to the TypeScript type you expect.
-
-**Helper function pattern:**
+Unlike the Python `Arg` proxy, there is no transparent wrapper — `args.name`
+IS the coerced value. Cast to the TypeScript type you expect, or use a small
+helper:
 
 ```typescript
 function get<T>(args: ParsedArgs, key: string): T {
   return args[key] as T;
 }
 
-const name = get<string>(args, 'name');
 const workers = get<number>(args, 'workers');
 ```
 
-### Metadata attributes
+### Metadata properties
 
-`ParsedArgs` carries context about the invocation using dunder keys:
+`ParsedArgs` exposes invocation context. The `__runspec_*__` keys are the
+storage; the `runspec_*` properties below them are the recommended API:
 
-| Attribute | Type | Description |
+| Property | Type | Description |
 |---|---|---|
-| `__script__` | `string` | Name of the runnable (e.g. `"deploy"`) |
-| `__source__` | `string` | Path to the config file that was loaded |
-| `__command__` | `string \| undefined` | Active subcommand, if any |
-| `__autonomy__` | `string` | Effective autonomy level for this invocation |
-| `__agent__` | `boolean` | `true` when called via `runspec serve` (agent context) |
-| `__spec__` | `ScriptSpec` | Full inferred spec — args, groups, description, etc. |
+| `__runspec_script__` | `string` | Name of the runnable |
+| `__runspec_source__` | `string` | Absolute path to `runspec.toml` |
+| `__runspec_command_path__` | `string[]` | Subcommand path, deepest last |
+| `__runspec_autonomy__` | `string` | Effective autonomy after escalation |
+| `__runspec_agent__` | `boolean` | `true` under `runspec serve` (RUNSPEC_AGENT=1) |
+| `__runspec_spec__` | `ScriptSpec` | Raw, fully-inferred spec for the runnable |
+| `runspec_command` | `string \| undefined` | Active subcommand (leaf) |
+| `runspec_command_path` | `string[]` | Same as `__runspec_command_path__` |
+| `runspec_prefix` | `string` | Package root: directory containing `runspec.toml` |
 
 ```typescript
 const args = parse();
 
-console.log(args['__script__']);    // "deploy"
-console.log(args['__command__']);   // "run"  (if a subcommand was matched)
-console.log(args['__autonomy__']);  // "confirm"
-console.log(args['__agent__']);     // true when called by an agent via runspec serve
-console.log(args['__source__']);    // "/home/user/project/runspec.toml"
+console.log(args.__runspec_script__);    // "deploy"
+console.log(args.runspec_command);       // "run"  (if a subcommand was matched)
+console.log(args.__runspec_autonomy__);  // "confirm"
+console.log(args.__runspec_agent__);     // true under runspec serve
+console.log(args.runspec_prefix);        // "/home/user/project/mypkg"
 ```
 
-`__autonomy__` reflects the most restrictive level across the runnable, its args,
-and any per-arg overrides. Use it to gate behaviour in agent workflows:
+### `runspec_prefix` — package-relative paths
 
 ```typescript
-if (args['__autonomy__'] === 'manual') {
-  console.error('This runnable requires human operation.');
+import * as path from 'path';
+import * as fs from 'fs';
+
+const args = parse();
+const templatesDir = path.join(args.runspec_prefix, 'templates');
+const files = fs.readdirSync(templatesDir);
+```
+
+Much sturdier than `__dirname`, which moves around when the runnable is
+invoked via a wrapper or `runspec serve`.
+
+### Autonomy gating
+
+`__runspec_autonomy__` reflects the most restrictive level across the
+runnable, its args, and any per-arg overrides. Use it to refuse agent
+invocation of destructive actions:
+
+```typescript
+if (args.delete && args.__runspec_agent__ && args.__runspec_autonomy__ !== 'autonomous') {
+  console.error("✗ --delete requires autonomy='autonomous' for agent invocation");
   process.exit(1);
 }
 ```
 
-`__agent__` is `true` when the runnable is called via `runspec serve` — set by the
-`RUNSPEC_AGENT=1` environment variable that the serve layer injects:
+### Agent-aware output
 
 ```typescript
-const isAgent = args['__agent__'] as boolean;
-
-if (isAgent) {
-  console.log(JSON.stringify({ status: 'deployed', env: args['env'] }));
+if (args.__runspec_agent__) {
+  console.log(JSON.stringify({ status: 'deployed', env: args.env }));
 } else {
-  console.log(`✓ Deployed to ${args['env']}`);
+  console.log(`✓ Deployed to ${args.env}`);
 }
 ```
 
@@ -171,21 +196,20 @@ if (isAgent) {
 ```typescript
 import { loadSpec } from 'runspec-node';
 
-const spec = loadSpec();              // current directory
-const spec = loadSpec({ scriptName: 'deploy', cwd: '/path/to/project' });
+const spec = loadSpec();
+const specForDeploy = loadSpec({ scriptName: 'deploy', cwd: '/path/to/project' });
 ```
 
-Loads the spec without parsing `process.argv`. Returns a `ParsedArgs` with default
-values only — no CLI args applied. Accepts the same `ParseOptions` as `parse()`.
-
-Use it for introspection, tooling, and code generation:
+Loads the spec without parsing `process.argv`. Returns a `ParsedArgs` with
+default values only — no CLI args applied. Accepts the same `ParseOptions`
+as `parse()`. Used for tooling, introspection, and code generation:
 
 ```typescript
 import { loadSpec } from 'runspec-node';
 import type { ScriptSpec } from 'runspec-node';
 
 const spec = loadSpec({ scriptName: 'deploy' });
-const scriptSpec = spec['__spec__'] as ScriptSpec;
+const scriptSpec = spec.__runspec_spec__ as ScriptSpec;
 
 for (const [name, arg] of Object.entries(scriptSpec.args)) {
   console.log(`${name}: ${arg.type} (required=${arg.required})`);
@@ -203,14 +227,16 @@ function registerType(name: string, coercer: (value: unknown) => unknown): void
 function listTypes(): string[]
 ```
 
-Register a custom type. The coercer receives the raw value and returns the coerced
-value. Throw an error to produce a clean message.
+Register a custom type. The coercer receives the raw value and returns the
+coerced value. Throw to produce a clean error message.
 
 ```typescript
 import * as fs from 'fs';
 import { registerType } from 'runspec-node';
 
-registerType('json-file', (v) => JSON.parse(fs.readFileSync(v as string, 'utf-8')));
+registerType('json-file', (v) =>
+  JSON.parse(fs.readFileSync(v as string, 'utf-8'))
+);
 
 registerType('port', (v) => {
   const port = Number(v);
@@ -227,6 +253,68 @@ Then in your spec:
 config = {type = "json-file"}
 port   = {type = "port", default = 8080}
 ```
+
+---
+
+## Logging integration (`getLogger`)
+
+When `[config.logging]` is present in your `runspec.toml`, `parse()`
+configures a lightweight logger automatically. Call `getLogger(name)` to
+obtain a named logger — that's the entire integration.
+
+```typescript
+import { parse, getLogger } from 'runspec-node';
+
+const logger = getLogger('deploy');
+
+function main(): void {
+  const args = parse();
+
+  logger.info('Deploy starting for %s', args.target);
+  logger.info('Result', {
+    target: args.target,
+    duration_ms: 1240,
+  });
+}
+
+main();
+```
+
+The trailing object becomes structured `extra` fields; the special `error`
+key extracts an `Error`:
+
+```typescript
+try {
+  await runDeploy(args);
+} catch (err) {
+  logger.error('Deploy failed', { target: args.target, error: err });
+  process.exit(1);
+}
+```
+
+Sensitive-data redaction (passwords, tokens, `Authorization` headers, URL
+credentials) is applied to every log line. See [Logging](logging.md) for
+the full picture: rotation policies, agent-mode behaviour, and the
+auto-injected `--log-level` flag.
+
+---
+
+## Exports
+
+Everything `runspec-node` exposes from the package root:
+
+| Export | Kind | Description |
+|---|---|---|
+| `parse` | function | Parse argv, return `ParsedArgs` |
+| `loadSpec` | function | Load spec without parsing argv |
+| `registerType` | function | Register a custom type coercer |
+| `listTypes` | function | List all registered type names |
+| `getLogger` | function | Get a named logger (no-op without `[config.logging]`) |
+| `findConfig` | function | Locate the nearest `runspec.toml` |
+| `loadRaw` | function | Read and parse a `runspec.toml` to its raw dict form |
+| `RunSpecError` | class | Base error class |
+| `MissingRequiredArg`, `InvalidChoice`, `OutOfRange`, `UnknownArg`, `GroupViolation`, `AutonomyViolation` | classes | Specific error subclasses |
+| `ParsedArgs`, `ScriptSpec`, `ArgSpec`, `GroupSpec`, `RawSpec`, `RawConfig`, `LoggingConfig` | types | TypeScript interfaces |
 
 ---
 
@@ -258,11 +346,12 @@ Error messages include context, expected values, and fuzzy suggestions:
    Did you mean: json?
 ```
 
-Catch the base class when you want to handle all runspec errors uniformly:
+Catch the base class for uniform handling:
 
 ```typescript
 try {
   const args = parse();
+  // ... your runnable ...
 } catch (e) {
   if (e instanceof RunSpecError) {
     console.error(e.message);
@@ -276,12 +365,12 @@ try {
 
 ## CLI
 
-The `runspec` binary is included in `runspec-node`. Use it via `npx` in any project
-that has `runspec-node` installed:
+The `runspec` binary is included in `runspec-node`. Use it via `npx` in any
+project that has `runspec-node` installed:
 
 ```bash
 npx runspec init                   # scaffold runspec.toml + code stub
-npx runspec local                  # list installed runnables and validate config
+npx runspec local                  # list installed runnables and validate
 npx runspec local --format mcp     # emit MCP tool schemas
 npx runspec serve                  # start the MCP stdio server
 ```
@@ -293,24 +382,30 @@ npm install -g runspec-node
 runspec local
 ```
 
-The CLI is identical to the Python version and reads the same `runspec.toml` format.
-If both `runspec` (Python) and `runspec-node` are installed, either binary works.
+The CLI is identical to the Python version and reads the same `runspec.toml`
+format. If both `runspec` (Python) and `runspec-node` are installed, either
+binary works.
 
-See the [CLI reference](cli.md) for full documentation of all commands.
+!!! note "Jump-host execution"
+    `runspec jump` is fully implemented in the Python CLI. The Node CLI
+    accepts the `jump` subcommand but currently prints a pointer to the
+    Python package; full Node parity is on the roadmap. See
+    [Jump Hosts](jump-hosts.md).
+
+See the [CLI Reference](cli.md) for full documentation of all commands.
 
 ---
 
 ## MCP server
 
-`runspec serve` starts a JSON-RPC 2.0 MCP stdio server for your project. It reads
-your `runspec.toml`, exposes all runnables as tool schemas, and executes them when
-an agent calls a tool.
+`runspec serve` starts a JSON-RPC 2.0 MCP stdio server for your project. It
+reads your `runspec.toml`, exposes all runnables as tool schemas, and
+executes them when an agent calls a tool.
 
-**How it finds scripts:**
-
-The Node serve command looks in `node_modules/.bin/` relative to your config file.
-Any package you install that declares a `bin` entry appears there automatically. Name
-your runnable the same as the binary it wraps.
+**How it finds scripts:** the Node serve command looks in `node_modules/.bin/`
+relative to your config file. Any package you install that declares a `bin`
+entry appears there automatically. Name your runnable the same as the binary
+it wraps.
 
 ```
 project/
@@ -366,21 +461,8 @@ project/
 
     With `"serve": "runspec serve"` in your `package.json` scripts.
 
-**Long-running service (systemd user unit):**
-
-```ini
-[Unit]
-Description=runspec MCP server
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/runspec serve
-WorkingDirectory=/path/to/project
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
-```
+See [Agent Integration](agents.md) for autonomy gating, agent-aware output,
+and the `RUNSPEC_AGENT` convention.
 
 ---
 
@@ -388,6 +470,11 @@ WantedBy=default.target
 
 ```toml
 # runspec.toml
+[config.logging]
+level  = "info"
+rotate = "midnight"
+keep   = 7
+
 [process]
 description = "Process input files"
 autonomy    = "confirm"
@@ -403,31 +490,43 @@ tag      = {type = "str", multiple = true}
 ```
 
 ```typescript
-import { parse } from 'runspec-node';
+import { parse, getLogger } from 'runspec-node';
 
-const args = parse();
+const logger = getLogger('process');
 
-const input = args['input'] as string;
-const format = args['format'] as string;
-const workers = args['workers'] as number;
-const dryRun = args['dry_run'] as boolean;
-const verbose = args['verbose'] as boolean;
-const tags = (args['tag'] as string[]) ?? [];
-const isAgent = args['__agent__'] as boolean;
+function main(): void {
+  const args = parse();
 
-if (dryRun) {
-  console.log(`[dry run] would process ${input} as ${format}`);
-  process.exit(0);
+  const input   = args.input as string;
+  const format  = args.format as string;
+  const workers = args.workers as number;
+  const dryRun  = args.dry_run as boolean;
+  const verbose = args.verbose as boolean;
+  const tags    = (args.tag as string[]) ?? [];
+  const isAgent = args.__runspec_agent__;
+
+  logger.info('Run starting', { format, workers, tags });
+
+  if (dryRun) {
+    if (isAgent) {
+      console.log(JSON.stringify({ status: 'dry-run', input }));
+    } else {
+      console.log(`[dry run] would process ${input} as ${format}`);
+    }
+    return;
+  }
+
+  // ... do the work ...
+
+  if (isAgent) {
+    console.log(JSON.stringify({ status: 'ok', tags }));
+  } else if (verbose) {
+    console.log(`Processed ${input} with ${workers} workers`);
+    if (tags.length) console.log(`Tags: ${tags.join(', ')}`);
+  }
 }
 
-// ... process the input ...
-
-if (isAgent) {
-  console.log(JSON.stringify({ status: 'done', format, workers }));
-} else {
-  if (verbose) console.log(`Processed ${input} with ${workers} workers`);
-  if (tags.length) console.log(`Tags: ${tags.join(', ')}`);
-}
+main();
 ```
 
 Running it:
@@ -436,5 +535,5 @@ Running it:
 node dist/process.js --input data.csv --workers 8 --tag etl --tag prod
 ```
 
-Or from an agent via `runspec serve` — no code change needed. The `__agent__` flag
-controls the output format automatically.
+Or from an agent via `runspec serve` — no code change needed. `__runspec_agent__`
+switches the output format automatically.

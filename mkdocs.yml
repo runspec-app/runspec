@@ -17,11 +17,12 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Quick Start: quickstart.md
+  - Quickstart: quickstart.md
   - Format Reference: format.md
+  - Logging: logging.md
   - Python Library: python.md
   - Node Library: node.md
-  - CLI: cli.md
+  - CLI Reference: cli.md
   - Agent Integration: agents.md
-  - Registry: registry.md
+  - Jump Hosts: jump-hosts.md
   - Changelog: changelog.md
