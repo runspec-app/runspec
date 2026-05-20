@@ -15,6 +15,7 @@ from runspec import errors
 from runspec.finder import find_config
 from runspec.inference import effective_autonomy, infer_script
 from runspec.loader import load_raw
+from runspec.logging_setup import configure_logging
 from runspec.models import Arg, Group, RunSpec
 from runspec.types import coerce
 from runspec.validator import raise_if_errors, validate_args, validate_groups
@@ -67,6 +68,27 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     # 4. Infer defaults for the script
     raw_script = infer_script(raw["runnables"][name], config["autonomy_default"])
 
+    # 4.5. Auto-inject log-level arg when [config.logging] is present
+    if config.get("logging") and "log-level" not in raw_script["args"]:
+        raw_script["args"]["log-level"] = {
+            "name": "log-level",
+            "type": "choice",
+            "options": ["debug", "info", "warning", "error", "critical"],
+            "default": config["logging"]["level"],
+            "required": False,
+            "description": "Override the console log level for this invocation.",
+            "multiple": False,
+            "delimiter": None,
+            "short": None,
+            "env": "RUNSPEC_LOG_LEVEL",
+            "deprecated": None,
+            "autonomy": None,
+            "ui": None,
+            "meta": None,
+            "position": None,
+            "range": None,
+        }
+
     # 5. Resolve subcommand if any
     argv_list = argv if argv is not None else sys.argv[1:]
     raw_script, command_path, argv_list = _resolve_subcommand(raw_script, argv_list)
@@ -106,8 +128,8 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     # 14. Detect agent context
     agent = os.environ.get("RUNSPEC_AGENT", "").lower() in ("1", "true", "yes")
 
-    # 15. Build and return RunSpec
-    return _build_runspec(
+    # 15. Build RunSpec
+    runspec_obj = _build_runspec(
         name=name,
         config_path=config_path,
         command_path=command_path,
@@ -118,6 +140,25 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
         group_specs=raw_script["groups"],
         raw_script=raw_script,
     )
+
+    # 16. Configure logging (no-op when [config.logging] absent)
+    log_level_override = None
+    if config.get("logging"):
+        pair = coerced_values.get("log_level")  # stores (value, source) tuples
+        if pair and pair[0] is not None:
+            log_level_override = str(pair[0])
+    try:
+        configure_logging(
+            config.get("logging"),
+            agent=agent,
+            runnable_name=name,
+            config_path=config_path,
+            log_level_override=log_level_override,
+        )
+    except ValueError as e:
+        raise errors.RunSpecError(str(e)) from e
+
+    return runspec_obj
 
 
 def load_spec(script_name: str | None = None, config_path: Path | None = None) -> RunSpec:

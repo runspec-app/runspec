@@ -234,6 +234,11 @@ class RunSpec:
         return self.__runspec_source__
 
     @property
+    def runspec_prefix(self) -> Path:
+        """Package root: the directory containing runspec.toml."""
+        return self.__runspec_source__.parent
+
+    @property
     def runspec_autonomy(self) -> str:
         """Effective autonomy for this invocation (after escalation)."""
         return self.__runspec_autonomy__
