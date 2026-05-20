@@ -132,3 +132,56 @@ test('autonomy-default falls back to confirm', () => {
   const raw = loadRaw(file);
   expect(raw.config.autonomyDefault).toBe('confirm');
 });
+
+// ── [config.logging] ──────────────────────────────────────────────────────────
+
+test('normalises [config.logging] with defaults', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `
+[config.logging]
+level = "info"
+
+[greet]
+description = "hi"
+`);
+  const raw = loadRaw(file);
+  expect(raw.config.logging).toEqual({ level: 'info', rotate: 'midnight', keep: 7 });
+});
+
+test('normalises [config.logging] all fields', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `
+[config.logging]
+level  = "debug"
+rotate = "10 MB"
+keep   = 3
+
+[greet]
+description = "hi"
+`);
+  const raw = loadRaw(file);
+  expect(raw.config.logging).toEqual({ level: 'debug', rotate: '10 MB', keep: 3 });
+});
+
+test('logging is undefined when section absent', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `[greet]\ndescription = "hi"\n`);
+  const raw = loadRaw(file);
+  expect(raw.config.logging).toBeUndefined();
+});
+
+test('throws on invalid log level', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `
+[config.logging]
+level = "verbose"
+
+[greet]
+description = "hi"
+`);
+  expect(() => loadRaw(file)).toThrow('[config.logging]');
+});

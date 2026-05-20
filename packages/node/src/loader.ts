@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { parse as parseTOML } from 'smol-toml';
-import type { RawConfig, RawSpec, ScriptSpec, ArgSpec, GroupSpec, JumpHostConfig } from './models';
+import type { RawConfig, RawSpec, ScriptSpec, ArgSpec, GroupSpec, JumpHostConfig, LoggingConfig } from './models';
 
 export function loadRaw(configPath: string): RawSpec {
   const content = fs.readFileSync(configPath, 'utf-8');
@@ -30,6 +30,23 @@ function normaliseConfig(raw: Record<string, unknown>): RawConfig {
     lang: raw['lang'] as string | undefined,
     version: String(raw['version'] ?? '1'),
     jumpHosts,
+    logging: normaliseLogging(raw['logging'] as Record<string, unknown> | undefined),
+  };
+}
+
+const VALID_LOG_LEVELS = new Set(['debug', 'info', 'warning', 'error', 'critical']);
+
+function normaliseLogging(raw: Record<string, unknown> | undefined): LoggingConfig | undefined {
+  if (raw === undefined) return undefined;
+  const level = String(raw['level'] ?? 'info').toLowerCase();
+  if (!VALID_LOG_LEVELS.has(level)) {
+    const sorted = [...VALID_LOG_LEVELS].sort().join(', ');
+    throw new Error(`✗  [config.logging] level must be one of: ${sorted}. Got: ${JSON.stringify(level)}`);
+  }
+  return {
+    level,
+    rotate: String(raw['rotate'] ?? 'midnight'),
+    keep: Number(raw['keep'] ?? 7),
   };
 }
 

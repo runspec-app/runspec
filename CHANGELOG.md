@@ -37,6 +37,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.9.0] — 2026-05-20
+
+### Added
+
+- **`[config.logging]`** ported to Node/TypeScript — parity with Python 0.10.0.
+  When `[config.logging]` is present, `parse()` configures a lightweight logger
+  automatically. Runnables call `getLogger(name)` (exported from `runspec-node`)
+  to obtain a named logger; no other setup required.
+
+  - **File logging** always on: `{package_dir}/logs/{runnable}.log`, structured
+    JSON at DEBUG, with `midnight` rotation (7-day retention by default).
+    Falls back to `~/logs/` when the package directory is not writable.
+  - **Console logging** (non-agent mode): human-readable `HH:MM:SS LEVEL
+    logger: msg`; tracebacks only when `level = "debug"`.
+  - **Agent mode** (`RUNSPEC_AGENT=1`): no console handler.
+  - **`--log-level` arg** auto-injected; also settable via `RUNSPEC_LOG_LEVEL`.
+  - **Sensitive data filter** on all output: passwords, tokens, `Authorization`
+    headers, URL credentials, and JSON/form-encoded credential fields replaced
+    with `[REDACTED]`.
+  - Rotation: `"N MB"`, `"N KB"`, `"N GB"` (size), `"daily"`, `"midnight"`,
+    `"weekly"` (time). Zero new runtime dependencies — stdlib `fs`/`path`/`os`
+    only.
+
+- **`runspec_prefix`** — new getter on `ParsedArgs` returning the directory
+  containing `runspec.toml` (the package root).
+
+---
+
 ## [0.9.0] — 2026-05-19
 
 ### Fixed
