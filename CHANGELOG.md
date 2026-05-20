@@ -7,6 +7,53 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.10.0] — 2026-05-20
+
+### Added
+
+- **`[config.logging]`** — define logging behaviour in `runspec.toml`. When
+  present, `parse()` automatically configures Python's stdlib logging system.
+  Developers just use `logger = logging.getLogger(__name__)` — no extra imports
+  or setup calls needed.
+
+  - **File logging** always on: `{package_dir}/logs/{runnable}.log`, structured
+    JSON at DEBUG, with `midnight` rotation (7-day retention by default).
+    Falls back to `~/logs/` when the package directory is not writable.
+  - **Console logging** (non-agent mode): human-readable `HH:MM:SS LEVEL
+    logger: msg`; tracebacks only when `level = "debug"`.
+  - **Agent mode** (`RUNSPEC_AGENT=1`): no console handler — stderr is the
+    MCP/SSH streaming side-channel. File log is the debugging interface.
+  - **`--log-level` arg** auto-injected when `[config.logging]` is present,
+    defaulting to the configured `level`. Also settable via `RUNSPEC_LOG_LEVEL`.
+  - **Sensitive data filter** applied to all output: passwords, tokens,
+    `Authorization` headers, URL credentials, and JSON/form-encoded credential
+    fields are replaced with `[REDACTED]`. Filter errors are silent.
+  - Rotation: `"N MB"`, `"N KB"`, `"N GB"` (size), `"daily"`, `"midnight"`,
+    `"weekly"` (time). Defaults to midnight/7.
+
+- **`RunSpec.runspec_prefix`** — new property returning the parent directory of
+  `runspec.toml` (the package root). Useful when runnables need to resolve paths
+  relative to the package.
+
+---
+
+## [0.9.0] — 2026-05-19
+
+### Fixed
+
+- `runspec jump` error messages now tailor to whether the bin path was set
+  explicitly or discovered via `PATH`, giving actionable guidance in each case.
+- Locked the `jump-hosts.bin` field to `runspec`-named executables only —
+  prevents accidental redirection to arbitrary binaries on the remote.
+- `RUNSPEC_CONFIG` is now forwarded to MCP-served subprocesses, so jump
+  invocations through `runspec serve` can find their config correctly.
+- `--list-jump-hosts` JSON output now shows the effective `bin` value rather
+  than `null` when the default is in use.
+- Remote tool failures are correctly propagated as non-zero exit codes from
+  `runspec jump`.
+
+---
+
 ## [0.7.0] — 2026-05-18
 
 ### Changed

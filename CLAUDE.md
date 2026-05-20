@@ -183,8 +183,8 @@ npm run typecheck
 ```
 
 Node mirrors the Python public API: `parse()`, `loadSpec()`, `registerType()`.
-CLI commands: `init`, `discover`, `check`, `emit`, `serve`.
-`run` command is not yet implemented in Node — do not add it until scoped.
+CLI commands: `init`, `local`, `jump`, `serve` (renamed in 0.8.0 to mirror Python).
+`[config.logging]` is not yet implemented in Node — do not add it until scoped.
 
 ---
 
@@ -194,11 +194,11 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm |
 |---|---|---|
-| `runspec` | 0.7.0 | PyPI |
-| `runspec-node` | 0.6.0 | npm — CLI rename pending (node-v0.7.0) |
+| `runspec` | 0.10.0 | PyPI |
+| `runspec-node` | 0.8.0 | npm |
 | `runspec-registry` | 0.1.1 | PyPI (archived — registry was removed from `runspec serve` in favour of the SSH+MCP jump-host model) |
 
-**Next:** Node CLI rename — `discover`→`local`, `run`→`jump`, `check`+`emit` absorbed into `local`. Mirror Python 0.7.0 exactly. SSH execution in Node comes after.
+**Next:** Port `[config.logging]` to Node (parity with Python 0.10.0). After that: config-file value fallback (third tier in value resolution, currently "design for now").
 
 ---
 

@@ -59,6 +59,7 @@ Project-wide defaults. All fields are optional.
 | `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. |
 | `version` | string | `"1"` | runspec spec version |
 | `jump-hosts` | table | — | Per-alias jump host config. See [Jump Hosts](#jump-hosts). |
+| `logging` | table | — | Logging configuration. See [Logging](#logging). |
 
 ### Jump Hosts
 
@@ -198,6 +199,60 @@ ssh-options = [
   "ConnectTimeout=10",
   "ServerAliveInterval=30",
 ]
+```
+
+### Logging
+
+When `[config.logging]` is present, the language pack configures the stdlib
+logging system automatically when `parse()` is called. No additional imports
+or setup calls are required in the runnable — `logger = logging.getLogger(__name__)`
+just works.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `level` | string | `"info"` | Console log level. One of `debug`, `info`, `warning`, `error`, `critical`. |
+| `rotate` | string | `"midnight"` | Rotation policy: `"N MB"`, `"N KB"`, `"N GB"` (size-based), `"daily"`, `"midnight"`, `"weekly"` (time-based). |
+| `keep` | int | `7` | Number of rotated backup files to retain. |
+
+Log file path is always: `{package_dir}/logs/{runnable_name}.log`  
+Fallback when the package directory is not writable: `{home}/logs/{runnable_name}.log`
+
+#### Console vs file behaviour
+
+| Context | Console handler | Console level | File handler | File level |
+|---|---|---|---|---|
+| `agent = false` | stderr, human-readable | `level` (overridable) | JSON | DEBUG |
+| `agent = true` | **none** (stderr reserved for streaming) | — | JSON | DEBUG |
+
+In agent mode (`RUNSPEC_AGENT=1`), stderr carries the MCP/SSH streaming side-channel,
+so console logging is suppressed. The file log at DEBUG level is the debugging interface.
+
+#### Runtime log level override
+
+When `[config.logging]` is present, a `--log-level` argument is automatically
+added to every runnable. It accepts the same values as `level`, defaults to the
+configured level, and can also be set via `RUNSPEC_LOG_LEVEL`. This allows
+per-invocation overrides without editing the spec:
+
+```
+my-script --log-level debug
+RUNSPEC_LOG_LEVEL=debug my-script
+```
+
+#### Sensitive data filtering
+
+All log output (console and file) is filtered for sensitive data before emission.
+Passwords, tokens, API keys, bearer/basic auth headers, URL credentials, and
+common JSON/form-encoded credential fields are replaced with `[REDACTED]`.
+Filter errors are silent — a failing pattern never suppresses the log record.
+
+#### Example
+
+```toml
+[config.logging]
+level  = "info"
+rotate = "midnight"
+keep   = 7
 ```
 
 ---
