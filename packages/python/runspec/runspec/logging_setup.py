@@ -33,12 +33,32 @@ _TIMED: dict[str, tuple[str, int]] = {
 _SENSITIVE_KEYS = re.compile(r"^(password|passwd|pwd|token|api[_\-]?key|secret)$", re.IGNORECASE)
 
 # Standard LogRecord attributes — anything else on the record is user-supplied extra.
-_LOGRECORD_ATTRS: frozenset[str] = frozenset({
-    "args", "created", "exc_info", "exc_text", "filename", "funcName",
-    "levelname", "levelno", "lineno", "message", "module", "msecs", "msg",
-    "name", "pathname", "process", "processName", "relativeCreated",
-    "stack_info", "taskName", "thread", "threadName",
-})
+_LOGRECORD_ATTRS: frozenset[str] = frozenset(
+    {
+        "args",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "taskName",
+        "thread",
+        "threadName",
+    }
+)
 
 # Pre-compiled patterns: passwords, tokens, bearer/basic auth, URL credentials,
 # JSON fields, and form-encoded values in HTTP bodies.
