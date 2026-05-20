@@ -7,6 +7,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.11.0] / [node-0.10.0] — 2026-05-20
+
+### Added
+
+- **Extra fields on logger calls** — attach structured context to any log record.
+  - Python: `logger.info('msg', extra={'user_id': '42', 'region': 'eu-west'})`
+    (standard stdlib `extra=` API — no wrapper needed).
+  - Node: `logger.info('msg', { user_id: '42', region: 'eu-west' })`;
+    the `error` key is special and extracts an `Error` object.
+  - Extra fields appear nested under `"extra"` in JSON file output and as
+    `{key=value ...}` appended to console lines.
+  - Sensitive key names (`token`, `password`, `api_key`, `secret`, etc.) are
+    unconditionally redacted; other string values pass through the standard
+    sensitive-data filter.
+
+---
+
 ## [0.10.0] — 2026-05-20
 
 ### Added
