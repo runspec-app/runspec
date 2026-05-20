@@ -1,30 +1,129 @@
-# Quick Start
+# Quickstart
 
-!!! note "Python guide"
-    This guide uses Python. For Node.js and TypeScript, see the [Node Library](node.md)
-    reference — the TOML format is identical, only the library call differs.
-    `runspec init --name greet --lang typescript` generates a `.ts` starter instead.
-
-Get from zero to a working runnable in five steps.
+Zero to a working CLI in five minutes. The TOML format is identical across
+Python and Node — only the install step and the import differ.
 
 ---
 
 ## 1. Install
 
-```bash
-pip install runspec
-```
+=== "Python"
+
+    ```bash
+    pip install runspec
+    ```
+
+=== "Node"
+
+    ```bash
+    npm install runspec-node
+    ```
 
 ---
 
-## 2. Create your config
+## 2. Scaffold a project
 
-!!! tip "New project?"
-    Run `runspec init --name greet` to scaffold both files automatically — it creates
-    `runspec.toml` and a `greet.py` starter with `parse()` already wired up.
-    Fill in your logic and continue from step 3.
+`runspec init` creates `runspec.toml` and a working code stub. The Python
+CLI also has `--write-project` to lay down the surrounding project files
+in one go.
 
-Create `hello/runspec.toml` inside your package directory:
+=== "Python"
+
+    ```bash
+    mkdir greet && cd greet
+    runspec init --name greet --write-project
+    ```
+
+    You get:
+
+    ```
+    .                      ← parent dir (cwd before --write-project)
+    ├── pyproject.toml     ← entry point already wired up
+    ├── .gitignore
+    ├── CLAUDE.md
+    └── greet/
+        ├── __init__.py
+        ├── runspec.toml   ← lives inside the package, not at the project root
+        └── greet.py       ← parse() call ready to go
+    ```
+
+    `--write-project` writes `pyproject.toml` to the parent directory (use
+    `--project-dir` to override). Add `--example` to scaffold worked
+    `clean` + `scan` runnables alongside, with confirmation prompts and
+    conditional deletion you can read for ideas.
+
+=== "Node"
+
+    ```bash
+    mkdir greet && cd greet
+    npm init -y
+    npm install runspec-node
+    npx runspec init --name greet
+    ```
+
+    You get:
+
+    ```
+    greet/
+    ├── package.json
+    ├── runspec.toml       ← the interface
+    └── greet.ts           ← parse() call ready to go
+    ```
+
+    Add the `bin` entry to `package.json` so the runnable is on `PATH` after
+    `npm install`:
+
+    ```json
+    {
+      "bin": { "greet": "./dist/greet.js" }
+    }
+    ```
+
+    Compile (`tsc` or whatever your build is) so `dist/greet.js` exists.
+
+---
+
+## 3. Fill in the logic
+
+The init scaffold already wires up `parse()`. Just write your runnable.
+
+=== "Python"
+
+    ```python
+    # greet/greet.py
+    from runspec import parse
+
+
+    def main():
+        args = parse()
+        message = f"Hello, {args.name}!"
+        if args.loud:
+            message = message.upper()
+        for _ in range(args.times):
+            print(message)
+
+
+    if __name__ == "__main__":
+        main()
+    ```
+
+=== "Node"
+
+    ```typescript
+    // greet.ts
+    import { parse } from 'runspec-node';
+
+    function main(): void {
+      const args = parse();
+      let message = `Hello, ${args.name as string}!`;
+      if (args.loud) message = message.toUpperCase();
+      for (let i = 0; i < (args.times as number); i++) console.log(message);
+    }
+
+    main();
+    ```
+
+The interface itself is in `runspec.toml`:
 
 ```toml
 [greet]
@@ -37,119 +136,39 @@ loud  = {default = false}
 times = {default = 1}
 ```
 
-The TOML format is identical across Python, Node, and Go — only the
-setup step differs per language.
-
----
-
-## 3. Write your runnable
-
-`runspec init` already created `hello/greet.py` with this starter:
-
-```python
-from runspec import parse
-
-
-def main():
-    args = parse()
-    # your logic here
-
-
-if __name__ == "__main__":
-    main()
-```
-
-Fill in your logic:
-
-```python
-from runspec import parse
-
-
-def main():
-    args = parse()
-    message = f"Hello, {args.name}!"
-    if args.loud:
-        message = message.upper()
-    for _ in range(args.times):
-        print(message)
-
-
-if __name__ == "__main__":
-    main()
-```
-
-For TypeScript, `runspec init --name greet --lang typescript` generates `greet.ts` instead:
-
-```typescript
-import { parse } from 'runspec';
-
-function main(): void {
-  const args = parse();
-  // your logic here
-}
-
-main();
-```
-
-`parse()` finds your config automatically — no path required. It walks up
-from the current directory until it finds a `runspec.toml`.
-This means it works from anywhere in your project without configuration.
+!!! note "Entry-point name must match"
+    The runnable section name (`[greet]`) must match the binary name on
+    `PATH`. Python uses `[project.scripts]` in `pyproject.toml`; Node uses
+    `bin` in `package.json`. `runspec init` wires this up for you.
 
 ---
 
 ## 4. Install and run
 
-```bash
-pip install -e .
-greet --name Alice --loud --times 3
-```
+=== "Python"
 
-Expected output:
+    ```bash
+    pip install -e .
+    greet --name Ada --loud --times 3
+    ```
 
-```
-HELLO, ALICE!
-HELLO, ALICE!
-HELLO, ALICE!
-```
+=== "Node"
 
-**Explore your setup with the runspec CLI:**
+    ```bash
+    npm install
+    npm run build      # if you have a build step
+    greet --name Ada --loud --times 3
+    ```
 
-```bash
-runspec local        # lists installed runnables and reports any config issues
-```
-
----
-
-## 5. What you get for free
-
-**Missing required argument:**
-
-```bash
-greet
-```
+Either way:
 
 ```
-✗  Missing required argument: --name
-   Type: str
+HELLO, ADA!
+HELLO, ADA!
+HELLO, ADA!
 ```
 
-**Wrong type:**
-
-```bash
-greet --name Alice --times abc
-```
-
-```
-✗  Cannot coerce value 'abc' to type 'int' for argument '--times': invalid literal for int() with base 10: 'abc'
-```
-
-No argument parsing code. No error handling. Just your runnable and a TOML file.
-
-**For humans — built-in help, for free:**
-
-```bash
-greet --help
-```
+`greet --help` works out of the box — no help text written:
 
 ```
 Usage: greet --name <str> [--loud] [--times <int>]
@@ -166,113 +185,75 @@ Autonomy: autonomous
   -h, --help    Show this message and exit
 ```
 
-No help text written. No argument parser configured. runspec generates this
-from your TOML definition automatically.
+---
+
+## 5. See what validation gives you
+
+Missing required argument:
+
+```
+$ greet
+✗  Missing required argument: --name
+   Type: str
+```
+
+Wrong type:
+
+```
+$ greet --name Ada --times abc
+✗  Cannot coerce value 'abc' to type 'int' for argument '--times':
+   invalid literal for int() with base 10: 'abc'
+```
+
+Bad choice (with a fuzzy suggestion):
+
+```
+$ greet --name Ada --format yml
+✗  Invalid value for --format: 'yml'
+   Expected one of: json, csv, parquet
+   Did you mean: json?
+```
+
+No argument parsing code. No error handling. Just your runnable and a TOML.
 
 ---
 
-## 6. Make it available to AI agents
+## 6. Try the worked examples
 
-Every runnable declares an `autonomy` level — how much trust an AI agent
-should have when deciding whether to run it automatically or ask a human first.
+=== "Python"
 
-```toml
-[greet]
-description = "Greet someone from the command line"
-autonomy    = "autonomous"       # safe to run without asking
+    ```bash
+    cd /tmp && mkdir runspec-sandbox && cd runspec-sandbox
+    runspec init --example --write-project
+    pip install -e .
+    clean --help
+    scan --help
+    ```
 
-[deploy]
-description     = "Deploy to production"
-autonomy        = "manual"
-autonomy-reason = "Irreversible — requires human approval"
-
-[deploy.args]
-environment = {options = ["staging", "production"]}
-dry-run     = {default = false}
-```
-
-The four autonomy levels are:
-
-| Level | Meaning |
-|---|---|
-| `autonomous` | Agent can run freely without asking |
-| `confirm` | Agent should confirm with the user first |
-| `supervised` | Human watches and can intervene |
-| `manual` | Human must run this — agent must not |
-
-Emit your runnables as an AI agent tool schema with a single command:
-
-```bash
-runspec local --format mcp
-```
-
-```json
-{
-  "tools": [
-    {
-      "name": "greet",
-      "description": "Greet someone from the command line",
-      "x-autonomy": "autonomous",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "name": { "type": "string" },
-          "loud": { "type": "boolean", "default": false },
-          "times": { "type": "integer", "default": 1 }
-        },
-        "required": ["name"]
-      }
-    },
-    {
-      "name": "deploy",
-      "description": "Deploy to production",
-      "x-autonomy": "manual",
-      "x-autonomy-reason": "Irreversible — requires human approval",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "environment": { "type": "string", "enum": ["staging", "production"] },
-          "dry-run": { "type": "boolean", "default": false }
-        },
-        "required": ["environment"]
-      }
-    }
-  ]
-}
-```
-
-The `x-autonomy` field travels with the schema — your agent framework knows
-exactly which runnables it can call freely and which ones need a human in the loop.
+`--example` scaffolds two runnables — `clean` and `scan` — that demonstrate
+confirmation prompts, conditional deletion, autonomy escalation, and
+agent-aware output. Read them as a learning sandbox.
 
 ---
 
-## 7. The bigger picture — a composable ecosystem
-
-Every runspec-aware package installed in your environment is automatically
-discoverable. No integration code. No hand-written tool definitions.
+## 7. See it as an agent tool
 
 ```bash
-runspec local                  # find every installed runspec-aware runnable
-runspec local --format mcp     # emit all of them as agent-ready tool schemas
+runspec local                  # list installed runnables, validate setup
+runspec local --format mcp     # emit MCP tool schemas
+runspec serve                  # start the live MCP stdio server
 ```
 
-Install a new runspec-aware package and it appears in `runspec local`
-automatically. Your agent's toolbox grows with every `pip install` — zero
-glue code required.
-
-This means:
-
-- **Developers** define their interface once in TOML — they get a CLI,
-  `--help`, validation, and agent schemas all from the same source
-- **Agents** run `runspec local --format mcp` to get all schemas — no
-  `skills.md`, no manual registration
-- **Users** install packages and everything just works
+Wire `runspec serve` into Claude Desktop, Cursor, or any MCP host once —
+every runspec-aware package installed in the environment is immediately
+available as a tool. See [Agent Integration](agents.md) for the wiring.
 
 ---
 
 ## Next steps
 
 - [Format Reference](format.md) — every field, every option
-- [Python Library](python.md) — `parse()`, `load_spec()`, `RunSpec`, `Arg`
-- [CLI](cli.md) — `runspec init`, `runspec local`, `runspec serve`, `runspec jump`
-- [Agent Integration](agents.md) — wiring runspec into your agent framework
+- [Logging](logging.md) — add `[config.logging]` and get rotation, JSON
+  file logs, sensitive-data redaction, and structured `extra` fields
+- [CLI Reference](cli.md) — `init`, `local`, `serve`, `jump` flag by flag
+- [Python Library](python.md) / [Node Library](node.md) — full API reference
