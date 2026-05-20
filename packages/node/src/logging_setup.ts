@@ -27,6 +27,8 @@ const LEVEL_LABEL: Record<number, string> = {
 
 // ── sensitive data redaction ──────────────────────────────────────────────────
 
+const SENSITIVE_KEY_RE = /^(password|passwd|pwd|token|api[_-]?key|secret)$/i;
+
 const SENSITIVE: Array<[RegExp, string]> = [
   [/(password|passwd|pwd)\s*[=:]\s*\S+/gi, '$1=[REDACTED]'],
   [/(token|api[_-]?key|secret)\s*[=:]\s*\S+/gi, '$1=[REDACTED]'],
@@ -55,6 +57,7 @@ interface LogRecord {
   loggerName: string;
   message: string;
   error?: Error;
+  extra?: Record<string, unknown>;
 }
 
 interface Handler {
@@ -67,20 +70,35 @@ interface Handler {
 export class Logger {
   constructor(private readonly name: string) {}
 
-  debug(msg: string, error?: Error): void { this._emit(10, msg, error); }
-  info(msg: string, error?: Error): void { this._emit(20, msg, error); }
-  warning(msg: string, error?: Error): void { this._emit(30, msg, error); }
-  warn(msg: string, error?: Error): void { this._emit(30, msg, error); }
-  error(msg: string, error?: Error): void { this._emit(40, msg, error); }
-  critical(msg: string, error?: Error): void { this._emit(50, msg, error); }
+  debug(msg: string, fields?: Record<string, unknown>): void { this._emit(10, msg, fields); }
+  info(msg: string, fields?: Record<string, unknown>): void { this._emit(20, msg, fields); }
+  warning(msg: string, fields?: Record<string, unknown>): void { this._emit(30, msg, fields); }
+  warn(msg: string, fields?: Record<string, unknown>): void { this._emit(30, msg, fields); }
+  error(msg: string, fields?: Record<string, unknown>): void { this._emit(40, msg, fields); }
+  critical(msg: string, fields?: Record<string, unknown>): void { this._emit(50, msg, fields); }
 
-  private _emit(levelNum: number, message: string, error?: Error): void {
+  private _emit(levelNum: number, message: string, fields?: Record<string, unknown>): void {
     if (_handlers.length === 0) return;
-    const record: LogRecord = { ts: new Date(), levelNum, loggerName: this.name, message: redact(message), error };
+    const error = fields?.['error'] instanceof Error ? (fields['error'] as Error) : undefined;
+    const extra = fields ? _extractExtra(fields) : undefined;
+    const record: LogRecord = { ts: new Date(), levelNum, loggerName: this.name, message: redact(message), error, extra };
     for (const h of _handlers) {
       if (levelNum >= h.level) h.emit(record);
     }
   }
+}
+
+function _extractExtra(fields: Record<string, unknown>): Record<string, unknown> | undefined {
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (k === 'error') continue;
+    if (typeof v === 'string') {
+      result[k] = SENSITIVE_KEY_RE.test(k) ? '[REDACTED]' : redact(v);
+    } else {
+      result[k] = v;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export function getLogger(name: string): Logger {
@@ -102,6 +120,7 @@ function formatJson(record: LogRecord): string {
     message: record.message,
   };
   if (record.error) obj['exc'] = record.error.stack ?? record.error.message;
+  if (record.extra) obj['extra'] = record.extra;
   return JSON.stringify(obj);
 }
 
@@ -112,6 +131,10 @@ function formatHuman(record: LogRecord, showTracebacks: boolean): string {
   const time = `${hh}:${mm}:${ss}`;
   const label = (LEVEL_LABEL[record.levelNum] ?? String(record.levelNum)).padEnd(8);
   let line = `${time} ${label} ${record.loggerName}: ${record.message}`;
+  if (record.extra) {
+    const pairs = Object.entries(record.extra).map(([k, v]) => `${k}=${v}`).join(' ');
+    line += `  {${pairs}}`;
+  }
   if (showTracebacks && record.error) line += `\n${record.error.stack ?? record.error.message}`;
   return line;
 }

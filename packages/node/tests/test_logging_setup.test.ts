@@ -115,7 +115,7 @@ test('log file captures all levels', () => {
 test('error field included when Error passed', () => {
   const dir = tmpDir();
   configureLogging(makeCfg(dir));
-  getLogger('test').error('boom', new Error('something broke'));
+  getLogger('test').error('boom', { error: new Error('something broke') });
   const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
   const parsed = JSON.parse(content);
   expect(typeof parsed.exc).toBe('string');
@@ -310,4 +310,79 @@ test('falls back to ~/logs when package dir is not writable', () => {
 test('throws on unrecognised rotate value', () => {
   const dir = tmpDir();
   expect(() => configureLogging(makeCfg(dir, { rotate: 'hourly' }))).toThrow('[config.logging]');
+});
+
+// ── extra fields ──────────────────────────────────────────────────────────────
+
+test('extra fields appear under "extra" key in JSON', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir));
+  getLogger('test').info('connected', { user_id: '42', region: 'eu-west' });
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
+  const record = JSON.parse(content);
+  expect(record.extra).toEqual({ user_id: '42', region: 'eu-west' });
+  expect(record.message).toBe('connected');
+});
+
+test('no "extra" key when no extra fields', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir));
+  getLogger('test').info('plain message');
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
+  const record = JSON.parse(content);
+  expect(record.extra).toBeUndefined();
+});
+
+test('error key extracted from fields, not placed in extra', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir));
+  getLogger('test').error('boom', { error: new Error('oops'), user_id: '42' });
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
+  const record = JSON.parse(content);
+  expect(typeof record.exc).toBe('string');
+  expect(record.exc).toContain('oops');
+  expect(record.extra).toEqual({ user_id: '42' });
+  expect(record.extra?.error).toBeUndefined();
+});
+
+test('error-only fields: no extra key', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir));
+  getLogger('test').error('boom', { error: new Error('oops') });
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
+  const record = JSON.parse(content);
+  expect(record.extra).toBeUndefined();
+  expect(typeof record.exc).toBe('string');
+});
+
+test('extra string values are redacted', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir));
+  getLogger('test').info('auth', { token: 'secret123', user: 'alice' });
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
+  expect(content).not.toContain('secret123');
+  expect(content).toContain('[REDACTED]');
+  expect(content).toContain('alice'); // non-sensitive field untouched
+});
+
+test('extra integer fields pass through unredacted', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir));
+  getLogger('test').info('counts', { items: 99 });
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
+  const record = JSON.parse(content);
+  expect(record.extra?.items).toBe(99);
+});
+
+test('extra fields appear in console output', () => {
+  const dir = tmpDir();
+  const lines: string[] = [];
+  const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  configureLogging(makeCfg(dir, { level: 'info' }));
+  getLogger('test').info('connected', { user_id: '42' });
+  expect(lines.some(l => l.includes('user_id=42'))).toBe(true);
+  stderrWrite.mockRestore();
 });

@@ -342,6 +342,83 @@ class TestGetLogger:
         assert "message from early logger" in out
 
 
+# ── TestExtraFields ──────────────────────────────────────────────────────────
+
+
+class TestExtraFields:
+    def test_extra_fields_appear_in_json(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ls, "_configured", False)
+        logging.getLogger().handlers.clear()
+        configure_logging(
+            {"level": "info", "rotate": "midnight", "keep": 7},
+            agent=True,
+            runnable_name="myscript",
+            config_path=tmp_path / "runspec.toml",
+        )
+        logging.getLogger("test").info("connected", extra={"user_id": "42", "region": "eu-west"})
+        log_path = tmp_path / "logs" / "myscript.log"
+        record = json.loads(log_path.read_text().strip())
+        assert record["extra"] == {"user_id": "42", "region": "eu-west"}
+        assert record["message"] == "connected"
+
+    def test_no_extra_key_when_no_extra(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ls, "_configured", False)
+        logging.getLogger().handlers.clear()
+        configure_logging(
+            {"level": "info", "rotate": "midnight", "keep": 7},
+            agent=True,
+            runnable_name="myscript",
+            config_path=tmp_path / "runspec.toml",
+        )
+        logging.getLogger("test").info("plain message")
+        log_path = tmp_path / "logs" / "myscript.log"
+        record = json.loads(log_path.read_text().strip())
+        assert "extra" not in record
+
+    def test_extra_fields_redacted(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ls, "_configured", False)
+        logging.getLogger().handlers.clear()
+        configure_logging(
+            {"level": "info", "rotate": "midnight", "keep": 7},
+            agent=True,
+            runnable_name="myscript",
+            config_path=tmp_path / "runspec.toml",
+        )
+        logging.getLogger("test").info("auth", extra={"token": "secret123", "user": "alice"})
+        log_path = tmp_path / "logs" / "myscript.log"
+        content = log_path.read_text()
+        assert "secret123" not in content
+        assert "[REDACTED]" in content
+        assert "alice" in content  # non-sensitive field untouched
+
+    def test_extra_fields_appear_in_console(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(ls, "_configured", False)
+        logging.getLogger().handlers.clear()
+        configure_logging(
+            {"level": "info", "rotate": "midnight", "keep": 7},
+            agent=False,
+            runnable_name="myscript",
+            config_path=tmp_path / "runspec.toml",
+        )
+        logging.getLogger("test").info("connected", extra={"user_id": "42"})
+        err = capsys.readouterr().err
+        assert "user_id=42" in err
+
+    def test_extra_integer_field(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ls, "_configured", False)
+        logging.getLogger().handlers.clear()
+        configure_logging(
+            {"level": "info", "rotate": "midnight", "keep": 7},
+            agent=True,
+            runnable_name="myscript",
+            config_path=tmp_path / "runspec.toml",
+        )
+        logging.getLogger("test").info("counts", extra={"items": 99})
+        log_path = tmp_path / "logs" / "myscript.log"
+        record = json.loads(log_path.read_text().strip())
+        assert record["extra"]["items"] == 99
+
+
 # ── TestRunSpecPrefix ─────────────────────────────────────────────────────────
 
 

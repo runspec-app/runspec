@@ -29,6 +29,17 @@ _TIMED: dict[str, tuple[str, int]] = {
     "weekly": ("W0", 1),
 }
 
+# Keys whose values are always redacted regardless of content.
+_SENSITIVE_KEYS = re.compile(r"^(password|passwd|pwd|token|api[_\-]?key|secret)$", re.IGNORECASE)
+
+# Standard LogRecord attributes — anything else on the record is user-supplied extra.
+_LOGRECORD_ATTRS: frozenset[str] = frozenset({
+    "args", "created", "exc_info", "exc_text", "filename", "funcName",
+    "levelname", "levelno", "lineno", "message", "module", "msecs", "msg",
+    "name", "pathname", "process", "processName", "relativeCreated",
+    "stack_info", "taskName", "thread", "threadName",
+})
+
 # Pre-compiled patterns: passwords, tokens, bearer/basic auth, URL credentials,
 # JSON fields, and form-encoded values in HTTP bodies.
 _SENSITIVE: list[tuple[re.Pattern[str], str]] = [
@@ -111,6 +122,24 @@ def _make_file_handler(path: Path, rotate: str, keep: int) -> logging.Handler:
     raise ValueError(f"✗  [config.logging] rotate {rotate!r} not recognised.\n   Valid: '10 MB', '100 KB', '1 GB', 'daily', 'midnight', 'weekly'")
 
 
+def _redact_value(key: str, val: str) -> str:
+    if _SENSITIVE_KEYS.match(key):
+        return "[REDACTED]"
+    for pattern, replacement in _SENSITIVE:
+        val = pattern.sub(replacement, val)
+    return val
+
+
+def _collect_extra(record: logging.LogRecord) -> dict[str, Any]:
+    """Collect user-supplied extra fields, redacting sensitive string values."""
+    result: dict[str, Any] = {}
+    for key, val in list(record.__dict__.items()):
+        if key in _LOGRECORD_ATTRS or key.startswith("_"):
+            continue
+        result[key] = _redact_value(key, val) if isinstance(val, str) else val
+    return result
+
+
 class _SensitiveFilter(logging.Filter):
     """Redacts passwords, tokens, and credentials from all log output."""
 
@@ -140,6 +169,9 @@ class _JsonFormatter(logging.Formatter):
         if record.exc_info:
             obj["exc"] = self.formatException(record.exc_info)
             record.exc_text = obj["exc"]
+        extra = _collect_extra(record)
+        if extra:
+            obj["extra"] = extra
         return json.dumps(obj)
 
 
@@ -168,6 +200,10 @@ class _HumanFormatter(logging.Formatter):
             record.exc_info = None
             record.exc_text = None
         try:
-            return super().format(record)
+            line = super().format(record)
+            extra = _collect_extra(record)
+            if extra:
+                line = f"{line}  {{{' '.join(f'{k}={v}' for k, v in extra.items())}}}"
+            return line
         finally:
             record.exc_info, record.exc_text = saved_exc, saved_text
