@@ -140,13 +140,12 @@ test('normalises [config.logging] with defaults', () => {
   const file = path.join(dir, 'runspec.toml');
   fs.writeFileSync(file, `
 [config.logging]
-level = "info"
 
 [greet]
 description = "hi"
 `);
   const raw = loadRaw(file);
-  expect(raw.config.logging).toEqual({ level: 'info', rotate: 'midnight', keep: 7 });
+  expect(raw.config.logging).toEqual({ rotate: 'midnight', keep: 7 });
 });
 
 test('normalises [config.logging] all fields', () => {
@@ -154,7 +153,6 @@ test('normalises [config.logging] all fields', () => {
   const file = path.join(dir, 'runspec.toml');
   fs.writeFileSync(file, `
 [config.logging]
-level  = "debug"
 rotate = "10 MB"
 keep   = 3
 
@@ -162,7 +160,7 @@ keep   = 3
 description = "hi"
 `);
   const raw = loadRaw(file);
-  expect(raw.config.logging).toEqual({ level: 'debug', rotate: '10 MB', keep: 3 });
+  expect(raw.config.logging).toEqual({ rotate: '10 MB', keep: 3 });
 });
 
 test('logging is undefined when section absent', () => {
@@ -171,17 +169,4 @@ test('logging is undefined when section absent', () => {
   fs.writeFileSync(file, `[greet]\ndescription = "hi"\n`);
   const raw = loadRaw(file);
   expect(raw.config.logging).toBeUndefined();
-});
-
-test('throws on invalid log level', () => {
-  const dir = tmpDir();
-  const file = path.join(dir, 'runspec.toml');
-  fs.writeFileSync(file, `
-[config.logging]
-level = "verbose"
-
-[greet]
-description = "hi"
-`);
-  expect(() => loadRaw(file)).toThrow('[config.logging]');
 });

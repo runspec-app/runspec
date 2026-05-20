@@ -14,10 +14,12 @@ function tmpDir(): string {
 }
 
 function makeCfg(dir: string, overrides: Record<string, unknown> = {}): Parameters<typeof configureLogging>[0] {
+  const { debug, ...logOverrides } = overrides as { debug?: boolean } & Record<string, unknown>;
   return {
-    logCfg: { level: 'info', rotate: 'midnight', keep: 7, ...overrides },
+    logCfg: { rotate: 'midnight', keep: 7, ...logOverrides },
     runnableName: 'myscript',
     configPath: path.join(dir, 'runspec.toml'),
+    debug,
   };
 }
 
@@ -87,9 +89,9 @@ test('log file contains JSON lines', () => {
   expect(typeof parsed.ts).toBe('string');
 });
 
-test('file handler captures DEBUG even when console is INFO', () => {
+test('file handler captures DEBUG even when console floor is INFO', () => {
   const dir = tmpDir();
-  configureLogging(makeCfg(dir, { level: 'info' }));
+  configureLogging(makeCfg(dir));
   getLogger('test').debug('low level detail');
   const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
   const parsed = JSON.parse(content);
@@ -184,54 +186,45 @@ test('critical routes to stderr with CRITICAL prefix', () => {
   cap.restore();
 });
 
-test('debug below threshold is silent on both streams', () => {
+test('debug records are silent on both streams by default', () => {
   const dir = tmpDir();
   const cap = captureStreams();
-  configureLogging(makeCfg(dir, { level: 'info' }));
+  configureLogging(makeCfg(dir));
   getLogger('test').debug('not shown');
   expect(cap.stdoutLines).toHaveLength(0);
   expect(cap.stderrLines).toHaveLength(0);
   cap.restore();
 });
 
-test('debug appears on stdout when configured level is debug', () => {
+test('warnings still reach stderr (warnings cannot be silenced)', () => {
   const dir = tmpDir();
   const cap = captureStreams();
-  configureLogging(makeCfg(dir, { level: 'debug' }));
-  getLogger('test').debug('low-level detail');
-  expect(cap.stdoutLines.some(l => l.includes('low-level detail'))).toBe(true);
-  // DEBUG prefix is emitted so it's distinguishable from plain INFO output
-  expect(cap.stdoutLines.find(l => l.includes('low-level detail'))!).toMatch(/DEBUG/);
-  cap.restore();
-});
-
-test('warnings still reach stderr even when configured level is critical', () => {
-  // Warnings must not be silenced by a high configured level.
-  const dir = tmpDir();
-  const cap = captureStreams();
-  configureLogging(makeCfg(dir, { level: 'critical' }));
+  configureLogging(makeCfg(dir));
   getLogger('test').warning('audible');
   expect(cap.stderrLines.some(l => l.includes('audible'))).toBe(true);
   cap.restore();
 });
 
-test('info below configured level is suppressed on stdout', () => {
+// ── --debug flag ──────────────────────────────────────────────────────────────
+
+test('debug flag lowers stdout threshold to DEBUG', () => {
   const dir = tmpDir();
   const cap = captureStreams();
-  configureLogging(makeCfg(dir, { level: 'warning' }));
-  getLogger('test').info('quiet');
-  expect(cap.stdoutLines.some(l => l.includes('quiet'))).toBe(false);
+  configureLogging(makeCfg(dir, { debug: true }));
+  getLogger('test').debug('now visible');
+  expect(cap.stdoutLines.some(l => l.includes('now visible'))).toBe(true);
+  // DEBUG records get a prefix so they're distinguishable from plain INFO output
+  expect(cap.stdoutLines.find(l => l.includes('now visible'))!).toMatch(/DEBUG/);
   cap.restore();
 });
 
-// ── log level override ────────────────────────────────────────────────────────
-
-test('logLevelOverride lowers stdout threshold', () => {
+test('debug flag does not lower the stderr floor below WARNING', () => {
   const dir = tmpDir();
   const cap = captureStreams();
-  configureLogging({ ...makeCfg(dir, { level: 'warning' }), logLevelOverride: 'debug' });
-  getLogger('test').debug('now visible');
-  expect(cap.stdoutLines.some(l => l.includes('now visible'))).toBe(true);
+  configureLogging(makeCfg(dir, { debug: true }));
+  getLogger('test').info('still on stdout');
+  expect(cap.stdoutLines.some(l => l.includes('still on stdout'))).toBe(true);
+  expect(cap.stderrLines).toHaveLength(0);
   cap.restore();
 });
 
@@ -441,7 +434,7 @@ test('extra fields appear in console output', () => {
     lines.push(String(chunk));
     return true;
   });
-  configureLogging(makeCfg(dir, { level: 'info' }));
+  configureLogging(makeCfg(dir));
   getLogger('test').info('connected', { user_id: '42' });
   expect(lines.some(l => l.includes('user_id=42'))).toBe(true);
   stdoutWrite.mockRestore();

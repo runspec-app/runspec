@@ -312,7 +312,7 @@ export interface ConfigureLoggingOptions {
   logCfg: LoggingConfig | undefined;
   runnableName: string;
   configPath: string;
-  logLevelOverride?: string;
+  debug?: boolean;
 }
 
 /**
@@ -323,20 +323,23 @@ export interface ConfigureLoggingOptions {
  * works in both CLI mode (terminal output) and agent mode (captured by
  * `runspec serve` as the MCP tool response):
  *
- *   DEBUG, INFO → stdout (plain message — reads like a print() call)
- *   WARNING+    → stderr (prefixed with the level name)
+ *   INFO     → stdout (plain message — reads like a print() call)
+ *   WARNING+ → stderr (prefixed with the level name)
+ *
+ * DEBUG is file-only by default. Pass `debug: true` (set by the auto-added
+ * `--debug` flag / RUNSPEC_DEBUG env var) to include DEBUG records and
+ * tracebacks on stdout for in-terminal debugging.
  *
  * File handler is always JSON at DEBUG level — the full audit trail.
  */
 export function configureLogging(opts: ConfigureLoggingOptions): void {
   if (!opts.logCfg || _configured) return;
 
-  const effectiveLevelName = opts.logLevelOverride ?? opts.logCfg.level;
-  const effectiveLevel = LEVEL_NUM[effectiveLevelName] ?? LEVEL_NUM['info'];
-  const showTracebacks = effectiveLevelName === 'debug';
+  const debug = opts.debug ?? false;
+  const stdoutFloor = debug ? LEVEL_NUM['debug'] : LEVEL_NUM['info'];
 
-  _handlers.push(new StdoutHandler(effectiveLevel, showTracebacks));
-  _handlers.push(new StderrHandler(showTracebacks));
+  _handlers.push(new StdoutHandler(stdoutFloor, debug));
+  _handlers.push(new StderrHandler(debug));
 
   const logDir = resolveLogDir(opts.configPath);
   const logPath = path.join(logDir, `${opts.runnableName}.log`);

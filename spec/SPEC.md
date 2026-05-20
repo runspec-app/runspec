@@ -210,9 +210,13 @@ just works.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `level` | string | `"info"` | Stdout floor — records below this level are not shown on stdout. One of `debug`, `info`, `warning`, `error`, `critical`. Stderr always shows WARNING+ regardless. |
 | `rotate` | string | `"midnight"` | Rotation policy: `"N MB"`, `"N KB"`, `"N GB"` (size-based), `"daily"`, `"midnight"`, `"weekly"` (time-based). |
 | `keep` | int | `7` | Number of rotated backup files to retain. |
+
+There is no `level` knob. Console routing is fixed (see below); the file
+handler is always at DEBUG. Silencing INFO on the console would break
+agent responses (stdout is the MCP tool response body), so the threshold is
+not configurable. Use the auto-added `--debug` flag to *raise* verbosity.
 
 Log file path is always: `{package_dir}/logs/{runnable_name}.log`  
 Fallback when the package directory is not writable: `{home}/logs/{runnable_name}.log`
@@ -224,7 +228,7 @@ pack routes by record level so the dev never has to branch on context:
 
 | Level | Stream | Format | Notes |
 |---|---|---|---|
-| `DEBUG` | stdout | `DEBUG file.py:42: message` | Shown only when configured level is `debug` |
+| `DEBUG` | stdout | `DEBUG file.py:42: message` | Only shown when `--debug` is passed |
 | `INFO` | stdout | `message` | Plain — reads like `print()` |
 | `WARNING` | stderr | `WARNING: message` | Prefixed so it stands out |
 | `ERROR` | stderr | `ERROR: message` | Prefixed so it stands out |
@@ -249,17 +253,21 @@ call do the right thing in two very different contexts:
 > above — those go to stderr and don't corrupt the pipe. `logger.info` would
 > land on stdout and mix with the data.
 
-#### Runtime log level override
+#### `--debug` flag
 
-When `[config.logging]` is present, a `--log-level` argument is automatically
-added to every runnable. It accepts the same values as `level`, defaults to the
-configured level, and can also be set via `RUNSPEC_LOG_LEVEL`. This allows
-per-invocation overrides without editing the spec:
+When `[config.logging]` is present, a `--debug` flag is auto-added to every
+runnable (also settable via `RUNSPEC_DEBUG=1`). Passing it includes DEBUG
+records and tracebacks on stdout — useful for in-terminal debugging without
+having to tail the log file:
 
 ```
-my-script --log-level debug
-RUNSPEC_LOG_LEVEL=debug my-script
+my-script --debug
+RUNSPEC_DEBUG=1 my-script
 ```
+
+The flag only *adds* visibility; it never silences anything. The `debug` name
+is reserved when `[config.logging]` is present — your runnable cannot define
+its own argument by that name.
 
 #### Sensitive data filtering
 
@@ -272,7 +280,6 @@ Filter errors are silent — a failing pattern never suppresses the log record.
 
 ```toml
 [config.logging]
-level  = "info"
 rotate = "midnight"
 keep   = 7
 ```

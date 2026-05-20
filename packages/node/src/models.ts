@@ -9,7 +9,6 @@ export interface JumpHostConfig {
 }
 
 export interface LoggingConfig {
-  level: string;
   rotate: string;
   keep: number;
 }

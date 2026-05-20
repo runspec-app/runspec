@@ -79,7 +79,7 @@ class TestNoop:
         assert len(logging.getLogger().handlers) == before
 
     def test_idempotent_second_call_ignored(self, tmp_path):
-        cfg = {"level": "info", "rotate": "midnight", "keep": 7}
+        cfg = {"rotate": "midnight", "keep": 7}
         toml = tmp_path / "runspec.toml"
         configure_logging(cfg, runnable_name="x", config_path=toml)
         first_our_count = len(_our_file_handlers()) + len(_our_console_handlers())
@@ -93,8 +93,8 @@ class TestNoop:
 class TestConsoleRouting:
     """INFO+below → stdout (plain print), WARNING+ → stderr (prefixed)."""
 
-    def _cfg(self, level="info"):
-        return {"level": level, "rotate": "midnight", "keep": 7}
+    def _cfg(self):
+        return {"rotate": "midnight", "keep": 7}
 
     def test_both_console_handlers_added(self, tmp_path):
         configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml")
@@ -123,7 +123,7 @@ class TestConsoleRouting:
         assert "something broke" not in cap.out
 
     def test_info_format_is_plain_message(self, tmp_path, capsys):
-        configure_logging(self._cfg("info"), runnable_name="x", config_path=tmp_path / "runspec.toml")
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml")
         logging.getLogger("test.fmt").info("hello world")
         line = capsys.readouterr().out.strip()
         # No timestamp, no level prefix, no logger name — reads like print()
@@ -148,8 +148,8 @@ class TestConsoleRouting:
         line = capsys.readouterr().err.strip()
         assert line == "CRITICAL: dead"
 
-    def test_info_level_hides_traceback(self, tmp_path, capsys):
-        configure_logging(self._cfg("info"), runnable_name="x", config_path=tmp_path / "runspec.toml")
+    def test_default_mode_hides_traceback(self, tmp_path, capsys):
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml")
         try:
             raise ValueError("boom")
         except ValueError:
@@ -158,8 +158,8 @@ class TestConsoleRouting:
         assert "Traceback" not in err
         assert "something went wrong" in err
 
-    def test_debug_level_shows_traceback(self, tmp_path, capsys):
-        configure_logging(self._cfg("debug"), runnable_name="x", config_path=tmp_path / "runspec.toml")
+    def test_debug_flag_shows_traceback(self, tmp_path, capsys):
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml", debug=True)
         try:
             raise ValueError("boom")
         except ValueError:
@@ -167,15 +167,15 @@ class TestConsoleRouting:
         err = capsys.readouterr().err
         assert "Traceback" in err
 
-    def test_debug_record_routes_to_stdout_with_location(self, tmp_path, capsys):
-        configure_logging(self._cfg("debug"), runnable_name="x", config_path=tmp_path / "runspec.toml")
+    def test_debug_flag_routes_debug_records_to_stdout_with_location(self, tmp_path, capsys):
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml", debug=True)
         logging.getLogger("test.location").debug("at location")
         out = capsys.readouterr().out
         assert "DEBUG" in out
         assert ".py:" in out
 
-    def test_debug_below_threshold_silent_on_console(self, tmp_path, capsys):
-        configure_logging(self._cfg("info"), runnable_name="x", config_path=tmp_path / "runspec.toml")
+    def test_debug_records_silent_without_debug_flag(self, tmp_path, capsys):
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml")
         logging.getLogger("test.threshold").debug("not shown")
         cap = capsys.readouterr()
         assert "not shown" not in cap.out
@@ -191,7 +191,7 @@ class TestConsoleRouting:
 
 class TestFileLogging:
     def _cfg(self, rotate="midnight", keep=7):
-        return {"level": "info", "rotate": rotate, "keep": keep}
+        return {"rotate": rotate, "keep": keep}
 
     def test_file_created_in_logs_subdir(self, tmp_path):
         toml = tmp_path / "pkg" / "runspec.toml"
@@ -313,25 +313,31 @@ class TestRotation:
 # ── TestLogLevelOverride ──────────────────────────────────────────────────────
 
 
-class TestLogLevelOverride:
-    def test_override_raises_stdout_handler_level(self, tmp_path):
-        cfg = {"level": "warning", "rotate": "midnight", "keep": 7}
-        configure_logging(cfg, runnable_name="x", config_path=tmp_path / "runspec.toml", log_level_override="debug")
+class TestDebugFlag:
+    def _cfg(self):
+        return {"rotate": "midnight", "keep": 7}
+
+    def test_default_stdout_floor_is_info(self, tmp_path):
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml")
+        stdout = _our_stdout_handler()
+        assert stdout is not None
+        assert stdout.level == logging.INFO
+
+    def test_debug_flag_lowers_stdout_floor_to_debug(self, tmp_path):
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml", debug=True)
         stdout = _our_stdout_handler()
         assert stdout is not None
         assert stdout.level == logging.DEBUG
 
-    def test_stderr_handler_floor_is_warning(self, tmp_path):
-        cfg = {"level": "info", "rotate": "midnight", "keep": 7}
-        configure_logging(cfg, runnable_name="x", config_path=tmp_path / "runspec.toml")
+    def test_stderr_floor_is_always_warning(self, tmp_path):
+        # Independent of the debug flag — warnings must never be silenced.
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml", debug=True)
         stderr = _our_stderr_handler()
         assert stderr is not None
-        # stderr never drops below WARNING regardless of configured level
         assert stderr.level == logging.WARNING
 
-    def test_override_does_not_affect_file_level(self, tmp_path):
-        cfg = {"level": "warning", "rotate": "midnight", "keep": 7}
-        configure_logging(cfg, runnable_name="x", config_path=tmp_path / "runspec.toml", log_level_override="debug")
+    def test_debug_flag_does_not_affect_file_level(self, tmp_path):
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml", debug=True)
         handlers = _our_file_handlers()
         assert handlers[0].level == logging.DEBUG
 
@@ -400,7 +406,7 @@ class TestGetLogger:
     def test_module_level_getlogger_works_after_parse(self, tmp_path, capsys):
         """Logger created before configure_logging() emits correctly after."""
         early_logger = logging.getLogger("early.module.unique")
-        cfg = {"level": "info", "rotate": "midnight", "keep": 7}
+        cfg = {"rotate": "midnight", "keep": 7}
         configure_logging(cfg, runnable_name="x", config_path=tmp_path / "runspec.toml")
         early_logger.info("message from early logger")
         out = capsys.readouterr().out
@@ -415,7 +421,7 @@ class TestExtraFields:
         monkeypatch.setattr(ls, "_configured", False)
         logging.getLogger().handlers.clear()
         configure_logging(
-            {"level": "info", "rotate": "midnight", "keep": 7},
+            {"rotate": "midnight", "keep": 7},
             runnable_name="myscript",
             config_path=tmp_path / "runspec.toml",
         )
@@ -429,7 +435,7 @@ class TestExtraFields:
         monkeypatch.setattr(ls, "_configured", False)
         logging.getLogger().handlers.clear()
         configure_logging(
-            {"level": "info", "rotate": "midnight", "keep": 7},
+            {"rotate": "midnight", "keep": 7},
             runnable_name="myscript",
             config_path=tmp_path / "runspec.toml",
         )
@@ -442,7 +448,7 @@ class TestExtraFields:
         monkeypatch.setattr(ls, "_configured", False)
         logging.getLogger().handlers.clear()
         configure_logging(
-            {"level": "info", "rotate": "midnight", "keep": 7},
+            {"rotate": "midnight", "keep": 7},
             runnable_name="myscript",
             config_path=tmp_path / "runspec.toml",
         )
@@ -457,7 +463,7 @@ class TestExtraFields:
         monkeypatch.setattr(ls, "_configured", False)
         logging.getLogger().handlers.clear()
         configure_logging(
-            {"level": "info", "rotate": "midnight", "keep": 7},
+            {"rotate": "midnight", "keep": 7},
             runnable_name="myscript",
             config_path=tmp_path / "runspec.toml",
         )
@@ -469,7 +475,7 @@ class TestExtraFields:
         monkeypatch.setattr(ls, "_configured", False)
         logging.getLogger().handlers.clear()
         configure_logging(
-            {"level": "info", "rotate": "midnight", "keep": 7},
+            {"rotate": "midnight", "keep": 7},
             runnable_name="myscript",
             config_path=tmp_path / "runspec.toml",
         )

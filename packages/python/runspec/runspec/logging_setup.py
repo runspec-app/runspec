@@ -13,14 +13,6 @@ from typing import Any
 
 _configured: bool = False  # idempotency guard — reset in tests via monkeypatch
 
-_LEVEL_MAP: dict[str, int] = {
-    "debug": logging.DEBUG,
-    "info": logging.INFO,
-    "warning": logging.WARNING,
-    "error": logging.ERROR,
-    "critical": logging.CRITICAL,
-}
-
 _SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(KB|MB|GB)$", re.IGNORECASE)
 _SIZE_MULT: dict[str, int] = {"KB": 1024, "MB": 1024**2, "GB": 1024**3}
 _TIMED: dict[str, tuple[str, int]] = {
@@ -77,7 +69,7 @@ def configure_logging(
     *,
     runnable_name: str,
     config_path: Path,
-    log_level_override: str | None = None,
+    debug: bool = False,
 ) -> None:
     """
     Configure root logger from normalised [config.logging].
@@ -87,8 +79,12 @@ def configure_logging(
     works in both CLI mode (terminal output) and agent mode (captured by
     `runspec serve` as the MCP tool response):
 
-      DEBUG, INFO → stdout (plain message, no timestamp — reads like print())
-      WARNING+    → stderr (prefixed with the level name)
+      INFO     → stdout (plain message — reads like print())
+      WARNING+ → stderr (prefixed with the level name)
+
+    DEBUG is file-only by default. Pass `debug=True` (set by the auto-added
+    `--debug` flag / `RUNSPEC_DEBUG` env var) to include DEBUG records and
+    tracebacks on stdout for in-terminal debugging.
 
     File handler is always JSON at DEBUG level — the full audit trail.
     """
@@ -96,25 +92,23 @@ def configure_logging(
     if log_cfg is None or _configured:
         return
 
-    effective_level_name = log_level_override or log_cfg["level"]
-    effective_level = _LEVEL_MAP[effective_level_name]
-    show_tracebacks = effective_level_name == "debug"
+    stdout_floor = logging.DEBUG if debug else logging.INFO
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
     root.addFilter(_SensitiveFilter())
 
-    # INFO and below → stdout (treated as the runnable's primary output)
+    # Below WARNING → stdout (treated as the runnable's primary output)
     out_handler = logging.StreamHandler(sys.stdout)
-    out_handler.setLevel(effective_level)
+    out_handler.setLevel(stdout_floor)
     out_handler.addFilter(lambda r: r.levelno < logging.WARNING)
-    out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=show_tracebacks))
+    out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(out_handler)
 
     # WARNING and above → stderr (Unix convention for diagnostics)
     err_handler = logging.StreamHandler(sys.stderr)
-    err_handler.setLevel(max(effective_level, logging.WARNING))
-    err_handler.setFormatter(_ConsoleFormatter(show_tracebacks=show_tracebacks))
+    err_handler.setLevel(logging.WARNING)
+    err_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(err_handler)
 
     # File handler: always active, always DEBUG, always JSON
