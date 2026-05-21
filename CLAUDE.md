@@ -201,6 +201,7 @@ CLI commands: `init`, `local`, `jump`, `serve` (renamed in 0.8.0 to mirror Pytho
 `[config.logging]` implemented in 0.9.0 — runnables call `getLogger(name)` from `runspec-node`.
 Extra fields (0.10.0): `logger.info('msg', { user_id: '42' })` — `error` key extracts an Error; all other keys appear under `"extra"` in the JSON log.
 Console routing (0.11.0) mirrors Python: INFO → stdout; WARNING+ → stderr with level prefix. No `level` knob. `[config.logging]` auto-adds a `--debug` flag (`RUNSPEC_DEBUG=1`) that flips DEBUG on everywhere — stdout *and* the audit file (the file defaults to INFO, same as stdout, so external library DEBUG noise stays out of the log).
+Run summary (0.12.0): same closing-line + audit-record shape as Python 0.12.3. `[config.logging] summary = true` (default on); per-invocation suppression via `--no-summary` or `RUNSPEC_NO_SUMMARY=1`. Log file now lands at `{project_root}/logs/{runnable}.log` — the nearest ancestor `package.json` skipping `node_modules`, falling back to `~/logs/`. `runspec serve` returns a `_meta.runspec` block on every `tools/call` response (`tool`, `duration_ms`, `exit_code`).
 
 ---
 
@@ -210,8 +211,8 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm |
 |---|---|---|
-| `runspec` | 0.12.2 | PyPI |
-| `runspec-node` | 0.11.1 | npm |
+| `runspec` | 0.12.3 | PyPI |
+| `runspec-node` | 0.12.0 | npm |
 | `runspec-registry` | 0.1.1 | PyPI (archived — registry was removed from `runspec serve` in favour of the SSH+MCP jump-host model) |
 
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").
