@@ -699,15 +699,19 @@ error — the tool should never be reached).
 | Variable | Set when | Purpose |
 |---|---|---|
 | `RUNSPEC_AGENT=1` | always (every `runspec serve` invocation) | The runnable can branch on agent vs. human invocation. |
-| `RUNSPEC_CONFIG=/abs/path/to/runspec.toml` | `runspec serve` subprocesses the runnable | Points `parse()` at the spec file directly, bypassing the cwd-walk. Without this, the subprocess inherits SSH's `$HOME` cwd and `find_config` fails. |
+| `RUNSPEC_CONFIG=/abs/path/to/runspec.toml` | `runspec serve` subprocesses the runnable | Points `parse()` at the spec file directly, bypassing the lookup cascade. Without this, the subprocess inherits SSH's `$HOME` cwd and the cwd-walk fallback would fail. |
 
-`parse()` consults `RUNSPEC_CONFIG` after an explicit `config_path=` arg but
-before walking up from cwd. So the resolution order in language packs is:
+`parse()` consults `RUNSPEC_CONFIG` after an explicit `config_path=` arg, then
+walks up from the caller's package directory, then from cwd. So the
+resolution order in language packs is:
 
 1. Explicit `config_path` passed to `parse()`
 2. `RUNSPEC_CONFIG` environment variable
-3. Walk up from cwd looking for `runspec.toml`
-4. Error
+3. Walk up from the caller's `__file__` directory (the package directory
+   where `runspec.toml` was shipped — found via call-stack introspection).
+   This makes installed entry points work from any working directory.
+4. Walk up from cwd looking for `runspec.toml` (ad-hoc usage and back-compat)
+5. Error
 
 ### Example
 

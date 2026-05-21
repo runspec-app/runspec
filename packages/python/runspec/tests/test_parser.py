@@ -95,6 +95,50 @@ class TestParseCleanErrors:
         result = runspec.parse(script_name="greet", argv=["--name", "hello"])
         assert result.name == "hello"
 
+    def test_parse_finds_config_next_to_caller_module(self, tmp_path, monkeypatch):
+        """Simulates the installed-package case: `clean` is invoked from cwd
+        that has no runspec.toml, but the calling module ships one beside it.
+        parse() should find that one via call-stack introspection."""
+        import importlib
+        import sys
+
+        pkg_dir = tmp_path / "installed_pkg"
+        pkg_dir.mkdir()
+        (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+        (pkg_dir / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [clean]
+                [clean.args.name]
+                type = "str"
+                required = true
+            """),
+            encoding="utf-8",
+        )
+        (pkg_dir / "entrypoint.py").write_text(
+            textwrap.dedent("""\
+                import runspec
+
+                def main(argv):
+                    return runspec.parse(script_name="clean", argv=argv)
+            """),
+            encoding="utf-8",
+        )
+
+        unrelated = tmp_path / "elsewhere"
+        unrelated.mkdir()
+        monkeypatch.chdir(unrelated)
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+        try:
+            mod = importlib.import_module("installed_pkg.entrypoint")
+            result = mod.main(["--name", "hello"])
+        finally:
+            sys.modules.pop("installed_pkg.entrypoint", None)
+            sys.modules.pop("installed_pkg", None)
+
+        assert result.name.value == "hello"
+        assert result.__runspec_source__ == pkg_dir / "runspec.toml"
+
     def test_explicit_config_path_beats_env_var(self, tmp_path, monkeypatch):
         """parse(config_path=...) wins over RUNSPEC_CONFIG."""
         env_spec_dir = tmp_path / "env"
