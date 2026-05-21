@@ -7,6 +7,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.12.2] — 2026-05-21
+
+### Fixed
+
+- **`parse()` now locates `runspec.toml` next to the calling module**, not just
+  by walking up from `cwd`. Installed entry points (via `pip install`,
+  `poetry install`, `uv sync`, etc.) previously only worked when the user
+  happened to be inside the source tree — the cwd-walk never reached
+  `site-packages/<pkg>/runspec.toml`. Resolution order is now:
+  explicit `config_path=` → `RUNSPEC_CONFIG` env var → walk up from the
+  caller's `__file__` (new) → walk up from cwd (fallback) → error.
+  Verified end-to-end with `pip`, `poetry`, and `uv` in both editable and
+  wheel install modes. Python only.
+
+---
+
 ## [0.12.1] / [node-0.11.1] — 2026-05-21
 
 ### Fixed
