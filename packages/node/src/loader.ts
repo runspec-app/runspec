@@ -40,10 +40,16 @@ function normaliseLogging(raw: Record<string, unknown> | undefined): LoggingConf
   // silencing INFO would break agent responses (stdout is the MCP tool
   // response body), and verbosity for debugging is handled by the `--debug`
   // flag injected at parse time.
+  //
+  // `summary` (default true) writes one record per run to the audit log and
+  // one human-readable line to stderr at process exit: duration, exit code,
+  // log-event counts by level. Suppress per-invocation with `--no-summary`
+  // or `RUNSPEC_NO_SUMMARY=1`.
   if (raw === undefined) return undefined;
   return {
     rotate: String(raw['rotate'] ?? 'midnight'),
     keep: Number(raw['keep'] ?? 7),
+    summary: raw['summary'] !== undefined ? Boolean(raw['summary']) : true,
   };
 }
 

@@ -139,13 +139,26 @@ function handleToolsCall(
   const runspecEnv = argsToRunspecEnv(args, toolArgSpecs);
   const env = { ...process.env, RUNSPEC_AGENT: '1', ...runspecEnv };
 
+  const start = process.hrtime.bigint();
   const result = spawnSync(cmd, argv, { encoding: 'utf-8', env });
+  const durationMs = Number((process.hrtime.bigint() - start) / 1_000_000n);
+
+  // _meta is the MCP-standard extension point; clients that don't understand
+  // it ignore the block. Same envelope on success and failure so callers can
+  // rely on it being present.
+  const meta = {
+    runspec: { tool: name, duration_ms: durationMs, exit_code: result.status ?? null },
+  };
 
   if (result.status === 0) {
     return {
       jsonrpc: '2.0',
       id: reqId,
-      result: { content: [{ type: 'text', text: result.stdout ?? '' }], isError: false },
+      result: {
+        content: [{ type: 'text', text: result.stdout ?? '' }],
+        isError: false,
+        _meta: meta,
+      },
     };
   }
 
@@ -156,7 +169,11 @@ function handleToolsCall(
   return {
     jsonrpc: '2.0',
     id: reqId,
-    result: { content: [{ type: 'text', text: parts.join('\n') }], isError: true },
+    result: {
+      content: [{ type: 'text', text: parts.join('\n') }],
+      isError: true,
+      _meta: meta,
+    },
   };
 }
 

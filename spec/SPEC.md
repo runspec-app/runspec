@@ -221,11 +221,15 @@ agent responses (stdout is the MCP tool response body), so the threshold is
 not configurable. Use the auto-added `--debug` flag to *raise* verbosity
 everywhere at once.
 
-Log file path is always: `{sys.prefix}/logs/{runnable_name}.log` (the
-virtual-environment root). Fallback when the venv root is not writable:
-`{home}/logs/{runnable_name}.log`. One logs directory per environment —
-survives `pip install -e .` and avoids scattering logs across package
-directories. The Node language pack uses the equivalent installation root.
+Log file path is always: `{installation_root}/logs/{runnable_name}.log`.
+Fallback when the root is not writable: `{home}/logs/{runnable_name}.log`.
+One logs directory per environment — survives reinstalls and avoids
+scattering logs across package directories.
+
+| Language pack | `installation_root` |
+|---|---|
+| Python (`runspec`) | `sys.prefix` — the venv root |
+| Node (`runspec-node`) | nearest ancestor `package.json`, skipping `node_modules` — the project root |
 
 #### Console routing
 
