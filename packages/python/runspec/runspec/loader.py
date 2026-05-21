@@ -86,12 +86,18 @@ def _normalise_logging(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     silencing INFO would break agent responses (stdout is the MCP tool
     response body), and verbosity for debugging is handled by the `--debug`
     flag injected at parse time.
+
+    `summary` (default true) writes one record per run to the audit log and
+    one human-readable line to stderr at process exit: duration, exit code,
+    log-event counts by level. Suppress per-invocation with `--no-summary`
+    or `RUNSPEC_NO_SUMMARY=1`.
     """
     if raw is None:
         return None
     return {
         "rotate": str(raw.get("rotate", "midnight")),
         "keep": int(raw.get("keep", 7)),
+        "summary": bool(raw.get("summary", True)),
     }
 
 

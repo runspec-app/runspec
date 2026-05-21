@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import datetime
 import json
 import logging
 import logging.handlers
+import os
 import re
 import sys
+import time
+import traceback
 from pathlib import Path
 from typing import Any
 
 _configured: bool = False  # idempotency guard — reset in tests via monkeypatch
+_summary_state: dict[str, Any] | None = None  # populated when summary is enabled
 
 _SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(KB|MB|GB)$", re.IGNORECASE)
 _SIZE_MULT: dict[str, int] = {"KB": 1024, "MB": 1024**2, "GB": 1024**3}
@@ -63,13 +69,18 @@ _SENSITIVE: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(password|passwd|token)=([^&\s\"]+)"), r"\1=[REDACTED]"),
 ]
 
+_RUN_SUMMARY_LOGGER = "runspec.runsummary"
+
 
 def configure_logging(
     log_cfg: dict[str, Any] | None,
     *,
     runnable_name: str,
-    config_path: Path,
     debug: bool = False,
+    no_summary: bool = False,
+    autonomy: str | None = None,
+    agent: bool = False,
+    command_path: list[str] | None = None,
 ) -> None:
     """
     Configure root logger from normalised [config.logging].
@@ -89,9 +100,16 @@ def configure_logging(
     WARNING regardless.
 
     File handler is always JSON; level follows the same `--debug` toggle as
-    stdout (defaults to INFO).
+    stdout (defaults to INFO). Log files land under `{sys.prefix}/logs/`
+    (the venv root) so they survive package reinstalls and aren't scattered
+    across package directories; falls back to `~/logs/` if the venv root
+    isn't writable.
+
+    Run summary (when `log_cfg["summary"]` is true and `no_summary` is false)
+    counts log events by level and emits a single record at process exit
+    with duration, exit code, exception class, and per-level counts.
     """
-    global _configured
+    global _configured, _summary_state
     if log_cfg is None or _configured:
         return
 
@@ -101,34 +119,61 @@ def configure_logging(
     root.setLevel(logging.DEBUG)
     root.addFilter(_SensitiveFilter())
 
-    # Below WARNING → stdout (treated as the runnable's primary output)
+    # Below WARNING → stdout (treated as the runnable's primary output).
+    # Drop run-summary records — they go to the file only; the human-visible
+    # form is written directly to stderr by the atexit hook.
     out_handler = logging.StreamHandler(sys.stdout)
     out_handler.setLevel(floor)
-    out_handler.addFilter(lambda r: r.levelno < logging.WARNING)
+    out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name != _RUN_SUMMARY_LOGGER)
     out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(out_handler)
 
-    # WARNING and above → stderr (Unix convention for diagnostics)
+    # WARNING and above → stderr (Unix convention for diagnostics).
     err_handler = logging.StreamHandler(sys.stderr)
     err_handler.setLevel(logging.WARNING)
+    err_handler.addFilter(lambda r: r.name != _RUN_SUMMARY_LOGGER)
     err_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(err_handler)
 
     # File handler: always active, always JSON; level follows --debug
     # (INFO by default — keeps third-party DEBUG noise out of the audit log).
-    log_dir = _resolve_log_dir(config_path)
+    log_dir = _resolve_log_dir()
     log_path = log_dir / f"{runnable_name}.log"
     fh = _make_file_handler(log_path, log_cfg["rotate"], log_cfg["keep"])
     fh.setLevel(floor)
     fh.setFormatter(_JsonFormatter())
     root.addHandler(fh)
 
+    # Run-summary counter handler — silently increments per-level counts.
+    counter = _RunSummaryCounter()
+    root.addHandler(counter)
+
+    summary_enabled = bool(log_cfg.get("summary", True)) and not no_summary and not _env_truthy("RUNSPEC_NO_SUMMARY")
+    if summary_enabled:
+        _summary_state = {
+            "counter": counter,
+            "start": time.monotonic(),
+            "runnable": runnable_name,
+            "autonomy": autonomy,
+            "agent": agent,
+            "command_path": list(command_path or []),
+            "exception": None,
+            "emitted": False,
+        }
+        _install_excepthook()
+        atexit.register(_emit_run_summary)
+
     _configured = True
 
 
-def _resolve_log_dir(config_path: Path) -> Path:
-    """Use {package_dir}/logs; fall back to ~/logs if not writable."""
-    candidate = config_path.parent / "logs"
+def _resolve_log_dir() -> Path:
+    """Use `{sys.prefix}/logs`; fall back to `~/logs` if not writable.
+
+    The venv root is the right home for an installed package's logs — one
+    logs dir per environment, survives `pip install -e .`, easy to locate,
+    and avoids scattering log files across every package directory.
+    """
+    candidate = Path(sys.prefix) / "logs"
     try:
         candidate.mkdir(parents=True, exist_ok=True)
         probe = candidate / ".wtest"
@@ -170,6 +215,10 @@ def _collect_extra(record: logging.LogRecord) -> dict[str, Any]:
     return result
 
 
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").lower() in ("1", "true", "yes")
+
+
 class _SensitiveFilter(logging.Filter):
     """Redacts passwords, tokens, and credentials from all log output."""
 
@@ -183,6 +232,21 @@ class _SensitiveFilter(logging.Filter):
         except Exception:
             pass  # never disrupt logging on filter errors
         return True
+
+
+class _RunSummaryCounter(logging.Handler):
+    """Counts log records by level. Emits nothing — read at process exit."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.counts: dict[str, int] = {"DEBUG": 0, "INFO": 0, "WARNING": 0, "ERROR": 0, "CRITICAL": 0}
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Don't count the summary record itself.
+        if record.name == _RUN_SUMMARY_LOGGER:
+            return
+        if record.levelname in self.counts:
+            self.counts[record.levelname] += 1
 
 
 class _JsonFormatter(logging.Formatter):
@@ -240,3 +304,83 @@ class _ConsoleFormatter(logging.Formatter):
             line += "\n" + self.formatException(record.exc_info)
 
         return line
+
+
+# ── Run summary ──────────────────────────────────────────────────────────────
+
+_original_excepthook = sys.excepthook
+_excepthook_installed: bool = False
+
+
+def _install_excepthook() -> None:
+    """Wrap sys.excepthook so uncaught exceptions land in the run summary.
+
+    Chains the original hook so default behaviour (printing the traceback) is
+    preserved. Idempotent.
+    """
+    global _excepthook_installed, _original_excepthook
+    if _excepthook_installed:
+        return
+    _original_excepthook = sys.excepthook
+
+    def hook(exc_type: type[BaseException], exc_value: BaseException, tb: Any) -> None:
+        if _summary_state is not None:
+            _summary_state["exception"] = {
+                "type": exc_type.__name__,
+                "message": str(exc_value),
+                "traceback": "".join(traceback.format_exception(exc_type, exc_value, tb)),
+            }
+        _original_excepthook(exc_type, exc_value, tb)
+
+    sys.excepthook = hook
+    _excepthook_installed = True
+
+
+def _format_summary_line(state: dict[str, Any], duration_ms: int, exit_code: int) -> str:
+    """One-line stderr summary — runs in atexit so it must never raise."""
+    counts = state["counter"].counts
+    total = sum(counts.values())
+    warnings = counts["WARNING"]
+    errors = counts["ERROR"] + counts["CRITICAL"]
+    secs = duration_ms / 1000.0
+    runnable = state["runnable"]
+    if state["exception"] or exit_code != 0:
+        exc = state["exception"]
+        exc_part = f", {exc['type']}" if exc else ""
+        return f"runspec: {runnable} failed in {secs:.2f}s — exit {exit_code}{exc_part} — {total} events ({warnings} warning{'s' if warnings != 1 else ''}, {errors} error{'s' if errors != 1 else ''})"
+    return f"runspec: {runnable} completed in {secs:.2f}s — {total} events ({warnings} warning{'s' if warnings != 1 else ''}, {errors} error{'s' if errors != 1 else ''})"
+
+
+def _emit_run_summary() -> None:
+    """atexit hook — emit one summary record to the file and one line to stderr."""
+    state = _summary_state
+    if state is None or state["emitted"]:
+        return
+    state["emitted"] = True
+
+    duration_ms = int((time.monotonic() - state["start"]) * 1000)
+    # Best-effort exit code — sys.exit() sets sys.last_value; for normal exits
+    # there's no reliable hook so we infer from the captured exception.
+    exit_code = 1 if state["exception"] else 0
+
+    # File record via the standard logger — picked up by the file handler only
+    # (console handlers filter out runspec.runsummary by logger name).
+    with contextlib.suppress(Exception):
+        logging.getLogger(_RUN_SUMMARY_LOGGER).info(
+            "run completed",
+            extra={
+                "event": "run_summary",
+                "runnable": state["runnable"],
+                "command_path": state["command_path"],
+                "duration_ms": duration_ms,
+                "exit_code": exit_code,
+                "agent": state["agent"],
+                "autonomy": state["autonomy"],
+                "exception": state["exception"],
+                "events": dict(state["counter"].counts),
+            },
+        )
+
+    with contextlib.suppress(Exception):
+        sys.stderr.write(_format_summary_line(state, duration_ms, exit_code) + "\n")
+        sys.stderr.flush()

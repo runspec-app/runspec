@@ -1173,6 +1173,27 @@ This is the version of `runspec` that makes the tool genuinely transformative ra
 
 ---
 
+## Roadmap
+
+### Reserved-name schema validator
+
+Auto-injected arguments are growing — `debug` and `no-summary` are added by
+the language pack whenever `[config.logging]` is present. Today, if a user
+runnable already declares an arg with one of those names, the injection
+silently no-ops and the auto-feature is quietly disabled. That's a confusing
+failure mode.
+
+A validator pass should centralise the reserved set
+(`{debug, no-summary, help}` and the reserved top-level section name
+`config`) and raise a clear `RunSpecError` at parse time when a user
+definition collides — with a renaming suggestion in the message. The set
+needs to be one constant in one module so future additions are a one-line
+change.
+
+This is purely a friendlier-error change; it doesn't expand the spec. Track
+as a follow-up; not part of the run-summary work that introduced
+`no-summary`.
+
 ## Open Questions (future `runspec generate`)
 
 - [ ] Should `runspec generate` use templates per language or be fully AI-driven?

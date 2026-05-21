@@ -15,6 +15,29 @@ let _configured = false;
 const _loggers = new Map<string, Logger>();
 const _handlers: Handler[] = [];
 
+const RUN_SUMMARY_LOGGER = 'runspec.runsummary';
+
+interface CapturedException {
+  type: string;
+  message: string;
+  traceback: string;
+}
+
+interface SummaryState {
+  counter: RunSummaryCounter;
+  start: bigint;
+  runnable: string;
+  autonomy: string | undefined;
+  agent: boolean;
+  commandPath: string[];
+  exception: CapturedException | null;
+  exitCode: number;
+  emitted: boolean;
+}
+
+let _summaryState: SummaryState | null = null;
+let _exitHooksInstalled = false;
+
 // ── level map ─────────────────────────────────────────────────────────────────
 
 const LEVEL_NUM: Record<string, number> = {
@@ -149,12 +172,16 @@ function formatConsole(record: LogRecord, showTracebacks: boolean): string {
  * Routes DEBUG/INFO records (i.e. below WARNING) to stdout.
  * Treated as the runnable's primary output — captured as the response body
  * when `runspec serve` invokes the runnable as a subprocess.
+ *
+ * Drops `runspec.runsummary` records — those are file-only; the human form
+ * of the summary is written directly to stderr by the exit hook.
  */
 class StdoutHandler implements Handler {
   constructor(public readonly level: number, private readonly showTracebacks: boolean) {}
 
   emit(record: LogRecord): void {
     if (record.levelNum >= 30) return; // WARNING+ belongs on stderr
+    if (record.loggerName === RUN_SUMMARY_LOGGER) return;
     try {
       process.stdout.write(formatConsole(record, this.showTracebacks) + '\n');
     } catch {
@@ -175,10 +202,33 @@ class StderrHandler implements Handler {
 
   emit(record: LogRecord): void {
     if (record.levelNum < 30) return;
+    if (record.loggerName === RUN_SUMMARY_LOGGER) return;
     try {
       process.stderr.write(formatConsole(record, this.showTracebacks) + '\n');
     } catch {
       // never disrupt
+    }
+  }
+}
+
+// ── run summary counter ───────────────────────────────────────────────────────
+
+/**
+ * Counts records by level. Emits nothing — read at process exit by the
+ * summary hook. Always attached at level=DEBUG so every record is counted.
+ */
+class RunSummaryCounter implements Handler {
+  readonly level = 10;
+  readonly counts: Record<string, number> = {
+    DEBUG: 0, INFO: 0, WARNING: 0, ERROR: 0, CRITICAL: 0,
+  };
+
+  emit(record: LogRecord): void {
+    // Don't count the summary record itself.
+    if (record.loggerName === RUN_SUMMARY_LOGGER) return;
+    const label = LEVEL_LABEL[record.levelNum];
+    if (label && label in this.counts) {
+      this.counts[label]++;
     }
   }
 }
@@ -289,19 +339,158 @@ function makeFileHandler(logPath: string, rotate: string, keep: number, level: n
 
 // ── log dir resolution ────────────────────────────────────────────────────────
 
-function resolveLogDir(configPath: string): string {
-  const candidate = path.join(path.dirname(configPath), 'logs');
-  try {
-    fs.mkdirSync(candidate, { recursive: true });
-    const probe = path.join(candidate, '.wtest');
-    fs.writeFileSync(probe, '');
-    fs.unlinkSync(probe);
-    return candidate;
-  } catch {
-    const fallback = path.join(os.homedir(), 'logs');
-    fs.mkdirSync(fallback, { recursive: true });
-    return fallback;
+/**
+ * Walk up from `start` looking for a `package.json` that is NOT inside a
+ * `node_modules` directory — that's the project root. Returns null if we
+ * reach the filesystem root without finding one.
+ *
+ * Skipping node_modules is intentional: dependency packages bundle their
+ * own package.json, but they're not the project root the user owns.
+ */
+function findProjectRoot(start: string): string | null {
+  let dir = path.resolve(start);
+  while (true) {
+    if (!dir.split(path.sep).includes('node_modules')) {
+      if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null; // hit filesystem root
+    dir = parent;
   }
+}
+
+/**
+ * Resolve the log directory.
+ *
+ * Mirror of Python's `sys.prefix / "logs"`: pick the project's installation
+ * root — the nearest ancestor `package.json` of the runnable's runspec.toml,
+ * skipping anything under `node_modules`. Logs land at `{project_root}/logs/`,
+ * so one logs directory per project, surviving reinstalls.
+ *
+ * Falls back to `~/logs/` when no project root is found or the chosen
+ * directory is not writable (e.g. read-only volumes, system installs).
+ */
+function resolveLogDir(configPath: string): string {
+  const projectRoot = findProjectRoot(path.dirname(configPath));
+  if (projectRoot) {
+    const candidate = path.join(projectRoot, 'logs');
+    try {
+      fs.mkdirSync(candidate, { recursive: true });
+      const probe = path.join(candidate, '.wtest');
+      fs.writeFileSync(probe, '');
+      fs.unlinkSync(probe);
+      return candidate;
+    } catch {
+      // fall through to home
+    }
+  }
+  const fallback = path.join(os.homedir(), 'logs');
+  fs.mkdirSync(fallback, { recursive: true });
+  return fallback;
+}
+
+// ── run summary ──────────────────────────────────────────────────────────────
+
+function formatSummaryLine(state: SummaryState, durationMs: number, exitCode: number): string {
+  const counts = state.counter.counts;
+  const total = (counts.DEBUG ?? 0) + (counts.INFO ?? 0) + (counts.WARNING ?? 0) + (counts.ERROR ?? 0) + (counts.CRITICAL ?? 0);
+  const warnings = counts.WARNING ?? 0;
+  const errors = (counts.ERROR ?? 0) + (counts.CRITICAL ?? 0);
+  const secs = (durationMs / 1000).toFixed(2);
+  const runnable = state.runnable;
+  const wSuffix = warnings === 1 ? '' : 's';
+  const eSuffix = errors === 1 ? '' : 's';
+  if (state.exception || exitCode !== 0) {
+    const excPart = state.exception ? `, ${state.exception.type}` : '';
+    return `runspec: ${runnable} failed in ${secs}s — exit ${exitCode}${excPart} — ${total} events (${warnings} warning${wSuffix}, ${errors} error${eSuffix})`;
+  }
+  return `runspec: ${runnable} completed in ${secs}s — ${total} events (${warnings} warning${wSuffix}, ${errors} error${eSuffix})`;
+}
+
+/**
+ * Emit one summary record to the file (via the standard logger pipeline —
+ * picked up by the file handler, dropped by the console handlers) and one
+ * formatted line directly to stderr. Idempotent — safe to call repeatedly.
+ */
+export function emitRunSummary(): void {
+  const state = _summaryState;
+  if (state === null || state.emitted) return;
+  state.emitted = true;
+
+  const durationMs = Number((process.hrtime.bigint() - state.start) / 1_000_000n);
+  // Exit code: explicit capture (set by uncaughtException hook) or
+  // process.exitCode if the user set it. Defaults to 0.
+  const exitCode = state.exitCode !== 0 ? state.exitCode : (state.exception ? 1 : 0);
+
+  try {
+    getLogger(RUN_SUMMARY_LOGGER).info('run completed', {
+      event: 'run_summary',
+      runnable: state.runnable,
+      command_path: state.commandPath,
+      duration_ms: durationMs,
+      exit_code: exitCode,
+      agent: state.agent,
+      autonomy: state.autonomy,
+      exception: state.exception,
+      events: { ...state.counter.counts },
+    });
+  } catch {
+    // never disrupt shutdown
+  }
+
+  try {
+    process.stderr.write(formatSummaryLine(state, durationMs, exitCode) + '\n');
+  } catch {
+    // never disrupt shutdown
+  }
+}
+
+function installExitHooks(): void {
+  if (_exitHooksInstalled) return;
+  _exitHooksInstalled = true;
+
+  process.on('exit', (code) => {
+    if (_summaryState && !_summaryState.emitted) {
+      // process.exitCode wins over the explicit exception capture only if
+      // it's non-zero — uncaughtException already set state.exitCode=1.
+      if (code !== 0 && _summaryState.exitCode === 0) _summaryState.exitCode = code;
+      emitRunSummary();
+    }
+  });
+
+  // Skip the crash-handlers under jest — they call process.exit(1), which
+  // would tear down the test runner if any test ever produced an unhandled
+  // rejection. The 'exit' hook above is harmless and still runs.
+  if (process.env['JEST_WORKER_ID'] !== undefined) return;
+
+  process.on('uncaughtException', (err: Error) => {
+    if (_summaryState) {
+      _summaryState.exception = {
+        type: err.name || 'Error',
+        message: err.message || String(err),
+        traceback: err.stack ?? '',
+      };
+      _summaryState.exitCode = 1;
+    }
+    // Preserve default Node behaviour: print and exit non-zero. The 'exit'
+    // hook above will fire and run emitRunSummary().
+    process.stderr.write((err.stack ?? String(err)) + '\n');
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason: unknown) => {
+    if (_summaryState) {
+      const err = reason instanceof Error ? reason : new Error(String(reason));
+      _summaryState.exception = {
+        type: err.name || 'Error',
+        message: err.message || String(reason),
+        traceback: err.stack ?? '',
+      };
+      _summaryState.exitCode = 1;
+    }
+    process.stderr.write(`Unhandled rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}\n`);
+    process.exit(1);
+  });
 }
 
 // ── public: configureLogging ──────────────────────────────────────────────────
@@ -311,6 +500,10 @@ export interface ConfigureLoggingOptions {
   runnableName: string;
   configPath: string;
   debug?: boolean;
+  noSummary?: boolean;
+  autonomy?: string;
+  agent?: boolean;
+  commandPath?: string[];
 }
 
 /**
@@ -331,7 +524,14 @@ export interface ConfigureLoggingOptions {
  * WARNING regardless.
  *
  * File handler is always JSON; level follows the same `--debug` toggle as
- * stdout (defaults to INFO — keeps third-party DEBUG noise out of the audit log).
+ * stdout (defaults to INFO — keeps third-party DEBUG noise out of the audit
+ * log). Log files land under `{project_root}/logs/` — the nearest ancestor
+ * `package.json` skipping `node_modules`, mirroring Python's venv-root
+ * convention. Falls back to `~/logs/` when no project root is found.
+ *
+ * Run summary (when `logCfg.summary` is true and `noSummary` is false)
+ * counts log events by level and emits a single record at process exit
+ * with duration, exit code, exception class, and per-level counts.
  */
 export function configureLogging(opts: ConfigureLoggingOptions): void {
   if (!opts.logCfg || _configured) return;
@@ -346,6 +546,31 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
   const logPath = path.join(logDir, `${opts.runnableName}.log`);
   _handlers.push(makeFileHandler(logPath, opts.logCfg.rotate, opts.logCfg.keep, floor));
 
+  // Always attach the counter — cost is one dict increment per log call.
+  // Only the exit hook + state population are conditional on summary mode.
+  const counter = new RunSummaryCounter();
+  _handlers.push(counter);
+
+  const summaryEnabled =
+    opts.logCfg.summary !== false &&
+    !opts.noSummary &&
+    !['1', 'true', 'yes'].includes((process.env['RUNSPEC_NO_SUMMARY'] ?? '').toLowerCase());
+
+  if (summaryEnabled) {
+    _summaryState = {
+      counter,
+      start: process.hrtime.bigint(),
+      runnable: opts.runnableName,
+      autonomy: opts.autonomy,
+      agent: opts.agent ?? false,
+      commandPath: opts.commandPath ?? [],
+      exception: null,
+      exitCode: 0,
+      emitted: false,
+    };
+    installExitHooks();
+  }
+
   _configured = true;
 }
 
@@ -355,6 +580,9 @@ export function _resetForTest(): void {
   _configured = false;
   _loggers.clear();
   _handlers.length = 0;
+  _summaryState = null;
+  // Note: process event listeners installed by installExitHooks() stay —
+  // they no-op when _summaryState is null, which is the test-time state.
 }
 
-export { _periodForDate };
+export { _periodForDate, RUN_SUMMARY_LOGGER };

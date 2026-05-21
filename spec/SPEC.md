@@ -212,6 +212,7 @@ just works.
 |---|---|---|---|
 | `rotate` | string | `"midnight"` | Rotation policy: `"N MB"`, `"N KB"`, `"N GB"` (size-based), `"daily"`, `"midnight"`, `"weekly"` (time-based). |
 | `keep` | int | `7` | Number of rotated backup files to retain. |
+| `summary` | bool | `true` | Emit one run-summary record (file) + one stderr line at process exit. See *Run summary* below. |
 
 There is no `level` knob. Console routing is fixed (see below); the file
 handler follows the same `--debug` toggle as stdout — INFO by default,
@@ -220,8 +221,15 @@ agent responses (stdout is the MCP tool response body), so the threshold is
 not configurable. Use the auto-added `--debug` flag to *raise* verbosity
 everywhere at once.
 
-Log file path is always: `{package_dir}/logs/{runnable_name}.log`  
-Fallback when the package directory is not writable: `{home}/logs/{runnable_name}.log`
+Log file path is always: `{installation_root}/logs/{runnable_name}.log`.
+Fallback when the root is not writable: `{home}/logs/{runnable_name}.log`.
+One logs directory per environment — survives reinstalls and avoids
+scattering logs across package directories.
+
+| Language pack | `installation_root` |
+|---|---|
+| Python (`runspec`) | `sys.prefix` — the venv root |
+| Node (`runspec-node`) | nearest ancestor `package.json`, skipping `node_modules` — the project root |
 
 #### Console routing
 
@@ -273,6 +281,60 @@ RUNSPEC_DEBUG=1 my-script
 The flag only *adds* visibility; it never silences anything. The `debug` name
 is reserved when `[config.logging]` is present — your runnable cannot define
 its own argument by that name.
+
+#### Run summary
+
+When `summary = true` (default), the language pack records one summary at
+process exit — without any user code. It does two things:
+
+1. **Audit log:** one JSON record on the `runspec.runsummary` logger,
+   written to the audit file (and only the audit file — the console
+   handlers filter this logger out).
+2. **Human line:** one short line to stderr.
+
+The audit record is fixed-schema:
+
+```json
+{"ts": "...", "level": "INFO", "logger": "runspec.runsummary",
+ "message": "run completed",
+ "extra": {
+   "event": "run_summary",
+   "runnable": "compress",
+   "command_path": [],
+   "duration_ms": 1483,
+   "exit_code": 0,
+   "agent": false,
+   "autonomy": "confirm",
+   "exception": null,
+   "events": {"DEBUG": 0, "INFO": 12, "WARNING": 2, "ERROR": 0, "CRITICAL": 0}
+ }}
+```
+
+The stderr line reads like a database client's closing message:
+
+```
+runspec: compress completed in 1.48s — 12 events (2 warnings, 0 errors)
+runspec: compress failed in 0.91s — exit 1, ValueError — 5 events (1 warning, 1 error)
+```
+
+A `--no-summary` flag is auto-added alongside `--debug` and suppresses
+both the record and the stderr line for the invocation. The
+`RUNSPEC_NO_SUMMARY=1` environment variable does the same. The
+`no-summary` name is reserved when `[config.logging]` is present.
+
+In agent mode, `runspec serve` returns the same information per call via
+the MCP `_meta` extension:
+
+```json
+"result": {
+  "content": [...],
+  "isError": false,
+  "_meta": {"runspec": {"tool": "compress", "duration_ms": 1483, "exit_code": 0}}
+}
+```
+
+`_meta` is the MCP-standard extension point — clients that don't read it
+ignore the block. The tool response body is unaffected.
 
 #### Sensitive data filtering
 

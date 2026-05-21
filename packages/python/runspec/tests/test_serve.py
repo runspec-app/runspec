@@ -177,6 +177,12 @@ def test_tools_call_success(tmp_path):
     resp = _handle_tools_call(3, {"name": "greet", "arguments": {}}, tools, {}, exec_specs)
     assert resp["result"]["isError"] is False
     assert "hello" in resp["result"]["content"][0]["text"]
+    # MCP _meta envelope present on success
+    meta = resp["result"]["_meta"]["runspec"]
+    assert meta["tool"] == "greet"
+    assert meta["exit_code"] == 0
+    assert isinstance(meta["duration_ms"], int)
+    assert meta["duration_ms"] >= 0
 
 
 def test_tools_call_failure(tmp_path):
@@ -192,6 +198,11 @@ def test_tools_call_failure(tmp_path):
     text = resp["result"]["content"][0]["text"]
     assert "exit_code: 1" in text
     assert "bad things" in text
+    # MCP _meta envelope present on failure too
+    meta = resp["result"]["_meta"]["runspec"]
+    assert meta["tool"] == "deploy"
+    assert meta["exit_code"] == 1
+    assert isinstance(meta["duration_ms"], int)
 
 
 def test_tools_call_sets_runspec_agent_env(tmp_path):

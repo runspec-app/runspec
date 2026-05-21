@@ -145,7 +145,7 @@ test('normalises [config.logging] with defaults', () => {
 description = "hi"
 `);
   const raw = loadRaw(file);
-  expect(raw.config.logging).toEqual({ rotate: 'midnight', keep: 7 });
+  expect(raw.config.logging).toEqual({ rotate: 'midnight', keep: 7, summary: true });
 });
 
 test('normalises [config.logging] all fields', () => {
@@ -153,14 +153,28 @@ test('normalises [config.logging] all fields', () => {
   const file = path.join(dir, 'runspec.toml');
   fs.writeFileSync(file, `
 [config.logging]
-rotate = "10 MB"
-keep   = 3
+rotate  = "10 MB"
+keep    = 3
+summary = false
 
 [greet]
 description = "hi"
 `);
   const raw = loadRaw(file);
-  expect(raw.config.logging).toEqual({ rotate: '10 MB', keep: 3 });
+  expect(raw.config.logging).toEqual({ rotate: '10 MB', keep: 3, summary: false });
+});
+
+test('[config.logging] summary defaults to true when omitted', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `
+[config.logging]
+rotate = "midnight"
+
+[greet]
+description = "hi"
+`);
+  expect(loadRaw(file).config.logging?.summary).toBe(true);
 });
 
 test('logging is undefined when section absent', () => {

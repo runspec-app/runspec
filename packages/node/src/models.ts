@@ -11,6 +11,7 @@ export interface JumpHostConfig {
 export interface LoggingConfig {
   rotate: string;
   keep: number;
+  summary: boolean;
 }
 
 export interface RawConfig {
