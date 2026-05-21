@@ -56,7 +56,7 @@ interface ParseOptions {
 4. Resolves any subcommand from `argv`.
 5. Intercepts `--help` / `-h` and prints usage, then exits.
 6. **If `[config.logging]` is present, configures the logger** and injects
-   `--log-level` (see [Logging](logging.md)).
+   `--debug` (see [Logging](logging.md)).
 7. Parses `argv` into raw values.
 8. Applies environment variable fallbacks.
 9. Applies spec defaults.
@@ -295,7 +295,7 @@ try {
 Sensitive-data redaction (passwords, tokens, `Authorization` headers, URL
 credentials) is applied to every log line. See [Logging](logging.md) for
 the full picture: rotation policies, agent-mode behaviour, and the
-auto-injected `--log-level` flag.
+auto-injected `--debug` flag.
 
 ---
 
@@ -471,7 +471,6 @@ and the `RUNSPEC_AGENT` convention.
 ```toml
 # runspec.toml
 [config.logging]
-level  = "info"
 rotate = "midnight"
 keep   = 7
 
