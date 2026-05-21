@@ -10,13 +10,20 @@ import {
 } from '../src/logging_setup';
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'runspec-log-test-'));
+  // Each test dir is its own project root so resolveLogDir lands inside it.
+  // Without a package.json the walk-up would escape to a real project root
+  // and write logs to a shared location — drop a marker file to anchor it.
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'runspec-log-test-'));
+  fs.writeFileSync(path.join(d, 'package.json'), '{"name":"test","version":"0.0.0"}');
+  return d;
 }
 
 function makeCfg(dir: string, overrides: Record<string, unknown> = {}): Parameters<typeof configureLogging>[0] {
   const { debug, ...logOverrides } = overrides as { debug?: boolean } & Record<string, unknown>;
   return {
-    logCfg: { rotate: 'midnight', keep: 7, ...logOverrides },
+    // summary defaults off in tests so we don't litter atexit emissions across
+    // unrelated assertions; the run-summary suite enables it explicitly.
+    logCfg: { rotate: 'midnight', keep: 7, summary: false, ...logOverrides },
     runnableName: 'myscript',
     configPath: path.join(dir, 'runspec.toml'),
     debug,
@@ -365,7 +372,7 @@ test('_periodForDate weekly: adjacent weeks differ', () => {
 
 // ── log dir fallback ──────────────────────────────────────────────────────────
 
-test('falls back to ~/logs when package dir is not writable', () => {
+test('falls back to ~/logs when the project root is not writable', () => {
   const dir = tmpDir();
   const logsDir = path.join(dir, 'logs');
   // Create logs dir as unwritable

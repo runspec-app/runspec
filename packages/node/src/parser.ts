@@ -54,6 +54,26 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
     };
   }
 
+  // Auto-inject --no-summary when [config.logging] is present. Suppresses
+  // the per-run summary record and stderr line for that one invocation.
+  if (config.logging && !('no-summary' in rawScript.args)) {
+    rawScript = {
+      ...rawScript,
+      args: {
+        ...rawScript.args,
+        'no-summary': {
+          name: 'no-summary',
+          type: 'flag',
+          default: false,
+          required: false,
+          description: 'Suppress the per-run summary record and stderr line.',
+          multiple: false,
+          env: 'RUNSPEC_NO_SUMMARY',
+        },
+      },
+    };
+  }
+
   let argv = argvOverride ?? process.argv.slice(2);
   let activeScript = rawScript;
   let commandPath: string[] = [];
@@ -90,6 +110,9 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
   const debug = config.logging
     ? Boolean(coercedValues['debug'] ?? false)
     : false;
+  const noSummary = config.logging
+    ? Boolean(coercedValues['no_summary'] ?? false)
+    : false;
 
   try {
     configureLogging({
@@ -97,6 +120,10 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
       runnableName: name,
       configPath,
       debug,
+      noSummary,
+      autonomy,
+      agent,
+      commandPath,
     });
   } catch (e) {
     throw new RunSpecError((e as Error).message);
