@@ -310,6 +310,29 @@ class TestErrorHandling:
             load_raw(p)
 
 
+class TestLoggingNormalisation:
+    def test_logging_absent_returns_none(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[greet]\ndescription = 'hi'\n")
+        assert load_raw(p)["config"]["logging"] is None
+
+    def test_logging_defaults(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[config.logging]\n\n[greet]\n")
+        cfg = load_raw(p)["config"]["logging"]
+        assert cfg == {"rotate": "midnight", "keep": 7, "summary": True}
+
+    def test_logging_summary_explicit_false(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[config.logging]\nsummary = false\n\n[greet]\n")
+        assert load_raw(p)["config"]["logging"]["summary"] is False
+
+    def test_logging_summary_explicit_true(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[config.logging]\nsummary = true\n\n[greet]\n")
+        assert load_raw(p)["config"]["logging"]["summary"] is True
+
+
 class TestIntegrationFixtures:
     def test_simple_toml(self):
         result = load_raw(FIXTURES / "simple.toml")

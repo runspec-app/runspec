@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import sysconfig
+import time
 from pathlib import Path
 from typing import Any
 
@@ -231,7 +232,14 @@ def _handle_tools_call(
     if config_path:
         env["RUNSPEC_CONFIG"] = str(config_path)
 
+    start = time.monotonic()
     result = subprocess.run([*cmd, *argv], capture_output=True, text=True, env=env)
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    # _meta is the MCP-standard extension point; clients that don't understand
+    # it ignore the block. Same envelope on success and failure so callers can
+    # rely on it being present.
+    meta = {"runspec": {"tool": name, "duration_ms": duration_ms, "exit_code": result.returncode}}
 
     if result.returncode == 0:
         return {
@@ -240,6 +248,7 @@ def _handle_tools_call(
             "result": {
                 "content": [{"type": "text", "text": result.stdout}],
                 "isError": False,
+                "_meta": meta,
             },
         }
 
@@ -255,6 +264,7 @@ def _handle_tools_call(
         "result": {
             "content": [{"type": "text", "text": "\n".join(parts)}],
             "isError": True,
+            "_meta": meta,
         },
     }
 
