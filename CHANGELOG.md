@@ -7,6 +7,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.12.1] / [node-0.11.1] — 2026-05-21
+
+### Fixed
+
+- **File handler now follows the `--debug` toggle** — was previously hard-wired
+  to DEBUG, which meant every imported library logging to root at DEBUG
+  (urllib3, boto3, sqlalchemy, etc.) flooded the audit file. The file now
+  defaults to INFO and flips to DEBUG together with stdout when `--debug` /
+  `RUNSPEC_DEBUG=1` is set. Stderr stays pinned at WARNING. No new TOML key —
+  the existing `--debug` flag auto-added by `[config.logging]` just governs
+  both surfaces now. Applies to both Python and Node.
+
+---
+
+## [0.12.0] / [node-0.11.0] — 2026-05-20
+
+### Changed
+
+- **Console routing by level** — a single `logger.X` call now does the right
+  thing in both CLI mode and agent mode. INFO and below go to stdout (plain
+  message, reads like `print()`); WARNING and above go to stderr (prefixed
+  with the level name). The split matches Unix stream conventions and means
+  `runspec serve` can capture stdout as the MCP tool response without losing
+  warnings/errors. Applies to both Python and Node.
+
+### Removed
+
+- **`level` knob** in `[config.logging]` — silencing INFO would break agent
+  responses, so the threshold is no longer configurable.
+
+### Added
+
+- **`--debug` flag**, auto-added when `[config.logging]` is present (also
+  settable via `RUNSPEC_DEBUG=1`). Includes DEBUG records and tracebacks on
+  stdout for in-terminal debugging. The flag only *raises* visibility — it
+  never silences anything. The `debug` name is reserved when
+  `[config.logging]` is present.
+
+---
+
 ## [0.11.0] / [node-0.10.0] — 2026-05-20
 
 ### Added
