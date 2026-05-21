@@ -1194,6 +1194,26 @@ This is purely a friendlier-error change; it doesn't expand the spec. Track
 as a follow-up; not part of the run-summary work that introduced
 `no-summary`.
 
+### Invocation audit record
+
+The `run_summary` exit record captures outcome but not invocation context — what
+runnable was called, from which `runspec.toml`, with which command path, and which
+args were explicitly provided vs. defaulted. The two sides of the audit trail are
+not yet combined in the file.
+
+Extend `_emit_run_summary()` to include the invocation context that is currently
+available at `parse()` return time: `source` (path to `runspec.toml`), and
+`arg_sources` (a dict of `{arg_name: "cli"|"env"|"default"}` for each arg,
+excluding auto-injected internals like `debug` and `no-summary`). Thread these
+through `configure_logging()` into `_summary_state` so they are available at exit.
+
+Adding arg *values* requires `_collect_extra` to recurse into nested dicts, or
+values to be serialised and passed through the existing `_SENSITIVE` pattern list
+— resolve the redaction strategy at the same time.
+
+The resulting single record gives a complete per-invocation audit entry: what was
+run, how it was invoked, and how it went.
+
 ## Open Questions (future `runspec generate`)
 
 - [ ] Should `runspec generate` use templates per language or be fully AI-driven?
