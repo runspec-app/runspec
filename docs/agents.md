@@ -311,16 +311,21 @@ the response rather than display it as text.
 
 ## Logging in agent mode
 
-When `[config.logging]` is configured, runspec adjusts its behaviour for
-agent invocations:
+When `[config.logging]` is configured, the routing is **the same as CLI
+mode** — there's no separate agent code path. `runspec serve` captures the
+subprocess's stdout as the MCP tool response, so every `logger.info(...)`
+line reaches the calling agent automatically.
 
-- **No console handler.** stderr is the MCP streaming side-channel; writing
-  log lines there would corrupt the JSON-RPC framing.
-- **File logging still at DEBUG.** `{package_dir}/logs/{runnable}.log` is
-  your debugging surface for everything an agent invoked.
-- **`--log-level` is available as a runtime knob.** An agent can pass
-  `--log-level debug` (or set `RUNSPEC_LOG_LEVEL=debug`) on a one-off
-  invocation without editing the spec.
+- **stdout → MCP response.** INFO and below land here (plain message,
+  reads like `print()`). The agent sees them as the tool's reply.
+- **stderr → forwarded to the agent's logs.** WARNING and above with a
+  `LEVEL:` prefix. Stays at WARNING regardless of `--debug`.
+- **File logging always on.** `{package_dir}/logs/{runnable}.log` is the
+  audit trail — INFO by default, DEBUG with `--debug`.
+- **`--debug` is the runtime knob.** An agent can pass `--debug` (or set
+  `RUNSPEC_DEBUG=1`) on a one-off invocation to flip DEBUG on across
+  stdout and the file. There is no `level` knob — silencing INFO would
+  blank out the MCP response.
 
 You write the same `logger.info(...)` calls; runspec routes them
 appropriately. See [Logging](logging.md) for the full picture, including
