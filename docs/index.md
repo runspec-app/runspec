@@ -98,7 +98,7 @@ For developers building a CLI:
   `options` where possible
 - **Subcommands and groups** — exclusive, inclusive, at-least-one,
   exactly-one, conditional
-- **Built-in `--log-level`, file rotation, sensitive-data redaction** — just
+- **Built-in `--debug` flag, file rotation, sensitive-data redaction** — just
   add `[config.logging]`; see [Logging](logging.md)
 - **`runspec init`** scaffolds a complete project — `pyproject.toml`,
   package layout, a working code stub

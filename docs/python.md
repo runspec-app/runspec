@@ -57,7 +57,7 @@ def parse(
 4. Resolves any subcommand from `argv`.
 5. Intercepts `--help` / `-h` and prints usage, then exits.
 6. **If `[config.logging]` is present, configures stdlib logging** and
-   injects `--log-level` (see [Logging](logging.md)).
+   injects `--debug` (see [Logging](logging.md)).
 7. Parses `argv` into raw values.
 8. Applies environment variable fallbacks.
 9. Applies spec defaults.
@@ -373,9 +373,9 @@ The coercer is called during `parse()` after validation passes.
 ## Logging integration
 
 When `[config.logging]` is present in your `runspec.toml`, `parse()`
-configures stdlib logging automatically and auto-injects a `--log-level`
-argument. Just use `logger = logging.getLogger(__name__)` — no extra setup,
-no `runspec` imports beyond `parse()`.
+configures stdlib logging automatically and auto-injects a `--debug` flag.
+Just use `logger = logging.getLogger(__name__)` — no extra setup, no
+`runspec` imports beyond `parse()`.
 
 ```python
 import logging
@@ -442,7 +442,6 @@ except runspec.errors.RunSpecError as e:
 ```toml
 # mypkg/runspec.toml
 [config.logging]
-level  = "info"
 rotate = "midnight"
 keep   = 7
 
