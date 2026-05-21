@@ -17,14 +17,12 @@ Add the block to your spec:
 
 ```toml
 [config.logging]
-level  = "info"        # debug | info | warning | error | critical
 rotate = "midnight"    # see "Rotation policies" below
 keep   = 7             # number of rotated backups to keep
 ```
 
-All three fields are optional. Defaults: `level = "info"`,
-`rotate = "midnight"`, `keep = 7`. That's enough — `parse()` configures the
-rest.
+Both fields are optional. Defaults: `rotate = "midnight"`, `keep = 7`. That's
+enough — `parse()` configures the rest.
 
 ---
 
@@ -76,21 +74,24 @@ rest.
 
 ## Where logs go
 
-File logging is always on, console logging is on outside of agent mode.
+Three surfaces, all always on, routed by record level:
 
-| Surface | Path | Format | Level |
+| Surface | Receives | Format | Notes |
 |---|---|---|---|
-| **File** | `{package_dir}/logs/{runnable}.log` | Structured JSON | `DEBUG` (everything) |
-| **Console** (`agent = false`) | stderr | `HH:MM:SS LEVEL logger: msg` | configured `level` |
-| **Console** (`agent = true`) | *none — stderr is the MCP stream* | — | — |
+| **stdout** | INFO and below | plain message (reads like `print()`) | Captured as the MCP tool response in agent mode |
+| **stderr** | WARNING and above | `LEVEL: message` | Pinned at WARNING — not affected by `--debug` |
+| **File** | INFO by default; DEBUG with `--debug` | Structured JSON | `{package_dir}/logs/{runnable}.log` |
 
 `package_dir` is the directory containing `runspec.toml`. When that path is
 not writable, runspec falls back to `~/logs/{runnable}.log` rather than
 silently dropping log records.
 
-The JSON file log captures **every** record at DEBUG regardless of the
-console level — so when something goes wrong in production, you have the full
-trace to inspect. The console level is just the live-tail filter.
+The split between stdout and stderr matches Unix stream conventions: routine
+output on stdout (greppable, pipeable), warnings and errors on stderr (still
+visible when stdout is redirected). The file is the audit trail — it
+defaults to INFO so third-party libraries logging at DEBUG (urllib3, boto3,
+sqlalchemy, …) don't flood it, and flips to DEBUG together with stdout when
+you need full detail.
 
 ```json
 // excerpt from {package_dir}/logs/deploy.log
@@ -103,32 +104,36 @@ trace to inspect. The console level is just the live-tail filter.
 ## Agent mode
 
 When a runnable is invoked via `runspec serve`, `RUNSPEC_AGENT=1` is set in
-the environment. The logging configurator detects this and:
+the environment. The routing is **the same as CLI mode** — there's no
+separate agent code path to maintain. `runspec serve` captures the
+subprocess's stdout as the MCP tool response, so every `logger.info(...)`
+line reaches the calling agent automatically. Stderr stays on stderr (the
+serve loop forwards it to the agent's logs). The file handler is
+unaffected.
 
-- **Suppresses the console handler** — stderr is the MCP/SSH side-channel and
-  log lines on it would corrupt the JSON-RPC framing.
-- **Keeps the file handler** at DEBUG — the file log is your debugging
-  interface for agent-driven invocations.
-
-This is automatic. You write the same `logger.info(...)` calls; in human
-mode they show up on stderr, in agent mode they go to the file only.
+You write the same code for both surfaces — `logger.info("done")` shows up
+in your terminal when you run the tool by hand, and shows up as the tool
+response when an agent invokes it.
 
 ---
 
-## Runtime override: `--log-level`
+## Runtime override: `--debug`
 
-When `[config.logging]` is present, a `--log-level` argument is automatically
-added to every runnable. It accepts the same five values as the `level`
-field, defaults to the configured level, and is also settable via
-`RUNSPEC_LOG_LEVEL`:
+When `[config.logging]` is present, a `--debug` flag is automatically added
+to every runnable. It only raises visibility — there is no `level` knob to
+silence INFO, because silencing INFO would break agent responses.
 
 ```bash
-deploy --target prod --log-level debug
-RUNSPEC_LOG_LEVEL=debug deploy --target prod
+deploy --target prod --debug
+RUNSPEC_DEBUG=1 deploy --target prod
 ```
 
-This is per-invocation only — it changes the **console** filter for one run;
-the file log is unaffected (it's always DEBUG).
+With `--debug`:
+- **stdout** also includes DEBUG records (plus full tracebacks on errors)
+- **file** flips from INFO to DEBUG too
+
+Stderr stays pinned at WARNING regardless. The CLI flag wins if both
+`--debug` and `RUNSPEC_DEBUG=1` are set.
 
 ---
 
@@ -221,19 +226,10 @@ The `rotate` field accepts time-based and size-based policies:
 
 ---
 
-## What about `RUNSPEC_LOG_LEVEL`?
-
-It's the same lever as `--log-level`, just delivered through the
-environment. Useful when you can't easily add a flag — `runspec serve`
-subprocesses, CI environments, container orchestration. CLI flag wins if
-both are set.
-
----
-
 ## See also
 
 - [Python Library](python.md) — `parse()` integration details
 - [Node Library](node.md) — `getLogger` and ParsedArgs integration
 - [Agent Integration](agents.md) — how `[config.logging]` behaves when
   invoked via `runspec serve`
-- [CHANGELOG](changelog.md) for 0.10.0 / node-0.9.0 / 0.11.0
+- [CHANGELOG](changelog.md) for 0.10.0 / node-0.9.0 / 0.11.0 / 0.12.0
