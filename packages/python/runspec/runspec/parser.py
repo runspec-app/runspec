@@ -99,6 +99,28 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
             "range": None,
         }
 
+    # Auto-inject --no-summary when [config.logging] is present. Suppresses the
+    # per-run summary record/stderr line for that one invocation.
+    if config.get("logging") and "no-summary" not in raw_script["args"]:
+        raw_script["args"]["no-summary"] = {
+            "name": "no-summary",
+            "type": "flag",
+            "options": None,
+            "default": False,
+            "required": False,
+            "description": "Suppress the per-run summary record and stderr line.",
+            "multiple": False,
+            "delimiter": None,
+            "short": None,
+            "env": "RUNSPEC_NO_SUMMARY",
+            "deprecated": None,
+            "autonomy": None,
+            "ui": None,
+            "meta": None,
+            "position": None,
+            "range": None,
+        }
+
     # 5. Resolve subcommand if any
     argv_list = argv if argv is not None else sys.argv[1:]
     raw_script, command_path, argv_list = _resolve_subcommand(raw_script, argv_list)
@@ -153,16 +175,23 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
 
     # 16. Configure logging (no-op when [config.logging] absent)
     debug = False
+    no_summary = False
     if config.get("logging"):
         pair = coerced_values.get("debug")  # stores (value, source) tuples
         if pair and pair[0] is not None:
             debug = bool(pair[0])
+        ns_pair = coerced_values.get("no_summary")  # _coerce_values normalises dashes
+        if ns_pair and ns_pair[0] is not None:
+            no_summary = bool(ns_pair[0])
     try:
         configure_logging(
             config.get("logging"),
             runnable_name=name,
-            config_path=config_path,
             debug=debug,
+            no_summary=no_summary,
+            autonomy=autonomy,
+            agent=agent,
+            command_path=command_path,
         )
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e
