@@ -82,17 +82,20 @@ def configure_logging(
       INFO     → stdout (plain message — reads like print())
       WARNING+ → stderr (prefixed with the level name)
 
-    DEBUG is file-only by default. Pass `debug=True` (set by the auto-added
-    `--debug` flag / `RUNSPEC_DEBUG` env var) to include DEBUG records and
-    tracebacks on stdout for in-terminal debugging.
+    DEBUG is suppressed by default on both stdout and the file. Pass
+    `debug=True` (set by the auto-added `--debug` flag / `RUNSPEC_DEBUG`
+    env var) to include DEBUG records (and tracebacks on stdout) everywhere.
+    One knob — stdout and file move together. Stderr stays pinned at
+    WARNING regardless.
 
-    File handler is always JSON at DEBUG level — the full audit trail.
+    File handler is always JSON; level follows the same `--debug` toggle as
+    stdout (defaults to INFO).
     """
     global _configured
     if log_cfg is None or _configured:
         return
 
-    stdout_floor = logging.DEBUG if debug else logging.INFO
+    floor = logging.DEBUG if debug else logging.INFO
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
@@ -100,7 +103,7 @@ def configure_logging(
 
     # Below WARNING → stdout (treated as the runnable's primary output)
     out_handler = logging.StreamHandler(sys.stdout)
-    out_handler.setLevel(stdout_floor)
+    out_handler.setLevel(floor)
     out_handler.addFilter(lambda r: r.levelno < logging.WARNING)
     out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(out_handler)
@@ -111,11 +114,12 @@ def configure_logging(
     err_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(err_handler)
 
-    # File handler: always active, always DEBUG, always JSON
+    # File handler: always active, always JSON; level follows --debug
+    # (INFO by default — keeps third-party DEBUG noise out of the audit log).
     log_dir = _resolve_log_dir(config_path)
     log_path = log_dir / f"{runnable_name}.log"
     fh = _make_file_handler(log_path, log_cfg["rotate"], log_cfg["keep"])
-    fh.setLevel(logging.DEBUG)
+    fh.setLevel(floor)
     fh.setFormatter(_JsonFormatter())
     root.addHandler(fh)
 

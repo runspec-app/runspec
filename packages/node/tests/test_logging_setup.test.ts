@@ -89,18 +89,30 @@ test('log file contains JSON lines', () => {
   expect(typeof parsed.ts).toBe('string');
 });
 
-test('file handler captures DEBUG even when console floor is INFO', () => {
+test('file handler omits DEBUG without the debug flag', () => {
   const dir = tmpDir();
   configureLogging(makeCfg(dir));
+  const log = getLogger('test');
+  log.debug('low level detail');
+  log.info('info detail');
+  const lines = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim().split('\n');
+  expect(lines.some(l => JSON.parse(l).level === 'DEBUG')).toBe(false);
+  expect(lines.some(l => JSON.parse(l).level === 'INFO')).toBe(true);
+});
+
+test('file handler captures DEBUG when debug flag is set', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir, { debug: true }));
   getLogger('test').debug('low level detail');
   const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
   const parsed = JSON.parse(content);
   expect(parsed.level).toBe('DEBUG');
+  expect(parsed.message).toBe('low level detail');
 });
 
-test('log file captures all levels', () => {
+test('log file captures all levels when debug flag is set', () => {
   const dir = tmpDir();
-  configureLogging(makeCfg(dir));
+  configureLogging(makeCfg(dir, { debug: true }));
   const log = getLogger('test');
   log.debug('a');
   log.info('b');
@@ -111,6 +123,21 @@ test('log file captures all levels', () => {
   expect(lines).toHaveLength(5);
   expect(JSON.parse(lines[0]).level).toBe('DEBUG');
   expect(JSON.parse(lines[4]).level).toBe('CRITICAL');
+});
+
+test('log file captures INFO and above without debug flag', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir));
+  const log = getLogger('test');
+  log.debug('a');
+  log.info('b');
+  log.warning('c');
+  log.error('d');
+  log.critical('e');
+  const lines = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim().split('\n');
+  expect(lines).toHaveLength(4);
+  expect(JSON.parse(lines[0]).level).toBe('INFO');
+  expect(JSON.parse(lines[3]).level).toBe('CRITICAL');
 });
 
 test('error field included when Error passed', () => {

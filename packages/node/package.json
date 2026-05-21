@@ -1,6 +1,6 @@
 {
   "name": "runspec-node",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Node/TypeScript language pack for runspec",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

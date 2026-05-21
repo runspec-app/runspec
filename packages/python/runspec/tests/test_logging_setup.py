@@ -213,16 +213,30 @@ class TestFileLogging:
         assert "ts" in obj
         assert "logger" in obj
 
-    def test_file_captures_debug_regardless_of_console_level(self, tmp_path):
+    def test_file_omits_debug_without_debug_flag(self, tmp_path):
         toml = tmp_path / "pkg" / "runspec.toml"
         toml.parent.mkdir()
         configure_logging(self._cfg(), runnable_name="myscript", config_path=toml)
+        log = logging.getLogger("test.file.debug")
+        log.debug("debug message")
+        log.info("info message")
+        for h in _our_file_handlers():
+            h.flush()
+        log_file = tmp_path / "pkg" / "logs" / "myscript.log"
+        lines = [json.loads(line) for line in log_file.read_text().strip().splitlines()]
+        assert not any(obj["level"] == "DEBUG" for obj in lines)
+        assert any(obj["level"] == "INFO" for obj in lines)
+
+    def test_file_captures_debug_with_debug_flag(self, tmp_path):
+        toml = tmp_path / "pkg" / "runspec.toml"
+        toml.parent.mkdir()
+        configure_logging(self._cfg(), runnable_name="myscript", config_path=toml, debug=True)
         logging.getLogger("test.file.debug").debug("debug message")
         for h in _our_file_handlers():
             h.flush()
         log_file = tmp_path / "pkg" / "logs" / "myscript.log"
         lines = [json.loads(line) for line in log_file.read_text().strip().splitlines()]
-        assert any(obj["level"] == "DEBUG" for obj in lines)
+        assert any(obj["level"] == "DEBUG" and obj["message"] == "debug message" for obj in lines)
 
     def test_exc_field_in_json_on_exception(self, tmp_path):
         toml = tmp_path / "pkg" / "runspec.toml"
@@ -336,7 +350,12 @@ class TestDebugFlag:
         assert stderr is not None
         assert stderr.level == logging.WARNING
 
-    def test_debug_flag_does_not_affect_file_level(self, tmp_path):
+    def test_default_file_floor_is_info(self, tmp_path):
+        configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml")
+        handlers = _our_file_handlers()
+        assert handlers[0].level == logging.INFO
+
+    def test_debug_flag_lowers_file_floor_to_debug(self, tmp_path):
         configure_logging(self._cfg(), runnable_name="x", config_path=tmp_path / "runspec.toml", debug=True)
         handlers = _our_file_handlers()
         assert handlers[0].level == logging.DEBUG

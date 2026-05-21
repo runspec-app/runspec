@@ -198,12 +198,11 @@ function doRotate(logPath: string, keep: number): void {
 }
 
 class SizeRotatingFileHandler implements Handler {
-  readonly level = 10; // always DEBUG
-
   constructor(
     private readonly logPath: string,
     private readonly maxBytes: number,
     private readonly keep: number,
+    readonly level: number,
   ) {}
 
   emit(record: LogRecord): void {
@@ -238,12 +237,11 @@ function _periodForDate(d: Date, when: 'daily' | 'midnight' | 'weekly'): string 
 }
 
 class TimedRotatingFileHandler implements Handler {
-  readonly level = 10;
-
   constructor(
     private readonly logPath: string,
     private readonly when: 'daily' | 'midnight' | 'weekly',
     private readonly keep: number,
+    readonly level: number,
   ) {}
 
   emit(record: LogRecord): void {
@@ -273,15 +271,15 @@ const SIZE_RE = /^(\d+(?:\.\d+)?)\s*(KB|MB|GB)$/i;
 const SIZE_MULT: Record<string, number> = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 };
 const TIMED_KEYS = new Set(['daily', 'midnight', 'weekly']);
 
-function makeFileHandler(logPath: string, rotate: string, keep: number): Handler {
+function makeFileHandler(logPath: string, rotate: string, keep: number, level: number): Handler {
   const sizeMatch = SIZE_RE.exec(rotate);
   if (sizeMatch) {
     const maxBytes = Math.round(parseFloat(sizeMatch[1]) * SIZE_MULT[sizeMatch[2].toUpperCase()]);
-    return new SizeRotatingFileHandler(logPath, maxBytes, keep);
+    return new SizeRotatingFileHandler(logPath, maxBytes, keep, level);
   }
   const when = rotate.toLowerCase();
   if (TIMED_KEYS.has(when)) {
-    return new TimedRotatingFileHandler(logPath, when as 'daily' | 'midnight' | 'weekly', keep);
+    return new TimedRotatingFileHandler(logPath, when as 'daily' | 'midnight' | 'weekly', keep, level);
   }
   throw new Error(
     `✗  [config.logging] rotate ${JSON.stringify(rotate)} not recognised.\n` +
@@ -326,24 +324,27 @@ export interface ConfigureLoggingOptions {
  *   INFO     → stdout (plain message — reads like a print() call)
  *   WARNING+ → stderr (prefixed with the level name)
  *
- * DEBUG is file-only by default. Pass `debug: true` (set by the auto-added
- * `--debug` flag / RUNSPEC_DEBUG env var) to include DEBUG records and
- * tracebacks on stdout for in-terminal debugging.
+ * DEBUG is suppressed by default on both stdout and the file. Pass
+ * `debug: true` (set by the auto-added `--debug` flag / RUNSPEC_DEBUG env
+ * var) to include DEBUG records (and tracebacks on stdout) everywhere.
+ * One knob — stdout and file move together. Stderr stays pinned at
+ * WARNING regardless.
  *
- * File handler is always JSON at DEBUG level — the full audit trail.
+ * File handler is always JSON; level follows the same `--debug` toggle as
+ * stdout (defaults to INFO — keeps third-party DEBUG noise out of the audit log).
  */
 export function configureLogging(opts: ConfigureLoggingOptions): void {
   if (!opts.logCfg || _configured) return;
 
   const debug = opts.debug ?? false;
-  const stdoutFloor = debug ? LEVEL_NUM['debug'] : LEVEL_NUM['info'];
+  const floor = debug ? LEVEL_NUM['debug'] : LEVEL_NUM['info'];
 
-  _handlers.push(new StdoutHandler(stdoutFloor, debug));
+  _handlers.push(new StdoutHandler(floor, debug));
   _handlers.push(new StderrHandler(debug));
 
   const logDir = resolveLogDir(opts.configPath);
   const logPath = path.join(logDir, `${opts.runnableName}.log`);
-  _handlers.push(makeFileHandler(logPath, opts.logCfg.rotate, opts.logCfg.keep));
+  _handlers.push(makeFileHandler(logPath, opts.logCfg.rotate, opts.logCfg.keep, floor));
 
   _configured = true;
 }
