@@ -214,9 +214,11 @@ just works.
 | `keep` | int | `7` | Number of rotated backup files to retain. |
 
 There is no `level` knob. Console routing is fixed (see below); the file
-handler is always at DEBUG. Silencing INFO on the console would break
+handler follows the same `--debug` toggle as stdout — INFO by default,
+DEBUG when `--debug` is set. Silencing INFO on the console would break
 agent responses (stdout is the MCP tool response body), so the threshold is
-not configurable. Use the auto-added `--debug` flag to *raise* verbosity.
+not configurable. Use the auto-added `--debug` flag to *raise* verbosity
+everywhere at once.
 
 Log file path is always: `{package_dir}/logs/{runnable_name}.log`  
 Fallback when the package directory is not writable: `{home}/logs/{runnable_name}.log`
@@ -228,14 +230,17 @@ pack routes by record level so the dev never has to branch on context:
 
 | Level | Stream | Format | Notes |
 |---|---|---|---|
-| `DEBUG` | stdout | `DEBUG file.py:42: message` | Only shown when `--debug` is passed |
+| `DEBUG` | stdout | `DEBUG file.py:42: message` | Only included when `--debug` is passed — applies to the file handler too |
 | `INFO` | stdout | `message` | Plain — reads like `print()` |
 | `WARNING` | stderr | `WARNING: message` | Prefixed so it stands out |
 | `ERROR` | stderr | `ERROR: message` | Prefixed so it stands out |
 | `CRITICAL` | stderr | `CRITICAL: message` | Prefixed so it stands out |
 
-The file handler is unconditional — always JSON, always DEBUG — and is the
-full audit trail regardless of console behaviour.
+The file handler is unconditional and always JSON. Its level follows the
+same `--debug` toggle as stdout — INFO by default, DEBUG when `--debug` /
+`RUNSPEC_DEBUG=1` is set. One knob: stdout and the audit file move
+together. Defaulting to INFO keeps third-party library DEBUG noise out of
+the log file. Stderr is independent and stays pinned at WARNING.
 
 The split matches Unix stream conventions, which makes the same `logger.info()`
 call do the right thing in two very different contexts:
@@ -257,8 +262,8 @@ call do the right thing in two very different contexts:
 
 When `[config.logging]` is present, a `--debug` flag is auto-added to every
 runnable (also settable via `RUNSPEC_DEBUG=1`). Passing it includes DEBUG
-records and tracebacks on stdout — useful for in-terminal debugging without
-having to tail the log file:
+records — on stdout *and* in the audit file — and tracebacks on stdout.
+One knob; both surfaces move together:
 
 ```
 my-script --debug
