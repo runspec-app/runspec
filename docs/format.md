@@ -436,12 +436,11 @@ underscore-joined names (e.g. `portal-api_orders_get-list`).
 ## Logging configuration
 
 When `[config.logging]` is present, `parse()` configures stdlib logging
-automatically and auto-injects a `--log-level` flag. The full reference is on
+automatically and auto-injects a `--debug` flag. The full reference is on
 the dedicated [Logging](logging.md) page; the short form:
 
 ```toml
 [config.logging]
-level  = "info"        # debug | info | warning | error | critical
 rotate = "midnight"    # daily | midnight | weekly | "10 MB" | "1 GB" | …
 keep   = 7
 ```

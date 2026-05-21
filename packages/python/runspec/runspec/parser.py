@@ -6,6 +6,7 @@ Orchestrates: find → load → infer → parse argv → validate → coerce →
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -28,7 +29,11 @@ def parse(script_name: str | None = None, argv: list[str] | None = None, config_
     Args:
         script_name: Override runnable name. Inferred from [project.scripts] if None.
         argv:        Override sys.argv. Uses sys.argv[1:] if None. Useful for testing.
-        config_path: Override config file location. Walks up from cwd if None.
+        config_path: Override config file location. If None, resolution order is:
+                     RUNSPEC_CONFIG env var → walk up from the caller's
+                     package directory → walk up from cwd. The caller-relative
+                     walk is what makes installed entry points work from any
+                     working directory.
 
     Returns:
         RunSpec — the fully parsed, validated, coerced argument namespace.
@@ -45,10 +50,13 @@ def parse(script_name: str | None = None, argv: list[str] | None = None, config_
 
 def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None) -> RunSpec:
     """Internal: full parse pipeline. Raises on error — call parse() for CLI use."""
-    # 1. Find config — explicit arg > RUNSPEC_CONFIG env var > walk up from cwd
+    # 1. Find config — explicit arg > RUNSPEC_CONFIG > caller's package > cwd.
+    # The caller-relative walk locates runspec.toml shipped inside an installed
+    # package directory (e.g. .../site-packages/mypkg/runspec.toml), so entry
+    # points work no matter where the user runs them from.
     if config_path is None:
         env_config = os.environ.get("RUNSPEC_CONFIG")
-        config_path = Path(env_config) if env_config else find_config()
+        config_path = Path(env_config) if env_config else find_config(caller=_detect_caller_file())
 
     # 2. Load and normalise TOML
     raw = load_raw(config_path)
@@ -293,6 +301,33 @@ def _print_help(name: str, script: dict[str, Any], command: str | None) -> None:
 def _infer_from_argv() -> str:
     """Infer script name from sys.argv[0]."""
     return Path(sys.argv[0]).stem if sys.argv else "unknown"
+
+
+def _detect_caller_file() -> Path | None:
+    """
+    Return the file path of the first frame on the call stack whose module
+    lives outside the runspec package. That's the user code that invoked
+    parse() — its directory is where the bundled runspec.toml lives.
+
+    Returns None when no such frame can be identified (e.g. invoked from
+    a REPL or compiled extension with no __file__).
+    """
+    frame = inspect.currentframe()
+    if frame is None:
+        return None
+    try:
+        frame = frame.f_back  # skip _detect_caller_file itself
+        while frame is not None:
+            module = inspect.getmodule(frame)
+            name = getattr(module, "__name__", "") if module else ""
+            if name and not name.startswith("runspec.") and name != "runspec":
+                file = frame.f_globals.get("__file__")
+                if file:
+                    return Path(file).resolve()
+            frame = frame.f_back
+    finally:
+        del frame
+    return None
 
 
 def _resolve_subcommand(
