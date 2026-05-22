@@ -92,7 +92,7 @@ function dispatch(
 }
 
 function handleInitialize(reqId: unknown, serverName: string): Record<string, unknown> {
-  const version = '0.6.0';
+  const version = '0.13.1';
   return {
     jsonrpc: '2.0',
     id: reqId,
