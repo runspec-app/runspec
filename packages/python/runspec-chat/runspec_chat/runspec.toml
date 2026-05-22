@@ -1,0 +1,39 @@
+[runspec-chat]
+description = "Launch the runspec-chat Chainlit web app"
+
+[runspec-chat.args.hosts]
+type = "path"
+short = "-H"
+description = "Path to hosts configuration file"
+default = "~/.config/runspec-chat/hosts.toml"
+required = false
+
+[runspec-chat.args.port]
+type = "int"
+short = "-p"
+description = "Port for the Chainlit web server"
+default = 8000
+
+[runspec-chat.args.model]
+type = "str"
+description = "LLM model identifier passed to the adapter"
+default = "claude-haiku-4-5-20251001"
+
+# ---
+
+[setup-keys]
+description = "Generate an SSH key (if missing) and copy it to all configured jump hosts"
+autonomy = "confirm"
+
+[setup-keys.args.hosts]
+type = "path"
+short = "-H"
+description = "Path to hosts configuration file"
+default = "~/.config/runspec-chat/hosts.toml"
+required = false
+
+[setup-keys.args.key-type]
+type = "choice"
+options = ["ed25519", "rsa"]
+default = "ed25519"
+description = "SSH key algorithm to generate"

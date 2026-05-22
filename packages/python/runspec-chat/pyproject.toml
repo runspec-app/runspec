@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-chat"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "chainlit>=2.7.0",
+    "mcp>=1.0.0",
+    "runspec>=0.13.1",
+]
+
+[project.scripts]
+runspec-chat = "runspec_chat.chat:main"
+setup-keys = "runspec_chat.setup_keys:main"
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40.0"]
+openai = ["openai>=1.0.0"]
+dev = [
+    "runspec-chat[anthropic]",
+    "ruff",
+    "mypy",
+]

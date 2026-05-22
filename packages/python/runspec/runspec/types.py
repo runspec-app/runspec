@@ -114,7 +114,7 @@ def _coerce_flag(value: Any, arg: dict[str, Any]) -> bool:
 
 
 def _coerce_path(value: Any, arg: dict[str, Any]) -> Path:
-    return Path(str(value)).resolve()
+    return Path(str(value)).expanduser().resolve()
 
 
 def _coerce_choice(value: Any, arg: dict[str, Any]) -> str:

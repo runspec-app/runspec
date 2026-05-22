@@ -25,4 +25,5 @@ nav:
   - CLI Reference: cli.md
   - Agent Integration: agents.md
   - Jump Hosts: jump-hosts.md
+  - runspec-chat: runspec-chat.md
   - Changelog: changelog.md

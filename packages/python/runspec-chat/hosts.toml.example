@@ -1,0 +1,23 @@
+# Copy to ~/.config/runspec-chat/hosts.toml and edit.
+#
+# Set a default SSH username in [config]. Any host can override it.
+# Passwords are never stored here — enter them once in Settings (⚙) when
+# you need to run /setup-keys. After keys are installed, they're not needed again.
+
+[config]
+user = "myuser"      # default SSH username for all hosts
+
+[hosts.dev-box]
+ssh = "192.168.1.10"
+runspec_path = "/home/myuser/.venv/bin/runspec"
+# → password field in Settings: SSH_PASS
+
+[hosts.build-server]
+ssh = "build.internal"
+user = "builder"     # overrides config.user
+runspec_path = "/opt/runspec/.venv/bin/runspec"
+# → password field in Settings: SSH_BUILD_SERVER_PASS
+
+# Local connection (no SSH — omit ssh field)
+# [hosts.local]
+# runspec_path = "/home/myuser/projects/mytools/.venv/bin/runspec"
