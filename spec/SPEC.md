@@ -712,8 +712,8 @@ Language packs may register additional types via the type registry.
 For every argument, implementations must resolve the value in this order:
 
 1. Explicit CLI argument — highest priority
-2. Environment variable (if `env` declared)
-3. Config file value (future)
+2. `RUNSPEC_ARG_<ARGNAME>` environment variable (automatic for every arg)
+3. `env` aliases (developer-declared list, checked in order)
 4. Default from spec
 5. Error: required — if nothing above matched and `required = true`
 
@@ -728,18 +728,31 @@ else — work without a language-specific library.
 
 ### Naming convention
 
+Per-arg variables use the `RUNSPEC_ARG_` prefix:
+
 ```
-RUNSPEC_<ARG_NAME_UPPERCASED>
+RUNSPEC_ARG_<ARG_NAME_UPPERCASED>
 ```
 
 Hyphens and underscores in the arg name both become underscores. Examples:
 
 | Arg name | Environment variable |
 |---|---|
-| `env` | `RUNSPEC_ENV` |
-| `dry-run` | `RUNSPEC_DRY_RUN` |
-| `input_file` | `RUNSPEC_INPUT_FILE` |
-| `max-retries` | `RUNSPEC_MAX_RETRIES` |
+| `env` | `RUNSPEC_ARG_ENV` |
+| `dry-run` | `RUNSPEC_ARG_DRY_RUN` |
+| `input_file` | `RUNSPEC_ARG_INPUT_FILE` |
+| `max-retries` | `RUNSPEC_ARG_MAX_RETRIES` |
+
+These variables serve two purposes:
+- **Input (user-settable):** Set `RUNSPEC_ARG_QUALITY=95` in your shell to make that your persistent default whenever no CLI arg is passed.
+- **Output (runtime-injected):** `runspec serve` and `runspec jump` inject resolved values into the subprocess environment so bash/node/any-language scripts can read them directly without a library.
+
+The `env` field on an arg declares additional aliases checked after `RUNSPEC_ARG_*`. Accepts a string or list of strings:
+
+```toml
+[compress.args.quality]
+env = ["CI_QUALITY", "ANSIBLE_QUALITY"]  # also checked if RUNSPEC_ARG_QUALITY unset
+```
 
 ### Serialisation
 
@@ -751,6 +764,8 @@ Hyphens and underscores in the arg name both become underscores. Examples:
 | `bool` | `true` | `1` |
 | `str`, `int`, `float`, `path`, `choice` | any value | natural string form |
 | `multiple = true` | list of values | newline-delimited string |
+
+The same formats are accepted on the input side — a user setting `RUNSPEC_ARG_DRY_RUN=1` or `RUNSPEC_ARG_DRY_RUN=true` both coerce correctly to a flag.
 
 Defaults from the spec are always set, even when the caller did not pass the arg
 explicitly. A required arg that was not provided is not set (this is a validation
@@ -791,11 +806,11 @@ dry-run = {type = "flag", default = false}
 ```bash
 #!/bin/bash
 # env vars are already set and validated — no parsing needed
-if [ "$RUNSPEC_DRY_RUN" = "1" ]; then
-    echo "Would back up $RUNSPEC_DAYS days of $RUNSPEC_ENV logs"
+if [ "$RUNSPEC_ARG_DRY_RUN" = "1" ]; then
+    echo "Would back up $RUNSPEC_ARG_DAYS days of $RUNSPEC_ARG_ENV logs"
     exit 0
 fi
-aws s3 sync "/var/log/app/$RUNSPEC_ENV" "s3://logs-$RUNSPEC_ENV" \
+aws s3 sync "/var/log/app/$RUNSPEC_ARG_ENV" "s3://logs-$RUNSPEC_ARG_ENV" \
     --delete --include "*.log"
 ```
 

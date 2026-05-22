@@ -123,7 +123,7 @@ describe('complex.toml', () => {
     const raw = loadRaw(COMPLEX);
     const inferred = inferScript(raw.runnables['pipeline'], raw.config.autonomyDefault);
     const run = inferred.commands['run'];
-    expect(run.args['api-key'].env).toBe('PIPELINE_API_KEY');
+    expect(run.args['api-key'].env).toEqual(['PIPELINE_API_KEY']);
     expect(run.args['api-key'].autonomy).toBe('manual');
   });
 

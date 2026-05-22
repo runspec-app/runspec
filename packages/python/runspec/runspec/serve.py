@@ -423,8 +423,8 @@ def _write(response: dict[str, Any]) -> None:
 
 
 def _arg_name_to_env_key(name: str) -> str:
-    """Convert an arg name to its RUNSPEC_* environment variable key."""
-    return "RUNSPEC_" + name.upper().replace("-", "_")
+    """Convert an arg name to its RUNSPEC_ARG_* environment variable key."""
+    return "RUNSPEC_ARG_" + name.upper().replace("-", "_")
 
 
 def _args_to_runspec_env(arguments: dict[str, Any], arg_specs: dict[str, Any]) -> dict[str, str]:

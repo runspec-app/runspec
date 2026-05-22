@@ -94,7 +94,7 @@ def configure_logging(
       WARNING+ → stderr (prefixed with the level name)
 
     DEBUG is suppressed by default on both stdout and the file. Pass
-    `debug=True` (set by the auto-added `--debug` flag / `RUNSPEC_DEBUG`
+    `debug=True` (set by the auto-added `--debug` flag / `RUNSPEC_ARG_DEBUG`
     env var) to include DEBUG records (and tracebacks on stdout) everywhere.
     One knob — stdout and file move together. Stderr stays pinned at
     WARNING regardless.
@@ -148,7 +148,7 @@ def configure_logging(
     counter = _RunSummaryCounter()
     root.addHandler(counter)
 
-    summary_enabled = bool(log_cfg.get("summary", True)) and not no_summary and not _env_truthy("RUNSPEC_NO_SUMMARY")
+    summary_enabled = bool(log_cfg.get("summary", True)) and not no_summary and not _env_truthy("RUNSPEC_ARG_NO_SUMMARY")
     if summary_enabled:
         _summary_state = {
             "counter": counter,

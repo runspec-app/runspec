@@ -518,7 +518,7 @@ export interface ConfigureLoggingOptions {
  *   WARNING+ → stderr (prefixed with the level name)
  *
  * DEBUG is suppressed by default on both stdout and the file. Pass
- * `debug: true` (set by the auto-added `--debug` flag / RUNSPEC_DEBUG env
+ * `debug: true` (set by the auto-added `--debug` flag / RUNSPEC_ARG_DEBUG env
  * var) to include DEBUG records (and tracebacks on stdout) everywhere.
  * One knob — stdout and file move together. Stderr stays pinned at
  * WARNING regardless.
@@ -554,7 +554,7 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
   const summaryEnabled =
     opts.logCfg.summary !== false &&
     !opts.noSummary &&
-    !['1', 'true', 'yes'].includes((process.env['RUNSPEC_NO_SUMMARY'] ?? '').toLowerCase());
+    !['1', 'true', 'yes'].includes((process.env['RUNSPEC_ARG_NO_SUMMARY'] ?? '').toLowerCase());
 
   if (summaryEnabled) {
     _summaryState = {

@@ -190,13 +190,21 @@ def _normalise_arg(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "multiple": raw.get("multiple", False),
         "delimiter": raw.get("delimiter"),
         "short": raw.get("short"),
-        "env": raw.get("env"),
+        "env": _normalise_env(raw.get("env")),
         "deprecated": raw.get("deprecated"),
         "autonomy": raw.get("autonomy"),
         "ui": raw.get("ui"),
         "meta": raw.get("meta"),
         "position": raw.get("position"),
     }
+
+
+def _normalise_env(raw: Any) -> list[str] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return [raw]
+    return list(raw)
 
 
 def _normalise_groups(raw: dict[str, Any]) -> dict[str, Any]:

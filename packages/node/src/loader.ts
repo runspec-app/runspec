@@ -106,7 +106,7 @@ function normaliseArg(name: string, raw: Record<string, unknown>): ArgSpec {
     delimiter: raw['delimiter'] as string | undefined,
     short: raw['short'] as string | undefined,
     position: raw['position'] as number | undefined,
-    env: raw['env'] as string | undefined,
+    env: normaliseEnv(raw['env']),
     deprecated: raw['deprecated'] as string | undefined,
     autonomy: raw['autonomy'] as string | undefined,
     ui: raw['ui'] as string | undefined,
@@ -133,6 +133,13 @@ function normaliseGroups(raw: Record<string, unknown>): Record<string, GroupSpec
       ];
     }),
   );
+}
+
+function normaliseEnv(raw: unknown): string[] | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw === 'string') return [raw];
+  if (Array.isArray(raw)) return raw.map(String);
+  return undefined;
 }
 
 function normaliseCommands(raw: Record<string, Record<string, unknown>>): Record<string, ScriptSpec> {

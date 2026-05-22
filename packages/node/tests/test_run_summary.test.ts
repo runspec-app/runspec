@@ -42,7 +42,7 @@ function captureStderr() {
 
 beforeEach(() => {
   _resetForTest();
-  delete process.env['RUNSPEC_NO_SUMMARY'];
+  delete process.env['RUNSPEC_ARG_NO_SUMMARY'];
 });
 
 afterAll(() => {
@@ -168,8 +168,8 @@ test('summary=false in config disables summary', () => {
   expect(cap.lines.join('')).not.toContain('runspec: ');
 });
 
-test('RUNSPEC_NO_SUMMARY=1 disables summary', () => {
-  process.env['RUNSPEC_NO_SUMMARY'] = '1';
+test('RUNSPEC_ARG_NO_SUMMARY=1 disables summary', () => {
+  process.env['RUNSPEC_ARG_NO_SUMMARY'] = '1';
   const dir = tmpDir();
   configureLogging(makeCfg(dir));
   const cap = captureStderr();

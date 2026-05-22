@@ -209,7 +209,7 @@ function argsToRunspecEnv(args: Record<string, unknown>, argSpecs: Record<string
     if (value === null || value === undefined) value = s['default'];
     if (value === null || value === undefined) continue;
 
-    const envKey = 'RUNSPEC_' + argName.toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
+    const envKey = 'RUNSPEC_ARG_' + argName.toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
     const argType = (s['type'] as string) ?? 'str';
 
     if (argType === 'flag' || argType === 'bool') {

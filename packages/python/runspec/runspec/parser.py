@@ -90,7 +90,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
             "multiple": False,
             "delimiter": None,
             "short": None,
-            "env": "RUNSPEC_DEBUG",
+            "env": None,
             "deprecated": None,
             "autonomy": None,
             "ui": None,
@@ -112,7 +112,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
             "multiple": False,
             "delimiter": None,
             "short": None,
-            "env": "RUNSPEC_NO_SUMMARY",
+            "env": None,
             "deprecated": None,
             "autonomy": None,
             "ui": None,
@@ -532,14 +532,29 @@ def _apply_env(
     parsed: dict[str, Any],
     arg_specs: dict[str, Any],
 ) -> dict[str, Any]:
-    """Apply environment variable fallbacks where values are still None."""
+    """Apply environment variable fallbacks where values are still None.
+
+    Resolution order:
+      1. RUNSPEC_ARG_<ARGNAME>  — automatic for every arg, user-settable
+      2. env aliases            — developer-declared list, for CI/Ansible/etc
+    """
     result = dict(parsed)
     for name, spec in arg_specs.items():
         norm = name.replace("-", "_")
-        if result.get(norm) is None and spec.get("env"):
-            env_val = os.environ.get(spec["env"])
+        if result.get(norm) is not None:
+            continue
+        # Tier 2a: automatic RUNSPEC_ARG_<ARGNAME>
+        auto_key = "RUNSPEC_ARG_" + name.upper().replace("-", "_")
+        env_val = os.environ.get(auto_key)
+        if env_val is not None:
+            result[norm] = env_val
+            continue
+        # Tier 2b: developer-declared aliases
+        for alias in spec.get("env") or []:
+            env_val = os.environ.get(alias)
             if env_val is not None:
                 result[norm] = env_val
+                break
     return result
 
 
