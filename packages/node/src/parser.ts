@@ -48,7 +48,6 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
           required: false,
           description: 'Show DEBUG records and tracebacks on stdout.',
           multiple: false,
-          env: 'RUNSPEC_DEBUG',
         },
       },
     };
@@ -68,7 +67,6 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
           required: false,
           description: 'Suppress the per-run summary record and stderr line.',
           multiple: false,
-          env: 'RUNSPEC_NO_SUMMARY',
         },
       },
     };
@@ -246,9 +244,22 @@ function applyEnv(parsed: Record<string, unknown>, argSpecs: Record<string, ArgS
   const result = { ...parsed };
   for (const [name, spec] of Object.entries(argSpecs)) {
     const norm = name.replace(/-/g, '_');
-    if ((result[norm] === null || result[norm] === undefined) && spec.env) {
-      const envVal = process.env[spec.env];
-      if (envVal !== undefined) result[norm] = envVal;
+    if (result[norm] !== null && result[norm] !== undefined) continue;
+    // Tier 2a: automatic RUNSPEC_ARG_<ARGNAME>
+    const autoKey = 'RUNSPEC_ARG_' + name.toUpperCase().replace(/-/g, '_');
+    const autoVal = process.env[autoKey];
+    if (autoVal !== undefined) {
+      result[norm] = autoVal;
+      continue;
+    }
+    // Tier 2b: developer-declared aliases
+    const aliases = Array.isArray(spec.env) ? spec.env : (spec.env ? [spec.env] : []);
+    for (const alias of aliases) {
+      const envVal = process.env[alias];
+      if (envVal !== undefined) {
+        result[norm] = envVal;
+        break;
+      }
     }
   }
   return result;

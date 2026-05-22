@@ -169,7 +169,7 @@ class TestDisable:
         assert ls._summary_state is None
 
     def test_env_var_disables_summary(self, monkeypatch):
-        monkeypatch.setenv("RUNSPEC_NO_SUMMARY", "1")
+        monkeypatch.setenv("RUNSPEC_ARG_NO_SUMMARY", "1")
         configure_logging(_cfg(summary=True), runnable_name="x")
         assert ls._summary_state is None
 

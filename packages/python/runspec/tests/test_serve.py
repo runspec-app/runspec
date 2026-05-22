@@ -12,6 +12,7 @@ import pytest
 from runspec.serve import (
     MCP_PROTOCOL_VERSION,
     _args_to_argv,
+    _args_to_runspec_env,
     _dispatch,
     _expand_tools,
     _find_script,
@@ -70,6 +71,34 @@ def test_argv_ordering_follows_spec():
 def test_argv_choice_arg():
     result = _args_to_argv({"format": "json"}, {"format": {"type": "choice", "options": ["json", "csv"]}})
     assert result == ["--format", "json"]
+
+
+# ── _args_to_runspec_env ──────────────────────────────────────────────────────
+
+
+def test_runspec_env_explicit_args_injected():
+    specs = {"quality": {"type": "int", "default": 7}}
+    result = _args_to_runspec_env({"quality": 95}, specs)
+    assert result == {"RUNSPEC_ARG_QUALITY": "95"}
+
+
+def test_runspec_env_spec_defaults_not_injected():
+    """Spec defaults must NOT be injected — they would overwrite RUNSPEC_ARG_* already in os.environ."""
+    specs = {"quality": {"type": "int", "default": 7}}
+    result = _args_to_runspec_env({}, specs)
+    assert "RUNSPEC_ARG_QUALITY" not in result
+
+
+def test_runspec_env_flag_encoding():
+    specs = {"delete": {"type": "flag", "default": False}}
+    assert _args_to_runspec_env({"delete": True}, specs) == {"RUNSPEC_ARG_DELETE": "1"}
+    assert _args_to_runspec_env({"delete": False}, specs) == {"RUNSPEC_ARG_DELETE": "0"}
+
+
+def test_runspec_env_hyphen_normalised():
+    specs = {"dry-run": {"type": "flag"}}
+    result = _args_to_runspec_env({"dry-run": True}, specs)
+    assert result == {"RUNSPEC_ARG_DRY_RUN": "1"}
 
 
 # ── _handle_initialize ────────────────────────────────────────────────────────

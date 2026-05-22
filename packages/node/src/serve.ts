@@ -200,16 +200,17 @@ function argsToArgv(args: Record<string, unknown>, argSpecs: Record<string, unkn
   return argv;
 }
 
+// Only explicitly-provided args are injected — spec defaults are omitted so they
+// don't overwrite RUNSPEC_ARG_* vars already set in the server environment.
 function argsToRunspecEnv(args: Record<string, unknown>, argSpecs: Record<string, unknown>): Record<string, string> {
   const env: Record<string, string> = {};
 
   for (const [argName, spec] of Object.entries(argSpecs)) {
     const s = spec as Record<string, unknown>;
-    let value = args[argName] ?? args[argName.replace(/-/g, '_')];
-    if (value === null || value === undefined) value = s['default'];
+    const value = args[argName] ?? args[argName.replace(/-/g, '_')];
     if (value === null || value === undefined) continue;
 
-    const envKey = 'RUNSPEC_' + argName.toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
+    const envKey = 'RUNSPEC_ARG_' + argName.toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
     const argType = (s['type'] as string) ?? 'str';
 
     if (argType === 'flag' || argType === 'bool') {

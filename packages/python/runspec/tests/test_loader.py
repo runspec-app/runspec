@@ -370,7 +370,7 @@ class TestIntegrationFixtures:
         assert args["workers"]["range"] == (1, 32)
         assert args["dry-run"]["default"] is False
         assert args["verbose"]["short"] == "-v"
-        assert args["api-key"]["env"] == "PIPELINE_API_KEY"
+        assert args["api-key"]["env"] == ["PIPELINE_API_KEY"]
         assert args["api-key"]["autonomy"] == "manual"
         assert args["threads"]["deprecated"] == "use --workers instead"
         assert args["tag"]["multiple"] is True

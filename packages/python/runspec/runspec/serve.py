@@ -423,19 +423,21 @@ def _write(response: dict[str, Any]) -> None:
 
 
 def _arg_name_to_env_key(name: str) -> str:
-    """Convert an arg name to its RUNSPEC_* environment variable key."""
-    return "RUNSPEC_" + name.upper().replace("-", "_")
+    """Convert an arg name to its RUNSPEC_ARG_* environment variable key."""
+    return "RUNSPEC_ARG_" + name.upper().replace("-", "_")
 
 
 def _args_to_runspec_env(arguments: dict[str, Any], arg_specs: dict[str, Any]) -> dict[str, str]:
-    """Convert a resolved arguments dict to RUNSPEC_* environment variables."""
+    """Convert explicitly-provided MCP arguments to RUNSPEC_ARG_* environment variables.
+
+    Only explicitly provided arguments are injected — spec defaults are omitted so they
+    don't overwrite RUNSPEC_ARG_* vars the caller already set in the server environment.
+    """
     env_vars: dict[str, str] = {}
     for arg_name, spec in arg_specs.items():
         value = arguments.get(arg_name)
         if value is None:
             value = arguments.get(arg_name.replace("-", "_"))
-        if value is None:
-            value = spec.get("default")
         if value is None:
             continue
 

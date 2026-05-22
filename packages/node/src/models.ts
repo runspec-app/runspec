@@ -34,7 +34,7 @@ export interface ArgSpec {
   delimiter?: string;
   short?: string;
   position?: number;
-  env?: string;
+  env?: string | string[];
   deprecated?: string;
   autonomy?: string;
   ui?: string;

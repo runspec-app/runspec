@@ -102,7 +102,7 @@ class TestComplexFixture:
 
     def test_env_arg(self, spec):
         api_key = spec["runnables"]["pipeline"]["commands"]["run"]["args"]["api-key"]
-        assert api_key["env"] == "PIPELINE_API_KEY"
+        assert api_key["env"] == ["PIPELINE_API_KEY"]
         assert api_key["autonomy"] == "manual"
 
     def test_deprecated_arg(self, spec):
