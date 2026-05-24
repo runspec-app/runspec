@@ -2,10 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 import runspec as rs
 from runspec_chat.chat import _resolve_hosts_path
@@ -75,7 +72,7 @@ def main() -> None:
         print("No SSH hosts found in the config (hosts with an 'ssh' field).")
         sys.exit(0)
 
-    key_type: str = spec.key_type
+    key_type = str(spec.key_type)
     key_path = Path.home() / ".ssh" / f"runspec-chat_{key_type}"
     pub_key = _ensure_key(key_path, key_type)
 

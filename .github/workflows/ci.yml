@@ -17,6 +17,7 @@ jobs:
     outputs:
       python: ${{ steps.filter.outputs.python }}
       node: ${{ steps.filter.outputs.node }}
+      chat: ${{ steps.filter.outputs.chat }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -24,11 +25,14 @@ jobs:
         with:
           filters: |
             python:
-              - 'packages/python/**'
+              - 'packages/python/runspec/**'
               - 'tests/integration/**'
               - '.github/workflows/ci.yml'
             node:
               - 'packages/node/**'
+              - '.github/workflows/ci.yml'
+            chat:
+              - 'packages/python/runspec-chat/**'
               - '.github/workflows/ci.yml'
 
   python:
@@ -64,6 +68,26 @@ jobs:
 
       - name: Run tests
         run: pytest
+
+      - name: Build wheel
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/runspec --help
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          assert (pkg / 'py.typed').is_file(), 'py.typed missing from wheel'
+          print('Wheel contents OK')
+          "
 
       - name: Upload coverage
         uses: codecov/codecov-action@v6
@@ -106,9 +130,54 @@ jobs:
         working-directory: packages/node
         run: npm test
 
+  chat:
+    name: runspec-chat
+    needs: changes
+    if: needs.changes.outputs.chat == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-chat
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Type check
+        run: mypy runspec_chat/
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/runspec-chat --help
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_chat')
+          assert (pkg / 'chainlit_config' / 'config.toml').is_file(), 'chainlit_config/config.toml missing from wheel'
+          assert (pkg / 'chainlit.md').is_file(), 'chainlit.md missing from wheel'
+          print('Wheel contents OK')
+          "
+
   ci:
     name: CI
-    needs: [python, node]
+    needs: [python, node, chat]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -119,14 +188,20 @@ jobs:
           # files for that language pack.
           python_result='${{ needs.python.result }}'
           node_result='${{ needs.node.result }}'
+          chat_result='${{ needs.chat.result }}'
           echo "python: $python_result"
           echo "node:   $node_result"
+          echo "chat:   $chat_result"
           if [[ "$python_result" == "failure" || "$python_result" == "cancelled" ]]; then
             echo "Python checks failed."
             exit 1
           fi
           if [[ "$node_result" == "failure" || "$node_result" == "cancelled" ]]; then
             echo "Node checks failed."
+            exit 1
+          fi
+          if [[ "$chat_result" == "failure" || "$chat_result" == "cancelled" ]]; then
+            echo "Chat checks failed."
             exit 1
           fi
           echo "All checks passed (or were correctly skipped)."

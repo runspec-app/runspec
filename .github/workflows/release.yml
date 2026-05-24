@@ -25,6 +25,20 @@ jobs:
           pip install build
           python -m build
 
+      - name: Wheel smoke test
+        working-directory: packages/python/runspec
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/runspec --help
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          assert (pkg / 'py.typed').is_file(), 'py.typed missing from wheel'
+          print('Wheel contents OK')
+          "
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.1] — 2026-05-24
+
+### Fixed
+
+- **Settings panel, MCP tools, and API key prompt restored** — Chainlit config
+  was excluded from wheels by all major build tools because the source folder
+  was named `.chainlit/` (hidden directory). Renamed to `chainlit_config/`
+  inside the package. At startup a temp directory is created, the config is
+  copied there as `.chainlit/`, and `CHAINLIT_ROOT` points to it — no
+  build-tool-specific packaging directives required. Works identically with
+  pip, uv, poetry, hatchling, and setuptools.
+- **`anthropic` SDK is now a required dependency** — previously it was an
+  optional extra (`[anthropic]`) which left a freshly installed app unable to
+  make any LLM calls. `pip install runspec-chat` now includes it automatically.
+
+---
+
 ## [0.4.0] — 2026-05-24
 
 ### Added

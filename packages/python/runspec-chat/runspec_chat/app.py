@@ -6,12 +6,10 @@ import shutil
 import sys
 from pathlib import Path
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 import chainlit as cl
+from chainlit.types import CommandDict
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -29,11 +27,14 @@ _DEFAULT_MODEL = os.environ.get("RUNSPEC_CHAT_MODEL", "claude-haiku-4-5-20251001
 _SELF_TOOLS = {"runspec-chat", "setup-keys"}  # hide from "Local tools ready" message
 _COMMANDS_HIDE = {"runspec-chat"}  # hide from slash-command autocomplete
 
-_HOSTS_PATH = Path(os.environ.get("RUNSPEC_CHAT_HOSTS", "~/.config/runspec-chat/jump_hosts.toml")).expanduser()
+_HOSTS_PATH = Path(
+    os.environ.get("RUNSPEC_CHAT_HOSTS", "~/.config/runspec-chat/jump_hosts.toml")
+).expanduser()
 
+_chainlit_root = Path(os.environ.get("CHAINLIT_ROOT", Path(__file__).parent))
 _sync_user_env(
     hosts_path=_HOSTS_PATH,
-    chainlit_config=Path(__file__).parent.parent / ".chainlit" / "config.toml",
+    chainlit_config=_chainlit_root / ".chainlit" / "config.toml",
 )
 
 
@@ -45,7 +46,10 @@ def _load_host_categories() -> dict[str, str]:
     try:
         with open(resolved, "rb") as f:
             cfg = tomllib.load(f)
-        return {name: info.get("category", name) for name, info in cfg.get("hosts", {}).items()}
+        return {
+            name: info.get("category", name)
+            for name, info in cfg.get("hosts", {}).items()
+        }
     except Exception:
         return {}
 
@@ -55,11 +59,17 @@ _HOST_CATEGORIES: dict[str, str] = _load_host_categories()
 
 def _get_user_identity() -> tuple[str, str | None]:
     """Return (login, display_name). display_name is None if OS username is all that's known."""
-    login = os.environ.get("USER") or os.environ.get("LOGNAME") or os.environ.get("USERNAME") or "unknown"
+    login = (
+        os.environ.get("USER")
+        or os.environ.get("LOGNAME")
+        or os.environ.get("USERNAME")
+        or "unknown"
+    )
     if sys.platform == "win32":
         try:
             import win32api  # type: ignore[import-untyped]
             import win32con  # type: ignore[import-untyped]
+
             name = win32api.GetUserNameEx(win32con.NameDisplay)
             if name and name != login:
                 return login, name
@@ -68,6 +78,7 @@ def _get_user_identity() -> tuple[str, str | None]:
     else:
         try:
             import pwd
+
             gecos = pwd.getpwuid(os.getuid()).pw_gecos
             name = gecos.split(",")[0].strip()
             if name and name != login:
@@ -90,7 +101,7 @@ async def _refresh_commands() -> None:
     mcp_tools: dict = cl.user_session.get("mcp_tools", {})
 
     seen: set[str] = set()
-    commands = []
+    commands: list[CommandDict] = []
 
     for t in local_tools:
         if t["name"] in _COMMANDS_HIDE or t["name"] in seen:
@@ -98,7 +109,16 @@ async def _refresh_commands() -> None:
         seen.add(t["name"])
         base_desc = t.get("description") or t["name"]
         icon = "key" if t["name"] == "setup-keys" else "terminal"
-        commands.append({"id": t["name"], "description": f"[local] {base_desc}", "icon": icon, "button": False})
+        commands.append(
+            {
+                "id": t["name"],
+                "description": f"[local] {base_desc}",
+                "icon": icon,
+                "button": False,
+                "persistent": None,
+                "selected": None,
+            }
+        )
 
     for conn, tools in mcp_tools.items():
         if conn == _LOCAL_CONN:
@@ -109,7 +129,16 @@ async def _refresh_commands() -> None:
                 continue
             seen.add(t["name"])
             base_desc = t.get("description") or t["name"]
-            commands.append({"id": t["name"], "description": f"[{category}] {base_desc}", "icon": "terminal", "button": False})
+            commands.append(
+                {
+                    "id": t["name"],
+                    "description": f"[{category}] {base_desc}",
+                    "icon": "terminal",
+                    "button": False,
+                    "persistent": None,
+                    "selected": None,
+                }
+            )
 
     try:
         await cl.context.emitter.set_commands(commands)
@@ -138,7 +167,7 @@ async def on_mcp_connect(connection, session: ClientSession) -> None:
     mcp_tools: dict = cl.user_session.get("mcp_tools", {})
     mcp_tools[connection.name] = tools
     cl.user_session.set("mcp_tools", mcp_tools)
-    tool_names = [t["name"] for t in tools]
+    tool_names: list[str] = [str(t["name"]) for t in tools]
     category = _HOST_CATEGORIES.get(connection.name, connection.name)
     await cl.Message(
         content=f"── {category} ──\n✓ Connected to **{connection.name}** — {len(tools)} tool(s): `{'`, `'.join(tool_names)}`"
@@ -164,7 +193,9 @@ async def on_chat_start() -> None:
     cl.user_session.set("messages", [])
     cl.user_session.set("mcp_tools", {})
     cl.user_session.set("local_sessions", {})
-    cl.user_session.set("user_identity", {"login": _USER_LOGIN, "display_name": _USER_DISPLAY_NAME})
+    cl.user_session.set(
+        "user_identity", {"login": _USER_LOGIN, "display_name": _USER_DISPLAY_NAME}
+    )
 
     # API key: browser settings take precedence over .env
     env = cl.user_session.get("env") or {}
@@ -176,7 +207,8 @@ async def on_chat_start() -> None:
     user_str = _format_user(_USER_LOGIN, _USER_DISPLAY_NAME)
     system = DEFAULT_SYSTEM + f"\nSession user: {user_str}."
     cl.user_session.set(
-        "adapter", AnthropicAdapter(model=_DEFAULT_MODEL, api_key=api_key or None, system=system)
+        "adapter",
+        AnthropicAdapter(model=_DEFAULT_MODEL, api_key=api_key or None, system=system),
     )
 
     await _connect_local()
@@ -408,7 +440,7 @@ def _get_session(mcp_name: str) -> ClientSession | None:
     """Return the ClientSession for a named connection, local or Chainlit-managed."""
     if mcp_name == _LOCAL_CONN:
         return cl.user_session.get("local_session")
-    pair = cl.context.session.mcp_sessions.get(mcp_name)
+    pair = getattr(cl.context.session, "mcp_sessions", {}).get(mcp_name)
     return pair.client if pair else None
 
 

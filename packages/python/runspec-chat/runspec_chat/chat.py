@@ -1,16 +1,15 @@
+import atexit
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import tomllib
 from pathlib import Path
 
 import runspec as rs
-
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore[no-redef]
 
 
 def _shared_pass_key() -> str:
@@ -63,15 +62,22 @@ def _sync_user_env(hosts_path: Path, chainlit_config: Path) -> None:
     chainlit_config.write_text(text)
 
 
+def _init_chainlit_root(hosts_path: Path) -> Path:
+    src = Path(__file__).parent / "chainlit_config"
+    tmp = Path(tempfile.mkdtemp(prefix="runspec-chat-"))
+    atexit.register(shutil.rmtree, tmp, True)
+    shutil.copytree(src, tmp / ".chainlit")
+    shutil.copy(Path(__file__).parent / "chainlit.md", tmp / "chainlit.md")
+    _sync_user_env(hosts_path, tmp / ".chainlit" / "config.toml")
+    return tmp
+
+
 def main() -> None:
     spec = rs.parse("runspec-chat")
 
-    package_root = Path(__file__).parent.parent
-    os.environ["CHAINLIT_ROOT"] = str(package_root)
-
     hosts_path = Path(str(spec.hosts)).expanduser()
-    chainlit_config = package_root / ".chainlit" / "config.toml"
-    _sync_user_env(hosts_path, chainlit_config)
+    chainlit_root = _init_chainlit_root(hosts_path)
+    os.environ["CHAINLIT_ROOT"] = str(chainlit_root)
 
     if spec.model:
         os.environ["RUNSPEC_CHAT_MODEL"] = str(spec.model)
@@ -82,10 +88,15 @@ def main() -> None:
     # Use our launcher instead of `python -m chainlit` so the Python 3.14
     # nest_asyncio compatibility shim is applied before chainlit's CLI runs.
     cmd = [
-        sys.executable, "-m", "runspec_chat._chainlit_launcher",
-        "run", str(app_py),
-        "--port", str(spec.port),
-        "--host", str(spec.host),
+        sys.executable,
+        "-m",
+        "runspec_chat._chainlit_launcher",
+        "run",
+        str(app_py),
+        "--port",
+        str(spec.port),
+        "--host",
+        str(spec.host),
     ]
     if spec.watch:
         cmd.append("--watch")
