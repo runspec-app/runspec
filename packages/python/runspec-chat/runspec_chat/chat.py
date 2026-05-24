@@ -77,7 +77,7 @@ def main() -> None:
 
     hosts_path = Path(str(spec.hosts)).expanduser()
     chainlit_root = _init_chainlit_root(hosts_path)
-    os.environ["CHAINLIT_ROOT"] = str(chainlit_root)
+    os.environ["CHAINLIT_APP_ROOT"] = str(chainlit_root)
 
     if spec.model:
         os.environ["RUNSPEC_CHAT_MODEL"] = str(spec.model)
