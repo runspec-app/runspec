@@ -213,7 +213,7 @@ Both Python and Node packages are active and published.
 |---|---|---|
 | `runspec` | 0.15.1 | PyPI |
 | `runspec-node` | 0.15.0 | npm |
-| `runspec-chat` | 0.4.5 | PyPI |
+| `runspec-chat` | 0.4.6 | PyPI |
 | `runspec-registry` | 0.1.1 | PyPI (archived — registry was removed from `runspec serve` in favour of the SSH+MCP jump-host model) |
 
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").

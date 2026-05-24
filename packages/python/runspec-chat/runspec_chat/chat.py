@@ -115,7 +115,9 @@ CREATE TABLE IF NOT EXISTS steps (
     "language"      TEXT,
     "indent"        INTEGER,
     "defaultOpen"   INTEGER,
+    "autoCollapse"  INTEGER,
     "modes"         TEXT,
+    "icon"          TEXT,
     FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS elements (
@@ -162,12 +164,33 @@ def _ensure_auth_secret() -> str:
 
 
 def _ensure_db(db_path: Path) -> None:
-    """Create the SQLite history DB schema if it doesn't exist."""
+    """Create the SQLite history DB schema and apply any missing column migrations."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
     con.executescript(_SQLITE_SCHEMA)
+
+    # Add any columns introduced after the initial schema (ALTER TABLE is
+    # idempotent-guarded by checking existing columns first).
+    _add_columns_if_missing(
+        con,
+        "steps",
+        [
+            ("autoCollapse", "INTEGER"),
+            ("icon", "TEXT"),
+        ],
+    )
+
     con.commit()
     con.close()
+
+
+def _add_columns_if_missing(
+    con: sqlite3.Connection, table: str, columns: list[tuple[str, str]]
+) -> None:
+    existing = {row[1] for row in con.execute(f'PRAGMA table_info("{table}")')}
+    for col_name, col_type in columns:
+        if col_name not in existing:
+            con.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col_name}" {col_type}')
 
 
 def main() -> None:

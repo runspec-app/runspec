@@ -9,6 +9,12 @@
 #
 # category: optional label shown in connection messages and slash-command
 # descriptions. Falls back to the host name when omitted.
+#
+# WINDOWS PATHS: TOML treats backslash as an escape character, so use
+# forward slashes in path values — Windows accepts them everywhere:
+#   runspec_path = "c:/Users/jason/.venv/bin/runspec"
+# Or use TOML literal strings (single quotes) to pass backslashes verbatim:
+#   runspec_path = 'c:\Users\jason\.venv\bin\runspec'
 
 [config]
 user = "myuser"      # default SSH username for all hosts
