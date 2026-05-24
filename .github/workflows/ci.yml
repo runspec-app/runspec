@@ -157,6 +157,9 @@ jobs:
       - name: Type check
         run: mypy runspec_chat/
 
+      - name: Run tests
+        run: pytest
+
       - name: Build wheel
         run: |
           pip install build

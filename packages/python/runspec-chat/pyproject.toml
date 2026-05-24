@@ -23,7 +23,11 @@ openai = ["openai>=1.0.0"]
 dev = [
     "ruff",
     "mypy",
+    "pytest>=8.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.11"
