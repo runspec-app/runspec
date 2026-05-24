@@ -316,7 +316,11 @@ async def _mcp_task(
                 session_holder.append(session)
                 ready.set()
                 await stop.wait()
-    except Exception:
+    except Exception as exc:
+        import traceback
+
+        traceback.print_exc()
+        print(f"[_mcp_task] failed: {exc}", flush=True)
         ready.set()  # unblock caller even on failure
 
 
@@ -553,10 +557,19 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
 
     if is_windows or not has_sshpass:
         pub_key_content = pub_key.read_text().strip()
-        host_lines = "\n".join(
-            f"  ssh {target} \"cat >> ~/.ssh/authorized_keys\" << 'EOF'\n  {pub_key_content}\n  EOF"
-            for _, target, _ in resolved
-        )
+        if is_windows:
+            host_lines = "\n".join(
+                f'  type "%USERPROFILE%\\.ssh\\runspec-chat_ed25519.pub" | ssh {target} '
+                f'"mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"'
+                for _, target, _ in resolved
+            )
+            shell_label = "PowerShell / cmd"
+        else:
+            host_lines = "\n".join(
+                f"  ssh {target} \"cat >> ~/.ssh/authorized_keys\" << 'EOF'\n  {pub_key_content}\n  EOF"
+                for _, target, _ in resolved
+            )
+            shell_label = "bash"
         reason = (
             "Windows"
             if is_windows
@@ -565,8 +578,8 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
         return (
             f"Key generated at `{pub_key}` ✓\n\n"
             f"Automated copy unavailable ({reason}). "
-            f"Run these commands once on the machine running runspec-chat:\n\n"
-            f"```bash\n{host_lines}\n```\n\n"
+            f"Run these commands once ({shell_label}):\n\n"
+            f"```\n{host_lines}\n```\n\n"
             f"Or ask your admin to add `{pub_key}` to each host's `~/.ssh/authorized_keys`."
         )
 
@@ -800,11 +813,30 @@ async def _llm_loop(user_text: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _is_bare_command(text: str) -> bool:
+    """Return True if text looks like a bare command name (no slash, single token, known tool)."""
+    parts = text.split()
+    if len(parts) != 1:
+        return False
+    name = parts[0]
+    mcp_tools: dict = cl.user_session.get("mcp_tools", {}) if cl.user_session else {}
+    local_tools: list = (
+        cl.user_session.get("local_tools", []) if cl.user_session else []
+    )
+    all_tools = local_tools + [t for tools in mcp_tools.values() for t in tools]
+    return any(t["name"] == name for t in all_tools)
+
+
 @cl.on_message
 async def on_message(msg: cl.Message) -> None:
     await _refresh_commands()
     text = msg.content.strip()
+    if not text:
+        return
     if text.startswith("/"):
         await _handle_slash(text)
+    elif _is_bare_command(text):
+        # Chainlit sends the command name without "/" when a zero-arg chip is submitted
+        await _handle_slash(f"/{text}")
     else:
         await _llm_loop(text)
