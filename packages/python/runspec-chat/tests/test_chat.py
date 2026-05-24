@@ -57,7 +57,7 @@ def test_sync_user_env_shared_ssh(tmp_path):
     cfg = tmp_path / "config.toml"
     _write_config(cfg, ["ANTHROPIC_API_KEY"])
     hosts = tmp_path / "jump_hosts.toml"
-    hosts.write_text("[hosts.myserver]\nssh = \"myserver.example.com\"\n")
+    hosts.write_text('[hosts.myserver]\nssh = "myserver.example.com"\n')
 
     chat._sync_user_env(hosts, cfg)
 
@@ -70,7 +70,9 @@ def test_sync_user_env_per_host_user(tmp_path):
     cfg = tmp_path / "config.toml"
     _write_config(cfg, ["ANTHROPIC_API_KEY"])
     hosts = tmp_path / "jump_hosts.toml"
-    hosts.write_text("[hosts.my-server]\nssh = \"my-server.example.com\"\nuser = \"admin\"\n")
+    hosts.write_text(
+        '[hosts.my-server]\nssh = "my-server.example.com"\nuser = "admin"\n'
+    )
 
     chat._sync_user_env(hosts, cfg)
 
@@ -84,7 +86,7 @@ def test_sync_user_env_non_ssh_host_ignored(tmp_path):
     cfg = tmp_path / "config.toml"
     _write_config(cfg, ["ANTHROPIC_API_KEY"])
     hosts = tmp_path / "jump_hosts.toml"
-    hosts.write_text("[hosts.local]\nbin = \"/usr/local/bin/runspec\"\n")
+    hosts.write_text('[hosts.local]\nbin = "/usr/local/bin/runspec"\n')
 
     chat._sync_user_env(hosts, cfg)
 
@@ -119,8 +121,12 @@ def test_main_sets_chainlit_app_root(monkeypatch):
     assert exc.value.code == 0
     assert "CHAINLIT_APP_ROOT" in captured, "subprocess.run was never called"
     root = Path(captured["CHAINLIT_APP_ROOT"])
-    assert (root / ".chainlit" / "config.toml").is_file(), "config.toml missing from CHAINLIT_APP_ROOT"
-    assert (root / "chainlit.md").is_file(), "chainlit.md missing from CHAINLIT_APP_ROOT"
+    assert (root / ".chainlit" / "config.toml").is_file(), (
+        "config.toml missing from CHAINLIT_APP_ROOT"
+    )
+    assert (root / "chainlit.md").is_file(), (
+        "chainlit.md missing from CHAINLIT_APP_ROOT"
+    )
 
 
 def test_main_config_has_mcp_enabled(monkeypatch):
@@ -193,7 +199,9 @@ def test_main_headless_flag_forwarded(monkeypatch):
 
 
 def test_main_custom_port_and_host(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["runspec-chat", "--port", "9000", "--host", "127.0.0.1"])
+    monkeypatch.setattr(
+        sys, "argv", ["runspec-chat", "--port", "9000", "--host", "127.0.0.1"]
+    )
     captured: dict = {}
     monkeypatch.setattr(subprocess, "run", _fake_run(captured))
 
