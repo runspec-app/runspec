@@ -60,7 +60,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#node-v}"
           ESCAPED="${VERSION//./\\.}"
-          awk "/^## ${ESCAPED}/{found=1; next} found && /^---/{exit} found{print}" \
+          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
             docs/changelog.md > release-notes.md
 
       - name: Create GitHub Release

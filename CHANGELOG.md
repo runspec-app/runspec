@@ -7,6 +7,53 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.14.0] — 2026-05-24
+
+### Added
+
+- **Run summary captures real invoking user** (Python and Node). The closing
+  stderr line and JSON audit record now include who actually ran the tool.
+  `SUDO_USER` is captured when present so the real person is recorded even
+  when running as a shared account via `sudo`.
+  Format: `user: alice` (no sudo) or `user: alice → root (sudo)`.
+
+---
+
+## [0.13.1] — 2026-05-22
+
+### Fixed
+
+- **`runspec serve` no longer injects spec defaults into subprocess env** —
+  `_args_to_runspec_env` was falling back to spec defaults when the MCP call
+  omitted an arg, then merging those defaults after `os.environ`. This
+  overwrote `RUNSPEC_ARG_*` vars already set in the server environment,
+  breaking the env-var default tier through `serve`. Fix: only inject
+  explicitly-provided MCP args. Applied to both Python and Node.
+- Node server version string was hardcoded to `0.6.0`; now reads from
+  `package.json`.
+
+---
+
+## [0.13.0] — 2026-05-22
+
+### Added (Breaking)
+
+- **`RUNSPEC_ARG_*` env var tier for all args** — every arg now automatically
+  reads `RUNSPEC_ARG_<ARGNAME>` as an environment variable fallback before the
+  spec default. No author opt-in required. Resolution order:
+  CLI arg → `RUNSPEC_ARG_*` → `env` aliases → spec default.
+- `env` field now accepts a string or list of strings for developer-declared
+  env aliases (for CI, Ansible, etc.) checked after `RUNSPEC_ARG_*`.
+
+### Breaking
+
+- Runtime-injected subprocess vars renamed: `RUNSPEC_DEBUG` →
+  `RUNSPEC_ARG_DEBUG`, `RUNSPEC_NO_SUMMARY` → `RUNSPEC_ARG_NO_SUMMARY`, all
+  other runtime-injected arg vars gain the `_ARG_` infix for consistency.
+  Framework vars `RUNSPEC_AGENT` and `RUNSPEC_CONFIG` are unchanged.
+
+---
+
 ## [0.12.2] — 2026-05-21
 
 ### Fixed
