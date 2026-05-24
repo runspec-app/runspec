@@ -1,4 +1,5 @@
 [runspec-chat]
+serve = false
 description = "Launch the runspec-chat Chainlit web app"
 
 [runspec-chat.args.hosts]
@@ -53,6 +54,7 @@ required = false
 # ---
 
 [setup-keys]
+serve = ["local"]
 description = "Generate an SSH key (if missing) and copy it to all configured jump hosts"
 autonomy = "confirm"
 

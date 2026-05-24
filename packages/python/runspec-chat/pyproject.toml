@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-chat"
-version = "0.4.1"
+version = "0.4.3"
 requires-python = ">=3.11"
 dependencies = [
     "chainlit>=2.7.0",
@@ -23,7 +23,12 @@ openai = ["openai>=1.0.0"]
 dev = [
     "ruff",
     "mypy",
+    "pytest>=8.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 
 [tool.mypy]
 python_version = "3.11"

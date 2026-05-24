@@ -211,8 +211,8 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm |
 |---|---|---|
-| `runspec` | 0.13.1 | PyPI |
-| `runspec-node` | 0.13.1 | npm |
+| `runspec` | 0.15.0 | PyPI |
+| `runspec-node` | 0.15.0 | npm |
 | `runspec-registry` | 0.1.1 | PyPI (archived — registry was removed from `runspec serve` in favour of the SSH+MCP jump-host model) |
 
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").
