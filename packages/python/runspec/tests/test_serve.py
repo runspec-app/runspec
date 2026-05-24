@@ -19,7 +19,10 @@ from runspec.serve import (
     _handle_initialize,
     _handle_tools_call,
     _handle_tools_list,
+    _is_serve_match,
+    _serve_context,
     _server_name,
+    _validate_serve,
     serve,
 )
 
@@ -609,3 +612,158 @@ def test_serve_includes_runnable_with_serve_true_explicitly(tmp_path):
         serve()
 
     assert "worker" in captured_tools
+
+
+# ── serve context helpers ─────────────────────────────────────────────────────
+
+
+def test_serve_context_local_when_no_ssh(monkeypatch):
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.delenv("RUNSPEC_SERVE_CONTEXT", raising=False)
+    assert _serve_context() == "local"
+
+
+def test_serve_context_remote_when_ssh(monkeypatch):
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.1 12345 10.0.0.2 22")
+    monkeypatch.delenv("RUNSPEC_SERVE_CONTEXT", raising=False)
+    assert _serve_context() == "remote"
+
+
+def test_serve_context_override_wins(monkeypatch):
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.1 12345 10.0.0.2 22")
+    monkeypatch.setenv("RUNSPEC_SERVE_CONTEXT", "local")
+    assert _serve_context() == "local"
+
+
+def test_validate_serve_none():
+    assert _validate_serve(None) == []
+
+
+def test_validate_serve_true():
+    assert _validate_serve(True) == []
+
+
+def test_validate_serve_false():
+    assert _validate_serve(False) == []
+
+
+def test_validate_serve_local_list():
+    assert _validate_serve(["local"]) == []
+
+
+def test_validate_serve_remote_list():
+    assert _validate_serve(["remote"]) == []
+
+
+def test_validate_serve_both_list():
+    assert _validate_serve(["local", "remote"]) == []
+
+
+def test_validate_serve_empty_list():
+    errors = _validate_serve([])
+    assert len(errors) == 1
+    assert "non-empty" in errors[0]
+
+
+def test_validate_serve_unknown_context():
+    errors = _validate_serve(["cloud"])
+    assert len(errors) == 1
+    assert "cloud" in errors[0]
+
+
+def test_validate_serve_bad_type():
+    errors = _validate_serve(42)
+    assert len(errors) == 1
+    assert "int" in errors[0]
+
+
+def test_is_serve_match_none_always_true():
+    assert _is_serve_match(None, "local") is True
+    assert _is_serve_match(None, "remote") is True
+
+
+def test_is_serve_match_true_always_true():
+    assert _is_serve_match(True, "local") is True
+    assert _is_serve_match(True, "remote") is True
+
+
+def test_is_serve_match_false_always_false():
+    assert _is_serve_match(False, "local") is False
+    assert _is_serve_match(False, "remote") is False
+
+
+def test_is_serve_match_local_list():
+    assert _is_serve_match(["local"], "local") is True
+    assert _is_serve_match(["local"], "remote") is False
+
+
+def test_is_serve_match_remote_list():
+    assert _is_serve_match(["remote"], "remote") is True
+    assert _is_serve_match(["remote"], "local") is False
+
+
+def test_is_serve_match_both_list():
+    assert _is_serve_match(["local", "remote"], "local") is True
+    assert _is_serve_match(["local", "remote"], "remote") is True
+
+
+# ── serve() integration: list form ───────────────────────────────────────────
+
+
+def _run_serve_with_context(tmp_path, monkeypatch, serve_value, context):
+    """Run serve() with a given serve field value and explicit context override."""
+    from unittest.mock import patch
+
+    toml = tmp_path / "pkg" / "runspec.toml"
+    toml.parent.mkdir()
+    toml.write_text("[config]\nname = 'test'\n\n[mytool]\ndescription = 'tool'\n", encoding="utf-8")
+
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.setenv("RUNSPEC_SERVE_CONTEXT", context)
+
+    discovered = [
+        {"source": str(toml), "runnable": "mytool", "spec": {"serve": serve_value, "description": "tool"}},
+    ]
+    captured_tools: dict = {}
+
+    def fake_mcp_loop(tools, arg_specs, exec_specs, name):
+        captured_tools.update(tools)
+
+    with (
+        patch("runspec.cli._discover_installed", return_value=discovered),
+        patch("runspec.serve._mcp_loop", fake_mcp_loop),
+        patch("runspec.serve._find_script", return_value=None),
+    ):
+        serve()
+
+    return captured_tools
+
+
+def test_serve_list_local_in_local_context(tmp_path, monkeypatch):
+    tools = _run_serve_with_context(tmp_path, monkeypatch, ["local"], "local")
+    assert "mytool" in tools
+
+
+def test_serve_list_local_in_remote_context(tmp_path, monkeypatch):
+    tools = _run_serve_with_context(tmp_path, monkeypatch, ["local"], "remote")
+    assert "mytool" not in tools
+
+
+def test_serve_list_remote_in_remote_context(tmp_path, monkeypatch):
+    tools = _run_serve_with_context(tmp_path, monkeypatch, ["remote"], "remote")
+    assert "mytool" in tools
+
+
+def test_serve_list_remote_in_local_context(tmp_path, monkeypatch):
+    tools = _run_serve_with_context(tmp_path, monkeypatch, ["remote"], "local")
+    assert "mytool" not in tools
+
+
+def test_serve_list_both_in_local_context(tmp_path, monkeypatch):
+    tools = _run_serve_with_context(tmp_path, monkeypatch, ["local", "remote"], "local")
+    assert "mytool" in tools
+
+
+def test_serve_list_both_in_remote_context(tmp_path, monkeypatch):
+    tools = _run_serve_with_context(tmp_path, monkeypatch, ["local", "remote"], "remote")
+    assert "mytool" in tools

@@ -13,6 +13,31 @@ const ERR_METHOD_NOT_FOUND = -32601;
 const ERR_INVALID_PARAMS = -32602;
 
 const SHELL_EXTS = ['', '.sh', '.ksh', '.bash', '.zsh'];
+const VALID_SERVE_CONTEXTS = new Set(['local', 'remote']);
+
+function serveContext(): string {
+  const ctx = process.env['RUNSPEC_SERVE_CONTEXT'];
+  if (ctx !== undefined) return ctx;
+  return process.env['SSH_CONNECTION'] ? 'remote' : 'local';
+}
+
+function validateServe(serveValue: boolean | string[] | undefined): string[] {
+  if (serveValue === undefined || typeof serveValue === 'boolean') return [];
+  if (Array.isArray(serveValue)) {
+    if (serveValue.length === 0) return ["serve = [] is invalid — must be non-empty, or omit to default to true"];
+    const unknown = serveValue.filter((s) => !VALID_SERVE_CONTEXTS.has(s));
+    if (unknown.length > 0) return [`serve contains unknown context(s) ${JSON.stringify(unknown)} — valid values are 'local' and 'remote'`];
+    return [];
+  }
+  return [`serve must be true, false, or a list of contexts ('local', 'remote'), got ${typeof serveValue}`];
+}
+
+function isServeMatch(serveValue: boolean | string[] | undefined, context: string): boolean {
+  if (serveValue === false) return false;
+  if (serveValue === true || serveValue === undefined) return true;
+  if (Array.isArray(serveValue)) return serveValue.includes(context);
+  return true;
+}
 
 export function serve(): void {
   let configPath: string;
@@ -32,9 +57,15 @@ export function serve(): void {
   const execSpecs: Record<string, { command: string | null }> = {};
 
   const binDir = path.join(path.dirname(configPath), 'node_modules', '.bin');
+  const context = serveContext();
 
   for (const [name, runnable] of Object.entries(raw.runnables)) {
-    if (runnable.serve === false) continue;
+    const serveErrors = validateServe(runnable.serve);
+    if (serveErrors.length > 0) {
+      for (const err of serveErrors) process.stderr.write(`runspec serve: ${name}.serve: ${err}\n`);
+      process.exit(1);
+    }
+    if (!isServeMatch(runnable.serve, context)) continue;
     const inferred = inferScript(runnable, config.autonomyDefault);
     tools[name] = buildSchema(name, inferred, 'mcp');
     argSpecs[name] = inferred.args ?? {};

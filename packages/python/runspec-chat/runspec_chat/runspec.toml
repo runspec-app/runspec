@@ -54,6 +54,7 @@ required = false
 # ---
 
 [setup-keys]
+serve = ["local"]
 description = "Generate an SSH key (if missing) and copy it to all configured jump hosts"
 autonomy = "confirm"
 

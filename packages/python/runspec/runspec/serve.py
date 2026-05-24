@@ -64,6 +64,7 @@ def serve() -> None:
     arg_specs: dict[str, dict[str, Any]] = {}
     exec_specs: dict[str, dict[str, Any]] = {}
     seen_runnables: set[str] = set()
+    serve_context = _serve_context()
 
     for item in discovered:
         rname = item["runnable"]
@@ -77,8 +78,14 @@ def serve() -> None:
             continue
         seen_runnables.add(rname)
 
-        # Skip runnables opted out of MCP serving
-        if runnable.get("serve") is False:
+        # Validate serve field and skip runnables not enabled for this context
+        serve_errors = _validate_serve(runnable.get("serve"))
+        if serve_errors:
+            for err in serve_errors:
+                sys.stderr.write(f"runspec serve: {rname}.serve: {err}\n")
+            sys.stderr.flush()
+            sys.exit(1)
+        if not _is_serve_match(runnable.get("serve"), serve_context):
             continue
 
         # Skip tools restricted to other hosts
@@ -344,6 +351,48 @@ def _validate_run_as_patterns(run_as_spec: Any) -> list[str]:
         except re.error as e:
             errors.append(f"invalid pattern '{pattern}': {e}")
     return errors
+
+
+# ── serve context helpers ─────────────────────────────────────────────────────
+
+_VALID_SERVE_CONTEXTS = frozenset({"local", "remote"})
+
+
+def _serve_context() -> str:
+    """Determine the serving context: 'local' or 'remote'.
+
+    RUNSPEC_SERVE_CONTEXT takes precedence (explicit override).
+    Otherwise: 'remote' when SSH_CONNECTION is set (injected by sshd), 'local' when not.
+    """
+    ctx = os.environ.get("RUNSPEC_SERVE_CONTEXT")
+    if ctx is not None:
+        return ctx
+    return "remote" if os.environ.get("SSH_CONNECTION") else "local"
+
+
+def _validate_serve(serve_value: Any) -> list[str]:
+    """Return error messages for an invalid serve field value."""
+    if serve_value is None or isinstance(serve_value, bool):
+        return []
+    if isinstance(serve_value, list):
+        if not serve_value:
+            return ["serve = [] is invalid — must be non-empty, or omit to default to true"]
+        unknown = [s for s in serve_value if s not in _VALID_SERVE_CONTEXTS]
+        if unknown:
+            return [f"serve contains unknown context(s) {unknown!r} — valid values are 'local' and 'remote'"]
+        return []
+    return [f"serve must be true, false, or a list of contexts ('local', 'remote'), got {type(serve_value).__name__}"]
+
+
+def _is_serve_match(serve_value: Any, context: str) -> bool:
+    """Return True if this runnable should be included for the given serve context."""
+    if serve_value is False:
+        return False
+    if serve_value is True or serve_value is None:
+        return True
+    if isinstance(serve_value, list):
+        return context in serve_value
+    return True  # unreachable after _validate_serve
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

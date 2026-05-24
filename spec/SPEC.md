@@ -364,7 +364,7 @@ description     = "Human and agent readable description"  # recommended
 autonomy        = "confirm"                               # optional
 autonomy-reason = "Why this level was chosen"             # optional
 output          = "text"                                  # optional
-serve           = true                                    # optional, default true
+serve           = true                                    # optional, default true; also false or ["local","remote"]
 hosts           = ["host1", "host2"]                      # optional, see Remote Execution
 run_as          = "username"                              # optional, see Remote Execution
 become_method   = "sudo"                                  # optional, default "sudo"
@@ -391,20 +391,48 @@ declarative; the spec layer never executes them.
 
 ### `serve`
 
-Controls whether `runspec serve` exposes this runnable as an MCP tool. Set to
-`false` for runnables that are human-operated launchers (GUIs, interactive
-wizards) and should never appear in an agent's tool list.
+Controls whether `runspec serve` exposes this runnable as an MCP tool.
+
+**Forms:**
+
+| Value | Meaning |
+|---|---|
+| `true` (default) | Always exposed — included in every `runspec serve` invocation |
+| `false` | Never exposed — excluded from all `runspec serve` invocations |
+| `["local"]` | Exposed only when served locally (not over SSH) |
+| `["remote"]` | Exposed only when served over SSH |
+| `["local", "remote"]` | Always exposed — equivalent to `true` |
+
+**Context detection:**
+
+`runspec serve` determines its own context at startup:
+
+- If `RUNSPEC_SERVE_CONTEXT` is set in the environment, its value is used
+  (must be `"local"` or `"remote"`).
+- Otherwise: `"remote"` if `SSH_CONNECTION` is set (injected by the SSH
+  daemon), `"local"` if not.
 
 ```toml
 [my-launcher]
-serve = false
+serve = false           # never exposed to agents
 description = "Launch the interactive UI"
+
+[setup-keys]
+serve = ["local"]       # exposed only when running on the local machine
+description = "Generate SSH keys for jump hosts"
+
+[run-report]
+serve = ["remote"]      # exposed only on remote machines
+description = "Generate a server-side report"
 ```
 
-`serve = false` only affects `runspec serve`. The runnable is still:
+`serve` only affects `runspec serve`. The runnable is still:
 - visible in `runspec local`
 - parseable via `rs.parse()` / `loadSpec()`
 - callable directly from the command line
+
+**Validation:** `runspec serve` exits with a clear error at startup if `serve`
+contains an unknown context string.
 
 Default when unspecified: `true`.
 

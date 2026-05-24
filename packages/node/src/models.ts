@@ -58,7 +58,7 @@ export interface ScriptSpec {
   autonomy?: string;
   autonomyReason?: string;
   output?: string;
-  serve?: boolean;
+  serve?: boolean | string[];
   args: Record<string, ArgSpec>;
   groups: Record<string, GroupSpec>;
   commands: Record<string, ScriptSpec>;
