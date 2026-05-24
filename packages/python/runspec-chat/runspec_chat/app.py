@@ -6,12 +6,10 @@ import shutil
 import sys
 from pathlib import Path
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 import chainlit as cl
+from chainlit.types import CommandDict
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -103,7 +101,7 @@ async def _refresh_commands() -> None:
     mcp_tools: dict = cl.user_session.get("mcp_tools", {})
 
     seen: set[str] = set()
-    commands = []
+    commands: list[CommandDict] = []
 
     for t in local_tools:
         if t["name"] in _COMMANDS_HIDE or t["name"] in seen:
@@ -117,6 +115,8 @@ async def _refresh_commands() -> None:
                 "description": f"[local] {base_desc}",
                 "icon": icon,
                 "button": False,
+                "persistent": None,
+                "selected": None,
             }
         )
 
@@ -135,6 +135,8 @@ async def _refresh_commands() -> None:
                     "description": f"[{category}] {base_desc}",
                     "icon": "terminal",
                     "button": False,
+                    "persistent": None,
+                    "selected": None,
                 }
             )
 
@@ -165,7 +167,7 @@ async def on_mcp_connect(connection, session: ClientSession) -> None:
     mcp_tools: dict = cl.user_session.get("mcp_tools", {})
     mcp_tools[connection.name] = tools
     cl.user_session.set("mcp_tools", mcp_tools)
-    tool_names = [t["name"] for t in tools]
+    tool_names: list[str] = [str(t["name"]) for t in tools]
     category = _HOST_CATEGORIES.get(connection.name, connection.name)
     await cl.Message(
         content=f"── {category} ──\n✓ Connected to **{connection.name}** — {len(tools)} tool(s): `{'`, `'.join(tool_names)}`"
@@ -438,7 +440,7 @@ def _get_session(mcp_name: str) -> ClientSession | None:
     """Return the ClientSession for a named connection, local or Chainlit-managed."""
     if mcp_name == _LOCAL_CONN:
         return cl.user_session.get("local_session")
-    pair = cl.context.session.mcp_sessions.get(mcp_name)
+    pair = getattr(cl.context.session, "mcp_sessions", {}).get(mcp_name)
     return pair.client if pair else None
 
 

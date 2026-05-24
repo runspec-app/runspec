@@ -2,10 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 import runspec as rs
 from runspec_chat.chat import _resolve_hosts_path
