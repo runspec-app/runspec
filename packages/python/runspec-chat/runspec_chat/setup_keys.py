@@ -72,7 +72,7 @@ def main() -> None:
         print("No SSH hosts found in the config (hosts with an 'ssh' field).")
         sys.exit(0)
 
-    key_type: str = spec.key_type
+    key_type = str(spec.key_type)
     key_path = Path.home() / ".ssh" / f"runspec-chat_{key_type}"
     pub_key = _ensure_key(key_path, key_type)
 

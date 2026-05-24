@@ -24,3 +24,7 @@ dev = [
     "ruff",
     "mypy",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "../runspec"
