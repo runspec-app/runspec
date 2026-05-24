@@ -77,6 +77,10 @@ def serve() -> None:
             continue
         seen_runnables.add(rname)
 
+        # Skip runnables opted out of MCP serving
+        if runnable.get("serve") is False:
+            continue
+
         # Skip tools restricted to other hosts
         allowed_hosts = runnable.get("hosts")
         if allowed_hosts and hostname not in allowed_hosts:

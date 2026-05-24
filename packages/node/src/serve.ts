@@ -34,6 +34,7 @@ export function serve(): void {
   const binDir = path.join(path.dirname(configPath), 'node_modules', '.bin');
 
   for (const [name, runnable] of Object.entries(raw.runnables)) {
+    if (runnable.serve === false) continue;
     const inferred = inferScript(runnable, config.autonomyDefault);
     tools[name] = buildSchema(name, inferred, 'mcp');
     argSpecs[name] = inferred.args ?? {};

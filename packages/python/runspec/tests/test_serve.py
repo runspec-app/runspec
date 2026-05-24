@@ -552,3 +552,60 @@ def test_serve_multi_package_falls_back_to_venv_name(tmp_path):
     assert captured["server_name"] not in ("first", "second")
     assert isinstance(captured["server_name"], str)
     assert len(captured["server_name"]) > 0
+
+
+def test_serve_skips_runnable_with_serve_false(tmp_path):
+    from unittest.mock import patch
+
+    toml = tmp_path / "pkg" / "runspec.toml"
+    toml.parent.mkdir()
+    toml.write_text(
+        "[launcher]\nserve = false\ndescription = 'UI launcher'\n\n[worker]\ndescription = 'Agent tool'\n",
+        encoding="utf-8",
+    )
+
+    discovered = [
+        {"source": str(toml), "runnable": "launcher", "spec": {"serve": False, "description": "UI launcher"}},
+        {"source": str(toml), "runnable": "worker", "spec": {"description": "Agent tool"}},
+    ]
+
+    captured_tools: dict = {}
+
+    def fake_mcp_loop(tools, arg_specs, exec_specs, name):
+        captured_tools.update(tools)
+
+    with (
+        patch("runspec.cli._discover_installed", return_value=discovered),
+        patch("runspec.serve._mcp_loop", fake_mcp_loop),
+        patch("runspec.serve._find_script", return_value=None),
+    ):
+        serve()
+
+    assert "launcher" not in captured_tools, "serve=false runnable must not be exposed as MCP tool"
+    assert "worker" in captured_tools
+
+
+def test_serve_includes_runnable_with_serve_true_explicitly(tmp_path):
+    from unittest.mock import patch
+
+    toml = tmp_path / "pkg" / "runspec.toml"
+    toml.parent.mkdir()
+    toml.write_text("[worker]\nserve = true\ndescription = 'Agent tool'\n", encoding="utf-8")
+
+    discovered = [
+        {"source": str(toml), "runnable": "worker", "spec": {"serve": True, "description": "Agent tool"}},
+    ]
+
+    captured_tools: dict = {}
+
+    def fake_mcp_loop(tools, arg_specs, exec_specs, name):
+        captured_tools.update(tools)
+
+    with (
+        patch("runspec.cli._discover_installed", return_value=discovered),
+        patch("runspec.serve._mcp_loop", fake_mcp_loop),
+        patch("runspec.serve._find_script", return_value=None),
+    ):
+        serve()
+
+    assert "worker" in captured_tools

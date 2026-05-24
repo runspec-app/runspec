@@ -364,6 +364,7 @@ description     = "Human and agent readable description"  # recommended
 autonomy        = "confirm"                               # optional
 autonomy-reason = "Why this level was chosen"             # optional
 output          = "text"                                  # optional
+serve           = true                                    # optional, default true
 hosts           = ["host1", "host2"]                      # optional, see Remote Execution
 run_as          = "username"                              # optional, see Remote Execution
 become_method   = "sudo"                                  # optional, default "sudo"
@@ -387,6 +388,25 @@ examples = [
 
 Bare strings are accepted as shorthand for `{cmd = <string>}`. Examples are
 declarative; the spec layer never executes them.
+
+### `serve`
+
+Controls whether `runspec serve` exposes this runnable as an MCP tool. Set to
+`false` for runnables that are human-operated launchers (GUIs, interactive
+wizards) and should never appear in an agent's tool list.
+
+```toml
+[my-launcher]
+serve = false
+description = "Launch the interactive UI"
+```
+
+`serve = false` only affects `runspec serve`. The runnable is still:
+- visible in `runspec local`
+- parseable via `rs.parse()` / `loadSpec()`
+- callable directly from the command line
+
+Default when unspecified: `true`.
 
 ### `output`
 
