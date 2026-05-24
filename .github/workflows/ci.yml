@@ -69,6 +69,26 @@ jobs:
       - name: Run tests
         run: pytest
 
+      - name: Build wheel
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/runspec --help
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          assert (pkg / 'py.typed').is_file(), 'py.typed missing from wheel'
+          print('Wheel contents OK')
+          "
+
       - name: Upload coverage
         uses: codecov/codecov-action@v6
         if: matrix.python-version == '3.12'
