@@ -20,11 +20,6 @@ type = "str"
 description = "LLM model identifier passed to the adapter"
 default = "claude-haiku-4-5-20251001"
 
-[runspec-chat.args.host]
-type = "str"
-description = "Network interface to bind to"
-default = "0.0.0.0"
-
 [runspec-chat.args.watch]
 type = "flag"
 short = "-w"

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-chat"
-version = "0.4.3"
+version = "0.4.5"
 requires-python = ">=3.11"
 dependencies = [
     "chainlit>=2.7.0",
@@ -12,6 +12,8 @@ dependencies = [
     "runspec>=0.13.1",
     "anthropic>=0.40.0",
     "pywin32>=306; sys_platform == 'win32'",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.19.0",
 ]
 
 [project.scripts]

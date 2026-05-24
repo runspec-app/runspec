@@ -318,6 +318,7 @@ def _build_example_toml() -> str:
         "[clean]\n"
         'description = "Find and optionally delete stale temporary files in a directory"\n'
         'autonomy    = "confirm"\n'
+        'serve       = ["remote"]   # only exposed when runspec serve is running on a remote host\n'
         "\n"
         "[clean.args]\n"
         'directory  = {type = "path",   description = "Directory to scan",                            default = "."}\n'
@@ -330,6 +331,7 @@ def _build_example_toml() -> str:
         'description = "Scan for stale temporary files and report what clean would delete"\n'
         'autonomy    = "autonomous"\n'
         'output      = "json"\n'
+        'serve       = ["remote"]   # only exposed when runspec serve is running on a remote host\n'
         "\n"
         "[scan.args]\n"
         'directory  = {type = "path",   description = "Directory to scan",                  default = "."}\n'

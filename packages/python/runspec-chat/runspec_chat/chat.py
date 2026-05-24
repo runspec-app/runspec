@@ -2,11 +2,14 @@ import atexit
 import json
 import os
 import re
+import secrets
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import tomllib
+import warnings
 from pathlib import Path
 
 import runspec as rs
@@ -24,9 +27,10 @@ def _resolve_hosts_path(path: Path) -> Path:
     if not path.exists():
         legacy = path.parent / "hosts.toml"
         if legacy.exists():
-            print(
+            warnings.warn(
                 f"[runspec-chat] {legacy} is deprecated; rename to {path.name} to suppress this warning.",
-                file=sys.stderr,
+                DeprecationWarning,
+                stacklevel=2,
             )
             return legacy
     return path
@@ -72,12 +76,114 @@ def _init_chainlit_root(hosts_path: Path) -> Path:
     return tmp
 
 
+_SQLITE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    "id"         TEXT PRIMARY KEY,
+    "identifier" TEXT NOT NULL UNIQUE,
+    "metadata"   TEXT NOT NULL,
+    "createdAt"  TEXT
+);
+CREATE TABLE IF NOT EXISTS threads (
+    "id"             TEXT PRIMARY KEY,
+    "createdAt"      TEXT,
+    "name"           TEXT,
+    "userId"         TEXT,
+    "userIdentifier" TEXT,
+    "tags"           TEXT,
+    "metadata"       TEXT,
+    FOREIGN KEY ("userId") REFERENCES users("id") ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS steps (
+    "id"            TEXT PRIMARY KEY,
+    "name"          TEXT NOT NULL,
+    "type"          TEXT NOT NULL,
+    "threadId"      TEXT NOT NULL,
+    "parentId"      TEXT,
+    "streaming"     INTEGER NOT NULL,
+    "waitForAnswer" INTEGER,
+    "isError"       INTEGER,
+    "metadata"      TEXT,
+    "tags"          TEXT,
+    "input"         TEXT,
+    "output"        TEXT,
+    "createdAt"     TEXT,
+    "command"       TEXT,
+    "start"         TEXT,
+    "end"           TEXT,
+    "generation"    TEXT,
+    "showInput"     TEXT,
+    "language"      TEXT,
+    "indent"        INTEGER,
+    "defaultOpen"   INTEGER,
+    "modes"         TEXT,
+    FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS elements (
+    "id"          TEXT PRIMARY KEY,
+    "threadId"    TEXT,
+    "type"        TEXT,
+    "url"         TEXT,
+    "chainlitKey" TEXT,
+    "name"        TEXT NOT NULL,
+    "display"     TEXT,
+    "objectKey"   TEXT,
+    "size"        TEXT,
+    "page"        INTEGER,
+    "language"    TEXT,
+    "forId"       TEXT,
+    "mime"        TEXT,
+    "props"       TEXT,
+    FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS feedbacks (
+    "id"       TEXT PRIMARY KEY,
+    "forId"    TEXT NOT NULL,
+    "threadId" TEXT NOT NULL,
+    "value"    INTEGER NOT NULL,
+    "comment"  TEXT,
+    FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+);
+"""
+
+
+def _get_config_dir() -> Path:
+    return Path("~/.config/runspec-chat").expanduser()
+
+
+def _ensure_auth_secret() -> str:
+    """Load or generate a persistent JWT secret for Chainlit auth."""
+    secret_file = _get_config_dir() / "auth.secret"
+    secret_file.parent.mkdir(parents=True, exist_ok=True)
+    if secret_file.exists():
+        return secret_file.read_text().strip()
+    secret = secrets.token_hex(32)
+    secret_file.write_text(secret)
+    return secret
+
+
+def _ensure_db(db_path: Path) -> None:
+    """Create the SQLite history DB schema if it doesn't exist."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db_path)
+    con.executescript(_SQLITE_SCHEMA)
+    con.commit()
+    con.close()
+
+
 def main() -> None:
     spec = rs.parse("runspec-chat")
 
     hosts_path = Path(str(spec.hosts)).expanduser()
     chainlit_root = _init_chainlit_root(hosts_path)
     os.environ["CHAINLIT_APP_ROOT"] = str(chainlit_root)
+
+    # Auth secret — required by Chainlit when any auth callback is registered
+    os.environ["CHAINLIT_AUTH_SECRET"] = _ensure_auth_secret()
+
+    # History DB — create schema once before the server starts
+    db_path = _get_config_dir() / "history.db"
+    _ensure_db(db_path)
+    os.environ["RUNSPEC_CHAT_DB"] = str(db_path)
 
     if spec.model:
         os.environ["RUNSPEC_CHAT_MODEL"] = str(spec.model)
@@ -96,7 +202,7 @@ def main() -> None:
         "--port",
         str(spec.port),
         "--host",
-        str(spec.host),
+        "127.0.0.1",
     ]
     if spec.watch:
         cmd.append("--watch")

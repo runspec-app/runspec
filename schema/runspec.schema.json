@@ -32,30 +32,85 @@
           "description": "runspec spec version.",
           "default": "1"
         },
-        "registry": {
-          "type": "string",
-          "description": "URL of the runspec-registry instance to heartbeat to."
-        },
         "name": {
           "type": "string",
-          "description": "Instance name reported to the registry. Defaults to the venv directory name."
+          "description": "MCP server name reported by runspec serve. Defaults to the venv directory name."
         },
-        "heartbeat": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Heartbeat interval in seconds.",
-          "default": 30
-        },
-        "heartbeat_data": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": ["system", "activity"]
+        "logging": {
+          "type": "object",
+          "description": "When present, the language pack configures structured logging automatically on parse().",
+          "properties": {
+            "rotate": {
+              "type": "string",
+              "description": "Log rotation strategy. 'daily' rotates at midnight.",
+              "enum": ["daily"],
+              "default": "daily"
+            },
+            "keep": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Number of rotated log files to keep.",
+              "default": 7
+            },
+            "summary": {
+              "type": "boolean",
+              "description": "Emit a closing summary line after each run.",
+              "default": true
+            }
           },
-          "description": "Extra data to include in heartbeats. 'system' adds pid and uptime.",
-          "default": []
+          "additionalProperties": false
+        },
+        "jump-hosts": {
+          "type": "object",
+          "description": "Named jump host aliases for runspec jump. Each key is an alias name.",
+          "additionalProperties": { "$ref": "#/$defs/jump_host" }
         }
       },
+      "additionalProperties": false
+    },
+    "jump_host": {
+      "type": "object",
+      "description": "A target host for runspec jump.",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Hostname or IP address to SSH to."
+        },
+        "user": {
+          "type": "string",
+          "description": "SSH username. Defaults to the current user."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "SSH port.",
+          "default": 22
+        },
+        "ssh-key": {
+          "type": "string",
+          "description": "Path to the SSH private key file."
+        },
+        "bin": {
+          "type": "string",
+          "description": "Path to the runspec binary on the remote host."
+        },
+        "use-ssh-config": {
+          "type": "boolean",
+          "description": "Pass -F ~/.ssh/config to the SSH command.",
+          "default": false
+        },
+        "ssh-options": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Extra arguments passed to the SSH command (e.g. [\"-o\", \"StrictHostKeyChecking=no\"])."
+        },
+        "jump-host": {
+          "type": "string",
+          "description": "ProxyJump alias — route through another named jump-host entry."
+        }
+      },
+      "required": ["host"],
       "additionalProperties": false
     },
     "runnable": {
@@ -79,6 +134,25 @@
           "description": "Declares what the runnable writes to stdout. Surfaces as x-output in emitted schemas.",
           "default": "text"
         },
+        "serve": {
+          "description": "Controls whether runspec serve exposes this runnable as an MCP tool. true/false or a list of contexts ('local', 'remote').",
+          "oneOf": [
+            {
+              "type": "boolean",
+              "description": "true (default) — always exposed; false — never exposed."
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["local", "remote"]
+              },
+              "minItems": 1,
+              "description": "Expose only in the listed serve contexts. 'local' = not over SSH; 'remote' = over SSH."
+            }
+          ],
+          "default": true
+        },
         "hosts": {
           "type": "array",
           "items": { "type": "string" },
@@ -96,6 +170,33 @@
         "become_flags": {
           "type": "string",
           "description": "Optional flags passed to the become method (e.g. \"-H\" for sudo)."
+        },
+        "examples": {
+          "type": "array",
+          "description": "Usage examples rendered by --help.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Bare string shorthand for {cmd = <string>}."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cmd": {
+                    "type": "string",
+                    "description": "The example command string."
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Optional explanation shown alongside the example."
+                  }
+                },
+                "required": ["cmd"],
+                "additionalProperties": false
+              }
+            ]
+          }
         },
         "args": {
           "type": "object",
@@ -210,12 +311,20 @@
         },
         "short": {
           "type": "string",
-          "description": "Short flag alias (e.g. \"-v\").",
-          "pattern": "^-[a-zA-Z]$"
+          "description": "Short flag alias (e.g. \"-v\"). -h is reserved for --help.",
+          "pattern": "^-[a-gi-zA-Z]$"
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based positional index. Makes the arg positional rather than a --flag. Must be unique within a runnable."
         },
         "env": {
-          "type": "string",
-          "description": "Environment variable fallback. Checked after CLI args, before the default."
+          "description": "Environment variable fallback(s). Checked after RUNSPEC_ARG_* and before the spec default.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          ]
         },
         "deprecated": {
           "type": "string",
@@ -304,6 +413,11 @@
           "type": "object",
           "description": "Argument group constraints for this subcommand.",
           "additionalProperties": { "$ref": "#/$defs/group" }
+        },
+        "commands": {
+          "type": "object",
+          "description": "Nested subcommands.",
+          "additionalProperties": { "$ref": "#/$defs/subcommand" }
         }
       },
       "additionalProperties": false

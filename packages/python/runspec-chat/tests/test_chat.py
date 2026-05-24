@@ -162,7 +162,7 @@ def test_main_config_has_user_env(monkeypatch):
 
 
 def test_main_cmd_includes_app_py_and_defaults(monkeypatch):
-    """Subprocess command must include app.py, default port 8000, and default host."""
+    """Subprocess command must include app.py, default port 8000, and localhost binding."""
     monkeypatch.setattr(sys, "argv", ["runspec-chat"])
     captured: dict = {}
     monkeypatch.setattr(subprocess, "run", _fake_run(captured))
@@ -173,7 +173,7 @@ def test_main_cmd_includes_app_py_and_defaults(monkeypatch):
     cmd = captured["cmd"]
     assert any(str(c).endswith("app.py") for c in cmd)
     assert "8000" in cmd
-    assert "0.0.0.0" in cmd
+    assert "127.0.0.1" in cmd
 
 
 def test_main_watch_flag_forwarded(monkeypatch):
@@ -198,10 +198,9 @@ def test_main_headless_flag_forwarded(monkeypatch):
     assert "--headless" in captured["cmd"]
 
 
-def test_main_custom_port_and_host(monkeypatch):
-    monkeypatch.setattr(
-        sys, "argv", ["runspec-chat", "--port", "9000", "--host", "127.0.0.1"]
-    )
+def test_main_custom_port(monkeypatch):
+    """--host is removed; host is always 127.0.0.1 regardless of port."""
+    monkeypatch.setattr(sys, "argv", ["runspec-chat", "--port", "9000"])
     captured: dict = {}
     monkeypatch.setattr(subprocess, "run", _fake_run(captured))
 

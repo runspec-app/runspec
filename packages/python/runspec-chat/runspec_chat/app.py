@@ -9,9 +9,11 @@ from pathlib import Path
 import tomllib
 
 import chainlit as cl
-from chainlit.types import CommandDict
+from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
+from chainlit.types import CommandDict, ThreadDict
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from starlette.datastructures import Headers
 
 from runspec_chat.adapter import ChatResponse, ToolCall
 from runspec_chat.adapters.anthropic_direct import DEFAULT_SYSTEM, AnthropicAdapter
@@ -36,6 +38,15 @@ _sync_user_env(
     hosts_path=_HOSTS_PATH,
     chainlit_config=_chainlit_root / ".chainlit" / "config.toml",
 )
+
+_DB_PATH = Path(
+    os.environ.get("RUNSPEC_CHAT_DB", "~/.config/runspec-chat/history.db")
+).expanduser()
+
+
+@cl.data_layer
+def get_data_layer() -> SQLAlchemyDataLayer:
+    return SQLAlchemyDataLayer(conninfo=f"sqlite+aiosqlite:///{_DB_PATH}")
 
 
 def _load_host_categories() -> dict[str, str]:
@@ -93,6 +104,14 @@ def _format_user(login: str, display_name: str | None) -> str:
 
 
 _USER_LOGIN, _USER_DISPLAY_NAME = _get_user_identity()
+
+
+@cl.header_auth_callback
+async def header_auth_callback(headers: Headers) -> cl.User | None:
+    return cl.User(
+        identifier=_USER_LOGIN,
+        metadata={"display_name": _USER_DISPLAY_NAME or _USER_LOGIN},
+    )
 
 
 async def _refresh_commands() -> None:
@@ -193,6 +212,8 @@ async def on_chat_start() -> None:
     cl.user_session.set("messages", [])
     cl.user_session.set("mcp_tools", {})
     cl.user_session.set("local_sessions", {})
+    cl.user_session.set("ssh_tasks", {})
+    cl.user_session.set("ssh_stops", {})
     cl.user_session.set(
         "user_identity", {"login": _USER_LOGIN, "display_name": _USER_DISPLAY_NAME}
     )
@@ -212,6 +233,7 @@ async def on_chat_start() -> None:
     )
 
     await _connect_local()
+    await _connect_ssh_hosts()
 
 
 @cl.on_chat_end
@@ -226,16 +248,58 @@ async def on_chat_end() -> None:
         except Exception:
             task.cancel()
 
+    ssh_stops: dict = cl.user_session.get("ssh_stops", {})
+    ssh_tasks: dict = cl.user_session.get("ssh_tasks", {})
+    for s in ssh_stops.values():
+        s.set()
+    for t in ssh_tasks.values():
+        try:
+            await asyncio.wait_for(asyncio.shield(t), timeout=2.0)
+        except Exception:
+            t.cancel()
 
-async def _local_mcp_task(
+
+@cl.on_chat_resume
+async def on_chat_resume(thread: ThreadDict) -> None:
+    messages = []
+    for step in thread.get("steps", []):
+        role = None
+        if step.get("type") == "user_message":
+            role = "user"
+        elif step.get("type") == "assistant_message":
+            role = "assistant"
+        if role and step.get("output"):
+            messages.append({"role": role, "content": step["output"]})
+    cl.user_session.set("messages", messages)
+    cl.user_session.set("mcp_tools", {})
+    cl.user_session.set("ssh_tasks", {})
+    cl.user_session.set("ssh_stops", {})
+    cl.user_session.set(
+        "user_identity", {"login": _USER_LOGIN, "display_name": _USER_DISPLAY_NAME}
+    )
+
+    env = cl.user_session.get("env") or {}
+    api_key = env.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+    user_str = _format_user(_USER_LOGIN, _USER_DISPLAY_NAME)
+    system = DEFAULT_SYSTEM + f"\nSession user: {user_str}."
+    cl.user_session.set(
+        "adapter",
+        AnthropicAdapter(model=_DEFAULT_MODEL, api_key=api_key or None, system=system),
+    )
+
+    await _connect_local()
+    await _connect_ssh_hosts()
+
+
+async def _mcp_task(
+    params: StdioServerParameters,
     session_holder: list,
     tools_holder: list,
     ready: asyncio.Event,
     stop: asyncio.Event,
 ) -> None:
-    """Runs the full local MCP session in one task so anyio cancel scopes are
+    """Runs the full MCP session in one task so anyio cancel scopes are
     entered and exited in the same task — required by anyio's task model."""
-    params = StdioServerParameters(command=_local_runspec_exe(), args=["serve"])
     try:
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
@@ -253,7 +317,7 @@ async def _local_mcp_task(
                 ready.set()
                 await stop.wait()
     except Exception:
-        ready.set()  # unblock _connect_local even on failure
+        ready.set()  # unblock caller even on failure
 
 
 async def _connect_local() -> None:
@@ -262,8 +326,9 @@ async def _connect_local() -> None:
     ready = asyncio.Event()
     stop = asyncio.Event()
 
+    params = StdioServerParameters(command=_local_runspec_exe(), args=["serve"])
     task = asyncio.create_task(
-        _local_mcp_task(session_holder, tools_holder, ready, stop)
+        _mcp_task(params, session_holder, tools_holder, ready, stop)
     )
     cl.user_session.set("local_stop", stop)
     cl.user_session.set("local_task", task)
@@ -291,9 +356,122 @@ async def _connect_local() -> None:
             content=f"── local ──\n✓ Local tools ready: `{'`, `'.join(user_tools)}` | running as **{user_str}**"
         ).send()
     else:
+        _ssh_key_exists = any(
+            (Path.home() / ".ssh" / f"runspec-chat_{kt}").exists()
+            for kt in ("ed25519", "rsa")
+        )
+        _setup_hint = (
+            "" if _ssh_key_exists else " or type `/setup-keys` to set up SSH keys."
+        )
         await cl.Message(
-            content=f"── local ──\nReady. Connect a remote host via the **plug icon**, or type `/setup-keys` to set up SSH keys. | running as **{user_str}**"
+            content=f"── local ──\nReady. Connect a remote host via the **plug icon**{_setup_hint} | running as **{user_str}**"
         ).send()
+    await _refresh_commands()
+
+
+def _find_ssh_key() -> Path | None:
+    for kt in ("ed25519", "rsa"):
+        p = Path.home() / ".ssh" / f"runspec-chat_{kt}"
+        if p.exists():
+            return p
+    return None
+
+
+async def _connect_ssh_hosts() -> None:
+    """Auto-connect to all SSH hosts in jump_hosts.toml using the installed key."""
+    resolved = _resolve_hosts_path(_HOSTS_PATH)
+    if not resolved.exists():
+        return
+
+    try:
+        with open(resolved, "rb") as f:
+            cfg = tomllib.load(f)
+    except Exception:
+        return
+
+    key = _find_ssh_key()
+    if not key:
+        return  # no key installed yet; user must run /setup-keys first
+
+    defaults = cfg.get("config", {})
+    default_user = defaults.get("user")
+
+    ssh_hosts = [
+        (name, info)
+        for name, info in cfg.get("hosts", {}).items()
+        if info.get("ssh") and info.get("auto_connect", True)
+    ]
+    if not ssh_hosts:
+        return
+
+    # Start all tasks before waiting — avoids serial timeout latency
+    ConnectionTuple = tuple[str, list, list, asyncio.Event, asyncio.Event, asyncio.Task]
+    connections: list[ConnectionTuple] = []
+    for name, info in ssh_hosts:
+        user = info.get("user") or default_user
+        host = info["ssh"]
+        target = f"{user}@{host}" if user else host
+        runspec_bin = info.get("runspec_path", "runspec")
+
+        params = StdioServerParameters(
+            command="ssh",
+            args=[
+                "-i",
+                str(key),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                "ConnectTimeout=8",
+                target,
+                runspec_bin,
+                "serve",
+            ],
+        )
+        session_holder: list = []
+        tools_holder: list = []
+        ready = asyncio.Event()
+        stop = asyncio.Event()
+        task: asyncio.Task = asyncio.create_task(
+            _mcp_task(params, session_holder, tools_holder, ready, stop)
+        )
+        connections.append((name, session_holder, tools_holder, ready, stop, task))
+
+    await asyncio.gather(
+        *(
+            asyncio.wait_for(asyncio.shield(r.wait()), timeout=15.0)
+            for _, _, _, r, _, _ in connections
+        ),
+        return_exceptions=True,
+    )
+
+    mcp_tools: dict = cl.user_session.get("mcp_tools", {})
+    ssh_tasks: dict = cl.user_session.get("ssh_tasks", {})
+    ssh_stops: dict = cl.user_session.get("ssh_stops", {})
+
+    for name, session_holder, tools_holder, ready, stop, task in connections:
+        category = _HOST_CATEGORIES.get(name, name)
+        if not session_holder:
+            await cl.Message(
+                content=f"── {category} ──\n⚠ Could not auto-connect to **{name}** (SSH failed or timed out)"
+            ).send()
+            task.cancel()
+            continue
+
+        mcp_tools[name] = tools_holder
+        ssh_tasks[name] = task
+        ssh_stops[name] = stop
+        cl.user_session.set(f"ssh_session_{name}", session_holder[0])
+
+        tool_names = [t["name"] for t in tools_holder]
+        await cl.Message(
+            content=f"── {category} ──\n✓ Auto-connected to **{name}** — {len(tools_holder)} tool(s): `{'`, `'.join(tool_names)}`"
+        ).send()
+
+    cl.user_session.set("mcp_tools", mcp_tools)
+    cl.user_session.set("ssh_tasks", ssh_tasks)
+    cl.user_session.set("ssh_stops", ssh_stops)
     await _refresh_commands()
 
 
@@ -437,9 +615,12 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
 
 
 def _get_session(mcp_name: str) -> ClientSession | None:
-    """Return the ClientSession for a named connection, local or Chainlit-managed."""
+    """Return the ClientSession for a named connection, local, SSH, or Chainlit-managed."""
     if mcp_name == _LOCAL_CONN:
         return cl.user_session.get("local_session")
+    ssh = cl.user_session.get(f"ssh_session_{mcp_name}")
+    if ssh:
+        return ssh
     pair = getattr(cl.context.session, "mcp_sessions", {}).get(mcp_name)
     return pair.client if pair else None
 
@@ -498,7 +679,7 @@ async def call_tool(tool_call: ToolCall) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _parse_slash(text: str) -> tuple[str, dict]:
+def _parse_slash(text: str) -> tuple[str, dict, list[str]]:
     try:
         parts = shlex.split(text[1:])
     except ValueError:
@@ -506,24 +687,28 @@ def _parse_slash(text: str) -> tuple[str, dict]:
 
     name = parts[0] if parts else ""
     args: dict = {}
+    unknown: list[str] = []
     i = 1
     while i < len(parts):
         token = parts[i]
         if token.startswith("--"):
             key = token[2:].replace("-", "_")
-            if i + 1 < len(parts) and not parts[i + 1].startswith("--"):
+            if i + 1 < len(parts) and not parts[i + 1].startswith("-"):
                 args[key] = parts[i + 1]
                 i += 2
             else:
                 args[key] = True
                 i += 1
+        elif token.startswith("-"):
+            unknown.append(token)
+            i += 1
         else:
             i += 1
-    return name, args
+    return name, args, unknown
 
 
 async def _handle_slash(text: str) -> None:
-    tool_name, tool_input = _parse_slash(text)
+    tool_name, tool_input, unknown_flags = _parse_slash(text)
     if not tool_name:
         await cl.Message(content="Usage: `/tool_name --arg value`").send()
         return
@@ -542,6 +727,12 @@ async def _handle_slash(text: str) -> None:
             content=f"Unknown tool `{tool_name}`. Available: {available}"
         ).send()
         return
+
+    if unknown_flags:
+        flag_list = " ".join(f"`{f}`" for f in unknown_flags)
+        await cl.Message(
+            content=f"⚠ Short flags are not supported: {flag_list}. Use `--long-form` instead."
+        ).send()
 
     if tool_input.get("help"):
         schema = tool_def.get("input_schema", {})

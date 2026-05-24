@@ -389,3 +389,27 @@ class TestIntegrationFixtures:
         assert groups["input-format"]["args"] == ["format", "raw"]
         assert groups["api-auth"]["inclusive"] is True
         assert groups["api-auth"]["args"] == ["api-key", "api-endpoint"]
+
+    def test_serve_false_preserved(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[launcher]\nserve = false\ndescription = 'UI launcher'\n")
+        result = load_raw(p)
+        assert result["runnables"]["launcher"]["serve"] is False
+
+    def test_serve_true_preserved(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[worker]\nserve = true\ndescription = 'Agent tool'\n")
+        result = load_raw(p)
+        assert result["runnables"]["worker"]["serve"] is True
+
+    def test_serve_list_preserved(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text('[setup]\nserve = ["local"]\ndescription = "Local only"\n')
+        result = load_raw(p)
+        assert result["runnables"]["setup"]["serve"] == ["local"]
+
+    def test_serve_absent_is_none(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[worker]\ndescription = 'Agent tool'\n")
+        result = load_raw(p)
+        assert result["runnables"]["worker"]["serve"] is None

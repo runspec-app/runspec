@@ -49,3 +49,7 @@ site/
 # Misc
 *.log
 *.tmp
+
+# External reference repos (cloned locally, not committed)
+chainlit-docs/
+.chainlit/

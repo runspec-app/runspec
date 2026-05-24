@@ -114,6 +114,7 @@ def _normalise_script(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "autonomy": raw.get("autonomy"),
         "autonomy_reason": raw.get("autonomy-reason"),
         "output": raw.get("output", "text"),
+        "serve": raw.get("serve"),
         "hosts": raw.get("hosts"),
         "run_as": raw.get("run_as"),
         "become_method": raw.get("become_method", "sudo"),
