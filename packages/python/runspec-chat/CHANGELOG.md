@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.1] — 2026-05-24
+
+### Fixed
+
+- **Settings panel, MCP tools, and API key prompt restored** — `.chainlit/config.toml`
+  and `chainlit.md` were at the project root and not included in the wheel.
+  Moved inside the `runspec_chat` package; `CHAINLIT_ROOT` now correctly
+  resolves to the installed package directory via `Path(__file__).parent`.
+  All Chainlit features (Settings ⚙, MCP plug icon, `user_env` fields) work
+  on a plain `pip install runspec-chat` without the source tree present.
+- **`anthropic` SDK is now a required dependency** — previously it was an
+  optional extra (`[anthropic]`) which left a freshly installed app unable to
+  make any LLM calls. `pip install runspec-chat` now includes it automatically.
+
+---
+
 ## [0.4.0] — 2026-05-24
 
 ### Added

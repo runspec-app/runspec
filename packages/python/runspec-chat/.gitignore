@@ -5,4 +5,3 @@ __pycache__/
 dist/
 *.egg-info/
 .env
-runspec_chat/.chainlit/

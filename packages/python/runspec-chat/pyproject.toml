@@ -4,12 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-chat"
-version = "0.4.0"
+version = "0.4.1"
 requires-python = ">=3.11"
 dependencies = [
     "chainlit>=2.7.0",
     "mcp>=1.0.0",
     "runspec>=0.13.1",
+    "anthropic>=0.40.0",
     "pywin32>=306; sys_platform == 'win32'",
 ]
 
@@ -18,10 +19,12 @@ runspec-chat = "runspec_chat.chat:main"
 setup-keys = "runspec_chat.setup_keys:main"
 
 [project.optional-dependencies]
-anthropic = ["anthropic>=0.40.0"]
 openai = ["openai>=1.0.0"]
 dev = [
-    "runspec-chat[anthropic]",
     "ruff",
     "mypy",
 ]
+
+[tool.hatch.build.targets.wheel.force-include]
+"runspec_chat/.chainlit" = "runspec_chat/.chainlit"
+"runspec_chat/chainlit.md" = "runspec_chat/chainlit.md"

@@ -66,7 +66,7 @@ def _sync_user_env(hosts_path: Path, chainlit_config: Path) -> None:
 def main() -> None:
     spec = rs.parse("runspec-chat")
 
-    package_root = Path(__file__).parent.parent
+    package_root = Path(__file__).parent
     os.environ["CHAINLIT_ROOT"] = str(package_root)
 
     hosts_path = Path(str(spec.hosts)).expanduser()

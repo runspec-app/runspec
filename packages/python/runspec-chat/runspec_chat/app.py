@@ -33,7 +33,7 @@ _HOSTS_PATH = Path(os.environ.get("RUNSPEC_CHAT_HOSTS", "~/.config/runspec-chat/
 
 _sync_user_env(
     hosts_path=_HOSTS_PATH,
-    chainlit_config=Path(__file__).parent.parent / ".chainlit" / "config.toml",
+    chainlit_config=Path(__file__).parent / ".chainlit" / "config.toml",
 )
 
 
