@@ -33,6 +33,8 @@ interface SummaryState {
   exception: CapturedException | null;
   exitCode: number;
   emitted: boolean;
+  user: string;
+  userTarget: string | undefined;
 }
 
 let _summaryState: SummaryState | null = null;
@@ -391,6 +393,16 @@ function resolveLogDir(configPath: string): string {
 
 // ── run summary ──────────────────────────────────────────────────────────────
 
+function _getInvoker(): [string, string | undefined] {
+  const sudoUser = process.env['SUDO_USER'];
+  if (sudoUser) {
+    const target = process.env['USER'] || process.env['LOGNAME'] || 'root';
+    return [sudoUser, target];
+  }
+  const user = process.env['USER'] || process.env['LOGNAME'] || process.env['USERNAME'] || 'unknown';
+  return [user, undefined];
+}
+
 function formatSummaryLine(state: SummaryState, durationMs: number, exitCode: number): string {
   const counts = state.counter.counts;
   const total = (counts.DEBUG ?? 0) + (counts.INFO ?? 0) + (counts.WARNING ?? 0) + (counts.ERROR ?? 0) + (counts.CRITICAL ?? 0);
@@ -400,11 +412,14 @@ function formatSummaryLine(state: SummaryState, durationMs: number, exitCode: nu
   const runnable = state.runnable;
   const wSuffix = warnings === 1 ? '' : 's';
   const eSuffix = errors === 1 ? '' : 's';
+  const userPart = state.userTarget
+    ? ` | user: ${state.user} → ${state.userTarget} (sudo)`
+    : ` | user: ${state.user}`;
   if (state.exception || exitCode !== 0) {
     const excPart = state.exception ? `, ${state.exception.type}` : '';
-    return `runspec: ${runnable} failed in ${secs}s — exit ${exitCode}${excPart} — ${total} events (${warnings} warning${wSuffix}, ${errors} error${eSuffix})`;
+    return `runspec: ${runnable} failed in ${secs}s — exit ${exitCode}${excPart} — ${total} events (${warnings} warning${wSuffix}, ${errors} error${eSuffix})${userPart}`;
   }
-  return `runspec: ${runnable} completed in ${secs}s — ${total} events (${warnings} warning${wSuffix}, ${errors} error${eSuffix})`;
+  return `runspec: ${runnable} completed in ${secs}s — ${total} events (${warnings} warning${wSuffix}, ${errors} error${eSuffix})${userPart}`;
 }
 
 /**
@@ -433,6 +448,8 @@ export function emitRunSummary(): void {
       autonomy: state.autonomy,
       exception: state.exception,
       events: { ...state.counter.counts },
+      user: state.user,
+      user_target: state.userTarget ?? null,
     });
   } catch {
     // never disrupt shutdown
@@ -557,6 +574,7 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
     !['1', 'true', 'yes'].includes((process.env['RUNSPEC_ARG_NO_SUMMARY'] ?? '').toLowerCase());
 
   if (summaryEnabled) {
+    const [user, userTarget] = _getInvoker();
     _summaryState = {
       counter,
       start: process.hrtime.bigint(),
@@ -567,6 +585,8 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
       exception: null,
       exitCode: 0,
       emitted: false,
+      user,
+      userTarget,
     };
     installExitHooks();
   }

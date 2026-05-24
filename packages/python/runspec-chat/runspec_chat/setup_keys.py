@@ -8,12 +8,14 @@ except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 
 import runspec as rs
+from runspec_chat.chat import _resolve_hosts_path
 
 
 def _load_hosts(hosts_path: Path) -> dict:
+    hosts_path = _resolve_hosts_path(hosts_path)
     if not hosts_path.exists():
         print(f"No hosts config found at {hosts_path}")
-        print("Copy hosts.toml.example and edit it, then re-run setup-keys.")
+        print("Copy jump_hosts.toml.example and edit it, then re-run setup-keys.")
         sys.exit(1)
     with open(hosts_path, "rb") as f:
         return tomllib.load(f)
@@ -26,12 +28,19 @@ def _ensure_key(key_path: Path, key_type: str) -> Path:
         return pub
 
     print(f"Generating {key_type} key at {key_path} ...")
-    result = subprocess.run([
-        "ssh-keygen", "-t", key_type,
-        "-f", str(key_path),
-        "-N", "",
-        "-C", "runspec-chat",
-    ])
+    result = subprocess.run(
+        [
+            "ssh-keygen",
+            "-t",
+            key_type,
+            "-f",
+            str(key_path),
+            "-N",
+            "",
+            "-C",
+            "runspec-chat",
+        ]
+    )
     if result.returncode != 0:
         print("ssh-keygen failed.")
         sys.exit(1)

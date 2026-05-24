@@ -5,7 +5,7 @@ description = "Launch the runspec-chat Chainlit web app"
 type = "path"
 short = "-H"
 description = "Path to hosts configuration file"
-default = "~/.config/runspec-chat/hosts.toml"
+default = "~/.config/runspec-chat/jump_hosts.toml"
 required = false
 
 [runspec-chat.args.port]
@@ -19,6 +19,37 @@ type = "str"
 description = "LLM model identifier passed to the adapter"
 default = "claude-haiku-4-5-20251001"
 
+[runspec-chat.args.host]
+type = "str"
+description = "Network interface to bind to"
+default = "0.0.0.0"
+
+[runspec-chat.args.watch]
+type = "flag"
+short = "-w"
+description = "Reload the app when source files change"
+default = false
+
+[runspec-chat.args.headless]
+type = "flag"
+description = "Do not open the browser automatically on startup"
+default = false
+
+[runspec-chat.args.root-path]
+type = "str"
+description = "Root path when serving behind a reverse proxy (e.g. /chat)"
+required = false
+
+[runspec-chat.args.ssl-cert]
+type = "path"
+description = "Path to SSL certificate file (enables HTTPS)"
+required = false
+
+[runspec-chat.args.ssl-key]
+type = "path"
+description = "Path to SSL private key file (enables HTTPS)"
+required = false
+
 # ---
 
 [setup-keys]
@@ -29,7 +60,7 @@ autonomy = "confirm"
 type = "path"
 short = "-H"
 description = "Path to hosts configuration file"
-default = "~/.config/runspec-chat/hosts.toml"
+default = "~/.config/runspec-chat/jump_hosts.toml"
 required = false
 
 [setup-keys.args.key-type]

@@ -21,12 +21,20 @@ def _host_pass_key(host_name: str) -> str:
     return f"SSH_{host_name.upper().replace('-', '_').replace(' ', '_')}_PASS"
 
 
-def _sync_user_env(hosts_path: Path, chainlit_config: Path) -> None:
-    """Rewrite user_env in .chainlit/config.toml from hosts.toml.
+def _resolve_hosts_path(path: Path) -> Path:
+    if not path.exists():
+        legacy = path.parent / "hosts.toml"
+        if legacy.exists():
+            print(
+                f"[runspec-chat] {legacy} is deprecated; rename to {path.name} to suppress this warning.",
+                file=sys.stderr,
+            )
+            return legacy
+    return path
 
-    Hosts that share the default username → one SSH_PASS field.
-    Hosts that declare their own username → individual SSH_{HOST}_PASS fields.
-    """
+
+def _sync_user_env(hosts_path: Path, chainlit_config: Path) -> None:
+    hosts_path = _resolve_hosts_path(hosts_path)
     user_env = ["ANTHROPIC_API_KEY"]
 
     if hosts_path.exists():
@@ -71,11 +79,24 @@ def main() -> None:
         os.environ["RUNSPEC_CHAT_HOSTS"] = str(spec.hosts)
 
     app_py = Path(__file__).parent / "app.py"
+    # Use our launcher instead of `python -m chainlit` so the Python 3.14
+    # nest_asyncio compatibility shim is applied before chainlit's CLI runs.
     cmd = [
-        sys.executable, "-m", "chainlit", "run", str(app_py),
+        sys.executable, "-m", "runspec_chat._chainlit_launcher",
+        "run", str(app_py),
         "--port", str(spec.port),
-        "--host", "0.0.0.0",
+        "--host", str(spec.host),
     ]
+    if spec.watch:
+        cmd.append("--watch")
+    if spec.headless:
+        cmd.append("--headless")
+    if spec.root_path:
+        cmd += ["--root-path", str(spec.root_path)]
+    if spec.ssl_cert:
+        cmd += ["--ssl-cert", str(spec.ssl_cert)]
+    if spec.ssl_key:
+        cmd += ["--ssl-key", str(spec.ssl_key)]
     try:
         sys.exit(subprocess.run(cmd).returncode)
     except KeyboardInterrupt:

@@ -114,6 +114,7 @@ This is a mono-repo containing all official runspec language packs:
 | `runspec` (Python) | `pip install runspec` | Active — 0.11.0 on PyPI |
 | `runspec-node` | `npm install runspec-node` | Active — 0.10.0 on npm |
 | `runspec-go` | `go get github.com/JasonFinestone/runspec/go` | Planned |
+| `runspec-chat` | `pip install "runspec-chat[anthropic]"` | Active — 0.4.0 on PyPI |
 
 ## Documentation
 

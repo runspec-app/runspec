@@ -150,6 +150,7 @@ def configure_logging(
 
     summary_enabled = bool(log_cfg.get("summary", True)) and not no_summary and not _env_truthy("RUNSPEC_ARG_NO_SUMMARY")
     if summary_enabled:
+        user, user_target = _get_invoker()
         _summary_state = {
             "counter": counter,
             "start": time.monotonic(),
@@ -159,6 +160,8 @@ def configure_logging(
             "command_path": list(command_path or []),
             "exception": None,
             "emitted": False,
+            "user": user,
+            "user_target": user_target,
         }
         _install_excepthook()
         atexit.register(_emit_run_summary)
@@ -217,6 +220,16 @@ def _collect_extra(record: logging.LogRecord) -> dict[str, Any]:
 
 def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").lower() in ("1", "true", "yes")
+
+
+def _get_invoker() -> tuple[str, str | None]:
+    """Return (invoker, sudo_target). sudo_target is None when not running under sudo."""
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        target = os.environ.get("USER") or os.environ.get("LOGNAME") or "root"
+        return sudo_user, target
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or os.environ.get("USERNAME") or "unknown"
+    return user, None
 
 
 class _SensitiveFilter(logging.Filter):
@@ -344,11 +357,17 @@ def _format_summary_line(state: dict[str, Any], duration_ms: int, exit_code: int
     errors = counts["ERROR"] + counts["CRITICAL"]
     secs = duration_ms / 1000.0
     runnable = state["runnable"]
+    user = state.get("user", "unknown")
+    user_target = state.get("user_target")
+    user_part = f" | user: {user} → {user_target} (sudo)" if user_target else f" | user: {user}"
+    ws = "s" if warnings != 1 else ""
+    es = "s" if errors != 1 else ""
+    events = f"{total} events ({warnings} warning{ws}, {errors} error{es})"
     if state["exception"] or exit_code != 0:
         exc = state["exception"]
         exc_part = f", {exc['type']}" if exc else ""
-        return f"runspec: {runnable} failed in {secs:.2f}s — exit {exit_code}{exc_part} — {total} events ({warnings} warning{'s' if warnings != 1 else ''}, {errors} error{'s' if errors != 1 else ''})"
-    return f"runspec: {runnable} completed in {secs:.2f}s — {total} events ({warnings} warning{'s' if warnings != 1 else ''}, {errors} error{'s' if errors != 1 else ''})"
+        return f"runspec: {runnable} failed in {secs:.2f}s — exit {exit_code}{exc_part} — {events}{user_part}"
+    return f"runspec: {runnable} completed in {secs:.2f}s — {events}{user_part}"
 
 
 def _emit_run_summary() -> None:
@@ -378,6 +397,8 @@ def _emit_run_summary() -> None:
                 "autonomy": state["autonomy"],
                 "exception": state["exception"],
                 "events": dict(state["counter"].counts),
+                "user": state["user"],
+                "user_target": state["user_target"],
             },
         )
 

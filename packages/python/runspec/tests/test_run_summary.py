@@ -12,6 +12,7 @@ import runspec.logging_setup as ls
 from runspec.logging_setup import (
     _ConsoleFormatter,
     _emit_run_summary,
+    _get_invoker,
     _JsonFormatter,
     _RunSummaryCounter,
     _SensitiveFilter,
@@ -29,7 +30,7 @@ def _reset(monkeypatch):
     """Reset logging state and unwind any atexit hooks left between tests."""
     # Prevent real atexit registration from running on interpreter shutdown
     # mid-test — patch atexit.register to a no-op for the duration of the test.
-    monkeypatch.setattr(ls.atexit, "register", lambda fn: fn)
+    monkeypatch.setattr(ls.atexit, "register", lambda fn, *args, **kwargs: fn)
     yield
     root = logging.getLogger()
     for h in list(root.handlers):
@@ -193,3 +194,60 @@ class TestStderrLine:
         _emit_run_summary()
         err = capsys.readouterr().err
         assert "2 warnings," in err
+
+
+# ── Invoker capture ──────────────────────────────────────────────────────────
+
+
+class TestInvoker:
+    def test_no_sudo_returns_user(self, monkeypatch):
+        monkeypatch.delenv("SUDO_USER", raising=False)
+        monkeypatch.setenv("USER", "alice")
+        user, target = _get_invoker()
+        assert user == "alice"
+        assert target is None
+
+    def test_sudo_returns_real_user_and_target(self, monkeypatch):
+        monkeypatch.setenv("SUDO_USER", "alice")
+        monkeypatch.setenv("USER", "root")
+        user, target = _get_invoker()
+        assert user == "alice"
+        assert target == "root"
+
+    def test_user_appended_to_stderr_line(self, capsys, monkeypatch):
+        monkeypatch.delenv("SUDO_USER", raising=False)
+        monkeypatch.setenv("USER", "alice")
+        configure_logging(_cfg(), runnable_name="r")
+        _emit_run_summary()
+        err = capsys.readouterr().err
+        assert "| user: alice" in err
+
+    def test_sudo_user_shown_with_target(self, capsys, monkeypatch):
+        monkeypatch.setenv("SUDO_USER", "alice")
+        monkeypatch.setenv("USER", "root")
+        configure_logging(_cfg(), runnable_name="r")
+        _emit_run_summary()
+        err = capsys.readouterr().err
+        assert "| user: alice → root (sudo)" in err
+
+    def test_user_in_audit_record(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.delenv("SUDO_USER", raising=False)
+        monkeypatch.setenv("USER", "alice")
+        configure_logging(_cfg(), runnable_name="myscript")
+        _emit_run_summary()
+        log_path = tmp_path / "logs" / "myscript.log"
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()]
+        summary = next(s for s in lines if s["logger"] == "runspec.runsummary")
+        assert summary["extra"]["user"] == "alice"
+        assert summary["extra"]["user_target"] is None
+
+    def test_sudo_user_target_in_audit_record(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.setenv("SUDO_USER", "alice")
+        monkeypatch.setenv("USER", "root")
+        configure_logging(_cfg(), runnable_name="myscript")
+        _emit_run_summary()
+        log_path = tmp_path / "logs" / "myscript.log"
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()]
+        summary = next(s for s in lines if s["logger"] == "runspec.runsummary")
+        assert summary["extra"]["user"] == "alice"
+        assert summary["extra"]["user_target"] == "root"

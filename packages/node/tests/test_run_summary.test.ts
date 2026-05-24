@@ -202,3 +202,61 @@ test('success line uses plural for 2 warnings', () => {
   cap.restore();
   expect(cap.lines.join('')).toContain('2 warnings,');
 });
+
+// ── invoker capture ──────────────────────────────────────────────────────────
+
+test('user appended to stderr line (no sudo)', () => {
+  const dir = tmpDir();
+  const origSudo = process.env['SUDO_USER'];
+  delete process.env['SUDO_USER'];
+  process.env['USER'] = 'alice';
+  configureLogging(makeCfg(dir));
+  const cap = captureStderr();
+  emitRunSummary();
+  cap.restore();
+  if (origSudo !== undefined) process.env['SUDO_USER'] = origSudo;
+  expect(cap.lines.join('')).toContain('| user: alice');
+});
+
+test('sudo user shown with arrow and target', () => {
+  const dir = tmpDir();
+  process.env['SUDO_USER'] = 'alice';
+  process.env['USER'] = 'root';
+  configureLogging(makeCfg(dir));
+  const cap = captureStderr();
+  emitRunSummary();
+  cap.restore();
+  delete process.env['SUDO_USER'];
+  expect(cap.lines.join('')).toContain('| user: alice → root (sudo)');
+});
+
+test('user and user_target written to audit record', () => {
+  const dir = tmpDir();
+  const origSudo = process.env['SUDO_USER'];
+  delete process.env['SUDO_USER'];
+  process.env['USER'] = 'alice';
+  configureLogging(makeCfg(dir));
+  const cap = captureStderr();
+  emitRunSummary();
+  cap.restore();
+  if (origSudo !== undefined) process.env['SUDO_USER'] = origSudo;
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8');
+  const summary = content.trim().split('\n').map(l => JSON.parse(l)).find(o => o.logger === RUN_SUMMARY_LOGGER);
+  expect(summary.extra.user).toBe('alice');
+  expect(summary.extra.user_target).toBeNull();
+});
+
+test('sudo user_target written to audit record', () => {
+  const dir = tmpDir();
+  process.env['SUDO_USER'] = 'alice';
+  process.env['USER'] = 'root';
+  configureLogging(makeCfg(dir));
+  const cap = captureStderr();
+  emitRunSummary();
+  cap.restore();
+  delete process.env['SUDO_USER'];
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8');
+  const summary = content.trim().split('\n').map(l => JSON.parse(l)).find(o => o.logger === RUN_SUMMARY_LOGGER);
+  expect(summary.extra.user).toBe('alice');
+  expect(summary.extra.user_target).toBe('root');
+});

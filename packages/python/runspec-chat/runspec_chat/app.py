@@ -16,20 +16,72 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from runspec_chat.adapter import ChatResponse, ToolCall
-from runspec_chat.adapters.anthropic_direct import AnthropicAdapter
-from runspec_chat.chat import _host_pass_key, _shared_pass_key, _sync_user_env
+from runspec_chat.adapters.anthropic_direct import DEFAULT_SYSTEM, AnthropicAdapter
+from runspec_chat.chat import (
+    _host_pass_key,
+    _resolve_hosts_path,
+    _shared_pass_key,
+    _sync_user_env,
+)
 
 _LOCAL_CONN = "__runspec_local__"
 _DEFAULT_MODEL = os.environ.get("RUNSPEC_CHAT_MODEL", "claude-haiku-4-5-20251001")
 _SELF_TOOLS = {"runspec-chat", "setup-keys"}  # hide from "Local tools ready" message
-_COMMANDS_HIDE = {"runspec-chat"}             # hide from slash-command autocomplete
+_COMMANDS_HIDE = {"runspec-chat"}  # hide from slash-command autocomplete
+
+_HOSTS_PATH = Path(os.environ.get("RUNSPEC_CHAT_HOSTS", "~/.config/runspec-chat/jump_hosts.toml")).expanduser()
 
 _sync_user_env(
-    hosts_path=Path(
-        os.environ.get("RUNSPEC_CHAT_HOSTS", "~/.config/runspec-chat/hosts.toml")
-    ).expanduser(),
+    hosts_path=_HOSTS_PATH,
     chainlit_config=Path(__file__).parent.parent / ".chainlit" / "config.toml",
 )
+
+
+def _load_host_categories() -> dict[str, str]:
+    """Return {host_name: category} from jump_hosts.toml. Falls back to host name."""
+    resolved = _resolve_hosts_path(_HOSTS_PATH)
+    if not resolved.exists():
+        return {}
+    try:
+        with open(resolved, "rb") as f:
+            cfg = tomllib.load(f)
+        return {name: info.get("category", name) for name, info in cfg.get("hosts", {}).items()}
+    except Exception:
+        return {}
+
+
+_HOST_CATEGORIES: dict[str, str] = _load_host_categories()
+
+
+def _get_user_identity() -> tuple[str, str | None]:
+    """Return (login, display_name). display_name is None if OS username is all that's known."""
+    login = os.environ.get("USER") or os.environ.get("LOGNAME") or os.environ.get("USERNAME") or "unknown"
+    if sys.platform == "win32":
+        try:
+            import win32api  # type: ignore[import-untyped]
+            import win32con  # type: ignore[import-untyped]
+            name = win32api.GetUserNameEx(win32con.NameDisplay)
+            if name and name != login:
+                return login, name
+        except Exception:
+            pass
+    else:
+        try:
+            import pwd
+            gecos = pwd.getpwuid(os.getuid()).pw_gecos
+            name = gecos.split(",")[0].strip()
+            if name and name != login:
+                return login, name
+        except (ImportError, KeyError, AttributeError):
+            pass
+    return login, None
+
+
+def _format_user(login: str, display_name: str | None) -> str:
+    return f"{display_name} ({login})" if display_name else login
+
+
+_USER_LOGIN, _USER_DISPLAY_NAME = _get_user_identity()
 
 
 async def _refresh_commands() -> None:
@@ -39,17 +91,26 @@ async def _refresh_commands() -> None:
 
     seen: set[str] = set()
     commands = []
-    for t in local_tools + [t for conn, tools in mcp_tools.items() for t in tools if conn != _LOCAL_CONN]:
+
+    for t in local_tools:
         if t["name"] in _COMMANDS_HIDE or t["name"] in seen:
             continue
         seen.add(t["name"])
+        base_desc = t.get("description") or t["name"]
         icon = "key" if t["name"] == "setup-keys" else "terminal"
-        commands.append({
-            "id": t["name"],
-            "description": t.get("description") or t["name"],
-            "icon": icon,
-            "button": False,
-        })
+        commands.append({"id": t["name"], "description": f"[local] {base_desc}", "icon": icon, "button": False})
+
+    for conn, tools in mcp_tools.items():
+        if conn == _LOCAL_CONN:
+            continue
+        category = _HOST_CATEGORIES.get(conn, conn)
+        for t in tools:
+            if t["name"] in _COMMANDS_HIDE or t["name"] in seen:
+                continue
+            seen.add(t["name"])
+            base_desc = t.get("description") or t["name"]
+            commands.append({"id": t["name"], "description": f"[{category}] {base_desc}", "icon": "terminal", "button": False})
+
     try:
         await cl.context.emitter.set_commands(commands)
     except Exception as exc:
@@ -66,6 +127,7 @@ def _local_runspec_exe() -> str:
 # MCP connection lifecycle  (user-initiated via Chainlit plug icon)
 # ---------------------------------------------------------------------------
 
+
 @cl.on_mcp_connect
 async def on_mcp_connect(connection, session: ClientSession) -> None:
     result = await session.list_tools()
@@ -77,8 +139,9 @@ async def on_mcp_connect(connection, session: ClientSession) -> None:
     mcp_tools[connection.name] = tools
     cl.user_session.set("mcp_tools", mcp_tools)
     tool_names = [t["name"] for t in tools]
+    category = _HOST_CATEGORIES.get(connection.name, connection.name)
     await cl.Message(
-        content=f"Connected to **{connection.name}** — {len(tools)} tool(s): `{'`, `'.join(tool_names)}`"
+        content=f"── {category} ──\n✓ Connected to **{connection.name}** — {len(tools)} tool(s): `{'`, `'.join(tool_names)}`"
     ).send()
     await _refresh_commands()
 
@@ -95,11 +158,13 @@ async def on_mcp_disconnect(name: str, session: ClientSession) -> None:
 # Chat lifecycle
 # ---------------------------------------------------------------------------
 
+
 @cl.on_chat_start
 async def on_chat_start() -> None:
     cl.user_session.set("messages", [])
     cl.user_session.set("mcp_tools", {})
     cl.user_session.set("local_sessions", {})
+    cl.user_session.set("user_identity", {"login": _USER_LOGIN, "display_name": _USER_DISPLAY_NAME})
 
     # API key: browser settings take precedence over .env
     env = cl.user_session.get("env") or {}
@@ -108,7 +173,11 @@ async def on_chat_start() -> None:
         await cl.Message(
             content="No API key found. Open **Settings** (⚙ gear icon) and enter your `ANTHROPIC_API_KEY`."
         ).send()
-    cl.user_session.set("adapter", AnthropicAdapter(model=_DEFAULT_MODEL, api_key=api_key or None))
+    user_str = _format_user(_USER_LOGIN, _USER_DISPLAY_NAME)
+    system = DEFAULT_SYSTEM + f"\nSession user: {user_str}."
+    cl.user_session.set(
+        "adapter", AnthropicAdapter(model=_DEFAULT_MODEL, api_key=api_key or None, system=system)
+    )
 
     await _connect_local()
 
@@ -141,7 +210,11 @@ async def _local_mcp_task(
                 await session.initialize()
                 result = await session.list_tools()
                 tools_holder.extend(
-                    {"name": t.name, "description": t.description, "input_schema": t.inputSchema}
+                    {
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.inputSchema,
+                    }
                     for t in result.tools
                 )
                 session_holder.append(session)
@@ -157,7 +230,9 @@ async def _connect_local() -> None:
     ready = asyncio.Event()
     stop = asyncio.Event()
 
-    task = asyncio.create_task(_local_mcp_task(session_holder, tools_holder, ready, stop))
+    task = asyncio.create_task(
+        _local_mcp_task(session_holder, tools_holder, ready, stop)
+    )
     cl.user_session.set("local_stop", stop)
     cl.user_session.set("local_task", task)
 
@@ -178,11 +253,14 @@ async def _connect_local() -> None:
     cl.user_session.set("local_tools", tools_holder)  # survives mcp_tools resets
 
     user_tools = [t["name"] for t in tools_holder if t["name"] not in _SELF_TOOLS]
+    user_str = _format_user(_USER_LOGIN, _USER_DISPLAY_NAME)
     if user_tools:
-        await cl.Message(content=f"Local tools ready: `{'`, `'.join(user_tools)}`").send()
+        await cl.Message(
+            content=f"── local ──\n✓ Local tools ready: `{'`, `'.join(user_tools)}` | running as **{user_str}**"
+        ).send()
     else:
         await cl.Message(
-            content="Ready. Connect a remote host via the **plug icon**, or type `/setup-keys` to set up SSH keys."
+            content=f"── local ──\nReady. Connect a remote host via the **plug icon**, or type `/setup-keys` to set up SSH keys. | running as **{user_str}**"
         ).send()
     await _refresh_commands()
 
@@ -191,17 +269,21 @@ async def _connect_local() -> None:
 # Built-in: setup-keys  (runs in-process so it can use browser credentials)
 # ---------------------------------------------------------------------------
 
+
 async def _builtin_setup_keys(tool_input: dict) -> str:
-    hosts_path = Path(tool_input.get("hosts", "~/.config/runspec-chat/hosts.toml")).expanduser()
+    hosts_path = _resolve_hosts_path(
+        Path(
+            tool_input.get("hosts", "~/.config/runspec-chat/jump_hosts.toml")
+        ).expanduser()
+    )
     if not hosts_path.exists():
-        return f"No hosts config at `{hosts_path}`. Copy `hosts.toml.example` and edit it."
+        return f"No hosts config at `{hosts_path}`. Copy `jump_hosts.toml.example` and edit it."
 
     with open(hosts_path, "rb") as f:
         config = tomllib.load(f)
 
     defaults = config.get("config", {})
     default_user = defaults.get("user")
-    default_password = defaults.get("password")
 
     ssh_hosts = [
         (name, info)
@@ -227,9 +309,8 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
             resolved.append((name, target, password))
 
     if missing and not resolved:
-        return (
-            "No passwords set. Open **Settings** (⚙) and fill in:\n"
-            + "\n".join(missing)
+        return "No passwords set. Open **Settings** (⚙) and fill in:\n" + "\n".join(
+            missing
         )
 
     key_type = tool_input.get("key_type", "ed25519")
@@ -239,8 +320,17 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
     if not key_path.exists():
         async with cl.Step(name="ssh-keygen") as step:
             proc = await asyncio.create_subprocess_exec(
-                "ssh-keygen", "-t", key_type, "-f", str(key_path), "-N", "", "-C", "runspec-chat",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                "ssh-keygen",
+                "-t",
+                key_type,
+                "-f",
+                str(key_path),
+                "-N",
+                "",
+                "-C",
+                "runspec-chat",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await proc.communicate()
             if proc.returncode != 0:
@@ -257,7 +347,11 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
             f"  ssh {target} \"cat >> ~/.ssh/authorized_keys\" << 'EOF'\n  {pub_key_content}\n  EOF"
             for _, target, _ in resolved
         )
-        reason = "Windows" if is_windows else "`sshpass` not installed (`sudo apt-get install sshpass`)"
+        reason = (
+            "Windows"
+            if is_windows
+            else "`sshpass` not installed (`sudo apt-get install sshpass`)"
+        )
         return (
             f"Key generated at `{pub_key}` ✓\n\n"
             f"Automated copy unavailable ({reason}). "
@@ -270,8 +364,14 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
     for name, target, password in resolved:
         async with cl.Step(name=f"ssh-copy-id → {name}") as step:
             proc = await asyncio.create_subprocess_exec(
-                "sshpass", "-e", "ssh-copy-id", "-i", str(pub_key), target,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                "sshpass",
+                "-e",
+                "ssh-copy-id",
+                "-i",
+                str(pub_key),
+                target,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 env={**os.environ, "SSHPASS": password},
             )
             _, stderr = await proc.communicate()
@@ -284,7 +384,10 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
 
     lines = []
     if missing:
-        lines.append("Skipped (no password in Settings): " + ", ".join(f"`{m.split('`')[1]}`" for m in missing))
+        lines.append(
+            "Skipped (no password in Settings): "
+            + ", ".join(f"`{m.split('`')[1]}`" for m in missing)
+        )
     if ok:
         lines.append(f"{len(ok)} host(s) configured: {', '.join(f'`{n}`' for n in ok)}")
     if failed:
@@ -299,6 +402,7 @@ async def _builtin_setup_keys(tool_input: dict) -> str:
 # ---------------------------------------------------------------------------
 # Tool dispatch
 # ---------------------------------------------------------------------------
+
 
 def _get_session(mcp_name: str) -> ClientSession | None:
     """Return the ClientSession for a named connection, local or Chainlit-managed."""
@@ -321,12 +425,18 @@ async def call_tool(tool_call: ToolCall) -> str:
 
     mcp_tools: dict = cl.user_session.get("mcp_tools", {})
     mcp_name = next(
-        (conn for conn, tools in mcp_tools.items() if any(t["name"] == tool_call.name for t in tools)),
+        (
+            conn
+            for conn, tools in mcp_tools.items()
+            if any(t["name"] == tool_call.name for t in tools)
+        ),
         None,
     )
 
     if not mcp_name:
-        step.output = json.dumps({"error": f"Tool '{tool_call.name}' not found in any connected MCP server"})
+        step.output = json.dumps(
+            {"error": f"Tool '{tool_call.name}' not found in any connected MCP server"}
+        )
         return step.output
 
     mcp_session = _get_session(mcp_name)
@@ -337,7 +447,9 @@ async def call_tool(tool_call: ToolCall) -> str:
     try:
         raw = await mcp_session.call_tool(tool_call.name, tool_call.input)
         if hasattr(raw, "content") and raw.content:
-            step.output = "\n".join(block.text for block in raw.content if hasattr(block, "text"))
+            step.output = "\n".join(
+                block.text for block in raw.content if hasattr(block, "text")
+            )
         else:
             step.output = str(raw)
         rs_meta = (getattr(raw, "meta", None) or {}).get("runspec", {})
@@ -352,6 +464,7 @@ async def call_tool(tool_call: ToolCall) -> str:
 # ---------------------------------------------------------------------------
 # Slash command handler  (/toolname --arg value ...)
 # ---------------------------------------------------------------------------
+
 
 def _parse_slash(text: str) -> tuple[str, dict]:
     try:
@@ -385,13 +498,17 @@ async def _handle_slash(text: str) -> None:
 
     local_tools: list = cl.user_session.get("local_tools", [])
     mcp_tools: dict = cl.user_session.get("mcp_tools", {})
-    all_tools = local_tools + [t for conn, tools in mcp_tools.items() for t in tools if conn != _LOCAL_CONN]
+    all_tools = local_tools + [
+        t for conn, tools in mcp_tools.items() for t in tools if conn != _LOCAL_CONN
+    ]
     tool_def = next((t for t in all_tools if t["name"] == tool_name), None)
 
     if tool_def is None:
         known = sorted({t["name"] for t in all_tools})
         available = ", ".join(f"`{n}`" for n in known) if known else "none"
-        await cl.Message(content=f"Unknown tool `{tool_name}`. Available: {available}").send()
+        await cl.Message(
+            content=f"Unknown tool `{tool_name}`. Available: {available}"
+        ).send()
         return
 
     if tool_input.get("help"):
@@ -421,6 +538,7 @@ async def _handle_slash(text: str) -> None:
 # ---------------------------------------------------------------------------
 # LLM message loop
 # ---------------------------------------------------------------------------
+
 
 async def _llm_loop(user_text: str) -> None:
     adapter: AnthropicAdapter | None = cl.user_session.get("adapter")
@@ -457,6 +575,7 @@ async def _llm_loop(user_text: str) -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 @cl.on_message
 async def on_message(msg: cl.Message) -> None:

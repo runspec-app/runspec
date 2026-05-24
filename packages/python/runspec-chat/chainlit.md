@@ -28,13 +28,13 @@ whichever hosts you connect — local or remote via SSH.
 
 **1. Create your hosts config**
 
-Copy `hosts.toml.example` to `~/.config/runspec-chat/hosts.toml` and edit it
+Copy `jump_hosts.toml.example` to `~/.config/runspec-chat/jump_hosts.toml` and edit it
 with your server addresses.
 
 **2. Enter your credentials in Settings**
 
 Click the **⚙ gear icon** (top-right) to open Settings. Fields shown depend on
-your `hosts.toml`:
+your `jump_hosts.toml`:
 
 | Field | What to enter |
 |---|---|
@@ -77,6 +77,11 @@ Click the **plug icon** (MCP button) and add a stdio connection:
 | Local (this machine) | `/path/to/.venv/bin/runspec serve` |
 
 Once connected, all tools on that host are available immediately.
+
+Name the connection identically to the host key in `jump_hosts.toml` (e.g.
+`dev-box`) so the category from your config is shown in connection messages
+and slash-command descriptions. If the names don't match, the connection name
+itself is used as the category.
 
 ---
 

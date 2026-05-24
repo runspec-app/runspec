@@ -26,9 +26,26 @@ runspec-chat
 Opens on `http://0.0.0.0:8000` by default.
 
 ```bash
-runspec-chat --port 9000          # custom port
-runspec-chat --model claude-opus-4-7  # override model
+runspec-chat --port 9000                  # custom port
+runspec-chat --model claude-opus-4-7      # override model
+runspec-chat --watch                      # reload on file changes (dev)
+runspec-chat --headless                   # don't open browser automatically
+runspec-chat --host 127.0.0.1             # bind to a specific interface
+runspec-chat --root-path /chat            # serve under a path prefix (reverse proxy)
+runspec-chat --ssl-cert cert.pem --ssl-key key.pem  # enable HTTPS
 ```
+
+| Argument | Default | Description |
+|---|---|---|
+| `--port` / `-p` | `8000` | Port for the web server |
+| `--host` | `0.0.0.0` | Network interface to bind to |
+| `--model` | `claude-haiku-4-5` | LLM model identifier |
+| `--hosts` / `-H` | `~/.config/runspec-chat/jump_hosts.toml` | Hosts config path |
+| `--watch` / `-w` | off | Reload on source file changes |
+| `--headless` | off | Suppress auto-opening the browser |
+| `--root-path` | — | Root path for reverse proxy deployments |
+| `--ssl-cert` | — | SSL certificate file (enables HTTPS) |
+| `--ssl-key` | — | SSL private key file (enables HTTPS) |
 
 ---
 
@@ -54,10 +71,10 @@ whichever hosts you connect — local or remote via SSH.
 
 ## Configuration
 
-### hosts.toml
+### jump_hosts.toml
 
-Copy `hosts.toml.example` (bundled with the package) to
-`~/.config/runspec-chat/hosts.toml` and edit it:
+Copy `jump_hosts.toml.example` (bundled with the package) to
+`~/.config/runspec-chat/jump_hosts.toml` and edit it:
 
 ```toml
 [config]
@@ -66,21 +83,43 @@ user = "myuser"      # default SSH username for all hosts
 [hosts.dev-box]
 ssh = "192.168.1.10"
 runspec_path = "/home/myuser/.venv/bin/runspec"
+category = "devops"  # optional — shown in connection messages and command descriptions
 
 [hosts.build-server]
 ssh = "build.internal"
 user = "builder"     # overrides config.user
 runspec_path = "/opt/runspec/.venv/bin/runspec"
+category = "ci"
 ```
 
-- `[config].user` — default SSH username, used for all hosts that don't set their own
-- Per-host `user` — overrides the default for that host only
-- `ssh` — hostname (or IP) to connect to
-- `runspec_path` — path to `runspec` on that host
+| Field | Required | Description |
+|---|---|---|
+| `ssh` | Yes (for remote hosts) | Hostname or IP to connect to |
+| `runspec_path` | Yes | Path to `runspec` on that host |
+| `user` | No | SSH username — overrides `[config].user` for this host |
+| `category` | No | Label shown in the UI — falls back to the host name if omitted |
+
+### Tool categories
+
+Each connection is labelled with its category. When you connect a host, the
+startup message includes a `── {category} ──` header. The slash-command
+autocomplete prefixes every tool description with `[category]`:
+
+```
+deploy          ← command id (bold)
+[devops] Deploy the app to production   ← description (muted, below id)
+```
+
+Local tools (the auto-started venv tools) always use the `local` category.
+
+!!! tip "Naming convention"
+    Name your Chainlit connection identically to the host key in
+    `jump_hosts.toml` (e.g. `dev-box`) so the category resolves automatically.
+    If the names don't match, the connection name itself is used as the category.
 
 ### Settings (⚙ gear icon)
 
-The browser settings panel shows credential fields based on your `hosts.toml`:
+The browser settings panel shows credential fields based on your `jump_hosts.toml`:
 
 | Field | When it appears |
 |---|---|
@@ -91,6 +130,28 @@ The browser settings panel shows credential fields based on your `hosts.toml`:
 SSH passwords are session-scoped: never written to disk, gone when you close
 the tab. They are only needed to run `/setup-keys` — once your key is installed
 on each host, you never need them again.
+
+### Session user identity
+
+runspec-chat resolves the OS identity of the person who started the server and
+surfaces it in two places:
+
+- **Startup message** — `running as **Jason Finestone (jason)**` appears in the
+  local tools ready line so you can confirm which account is active at a glance.
+- **System prompt** — the resolved identity is injected into every session so
+  the assistant is aware of who it's working with. This is useful when tools
+  care about the invoking user (audit trails, personalised output, etc.).
+
+Resolution order:
+
+| Platform | Source |
+|---|---|
+| Linux / Mac | GECOS full name from `/etc/passwd` (`pwd.getpwuid`) |
+| Windows (domain-joined) | AD display name via `pywin32` `GetUserNameEx` |
+| Fallback | `USER` / `LOGNAME` / `USERNAME` environment variable |
+
+The identity is the OS user who launched `runspec-chat`, not the browser user.
+No user-input name — avoids spoofing in shared environments.
 
 ---
 
@@ -107,7 +168,7 @@ or just ask:
 > set up my SSH keys for all configured hosts
 
 This generates an `ed25519` key at `~/.ssh/runspec-chat_ed25519` (if it doesn't
-already exist), then copies the public key to every host in your `hosts.toml`
+already exist), then copies the public key to every host in your `jump_hosts.toml`
 using the password from Settings.
 
 After keys are installed, add to `~/.ssh/config`:

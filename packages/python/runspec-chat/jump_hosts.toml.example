@@ -1,8 +1,13 @@
-# Copy to ~/.config/runspec-chat/hosts.toml and edit.
+# Copy to ~/.config/runspec-chat/jump_hosts.toml and edit.
 #
 # Set a default SSH username in [config]. Any host can override it.
 # Passwords are never stored here — enter them once in Settings (⚙) when
 # you need to run /setup-keys. After keys are installed, they're not needed again.
+#
+# category: optional label shown in connection messages and slash-command
+# descriptions. Falls back to the host name when omitted. When you connect via
+# the Chainlit plug icon, name the connection identically to the host key here
+# (e.g. "dev-box") so the category is resolved automatically.
 
 [config]
 user = "myuser"      # default SSH username for all hosts
@@ -10,12 +15,14 @@ user = "myuser"      # default SSH username for all hosts
 [hosts.dev-box]
 ssh = "192.168.1.10"
 runspec_path = "/home/myuser/.venv/bin/runspec"
+category = "devops"  # optional; falls back to "dev-box" if omitted
 # → password field in Settings: SSH_PASS
 
 [hosts.build-server]
 ssh = "build.internal"
 user = "builder"     # overrides config.user
 runspec_path = "/opt/runspec/.venv/bin/runspec"
+category = "ci"      # optional
 # → password field in Settings: SSH_BUILD_SERVER_PASS
 
 # Local connection (no SSH — omit ssh field)
