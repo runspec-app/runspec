@@ -31,9 +31,10 @@ _COMMANDS_HIDE = {"runspec-chat"}  # hide from slash-command autocomplete
 
 _HOSTS_PATH = Path(os.environ.get("RUNSPEC_CHAT_HOSTS", "~/.config/runspec-chat/jump_hosts.toml")).expanduser()
 
+_chainlit_root = Path(os.environ.get("CHAINLIT_ROOT", Path(__file__).parent))
 _sync_user_env(
     hosts_path=_HOSTS_PATH,
-    chainlit_config=Path(__file__).parent / ".chainlit" / "config.toml",
+    chainlit_config=_chainlit_root / ".chainlit" / "config.toml",
 )
 
 

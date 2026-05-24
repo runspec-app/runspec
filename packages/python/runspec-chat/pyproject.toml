@@ -24,7 +24,3 @@ dev = [
     "ruff",
     "mypy",
 ]
-
-[tool.hatch.build.targets.wheel.force-include]
-"runspec_chat/.chainlit" = "runspec_chat/.chainlit"
-"runspec_chat/chainlit.md" = "runspec_chat/chainlit.md"
