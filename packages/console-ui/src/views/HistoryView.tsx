@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Space } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined, CaretRightOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
@@ -23,12 +23,11 @@ function formatLogsAsText(record: HistoryRecord, logLines: HistoryLogLine[]): st
 
 interface ExpandedRunProps {
   record: HistoryRecord
-  rerunCount: number
   onRerun?: (record: HistoryRecord) => void
   onAskLlm?: (text: string) => void
 }
 
-function ExpandedRun({ record, rerunCount, onRerun, onAskLlm }: ExpandedRunProps) {
+function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
   const args = record.args ?? {}
   const logLines = record.logLines ?? []
   const hasArgs = Object.keys(args).length > 0
@@ -62,9 +61,6 @@ function ExpandedRun({ record, rerunCount, onRerun, onAskLlm }: ExpandedRunProps
           <Button size="small" icon={<RedoOutlined />} onClick={() => onRerun(record)}>
             Rerun
           </Button>
-          {rerunCount > 0 && (
-            <Text type="secondary" style={{ fontSize: 11 }}>× {rerunCount}</Text>
-          )}
           {hasArgs && !isEditing && (
             <Button size="small" icon={<EditOutlined />} onClick={startEditing}>
               Edit args
@@ -170,22 +166,20 @@ function LogLine({ line }: { line: HistoryLogLine }) {
 }
 
 interface HistoryViewProps {
+  search: string
+  onSearchChange: (s: string) => void
   onRerun?: (record: HistoryRecord) => void
   onAskLlm?: (text: string) => void
 }
 
-export function HistoryView({ onRerun, onAskLlm }: HistoryViewProps) {
+export function HistoryView({ search, onSearchChange, onRerun, onAskLlm }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
-  const [search, setSearch] = useState('')
-  const [rerunCounts, setRerunCounts] = useState<Record<string, number>>({})
-
-  const handleRerun = (record: HistoryRecord) => {
-    setRerunCounts(c => ({ ...c, [record.id]: (c[record.id] ?? 0) + 1 }))
-    onRerun?.(record)
-  }
+  const fetchRef = useRef(() => bridge.get_history('local').then(setRecords))
 
   useEffect(() => {
-    bridge.get_history('local').then(setRecords)
+    fetchRef.current()
+    const id = setInterval(fetchRef.current, 5000)
+    return () => clearInterval(id)
   }, [])
 
   const filtered = search
@@ -267,7 +261,7 @@ export function HistoryView({ onRerun, onAskLlm }: HistoryViewProps) {
         prefix={<SearchOutlined />}
         placeholder="Search runnable, host, operator, run-as…"
         value={search}
-        onChange={e => setSearch(e.target.value)}
+        onChange={e => onSearchChange(e.target.value)}
         allowClear
         style={{ marginBottom: 16, maxWidth: 400 }}
       />
@@ -279,12 +273,7 @@ export function HistoryView({ onRerun, onAskLlm }: HistoryViewProps) {
         pagination={{ pageSize: 50, showSizeChanger: true }}
         expandable={{
           expandedRowRender: (record) => (
-            <ExpandedRun
-              record={record}
-              rerunCount={rerunCounts[record.id] ?? 0}
-              onRerun={handleRerun}
-              onAskLlm={onAskLlm}
-            />
+            <ExpandedRun record={record} onRerun={onRerun} onAskLlm={onAskLlm} />
           ),
           rowExpandable: () => true,
         }}

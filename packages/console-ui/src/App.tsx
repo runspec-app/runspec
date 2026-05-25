@@ -34,6 +34,7 @@ export default function App() {
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
+  const [historySearch, setHistorySearch] = useState('')
   const inFlight = useInFlight()
 
   useEffect(() => {
@@ -53,6 +54,7 @@ export default function App() {
   }
 
   const handleHistoryRerun = (record: HistoryRecord) => {
+    setHistorySearch(record.runnable)
     setView('console')
     window.dispatchEvent(new CustomEvent('runspec:rerun', {
       detail: { host: record.host, runnable: record.runnable, args: record.args },
@@ -172,7 +174,7 @@ export default function App() {
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'runnables' && <RunnablesView />}
                     {view === 'hosts'     && <HostsView />}
-                    {view === 'history'   && <HistoryView onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} />}
+                    {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} />}
                     {view === 'schedules' && <SchedulesView />}
                   </div>
                 )}
