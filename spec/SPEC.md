@@ -56,10 +56,62 @@ Project-wide defaults. All fields are optional.
 |---|---|---|---|
 | `autonomy-default` | string | `"confirm"` | Autonomy when unspecified on a script |
 | `lang` | string | — | Preferred language for `runspec generate` |
-| `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. |
+| `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. The venv directory name must pass the naming check (see *Virtual Environment Identity*) regardless of whether this field is set. |
 | `version` | string | `"1"` | runspec spec version |
 | `jump-hosts` | table | — | Per-alias jump host config. See [Jump Hosts](#jump-hosts). |
 | `logging` | table | — | Logging configuration. See [Logging](#logging). |
+
+### Virtual Environment Identity
+
+`runspec serve` derives the runnable group identifier from the execution
+environment name at startup:
+
+| Runtime | Source |
+|---|---|
+| Python | `Path(sys.prefix).name` — the venv root directory name |
+| Node | `name` field from the nearest `package.json` |
+
+This name identifies which set of runnables came from which environment. When
+two environments expose a runnable with the same name, the group label is what
+lets operators and agents tell them apart.
+
+**Naming requirement (Python):** The following venv directory names are
+rejected — `runspec serve` refuses to start if `Path(sys.prefix).name` matches
+any of them:
+
+```
+venv  .venv  env  .env  virtualenv  .virtualenv
+```
+
+These names are ambiguous — they describe nothing about what is installed or who
+owns the environment. A venv named `myapp-prod` makes an unambiguous claim that
+`venv` cannot.
+
+This check is unconditional. Setting `[config] name` does not bypass it — the
+venv directory name is the execution identity, not a display label. A display
+label over a generically-named venv is still a generically-named venv.
+
+**Remedy:** Recreate the venv with a meaningful name that reflects the
+application and deployment tier:
+
+```bash
+# wrong
+python -m venv .venv
+
+# right
+python -m venv myapp-prod
+source myapp-prod/bin/activate
+pip install -e .
+```
+
+Deployments managed by configuration management should encode the application
+name in the venv path so the identity is visible at the filesystem level:
+
+```
+/opt/myapp-prod/          ← venv root (sys.prefix basename = "myapp-prod")
+  bin/runspec
+  lib/python3.x/...
+```
 
 ### Jump Hosts
 
