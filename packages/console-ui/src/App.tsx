@@ -35,7 +35,14 @@ export default function App() {
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const [historySearch, setHistorySearch] = useState('')
+  const [activeScope, setActiveScope] = useState<string[]>([])
   const inFlight = useInFlight()
+
+  const handleScopeToggle = (group: string) => {
+    setActiveScope(prev =>
+      prev.includes(group) ? prev.filter(g => g !== group) : [...prev, group]
+    )
+  }
 
   useEffect(() => {
     bridge.get_runnables('local').then(setRunnables)
@@ -172,9 +179,9 @@ export default function App() {
                 </div>
                 {view !== 'console' && (
                   <div style={{ flex: 1, overflow: 'auto' }}>
-                    {view === 'runnables' && <RunnablesView />}
+                    {view === 'runnables' && <RunnablesView activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'hosts'     && <HostsView />}
-                    {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} />}
+                    {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'schedules' && <SchedulesView />}
                   </div>
                 )}
@@ -189,7 +196,9 @@ export default function App() {
               }}>
                 <div style={{ flex: 1 }}>
                   <CommandInput
-                    runnables={runnables}
+                    runnables={activeScope.length > 0 ? runnables.filter(r => activeScope.includes(r.group)) : runnables}
+                    activeScope={activeScope}
+                    onScopeChange={setActiveScope}
                     onRunRunnable={handleRunRunnable}
                     onSendChat={handleSendChat}
                     history={inputHistory}

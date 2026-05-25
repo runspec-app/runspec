@@ -34,7 +34,12 @@ function RunnableHelp({ runnable }: { runnable: Runnable }) {
   )
 }
 
-export function RunnablesView() {
+interface RunnablesViewProps {
+  activeScope: string[]
+  onScopeToggle: (group: string) => void
+}
+
+export function RunnablesView({ activeScope, onScopeToggle }: RunnablesViewProps) {
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [search, setSearch] = useState('')
 
@@ -66,7 +71,19 @@ export function RunnablesView() {
       title: 'Group',
       dataIndex: 'group',
       key: 'group',
-      render: (g: string) => <Tag color="blue">{g}</Tag>,
+      render: (g: string) => {
+        const active = activeScope.includes(g)
+        return (
+          <Tag
+            color={active ? 'geekblue' : 'blue'}
+            onClick={() => onScopeToggle(g)}
+            style={{ cursor: 'pointer', fontWeight: active ? 600 : 400 }}
+            title={active ? 'Remove from scope' : 'Add to scope'}
+          >
+            {g}
+          </Tag>
+        )
+      },
       filters: groups.map(g => ({ text: g, value: g })),
       onFilter: (value, record) => record.group === value,
     },

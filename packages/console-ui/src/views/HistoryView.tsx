@@ -170,9 +170,11 @@ interface HistoryViewProps {
   onSearchChange: (s: string) => void
   onRerun?: (record: HistoryRecord) => void
   onAskLlm?: (text: string) => void
+  activeScope: string[]
+  onScopeToggle: (group: string) => void
 }
 
-export function HistoryView({ search, onSearchChange, onRerun, onAskLlm }: HistoryViewProps) {
+export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
   const fetchRef = useRef(() => bridge.get_history('local').then(setRecords))
 
@@ -212,7 +214,19 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm }: Histo
       title: 'Group',
       dataIndex: 'group',
       key: 'group',
-      render: (g: string) => <Tag color="blue">{g}</Tag>,
+      render: (g: string) => {
+        const active = activeScope.includes(g)
+        return (
+          <Tag
+            color={active ? 'geekblue' : 'blue'}
+            onClick={() => onScopeToggle(g)}
+            style={{ cursor: 'pointer', fontWeight: active ? 600 : 400 }}
+            title={active ? 'Remove from scope' : 'Add to scope'}
+          >
+            {g}
+          </Tag>
+        )
+      },
       filters: groups.map(g => ({ text: g, value: g })),
       onFilter: (value, record) => record.group === value,
     },

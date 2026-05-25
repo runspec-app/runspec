@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Button } from 'antd'
+import { Button, Tag } from 'antd'
 import { SendOutlined } from '@ant-design/icons'
 import type { Runnable } from '../bridge'
 
@@ -10,12 +10,14 @@ interface SlashItem {
 
 interface CommandInputProps {
   runnables: Runnable[]
+  activeScope: string[]
+  onScopeChange: (groups: string[]) => void
   onRunRunnable: (runnable: Runnable, args: Record<string, unknown>) => void
   onSendChat: (message: string) => void
   history: string[]
 }
 
-export function CommandInput({ runnables, onRunRunnable, onSendChat, history }: CommandInputProps) {
+export function CommandInput({ runnables, activeScope, onScopeChange, onRunRunnable, onSendChat, history }: CommandInputProps) {
   const [value, setValue] = useState('')
   const [slashItems, setSlashItems] = useState<SlashItem[]>([])
   const [slashOpen, setSlashOpen] = useState(false)
@@ -127,8 +129,29 @@ export function CommandInput({ runnables, onRunRunnable, onSendChat, history }: 
     }
   }
 
+  const placeholder = activeScope.length > 0
+    ? `Scoped to ${activeScope.join(', ')} — type / for runnables or ask the LLM...`
+    : 'Type / for runnables or ask the LLM...'
+
   return (
     <div style={{ position: 'relative' }}>
+      {/* Active scope chips */}
+      {activeScope.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+          {activeScope.map(g => (
+            <Tag
+              key={g}
+              color="geekblue"
+              closable
+              onClose={() => onScopeChange(activeScope.filter(s => s !== g))}
+              style={{ margin: 0, fontSize: 12, cursor: 'default' }}
+            >
+              {g}
+            </Tag>
+          ))}
+        </div>
+      )}
+
       {/* Slash dropdown */}
       {slashOpen && filteredItems.length > 0 && (
         <div style={{
@@ -176,7 +199,7 @@ export function CommandInput({ runnables, onRunRunnable, onSendChat, history }: 
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder="Type / for runnables or ask the LLM..."
+          placeholder={placeholder}
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
             color: '#d4d4d4', fontFamily: 'monospace', fontSize: 14, resize: 'none',
