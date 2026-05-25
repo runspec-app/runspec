@@ -3,6 +3,7 @@ import { Tag, Typography } from 'antd'
 import { LoadingOutlined } from '@ant-design/icons'
 import { bridge, type InFlightRecord, type Runnable } from '../bridge'
 import { OutputPanel, useInvocationBlocks, type RerunData } from '../components/OutputPanel'
+import { useIsDark } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -21,6 +22,7 @@ function elapsed(startedAt: string): string {
 }
 
 function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
+  const isDark = useIsDark()
   const [, setTick] = useState(0)
   const ref = useRef<ReturnType<typeof setInterval>>()
   useEffect(() => {
@@ -30,17 +32,21 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 
   if (inFlight.length === 0) return null
 
+  const bg     = isDark ? '#0d1f0d' : '#f6ffed'
+  const border = isDark ? '#1a3a1a' : '#b7eb8f'
+  const nameCol = isDark ? '#d4d4d4' : '#1a1a1a'
+
   return (
     <div style={{
       display: 'flex', flexWrap: 'wrap', gap: 8,
       padding: '8px 12px',
-      background: '#0d1f0d', border: '1px solid #1a3a1a', borderRadius: 6,
+      background: bg, border: `1px solid ${border}`, borderRadius: 6,
       marginBottom: 4,
     }}>
       {inFlight.map(r => (
         <span key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <LoadingOutlined style={{ color: '#52c41a', fontSize: 11 }} spin />
-          <Text style={{ fontFamily: 'monospace', fontSize: 12, color: '#d4d4d4' }}>/{r.runnable}</Text>
+          <Text style={{ fontFamily: 'monospace', fontSize: 12, color: nameCol }}>/{r.runnable}</Text>
           <Tag style={{ fontSize: 11, margin: 0 }}>{r.host}</Tag>
           <Text type="secondary" style={{ fontSize: 11 }}>{r.operator}</Text>
           <Text style={{ fontSize: 11, color: '#52c41a' }}>{elapsed(r.startedAt)}</Text>

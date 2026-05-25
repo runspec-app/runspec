@@ -16,7 +16,7 @@ export function HostsView() {
       <Title level={4} style={{ marginBottom: 16 }}>Hosts</Title>
       <Space direction="vertical" style={{ width: '100%' }} size={12}>
         {hosts.map(h => (
-          <Card key={h.name} size="small" style={{ background: '#1a1a1a', border: '1px solid #2a2a2a' }}>
+          <Card key={h.name} size="small">
             <Space>
               <Badge status={h.connected ? 'success' : 'error'} />
               <Text strong style={{ fontFamily: 'monospace' }}>{h.name}</Text>
