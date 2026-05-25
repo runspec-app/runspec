@@ -67,7 +67,7 @@ export default function App() {
             fontSize: 15, color: '#4fc1ff',
             borderBottom: '1px solid #222',
           }}>
-            runspec
+            runspec console
           </div>
           <Menu
             mode="inline"
