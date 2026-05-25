@@ -1,4 +1,4 @@
-import type { BridgeApi, Host, Runnable, HistoryRecord, Schedule, InFlightRecord } from './index'
+import type { BridgeApi, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord } from './index'
 
 const MOCK_RUNNABLES: Runnable[] = [
   {
@@ -58,6 +58,12 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'dry-run', type: 'flag', required: false, default: false },
     ],
   },
+]
+
+const MOCK_JUMP_HOSTS: JumpHost[] = [
+  { name: 'eu-dc1-primary',   hostname: 'hostname1.company.com', user: 'jason', region: 'europe', datacenter: 'datacenter-1', role: 'primary' },
+  { name: 'eu-dc2-secondary', hostname: 'hostname2.company.com', user: 'jason', region: 'europe', datacenter: 'datacenter-2', role: 'secondary' },
+  { name: 'eu-dc1-primary-logs', hostname: 'hostname3.company.com', user: 'jason', region: 'europe', datacenter: 'datacenter-1', role: 'primary' },
 ]
 
 const MOCK_HOSTS: Host[] = [
@@ -171,9 +177,13 @@ export const mockApi: BridgeApi = {
 
   get_schedules: async () => MOCK_SCHEDULES,
 
-  get_config: async () => ({ jumpHosts: MOCK_HOSTS.filter(h => h.name !== 'local').map(h => h.name) }),
+  get_config: async () => ({
+    ssh: { user: 'jason', identityFile: '~/.ssh/runspec_ed25519' },
+    llm: { apiBaseUrl: '', model: 'claude-opus-4-7' },
+    jumpHosts: MOCK_JUMP_HOSTS,
+  }),
 
-  save_config: async (_data) => {},
+  save_config: async (data) => { console.log('[mock] save_config', data) },
 
   create_schedule: async (_data) => {},
 

@@ -21,6 +21,16 @@ export interface Host {
   groups: string[]
 }
 
+export interface JumpHost {
+  name: string        // identifier — becomes the key in jump_hosts.toml
+  hostname: string
+  user?: string       // falls back to global SSH default in settings
+  region?: string
+  datacenter?: string
+  role: 'primary' | 'secondary'
+  identityFile?: string
+}
+
 export interface HistoryLogLine {
   ts: string
   level: string
