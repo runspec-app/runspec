@@ -77,39 +77,39 @@ function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
 
       {/* Log lines */}
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
-            Log
-          </Text>
+        <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
+          Log
+        </Text>
+        <div style={{
+          position: 'relative',
+          marginTop: 6,
+          background: '#0d0d0d', border: '1px solid #222', borderRadius: 6,
+          padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.8,
+        }}>
           {logLines.length > 0 && (
-            <div style={{ display: 'flex', gap: 4 }}>
-              <Tooltip title="Copy logs to clipboard">
+            <div style={{ position: 'absolute', top: 5, right: 6, display: 'flex', gap: 2 }}>
+              <Tooltip title="Copy to clipboard">
                 <Button
                   type="text"
                   size="small"
                   icon={<CopyOutlined />}
                   onClick={handleCopy}
-                  style={{ fontSize: 12, height: 20, padding: '0 4px' }}
+                  style={{ color: '#555', height: 22, padding: '0 5px' }}
                 />
               </Tooltip>
               {onAskLlm && (
-                <Tooltip title="Ask the LLM about this log">
+                <Tooltip title="Ask the LLM">
                   <Button
                     type="text"
                     size="small"
                     icon={<RobotOutlined />}
                     onClick={handleAskLlm}
-                    style={{ fontSize: 12, height: 20, padding: '0 4px' }}
+                    style={{ color: '#555', height: 22, padding: '0 5px' }}
                   />
                 </Tooltip>
               )}
             </div>
           )}
-        </div>
-        <div style={{
-          background: '#0d0d0d', border: '1px solid #222', borderRadius: 6,
-          padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.8,
-        }}>
           {logLines.length === 0
             ? <span style={{ color: '#555' }}>no log lines</span>
             : logLines.map((line, i) => <LogLine key={i} line={line} />)
