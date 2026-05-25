@@ -13,18 +13,21 @@ import { HostsView } from './views/HostsView'
 import { HistoryView } from './views/HistoryView'
 import { SchedulesView } from './views/SchedulesView'
 import { useInFlight } from './bridge/useInFlight'
-import type { InFlightRecord } from './bridge'
+import type { InFlightRecord, HistoryRecord } from './bridge'
 
 const { Sider, Content } = Layout
 
 type ViewKey = 'console' | 'runnables' | 'hosts' | 'history' | 'schedules'
 
-function makeViews(inFlight: InFlightRecord[]): Record<ViewKey, React.ReactNode> {
+function makeViews(
+  inFlight: InFlightRecord[],
+  onHistoryRerun: (record: HistoryRecord) => void,
+): Record<ViewKey, React.ReactNode> {
   return {
     console: <ConsoleView inFlight={inFlight} />,
     runnables: <RunnablesView />,
     hosts: <HostsView />,
-    history: <HistoryView />,
+    history: <HistoryView onRerun={onHistoryRerun} />,
     schedules: <SchedulesView />,
   }
 }
@@ -32,6 +35,13 @@ function makeViews(inFlight: InFlightRecord[]): Record<ViewKey, React.ReactNode>
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
   const inFlight = useInFlight()
+
+  const handleHistoryRerun = (record: HistoryRecord) => {
+    setView('console')
+    window.dispatchEvent(new CustomEvent('runspec:rerun', {
+      detail: { host: record.host, runnable: record.runnable, args: record.args },
+    }))
+  }
 
   const navItems = [
     {
@@ -72,7 +82,7 @@ export default function App() {
           display: 'flex', flexDirection: 'column',
           overflow: 'hidden',
         }}>
-          {makeViews(inFlight)[view]}
+          {makeViews(inFlight, handleHistoryRerun)[view]}
         </Content>
       </Layout>
     </ConfigProvider>

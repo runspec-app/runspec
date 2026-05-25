@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Typography } from 'antd'
+import { Table, Tag, Typography, Button } from 'antd'
+import { RedoOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HistoryRecord, type HistoryLogLine } from '../bridge'
 
@@ -12,13 +13,26 @@ const LOG_LEVEL_COLOUR: Record<string, string> = {
   DEBUG: '#888',
 }
 
-function ExpandedRun({ record }: { record: HistoryRecord }) {
+function ExpandedRun({ record, onRerun }: { record: HistoryRecord; onRerun?: (record: HistoryRecord) => void }) {
   const args = record.args ?? {}
   const logLines = record.logLines ?? []
   const hasArgs = Object.keys(args).length > 0
 
   return (
     <div style={{ padding: '12px 24px 12px 48px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Rerun */}
+      {onRerun && (
+        <div>
+          <Button
+            size="small"
+            icon={<RedoOutlined />}
+            onClick={() => onRerun(record)}
+          >
+            Rerun with same args
+          </Button>
+        </div>
+      )}
+
       {/* Args */}
       <div>
         <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
@@ -69,7 +83,11 @@ function LogLine({ line }: { line: HistoryLogLine }) {
   )
 }
 
-export function HistoryView() {
+interface HistoryViewProps {
+  onRerun?: (record: HistoryRecord) => void
+}
+
+export function HistoryView({ onRerun }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
 
   useEffect(() => {
@@ -149,7 +167,7 @@ export function HistoryView() {
         size="small"
         pagination={{ pageSize: 50, showSizeChanger: true }}
         expandable={{
-          expandedRowRender: (record) => <ExpandedRun record={record} />,
+          expandedRowRender: (record) => <ExpandedRun record={record} onRerun={onRerun} />,
           rowExpandable: () => true,
         }}
       />

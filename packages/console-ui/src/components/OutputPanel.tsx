@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Tag, Typography } from 'antd'
-import { ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons'
+import { Tag, Tooltip, Typography } from 'antd'
+import { ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, RedoOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
 
@@ -8,6 +8,12 @@ export interface OutputLine {
   id: string
   line: string
   stream: 'stdout' | 'stderr'
+}
+
+export interface RerunData {
+  host: string
+  runnable: string
+  args: Record<string, unknown>
 }
 
 export interface InvocationBlock {
@@ -18,13 +24,15 @@ export interface InvocationBlock {
   done: boolean
   exitCode?: number
   durationMs?: number
+  rerunData?: RerunData
 }
 
 interface OutputPanelProps {
   blocks: InvocationBlock[]
+  onRerun?: (data: RerunData) => void
 }
 
-export function OutputPanel({ blocks }: OutputPanelProps) {
+export function OutputPanel({ blocks, onRerun }: OutputPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -45,14 +53,14 @@ export function OutputPanel({ blocks }: OutputPanelProps) {
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {blocks.map(block => (
-        <BlockCard key={block.id} block={block} />
+        <BlockCard key={block.id} block={block} onRerun={onRerun} />
       ))}
       <div ref={bottomRef} />
     </div>
   )
 }
 
-function BlockCard({ block }: { block: InvocationBlock }) {
+function BlockCard({ block, onRerun }: { block: InvocationBlock; onRerun?: (data: RerunData) => void }) {
   const icon = block.done
     ? block.exitCode === 0
       ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
@@ -60,13 +68,7 @@ function BlockCard({ block }: { block: InvocationBlock }) {
     : <LoadingOutlined style={{ color: '#1677ff' }} />
 
   return (
-    <div style={{
-      background: '#141414',
-      border: '1px solid #2a2a2a',
-      borderRadius: 8,
-      overflow: 'hidden',
-    }}>
-      {/* Block header */}
+    <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 8, overflow: 'hidden' }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 14px',
@@ -80,8 +82,17 @@ function BlockCard({ block }: { block: InvocationBlock }) {
             {block.exitCode === 0 ? 'ok' : 'error'} · {(block.durationMs / 1000).toFixed(2)}s
           </Tag>
         )}
+        {block.done && block.rerunData && onRerun && (
+          <Tooltip title="Rerun with same args">
+            <RedoOutlined
+              onClick={() => onRerun(block.rerunData!)}
+              style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: block.durationMs !== undefined ? 6 : 'auto' }}
+              onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
+              onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+            />
+          </Tooltip>
+        )}
       </div>
-      {/* Output lines */}
       <pre style={{
         margin: 0, padding: '10px 14px',
         fontFamily: 'monospace', fontSize: 13,
