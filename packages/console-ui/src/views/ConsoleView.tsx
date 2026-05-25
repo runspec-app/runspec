@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Tag, Typography } from 'antd'
 import { LoadingOutlined } from '@ant-design/icons'
 import { bridge, type InFlightRecord, type Runnable } from '../bridge'
-import { CommandInput } from '../components/CommandInput'
 import { OutputPanel, useInvocationBlocks, type RerunData } from '../components/OutputPanel'
 
 const { Text } = Typography
@@ -52,17 +51,34 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 }
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
-  const [runnables, setRunnables] = useState<Runnable[]>([])
-  const [inputHistory, setInputHistory] = useState<string[]>([])
   const { blocks, addBlock } = useInvocationBlocks()
   const addBlockRef = useRef(addBlock)
   addBlockRef.current = addBlock
 
+  // Invoked from the App-level command bar
   useEffect(() => {
-    bridge.get_runnables('local').then(setRunnables)
+    const onInvoke = async (e: Event) => {
+      const { runnable, args } = (e as CustomEvent).detail as { runnable: Runnable; args: Record<string, unknown> }
+      const label = `/${runnable.name} on ${runnable.host}`
+      const id = await bridge.invoke_runnable(runnable.host, runnable.name, args)
+      addBlockRef.current({ id, type: 'run', label, lines: [], done: false, rerunData: { host: runnable.host, runnable: runnable.name, args } })
+    }
+    window.addEventListener('runspec:invoke_runnable', onInvoke)
+    return () => window.removeEventListener('runspec:invoke_runnable', onInvoke)
   }, [])
 
-  // Listen for rerun events dispatched by HistoryView (via App)
+  // Chat sent from the App-level command bar
+  useEffect(() => {
+    const onChat = async (e: Event) => {
+      const { message } = (e as CustomEvent).detail as { message: string }
+      const id = await bridge.send_chat(message)
+      addBlockRef.current({ id, type: 'chat', label: message, lines: [], done: false })
+    }
+    window.addEventListener('runspec:send_chat', onChat)
+    return () => window.removeEventListener('runspec:send_chat', onChat)
+  }, [])
+
+  // Rerun dispatched by History → App → here
   useEffect(() => {
     const onRerun = async (e: Event) => {
       const { host, runnable, args } = (e as CustomEvent).detail as RerunData
@@ -74,30 +90,20 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     return () => window.removeEventListener('runspec:rerun', onRerun)
   }, [])
 
-  // Auto-send chat when asked from another view (e.g. "Ask LLM" from History)
-  const handleSendChatRef = useRef<(message: string) => Promise<void>>(async () => {})
+  // Ask LLM from History: pendingChat prop triggers a chat send
+  const sendChat = async (message: string) => {
+    const id = await bridge.send_chat(message)
+    addBlockRef.current({ id, type: 'chat', label: message, lines: [], done: false })
+  }
+  const sendChatRef = useRef(sendChat)
+  sendChatRef.current = sendChat
+
   useEffect(() => {
     if (pendingChat) {
-      handleSendChatRef.current(pendingChat)
+      sendChatRef.current(pendingChat)
       onChatSent?.()
     }
   }, [pendingChat, onChatSent])
-
-  const handleRunRunnable = async (runnable: Runnable, args: Record<string, unknown>) => {
-    const label = `/${runnable.name} on ${runnable.host}`
-    setInputHistory(h => [...h, `/${runnable.name}`])
-    const id = await bridge.invoke_runnable(runnable.host, runnable.name, args)
-    addBlock({ id, type: 'run', label, lines: [], done: false, rerunData: { host: runnable.host, runnable: runnable.name, args } })
-  }
-
-  const handleSendChat = async (message: string) => {
-    setInputHistory(h => [...h, message])
-    const id = await bridge.send_chat(message)
-    addBlock({ id, type: 'chat', label: message, lines: [], done: false })
-  }
-
-  // Keep ref current so the pendingChat effect always calls the latest version
-  handleSendChatRef.current = handleSendChat
 
   const handleRerun = (data: RerunData) => {
     window.dispatchEvent(new CustomEvent('runspec:rerun', { detail: data }))
@@ -107,12 +113,6 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
       <InFlightStrip inFlight={inFlight} />
       <OutputPanel blocks={blocks} onRerun={handleRerun} />
-      <CommandInput
-        runnables={runnables}
-        onRunRunnable={handleRunRunnable}
-        onSendChat={handleSendChat}
-        history={inputHistory}
-      />
     </div>
   )
 }

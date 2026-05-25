@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ConfigProvider, Layout, Menu, Badge, theme, Button, Tooltip } from 'antd'
 import {
   ThunderboltOutlined,
@@ -14,8 +14,9 @@ import { RunnablesView } from './views/RunnablesView'
 import { HostsView } from './views/HostsView'
 import { HistoryView } from './views/HistoryView'
 import { SchedulesView } from './views/SchedulesView'
+import { CommandInput } from './components/CommandInput'
 import { useInFlight } from './bridge/useInFlight'
-import type { InFlightRecord, HistoryRecord } from './bridge'
+import { bridge, type HistoryRecord, type Runnable } from './bridge'
 
 const { Sider, Content } = Layout
 
@@ -25,13 +26,26 @@ export default function App() {
   const [view, setView] = useState<ViewKey>('console')
   const [collapsed, setCollapsed] = useState(false)
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
+  const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
+  const [runnables, setRunnables] = useState<Runnable[]>([])
+  const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const inFlight = useInFlight()
+
+  useEffect(() => {
+    bridge.get_runnables('local').then(setRunnables)
+  }, [])
 
   const toggleTheme = () => {
     const next = !isDark
     setIsDark(next)
     localStorage.setItem('theme', next ? 'dark' : 'light')
+  }
+
+  const toggleAutoSwitch = () => {
+    const next = !autoSwitch
+    setAutoSwitch(next)
+    localStorage.setItem('autoSwitch', next ? 'true' : 'false')
   }
 
   const handleHistoryRerun = (record: HistoryRecord) => {
@@ -44,6 +58,18 @@ export default function App() {
   const handleAskLlm = (text: string) => {
     setView('console')
     setPendingChat(text)
+  }
+
+  const handleRunRunnable = (runnable: Runnable, args: Record<string, unknown>) => {
+    setInputHistory(h => [...h, `/${runnable.name}`])
+    if (autoSwitch) setView('console')
+    window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args } }))
+  }
+
+  const handleSendChat = (message: string) => {
+    setInputHistory(h => [...h, message])
+    if (autoSwitch) setView('console')
+    window.dispatchEvent(new CustomEvent('runspec:send_chat', { detail: { message } }))
   }
 
   const siderBg   = isDark ? '#111'   : '#fafafa'
@@ -110,22 +136,65 @@ export default function App() {
             style={{ background: 'transparent', border: 'none', marginTop: 8 }}
           />
         </Sider>
+
         <Content style={{
-          background: contentBg, padding: 24,
-          display: 'flex', flexDirection: 'column',
-          overflow: 'hidden',
+          background: contentBg, padding: 0,
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
-          {view === 'console' && (
-            <ConsoleView
-              inFlight={inFlight}
-              pendingChat={pendingChat}
-              onChatSent={() => setPendingChat(null)}
-            />
-          )}
-          {view === 'runnables'  && <RunnablesView />}
-          {view === 'hosts'      && <HostsView />}
-          {view === 'history'    && <HistoryView onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} />}
-          {view === 'schedules'  && <SchedulesView />}
+          {/* View area */}
+          <div style={{ flex: 1, padding: '24px 24px 16px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {/* ConsoleView: always mounted so blocks + listeners persist */}
+            <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <ConsoleView
+                inFlight={inFlight}
+                pendingChat={pendingChat}
+                onChatSent={() => setPendingChat(null)}
+              />
+            </div>
+            {/* Other views: conditionally rendered, scrollable */}
+            {view !== 'console' && (
+              <div style={{ flex: 1, overflow: 'auto' }}>
+                {view === 'runnables' && <RunnablesView />}
+                {view === 'hosts'     && <HostsView />}
+                {view === 'history'   && <HistoryView onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} />}
+                {view === 'schedules' && <SchedulesView />}
+              </div>
+            )}
+          </div>
+
+          {/* Persistent command bar */}
+          <div style={{
+            borderTop: `1px solid ${borderCol}`,
+            padding: '8px 12px 8px 16px',
+            display: 'flex', alignItems: 'flex-end', gap: 8,
+            background: contentBg,
+          }}>
+            <div style={{ flex: 1 }}>
+              <CommandInput
+                runnables={runnables}
+                onRunRunnable={handleRunRunnable}
+                onSendChat={handleSendChat}
+                history={inputHistory}
+              />
+            </div>
+            <Tooltip
+              title={autoSwitch ? 'Auto-switch to Console: on — click to stay on current view' : 'Auto-switch to Console: off — click to enable'}
+              placement="top"
+            >
+              <Button
+                type="text"
+                size="small"
+                icon={<ThunderboltOutlined />}
+                onClick={toggleAutoSwitch}
+                style={{
+                  color: autoSwitch ? titleCol : (isDark ? '#444' : '#bbb'),
+                  background: autoSwitch ? (isDark ? 'rgba(79,193,255,0.08)' : 'rgba(9,88,217,0.06)') : 'transparent',
+                  marginBottom: 6,
+                  borderRadius: 6,
+                }}
+              />
+            </Tooltip>
+          </div>
         </Content>
       </Layout>
     </ConfigProvider>
