@@ -87,7 +87,7 @@ export function RunnablesView() {
       <Title level={4} style={{ marginBottom: 16 }}>Runnables</Title>
       <Input
         prefix={<SearchOutlined />}
-        placeholder="Filter runnables..."
+        placeholder="Search name, host, description…"
         value={search}
         onChange={e => setSearch(e.target.value)}
         style={{ marginBottom: 16, maxWidth: 360 }}

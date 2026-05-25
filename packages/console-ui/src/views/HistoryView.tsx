@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, message } from 'antd'
-import { RedoOutlined, CopyOutlined, RobotOutlined } from '@ant-design/icons'
+import { Table, Tag, Typography, Button, Tooltip, message, Input } from 'antd'
+import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HistoryRecord, type HistoryLogLine } from '../bridge'
 
@@ -139,10 +139,20 @@ interface HistoryViewProps {
 
 export function HistoryView({ onRerun, onAskLlm }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     bridge.get_history('local').then(setRecords)
   }, [])
+
+  const filtered = search
+    ? records.filter(r =>
+        r.runnable.toLowerCase().includes(search.toLowerCase()) ||
+        r.host.toLowerCase().includes(search.toLowerCase()) ||
+        r.operator.toLowerCase().includes(search.toLowerCase()) ||
+        r.runAs.toLowerCase().includes(search.toLowerCase())
+      )
+    : records
 
   const hosts = [...new Set(records.map(r => r.host))]
   const operators = [...new Set(records.map(r => r.operator))]
@@ -210,8 +220,16 @@ export function HistoryView({ onRerun, onAskLlm }: HistoryViewProps) {
   return (
     <div>
       <Title level={4} style={{ marginBottom: 16 }}>History</Title>
+      <Input
+        prefix={<SearchOutlined />}
+        placeholder="Search runnable, host, operator, run-as…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        allowClear
+        style={{ marginBottom: 16, maxWidth: 400 }}
+      />
       <Table
-        dataSource={records}
+        dataSource={filtered}
         columns={columns}
         rowKey="id"
         size="small"
