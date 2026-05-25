@@ -87,7 +87,9 @@ export default function App() {
     {
       key: 'console',
       icon: inFlight.length > 0
-        ? <Badge count={collapsed ? 0 : inFlight.length} dot={collapsed} size="small" offset={[2, -1]}><ThunderboltOutlined /></Badge>
+        ? collapsed
+          ? <ThunderboltOutlined style={{ color: '#ff4d4f' }} />
+          : <Badge count={inFlight.length} size="small" offset={[2, -1]}><ThunderboltOutlined /></Badge>
         : <ThunderboltOutlined />,
       title: 'Console',
       label: 'Console',
