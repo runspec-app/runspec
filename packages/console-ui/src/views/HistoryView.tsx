@@ -185,6 +185,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm }: Histo
   const filtered = search
     ? records.filter(r =>
         r.runnable.toLowerCase().includes(search.toLowerCase()) ||
+        r.group.toLowerCase().includes(search.toLowerCase()) ||
         r.host.toLowerCase().includes(search.toLowerCase()) ||
         r.operator.toLowerCase().includes(search.toLowerCase()) ||
         r.runAs.toLowerCase().includes(search.toLowerCase())
@@ -192,16 +193,28 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm }: Histo
     : records
 
   const hosts = [...new Set(records.map(r => r.host))]
+  const groups = [...new Set(records.map(r => r.group))]
   const operators = [...new Set(records.map(r => r.operator))]
   const runAsUsers = [...new Set(records.map(r => r.runAs))]
 
   const columns: ColumnType<HistoryRecord>[] = [
     {
       title: 'Runnable',
-      dataIndex: 'runnable',
       key: 'runnable',
-      render: (n: string) => <code>/{n}</code>,
-      sorter: (a, b) => a.runnable.localeCompare(b.runnable),
+      render: (_: unknown, r: HistoryRecord) => (
+        <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
+          <span style={{ color: '#666' }}>{r.group}/</span>{r.runnable}
+        </span>
+      ),
+      sorter: (a, b) => `${a.group}/${a.runnable}`.localeCompare(`${b.group}/${b.runnable}`),
+    },
+    {
+      title: 'Group',
+      dataIndex: 'group',
+      key: 'group',
+      render: (g: string) => <Tag color="blue">{g}</Tag>,
+      filters: groups.map(g => ({ text: g, value: g })),
+      onFilter: (value, record) => record.group === value,
     },
     {
       title: 'Host',

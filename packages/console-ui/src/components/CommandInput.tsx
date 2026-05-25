@@ -138,7 +138,7 @@ export function CommandInput({ runnables, onRunRunnable, onSendChat, history }: 
         }}>
           {filteredItems.map((item, idx) => (
             <div
-              key={`${item.host}/${item.runnable.name}`}
+              key={`${item.host}/${item.runnable.group}/${item.runnable.name}`}
               onMouseDown={() => selectSlashItem(item)}
               style={{
                 padding: '8px 14px',
@@ -148,8 +148,9 @@ export function CommandInput({ runnables, onRunRunnable, onSendChat, history }: 
                 borderBottom: '1px solid #222',
               }}
             >
-              <span style={{ fontFamily: 'monospace', color: '#4fc1ff', fontSize: 13, minWidth: 120 }}>
-                /{item.runnable.name}
+              <span style={{ fontFamily: 'monospace', fontSize: 13, minWidth: 160 }}>
+                <span style={{ color: '#666' }}>{item.runnable.group}/</span>
+                <span style={{ color: '#4fc1ff' }}>{item.runnable.name}</span>
               </span>
               <span style={{ color: '#777', fontSize: 11 }}>{item.host}</span>
               {item.runnable.description && (

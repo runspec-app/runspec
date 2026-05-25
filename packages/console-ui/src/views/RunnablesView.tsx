@@ -44,17 +44,31 @@ export function RunnablesView() {
 
   const filtered = runnables.filter(r =>
     r.name.includes(search) ||
+    r.group.toLowerCase().includes(search.toLowerCase()) ||
     r.host.includes(search) ||
     (r.description ?? '').toLowerCase().includes(search.toLowerCase())
   )
 
+  const groups = [...new Set(runnables.map(r => r.group))]
+
   const columns: ColumnType<Runnable>[] = [
     {
       title: 'Runnable',
-      dataIndex: 'name',
       key: 'name',
-      render: (n: string) => <code>/{n}</code>,
-      sorter: (a, b) => a.name.localeCompare(b.name),
+      render: (_: unknown, r: Runnable) => (
+        <span style={{ fontFamily: 'monospace', fontSize: 13 }}>
+          <span style={{ color: '#666', fontSize: 12 }}>{r.group}/</span>{r.name}
+        </span>
+      ),
+      sorter: (a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`),
+    },
+    {
+      title: 'Group',
+      dataIndex: 'group',
+      key: 'group',
+      render: (g: string) => <Tag color="blue">{g}</Tag>,
+      filters: groups.map(g => ({ text: g, value: g })),
+      onFilter: (value, record) => record.group === value,
     },
     {
       title: 'Host',

@@ -8,6 +8,7 @@ export interface ArgDef {
 
 export interface Runnable {
   name: string
+  group: string   // venv directory name — the execution environment identity
   host: string
   description?: string
   args: ArgDef[]
@@ -28,6 +29,7 @@ export interface HistoryLogLine {
 export interface HistoryRecord {
   id: string
   runnable: string
+  group: string
   host: string
   operator: string   // who triggered the run (console user or "Scheduled Task")
   runAs: string      // OS user the runnable executed as on the host (from run_as in spec)
@@ -49,6 +51,7 @@ export interface Schedule {
 export interface InFlightRecord {
   id: string
   runnable: string
+  group: string
   host: string
   operator: string
   runAs: string

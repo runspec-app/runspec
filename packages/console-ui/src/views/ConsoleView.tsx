@@ -48,6 +48,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
           <LoadingOutlined style={{ color: '#52c41a', fontSize: 11 }} spin />
           <Text style={{ fontFamily: 'monospace', fontSize: 12, color: nameCol }}>/{r.runnable}</Text>
           <Tag style={{ fontSize: 11, margin: 0 }}>{r.host}</Tag>
+          <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{r.group}</Tag>
           <Text type="secondary" style={{ fontSize: 11 }}>{r.operator}</Text>
           <Text style={{ fontSize: 11, color: '#52c41a' }}>{elapsed(r.startedAt)}</Text>
         </span>
