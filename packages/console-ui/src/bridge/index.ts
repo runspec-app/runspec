@@ -79,6 +79,7 @@ export interface BridgeApi {
   save_config: (data: Record<string, unknown>) => Promise<void>
   create_schedule: (data: Record<string, unknown>) => Promise<void>
   delete_schedule: (id: string) => Promise<void>
+  import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>) => Promise<string>
   send_chat: (message: string, invocationId?: string) => Promise<string>
   get_in_flight: () => Promise<InFlightRecord[]>

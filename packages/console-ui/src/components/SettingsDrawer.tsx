@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { Drawer, Form, Input, Select, Button, Divider, Typography, Tag, Space, Tabs, Popconfirm } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
+import { useEffect, useRef, useState } from 'react'
+import { Drawer, Form, Input, Select, Button, Divider, Typography, Tag, Space, Tabs, Popconfirm, message } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost } from '../bridge'
 
 const { Text } = Typography
@@ -63,6 +63,7 @@ function JumpHostsTab() {
   const [hosts, setHosts] = useState<JumpHost[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null) // null=none ''=new
   const [form] = Form.useForm<HostFormValues>()
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     bridge.get_config().then(cfg => setHosts((cfg.jumpHosts as JumpHost[]) ?? []))
@@ -88,6 +89,24 @@ function JumpHostsTab() {
     form.resetFields()
   }
 
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!fileInputRef.current) return
+    fileInputRef.current.value = ''
+    if (!file) return
+    const content = await file.text()
+    const imported = await bridge.import_jump_hosts(content)
+    if (imported.length === 0) { message.warning('No hosts found in file'); return }
+    const merged = [...hosts]
+    let added = 0, updated = 0
+    for (const h of imported) {
+      const idx = merged.findIndex(x => x.name === h.name)
+      if (idx >= 0) { merged[idx] = h; updated++ } else { merged.push(h); added++ }
+    }
+    await persist(merged)
+    message.success(`Imported ${added} new, updated ${updated} existing`)
+  }
+
   const save = async () => {
     const values = await form.validateFields()
     if (editingKey === '') {
@@ -108,18 +127,35 @@ function JumpHostsTab() {
 
   return (
     <div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".toml"
+        style={{ display: 'none' }}
+        onChange={handleImport}
+      />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
           Saved to <code>jump_hosts.toml</code>. Adding a host connects and discovers runnables automatically.
         </Text>
-        <Button
-          size="small"
-          icon={<PlusOutlined />}
-          onClick={startAdd}
-          disabled={isEditing}
-        >
-          Add host
-        </Button>
+        <Space size={6}>
+          <Button
+            size="small"
+            icon={<UploadOutlined />}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isEditing}
+          >
+            Import .toml
+          </Button>
+          <Button
+            size="small"
+            icon={<PlusOutlined />}
+            onClick={startAdd}
+            disabled={isEditing}
+          >
+            Add host
+          </Button>
+        </Space>
       </div>
 
       {/* Inline add/edit form */}

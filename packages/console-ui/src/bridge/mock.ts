@@ -189,6 +189,27 @@ export const mockApi: BridgeApi = {
 
   delete_schedule: async (id) => { console.log('[mock] delete_schedule', id) },
 
+  import_jump_hosts: async (content) => {
+    // Minimal TOML section parser — mirrors what Python's tomllib.loads() does on the real bridge
+    const hosts: JumpHost[] = []
+    let name = ''
+    let current: Record<string, string> = {}
+    for (const raw of content.split('\n')) {
+      const line = raw.trim()
+      const section = line.match(/^\[([^\]]+)\]$/)
+      if (section) {
+        if (name && current.hostname) hosts.push({ name, role: 'primary', ...current } as JumpHost)
+        name = section[1].trim()
+        current = {}
+        continue
+      }
+      const kv = line.match(/^([\w-]+)\s*=\s*"([^"]*)"$/)
+      if (kv && name) current[kv[1]] = kv[2]
+    }
+    if (name && current.hostname) hosts.push({ name, role: 'primary', ...current } as JumpHost)
+    return hosts
+  },
+
   invoke_runnable: async (host, runnable, args) => {
     const id = `inv-${++invocationCounter}`
     console.log('[mock] invoke_runnable', { host, runnable, args, id })
