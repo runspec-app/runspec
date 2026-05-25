@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from 'antd'
 import { SendOutlined } from '@ant-design/icons'
 import type { Runnable } from '../bridge'
@@ -23,6 +23,14 @@ export function CommandInput({ runnables, onRunRunnable, onSendChat, history }: 
   const [slashIndex, setSlashIndex] = useState(0)
   const [historyIndex, setHistoryIndex] = useState(-1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-grow: runs after every value change (typing, paste, history nav, clear)
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 240)}px`
+  }, [value])
 
   // Build slash items from runnables
   useEffect(() => {
@@ -167,11 +175,10 @@ export function CommandInput({ runnables, onRunRunnable, onSendChat, history }: 
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder="Type / for runnables or ask the LLM..."
-          rows={1}
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
             color: '#d4d4d4', fontFamily: 'monospace', fontSize: 14, resize: 'none',
-            lineHeight: 1.5,
+            lineHeight: 1.5, minHeight: '42px', maxHeight: '240px', overflowY: 'auto',
           }}
         />
         <Button
