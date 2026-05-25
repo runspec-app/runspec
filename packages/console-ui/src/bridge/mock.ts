@@ -51,9 +51,68 @@ const MOCK_HOSTS: Host[] = [
 ]
 
 const MOCK_HISTORY: HistoryRecord[] = [
-  { id: '1', runnable: 'backup', host: 'local', exitCode: 0, durationMs: 3201, ts: new Date(Date.now() - 3600000).toISOString() },
-  { id: '2', runnable: 'log-rotate', host: 'prod-1', exitCode: 0, durationMs: 812, ts: new Date(Date.now() - 7200000).toISOString() },
-  { id: '3', runnable: 'get-alerts', host: 'local', exitCode: 1, durationMs: 450, ts: new Date(Date.now() - 10800000).toISOString() },
+  {
+    id: '1', runnable: 'backup', host: 'local', operator: 'Jason Finestone', runAs: 'DESKTOP\\jason',
+    exitCode: 0, durationMs: 3201, ts: new Date(Date.now() - 3600000).toISOString(),
+    args: { source: 'C:/Users/jason/documents', dest: 'Z:/backups/documents', 'dry-run': false },
+    logLines: [
+      { ts: new Date(Date.now() - 3605000).toISOString(), level: 'INFO', message: 'backup starting' },
+      { ts: new Date(Date.now() - 3604000).toISOString(), level: 'INFO', message: 'scanning source: C:/Users/jason/documents' },
+      { ts: new Date(Date.now() - 3603000).toISOString(), level: 'INFO', message: '1,243 files found (2.1 GB)' },
+      { ts: new Date(Date.now() - 3602000).toISOString(), level: 'INFO', message: 'copying to Z:/backups/documents' },
+      { ts: new Date(Date.now() - 3601000).toISOString(), level: 'INFO', message: 'backup complete' },
+    ],
+  },
+  {
+    id: '2', runnable: 'log-rotate', host: 'prod-1', operator: 'Scheduled Task', runAs: 'svc-runner',
+    exitCode: 0, durationMs: 812, ts: new Date(Date.now() - 7200000).toISOString(),
+    args: { keep: 7 },
+    logLines: [
+      { ts: new Date(Date.now() - 7205000).toISOString(), level: 'INFO', message: 'log-rotate starting, keep=7 days' },
+      { ts: new Date(Date.now() - 7204000).toISOString(), level: 'INFO', message: 'rotating /var/log/app.log' },
+      { ts: new Date(Date.now() - 7203000).toISOString(), level: 'INFO', message: 'deleted 3 files older than 7 days' },
+    ],
+  },
+  {
+    id: '3', runnable: 'get-alerts', host: 'local', operator: 'Jason Finestone', runAs: 'DESKTOP\\jason',
+    exitCode: 1, durationMs: 450, ts: new Date(Date.now() - 10800000).toISOString(),
+    args: { since: 'yesterday' },
+    logLines: [
+      { ts: new Date(Date.now() - 10805000).toISOString(), level: 'INFO',  message: 'get-alerts starting' },
+      { ts: new Date(Date.now() - 10804000).toISOString(), level: 'INFO',  message: 'connecting to Datadog API' },
+      { ts: new Date(Date.now() - 10803000).toISOString(), level: 'ERROR', message: 'Datadog API request failed: 401 Unauthorized' },
+    ],
+  },
+  {
+    id: '4', runnable: 'cache-purge', host: 'prod-1', operator: 'Scheduled Task', runAs: 'svc-runner',
+    exitCode: 0, durationMs: 201, ts: new Date(Date.now() - 86400000).toISOString(),
+    args: {},
+    logLines: [
+      { ts: new Date(Date.now() - 86405000).toISOString(), level: 'INFO', message: 'cache-purge starting' },
+      { ts: new Date(Date.now() - 86404000).toISOString(), level: 'INFO', message: 'purged 412 stale entries' },
+    ],
+  },
+  {
+    id: '5', runnable: 'backup', host: 'local', operator: 'Jason Finestone', runAs: 'DESKTOP\\jason',
+    exitCode: 0, durationMs: 2980, ts: new Date(Date.now() - 90000000).toISOString(),
+    args: { source: 'C:/Users/jason/documents', dest: 'Z:/backups/documents', 'dry-run': true },
+    logLines: [
+      { ts: new Date(Date.now() - 90005000).toISOString(), level: 'INFO', message: 'backup starting (dry-run mode)' },
+      { ts: new Date(Date.now() - 90004000).toISOString(), level: 'INFO', message: 'scanning source: C:/Users/jason/documents' },
+      { ts: new Date(Date.now() - 90003000).toISOString(), level: 'INFO', message: '1,241 files found (2.1 GB)' },
+      { ts: new Date(Date.now() - 90002000).toISOString(), level: 'INFO', message: 'dry-run: no files copied' },
+    ],
+  },
+  {
+    id: '6', runnable: 'log-rotate', host: 'prod-1', operator: 'Jason Finestone', runAs: 'svc-runner',
+    exitCode: 0, durationMs: 930, ts: new Date(Date.now() - 172800000).toISOString(),
+    args: { keep: 14 },
+    logLines: [
+      { ts: new Date(Date.now() - 172805000).toISOString(), level: 'INFO', message: 'log-rotate starting, keep=14 days' },
+      { ts: new Date(Date.now() - 172804000).toISOString(), level: 'INFO', message: 'rotating /var/log/app.log' },
+      { ts: new Date(Date.now() - 172803000).toISOString(), level: 'INFO', message: 'no files older than 14 days found' },
+    ],
+  },
 ]
 
 const MOCK_SCHEDULES: Schedule[] = [

@@ -19,13 +19,23 @@ export interface Host {
   runnableCount: number
 }
 
+export interface HistoryLogLine {
+  ts: string
+  level: string
+  message: string
+}
+
 export interface HistoryRecord {
   id: string
   runnable: string
   host: string
+  operator: string   // who triggered the run (console user or "Scheduled Task")
+  runAs: string      // OS user the runnable executed as on the host (from run_as in spec)
   exitCode: number
   durationMs: number
   ts: string
+  args: Record<string, unknown>      // arguments used for this invocation (from run_summary)
+  logLines: HistoryLogLine[]         // log records belonging to this invocation
 }
 
 export interface Schedule {
