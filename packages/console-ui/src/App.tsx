@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ConfigProvider, Layout, Menu, Badge, theme, Button, Tooltip } from 'antd'
+import { ConfigProvider, Layout, Menu, Badge, theme, Button, Tooltip, Popover, Checkbox } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -9,6 +9,7 @@ import {
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
+  FilterOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { RunnablesView } from './views/RunnablesView'
@@ -36,7 +37,10 @@ export default function App() {
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
+  const [scopePopoverOpen, setScopePopoverOpen] = useState(false)
   const inFlight = useInFlight()
+
+  const allGroups = [...new Set(runnables.map(r => r.group))].sort()
 
   const handleScopeToggle = (group: string) => {
     setActiveScope(prev =>
@@ -197,6 +201,7 @@ export default function App() {
                 <div style={{ flex: 1 }}>
                   <CommandInput
                     runnables={activeScope.length > 0 ? runnables.filter(r => activeScope.includes(r.group)) : runnables}
+                    allGroups={allGroups}
                     activeScope={activeScope}
                     onScopeChange={setActiveScope}
                     onRunRunnable={handleRunRunnable}
@@ -204,6 +209,53 @@ export default function App() {
                     history={inputHistory}
                   />
                 </div>
+                <Popover
+                  open={scopePopoverOpen}
+                  onOpenChange={setScopePopoverOpen}
+                  trigger="click"
+                  placement="topRight"
+                  content={
+                    <div style={{ minWidth: 180 }}>
+                      {allGroups.length === 0
+                        ? <span style={{ color: '#888', fontSize: 12 }}>No groups available</span>
+                        : allGroups.map(g => (
+                          <div key={g} style={{ padding: '5px 0' }}>
+                            <Checkbox
+                              checked={activeScope.includes(g)}
+                              onChange={() => handleScopeToggle(g)}
+                            >
+                              <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{g}</span>
+                            </Checkbox>
+                          </div>
+                        ))
+                      }
+                      {activeScope.length > 0 && (
+                        <div style={{ borderTop: '1px solid #333', marginTop: 6, paddingTop: 6 }}>
+                          <Button size="small" type="text" onClick={() => { setActiveScope([]); setScopePopoverOpen(false) }}
+                            style={{ padding: 0, fontSize: 12, color: '#888' }}>
+                            Clear all
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  }
+                >
+                  <Tooltip title="Scope to groups" placement="top">
+                    <Badge count={activeScope.length} size="small" offset={[2, -2]}>
+                      <Button
+                        type="text" size="small"
+                        icon={<FilterOutlined />}
+                        style={{
+                          color: activeScope.length > 0 ? titleCol : iconCol,
+                          background: activeScope.length > 0
+                            ? (isDark ? 'rgba(79,193,255,0.08)' : 'rgba(9,88,217,0.06)')
+                            : 'transparent',
+                          marginBottom: 6, borderRadius: 6,
+                        }}
+                      />
+                    </Badge>
+                  </Tooltip>
+                </Popover>
                 <Tooltip
                   title={autoSwitch
                     ? 'Auto-switch to Console: on — click to stay on current view'

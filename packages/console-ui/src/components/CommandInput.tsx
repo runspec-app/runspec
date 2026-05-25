@@ -10,6 +10,7 @@ interface SlashItem {
 
 interface CommandInputProps {
   runnables: Runnable[]
+  allGroups: string[]
   activeScope: string[]
   onScopeChange: (groups: string[]) => void
   onRunRunnable: (runnable: Runnable, args: Record<string, unknown>) => void
@@ -17,12 +18,15 @@ interface CommandInputProps {
   history: string[]
 }
 
-export function CommandInput({ runnables, activeScope, onScopeChange, onRunRunnable, onSendChat, history }: CommandInputProps) {
+export function CommandInput({ runnables, allGroups, activeScope, onScopeChange, onRunRunnable, onSendChat, history }: CommandInputProps) {
   const [value, setValue] = useState('')
   const [slashItems, setSlashItems] = useState<SlashItem[]>([])
   const [slashOpen, setSlashOpen] = useState(false)
   const [slashFilter, setSlashFilter] = useState('')
   const [slashIndex, setSlashIndex] = useState(0)
+  const [atOpen, setAtOpen] = useState(false)
+  const [atFilter, setAtFilter] = useState('')
+  const [atIndex, setAtIndex] = useState(0)
   const [historyIndex, setHistoryIndex] = useState(-1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -57,16 +61,38 @@ export function CommandInput({ runnables, activeScope, onScopeChange, onRunRunna
       setSlashFilter(v.slice(1).split(' ')[0])
       setSlashOpen(true)
       setSlashIndex(0)
+      setAtOpen(false)
     } else {
       setSlashOpen(false)
+      const atMatch = v.match(/@([\w-]*)$/)
+      if (atMatch) {
+        setAtFilter(atMatch[1])
+        setAtOpen(true)
+        setAtIndex(0)
+      } else {
+        setAtOpen(false)
+      }
     }
   }
 
   const selectSlashItem = (item: SlashItem) => {
     setSlashOpen(false)
-    // For now: invoke with empty args. A full implementation would show an arg form.
     onRunRunnable(item.runnable, {})
     setValue('')
+  }
+
+  const filteredGroups = atFilter
+    ? allGroups.filter(g => g.toLowerCase().includes(atFilter.toLowerCase()))
+    : allGroups
+
+  const selectGroup = (group: string) => {
+    setAtOpen(false)
+    if (!activeScope.includes(group)) {
+      onScopeChange([...activeScope, group])
+    }
+    // strip the @word that triggered this
+    setValue(v => v.replace(/@[\w-]*$/, ''))
+    inputRef.current?.focus()
   }
 
   const submit = () => {
@@ -76,30 +102,35 @@ export function CommandInput({ runnables, activeScope, onScopeChange, onRunRunna
       selectSlashItem(filteredItems[slashIndex])
       return
     }
+    if (atOpen && filteredGroups[atIndex]) {
+      selectGroup(filteredGroups[atIndex])
+      return
+    }
     onSendChat(trimmed)
     setValue('')
     setSlashOpen(false)
+    setAtOpen(false)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (slashOpen) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSlashIndex(i => Math.min(i + 1, filteredItems.length - 1))
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSlashIndex(i => Math.max(i - 1, 0))
-        return
-      }
-      if (e.key === 'Escape') {
-        setSlashOpen(false)
-        return
-      }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex(i => Math.min(i + 1, filteredItems.length - 1)); return }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setSlashIndex(i => Math.max(i - 1, 0)); return }
+      if (e.key === 'Escape')    { setSlashOpen(false); return }
       if (e.key === 'Tab' || e.key === 'Enter') {
         e.preventDefault()
         if (filteredItems[slashIndex]) selectSlashItem(filteredItems[slashIndex])
+        return
+      }
+    }
+
+    if (atOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setAtIndex(i => Math.min(i + 1, filteredGroups.length - 1)); return }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setAtIndex(i => Math.max(i - 1, 0)); return }
+      if (e.key === 'Escape')    { setAtOpen(false); return }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault()
+        if (filteredGroups[atIndex]) selectGroup(filteredGroups[atIndex])
         return
       }
     }
@@ -110,8 +141,7 @@ export function CommandInput({ runnables, activeScope, onScopeChange, onRunRunna
       return
     }
 
-    // Up/down for history (when input is empty or not in slash mode)
-    if (!slashOpen) {
+    if (!slashOpen && !atOpen) {
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         const next = Math.min(historyIndex + 1, history.length - 1)
@@ -181,6 +211,38 @@ export function CommandInput({ runnables, activeScope, onScopeChange, onRunRunna
                 <span style={{ color: '#999', fontSize: 12, marginLeft: 'auto' }}>
                   {item.runnable.description}
                 </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* @ group picker dropdown */}
+      {atOpen && filteredGroups.length > 0 && (
+        <div style={{
+          position: 'absolute', bottom: '100%', left: 0, marginBottom: 6,
+          background: '#1e1e1e', border: '1px solid #333', borderRadius: 8,
+          minWidth: 200, zIndex: 100,
+          boxShadow: '0 -4px 16px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ padding: '6px 14px 4px', color: '#555', fontSize: 11, borderBottom: '1px solid #222' }}>
+            scope to group
+          </div>
+          {filteredGroups.map((g, idx) => (
+            <div
+              key={g}
+              onMouseDown={() => selectGroup(g)}
+              style={{
+                padding: '8px 14px',
+                cursor: 'pointer',
+                background: idx === atIndex ? '#2a2a2a' : 'transparent',
+                display: 'flex', alignItems: 'center', gap: 10,
+                borderBottom: '1px solid #222',
+              }}
+            >
+              <span style={{ fontFamily: 'monospace', fontSize: 13, color: '#4fc1ff' }}>{g}</span>
+              {activeScope.includes(g) && (
+                <span style={{ color: '#555', fontSize: 11, marginLeft: 'auto' }}>already scoped</span>
               )}
             </div>
           ))}
