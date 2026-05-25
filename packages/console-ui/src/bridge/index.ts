@@ -18,6 +18,7 @@ export interface Host {
   name: string
   connected: boolean
   runnableCount: number
+  groups: string[]
 }
 
 export interface HistoryLogLine {

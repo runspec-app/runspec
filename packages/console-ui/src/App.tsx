@@ -184,7 +184,7 @@ export default function App() {
                 {view !== 'console' && (
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'runnables' && <RunnablesView activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'hosts'     && <HostsView />}
+                    {view === 'hosts'     && <HostsView activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'schedules' && <SchedulesView />}
                   </div>

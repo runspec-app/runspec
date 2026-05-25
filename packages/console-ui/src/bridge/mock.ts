@@ -61,9 +61,9 @@ const MOCK_RUNNABLES: Runnable[] = [
 ]
 
 const MOCK_HOSTS: Host[] = [
-  { name: 'local', connected: true, runnableCount: 3 },
-  { name: 'prod-1', connected: true, runnableCount: 3 },
-  { name: 'prod-2', connected: false, runnableCount: 0 },
+  { name: 'local',  connected: true,  runnableCount: 3, groups: ['ops-tools'] },
+  { name: 'prod-1', connected: true,  runnableCount: 3, groups: ['platform-core'] },
+  { name: 'prod-2', connected: false, runnableCount: 0, groups: [] },
 ]
 
 const MOCK_HISTORY: HistoryRecord[] = [
