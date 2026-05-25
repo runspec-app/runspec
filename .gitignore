@@ -53,3 +53,6 @@ site/
 # External reference repos (cloned locally, not committed)
 chainlit-docs/
 .chainlit/
+
+# Claude Code local config (machine-specific)
+.claude/launch.json
