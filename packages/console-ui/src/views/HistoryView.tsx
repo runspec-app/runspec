@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, message, Input } from 'antd'
-import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined } from '@ant-design/icons'
+import { Table, Tag, Typography, Button, Tooltip, message, Input, Space } from 'antd'
+import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined, CaretRightOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HistoryRecord, type HistoryLogLine } from '../bridge'
 
@@ -23,14 +23,27 @@ function formatLogsAsText(record: HistoryRecord, logLines: HistoryLogLine[]): st
 
 interface ExpandedRunProps {
   record: HistoryRecord
+  rerunCount: number
   onRerun?: (record: HistoryRecord) => void
   onAskLlm?: (text: string) => void
 }
 
-function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
+function ExpandedRun({ record, rerunCount, onRerun, onAskLlm }: ExpandedRunProps) {
   const args = record.args ?? {}
   const logLines = record.logLines ?? []
   const hasArgs = Object.keys(args).length > 0
+  const [isEditing, setIsEditing] = useState(false)
+  const [editArgs, setEditArgs] = useState<Record<string, string>>({})
+
+  const startEditing = () => {
+    setEditArgs(Object.fromEntries(Object.entries(args).map(([k, v]) => [k, String(v)])))
+    setIsEditing(true)
+  }
+
+  const handleEditRun = () => {
+    onRerun?.({ ...record, args: editArgs })
+    setIsEditing(false)
+  }
 
   const handleCopy = () => {
     navigator.clipboard.writeText(formatLogsAsText(record, logLines))
@@ -43,25 +56,49 @@ function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
 
   return (
     <div style={{ padding: '12px 24px 12px 48px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Rerun */}
+      {/* Rerun controls */}
       {onRerun && (
-        <div>
-          <Button
-            size="small"
-            icon={<RedoOutlined />}
-            onClick={() => onRerun(record)}
-          >
-            Rerun with same args
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Button size="small" icon={<RedoOutlined />} onClick={() => onRerun(record)}>
+            Rerun
           </Button>
+          {rerunCount > 0 && (
+            <Text type="secondary" style={{ fontSize: 11 }}>× {rerunCount}</Text>
+          )}
+          {hasArgs && !isEditing && (
+            <Button size="small" icon={<EditOutlined />} onClick={startEditing}>
+              Edit args
+            </Button>
+          )}
         </div>
       )}
 
-      {/* Args */}
+      {/* Args — editable form or static display */}
       <div>
         <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
           Arguments
         </Text>
-        {hasArgs ? (
+        {isEditing ? (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {Object.entries(editArgs).map(([k, v]) => (
+              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Text code style={{ fontSize: 12, minWidth: 140, flexShrink: 0 }}>--{k}</Text>
+                <Input
+                  size="small"
+                  value={v}
+                  onChange={e => setEditArgs(a => ({ ...a, [k]: e.target.value }))}
+                  style={{ maxWidth: 340, fontFamily: 'monospace', fontSize: 12 }}
+                />
+              </div>
+            ))}
+            <Space style={{ marginTop: 4 }}>
+              <Button size="small" type="primary" icon={<CaretRightOutlined />} onClick={handleEditRun}>
+                Run with edits
+              </Button>
+              <Button size="small" onClick={() => setIsEditing(false)}>Cancel</Button>
+            </Space>
+          </div>
+        ) : hasArgs ? (
           <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
             {Object.entries(args).map(([k, v]) => (
               <span key={k}>
@@ -140,6 +177,12 @@ interface HistoryViewProps {
 export function HistoryView({ onRerun, onAskLlm }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
   const [search, setSearch] = useState('')
+  const [rerunCounts, setRerunCounts] = useState<Record<string, number>>({})
+
+  const handleRerun = (record: HistoryRecord) => {
+    setRerunCounts(c => ({ ...c, [record.id]: (c[record.id] ?? 0) + 1 }))
+    onRerun?.(record)
+  }
 
   useEffect(() => {
     bridge.get_history('local').then(setRecords)
@@ -236,7 +279,12 @@ export function HistoryView({ onRerun, onAskLlm }: HistoryViewProps) {
         pagination={{ pageSize: 50, showSizeChanger: true }}
         expandable={{
           expandedRowRender: (record) => (
-            <ExpandedRun record={record} onRerun={onRerun} onAskLlm={onAskLlm} />
+            <ExpandedRun
+              record={record}
+              rerunCount={rerunCounts[record.id] ?? 0}
+              onRerun={handleRerun}
+              onAskLlm={onAskLlm}
+            />
           ),
           rowExpandable: () => true,
         }}
