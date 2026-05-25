@@ -1,4 +1,4 @@
-import type { BridgeApi, Host, Runnable, HistoryRecord, Schedule } from './index'
+import type { BridgeApi, Host, Runnable, HistoryRecord, Schedule, InFlightRecord } from './index'
 
 const MOCK_RUNNABLES: Runnable[] = [
   {
@@ -120,6 +120,27 @@ const MOCK_SCHEDULES: Schedule[] = [
   { id: 'rs-log-rotate-weekly', runnable: 'log-rotate', host: 'prod-1', schedule: 'Weekly Sun 03:00', nextRun: 'Sun 03:00' },
 ]
 
+const MOCK_IN_FLIGHT: InFlightRecord[] = [
+  {
+    id: 'inf-1',
+    runnable: 'log-rotate',
+    host: 'prod-1',
+    operator: 'Scheduled Task',
+    runAs: 'svc-runner',
+    startedAt: new Date(Date.now() - 45000).toISOString(),
+    args: { keep: 7 },
+  },
+  {
+    id: 'inf-2',
+    runnable: 'cache-purge',
+    host: 'prod-1',
+    operator: 'Jason Finestone',
+    runAs: 'svc-runner',
+    startedAt: new Date(Date.now() - 8000).toISOString(),
+    args: {},
+  },
+]
+
 let invocationCounter = 0
 
 export const mockApi: BridgeApi = {
@@ -165,6 +186,8 @@ export const mockApi: BridgeApi = {
 
     return id
   },
+
+  get_in_flight: async () => MOCK_IN_FLIGHT,
 
   send_chat: async (message, _invocationId) => {
     const id = `chat-${++invocationCounter}`

@@ -46,6 +46,16 @@ export interface Schedule {
   nextRun: string
 }
 
+export interface InFlightRecord {
+  id: string
+  runnable: string
+  host: string
+  operator: string
+  runAs: string
+  startedAt: string
+  args: Record<string, unknown>
+}
+
 export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
   get_runnables: (host: string) => Promise<Runnable[]>
@@ -57,6 +67,7 @@ export interface BridgeApi {
   delete_schedule: (id: string) => Promise<void>
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>) => Promise<string>
   send_chat: (message: string, invocationId?: string) => Promise<string>
+  get_in_flight: () => Promise<InFlightRecord[]>
 }
 
 declare global {
