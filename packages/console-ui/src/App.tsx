@@ -87,14 +87,15 @@ export default function App() {
     {
       key: 'console',
       icon: <ThunderboltOutlined />,
+      title: 'Console',  // explicit string so collapsed tooltip doesn't render Badge JSX
       label: inFlight.length > 0
         ? <Badge count={inFlight.length} size="small" offset={[6, 0]}>Console</Badge>
         : 'Console',
     },
-    { key: 'runnables', icon: <AppstoreOutlined />, label: 'Runnables' },
-    { key: 'hosts',     icon: <ClusterOutlined />,  label: 'Hosts' },
-    { key: 'history',   icon: <HistoryOutlined />,  label: 'History' },
-    { key: 'schedules', icon: <CalendarOutlined />, label: 'Schedules' },
+    { key: 'runnables', icon: <AppstoreOutlined />, title: 'Runnables', label: 'Runnables' },
+    { key: 'hosts',     icon: <ClusterOutlined />,  title: 'Hosts',     label: 'Hosts' },
+    { key: 'history',   icon: <HistoryOutlined />,  title: 'History',   label: 'History' },
+    { key: 'schedules', icon: <CalendarOutlined />, title: 'Schedules', label: 'Schedules' },
   ]
 
   return (
