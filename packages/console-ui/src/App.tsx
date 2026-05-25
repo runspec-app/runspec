@@ -1,11 +1,13 @@
 import { useState } from 'react'
-import { ConfigProvider, Layout, Menu, Badge, theme } from 'antd'
+import { ConfigProvider, Layout, Menu, Badge, theme, Button, Tooltip } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
   ClusterOutlined,
   HistoryOutlined,
   CalendarOutlined,
+  SunOutlined,
+  MoonOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { RunnablesView } from './views/RunnablesView'
@@ -19,22 +21,18 @@ const { Sider, Content } = Layout
 
 type ViewKey = 'console' | 'runnables' | 'hosts' | 'history' | 'schedules'
 
-function makeViews(
-  inFlight: InFlightRecord[],
-  onHistoryRerun: (record: HistoryRecord) => void,
-): Record<ViewKey, React.ReactNode> {
-  return {
-    console: <ConsoleView inFlight={inFlight} />,
-    runnables: <RunnablesView />,
-    hosts: <HostsView />,
-    history: <HistoryView onRerun={onHistoryRerun} />,
-    schedules: <SchedulesView />,
-  }
-}
-
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
+  const [collapsed, setCollapsed] = useState(false)
+  const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
+  const [pendingChat, setPendingChat] = useState<string | null>(null)
   const inFlight = useInFlight()
+
+  const toggleTheme = () => {
+    const next = !isDark
+    setIsDark(next)
+    localStorage.setItem('theme', next ? 'dark' : 'light')
+  }
 
   const handleHistoryRerun = (record: HistoryRecord) => {
     setView('console')
@@ -42,6 +40,16 @@ export default function App() {
       detail: { host: record.host, runnable: record.runnable, args: record.args },
     }))
   }
+
+  const handleAskLlm = (text: string) => {
+    setView('console')
+    setPendingChat(text)
+  }
+
+  const siderBg   = isDark ? '#111'   : '#fafafa'
+  const borderCol = isDark ? '#222'   : '#e0e0e0'
+  const titleCol  = isDark ? '#4fc1ff': '#0958d9'
+  const contentBg = isDark ? '#111'   : '#ffffff'
 
   const navItems = [
     {
@@ -58,19 +66,44 @@ export default function App() {
   ]
 
   return (
-    <ConfigProvider theme={{ algorithm: theme.darkAlgorithm }}>
-      <Layout style={{ height: '100vh', background: '#0d0d0d' }}>
-        <Sider width={200} style={{ background: '#111', borderRight: '1px solid #222' }}>
+    <ConfigProvider theme={{ algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
+      <Layout style={{ height: '100vh', background: contentBg }}>
+        <Sider
+          width={200}
+          collapsedWidth={56}
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
+          collapsible
+          style={{ background: siderBg, borderRight: `1px solid ${borderCol}` }}
+        >
           <div style={{
-            padding: '16px 20px 12px',
-            fontFamily: 'monospace', fontWeight: 700,
-            fontSize: 15, color: '#4fc1ff',
-            borderBottom: '1px solid #222',
+            display: 'flex', alignItems: 'center',
+            justifyContent: collapsed ? 'center' : 'space-between',
+            padding: collapsed ? '14px 0' : '14px 12px 12px 20px',
+            borderBottom: `1px solid ${borderCol}`,
+            minHeight: 48,
           }}>
-            runspec console
+            {!collapsed && (
+              <span style={{
+                fontFamily: 'monospace', fontWeight: 700,
+                fontSize: 15, color: titleCol,
+              }}>
+                runspec console
+              </span>
+            )}
+            <Tooltip title={isDark ? 'Light theme' : 'Dark theme'} placement="right">
+              <Button
+                type="text"
+                size="small"
+                icon={isDark ? <SunOutlined /> : <MoonOutlined />}
+                onClick={toggleTheme}
+                style={{ color: titleCol, flexShrink: 0 }}
+              />
+            </Tooltip>
           </div>
           <Menu
             mode="inline"
+            inlineCollapsed={collapsed}
             selectedKeys={[view]}
             onClick={({ key }) => setView(key as ViewKey)}
             items={navItems}
@@ -78,11 +111,21 @@ export default function App() {
           />
         </Sider>
         <Content style={{
-          background: '#111', padding: 24,
+          background: contentBg, padding: 24,
           display: 'flex', flexDirection: 'column',
           overflow: 'hidden',
         }}>
-          {makeViews(inFlight, handleHistoryRerun)[view]}
+          {view === 'console' && (
+            <ConsoleView
+              inFlight={inFlight}
+              pendingChat={pendingChat}
+              onChatSent={() => setPendingChat(null)}
+            />
+          )}
+          {view === 'runnables'  && <RunnablesView />}
+          {view === 'hosts'      && <HostsView />}
+          {view === 'history'    && <HistoryView onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} />}
+          {view === 'schedules'  && <SchedulesView />}
         </Content>
       </Layout>
     </ConfigProvider>

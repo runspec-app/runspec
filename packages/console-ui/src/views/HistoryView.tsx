@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Typography, Button } from 'antd'
-import { RedoOutlined } from '@ant-design/icons'
+import { Table, Tag, Typography, Button, Tooltip, message } from 'antd'
+import { RedoOutlined, CopyOutlined, RobotOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HistoryRecord, type HistoryLogLine } from '../bridge'
 
@@ -13,10 +13,33 @@ const LOG_LEVEL_COLOUR: Record<string, string> = {
   DEBUG: '#888',
 }
 
-function ExpandedRun({ record, onRerun }: { record: HistoryRecord; onRerun?: (record: HistoryRecord) => void }) {
+function formatLogsAsText(record: HistoryRecord, logLines: HistoryLogLine[]): string {
+  const header = `Log output from /${record.runnable} on ${record.host} (${new Date(record.ts).toLocaleString()})`
+  const lines = logLines.map(l =>
+    `${new Date(l.ts).toLocaleTimeString()} ${l.level.padEnd(8)} ${l.message}`
+  )
+  return [header, '', ...lines].join('\n')
+}
+
+interface ExpandedRunProps {
+  record: HistoryRecord
+  onRerun?: (record: HistoryRecord) => void
+  onAskLlm?: (text: string) => void
+}
+
+function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
   const args = record.args ?? {}
   const logLines = record.logLines ?? []
   const hasArgs = Object.keys(args).length > 0
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(formatLogsAsText(record, logLines))
+    message.success('Copied to clipboard')
+  }
+
+  const handleAskLlm = () => {
+    onAskLlm?.(formatLogsAsText(record, logLines))
+  }
 
   return (
     <div style={{ padding: '12px 24px 12px 48px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -54,17 +77,43 @@ function ExpandedRun({ record, onRerun }: { record: HistoryRecord; onRerun?: (re
 
       {/* Log lines */}
       <div>
-        <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
-          Log
-        </Text>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>
+            Log
+          </Text>
+          {logLines.length > 0 && (
+            <div style={{ display: 'flex', gap: 4 }}>
+              <Tooltip title="Copy logs to clipboard">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={handleCopy}
+                  style={{ fontSize: 12, height: 20, padding: '0 4px' }}
+                />
+              </Tooltip>
+              {onAskLlm && (
+                <Tooltip title="Ask the LLM about this log">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<RobotOutlined />}
+                    onClick={handleAskLlm}
+                    style={{ fontSize: 12, height: 20, padding: '0 4px' }}
+                  />
+                </Tooltip>
+              )}
+            </div>
+          )}
+        </div>
         <div style={{
-          marginTop: 6,
           background: '#0d0d0d', border: '1px solid #222', borderRadius: 6,
           padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.8,
         }}>
-          {logLines.map((line, i) => (
-            <LogLine key={i} line={line} />
-          ))}
+          {logLines.length === 0
+            ? <span style={{ color: '#555' }}>no log lines</span>
+            : logLines.map((line, i) => <LogLine key={i} line={line} />)
+          }
         </div>
       </div>
     </div>
@@ -85,9 +134,10 @@ function LogLine({ line }: { line: HistoryLogLine }) {
 
 interface HistoryViewProps {
   onRerun?: (record: HistoryRecord) => void
+  onAskLlm?: (text: string) => void
 }
 
-export function HistoryView({ onRerun }: HistoryViewProps) {
+export function HistoryView({ onRerun, onAskLlm }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
 
   useEffect(() => {
@@ -167,7 +217,9 @@ export function HistoryView({ onRerun }: HistoryViewProps) {
         size="small"
         pagination={{ pageSize: 50, showSizeChanger: true }}
         expandable={{
-          expandedRowRender: (record) => <ExpandedRun record={record} onRerun={onRerun} />,
+          expandedRowRender: (record) => (
+            <ExpandedRun record={record} onRerun={onRerun} onAskLlm={onAskLlm} />
+          ),
           rowExpandable: () => true,
         }}
       />

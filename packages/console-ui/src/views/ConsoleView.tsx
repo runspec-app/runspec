@@ -9,6 +9,8 @@ const { Text } = Typography
 
 interface ConsoleViewProps {
   inFlight: InFlightRecord[]
+  pendingChat?: string | null
+  onChatSent?: () => void
 }
 
 function elapsed(startedAt: string): string {
@@ -49,7 +51,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
   )
 }
 
-export function ConsoleView({ inFlight }: ConsoleViewProps) {
+export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const { blocks, addBlock } = useInvocationBlocks()
@@ -72,6 +74,15 @@ export function ConsoleView({ inFlight }: ConsoleViewProps) {
     return () => window.removeEventListener('runspec:rerun', onRerun)
   }, [])
 
+  // Auto-send chat when asked from another view (e.g. "Ask LLM" from History)
+  const handleSendChatRef = useRef<(message: string) => Promise<void>>(async () => {})
+  useEffect(() => {
+    if (pendingChat) {
+      handleSendChatRef.current(pendingChat)
+      onChatSent?.()
+    }
+  }, [pendingChat, onChatSent])
+
   const handleRunRunnable = async (runnable: Runnable, args: Record<string, unknown>) => {
     const label = `/${runnable.name} on ${runnable.host}`
     setInputHistory(h => [...h, `/${runnable.name}`])
@@ -84,6 +95,9 @@ export function ConsoleView({ inFlight }: ConsoleViewProps) {
     const id = await bridge.send_chat(message)
     addBlock({ id, type: 'chat', label: message, lines: [], done: false })
   }
+
+  // Keep ref current so the pendingChat effect always calls the latest version
+  handleSendChatRef.current = handleSendChat
 
   const handleRerun = (data: RerunData) => {
     window.dispatchEvent(new CustomEvent('runspec:rerun', { detail: data }))
