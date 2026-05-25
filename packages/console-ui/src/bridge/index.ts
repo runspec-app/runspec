@@ -19,6 +19,7 @@ export interface Host {
   connected: boolean
   runnableCount: number
   groups: string[]
+  role?: 'primary' | 'secondary'  // undefined = local machine, always included
 }
 
 export interface JumpHost {

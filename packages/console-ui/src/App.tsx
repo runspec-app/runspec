@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ConfigProvider, Layout, Menu, Badge, theme, Button, Tooltip, Popover, Checkbox } from 'antd'
+import { ConfigProvider, Layout, Menu, Badge, theme, Button, Tooltip, Popover, Checkbox, Segmented } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -19,7 +19,7 @@ import { SchedulesView } from './views/SchedulesView'
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Runnable } from './bridge'
+import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 const { Header, Sider, Content } = Layout
@@ -33,6 +33,10 @@ export default function App() {
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [runnables, setRunnables] = useState<Runnable[]>([])
+  const [hosts, setHosts] = useState<Host[]>([])
+  const [hostRole, setHostRole] = useState<'all' | 'primary' | 'secondary'>(
+    () => (localStorage.getItem('hostRole') as 'all' | 'primary' | 'secondary') ?? 'all'
+  )
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const [historySearch, setHistorySearch] = useState('')
@@ -40,7 +44,14 @@ export default function App() {
   const [scopePopoverOpen, setScopePopoverOpen] = useState(false)
   const inFlight = useInFlight()
 
-  const allGroups = [...new Set(runnables.map(r => r.group))].sort()
+  // Hosts with no role (local machine) are always included regardless of role filter
+  const activeHostNames = new Set(
+    hosts
+      .filter(h => h.connected && (h.role === undefined || hostRole === 'all' || h.role === hostRole))
+      .map(h => h.name)
+  )
+  const roleFilteredRunnables = runnables.filter(r => activeHostNames.has(r.host))
+  const allGroups = [...new Set(roleFilteredRunnables.map(r => r.group))].sort()
 
   const handleScopeToggle = (group: string) => {
     setActiveScope(prev =>
@@ -50,7 +61,13 @@ export default function App() {
 
   useEffect(() => {
     bridge.get_runnables('local').then(setRunnables)
+    bridge.get_hosts().then(setHosts)
   }, [])
+
+  const toggleHostRole = (role: 'all' | 'primary' | 'secondary') => {
+    setHostRole(role)
+    localStorage.setItem('hostRole', role)
+  }
 
   const toggleTheme = () => {
     const next = !isDark
@@ -127,7 +144,18 @@ export default function App() {
             <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 15, color: titleCol }}>
               runspec console
             </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Segmented
+                size="small"
+                value={hostRole}
+                onChange={v => toggleHostRole(v as 'all' | 'primary' | 'secondary')}
+                options={[
+                  { label: 'All', value: 'all' },
+                  { label: 'Primary', value: 'primary' },
+                  { label: 'Secondary', value: 'secondary' },
+                ]}
+                style={{ fontSize: 11 }}
+              />
               <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                 <Button
                   type="text" size="small"
@@ -183,8 +211,8 @@ export default function App() {
                 </div>
                 {view !== 'console' && (
                   <div style={{ flex: 1, overflow: 'auto' }}>
-                    {view === 'runnables' && <RunnablesView activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'hosts'     && <HostsView activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
+                    {view === 'runnables' && <RunnablesView runnables={roleFilteredRunnables} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
+                    {view === 'hosts'     && <HostsView hosts={hosts} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'schedules' && <SchedulesView />}
                   </div>
@@ -200,7 +228,7 @@ export default function App() {
               }}>
                 <div style={{ flex: 1 }}>
                   <CommandInput
-                    runnables={activeScope.length > 0 ? runnables.filter(r => activeScope.includes(r.group)) : runnables}
+                    runnables={activeScope.length > 0 ? roleFilteredRunnables.filter(r => activeScope.includes(r.group)) : roleFilteredRunnables}
                     allGroups={allGroups}
                     activeScope={activeScope}
                     onScopeChange={setActiveScope}

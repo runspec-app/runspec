@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Table, Tag, Input, Typography } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
-import { bridge, type Runnable, type ArgDef } from '../bridge'
+import type { Runnable, ArgDef } from '../bridge'
 
 const { Title, Text } = Typography
 
@@ -35,17 +35,13 @@ function RunnableHelp({ runnable }: { runnable: Runnable }) {
 }
 
 interface RunnablesViewProps {
+  runnables: Runnable[]
   activeScope: string[]
   onScopeToggle: (group: string) => void
 }
 
-export function RunnablesView({ activeScope, onScopeToggle }: RunnablesViewProps) {
-  const [runnables, setRunnables] = useState<Runnable[]>([])
+export function RunnablesView({ runnables, activeScope, onScopeToggle }: RunnablesViewProps) {
   const [search, setSearch] = useState('')
-
-  useEffect(() => {
-    bridge.get_runnables('local').then(setRunnables)
-  }, [])
 
   const filtered = runnables.filter(r =>
     r.name.includes(search) ||

@@ -1,20 +1,15 @@
-import { useEffect, useState } from 'react'
 import { Card, Badge, Tag, Typography, Space } from 'antd'
-import { bridge, type Host } from '../bridge'
+import type { Host } from '../bridge'
 
 const { Title, Text } = Typography
 
 interface HostsViewProps {
+  hosts: Host[]
   activeScope: string[]
   onScopeToggle: (group: string) => void
 }
 
-export function HostsView({ activeScope, onScopeToggle }: HostsViewProps) {
-  const [hosts, setHosts] = useState<Host[]>([])
-
-  useEffect(() => {
-    bridge.get_hosts().then(setHosts)
-  }, [])
+export function HostsView({ hosts, activeScope, onScopeToggle }: HostsViewProps) {
 
   return (
     <div>

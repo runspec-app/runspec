@@ -58,6 +58,16 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'dry-run', type: 'flag', required: false, default: false },
     ],
   },
+  {
+    // Secondary-only runnable — only visible when Secondary or All is selected
+    name: 'failover-drain',
+    group: 'platform-core',
+    host: 'prod-2',
+    description: 'Drain connections before failover to secondary datacenter',
+    args: [
+      { name: 'timeout', type: 'int', required: false, default: 30, description: 'Drain timeout in seconds' },
+    ],
+  },
 ]
 
 const MOCK_JUMP_HOSTS: JumpHost[] = [
@@ -67,9 +77,9 @@ const MOCK_JUMP_HOSTS: JumpHost[] = [
 ]
 
 const MOCK_HOSTS: Host[] = [
-  { name: 'local',  connected: true,  runnableCount: 3, groups: ['ops-tools'] },
-  { name: 'prod-1', connected: true,  runnableCount: 3, groups: ['platform-core'] },
-  { name: 'prod-2', connected: false, runnableCount: 0, groups: [] },
+  { name: 'local',  connected: true, runnableCount: 3, groups: ['ops-tools'] },
+  { name: 'prod-1', connected: true, runnableCount: 3, groups: ['platform-core'], role: 'primary' },
+  { name: 'prod-2', connected: true, runnableCount: 1, groups: ['platform-core'], role: 'secondary' },
 ]
 
 const MOCK_HISTORY: HistoryRecord[] = [
