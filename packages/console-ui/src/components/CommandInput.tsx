@@ -40,6 +40,7 @@ export function CommandInput({ runnables, onRunRunnable, onSendChat, history }: 
   const filteredItems = slashFilter
     ? slashItems.filter(i =>
         i.runnable.name.includes(slashFilter) ||
+        i.runnable.group.toLowerCase().includes(slashFilter.toLowerCase()) ||
         i.host.includes(slashFilter) ||
         (i.runnable.description ?? '').toLowerCase().includes(slashFilter.toLowerCase())
       )
