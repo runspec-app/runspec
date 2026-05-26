@@ -1,57 +1,49 @@
 import { useEffect, useState } from 'react'
-import { ConfigProvider, Layout, Menu, Badge, theme, Button, Tooltip, Popover, Checkbox, Segmented } from 'antd'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
-  ClusterOutlined,
+  FormOutlined,
   HistoryOutlined,
   CalendarOutlined,
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
-  FilterOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { RunnablesView } from './views/RunnablesView'
-import { HostsView } from './views/HostsView'
 import { HistoryView } from './views/HistoryView'
 import { SchedulesView } from './views/SchedulesView'
+import { FormsView, type PendingForm } from './views/FormsView'
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
-const { Header, Sider, Content } = Layout
-
-type ViewKey = 'console' | 'runnables' | 'hosts' | 'history' | 'schedules'
+type ViewKey = 'console' | 'runnables' | 'history' | 'forms' | 'schedules'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
-  const [collapsed, setCollapsed] = useState(false)
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
-  const [hostRole, setHostRole] = useState<'all' | 'primary' | 'secondary'>(
-    () => (localStorage.getItem('hostRole') as 'all' | 'primary' | 'secondary') ?? 'all'
-  )
+  const [selectedHost, setSelectedHost] = useState<string>('')
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
+  const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
-  const [scopePopoverOpen, setScopePopoverOpen] = useState(false)
   const inFlight = useInFlight()
 
-  // Hosts with no role (local machine) are always included regardless of role filter
-  const activeHostNames = new Set(
-    hosts
-      .filter(h => h.connected && (h.role === undefined || hostRole === 'all' || h.role === hostRole))
-      .map(h => h.name)
-  )
-  const roleFilteredRunnables = runnables.filter(r => activeHostNames.has(r.host))
-  const allGroups = [...new Set(roleFilteredRunnables.map(r => r.group))].sort()
+  const selectedHostObj = hosts.find(h => h.name === selectedHost)
+  const selectedHostGroups = selectedHostObj?.groups ?? []
+  const hostFilteredRunnables = runnables.filter(r => r.host === selectedHost)
+  const scopedRunnables = activeScope.length > 0
+    ? hostFilteredRunnables.filter(r => activeScope.includes(r.group))
+    : hostFilteredRunnables
 
   const handleScopeToggle = (group: string) => {
     setActiveScope(prev =>
@@ -59,15 +51,18 @@ export default function App() {
     )
   }
 
-  useEffect(() => {
-    bridge.get_runnables('local').then(setRunnables)
-    bridge.get_hosts().then(setHosts)
-  }, [])
-
-  const toggleHostRole = (role: 'all' | 'primary' | 'secondary') => {
-    setHostRole(role)
-    localStorage.setItem('hostRole', role)
+  const handleHostSelect = (name: string) => {
+    setSelectedHost(name)
+    setActiveScope([])
   }
+
+  useEffect(() => {
+    bridge.get_runnables('all').then(setRunnables)
+    bridge.get_hosts().then(hs => {
+      setHosts(hs)
+      setSelectedHost(hs[0]?.name ?? '')
+    })
+  }, [])
 
   const toggleTheme = () => {
     const next = !isDark
@@ -94,10 +89,18 @@ export default function App() {
     setPendingChat(text)
   }
 
-  const handleRunRunnable = (runnable: Runnable, args: Record<string, unknown>) => {
-    setInputHistory(h => [...h, `/${runnable.name}`])
-    if (autoSwitch) setView('console')
-    window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args } }))
+  const handleRunRunnable = (runnable: Runnable, args: Record<string, unknown>, commandPath: string[] = []) => {
+    const cmd = commandPath.length > 0 ? `${runnable.name} ${commandPath.join(' ')}` : runnable.name
+    const argStr = Object.entries(args).map(([k, v]) => v === true ? `--${k}` : `--${k}=${v}`).join(' ')
+    const label = argStr ? `/${cmd} ${argStr}` : `/${cmd}`
+    setInputHistory(h => [...h, label])
+    setView('console')
+    window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args, commandPath } }))
+  }
+
+  const handleOpenForm = (runnable: Runnable, commandPath: string[] = []) => {
+    setPendingForm({ runnable, commandPath })
+    setView('forms')
   }
 
   const handleSendChat = (message: string) => {
@@ -112,203 +115,216 @@ export default function App() {
   const titleCol  = isDark ? '#4fc1ff' : '#0958d9'
   const contentBg = isDark ? '#111'    : '#ffffff'
   const iconCol   = isDark ? '#888'    : '#999'
+  const textCol   = isDark ? '#ccc'    : '#333'
 
-  const navItems = [
+  const navTabs = [
     {
-      key: 'console',
-      icon: inFlight.length > 0
-        ? collapsed
-          ? <ThunderboltOutlined style={{ color: '#ff4d4f' }} />
-          : <Badge count={inFlight.length} size="small" offset={[2, -1]}><ThunderboltOutlined /></Badge>
-        : <ThunderboltOutlined />,
-      title: 'Console',
+      key: 'console' as ViewKey,
       label: 'Console',
+      icon: inFlight.length > 0
+        ? <Badge count={inFlight.length} size="small" offset={[2, -1]}><ThunderboltOutlined /></Badge>
+        : <ThunderboltOutlined />,
     },
-    { key: 'runnables', icon: <AppstoreOutlined />, title: 'Runnables', label: 'Runnables' },
-    { key: 'hosts',     icon: <ClusterOutlined />,  title: 'Hosts',     label: 'Hosts' },
-    { key: 'history',   icon: <HistoryOutlined />,  title: 'History',   label: 'History' },
-    { key: 'schedules', icon: <CalendarOutlined />, title: 'Schedules', label: 'Schedules' },
+    { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
+    { key: 'runnables' as ViewKey, label: 'Runnables', icon: <AppstoreOutlined /> },
+    { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
+    { key: 'schedules' as ViewKey, label: 'Schedules', icon: <CalendarOutlined /> },
   ]
 
   return (
     <ThemeContext.Provider value={isDark}>
-      <ConfigProvider theme={{ algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
-        <Layout style={{ height: '100vh', background: contentBg }}>
+      <ConfigProvider theme={{
+          algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+          token: { fontFamily: 'monospace' },
+        }}>
+        <div style={{ height: '100vh', display: 'flex', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
 
-          {/* Top header: branding left, actions right */}
-          <Header style={{
-            height: 48, lineHeight: '48px', padding: '0 16px',
-            background: headerBg, borderBottom: `1px solid ${borderCol}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          {/* Fixed host sidebar */}
+          <div style={{
+            width: 180, flexShrink: 0,
+            background: siderBg, borderRight: `1px solid ${borderCol}`,
+            display: 'flex', flexDirection: 'column',
           }}>
-            <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 15, color: titleCol }}>
-              runspec console
-            </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Segmented
-                size="small"
-                value={hostRole}
-                onChange={v => toggleHostRole(v as 'all' | 'primary' | 'secondary')}
-                options={[
-                  { label: 'All', value: 'all' },
-                  { label: 'Primary', value: 'primary' },
-                  { label: 'Secondary', value: 'secondary' },
-                ]}
-                style={{ fontSize: 11 }}
-              />
-              <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
-                <Button
-                  type="text" size="small"
-                  icon={isDark ? <SunOutlined /> : <MoonOutlined />}
-                  onClick={toggleTheme}
-                  style={{ color: iconCol }}
-                />
-              </Tooltip>
-              <Tooltip title="Settings">
-                <Button
-                  type="text" size="small"
-                  icon={<SettingOutlined />}
-                  onClick={() => setSettingsOpen(true)}
-                  style={{ color: iconCol }}
-                />
-              </Tooltip>
-            </div>
-          </Header>
-
-          {/* Sidebar + content row */}
-          <Layout style={{ flex: 1, overflow: 'hidden', background: contentBg }}>
-            <Sider
-              width={200}
-              collapsedWidth={56}
-              collapsed={collapsed}
-              onCollapse={setCollapsed}
-              collapsible
-              style={{ background: siderBg, borderRight: `1px solid ${borderCol}` }}
-            >
-              <Menu
-                mode="inline"
-                inlineCollapsed={collapsed}
-                selectedKeys={[view]}
-                onClick={({ key }) => setView(key as ViewKey)}
-                items={navItems}
-                style={{ background: 'transparent', border: 'none', marginTop: 8 }}
-              />
-            </Sider>
-
-            <Content style={{
-              background: contentBg, padding: 0,
-              display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            <div style={{
+              padding: '13px 16px 12px',
+              fontWeight: 700, fontSize: 14, color: titleCol,
+              borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
             }}>
-              {/* View area */}
-              <div style={{ flex: 1, padding: '24px 24px 16px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {/* ConsoleView always mounted so blocks + listeners persist */}
-                <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                  <ConsoleView
-                    inFlight={inFlight}
-                    pendingChat={pendingChat}
-                    onChatSent={() => setPendingChat(null)}
-                  />
-                </div>
-                {view !== 'console' && (
-                  <div style={{ flex: 1, overflow: 'auto' }}>
-                    {view === 'runnables' && <RunnablesView runnables={roleFilteredRunnables} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'hosts'     && <HostsView hosts={hosts} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'schedules' && <SchedulesView />}
-                  </div>
-                )}
-              </div>
-
-              {/* Persistent command bar */}
-              <div style={{
-                borderTop: `1px solid ${borderCol}`,
-                padding: '8px 12px 8px 16px',
-                display: 'flex', alignItems: 'flex-end', gap: 8,
-                background: contentBg,
-              }}>
-                <div style={{ flex: 1 }}>
-                  <CommandInput
-                    runnables={activeScope.length > 0 ? roleFilteredRunnables.filter(r => activeScope.includes(r.group)) : roleFilteredRunnables}
-                    allGroups={allGroups}
-                    activeScope={activeScope}
-                    onScopeChange={setActiveScope}
-                    onRunRunnable={handleRunRunnable}
-                    onSendChat={handleSendChat}
-                    history={inputHistory}
-                  />
-                </div>
-                <Popover
-                  open={scopePopoverOpen}
-                  onOpenChange={setScopePopoverOpen}
-                  trigger="click"
-                  placement="topRight"
-                  content={
-                    <div style={{ minWidth: 180 }}>
-                      {allGroups.length === 0
-                        ? <span style={{ color: '#888', fontSize: 12 }}>No groups available</span>
-                        : allGroups.map(g => (
-                          <div key={g} style={{ padding: '5px 0' }}>
-                            <Checkbox
-                              checked={activeScope.includes(g)}
-                              onChange={() => handleScopeToggle(g)}
-                            >
-                              <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{g}</span>
-                            </Checkbox>
-                          </div>
-                        ))
-                      }
-                      {activeScope.length > 0 && (
-                        <div style={{ borderTop: '1px solid #333', marginTop: 6, paddingTop: 6 }}>
-                          <Button size="small" type="text" onClick={() => { setActiveScope([]); setScopePopoverOpen(false) }}
-                            style={{ padding: 0, fontSize: 12, color: '#888' }}>
-                            Clear all
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  }
-                >
-                  <Tooltip title="Scope to groups" placement="top">
-                    <Badge count={activeScope.length} size="small" offset={[2, -2]}>
-                      <Button
-                        type="text" size="small"
-                        icon={<FilterOutlined />}
-                        style={{
-                          color: activeScope.length > 0 ? titleCol : iconCol,
-                          background: activeScope.length > 0
-                            ? (isDark ? 'rgba(79,193,255,0.08)' : 'rgba(9,88,217,0.06)')
-                            : 'transparent',
-                          marginBottom: 6, borderRadius: 6,
-                        }}
-                      />
-                    </Badge>
-                  </Tooltip>
-                </Popover>
-                <Tooltip
-                  title={autoSwitch
-                    ? 'Auto-switch to Console: on — click to stay on current view'
-                    : 'Auto-switch to Console: off — click to enable'}
-                  placement="top"
-                >
-                  <Button
-                    type="text" size="small"
-                    icon={<ThunderboltOutlined />}
-                    onClick={toggleAutoSwitch}
+              runspec
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', paddingTop: 4 }}>
+              {(() => {
+                const hostRow = (h: typeof hosts[0]) => (
+                  <div
+                    key={h.name}
+                    onClick={() => handleHostSelect(h.name)}
                     style={{
-                      color: autoSwitch ? titleCol : (isDark ? '#444' : '#bbb'),
-                      background: autoSwitch
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '8px 12px 8px 14px', cursor: 'pointer',
+                      borderLeft: selectedHost === h.name
+                        ? `2px solid ${titleCol}`
+                        : '2px solid transparent',
+                      background: selectedHost === h.name
                         ? (isDark ? 'rgba(79,193,255,0.08)' : 'rgba(9,88,217,0.06)')
                         : 'transparent',
-                      marginBottom: 6, borderRadius: 6,
                     }}
-                  />
+                  >
+                    <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
+                    <span style={{
+                      fontSize: 13, color: textCol,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{h.name}</span>
+                  </div>
+                )
+
+                // Group all hosts — ungrouped (incl. local) → 'Hosts' heading
+                const groupMap = new Map<string, typeof hosts>()
+                const groupOrder: string[] = []
+                for (const h of hosts) {
+                  const g = h.group ?? ''
+                  if (!groupMap.has(g)) { groupMap.set(g, []); groupOrder.push(g) }
+                  groupMap.get(g)!.push(h)
+                }
+                // Ungrouped ('') first, named groups alphabetically after
+                const sortedGroupKeys = [...groupOrder].sort((a, b) => {
+                  if (!a && b) return -1
+                  if (a && !b) return 1
+                  return a.localeCompare(b)
+                })
+
+                return (
+                  <>
+                    {sortedGroupKeys.map(g => (
+                      <div key={g || '__hosts__'}>
+                        <div style={{
+                          padding: '10px 14px 3px',
+                          fontSize: 10, color: isDark ? '#aaa' : '#999',
+                          textTransform: 'uppercase', letterSpacing: '0.08em',
+                          userSelect: 'none',
+                        }}>
+                          {g || 'Hosts'}
+                        </div>
+                        {groupMap.get(g)!.map(hostRow)}
+                      </div>
+                    ))}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+
+          {/* Content column */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+            {/* Tab bar */}
+            <div style={{
+              height: 44, flexShrink: 0,
+              background: headerBg, borderBottom: `1px solid ${borderCol}`,
+              display: 'flex', alignItems: 'stretch',
+            }}>
+              {navTabs.map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setView(tab.key)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '0 16px', border: 'none', background: 'transparent',
+                    cursor: 'pointer', fontSize: 13,
+                    color: view === tab.key ? titleCol : iconCol,
+                    borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
+                    transition: 'color 0.15s',
+                  }}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
+              <div style={{ flex: 1 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 10 }}>
+                <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
+                  <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
+                </Tooltip>
+                <Tooltip title="Settings">
+                  <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ color: iconCol }} />
                 </Tooltip>
               </div>
-            </Content>
-          </Layout>
-        </Layout>
+            </div>
 
-        <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+            {/* View area */}
+            <div style={{ flex: 1, padding: '24px 24px 16px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
+              </div>
+              {view !== 'console' && (
+                <div style={{ flex: 1, overflow: 'auto' }}>
+                  {view === 'runnables' && <RunnablesView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
+                  {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
+                  {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
+                  {view === 'schedules' && <SchedulesView />}
+                </div>
+              )}
+            </div>
+
+            {/* Group strip */}
+            {selectedHostGroups.length > 0 && (
+              <div style={{
+                borderTop: `1px solid ${borderCol}`,
+                padding: '5px 16px',
+                display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+                background: headerBg, flexShrink: 0,
+              }}>
+                {selectedHostGroups.map(g => (
+                  <Tag
+                    key={g}
+                    onClick={() => handleScopeToggle(g)}
+                    closable={activeScope.includes(g)}
+                    onClose={e => { e.preventDefault(); handleScopeToggle(g) }}
+                    color={activeScope.includes(g) ? 'blue' : undefined}
+                    style={{ cursor: 'pointer', fontSize: 12, margin: 0, userSelect: 'none' }}
+                  >
+                    {g}
+                  </Tag>
+                ))}
+                {activeScope.length > 0 && (
+                  <Button
+                    size="small" type="text"
+                    onClick={() => setActiveScope([])}
+                    style={{ fontSize: 11, color: '#888', padding: '0 4px', height: 'auto' }}
+                  >
+                    clear
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Command bar */}
+            <div style={{
+              borderTop: `1px solid ${borderCol}`,
+              padding: '8px 12px 8px 16px',
+              background: contentBg, flexShrink: 0,
+            }}>
+              <CommandInput
+                runnables={scopedRunnables}
+                onRunRunnable={handleRunRunnable}
+                onOpenForm={handleOpenForm}
+                onSendChat={handleSendChat}
+                history={inputHistory}
+                autoSwitch={autoSwitch}
+                onToggleAutoSwitch={toggleAutoSwitch}
+              />
+            </div>
+
+          </div>
+        </div>
+
+        <SettingsDrawer
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onHostsChanged={() => {
+            bridge.get_hosts().then(setHosts)
+            bridge.get_runnables('all').then(setRunnables)
+          }}
+        />
       </ConfigProvider>
     </ThemeContext.Provider>
   )

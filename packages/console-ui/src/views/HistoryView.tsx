@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Space } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined, CaretRightOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
@@ -172,17 +172,25 @@ interface HistoryViewProps {
   onAskLlm?: (text: string) => void
   activeScope: string[]
   onScopeToggle: (group: string) => void
+  selectedHost: string
 }
 
-export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle }: HistoryViewProps) {
+export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, selectedHost }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
-  const fetchRef = useRef(() => bridge.get_history('local').then(setRecords))
+  const [hostColumnFilter, setHostColumnFilter] = useState<string[]>(selectedHost ? [selectedHost] : [])
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([])
 
   useEffect(() => {
-    fetchRef.current()
-    const id = setInterval(fetchRef.current, 5000)
+    const host = selectedHost || 'local'
+    const fetch = () => bridge.get_history(host).then(setRecords)
+    fetch()
+    const id = setInterval(fetch, 8000)
     return () => clearInterval(id)
-  }, [])
+  }, [selectedHost])
+
+  useEffect(() => {
+    setHostColumnFilter(selectedHost ? [selectedHost] : [])
+  }, [selectedHost])
 
   const filtered = search
     ? records.filter(r =>
@@ -229,6 +237,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       },
       filters: groups.map(g => ({ text: g, value: g })),
       onFilter: (value, record) => record.group === value,
+      filteredValue: [],
     },
     {
       title: 'Host',
@@ -237,6 +246,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       render: (h: string) => <Tag>{h}</Tag>,
       filters: hosts.map(h => ({ text: h, value: h })),
       onFilter: (value, record) => record.host === value,
+      filteredValue: hostColumnFilter,
     },
     {
       title: 'Operator',
@@ -244,6 +254,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       key: 'operator',
       filters: operators.map(u => ({ text: u, value: u })),
       onFilter: (value, record) => record.operator === value,
+      filteredValue: [],
     },
     {
       title: 'Run as',
@@ -252,6 +263,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       render: (u: string) => <code style={{ fontSize: 12 }}>{u}</code>,
       filters: runAsUsers.map(u => ({ text: u, value: u })),
       onFilter: (value, record) => record.runAs === value,
+      filteredValue: [],
     },
     {
       title: 'Status',
@@ -263,6 +275,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         { text: 'error', value: 1 },
       ],
       onFilter: (value, record) => (value === 0 ? record.exitCode === 0 : record.exitCode !== 0),
+      filteredValue: [],
     },
     {
       title: 'Duration',
@@ -283,26 +296,30 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
 
   return (
     <div>
-      <Title level={4} style={{ marginBottom: 16 }}>History</Title>
-      <Input
-        prefix={<SearchOutlined />}
-        placeholder="Search runnable, host, operator, run-as…"
-        value={search}
-        onChange={e => onSearchChange(e.target.value)}
-        allowClear
-        style={{ marginBottom: 16, maxWidth: 400 }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <Input
+          prefix={<SearchOutlined />}
+          placeholder="Search runnable, host, operator, run-as…"
+          value={search}
+          onChange={e => onSearchChange(e.target.value)}
+          allowClear
+          style={{ maxWidth: 400 }}
+        />
+      </div>
       <Table
         dataSource={filtered}
         columns={columns}
         rowKey="id"
         size="small"
         pagination={{ pageSize: 50, showSizeChanger: true }}
+        onChange={(_, filters) => setHostColumnFilter((filters['host'] as string[]) || [])}
         expandable={{
           expandedRowRender: (record) => (
             <ExpandedRun record={record} onRerun={onRerun} onAskLlm={onAskLlm} />
           ),
           rowExpandable: () => true,
+          expandedRowKeys: expandedKeys,
+          onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]),
         }}
       />
     </div>

@@ -4,6 +4,7 @@ export interface ArgDef {
   required: boolean
   description?: string
   default?: unknown
+  options?: string[]  // populated when type === 'choice'
 }
 
 export interface Runnable {
@@ -12,6 +13,9 @@ export interface Runnable {
   host: string
   description?: string
   args: ArgDef[]
+  commands?: Record<string, Runnable>  // subcommands, max two levels deep
+  autonomy?: 'confirm' | 'autonomous'  // default 'confirm'; 'autonomous' = LLM can invoke without asking
+  runAs?: string                       // OS user the runnable executes as on the host
 }
 
 export interface Host {
@@ -20,16 +24,17 @@ export interface Host {
   runnableCount: number
   groups: string[]
   role?: 'primary' | 'secondary'  // undefined = local machine, always included
+  group?: string                  // sidebar display group label, joined from JumpHost config
 }
 
 export interface JumpHost {
-  name: string        // identifier — becomes the key in jump_hosts.toml
+  name: string        // identifier — displayed and used as SSH host alias
   hostname: string
-  user?: string       // falls back to global SSH default in settings
-  region?: string
-  datacenter?: string
-  role: 'primary' | 'secondary'
+  runspec_path?: string  // path to runspec binary on the remote host
+  user?: string       // falls back to SSH default in settings
+  port?: number       // falls back to SSH default (22)
   identityFile?: string
+  group?: string      // sidebar display group label (e.g. "Production", "Staging")
 }
 
 export interface HistoryLogLine {
@@ -71,6 +76,40 @@ export interface InFlightRecord {
   args: Record<string, unknown>
 }
 
+export interface TodayByRunnable {
+  runnable: string
+  host: string
+  count: number
+  lastExitCode: number
+  lastRun: string
+}
+
+export interface TodayUpcoming {
+  scheduleId: string
+  runnable: string
+  host: string
+  nextRun: string
+}
+
+export interface TodaySummary {
+  date: string           // YYYY-MM-DD
+  generatedAt: string    // ISO timestamp of last digest run
+  totalRuns: number
+  successCount: number
+  failureCount: number
+  byRunnable: TodayByRunnable[]
+  upcomingToday: TodayUpcoming[]
+}
+
+export interface TestResult {
+  connected: boolean
+  runspec_ok: boolean
+  runnable_count: number
+  stdout: string
+  stderr: string
+  exit_code: number
+}
+
 export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
   get_runnables: (host: string) => Promise<Runnable[]>
@@ -80,10 +119,14 @@ export interface BridgeApi {
   save_config: (data: Record<string, unknown>) => Promise<void>
   create_schedule: (data: Record<string, unknown>) => Promise<void>
   delete_schedule: (id: string) => Promise<void>
+  get_jump_hosts: () => Promise<JumpHost[]>
+  save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
-  invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>) => Promise<string>
+  test_host: (name: string) => Promise<TestResult>
+  invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[]) => Promise<string>
   send_chat: (message: string, invocationId?: string) => Promise<string>
   get_in_flight: () => Promise<InFlightRecord[]>
+  get_today: (host: string, group: string) => Promise<TodaySummary | null>
 }
 
 declare global {
@@ -92,11 +135,33 @@ declare global {
   }
 }
 
-// Use real pywebview bridge in production, mock in dev
-async function resolveBridge(): Promise<BridgeApi> {
-  if (window.pywebview?.api) return window.pywebview.api
-  const { mockApi } = await import('./mock')
-  return mockApi
+// Use real pywebview bridge in the desktop app, mock in a plain browser.
+// pywebview injects window.pywebview.api asynchronously — wait for the
+// 'pywebviewready' event with a short timeout to fall back to mock when
+// running directly in a browser (no pywebview present).
+let _bridge: Promise<BridgeApi> | null = null
+
+function resolveBridge(): Promise<BridgeApi> {
+  if (_bridge) return _bridge
+  _bridge = new Promise<BridgeApi>(resolve => {
+    if (window.pywebview?.api) {
+      resolve(window.pywebview.api)
+      return
+    }
+    let settled = false
+    window.addEventListener('pywebviewready', () => {
+      if (!settled) { settled = true; resolve(window.pywebview!.api) }
+    }, { once: true })
+    // If pywebviewready hasn't fired after 500 ms we're in a plain browser
+    setTimeout(async () => {
+      if (!settled) {
+        settled = true
+        const { mockApi } = await import('./mock')
+        resolve(mockApi)
+      }
+    }, 500)
+  })
+  return _bridge
 }
 
 export const bridge: BridgeApi = new Proxy({} as BridgeApi, {
