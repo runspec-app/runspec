@@ -168,7 +168,7 @@ function handleToolsCall(
 
   const toolArgSpecs = argSpecs[name] ?? {};
   const argv = argsToArgv(args, toolArgSpecs);
-  const runspecEnv = argsToRunspecEnv(args, toolArgSpecs);
+  const runspecEnv = argsToRunspecEnv(args, toolArgSpecs, name);
   const env = { ...process.env, RUNSPEC_AGENT: '1', ...runspecEnv };
 
   const start = process.hrtime.bigint();
@@ -233,8 +233,9 @@ function argsToArgv(args: Record<string, unknown>, argSpecs: Record<string, unkn
 }
 
 // Only explicitly-provided args are injected — spec defaults are omitted so they
-// don't overwrite RUNSPEC_ARG_* vars already set in the server environment.
-function argsToRunspecEnv(args: Record<string, unknown>, argSpecs: Record<string, unknown>): Record<string, string> {
+// don't overwrite RUNSPEC_<RUNNABLE>_ARG_* vars already set in the server environment.
+function argsToRunspecEnv(args: Record<string, unknown>, argSpecs: Record<string, unknown>, runnableName: string): Record<string, string> {
+  const runnablePrefix = runnableName.toUpperCase().replace(/-/g, '_');
   const env: Record<string, string> = {};
 
   for (const [argName, spec] of Object.entries(argSpecs)) {
@@ -242,7 +243,7 @@ function argsToRunspecEnv(args: Record<string, unknown>, argSpecs: Record<string
     const value = args[argName] ?? args[argName.replace(/-/g, '_')];
     if (value === null || value === undefined) continue;
 
-    const envKey = 'RUNSPEC_ARG_' + argName.toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
+    const envKey = `RUNSPEC_${runnablePrefix}_ARG_` + argName.toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
     const argType = (s['type'] as string) ?? 'str';
 
     if (argType === 'flag' || argType === 'bool') {

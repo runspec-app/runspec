@@ -2,16 +2,15 @@ import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import * as readline from 'readline';
 import * as path from 'path';
-import type { JumpHostConfig } from './models';
 
 const VALID_BIN_NAMES = new Set(['runspec', 'runspec.exe']);
 
-export function resolveBinRaw(hostCfg: JumpHostConfig): string {
-  return hostCfg.bin ?? process.env['RUNSPEC_JUMP_BIN'] ?? 'runspec';
+export function resolveBinRaw(binFlag: string | undefined): string {
+  return binFlag ?? process.env['RUNSPEC_JUMP_BIN'] ?? 'runspec';
 }
 
-function resolveBin(hostCfg: JumpHostConfig): string {
-  const binPath = resolveBinRaw(hostCfg);
+export function resolveBin(binFlag: string | undefined): string {
+  const binPath = resolveBinRaw(binFlag);
   validateBinPath(binPath);
   return binPath;
 }
@@ -20,7 +19,7 @@ function validateBinPath(binPath: string): void {
   const name = path.basename(binPath);
   if (!VALID_BIN_NAMES.has(name)) {
     process.stderr.write(
-      `✗  Jump-host \`bin\` must point at a runspec executable.\n` +
+      `✗  Jump \`bin\` must point at a runspec executable.\n` +
         `   Got: ${JSON.stringify(binPath)} (basename ${JSON.stringify(name)})\n` +
         `   Expected basename: 'runspec' (or 'runspec.exe' on Windows).\n` +
         `   This field is locked to the runspec CLI; it cannot be redirected.\n`,
@@ -29,27 +28,8 @@ function validateBinPath(binPath: string): void {
   }
 }
 
-export function sshCmd(hostCfg: JumpHostConfig, binPath: string): string[] {
-  const cmd = ['ssh', '-o', 'BatchMode=yes'];
-
-  if (hostCfg.useSshConfig === false) {
-    cmd.push('-F', '/dev/null');
-  }
-
-  if (hostCfg.port && hostCfg.port !== 22) {
-    cmd.push('-p', String(hostCfg.port));
-  }
-  if (hostCfg.sshKey) {
-    cmd.push('-i', hostCfg.sshKey);
-  }
-
-  for (const opt of hostCfg.sshOptions ?? []) {
-    cmd.push('-o', String(opt));
-  }
-
-  const target = hostCfg.user ? `${hostCfg.user}@${hostCfg.host}` : hostCfg.host;
-  cmd.push(target, binPath, 'serve');
-  return cmd;
+export function sshCmd(host: string, binPath: string): string[] {
+  return ['ssh', '-o', 'BatchMode=yes', host, binPath, 'serve'];
 }
 
 interface Session {
@@ -60,8 +40,8 @@ interface Session {
   binPath: string;
 }
 
-function openSession(hostCfg: JumpHostConfig, binPath: string): Session {
-  const cmd = sshCmd(hostCfg, binPath);
+function openSession(host: string, binPath: string): Session {
+  const cmd = sshCmd(host, binPath);
   const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'inherit'] });
 
   proc.on('error', (err: NodeJS.ErrnoException) => {
@@ -115,18 +95,18 @@ async function reportRemoteFailure(proc: ChildProcess, binPath: string): Promise
     if (binPath.includes('/')) {
       process.stderr.write(
         prefix +
-          '   If the error above doesn\'t explain it, verify the path exists on the remote:\n' +
+          "   If the error above doesn't explain it, verify the path exists on the remote:\n" +
           `     ${binPath}\n` +
           '   Common causes:\n' +
           '     - the venv path differs between local and remote\n' +
           "     - runspec isn't installed in that venv on the remote\n" +
-          '     - typo in the bin / RUNSPEC_JUMP_BIN value\n',
+          '     - typo in the --bin / RUNSPEC_JUMP_BIN value\n',
       );
     } else {
       process.stderr.write(
         prefix +
           `   \`${binPath}\` is not on the remote shell's PATH.\n` +
-          '   Fix: set `bin = "/full/path/to/runspec"` in [config.jump-hosts.<alias>],\n' +
+          '   Fix: pass --bin /full/path/to/runspec to runspec jump,\n' +
           '   or export RUNSPEC_JUMP_BIN in your local shell.\n' +
           "   (SSH commands run in a non-login shell and don't source ~/.bashrc / ~/.profile.)\n",
       );
@@ -152,9 +132,8 @@ async function initialize(session: Session): Promise<void> {
   session.send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
 }
 
-export async function listTools(hostCfg: JumpHostConfig): Promise<Array<Record<string, unknown>>> {
-  const binPath = resolveBin(hostCfg);
-  const session = openSession(hostCfg, binPath);
+export async function listTools(host: string, binPath: string): Promise<Array<Record<string, unknown>>> {
+  const session = openSession(host, binPath);
   try {
     await initialize(session);
     session.send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
@@ -165,9 +144,8 @@ export async function listTools(hostCfg: JumpHostConfig): Promise<Array<Record<s
   }
 }
 
-export async function callTool(hostCfg: JumpHostConfig, toolName: string, toolArgv: string[]): Promise<void> {
-  const binPath = resolveBin(hostCfg);
-  const session = openSession(hostCfg, binPath);
+export async function callTool(host: string, binPath: string, toolName: string, toolArgv: string[]): Promise<void> {
+  const session = openSession(host, binPath);
   try {
     await initialize(session);
     session.send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });

@@ -53,29 +53,9 @@ def _normalise_config(raw: dict[str, Any]) -> dict[str, Any]:
         "lang": raw.get("lang"),
         "name": raw.get("name"),
         "version": str(raw.get("version", "1")),
-        "jump_hosts": _normalise_jump_hosts(raw.get("jump-hosts", {})),
         "logging": _normalise_logging(raw.get("logging")),
+        "runspec_env": raw.get("runspec_env"),
     }
-
-
-def _normalise_jump_hosts(raw: dict[str, Any]) -> dict[str, Any]:
-    """Normalise [config.jump-hosts.*] sections."""
-    result: dict[str, Any] = {}
-    for alias, cfg in raw.items():
-        if not isinstance(cfg, dict):
-            continue
-        result[alias] = {
-            "name": alias,
-            "host": cfg.get("host", alias),
-            # bin: None here lets jump.ssh_cmd cascade TOML → RUNSPEC_JUMP_BIN → "runspec"
-            "bin": cfg.get("bin"),
-            "user": cfg.get("user"),
-            "port": int(cfg.get("port", 22)),
-            "ssh_key": cfg.get("ssh-key"),
-            "use_ssh_config": bool(cfg.get("use-ssh-config", True)),
-            "ssh_options": list(cfg.get("ssh-options", [])),
-        }
-    return result
 
 
 def _normalise_logging(raw: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -115,10 +95,10 @@ def _normalise_script(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "autonomy_reason": raw.get("autonomy-reason"),
         "output": raw.get("output", "text"),
         "serve": raw.get("serve"),
-        "hosts": raw.get("hosts"),
         "run_as": raw.get("run_as"),
         "become_method": raw.get("become_method", "sudo"),
         "become_flags": raw.get("become_flags"),
+        "runspec_env": raw.get("runspec_env"),
         "examples": _normalise_examples(raw.get("examples", [])),
         "args": _normalise_args(raw.get("args", {})),
         "groups": _normalise_groups(raw.get("groups", {})),
@@ -170,6 +150,8 @@ def _normalise_args(raw: dict[str, Any]) -> dict[str, Any]:
     normalised: dict[str, Any] = {}
 
     for name, value in raw.items():
+        if name.startswith("runspec_") or name.startswith("runspec-"):
+            raise ValueError(f"✗  Arg name '{name}' uses a reserved prefix.\n   Names starting with 'runspec_' or 'runspec-' are reserved for the runspec framework.\n   Rename your argument.")
         if isinstance(value, dict):
             normalised[name] = _normalise_arg(name, value)
         else:

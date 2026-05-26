@@ -102,7 +102,7 @@ runspec/
 
 **Discovery**
 - `runspec local`, `runspec serve`: importlib.metadata only — installed packages, no filesystem scanning. `pip install -e .` to make a package visible.
-- `runspec jump` walks up from cwd to find `[config.jump-hosts]` only — runnables themselves are not discovered via filesystem.
+- `runspec jump` takes the SSH host string directly on the command line — no local config lookup required.
 - `.git` is the only project boundary marker — language agnostic (used by `runspec init --write-project` to locate the parent directory)
 
 ---
@@ -211,8 +211,8 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm |
 |---|---|---|
-| `runspec` | 0.15.1 | PyPI |
-| `runspec-node` | 0.15.0 | npm |
+| `runspec` | 0.17.0 | PyPI |
+| `runspec-node` | 0.17.0 | npm |
 | `runspec-chat` | 0.4.7 | PyPI |
 | `runspec-registry` | 0.1.1 | PyPI (archived — registry was removed from `runspec serve` in favour of the SSH+MCP jump-host model) |
 

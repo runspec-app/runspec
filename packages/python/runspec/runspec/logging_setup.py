@@ -148,7 +148,8 @@ def configure_logging(
     counter = _RunSummaryCounter()
     root.addHandler(counter)
 
-    summary_enabled = bool(log_cfg.get("summary", True)) and not no_summary and not _env_truthy("RUNSPEC_ARG_NO_SUMMARY")
+    runnable_prefix = runnable_name.upper().replace("-", "_")
+    summary_enabled = bool(log_cfg.get("summary", True)) and not no_summary and not _env_truthy(f"RUNSPEC_{runnable_prefix}_ARG_NO_SUMMARY")
     if summary_enabled:
         user, user_target = _get_invoker()
         _summary_state = {

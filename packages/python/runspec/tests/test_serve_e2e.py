@@ -218,8 +218,8 @@ def test_tool_call_explicit_arg(e2e_pkg: Any) -> None:
 
 
 def test_env_var_flows_to_subprocess(e2e_pkg: Any) -> None:
-    """RUNSPEC_ARG_MESSAGE in the server env reaches the subprocess when no MCP arg is given."""
-    env = {**os.environ, "RUNSPEC_ARG_MESSAGE": "from-server-env"}
+    """RUNSPEC_<RUNNABLE>_ARG_MESSAGE in the server env reaches the subprocess when no MCP arg is given."""
+    env = {**os.environ, "RUNSPEC_RUNSPEC_E2E_ECHO_ARG_MESSAGE": "from-server-env"}
     proc = _start_serve(env=env)
     try:
         _initialize(proc)
@@ -234,8 +234,8 @@ def test_env_var_flows_to_subprocess(e2e_pkg: Any) -> None:
 
 
 def test_explicit_arg_overrides_env_var(e2e_pkg: Any) -> None:
-    """Explicit MCP arg wins over a RUNSPEC_ARG_* already set in the server environment."""
-    env = {**os.environ, "RUNSPEC_ARG_MESSAGE": "from-server-env"}
+    """Explicit MCP arg wins over a RUNSPEC_<RUNNABLE>_ARG_* already set in the server environment."""
+    env = {**os.environ, "RUNSPEC_RUNSPEC_E2E_ECHO_ARG_MESSAGE": "from-server-env"}
     proc = _start_serve(env=env)
     try:
         _initialize(proc)
@@ -255,14 +255,14 @@ def test_explicit_arg_overrides_env_var(e2e_pkg: Any) -> None:
 
 
 def test_spec_default_does_not_overwrite_env_var(e2e_pkg: Any) -> None:
-    """Spec default must NOT overwrite a RUNSPEC_ARG_* var set on the server.
+    """Spec default must NOT overwrite a RUNSPEC_<RUNNABLE>_ARG_* var set on the server.
 
     Regression guard for the _args_to_runspec_env bug: injecting spec defaults
-    into the subprocess env overwrote operator-set RUNSPEC_ARG_* vars because
+    into the subprocess env overwrote operator-set RUNSPEC_<RUNNABLE>_ARG_* vars because
     runspec_env is merged after os.environ. With the fix, no default is injected
     when the arg is absent from the MCP call, so the server env var survives.
     """
-    env = {**os.environ, "RUNSPEC_ARG_MESSAGE": "operator-value"}
+    env = {**os.environ, "RUNSPEC_RUNSPEC_E2E_ECHO_ARG_MESSAGE": "operator-value"}
     proc = _start_serve(env=env)
     try:
         _initialize(proc)

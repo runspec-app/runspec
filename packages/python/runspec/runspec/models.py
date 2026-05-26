@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 
@@ -207,6 +208,9 @@ class RunSpec:
     # Args are stored internally and exposed as attributes
     _args: dict[str, Arg] = field(default_factory=dict)
 
+    # Values loaded from the .runspec_env file at parse time
+    _runspec_env: dict[str, str] = field(default_factory=dict)
+
     def __getattr__(self, name: str) -> Arg:
         """Access args as attributes: args.quality, args.input_dir."""
         try:
@@ -268,6 +272,16 @@ class RunSpec:
     def runspec_command_path(self) -> list[str]:
         """Full subcommand path as a list, deepest last. Empty if no subcommand."""
         return self.__runspec_command_path__
+
+    def get_runspec_env(self) -> SimpleNamespace:
+        """Return the contents of the .runspec_env file as a SimpleNamespace.
+
+        Keys are lowercased: MY_API_KEY becomes ns.my_api_key.
+        Returns an empty namespace if no file was found at parse time.
+        """
+        from runspec.env import make_env_namespace
+
+        return make_env_namespace(self._runspec_env)
 
     def _set_arg(self, name: str, arg: Arg) -> None:
         """Internal: store an arg. Normalises hyphens to underscores."""

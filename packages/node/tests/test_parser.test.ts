@@ -26,34 +26,34 @@ quality = {default = 85, range = [1, 100], env = "CI_QUALITY"}
 
 describe('env resolution', () => {
   afterEach(() => {
-    delete process.env['RUNSPEC_ARG_QUALITY'];
+    delete process.env['RUNSPEC_COMPRESS_ARG_QUALITY'];
     delete process.env['CI_QUALITY'];
   });
 
-  test('RUNSPEC_ARG_* provides auto default when no CLI arg', () => {
+  test('RUNSPEC_<RUNNABLE>_ARG_* provides auto default when no CLI arg', () => {
     const configPath = makeTmpConfig(QUALITY_TOML);
-    process.env['RUNSPEC_ARG_QUALITY'] = '95';
+    process.env['RUNSPEC_COMPRESS_ARG_QUALITY'] = '95';
     const args = parse({ scriptName: 'compress', argv: [], configPath });
     expect(args['quality']).toBe(95);
   });
 
-  test('CLI arg wins over RUNSPEC_ARG_*', () => {
+  test('CLI arg wins over RUNSPEC_<RUNNABLE>_ARG_*', () => {
     const configPath = makeTmpConfig(QUALITY_TOML);
-    process.env['RUNSPEC_ARG_QUALITY'] = '95';
+    process.env['RUNSPEC_COMPRESS_ARG_QUALITY'] = '95';
     const args = parse({ scriptName: 'compress', argv: ['--quality', '80'], configPath });
     expect(args['quality']).toBe(80);
   });
 
-  test('developer alias fallback when RUNSPEC_ARG_* not set', () => {
+  test('developer alias fallback when RUNSPEC_<RUNNABLE>_ARG_* not set', () => {
     const configPath = makeTmpConfig(QUALITY_ALIAS_TOML);
     process.env['CI_QUALITY'] = '70';
     const args = parse({ scriptName: 'compress', argv: [], configPath });
     expect(args['quality']).toBe(70);
   });
 
-  test('RUNSPEC_ARG_* wins over developer alias', () => {
+  test('RUNSPEC_<RUNNABLE>_ARG_* wins over developer alias', () => {
     const configPath = makeTmpConfig(QUALITY_ALIAS_TOML);
-    process.env['RUNSPEC_ARG_QUALITY'] = '95';
+    process.env['RUNSPEC_COMPRESS_ARG_QUALITY'] = '95';
     process.env['CI_QUALITY'] = '70';
     const args = parse({ scriptName: 'compress', argv: [], configPath });
     expect(args['quality']).toBe(95);

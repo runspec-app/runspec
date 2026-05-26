@@ -34,9 +34,6 @@ Implementations must use the following lookup strategy depending on context:
 3. Packages must be installed (`pip install` or `pip install -e .`) to be visible.
    There is no filesystem-scanning fallback; install is the convention.
 
-**Local config lookup (`runspec jump` for `[config.jump-hosts]`):**
-1. Walk up from cwd, return the first `runspec.toml` found
-
 ---
 
 ## Top-Level Structure
@@ -58,8 +55,8 @@ Project-wide defaults. All fields are optional.
 | `lang` | string | — | Preferred language for `runspec generate` |
 | `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. The venv directory name must pass the naming check (see *Virtual Environment Identity*) regardless of whether this field is set. |
 | `version` | string | `"1"` | runspec spec version |
-| `jump-hosts` | table | — | Per-alias jump host config. See [Jump Hosts](#jump-hosts). |
 | `logging` | table | — | Logging configuration. See [Logging](#logging). |
+| `runspec_env` | string | — | Path to a `.runspec_env` file. Relative paths resolve from `sys.prefix`. Per-runnable `runspec_env` wins. |
 
 ### Virtual Environment Identity
 
@@ -113,145 +110,6 @@ name in the venv path so the identity is visible at the filesystem level:
   lib/python3.x/...
 ```
 
-### Jump Hosts
-
-`[config.jump-hosts.<alias>]` declares a target for `runspec jump`. The
-alias is the dict key — `runspec jump prod` looks up
-`[config.jump-hosts.prod]`. Each alias entry accepts these fields:
-
-| Field | Type | Default | Env fallback | Description |
-|---|---|---|---|---|
-| `host` | string | the alias | — | Hostname or IP. Usually matches a `Host` entry in `~/.ssh/config`; can be a literal hostname when ssh-config isn't involved. |
-| `bin` | string | `"runspec"` | `RUNSPEC_JUMP_BIN` | Path to the `runspec` binary on the remote. Basename **must** be `runspec` (or `runspec.exe` on Windows) — the field is locked to runspec and cannot be redirected to other executables. |
-| `user` | string | — | — | SSH user (becomes `user@host`). |
-| `port` | int | `22` | — | SSH port. Only emitted as `-p N` when non-default. |
-| `ssh-key` | string | — | — | Path to private key (becomes `-i <path>`). |
-| `use-ssh-config` | bool | `true` | — | When `false`, ssh runs with `-F /dev/null` and ignores `~/.ssh/config` entirely. |
-| `ssh-options` | array of string | `[]` | — | Extra `-o KEY=VALUE` options passed through to ssh. Each item becomes one `-o` flag. |
-
-#### ssh argv construction
-
-`runspec jump` shells out to the system `ssh` binary. The argv order
-matters because OpenSSH uses first-value-wins for command-line options:
-
-```
-ssh -o BatchMode=yes        ← always; locked because stdin is JSON-RPC
-    [-F /dev/null]          ← when use-ssh-config = false
-    [-p PORT]               ← when port ≠ 22
-    [-i SSH-KEY]            ← when ssh-key is set
-    [-o OPT]...             ← each ssh-options item
-    [user@]host bin serve
-```
-
-`BatchMode=yes` is locked because `runspec jump` pipes JSON-RPC over
-stdin/stdout — interactive prompts would corrupt the protocol. Use
-`ssh-agent` for keys that need a passphrase.
-
-Explicit fields (`port`, `ssh-key`) appear in argv before `ssh-options`,
-so on conflict the explicit field wins. If you specify both `port = 2222`
-and `ssh-options = ["Port=99"]`, the connection uses port 2222.
-
-#### Trust model
-
-`runspec jump` ultimately executes whatever binary lives at the resolved
-`bin` path on the remote. The format provides three forms of intent
-enforcement, but no cryptographic protection:
-
-1. **`bin` basename is locked to `runspec` / `runspec.exe`.** A naive
-   redirection (e.g. `bin = "/usr/bin/cat"`) is rejected before SSH runs.
-2. **MCP handshake required.** Any process that doesn't speak JSON-RPC
-   over stdio fails the `initialize` exchange and the call aborts.
-3. **`stderr` is streamed live.** Anything the remote process writes to
-   stderr (including pre-exec output from a wrapper script) appears in
-   the user's terminal in real time, not hidden behind a log file.
-
-These cover accidents (typos, stale values, wrong paths), not adversaries.
-The format **cannot** distinguish a real `runspec` binary from a wrapper
-script named `runspec` that runs malicious code and then `exec`s the real
-binary. Anyone with write access to either the local `runspec.toml` or
-the remote filesystem can route execution through a wrapper that's
-indistinguishable from a legitimate binary at the MCP layer.
-
-If your threat model includes that, the defenses live above runspec:
-
-- **Treat `runspec.toml` like shell config.** Audit changes via PR review;
-  don't accept TOMLs from untrusted sources without reading them.
-- **Lock down remote filesystem permissions.** The remote should not be
-  writable by anyone who isn't trusted to run code as you (the standard
-  SSH trust assumption).
-- **Pin `bin` to absolute paths under controlled directories.** Prefer
-  `/opt/...` or `/usr/...` paths managed by configuration management
-  (Ansible, Salt, etc.) over user-writable locations like `/tmp` or
-  `$HOME` subdirectories. A `bin = "/tmp/foo/runspec"` in a checked-in
-  TOML is a red flag worth questioning.
-- **Audit the runspec install on the remote.** The same way you'd audit
-  any binary you `pip install`. The package itself is not signed; rely
-  on PyPI's chain of trust and your venv's integrity.
-
-The `bin` field is documented as the runspec executable path. Treating
-it as anything else — even temporarily, even "just to test something" —
-breaks the trust model. The basename check exists to make that
-violation impossible to accidentally encode in a TOML; it does not make
-the field tamper-proof against a deliberate local actor.
-
-#### Cross-platform notes
-
-`runspec jump` invokes the system `ssh` binary. This works identically on:
-
-- **Linux / macOS** — OpenSSH is the system default.
-- **Windows 10 (1809+) and Windows 11** — built-in OpenSSH Client at
-  `C:\Windows\System32\OpenSSH\ssh.exe`, on PATH by default. The
-  ssh-config lives at `C:\Users\<you>\.ssh\config`. PuTTY / plink /
-  MobaXterm coexist on the same machine but are not used by runspec —
-  the protocol-level requirement is OpenSSH semantics.
-
-If `Get-Command ssh` doesn't find anything on a Windows machine, the
-OpenSSH Client capability is disabled. Enable it (admin) with:
-
-```powershell
-Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
-```
-
-#### Typical usage patterns
-
-**Rely on ssh-config** — the cleanest setup. Put per-host config in
-`~/.ssh/config`, give the alias the same name as the `Host` entry:
-
-```toml
-[config.jump-hosts.prod-app]
-# everything (user, port, key, ProxyJump) comes from ssh-config
-```
-
-**Literal hostname with alias-as-label** — when the alias is a friendly
-project name but ssh-config doesn't have it:
-
-```toml
-[config.jump-hosts.shorty]
-host = "actual.hostname.internal.example.com"
-```
-
-**Ignore ssh-config entirely** — useful in CI or shared environments:
-
-```toml
-[config.jump-hosts.ci-target]
-host           = "10.0.0.5"
-user           = "deploy"
-ssh-key        = "/secrets/deploy_key"
-use-ssh-config = false
-```
-
-**Pass-through options** — for everything ssh-config supports but TOML
-doesn't have a dedicated field for:
-
-```toml
-[config.jump-hosts.bastion-fronted]
-host        = "internal.example.com"
-ssh-options = [
-  "ProxyJump=bastion.example.com",
-  "ConnectTimeout=10",
-  "ServerAliveInterval=30",
-]
-```
 
 ### Logging
 
@@ -417,11 +275,11 @@ autonomy        = "confirm"                               # optional
 autonomy-reason = "Why this level was chosen"             # optional
 output          = "text"                                  # optional
 serve           = true                                    # optional, default true; also false or ["local","remote"]
-hosts           = ["host1", "host2"]                      # optional, see Remote Execution
 run_as          = "username"                              # optional, see Remote Execution
 become_method   = "sudo"                                  # optional, default "sudo"
 become_flags    = "-H"                                    # optional
 examples        = [...]                                   # optional, see Examples
+runspec_env     = "/path/to/.runspec_env"                 # optional, see .runspec_env File
 ```
 
 ### `examples`
@@ -553,17 +411,6 @@ This refuses agent invocation of a destructive action unless the runnable's decl
 ## Remote Execution
 
 These fields control how `runspec jump` and compatible SSH clients run the tool on a remote host.
-
-### `hosts`
-
-Restricts a runnable to specific machines. `runspec serve` checks this against the
-current hostname at startup — tools not matching are excluded from the MCP tool list.
-Absent means available everywhere it is installed.
-
-```toml
-[parse-app-logs]
-hosts = ["logserver-01", "logserver-02"]
-```
 
 ### `run_as`
 
@@ -812,7 +659,7 @@ Language packs may register additional types via the type registry.
 For every argument, implementations must resolve the value in this order:
 
 1. Explicit CLI argument — highest priority
-2. `RUNSPEC_ARG_<ARGNAME>` environment variable (automatic for every arg)
+2. `RUNSPEC_<RUNNABLE>_ARG_<ARGNAME>` environment variable (automatic for every arg)
 3. `env` aliases (developer-declared list, checked in order)
 4. Default from spec
 5. Error: required — if nothing above matched and `required = true`
@@ -828,23 +675,25 @@ else — work without a language-specific library.
 
 ### Naming convention
 
-Per-arg variables use the `RUNSPEC_ARG_` prefix:
+Per-arg variables include the runnable name to prevent clashes when multiple
+runnables share the same argument name:
 
 ```
-RUNSPEC_ARG_<ARG_NAME_UPPERCASED>
+RUNSPEC_<RUNNABLE_UPPERCASED>_ARG_<ARG_NAME_UPPERCASED>
 ```
 
-Hyphens and underscores in the arg name both become underscores. Examples:
+Hyphens and underscores in both the runnable name and arg name become underscores.
+Examples for a runnable named `backup-logs`:
 
 | Arg name | Environment variable |
 |---|---|
-| `env` | `RUNSPEC_ARG_ENV` |
-| `dry-run` | `RUNSPEC_ARG_DRY_RUN` |
-| `input_file` | `RUNSPEC_ARG_INPUT_FILE` |
-| `max-retries` | `RUNSPEC_ARG_MAX_RETRIES` |
+| `env` | `RUNSPEC_BACKUP_LOGS_ARG_ENV` |
+| `dry-run` | `RUNSPEC_BACKUP_LOGS_ARG_DRY_RUN` |
+| `input_file` | `RUNSPEC_BACKUP_LOGS_ARG_INPUT_FILE` |
+| `max-retries` | `RUNSPEC_BACKUP_LOGS_ARG_MAX_RETRIES` |
 
 These variables serve two purposes:
-- **Input (user-settable):** Set `RUNSPEC_ARG_QUALITY=95` in your shell to make that your persistent default whenever no CLI arg is passed.
+- **Input (user-settable):** Set `RUNSPEC_BACKUP_LOGS_ARG_QUALITY=95` in your shell to make that your persistent default whenever no CLI arg is passed.
 - **Output (runtime-injected):** `runspec serve` and `runspec jump` inject resolved values into the subprocess environment so bash/node/any-language scripts can read them directly without a library.
 
 The `env` field on an arg declares additional aliases checked after `RUNSPEC_ARG_*`. Accepts a string or list of strings:
@@ -906,13 +755,65 @@ dry-run = {type = "flag", default = false}
 ```bash
 #!/bin/bash
 # env vars are already set and validated — no parsing needed
-if [ "$RUNSPEC_ARG_DRY_RUN" = "1" ]; then
-    echo "Would back up $RUNSPEC_ARG_DAYS days of $RUNSPEC_ARG_ENV logs"
+if [ "$RUNSPEC_BACKUP_LOGS_ARG_DRY_RUN" = "1" ]; then
+    echo "Would back up $RUNSPEC_BACKUP_LOGS_ARG_DAYS days of $RUNSPEC_BACKUP_LOGS_ARG_ENV logs"
     exit 0
 fi
-aws s3 sync "/var/log/app/$RUNSPEC_ARG_ENV" "s3://logs-$RUNSPEC_ARG_ENV" \
+aws s3 sync "/var/log/app/$RUNSPEC_BACKUP_LOGS_ARG_ENV" "s3://logs-$RUNSPEC_BACKUP_LOGS_ARG_ENV" \
     --delete --include "*.log"
 ```
+
+---
+
+## .runspec_env File
+
+A `KEY=VALUE` dotenv file loaded at parse time and merged into `os.environ`
+(existing env vars are never overwritten). This is a deployment-time mechanism
+for injecting environment-specific values (API keys, endpoint URLs) into a venv
+without modifying the OS environment or using shell profile scripts.
+
+### Path resolution (four tiers, first match wins)
+
+1. `RUNSPEC_ENV_FILE` environment variable — absolute escape hatch for testing
+2. Per-runnable `runspec_env` key in `runspec.toml`
+3. `[config] runspec_env` key in `runspec.toml`
+4. `{sys.prefix}/.runspec_env` — default; silent skip if absent
+
+Relative paths in tiers 2–3 resolve from `sys.prefix`.
+
+### File format
+
+Standard `KEY=VALUE` pairs. Comments (`#`) and blank lines are ignored. Single
+and double quotes strip the surrounding character. Lines without `=` are ignored.
+
+```
+# .runspec_env
+MY_API_KEY=abc123
+DB_URL=postgres://localhost/mydb
+QUOTED_VALUE="hello world"
+```
+
+### Access
+
+```python
+args = parse()
+env = args.get_runspec_env()   # SimpleNamespace; keys are lowercased
+print(env.my_api_key)          # "abc123"
+```
+
+### Inspect with CLI
+
+```
+runspec env                  # show default file path and contents
+runspec env <runnable>       # show the file resolved for a specific runnable
+```
+
+### `runspec_` namespace reservation
+
+Arg names starting with `runspec_` or `runspec-` are **reserved** for the
+framework. Attempting to declare such an arg raises a hard error at parse time.
+This reservation protects the `RunSpec` metadata properties (`runspec_runnable`,
+`runspec_autonomy`, `runspec_agent`, etc.) from being shadowed by user-defined args.
 
 ---
 

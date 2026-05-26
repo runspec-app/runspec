@@ -81,27 +81,27 @@ def test_argv_choice_arg():
 
 def test_runspec_env_explicit_args_injected():
     specs = {"quality": {"type": "int", "default": 7}}
-    result = _args_to_runspec_env({"quality": 95}, specs)
-    assert result == {"RUNSPEC_ARG_QUALITY": "95"}
+    result = _args_to_runspec_env({"quality": 95}, specs, "compress")
+    assert result == {"RUNSPEC_COMPRESS_ARG_QUALITY": "95"}
 
 
 def test_runspec_env_spec_defaults_not_injected():
-    """Spec defaults must NOT be injected — they would overwrite RUNSPEC_ARG_* already in os.environ."""
+    """Spec defaults must NOT be injected — they would overwrite RUNSPEC_<RUNNABLE>_ARG_* already in os.environ."""
     specs = {"quality": {"type": "int", "default": 7}}
-    result = _args_to_runspec_env({}, specs)
-    assert "RUNSPEC_ARG_QUALITY" not in result
+    result = _args_to_runspec_env({}, specs, "compress")
+    assert "RUNSPEC_COMPRESS_ARG_QUALITY" not in result
 
 
 def test_runspec_env_flag_encoding():
     specs = {"delete": {"type": "flag", "default": False}}
-    assert _args_to_runspec_env({"delete": True}, specs) == {"RUNSPEC_ARG_DELETE": "1"}
-    assert _args_to_runspec_env({"delete": False}, specs) == {"RUNSPEC_ARG_DELETE": "0"}
+    assert _args_to_runspec_env({"delete": True}, specs, "compress") == {"RUNSPEC_COMPRESS_ARG_DELETE": "1"}
+    assert _args_to_runspec_env({"delete": False}, specs, "compress") == {"RUNSPEC_COMPRESS_ARG_DELETE": "0"}
 
 
 def test_runspec_env_hyphen_normalised():
     specs = {"dry-run": {"type": "flag"}}
-    result = _args_to_runspec_env({"dry-run": True}, specs)
-    assert result == {"RUNSPEC_ARG_DRY_RUN": "1"}
+    result = _args_to_runspec_env({"dry-run": True}, specs, "compress")
+    assert result == {"RUNSPEC_COMPRESS_ARG_DRY_RUN": "1"}
 
 
 # ── _handle_initialize ────────────────────────────────────────────────────────

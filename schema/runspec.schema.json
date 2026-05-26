@@ -64,6 +64,10 @@
           "type": "object",
           "description": "Named jump host aliases for runspec jump. Each key is an alias name.",
           "additionalProperties": { "$ref": "#/$defs/jump_host" }
+        },
+        "runspec_env": {
+          "type": "string",
+          "description": "Path to a .runspec_env file (KEY=VALUE dotenv format). Loaded at parse time; existing env vars win. Relative paths resolve from sys.prefix. Per-runnable runspec_env wins over this setting."
         }
       },
       "additionalProperties": false
@@ -212,6 +216,10 @@
           "type": "object",
           "description": "Subcommands. Each key is a subcommand name with its own args, groups, autonomy, and description.",
           "additionalProperties": { "$ref": "#/$defs/subcommand" }
+        },
+        "runspec_env": {
+          "type": "string",
+          "description": "Path to a .runspec_env file for this runnable. Overrides [config] runspec_env. Relative paths resolve from sys.prefix."
         }
       },
       "additionalProperties": false
@@ -320,7 +328,7 @@
           "description": "1-based positional index. Makes the arg positional rather than a --flag. Must be unique within a runnable."
         },
         "env": {
-          "description": "Environment variable fallback(s). Checked after RUNSPEC_ARG_* and before the spec default.",
+          "description": "Environment variable fallback(s). Checked after RUNSPEC_<RUNNABLE>_ARG_* and before the spec default.",
           "oneOf": [
             { "type": "string" },
             { "type": "array", "items": { "type": "string" }, "minItems": 1 }

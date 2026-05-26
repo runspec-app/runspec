@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { parse as parseTOML } from 'smol-toml';
-import type { RawConfig, RawSpec, ScriptSpec, ArgSpec, GroupSpec, JumpHostConfig, LoggingConfig } from './models';
+import type { RawConfig, RawSpec, ScriptSpec, ArgSpec, GroupSpec, LoggingConfig } from './models';
 
 export function loadRaw(configPath: string): RawSpec {
   const content = fs.readFileSync(configPath, 'utf-8');
@@ -20,16 +20,10 @@ export function loadRaw(configPath: string): RawSpec {
 }
 
 function normaliseConfig(raw: Record<string, unknown>): RawConfig {
-  const rawHosts = (raw['jump-hosts'] ?? {}) as Record<string, Record<string, unknown>>;
-  const jumpHosts: Record<string, JumpHostConfig> = {};
-  for (const [name, cfg] of Object.entries(rawHosts)) {
-    jumpHosts[name] = normaliseJumpHost(cfg);
-  }
   return {
     autonomyDefault: (raw['autonomy-default'] as string | undefined) ?? 'confirm',
     lang: raw['lang'] as string | undefined,
     version: String(raw['version'] ?? '1'),
-    jumpHosts,
     logging: normaliseLogging(raw['logging'] as Record<string, unknown> | undefined),
   };
 }
@@ -50,18 +44,6 @@ function normaliseLogging(raw: Record<string, unknown> | undefined): LoggingConf
     rotate: String(raw['rotate'] ?? 'midnight'),
     keep: Number(raw['keep'] ?? 7),
     summary: raw['summary'] !== undefined ? Boolean(raw['summary']) : true,
-  };
-}
-
-function normaliseJumpHost(raw: Record<string, unknown>): JumpHostConfig {
-  return {
-    host: raw['host'] as string,
-    user: raw['user'] as string | undefined,
-    port: raw['port'] as number | undefined,
-    sshKey: raw['ssh-key'] as string | undefined,
-    bin: raw['bin'] as string | undefined,
-    useSshConfig: raw['use-ssh-config'] as boolean | undefined,
-    sshOptions: raw['ssh-options'] as string[] | undefined,
   };
 }
 

@@ -568,10 +568,11 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
   const counter = new RunSummaryCounter();
   _handlers.push(counter);
 
+  const runnablePrefix = opts.runnableName.toUpperCase().replace(/-/g, '_');
   const summaryEnabled =
     opts.logCfg.summary !== false &&
     !opts.noSummary &&
-    !['1', 'true', 'yes'].includes((process.env['RUNSPEC_ARG_NO_SUMMARY'] ?? '').toLowerCase());
+    !['1', 'true', 'yes'].includes((process.env[`RUNSPEC_${runnablePrefix}_ARG_NO_SUMMARY`] ?? '').toLowerCase());
 
   if (summaryEnabled) {
     const [user, userTarget] = _getInvoker();

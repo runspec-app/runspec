@@ -1,6 +1,6 @@
 [project]
 name = "runspec"
-version = "0.15.1"
+version = "0.17.0"
 description = "A language-agnostic, TOML-based interface specification for anything runnable"
 readme = "README.md"
 license = { file = "../../LICENSE" }

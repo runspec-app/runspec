@@ -13,7 +13,8 @@ examples = [
   {cmd = "runspec init",                   description = "Scaffold a new runnable in this directory"},
   {cmd = "runspec local",                  description = "Discover and validate runnables"},
   {cmd = "runspec serve",                  description = "Start the MCP stdio server"},
-  {cmd = "runspec jump --list-jump-hosts", description = "List configured jump hosts"},
+  {cmd = "runspec jump user@host",          description = "List tools available on a remote host"},
+  {cmd = "runspec env",                    description = "Show the resolved .runspec_env file"},
 ]
 
 [runspec.commands.init]
@@ -63,19 +64,31 @@ examples = [
 # No args — runnables are discovered via importlib.metadata. Install with
 # `pip install -e .` to make a package visible.
 
+[runspec.commands.env]
+description = "Show the resolved .runspec_env file path and its contents"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "runspec env",             description = "Show the default .runspec_env file"},
+  {cmd = "runspec env myrunnable",  description = "Show the env file for a specific runnable"},
+]
+
+[runspec.commands.env.args]
+runnable = {type = "str", description = "Runnable name to show env file for", position = 1, required = false}
+
 [runspec.commands.jump]
-description = "List jump hosts, list tools on a jump host, or run a tool via SSH+MCP"
+description = "List tools on a remote host or run a tool via SSH+MCP"
 autonomy    = "confirm"
 
 examples = [
-  {cmd = "runspec jump --list-jump-hosts",             description = "List configured jump hosts"},
-  {cmd = "runspec jump myserver",                      description = "List tools available on myserver"},
-  {cmd = "runspec jump myserver deploy -- --env prod", description = "Run 'deploy' on myserver with --env prod"},
+  {cmd = "runspec jump user@prod.example.com",                      description = "List tools available on the remote"},
+  {cmd = "runspec jump user@prod.example.com deploy -- --env prod", description = "Run 'deploy' with --env prod"},
+  {cmd = "runspec jump user@prod.example.com --bin /opt/venv/bin/runspec", description = "Use a specific runspec path on the remote"},
 ]
 
 [runspec.commands.jump.args]
-list-jump-hosts = {type = "flag",   description = "List configured jump hosts from runspec.toml", short = "-l", default = false}
-format          = {type = "choice", description = "Output format when listing", options = ["text", "json"], short = "-f", default = "text"}
-jump-host       = {type = "str",    description = "Jump host alias from [config.jump-hosts]",  position = 1, required = false}
-tool            = {type = "str",    description = "Tool to run on the jump host",              position = 2, required = false}
-tool-args       = {type = "rest",   description = "Args passed to the remote tool"}
+host      = {type = "str",    description = "SSH connection string (e.g. user@host or host)",  position = 1, required = false}
+tool      = {type = "str",    description = "Tool to run on the remote host",                  position = 2, required = false}
+bin       = {type = "str",    description = "Path to runspec binary on the remote",            required = false}
+format    = {type = "choice", description = "Output format when listing", options = ["text", "json"], short = "-f", default = "text"}
+tool-args = {type = "rest",   description = "Args passed to the remote tool"}
