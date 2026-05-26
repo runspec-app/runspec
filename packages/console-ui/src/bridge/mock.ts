@@ -79,6 +79,13 @@ const MOCK_RUNNABLES: Runnable[] = [
     ],
   },
   {
+    name: 'flush-dns',
+    group: 'ops-tools',
+    host: 'local',
+    description: 'Flush the local DNS cache',
+    args: [],
+  },
+  {
     name: 'set-env',
     group: 'ops-tools',
     host: 'local',
