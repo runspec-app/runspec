@@ -280,59 +280,62 @@ the `RUNSPEC_AGENT` pattern.
 
 ## `runspec jump`
 
-List jump hosts, list tools on a jump host, or run a tool via SSH+MCP.
+List tools on a remote host or run a tool via SSH+MCP.
 
 ```bash
-runspec jump [--list-jump-hosts] [--format <fmt>]
-             [<jump-host> [<tool>] [-- <tool-args>...]]
+runspec jump [--bin <path>] [--format <fmt>]
+             <host> [<tool>] [-- <tool-args>...]
 ```
 
 | Flag / Argument | Description |
 |---|---|
-| `-l`, `--list-jump-hosts` | List jump hosts configured in `[config.jump-hosts]` |
-| `-f`, `--format <fmt>` | Output format for listings: `text` (default) or `json` |
-| `<jump-host>` | Alias from `[config.jump-hosts.<alias>]` (positional) |
+| `<host>` | SSH connection string — `user@host` or just `host` (positional) |
 | `<tool>` | Tool to run on the remote (positional) |
+| `--bin <path>` | Path to runspec binary on the remote. Basename must be `runspec`. Env fallback: `RUNSPEC_JUMP_BIN`. Default: `runspec` (relies on remote PATH). |
+| `-f`, `--format <fmt>` | Output format for tool listings: `text` (default) or `json` |
 | `-- <tool-args>...` | Args forwarded to the remote tool (`rest`-type) |
-
-!!! info "Python today; Node soon"
-    `runspec jump` is fully implemented in the Python CLI. The Node CLI
-    currently directs `jump` invocations to the Python package. Use
-    `pip install runspec` alongside `runspec-node` if you need remote
-    execution from a Node project.
 
 ### Discover what's available
 
 ```bash
-runspec jump --list-jump-hosts                  # list configured aliases
-runspec jump --list-jump-hosts --format json    # same, as JSON
-runspec jump myserver                           # list tools available on myserver
+runspec jump user@prod.example.com              # list tools available on the remote
+runspec jump user@prod.example.com --format json
 ```
 
 ### Run a tool
 
 ```bash
-runspec jump myserver deploy -- --env prod
-runspec jump prod-app backup-logs -- --days 14 --dry-run
+runspec jump user@prod.example.com deploy -- --env prod
+runspec jump user@prod.example.com backup-logs -- --days 14 --dry-run
 ```
 
 Everything after `--` is forwarded to the tool on the remote.
 
+### Specify the remote binary
+
+If `runspec` isn't on the remote shell's PATH (SSH runs non-login shells):
+
+```bash
+runspec jump user@prod --bin /opt/venv/bin/runspec deploy -- --env prod
+# or
+export RUNSPEC_JUMP_BIN=/opt/venv/bin/runspec
+runspec jump user@prod deploy -- --env prod
+```
+
 ### How it works
 
-1. Reads `[config.jump-hosts.<alias>]` from the nearest `runspec.toml`.
-2. Builds the SSH command (`ssh -o BatchMode=yes [-p N] [-i KEY]
-   [-o OPT…] user@host runspec serve`).
-3. Speaks MCP JSON-RPC over stdin/stdout to the remote `runspec serve`.
+1. SSHes to `<host>` with `BatchMode=yes` (stdin/stdout are the JSON-RPC channel).
+   All connection options (port, key, ProxyJump, etc.) come from `~/.ssh/config`.
+2. Starts `runspec serve` on the remote via the resolved `bin` path.
+3. Speaks MCP JSON-RPC over stdin/stdout.
 4. Invokes `tools/list` (without `<tool>`) or `tools/call` (with `<tool>`
    and tool args).
 5. Streams the response back to your terminal in real time; stderr from the
    remote is mirrored live.
 6. Exits with the remote process's exit code.
 
-See [Jump Hosts](jump-hosts.md) for the SSH argv construction rules, all
-four `[config.jump-hosts]` forms, the trust model, and the `run_as` /
-`become_method` / `become_flags` privilege-escalation matrix.
+See [Jump Hosts](jump-hosts.md) for `~/.ssh/config` examples, the trust model,
+and the `run_as` / `become_method` / `become_flags` privilege-escalation matrix.
 
 ---
 

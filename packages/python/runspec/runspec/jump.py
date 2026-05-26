@@ -1,8 +1,11 @@
 """
 jump.py — SSH+MCP client for runspec jump.
 
-Connects to a configured jump host via SSH subprocess, starts 'runspec serve'
+Connects to a remote host via SSH subprocess, starts 'runspec serve'
 on the remote, and communicates via JSON-RPC stdio (MCP 2024-11-05).
+
+Connection parameters (user, port, key, ProxyJump, etc.) come from
+~/.ssh/config — pass a plain SSH connection string like user@host.
 """
 
 from __future__ import annotations
@@ -14,75 +17,47 @@ import sys
 from typing import Any
 
 
-def _resolve_bin_raw(host_cfg: dict[str, Any]) -> str:
-    """Cascade only — no validation. Used by listing so we can show what *would*
+def _resolve_bin_raw(bin_flag: str | None = None) -> str:
+    """Cascade only — no validation. Used when we need to show what *would*
     happen at jump time even if the value is currently invalid."""
-    return host_cfg.get("bin") or os.environ.get("RUNSPEC_JUMP_BIN") or "runspec"
+    return bin_flag or os.environ.get("RUNSPEC_JUMP_BIN") or "runspec"
 
 
-def _resolve_bin(host_cfg: dict[str, Any]) -> str:
-    """Cascade: TOML `bin` → RUNSPEC_JUMP_BIN env var → 'runspec' default.
+def _resolve_bin(bin_flag: str | None = None) -> str:
+    """Cascade: --bin CLI flag → RUNSPEC_JUMP_BIN env var → 'runspec' default.
 
-    Validates the result. Used at ssh_cmd time when we actually need to run.
+    Validates the result.
     """
-    bin_path = _resolve_bin_raw(host_cfg)
+    bin_path = _resolve_bin_raw(bin_flag)
     _validate_bin_path(bin_path)
     return bin_path
 
 
-def ssh_cmd(host_cfg: dict[str, Any]) -> list[str]:
+def ssh_cmd(host: str, bin_path: str) -> list[str]:
     """Build the SSH command list to start runspec serve on the remote.
 
-    Argv order matters — OpenSSH uses first-value-wins for command-line
-    options, so the structure is:
-
-        ssh -o BatchMode=yes        ← always; locked because stdin is JSON-RPC
-            [-F /dev/null]          ← when use-ssh-config = false
-            [-p PORT] [-i KEY]      ← explicit fields next (highest precedence)
-            [-o OPT]...             ← ssh-options pass-through (lowest precedence)
-            user@host bin serve
+    BatchMode=yes is locked because runspec jump pipes JSON-RPC over
+    stdin/stdout — interactive prompts would corrupt the protocol.
+    All other SSH options (user, port, key, ProxyJump, etc.) come from
+    ~/.ssh/config for the given host.
     """
-    cmd = ["ssh", "-o", "BatchMode=yes"]
-
-    if not host_cfg.get("use_ssh_config", True):
-        cmd += ["-F", "/dev/null"]
-
-    if host_cfg.get("port") and host_cfg["port"] != 22:
-        cmd += ["-p", str(host_cfg["port"])]
-    if host_cfg.get("ssh_key"):
-        cmd += ["-i", host_cfg["ssh_key"]]
-
-    for opt in host_cfg.get("ssh_options") or []:
-        cmd += ["-o", str(opt)]
-
-    host = host_cfg["host"]
-    target = f"{host_cfg['user']}@{host}" if host_cfg.get("user") else host
-    cmd.append(target)
-
-    cmd.append(_resolve_bin(host_cfg))
-    cmd.append("serve")
-    return cmd
+    return ["ssh", "-o", "BatchMode=yes", host, bin_path, "serve"]
 
 
 # Names accepted as the remote runspec executable. Anything else is rejected.
 # Locks the `bin` field to its documented purpose (no accidental redirection
-# to unrelated binaries via a TOML edit or stale env var).
+# to unrelated binaries via a stale env var).
 _VALID_BIN_NAMES = frozenset({"runspec", "runspec.exe"})
 
 
 def _validate_bin_path(bin_path: str) -> None:
-    """Enforce that the remote bin is named `runspec` (or `runspec.exe`).
-
-    Cosmetic enough that a determined local user can copy any binary to a
-    file named `runspec` and point at it, but catches every accidental
-    misuse — wrong path, stale value, attempted redirection via TOML.
-    """
+    """Enforce that the remote bin is named `runspec` (or `runspec.exe`)."""
     import os.path
 
     name = os.path.basename(bin_path)
     if name not in _VALID_BIN_NAMES:
         sys.stderr.write(
-            f"✗  Jump-host `bin` must point at a runspec executable.\n"
+            f"✗  Jump `bin` must point at a runspec executable.\n"
             f"   Got: {bin_path!r} (basename {name!r})\n"
             f"   Expected basename: 'runspec' (or 'runspec.exe' on Windows).\n"
             f"   This field is locked to the runspec CLI; it cannot be redirected.\n"
@@ -90,9 +65,9 @@ def _validate_bin_path(bin_path: str) -> None:
         sys.exit(1)
 
 
-def _open_session(host_cfg: dict[str, Any]) -> subprocess.Popen[bytes]:
+def _open_session(host: str, bin_path: str) -> subprocess.Popen[bytes]:
     """Open an SSH+MCP session. Exits on connection failure."""
-    cmd = ssh_cmd(host_cfg)
+    cmd = ssh_cmd(host, bin_path)
     try:
         return subprocess.Popen(
             cmd,
@@ -120,19 +95,13 @@ def _recv(proc: subprocess.Popen[bytes], bin_path: str | None = None) -> dict[st
 
 
 def _report_remote_failure(proc: subprocess.Popen[bytes], bin_path: str | None = None) -> None:
-    """The remote produced no MCP response — figure out why and report cleanly.
-
-    The diagnosis branches on the shape of `bin_path`:
-      - explicit path ("/" present) → the path likely doesn't exist or isn't executable
-      - bare name ("runspec")        → the binary isn't on the remote shell's PATH
-    """
+    """The remote produced no MCP response — figure out why and report cleanly."""
     try:
         exit_code = proc.wait(timeout=1)
     except subprocess.TimeoutExpired:
         exit_code = None  # still alive but stdout closed — unusual
 
     if exit_code == 255:
-        # OpenSSH conventional exit code for connection / authentication failure
         sys.stderr.write("✗  SSH connection failed (see error above for details).\n")
     elif exit_code is not None and exit_code != 0:
         prefix = f"✗  Remote command failed (exit {exit_code}) before the MCP handshake completed.\n"
@@ -143,12 +112,12 @@ def _report_remote_failure(proc: subprocess.Popen[bytes], bin_path: str | None =
                 "   Common causes:\n"
                 "     - the venv path differs between local and remote\n"
                 "     - runspec isn't installed in that venv on the remote\n"
-                "     - typo in the bin / RUNSPEC_JUMP_BIN value\n"
+                "     - typo in the --bin / RUNSPEC_JUMP_BIN value\n"
             )
         else:
             sys.stderr.write(
                 prefix + f"   `{bin_path or 'runspec'}` is not on the remote shell's PATH.\n"
-                '   Fix: set `bin = "/full/path/to/runspec"` in [config.jump-hosts.<alias>],\n'
+                "   Fix: pass --bin /full/path/to/runspec to runspec jump,\n"
                 "   or export RUNSPEC_JUMP_BIN in your local shell.\n"
                 "   (SSH commands run in a non-login shell and don't source ~/.bashrc / ~/.profile.)\n"
             )
@@ -178,14 +147,12 @@ def _initialize(proc: subprocess.Popen[bytes], bin_path: str | None = None) -> N
         },
     )
     _recv(proc, bin_path)
-    # Notification: no id, no response expected
     _send(proc, {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
 
 
-def list_tools(host_cfg: dict[str, Any]) -> list[dict[str, Any]]:
-    """List tools available on a jump host via SSH+MCP."""
-    bin_path = _resolve_bin(host_cfg)
-    proc = _open_session(host_cfg)
+def list_tools(host: str, bin_path: str) -> list[dict[str, Any]]:
+    """List tools available on a remote host via SSH+MCP."""
+    proc = _open_session(host, bin_path)
     try:
         _initialize(proc, bin_path)
         _send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
@@ -195,10 +162,9 @@ def list_tools(host_cfg: dict[str, Any]) -> list[dict[str, Any]]:
         _close(proc)
 
 
-def call_tool(host_cfg: dict[str, Any], tool_name: str, tool_argv: list[str]) -> None:
-    """Call a tool on a jump host via SSH+MCP, streaming text output to stdout."""
-    bin_path = _resolve_bin(host_cfg)
-    proc = _open_session(host_cfg)
+def call_tool(host: str, bin_path: str, tool_name: str, tool_argv: list[str]) -> None:
+    """Call a tool on a remote host via SSH+MCP, streaming text output to stdout."""
+    proc = _open_session(host, bin_path)
     try:
         _initialize(proc, bin_path)
         _send(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
@@ -230,11 +196,6 @@ def call_tool(host_cfg: dict[str, Any], tool_name: str, tool_argv: list[str]) ->
                 sys.stdout.write(text)
                 if not text.endswith("\n"):
                     sys.stdout.write("\n")
-        # Propagate the remote tool's success/failure to our own exit code.
-        # MCP's tools/call sets result.isError=true when the tool failed; the
-        # exit_code / stdout / stderr block is already embedded in `content`
-        # for the user to see, but a wrapping script needs runspec jump itself
-        # to exit non-zero so it can detect the failure.
         if result.get("isError"):
             sys.exit(1)
     finally:
@@ -242,10 +203,7 @@ def call_tool(host_cfg: dict[str, Any], tool_name: str, tool_argv: list[str]) ->
 
 
 def parse_tool_argv(argv: list[str], schema: dict[str, Any]) -> dict[str, Any]:
-    """Parse --flag [value] argv into a call arguments dict using the tool's JSON Schema.
-
-    serve.py maps runspec 'flag' and 'bool' types to JSON Schema 'boolean'.
-    """
+    """Parse --flag [value] argv into a call arguments dict using the tool's JSON Schema."""
     props = schema.get("inputSchema", {}).get("properties", {})
     result: dict[str, Any] = {}
     i = 0

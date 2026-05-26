@@ -117,48 +117,42 @@ def cmd_serve(args: list[str]) -> None:
 
 
 def cmd_jump(args: list[str]) -> None:
-    """List jump hosts, list tools on a jump host, or run a tool via SSH+MCP."""
+    """List tools on a remote host or run a tool via SSH+MCP."""
     from runspec.parser import parse as _parse
 
     parsed = _parse(script_name="runspec", argv=["jump"] + args, config_path=_CLI_CONFIG)
 
-    fmt = str(parsed.format)
-
-    if bool(parsed.list_jump_hosts):
-        _cmd_list_jump_hosts(fmt)
-        return
-
-    jump_host_name: str | None = parsed.jump_host.value
-    if jump_host_name is None:
-        print("✗  A jump host name is required")
-        print("   Usage: runspec jump <jump-host> [<tool>] [-- tool-args...]")
-        print("   Run 'runspec jump --list-jump-hosts' to see configured jump hosts")
+    host: str | None = parsed.host.value
+    if host is None:
+        print("✗  A host is required")
+        print("   Usage: runspec jump <host> [<tool>] [-- tool-args...]")
+        print("   Example: runspec jump user@prod.example.com")
         sys.exit(1)
 
-    host_cfg = _load_jump_host(jump_host_name)
-
+    fmt = str(parsed.format)
+    bin_flag: str | None = parsed.bin.value
     tool_name: str | None = parsed.tool.value
     tool_argv: list[str] = parsed.tool_args.value or []
 
-    if tool_name is None:
-        from runspec.jump import list_tools
+    from runspec.jump import _resolve_bin, call_tool, list_tools
 
-        tools = list_tools(host_cfg)
+    bin_path = _resolve_bin(bin_flag)
+
+    if tool_name is None:
+        tools = list_tools(host, bin_path)
         if not tools:
-            print(f"No tools found on {jump_host_name}.")
+            print(f"No tools found on {host}.")
             return
         if fmt == "json":
             print(json.dumps(tools, indent=2))
             return
-        print(f"Tools on {jump_host_name}:\n")
+        print(f"Tools on {host}:\n")
         for t in tools:
             desc = t.get("description") or ""
             print(f"  {t['name']:<24} {desc}")
         return
 
-    from runspec.jump import call_tool
-
-    call_tool(host_cfg, tool_name, tool_argv)
+    call_tool(host, bin_path, tool_name, tool_argv)
 
 
 def cmd_env(args: list[str]) -> None:
@@ -203,63 +197,6 @@ def cmd_env(args: list[str]) -> None:
     pad = max(len(k) for k in values)
     for key, value in values.items():
         print(f"  {key:<{pad}} = {value}")
-
-
-def _cmd_list_jump_hosts(fmt: str) -> None:
-    """List configured jump hosts from the nearest runspec.toml."""
-    from runspec.finder import find_config
-    from runspec.loader import load_raw
-
-    try:
-        config_path = find_config(Path.cwd())
-        raw = load_raw(config_path)
-        jump_hosts = raw["config"].get("jump_hosts", {})
-    except FileNotFoundError:
-        jump_hosts = {}
-
-    if not jump_hosts:
-        print("No jump hosts configured.")
-        print("Add [config.jump-hosts.<name>] sections to your runspec.toml.")
-        return
-
-    # Apply the bin cascade once so both text and JSON show the effective value
-    # (what would actually run at jump time), not the raw TOML field.
-    from runspec.jump import _resolve_bin_raw
-
-    effective_hosts = [{**cfg, "bin": _resolve_bin_raw(cfg)} for cfg in jump_hosts.values()]
-
-    if fmt == "json":
-        print(json.dumps(effective_hosts, indent=2, default=str))
-        return
-
-    print("Configured jump hosts:\n")
-    for cfg in effective_hosts:
-        host = cfg["host"]
-        user = cfg.get("user")
-        target = f"{user}@{host}" if user else host
-        print(f"  {cfg['name']:<20} {target}  bin={cfg['bin']}")
-
-
-def _load_jump_host(name: str) -> dict[str, Any]:
-    """Load a jump host config by alias from the nearest runspec.toml."""
-    from runspec.finder import find_config
-    from runspec.loader import load_raw
-
-    try:
-        config_path = find_config(Path.cwd())
-    except FileNotFoundError:
-        print(f"✗  No runspec.toml found — cannot look up jump host '{name}'")
-        sys.exit(1)
-
-    raw = load_raw(config_path)
-    jump_hosts = raw["config"].get("jump_hosts", {})
-    if name not in jump_hosts:
-        available = ", ".join(jump_hosts.keys()) or "(none)"
-        print(f"✗  Jump host '{name}' not configured")
-        print(f"   Configured jump hosts: {available}")
-        sys.exit(1)
-
-    return jump_hosts[name]  # type: ignore[no-any-return]
 
 
 def cmd_init(args: list[str]) -> None:

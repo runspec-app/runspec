@@ -1,28 +1,21 @@
 # Jump Hosts
 
-`runspec jump` runs a runspec tool on a remote machine over SSH+MCP. The
-remote configuration lives in `[config.jump-hosts]` in your local
-`runspec.toml`; the binary itself does the SSH handshake, speaks MCP
-JSON-RPC over stdin/stdout to a `runspec serve` on the remote, and streams
+`runspec jump` runs a runspec tool on a remote machine over SSH+MCP. Pass the
+SSH connection string directly on the command line; connection details (user,
+port, key, ProxyJump, etc.) come from your `~/.ssh/config`. The binary speaks
+MCP JSON-RPC over stdin/stdout to a `runspec serve` on the remote and streams
 the result back.
-
-!!! note "Replaces the removed registry service"
-    Earlier versions of runspec shipped a separate `runspec-registry` HTTP
-    service for tool discovery via heartbeat polling. That was removed in
-    0.7.0; the package on PyPI is archived. `[config.jump-hosts]` is the
-    current — and only — remote-execution model.
 
 ---
 
 ## The model
 
 ```
-agent / terminal                              jump host
+agent / terminal                              remote host
     │                                            │
-    │   runspec jump prod-app deploy             │
-    │   ── parses [config.jump-hosts.prod-app]   │
+    │   runspec jump user@prod deploy            │
     │                                            │
-    │   ssh -o BatchMode=yes prod-app            │
+    │   ssh -o BatchMode=yes user@prod           │
     │     runspec serve                          │
     │   ──────────────────────────────────────►  │
     │                                            │
@@ -37,175 +30,130 @@ agent / terminal                              jump host
     │   exit code propagated                  │
 ```
 
-The local `runspec.toml` only needs to know how to reach the jump host. The
-runnables themselves are defined and installed on the remote.
+The runnables are defined and installed on the remote. The local machine only
+needs `ssh` and `runspec`.
 
 ---
 
-## Configuring a jump host
-
-`[config.jump-hosts.<alias>]` declares a target. The alias is what you type:
-`runspec jump prod-app` looks up `[config.jump-hosts.prod-app]`.
-
-Every field is optional. The minimal config is just the section header — the
-alias becomes the SSH host name and everything else comes from
-`~/.ssh/config`.
-
-| Field | Type | Default | Env fallback | Description |
-|---|---|---|---|---|
-| `host` | string | the alias | — | Hostname or IP. Usually matches a `Host` entry in `~/.ssh/config`. |
-| `bin` | string | `"runspec"` | `RUNSPEC_JUMP_BIN` | Path to the `runspec` binary on the remote. Basename **must** be `runspec` (or `runspec.exe`). |
-| `user` | string | — | — | SSH user (becomes `user@host`). |
-| `port` | int | `22` | — | SSH port. Emitted as `-p N` only when non-default. |
-| `ssh-key` | string | — | — | Path to private key (becomes `-i <path>`). |
-| `use-ssh-config` | bool | `true` | — | When `false`, ssh runs with `-F /dev/null` and ignores `~/.ssh/config` entirely. |
-| `ssh-options` | array of string | `[]` | — | Extra `-o KEY=VALUE` options passed to ssh. Each item becomes one `-o` flag. |
-
-### Four typical setups
-
-=== "Rely on ssh-config"
-
-    The cleanest setup. Put per-host config in `~/.ssh/config`, give the
-    alias the same name as the `Host` entry:
-
-    ```toml
-    [config.jump-hosts.prod-app]
-    # everything (user, port, key, ProxyJump) comes from ssh-config
-    ```
-
-=== "Literal hostname with friendly alias"
-
-    Useful when the alias is a project-readable name but ssh-config doesn't
-    have it:
-
-    ```toml
-    [config.jump-hosts.shorty]
-    host = "actual.hostname.internal.example.com"
-    ```
-
-=== "Ignore ssh-config (CI / shared environments)"
-
-    ```toml
-    [config.jump-hosts.ci-target]
-    host           = "10.0.0.5"
-    user           = "deploy"
-    ssh-key        = "/secrets/deploy_key"
-    use-ssh-config = false
-    port           = 2222
-    ```
-
-=== "Pass-through ssh-options"
-
-    For anything ssh-config supports but the TOML doesn't have a dedicated
-    field for:
-
-    ```toml
-    [config.jump-hosts.bastion-fronted]
-    host        = "internal.example.com"
-    ssh-options = [
-      "ProxyJump=bastion.example.com",
-      "ConnectTimeout=10",
-      "ServerAliveInterval=30",
-    ]
-    ```
-
----
-
-## Listing and invoking
-
-### List configured aliases
+## Basic usage
 
 ```bash
-runspec jump --list-jump-hosts
-runspec jump --list-jump-hosts --format json
+# List tools available on the remote
+runspec jump user@prod.example.com
+
+# Run a tool
+runspec jump user@prod.example.com deploy -- --env production
+
+# Specify an exact runspec path on the remote
+runspec jump user@prod.example.com --bin /opt/venv/bin/runspec deploy -- --env prod
 ```
 
-Text output shows the effective `bin` value (the field's default of
-`runspec`, the explicit override, or `$RUNSPEC_JUMP_BIN`):
-
-```
-Configured jump hosts (/home/user/project/runspec.toml):
-
-  prod-app          host: prod-app                    bin: runspec
-  shorty            host: actual.hostname.example.com bin: runspec
-  ci-target         host: 10.0.0.5 (user: deploy)     bin: runspec
-```
-
-### List tools on a host
-
-```bash
-runspec jump prod-app
-```
-
-SSHes to the host, speaks MCP, and lists the tools the remote exposes —
-exactly what an agent connected to that host would see.
-
-### Run a tool
-
-```bash
-runspec jump prod-app deploy -- --env production
-runspec jump ci-target run-migrations -- --schema users --dry-run
-```
-
-Everything after `--` is forwarded to the tool on the remote (the
-positional `rest`-type arg). The local CLI parses out the alias and tool;
-everything else is the remote tool's argv.
-
-stderr from the remote is streamed live, so when something goes wrong on
-the other side you see it in real time — not buried in a log file you have
-to fetch.
+Everything after `--` is forwarded to the tool on the remote. stderr from
+the remote is streamed live — not buried in a log file you have to fetch.
 
 ---
 
-## SSH argv construction
+## SSH configuration
 
-`runspec jump` shells out to the system `ssh` binary. The argv order
-matters because OpenSSH uses first-value-wins for command-line options:
+All SSH options (user, port, private key, ProxyJump, timeouts, etc.) live in
+`~/.ssh/config` for the given host. `runspec jump` passes the host string
+directly to `ssh` with `BatchMode=yes` set (required because stdin/stdout are
+the JSON-RPC channel).
+
+`BatchMode=yes` is locked — interactive prompts would corrupt the protocol.
+Use `ssh-agent` for keys that need a passphrase.
+
+**Example `~/.ssh/config` entries:**
 
 ```
-ssh -o BatchMode=yes        ← always; locked because stdin is JSON-RPC
-    [-F /dev/null]          ← when use-ssh-config = false
-    [-p PORT]               ← when port ≠ 22
-    [-i SSH-KEY]            ← when ssh-key is set
-    [-o OPT]...             ← each ssh-options item
-    [user@]host bin serve
+# Simple remote
+Host prod
+    HostName prod.example.com
+    User deploy
+    IdentityFile ~/.ssh/id_deploy
+
+# Behind a bastion
+Host internal
+    HostName internal.example.com
+    User deploy
+    ProxyJump bastion.example.com
+    ConnectTimeout 10
+
+# CI target (non-standard port)
+Host ci-target
+    HostName 10.0.0.5
+    User ci
+    Port 2222
+    IdentityFile /secrets/deploy_key
+    UserKnownHostsFile /dev/null
+    StrictHostKeyChecking no
 ```
 
-`BatchMode=yes` is locked because `runspec jump` pipes JSON-RPC over
-stdin/stdout — interactive prompts would corrupt the protocol. Use
-`ssh-agent` for keys that need a passphrase.
+Then:
 
-Explicit fields (`port`, `ssh-key`) appear in argv before `ssh-options`, so
-on conflict the explicit field wins. If you specify both `port = 2222` and
-`ssh-options = ["Port=99"]`, the connection uses port 2222.
+```bash
+runspec jump prod                              # uses Host entry "prod"
+runspec jump internal deploy -- --env staging
+runspec jump ci-target run-tests
+```
 
 ---
 
-## Restricting where a runnable can run
+## Remote `runspec` binary (`--bin`)
 
-The runnable-side counterpart to `[config.jump-hosts]` is the `hosts` field
-on a runnable. `runspec serve` checks the current hostname at startup;
-tools that don't match are excluded from the MCP tool list:
+If `runspec` is not on the remote shell's PATH (common because SSH commands
+run in a non-login shell and don't source `~/.bashrc`), pass the full path:
 
-```toml
-[parse-app-logs]
-description = "Parse and summarise application logs"
-autonomy    = "confirm"
-hosts       = ["logserver-01", "logserver-02"]
+```bash
+runspec jump user@prod --bin /opt/venv/bin/runspec
 ```
 
-On any other host, `parse-app-logs` is invisible. The `hosts` field protects
-against accidental invocation on the wrong machine — it's not a security
-boundary, just an availability filter.
+The `--bin` value can also be set via environment variable:
+
+```bash
+export RUNSPEC_JUMP_BIN=/opt/venv/bin/runspec
+runspec jump user@prod deploy -- --env prod
+```
+
+Resolution cascade (first match wins):
+
+1. `--bin` CLI flag
+2. `RUNSPEC_JUMP_BIN` environment variable
+3. `"runspec"` (relies on remote `PATH`)
+
+**Basename validation:** the resolved path's basename must be `runspec` or
+`runspec.exe`. Anything else is rejected before SSH runs — this prevents
+accidental redirection to unrelated binaries.
+
+### Trust model
+
+`runspec jump` executes whatever binary lives at the resolved path on the
+remote. Three forms of intent enforcement apply, but **no cryptographic
+protection**:
+
+1. **Basename locked to `runspec` / `runspec.exe`.** Accidental redirection
+   is rejected before SSH runs.
+2. **MCP handshake required.** Any process that doesn't speak JSON-RPC over
+   stdio fails the `initialize` exchange and the call aborts.
+3. **`stderr` streamed live.** Pre-exec output from a wrapper script appears
+   in your terminal in real time.
+
+These cover accidents, not adversaries. To harden further:
+
+- Lock down remote filesystem permissions — the remote should not be writable
+  by anyone not trusted to run code as you.
+- Pin `--bin` to absolute paths under controlled directories (`/opt/...`,
+  `/usr/...`) rather than user-writable locations.
+- Audit the runspec install on the remote the same way you'd audit any
+  `pip install`.
 
 ---
 
 ## Privilege escalation
 
 When a tool needs to run as a different user on the remote, use `run_as`
-together with `become_method` / `become_flags`. These are resolved by
-`runspec serve` on the remote against the local hostname before the tool
-runs.
+together with `become_method` / `become_flags` in the runnable's definition.
+These are resolved by `runspec serve` on the remote before the tool runs.
 
 ### Four `run_as` shapes
 
@@ -268,57 +216,8 @@ become_flags  = "-H"        # passed through to the become method
 
 When the runnable declares both `env` args and `run_as`, the command is
 prefixed with `env KEY=val ...` after the become so variables apply in the
-target user's process context. This avoids requiring `sudo -E` /
-`env_keep` in sudoers and needs no `sshd_config` changes.
-
----
-
-## Remote `runspec` binary resolution
-
-The `bin` field is locked to executables named `runspec` (or
-`runspec.exe`). The resolution cascade is:
-
-1. Explicit `bin` field in `[config.jump-hosts.<alias>]`
-2. `RUNSPEC_JUMP_BIN` environment variable
-3. The remote's `PATH`
-
-```toml
-[config.jump-hosts.prod-app]
-bin = "/opt/runspec/bin/runspec"     # pinned absolute path
-```
-
-If the resolved path doesn't exist on the remote (or its basename isn't
-`runspec`), `runspec jump` fails before invoking SSH with a message that
-distinguishes between "the bin field was explicit" and "we tried `PATH`".
-
-### Trust model
-
-`runspec jump` ultimately executes whatever binary lives at the resolved
-`bin` path. The format provides three forms of intent enforcement, but **no
-cryptographic protection**:
-
-1. **Basename is locked to `runspec` / `runspec.exe`.** Accidental
-   redirection (`bin = "/usr/bin/cat"`) is rejected before SSH runs.
-2. **MCP handshake required.** Any process that doesn't speak JSON-RPC over
-   stdio fails the `initialize` exchange and the call aborts.
-3. **`stderr` is streamed live.** Anything the remote writes to stderr —
-   including pre-exec output from a wrapper script — appears in the user's
-   terminal in real time, not hidden behind a log file.
-
-These cover accidents (typos, stale values, wrong paths), not adversaries.
-The format **cannot** distinguish a real `runspec` binary from a wrapper
-named `runspec` that runs malicious code and then `exec`s the real binary.
-
-If your threat model includes that, defences live above runspec:
-
-- **Treat `runspec.toml` like shell config.** Audit changes via PR review;
-  don't accept TOMLs from untrusted sources without reading them.
-- **Lock down remote filesystem permissions.** The remote should not be
-  writable by anyone who isn't trusted to run code as you.
-- **Pin `bin` to absolute paths under controlled directories.** Prefer
-  `/opt/...` or `/usr/...` paths managed by configuration management over
-  user-writable locations like `/tmp` or `$HOME` subdirectories. A `bin =
-  "/tmp/foo/runspec"` in a checked-in TOML is a red flag worth questioning.
+target user's process context. This avoids requiring `sudo -E` / `env_keep`
+in sudoers and needs no `sshd_config` changes.
 
 ---
 
@@ -340,15 +239,6 @@ Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
 
 PuTTY, plink, and MobaXterm can coexist on the same machine but are not
 used by runspec — the protocol-level requirement is OpenSSH semantics.
-
----
-
-## Where this fits in the changelog
-
-| Change | Version |
-|---|---|
-| `runspec-registry` removed; replaced by `[config.jump-hosts]` model | [0.7.0](changelog.md#070-2026-05-18) |
-| `--list-jump-hosts` flag, locked `bin` basename, `RUNSPEC_CONFIG` forwarding | [0.9.0](changelog.md#090-2026-05-19) |
 
 ---
 

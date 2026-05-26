@@ -1,13 +1,3 @@
-export interface JumpHostConfig {
-  host: string;
-  user?: string;
-  port?: number;
-  sshKey?: string;
-  bin?: string;
-  useSshConfig?: boolean;
-  sshOptions?: string[];
-}
-
 export interface LoggingConfig {
   rotate: string;
   keep: number;
@@ -18,7 +8,6 @@ export interface RawConfig {
   autonomyDefault: string;
   lang?: string;
   version: string;
-  jumpHosts: Record<string, JumpHostConfig>;
   logging?: LoggingConfig;
 }
 
