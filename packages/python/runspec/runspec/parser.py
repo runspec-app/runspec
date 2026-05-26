@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from runspec import errors
+from runspec.env import apply_env_file
 from runspec.finder import find_config
 from runspec.inference import effective_autonomy, infer_script
 from runspec.loader import load_raw
@@ -72,6 +73,10 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     if name not in raw["runnables"]:
         available = ", ".join(raw["runnables"].keys()) or "(none)"
         raise errors.RunSpecError(f"✗  Runnable '{name}' not found in runspec config.\n   Available runnables: {available}\n   Config: {config_path}")
+
+    # 3.5. Load .runspec_env file into os.environ (before _apply_env so
+    # RUNSPEC_<RUNNABLE>_ARG_* vars in the file feed into arg resolution)
+    runspec_env_data = apply_env_file(raw, name)
 
     # 4. Infer defaults for the script
     raw_script = infer_script(raw["runnables"][name], config["autonomy_default"])
@@ -134,7 +139,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     parsed_values = _parse_argv(argv_list, raw_script["args"])
 
     # 8. Apply env var fallbacks
-    parsed_values = _apply_env(parsed_values, raw_script["args"])
+    parsed_values = _apply_env(parsed_values, raw_script["args"], name)
 
     # 9. Apply defaults
     parsed_values = _apply_defaults(parsed_values, raw_script["args"])
@@ -171,6 +176,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
         arg_specs=raw_script["args"],
         group_specs=raw_script["groups"],
         raw_script=raw_script,
+        runspec_env_data=runspec_env_data,
     )
 
     # 16. Configure logging (no-op when [config.logging] absent)
@@ -531,20 +537,22 @@ def _append_or_set(current: Any, value: Any, spec: dict[str, Any]) -> Any:
 def _apply_env(
     parsed: dict[str, Any],
     arg_specs: dict[str, Any],
+    runnable_name: str,
 ) -> dict[str, Any]:
     """Apply environment variable fallbacks where values are still None.
 
     Resolution order:
-      1. RUNSPEC_ARG_<ARGNAME>  — automatic for every arg, user-settable
-      2. env aliases            — developer-declared list, for CI/Ansible/etc
+      1. RUNSPEC_<RUNNABLE>_ARG_<ARGNAME>  — automatic for every arg, user-settable
+      2. env aliases                        — developer-declared list, for CI/Ansible/etc
     """
+    runnable_prefix = runnable_name.upper().replace("-", "_")
     result = dict(parsed)
     for name, spec in arg_specs.items():
         norm = name.replace("-", "_")
         if result.get(norm) is not None:
             continue
-        # Tier 2a: automatic RUNSPEC_ARG_<ARGNAME>
-        auto_key = "RUNSPEC_ARG_" + name.upper().replace("-", "_")
+        # Tier 2a: automatic RUNSPEC_<RUNNABLE>_ARG_<ARGNAME>
+        auto_key = f"RUNSPEC_{runnable_prefix}_ARG_{name.upper().replace('-', '_')}"
         env_val = os.environ.get(auto_key)
         if env_val is not None:
             result[norm] = env_val
@@ -609,6 +617,7 @@ def _build_runspec(
     arg_specs: dict[str, Any],
     group_specs: dict[str, Any],
     raw_script: dict[str, Any],
+    runspec_env_data: dict[str, str] | None = None,
 ) -> RunSpec:
     """Assemble the final RunSpec object."""
     groups = [
@@ -632,6 +641,7 @@ def _build_runspec(
         __runspec_agent__=agent,
         __runspec_spec__=raw_script,
         __runspec_groups__=groups,
+        _runspec_env=runspec_env_data or {},
     )
 
     for arg_name, spec in arg_specs.items():

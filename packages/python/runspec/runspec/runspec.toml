@@ -14,6 +14,7 @@ examples = [
   {cmd = "runspec local",                  description = "Discover and validate runnables"},
   {cmd = "runspec serve",                  description = "Start the MCP stdio server"},
   {cmd = "runspec jump --list-jump-hosts", description = "List configured jump hosts"},
+  {cmd = "runspec env",                    description = "Show the resolved .runspec_env file"},
 ]
 
 [runspec.commands.init]
@@ -62,6 +63,18 @@ examples = [
 
 # No args — runnables are discovered via importlib.metadata. Install with
 # `pip install -e .` to make a package visible.
+
+[runspec.commands.env]
+description = "Show the resolved .runspec_env file path and its contents"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "runspec env",             description = "Show the default .runspec_env file"},
+  {cmd = "runspec env myrunnable",  description = "Show the env file for a specific runnable"},
+]
+
+[runspec.commands.env.args]
+runnable = {type = "str", description = "Runnable name to show env file for", position = 1, required = false}
 
 [runspec.commands.jump]
 description = "List jump hosts, list tools on a jump host, or run a tool via SSH+MCP"

@@ -56,6 +56,7 @@ def main() -> None:
         "local": cmd_local,
         "serve": cmd_serve,
         "jump": cmd_jump,
+        "env": cmd_env,
     }
 
     if command not in commands:
@@ -158,6 +159,50 @@ def cmd_jump(args: list[str]) -> None:
     from runspec.jump import call_tool
 
     call_tool(host_cfg, tool_name, tool_argv)
+
+
+def cmd_env(args: list[str]) -> None:
+    """Show the resolved .runspec_env file path and its contents."""
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["env"] + args, config_path=_CLI_CONFIG)
+    runnable_name: str | None = parsed.runnable.value
+
+    from runspec.env import _parse_dotenv, resolve_env_path_with_source
+    from runspec.finder import find_config
+    from runspec.loader import load_raw
+
+    raw: dict[str, Any] = {}
+    try:
+        config_path = find_config(Path.cwd())
+        raw = load_raw(config_path)
+    except FileNotFoundError:
+        pass
+
+    path, source = resolve_env_path_with_source(raw, runnable_name or "")
+
+    if runnable_name:
+        print(f"Resolved .runspec_env for '{runnable_name}':")
+    else:
+        print("Resolved .runspec_env (default):")
+
+    print(f"  Path:   {path}")
+    print(f"  Source: {source}")
+
+    if not path.exists():
+        print("  Status: not found")
+        return
+
+    values = _parse_dotenv(path)
+
+    if not values:
+        print("  Status: found (empty)")
+        return
+
+    print()
+    pad = max(len(k) for k in values)
+    for key, value in values.items():
+        print(f"  {key:<{pad}} = {value}")
 
 
 def _cmd_list_jump_hosts(fmt: str) -> None:

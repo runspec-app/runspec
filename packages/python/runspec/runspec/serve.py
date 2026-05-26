@@ -233,7 +233,7 @@ def _handle_tools_call(
     tool_arg_specs = arg_specs.get(name, {})
     argv = _args_to_argv(arguments, tool_arg_specs)
 
-    runspec_env = _args_to_runspec_env(arguments, tool_arg_specs)
+    runspec_env = _args_to_runspec_env(arguments, tool_arg_specs, name)
     env = {**os.environ, "RUNSPEC_AGENT": "1", **runspec_env}
 
     # Tell the subprocess where its runspec.toml lives. Otherwise the tool's
@@ -475,16 +475,17 @@ def _write(response: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-def _arg_name_to_env_key(name: str) -> str:
-    """Convert an arg name to its RUNSPEC_ARG_* environment variable key."""
-    return "RUNSPEC_ARG_" + name.upper().replace("-", "_")
+def _arg_name_to_env_key(name: str, runnable_name: str) -> str:
+    """Convert an arg name to its RUNSPEC_<RUNNABLE>_ARG_* environment variable key."""
+    runnable_prefix = runnable_name.upper().replace("-", "_")
+    return f"RUNSPEC_{runnable_prefix}_ARG_{name.upper().replace('-', '_')}"
 
 
-def _args_to_runspec_env(arguments: dict[str, Any], arg_specs: dict[str, Any]) -> dict[str, str]:
-    """Convert explicitly-provided MCP arguments to RUNSPEC_ARG_* environment variables.
+def _args_to_runspec_env(arguments: dict[str, Any], arg_specs: dict[str, Any], runnable_name: str) -> dict[str, str]:
+    """Convert explicitly-provided MCP arguments to RUNSPEC_<RUNNABLE>_ARG_* environment variables.
 
     Only explicitly provided arguments are injected — spec defaults are omitted so they
-    don't overwrite RUNSPEC_ARG_* vars the caller already set in the server environment.
+    don't overwrite RUNSPEC_<RUNNABLE>_ARG_* vars the caller already set in the server environment.
     """
     env_vars: dict[str, str] = {}
     for arg_name, spec in arg_specs.items():
@@ -494,7 +495,7 @@ def _args_to_runspec_env(arguments: dict[str, Any], arg_specs: dict[str, Any]) -
         if value is None:
             continue
 
-        env_key = _arg_name_to_env_key(arg_name)
+        env_key = _arg_name_to_env_key(arg_name, runnable_name)
         arg_type = spec.get("type", "str")
 
         if arg_type in ("bool", "flag"):

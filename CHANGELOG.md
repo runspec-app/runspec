@@ -7,6 +7,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.16.0] — 2026-05-26
+
+### Breaking
+
+- **`RUNSPEC_ARG_*` renamed to `RUNSPEC_{RUNNABLE}_ARG_*`** — per-arg
+  environment variables now include the runnable name as a middle segment to
+  prevent clashes when multiple runnables share the same argument name
+  (e.g. `run-this --region` and `run-that --region` both reacting to
+  `RUNSPEC_ARG_REGION=europe`). New form:
+  `RUNSPEC_<RUNNABLE_UPPERCASED>_ARG_<ARG_NAME_UPPERCASED>`.
+  Applied to Python and Node simultaneously (parser, serve, logging_setup).
+  Framework vars `RUNSPEC_AGENT` and `RUNSPEC_CONFIG` are unchanged.
+
+### Added
+
+- **`.runspec_env` file** — a `KEY=VALUE` dotenv file loaded at parse time and
+  merged into `os.environ` (existing env vars win). Path resolution: four tiers,
+  first match wins: `RUNSPEC_ENV_FILE` env var → per-runnable `runspec_env` key
+  in `runspec.toml` → `[config] runspec_env` key → `{sys.prefix}/.runspec_env`
+  (default, silent skip if absent). Relative paths in TOML keys resolve from
+  `sys.prefix`. The venv is the deployment container — values placed there stay
+  there across reinstalls of the package itself.
+- **`RunSpec.get_runspec_env()`** — method on the parsed result that returns
+  the loaded env file contents as a `SimpleNamespace` with lowercased keys
+  (`MY_API_KEY` → `ns.my_api_key`). Returns an empty namespace when no file
+  was found.
+- **`runspec_env` TOML key** — accepted in `[config]` and in any per-runnable
+  section to override the default file path for that runnable.
+- **`runspec env` CLI command** — `runspec env` shows the default resolved file
+  path and its contents; `runspec env <runnable>` shows the file resolved for a
+  specific runnable, annotated by which resolution tier was used.
+- **`runspec_` namespace reservation** — arg names starting with `runspec_` or
+  `runspec-` now raise a hard error at parse time. Reserved for the framework
+  (`runspec_runnable`, `runspec_autonomy`, `runspec_agent`, etc.).
+
+---
+
 ## [0.14.0] — 2026-05-24
 
 ### Added

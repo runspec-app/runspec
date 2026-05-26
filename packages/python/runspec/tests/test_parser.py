@@ -525,41 +525,41 @@ def _spec(**kwargs):
 
 class TestApplyEnv:
     def test_runspec_arg_var_provides_default(self, monkeypatch):
-        """RUNSPEC_ARG_<ARGNAME> is picked up automatically when no CLI value."""
-        monkeypatch.setenv("RUNSPEC_ARG_QUALITY", "95")
-        result = _apply_env({"quality": None}, {"quality": _spec()})
+        """RUNSPEC_<RUNNABLE>_ARG_<ARGNAME> is picked up automatically when no CLI value."""
+        monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_QUALITY", "95")
+        result = _apply_env({"quality": None}, {"quality": _spec()}, "compress")
         assert result["quality"] == "95"
 
     def test_cli_value_wins_over_runspec_arg_var(self, monkeypatch):
-        """Explicit CLI arg takes precedence — RUNSPEC_ARG_* is ignored."""
-        monkeypatch.setenv("RUNSPEC_ARG_QUALITY", "95")
-        result = _apply_env({"quality": "80"}, {"quality": _spec()})
+        """Explicit CLI arg takes precedence — RUNSPEC_<RUNNABLE>_ARG_* is ignored."""
+        monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_QUALITY", "95")
+        result = _apply_env({"quality": "80"}, {"quality": _spec()}, "compress")
         assert result["quality"] == "80"
 
     def test_developer_alias_fallback(self, monkeypatch):
-        """env = [...] alias is checked when RUNSPEC_ARG_* is not set."""
+        """env = [...] alias is checked when RUNSPEC_<RUNNABLE>_ARG_* is not set."""
         monkeypatch.setenv("CI_QUALITY", "70")
-        monkeypatch.delenv("RUNSPEC_ARG_QUALITY", raising=False)
-        result = _apply_env({"quality": None}, {"quality": _spec(env=["CI_QUALITY"])})
+        monkeypatch.delenv("RUNSPEC_COMPRESS_ARG_QUALITY", raising=False)
+        result = _apply_env({"quality": None}, {"quality": _spec(env=["CI_QUALITY"])}, "compress")
         assert result["quality"] == "70"
 
     def test_runspec_arg_var_wins_over_developer_alias(self, monkeypatch):
-        """RUNSPEC_ARG_* takes precedence over developer-declared env aliases."""
-        monkeypatch.setenv("RUNSPEC_ARG_QUALITY", "95")
+        """RUNSPEC_<RUNNABLE>_ARG_* takes precedence over developer-declared env aliases."""
+        monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_QUALITY", "95")
         monkeypatch.setenv("CI_QUALITY", "70")
-        result = _apply_env({"quality": None}, {"quality": _spec(env=["CI_QUALITY"])})
+        result = _apply_env({"quality": None}, {"quality": _spec(env=["CI_QUALITY"])}, "compress")
         assert result["quality"] == "95"
 
     def test_hyphenated_arg_name(self, monkeypatch):
-        """Hyphens in arg names become underscores in the RUNSPEC_ARG_* key."""
-        monkeypatch.setenv("RUNSPEC_ARG_DRY_RUN", "1")
-        result = _apply_env({"dry_run": None}, {"dry-run": _spec(type="flag")})
+        """Hyphens in arg names become underscores in the RUNSPEC_<RUNNABLE>_ARG_* key."""
+        monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_DRY_RUN", "1")
+        result = _apply_env({"dry_run": None}, {"dry-run": _spec(type="flag")}, "compress")
         assert result["dry_run"] == "1"
 
     def test_multiple_aliases_first_match_wins(self, monkeypatch):
         """When multiple aliases declared, first one found is used."""
         monkeypatch.setenv("SECOND_VAR", "second")
-        monkeypatch.delenv("RUNSPEC_ARG_QUALITY", raising=False)
+        monkeypatch.delenv("RUNSPEC_COMPRESS_ARG_QUALITY", raising=False)
         monkeypatch.delenv("FIRST_VAR", raising=False)
-        result = _apply_env({"quality": None}, {"quality": _spec(env=["FIRST_VAR", "SECOND_VAR"])})
+        result = _apply_env({"quality": None}, {"quality": _spec(env=["FIRST_VAR", "SECOND_VAR"])}, "compress")
         assert result["quality"] == "second"

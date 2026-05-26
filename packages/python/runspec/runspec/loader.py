@@ -55,6 +55,7 @@ def _normalise_config(raw: dict[str, Any]) -> dict[str, Any]:
         "version": str(raw.get("version", "1")),
         "jump_hosts": _normalise_jump_hosts(raw.get("jump-hosts", {})),
         "logging": _normalise_logging(raw.get("logging")),
+        "runspec_env": raw.get("runspec_env"),
     }
 
 
@@ -119,6 +120,7 @@ def _normalise_script(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "run_as": raw.get("run_as"),
         "become_method": raw.get("become_method", "sudo"),
         "become_flags": raw.get("become_flags"),
+        "runspec_env": raw.get("runspec_env"),
         "examples": _normalise_examples(raw.get("examples", [])),
         "args": _normalise_args(raw.get("args", {})),
         "groups": _normalise_groups(raw.get("groups", {})),
@@ -170,6 +172,8 @@ def _normalise_args(raw: dict[str, Any]) -> dict[str, Any]:
     normalised: dict[str, Any] = {}
 
     for name, value in raw.items():
+        if name.startswith("runspec_") or name.startswith("runspec-"):
+            raise ValueError(f"✗  Arg name '{name}' uses a reserved prefix.\n   Names starting with 'runspec_' or 'runspec-' are reserved for the runspec framework.\n   Rename your argument.")
         if isinstance(value, dict):
             normalised[name] = _normalise_arg(name, value)
         else:

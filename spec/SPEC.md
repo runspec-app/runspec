@@ -60,6 +60,7 @@ Project-wide defaults. All fields are optional.
 | `version` | string | `"1"` | runspec spec version |
 | `jump-hosts` | table | — | Per-alias jump host config. See [Jump Hosts](#jump-hosts). |
 | `logging` | table | — | Logging configuration. See [Logging](#logging). |
+| `runspec_env` | string | — | Path to a `.runspec_env` file. Relative paths resolve from `sys.prefix`. Per-runnable `runspec_env` wins. |
 
 ### Jump Hosts
 
@@ -370,6 +371,7 @@ run_as          = "username"                              # optional, see Remote
 become_method   = "sudo"                                  # optional, default "sudo"
 become_flags    = "-H"                                    # optional
 examples        = [...]                                   # optional, see Examples
+runspec_env     = "/path/to/.runspec_env"                 # optional, see .runspec_env File
 ```
 
 ### `examples`
@@ -760,7 +762,7 @@ Language packs may register additional types via the type registry.
 For every argument, implementations must resolve the value in this order:
 
 1. Explicit CLI argument — highest priority
-2. `RUNSPEC_ARG_<ARGNAME>` environment variable (automatic for every arg)
+2. `RUNSPEC_<RUNNABLE>_ARG_<ARGNAME>` environment variable (automatic for every arg)
 3. `env` aliases (developer-declared list, checked in order)
 4. Default from spec
 5. Error: required — if nothing above matched and `required = true`
@@ -776,23 +778,25 @@ else — work without a language-specific library.
 
 ### Naming convention
 
-Per-arg variables use the `RUNSPEC_ARG_` prefix:
+Per-arg variables include the runnable name to prevent clashes when multiple
+runnables share the same argument name:
 
 ```
-RUNSPEC_ARG_<ARG_NAME_UPPERCASED>
+RUNSPEC_<RUNNABLE_UPPERCASED>_ARG_<ARG_NAME_UPPERCASED>
 ```
 
-Hyphens and underscores in the arg name both become underscores. Examples:
+Hyphens and underscores in both the runnable name and arg name become underscores.
+Examples for a runnable named `backup-logs`:
 
 | Arg name | Environment variable |
 |---|---|
-| `env` | `RUNSPEC_ARG_ENV` |
-| `dry-run` | `RUNSPEC_ARG_DRY_RUN` |
-| `input_file` | `RUNSPEC_ARG_INPUT_FILE` |
-| `max-retries` | `RUNSPEC_ARG_MAX_RETRIES` |
+| `env` | `RUNSPEC_BACKUP_LOGS_ARG_ENV` |
+| `dry-run` | `RUNSPEC_BACKUP_LOGS_ARG_DRY_RUN` |
+| `input_file` | `RUNSPEC_BACKUP_LOGS_ARG_INPUT_FILE` |
+| `max-retries` | `RUNSPEC_BACKUP_LOGS_ARG_MAX_RETRIES` |
 
 These variables serve two purposes:
-- **Input (user-settable):** Set `RUNSPEC_ARG_QUALITY=95` in your shell to make that your persistent default whenever no CLI arg is passed.
+- **Input (user-settable):** Set `RUNSPEC_BACKUP_LOGS_ARG_QUALITY=95` in your shell to make that your persistent default whenever no CLI arg is passed.
 - **Output (runtime-injected):** `runspec serve` and `runspec jump` inject resolved values into the subprocess environment so bash/node/any-language scripts can read them directly without a library.
 
 The `env` field on an arg declares additional aliases checked after `RUNSPEC_ARG_*`. Accepts a string or list of strings:
@@ -854,13 +858,65 @@ dry-run = {type = "flag", default = false}
 ```bash
 #!/bin/bash
 # env vars are already set and validated — no parsing needed
-if [ "$RUNSPEC_ARG_DRY_RUN" = "1" ]; then
-    echo "Would back up $RUNSPEC_ARG_DAYS days of $RUNSPEC_ARG_ENV logs"
+if [ "$RUNSPEC_BACKUP_LOGS_ARG_DRY_RUN" = "1" ]; then
+    echo "Would back up $RUNSPEC_BACKUP_LOGS_ARG_DAYS days of $RUNSPEC_BACKUP_LOGS_ARG_ENV logs"
     exit 0
 fi
-aws s3 sync "/var/log/app/$RUNSPEC_ARG_ENV" "s3://logs-$RUNSPEC_ARG_ENV" \
+aws s3 sync "/var/log/app/$RUNSPEC_BACKUP_LOGS_ARG_ENV" "s3://logs-$RUNSPEC_BACKUP_LOGS_ARG_ENV" \
     --delete --include "*.log"
 ```
+
+---
+
+## .runspec_env File
+
+A `KEY=VALUE` dotenv file loaded at parse time and merged into `os.environ`
+(existing env vars are never overwritten). This is a deployment-time mechanism
+for injecting environment-specific values (API keys, endpoint URLs) into a venv
+without modifying the OS environment or using shell profile scripts.
+
+### Path resolution (four tiers, first match wins)
+
+1. `RUNSPEC_ENV_FILE` environment variable — absolute escape hatch for testing
+2. Per-runnable `runspec_env` key in `runspec.toml`
+3. `[config] runspec_env` key in `runspec.toml`
+4. `{sys.prefix}/.runspec_env` — default; silent skip if absent
+
+Relative paths in tiers 2–3 resolve from `sys.prefix`.
+
+### File format
+
+Standard `KEY=VALUE` pairs. Comments (`#`) and blank lines are ignored. Single
+and double quotes strip the surrounding character. Lines without `=` are ignored.
+
+```
+# .runspec_env
+MY_API_KEY=abc123
+DB_URL=postgres://localhost/mydb
+QUOTED_VALUE="hello world"
+```
+
+### Access
+
+```python
+args = parse()
+env = args.get_runspec_env()   # SimpleNamespace; keys are lowercased
+print(env.my_api_key)          # "abc123"
+```
+
+### Inspect with CLI
+
+```
+runspec env                  # show default file path and contents
+runspec env <runnable>       # show the file resolved for a specific runnable
+```
+
+### `runspec_` namespace reservation
+
+Arg names starting with `runspec_` or `runspec-` are **reserved** for the
+framework. Attempting to declare such an arg raises a hard error at parse time.
+This reservation protects the `RunSpec` metadata properties (`runspec_runnable`,
+`runspec_autonomy`, `runspec_agent`, etc.) from being shadowed by user-defined args.
 
 ---
 

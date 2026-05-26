@@ -89,7 +89,7 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
   }
 
   let parsedValues = parseArgv(argv, activeScript.args ?? {});
-  parsedValues = applyEnv(parsedValues, activeScript.args ?? {});
+  parsedValues = applyEnv(parsedValues, activeScript.args ?? {}, name);
   parsedValues = applyDefaults(parsedValues, activeScript.args ?? {});
 
   raiseIfErrors(validateArgs(parsedValues, activeScript.args ?? {}));
@@ -240,13 +240,14 @@ function appendOrSet(current: unknown, value: unknown, spec: ArgSpec): unknown {
   return value;
 }
 
-function applyEnv(parsed: Record<string, unknown>, argSpecs: Record<string, ArgSpec>): Record<string, unknown> {
+function applyEnv(parsed: Record<string, unknown>, argSpecs: Record<string, ArgSpec>, runnableName: string): Record<string, unknown> {
+  const runnablePrefix = runnableName.toUpperCase().replace(/-/g, '_');
   const result = { ...parsed };
   for (const [name, spec] of Object.entries(argSpecs)) {
     const norm = name.replace(/-/g, '_');
     if (result[norm] !== null && result[norm] !== undefined) continue;
-    // Tier 2a: automatic RUNSPEC_ARG_<ARGNAME>
-    const autoKey = 'RUNSPEC_ARG_' + name.toUpperCase().replace(/-/g, '_');
+    // Tier 2a: automatic RUNSPEC_<RUNNABLE>_ARG_<ARGNAME>
+    const autoKey = `RUNSPEC_${runnablePrefix}_ARG_` + name.toUpperCase().replace(/-/g, '_');
     const autoVal = process.env[autoKey];
     if (autoVal !== undefined) {
       result[norm] = autoVal;
