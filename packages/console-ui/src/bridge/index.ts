@@ -140,6 +140,9 @@ export interface BridgeApi {
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   generate_ssh_key: (keyPath: string) => Promise<{ ok: boolean; public_key: string; message: string }>
+  minimize_window: () => Promise<void>
+  toggle_maximize_window: () => Promise<void>
+  close_window: () => Promise<void>
 }
 
 declare global {

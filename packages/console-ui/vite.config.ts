@@ -8,7 +8,8 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
-    outDir: '../python-console/runspec_console/static',
+    // Output directly into the Python package so `pip install` bundles it
+    outDir: '../python/runspec-console/runspec_console/dist',
     emptyOutDir: true,
   },
 })

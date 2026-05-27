@@ -525,6 +525,10 @@ export const mockApi: BridgeApi = {
     console.log('[mock] cancel_invocation', invId)
   },
 
+  minimize_window: async () => { console.log('[mock] minimize_window') },
+  toggle_maximize_window: async () => { console.log('[mock] toggle_maximize_window') },
+  close_window: async () => { console.log('[mock] close_window') },
+
   get_in_flight: async () => MOCK_IN_FLIGHT,
 
   get_today: async (_host, _group) => {

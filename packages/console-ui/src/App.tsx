@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { ConfigProvider, Badge, theme, Button, Tooltip, Tag } from 'antd'
 import {
   ThunderboltOutlined,
@@ -9,6 +9,9 @@ import {
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
+  MinusOutlined,
+  BorderOutlined,
+  CloseOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -173,7 +176,9 @@ export default function App() {
               padding: '13px 16px 12px',
               fontWeight: 700, fontSize: 14, color: titleCol,
               borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
-            }}>
+              // Drag region for frameless window — no interactive children here
+              WebkitAppRegion: 'drag',
+            } as React.CSSProperties}>
               runspec
             </div>
             <div style={{ flex: 1, overflowY: 'auto', paddingTop: 4 }}>
@@ -263,7 +268,8 @@ export default function App() {
                   {tab.label}
                 </button>
               ))}
-              <div style={{ flex: 1 }} />
+              {/* Spacer doubles as drag region for frameless window */}
+              <div style={{ flex: 1, WebkitAppRegion: 'drag' } as React.CSSProperties} />
 
               {/* Host status pills — always-visible connectivity at a glance */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px', borderRight: `1px solid ${borderCol}` }}>
@@ -289,7 +295,7 @@ export default function App() {
                 ))}
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 4 }}>
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
                 </Tooltip>
@@ -298,6 +304,53 @@ export default function App() {
                     <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ color: iconCol }} />
                   </Badge>
                 </Tooltip>
+              </div>
+
+              {/* Window controls — frameless title bar */}
+              <div style={{
+                display: 'flex', alignItems: 'stretch', flexShrink: 0,
+                borderLeft: `1px solid ${borderCol}`, marginLeft: 2,
+                WebkitAppRegion: 'no-drag',
+              } as React.CSSProperties}>
+                <button
+                  onClick={() => bridge.minimize_window()}
+                  title="Minimise"
+                  style={{
+                    width: 46, border: 'none', background: 'transparent',
+                    color: iconCol, cursor: 'pointer', fontSize: 11,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = isDark ? '#1f1f1f' : '#e8e8e8')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <MinusOutlined style={{ fontSize: 11 }} />
+                </button>
+                <button
+                  onClick={() => bridge.toggle_maximize_window()}
+                  title="Maximise"
+                  style={{
+                    width: 46, border: 'none', background: 'transparent',
+                    color: iconCol, cursor: 'pointer', fontSize: 11,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = isDark ? '#1f1f1f' : '#e8e8e8')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <BorderOutlined style={{ fontSize: 10 }} />
+                </button>
+                <button
+                  onClick={() => bridge.close_window()}
+                  title="Close"
+                  style={{
+                    width: 46, border: 'none', background: 'transparent',
+                    color: iconCol, cursor: 'pointer', fontSize: 11,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#c42b1c'; e.currentTarget.style.color = '#fff' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = iconCol }}
+                >
+                  <CloseOutlined style={{ fontSize: 11 }} />
+                </button>
               </div>
             </div>
 

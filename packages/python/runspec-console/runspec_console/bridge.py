@@ -51,6 +51,27 @@ class Bridge:
 
     def set_window(self, window: Any) -> None:
         self._window = window
+        self._maximized = False
+
+    # ── window controls (frameless) ───────────────────────────────────────────
+
+    def minimize_window(self) -> None:
+        if self._window:
+            self._window.minimize()
+
+    def toggle_maximize_window(self) -> None:
+        if not self._window:
+            return
+        if self._maximized:
+            self._window.restore()
+            self._maximized = False
+        else:
+            self._window.maximize()
+            self._maximized = True
+
+    def close_window(self) -> None:
+        if self._window:
+            self._window.destroy()
 
     # ── hosts ────────────────────────────────────────────────────────────────
 

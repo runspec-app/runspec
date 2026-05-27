@@ -88,6 +88,7 @@ def main() -> None:
         width=1440,
         height=900,
         min_size=(1024, 600),
+        frameless=True,
     )
     bridge.set_window(window)
 
