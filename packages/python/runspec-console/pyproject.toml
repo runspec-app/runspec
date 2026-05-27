@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-console"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pywebview>=5.0",
+    "runspec>=0.17.1",
+    "pywin32>=306",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["runspec_console"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"runspec_console/runspec.toml" = "runspec_console/runspec.toml"
+
+[project.scripts]
+runspec-console = "runspec_console.app:main"
+disk-usage      = "runspec_console.tools.disk_usage:main"
+ping-host       = "runspec_console.tools.ping_host:main"
+flush-dns       = "runspec_console.tools.flush_dns:main"
+check-port      = "runspec_console.tools.check_port:main"
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40.0"]
+openai    = ["openai>=1.0.0"]
+bedrock   = ["anthropic[bedrock]>=0.40.0"]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "../runspec"
