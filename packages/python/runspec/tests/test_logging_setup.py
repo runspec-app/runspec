@@ -31,7 +31,7 @@ def _our_console_handlers():
 def _our_stdout_handler():
     """The handler routing INFO and below to stdout."""
     for h in _our_console_handlers():
-        if getattr(h, "stream", None) is sys.stdout:
+        if getattr(h, "_runspec_stream", None) == "stdout":
             return h
     return None
 
@@ -39,7 +39,7 @@ def _our_stdout_handler():
 def _our_stderr_handler():
     """The handler routing WARNING and above to stderr."""
     for h in _our_console_handlers():
-        if getattr(h, "stream", None) is sys.stderr:
+        if getattr(h, "_runspec_stream", None) == "stderr":
             return h
     return None
 
@@ -436,7 +436,10 @@ class TestExtraFields:
         logging.getLogger("test").info("connected", extra={"user_id": "42", "region": "eu-west"})
         log_path = tmp_path / "logs" / "myscript.log"
         record = json.loads(log_path.read_text().strip())
-        assert record["extra"] == {"user_id": "42", "region": "eu-west"}
+        # run_id is always injected alongside user fields
+        assert record["extra"]["user_id"] == "42"
+        assert record["extra"]["region"] == "eu-west"
+        assert "run_id" in record["extra"]
         assert record["message"] == "connected"
 
     def test_no_extra_key_when_no_extra(self, tmp_path):
@@ -444,7 +447,8 @@ class TestExtraFields:
         logging.getLogger("test").info("plain message")
         log_path = tmp_path / "logs" / "myscript.log"
         record = json.loads(log_path.read_text().strip())
-        assert "extra" not in record
+        # run_id is always present; no user-supplied fields
+        assert set(record["extra"].keys()) == {"run_id"}
 
     def test_extra_fields_redacted(self, tmp_path):
         configure_logging(_cfg(), runnable_name="myscript")

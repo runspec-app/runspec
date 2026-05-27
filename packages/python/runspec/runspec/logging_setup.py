@@ -134,6 +134,7 @@ def configure_logging(
     # form is written directly to stderr by the atexit hook.
     # Also suppress print-captured records (_from_print) to avoid double output.
     out_handler = logging.StreamHandler(sys.stdout)
+    out_handler._runspec_stream = "stdout"  # type: ignore[attr-defined]
     out_handler.setLevel(floor)
     out_handler.addFilter(sensitive)
     out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name != _RUN_SUMMARY_LOGGER and not getattr(r, "_from_print", False))
@@ -142,6 +143,7 @@ def configure_logging(
 
     # WARNING and above → stderr (Unix convention for diagnostics).
     err_handler = logging.StreamHandler(sys.stderr)
+    err_handler._runspec_stream = "stderr"  # type: ignore[attr-defined]
     err_handler.setLevel(logging.WARNING)
     err_handler.addFilter(sensitive)
     err_handler.addFilter(lambda r: r.name != _RUN_SUMMARY_LOGGER)
@@ -487,7 +489,7 @@ def _emit_run_summary() -> None:
                 "events": dict(state["counter"].counts),
                 "user": state["user"],
                 "user_target": state["user_target"],
-                "args": {k: v["value"] for k, v in invocation_args.items()},
+                "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
                 "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
             },
         )

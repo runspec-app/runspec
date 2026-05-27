@@ -236,7 +236,7 @@ The audit record is fixed-schema:
    "autonomy": "confirm",
    "exception": null,
    "events": {"DEBUG": 0, "INFO": 12, "WARNING": 2, "ERROR": 0, "CRITICAL": 0},
-   "args": {"quality": 85, "dry_run": false},
+   "invocation_args": {"quality": 85, "dry_run": false},
    "arg_sources": {"quality": "cli", "dry_run": "spec_default"}
  }}
 ```
@@ -697,9 +697,10 @@ an `Arg.source` field (or equivalent). Valid source values:
 | `"spec_default"` | Came from `default = ...` in `runspec.toml` |
 | `"not_set"` | No value — arg is optional and was left absent |
 
-The `run_summary` audit record includes both `args` (plain values) and
+The `run_summary` audit record includes both `invocation_args` (plain values) and
 `arg_sources` (provenance strings) so the full invocation context is
-reconstructable from the log alone.
+reconstructable from the log alone. (`"args"` is a reserved `LogRecord` field and
+cannot be used as an `extra` key — hence `invocation_args`.)
 
 ---
 
