@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, WarningOutlined } from '@ant-design/icons'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, WarningOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type TestResult } from '../bridge'
 
 const { Text } = Typography
@@ -265,7 +265,7 @@ function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
 interface HostFormValues {
   name: string
   hostname: string
-  runspec_path?: string
+  runspec_paths?: string[]
   user?: string
   port?: number
   identityFile?: string
@@ -279,6 +279,10 @@ function toToml(hosts: JumpHost[]): string {
     if (h.port) lines.push(`port = ${h.port}`)
     if (h.identityFile) lines.push(`identity_file = "${h.identityFile}"`)
     if (h.group) lines.push(`group = "${h.group}"`)
+    if (h.runspec_paths?.length) {
+      const paths = h.runspec_paths.map(p => `"${p}"`).join(', ')
+      lines.push(`runspec_paths = [${paths}]`)
+    }
     return lines.join('\n')
   }).join('\n\n')
 }
@@ -317,7 +321,11 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   }
 
   const startEdit = (h: JumpHost) => {
-    form.setFieldsValue(h)
+    const values: HostFormValues = {
+      ...h,
+      runspec_paths: h.runspec_paths ?? [],
+    }
+    form.setFieldsValue(values)
     setEditingKey(h.name)
   }
 
@@ -484,8 +492,24 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
             <Form.Item name="identityFile" label="Identity file">
               <Input placeholder="~/.ssh/id_ed25519 (leave blank for SSH default)" />
             </Form.Item>
-            <Form.Item name="runspec_path" label="runspec path on host">
-              <Input placeholder="/home/user/.venv/bin/runspec" style={{ fontFamily: 'monospace' }} />
+            <Form.Item label="runspec path(s) on host">
+              <Form.List name="runspec_paths">
+                {(fields, { add, remove }) => (
+                  <>
+                    {fields.map(({ key, name, ...restField }) => (
+                      <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 4 }}>
+                        <Form.Item {...restField} name={name} style={{ marginBottom: 0, flex: 1 }}>
+                          <Input placeholder="/home/user/.venv/bin/runspec" style={{ fontFamily: 'monospace', width: 312 }} />
+                        </Form.Item>
+                        <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                      </Space>
+                    ))}
+                    <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />} style={{ marginTop: 2 }}>
+                      Add path
+                    </Button>
+                  </>
+                )}
+              </Form.List>
             </Form.Item>
             <Form.Item name="group" label="Group">
               <Input placeholder="e.g. Production, Staging (optional — for sidebar organisation)" />

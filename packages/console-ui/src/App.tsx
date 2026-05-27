@@ -19,6 +19,7 @@ import { HistoryView } from './views/HistoryView'
 import { SchedulesView } from './views/SchedulesView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { CommandInput } from './components/CommandInput'
+import { ResizeHandles } from './components/ResizeHandles'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
@@ -165,6 +166,7 @@ export default function App() {
           token: { fontFamily: 'monospace' },
         }}>
         <div style={{ height: '100vh', display: 'flex', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
+          <ResizeHandles />
 
           {/* Fixed host sidebar */}
           <div style={{

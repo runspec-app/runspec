@@ -57,6 +57,37 @@ def _start_static_server(dist: Path) -> int:
     return port
 
 
+def _build_icon() -> Path | None:
+    """Generate a simple runspec-branded .ico on first launch, cached in app-data."""
+    import struct
+    import zlib
+
+    from .config import config_path
+
+    cache = config_path().parent / "runspec_console.ico"
+    if cache.exists():
+        return cache
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        r, g, b, w = 9, 88, 217, 32  # runspec blue, 32×32
+
+        def _chunk(tag: bytes, data: bytes) -> bytes:
+            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+        scanlines = b"".join(b"\x00" + bytes([r, g, b] * w) for _ in range(w))
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            + _chunk(b"IHDR", struct.pack(">IIBBBBB", w, w, 8, 2, 0, 0, 0))
+            + _chunk(b"IDAT", zlib.compress(scanlines))
+            + _chunk(b"IEND", b"")
+        )
+        ico = struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", w, w, 0, 0, 1, 32, len(png), 22) + png
+        cache.write_bytes(ico)
+        return cache
+    except Exception:
+        return None
+
+
 def main() -> None:
     import runspec
 
@@ -92,4 +123,8 @@ def main() -> None:
     )
     bridge.set_window(window)
 
-    webview.start(debug=dev)
+    start_kwargs: dict[str, object] = {"debug": dev}
+    icon = _build_icon()
+    if icon:
+        start_kwargs["icon"] = str(icon)
+    webview.start(**start_kwargs)

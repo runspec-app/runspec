@@ -78,7 +78,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const { runnable, args, commandPath = [] } = (e as CustomEvent).detail as { runnable: Runnable; args: Record<string, unknown>; commandPath?: string[] }
       const cmd = commandPath.length > 0 ? `${runnable.name} ${commandPath.join(' ')}` : runnable.name
       const label = `/${cmd} on ${runnable.host}`
-      const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath)
+      const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath, runnable.group)
       addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args } })
     }
     window.addEventListener('runspec:invoke_runnable', onInvoke)

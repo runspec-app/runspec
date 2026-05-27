@@ -7,6 +7,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.2] — 2026-05-27
+
+### Added
+- **Multi-venv host support** — hosts config now accepts `runspec_paths` (a list of runspec binary paths, one per virtual environment). A single jump host entry can now target multiple venvs; the console discovers runnables from all of them and routes invocations to the correct one automatically. Old `runspec_path` (single string) configs are read transparently.
+- **Taskbar / window icon** — the window and taskbar now show the runspec blue icon instead of the Python logo. Generated at first launch and cached in the app-data directory (no binary asset bundled).
+
+---
+
+## [0.1.1] — 2026-05-27
+
+### Fixed
+- Window is now resizable again — frameless mode is kept (custom title bar intact) and 8 transparent resize handles are added at all window edges and corners. Drag any edge or corner to resize; the window respects a 1024 × 600 minimum.
+- `bridge.resize_window(w, h)` and `bridge.move_window(x, y)` added to the Python bridge.
+
+---
+
 ## [0.1.0] — 2026-05-27
 
 ### Added

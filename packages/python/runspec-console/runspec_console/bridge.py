@@ -73,6 +73,14 @@ class Bridge:
         if self._window:
             self._window.destroy()
 
+    def resize_window(self, width: int, height: int) -> None:
+        if self._window:
+            self._window.resize(int(width), int(height))
+
+    def move_window(self, x: int, y: int) -> None:
+        if self._window:
+            self._window.move(int(x), int(y))
+
     # ── hosts ────────────────────────────────────────────────────────────────
 
     def get_hosts(self) -> list[dict[str, Any]]:
@@ -81,7 +89,7 @@ class Bridge:
         all_hosts = [local] + [h for h in self._hosts if h.get("name") != "local"]
         result: list[dict[str, Any]] = []
         for h in all_hosts:
-            rp = h.get("runspec_path", "")
+            paths = _paths(h)
             with self._lock:
                 # Local is always connected; remotes use last cached probe result
                 # (defaults to False until first probe completes)
@@ -90,7 +98,7 @@ class Bridge:
                 "name": h["name"],
                 "connected": connected,
                 "runnableCount": 0,   # filled by get_runnables
-                "groups": [venv_name(rp)] if rp else [],
+                "groups": [venv_name(p) for p in paths],
                 "role": h.get("role"),
                 "group": h.get("group"),
             })
@@ -111,14 +119,18 @@ class Bridge:
             return []
         if entry.get("ssh"):
             return self._get_remote_history(entry, runnable)
-        rp = entry.get("runspec_path", "")
-        log_dir = Path(rp).parent.parent / "logs"
-        if not log_dir.exists():
-            return []
+        paths = _paths(entry)
         records: list[dict[str, Any]] = []
         pattern = f"{runnable}.log" if runnable else "*.log"
-        for log_file in sorted(log_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True):
-            records.extend(_parse_log(log_file, host))
+        for rp in paths:
+            if not rp:
+                continue
+            log_dir = Path(rp).parent.parent / "logs"
+            if not log_dir.exists():
+                continue
+            for log_file in sorted(log_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True):
+                records.extend(_parse_log(log_file, host))
+        records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return records[:200]
 
     def _get_remote_history(self, entry: dict[str, Any], runnable: str | None) -> list[dict[str, Any]]:
@@ -127,7 +139,8 @@ class Bridge:
         from .executor import ssh_flags
         ssh = entry["ssh"]
         idf = entry.get("identityFile")
-        rp = entry.get("runspec_path", "")
+        paths = _paths(entry)
+        rp = paths[0] if paths else ""
         log_dir = str(PurePosixPath(rp).parent.parent / "logs")
         pattern = f"{log_dir}/{runnable}.log" if runnable else f"{log_dir}/*.log"
         # One SSH call: emit a marker line before each file then its content
@@ -187,7 +200,10 @@ class Bridge:
         entry = self._host_entry(host)
         if entry is None:
             return None
-        rp = entry.get("runspec_path", "")
+        paths = _paths(entry)
+        rp = next((p for p in paths if venv_name(p) == group), paths[0] if paths else "")
+        if not rp:
+            return None
         today_file = Path(rp).parent.parent / "runspec_today.json"
         if not today_file.exists():
             return None
@@ -226,7 +242,8 @@ class Bridge:
                     "stdout": "", "stderr": f"Host '{name}' not found in hosts file", "exit_code": -1}
         import subprocess as _sp
         ssh = entry.get("ssh")
-        rp = entry.get("runspec_path", "")
+        paths = _paths(entry)
+        rp = paths[0] if paths else ""
         idf = entry.get("identityFile")
         if ssh:
             from .executor import ssh_flags
@@ -271,7 +288,7 @@ class Bridge:
             entry: dict[str, Any] = {
                 "name": h["name"],
                 "hostname": hostname,
-                "runspec_path": h.get("runspec_path", ""),
+                "runspec_paths": _paths(h),
             }
             if user:
                 entry["user"] = user
@@ -293,10 +310,13 @@ class Bridge:
             ssh = f"{user}@{hostname}" if user else hostname
             if port:
                 ssh = f"{ssh}:{port}"
+            raw_paths = h.get("runspec_paths") or []
+            if not raw_paths and h.get("runspec_path"):
+                raw_paths = [h["runspec_path"]]
             entry: dict[str, Any] = {
                 "name": h["name"],
                 "ssh": ssh,
-                "runspec_path": h.get("runspec_path", "runspec"),
+                "runspec_paths": raw_paths or ["runspec"],
             }
             if h.get("identityFile"):
                 entry["identityFile"] = h["identityFile"]
@@ -328,17 +348,28 @@ class Bridge:
         runnable: str,
         args: dict[str, Any],
         command_path: list[str] | None = None,
+        group: str | None = None,
     ) -> str:
         inv_id = uuid.uuid4().hex[:12]
         cp = command_path or []
         entry = self._host_entry(host)
         cancel_event = threading.Event()
 
+        entry_paths = _paths(entry) if entry else []
+        # If group not specified, look up the runnable's venv from the discovery cache
+        if group is None and entry_paths:
+            with self._lock:
+                cached = next((r for r in self._runnables_cache
+                               if r.get("host") == host and r.get("name") == runnable), None)
+            if cached:
+                group = cached.get("group")
+        rp = next((p for p in entry_paths if venv_name(p) == group), entry_paths[0] if entry_paths else "")
+
         with self._lock:
             self._in_flight[inv_id] = {
                 "id": inv_id,
                 "runnable": runnable,
-                "group": venv_name(entry["runspec_path"]) if entry else "",
+                "group": venv_name(rp) if rp else "",
                 "host": host,
                 "operator": self._current_user(),
                 "runAs": "",
@@ -356,12 +387,11 @@ class Bridge:
                     self._in_flight.pop(inv_id, None)
                 self._dispatch("runspec:run_end", {"id": inv_id, "exit_code": exit_code, "duration_ms": duration_ms})
 
-            if entry is None:
+            if entry is None or not rp:
                 on_line(f"✗  Host '{host}' not found in runspec_hosts.toml", "stderr")
                 on_done(-1, 0)
                 return
 
-            rp = entry["runspec_path"]
             ssh = entry.get("ssh")
             if ssh:
                 run_remote(ssh, rp, runnable, args, cp, on_line, on_done,
@@ -531,7 +561,12 @@ class Bridge:
         def on_done(exit_code: int, duration_ms: int) -> None:
             exit_code_holder[0] = exit_code
 
-        rp = entry["runspec_path"]
+        tool_paths = _paths(entry)
+        with self._lock:
+            cached_r = next((r for r in self._runnables_cache
+                             if r.get("host") == host and r.get("name") == runnable), None)
+        run_group = cached_r.get("group") if cached_r else None
+        rp = next((p for p in tool_paths if venv_name(p) == run_group), tool_paths[0] if tool_paths else "")
         ssh = entry.get("ssh")
         if ssh:
             run_remote(ssh, rp, runnable, tool_input, [], on_line, on_done,
@@ -558,9 +593,9 @@ class Bridge:
         for name in ("runspec.exe", "runspec"):
             candidate = scripts / name
             if candidate.exists():
-                return {"name": "local", "runspec_path": str(candidate), "ssh": None}
+                return {"name": "local", "runspec_paths": [str(candidate)], "ssh": None}
         # Fallback: construct the expected path even if not yet installed
-        return {"name": "local", "runspec_path": str(scripts / "runspec.exe"), "ssh": None}
+        return {"name": "local", "runspec_paths": [str(scripts / "runspec.exe")], "ssh": None}
 
     def _host_entry(self, host: str) -> dict[str, Any] | None:
         if host == "local":
@@ -605,7 +640,7 @@ class Bridge:
         lock2 = threading.Lock()
 
         def discover(h: dict[str, Any]) -> None:
-            rp = h.get("runspec_path", "")
+            paths = _paths(h)
             ssh = h.get("ssh")
             idf = h.get("identityFile")
             name = h["name"]
@@ -613,9 +648,10 @@ class Bridge:
                 connected = self._connected_cache.get(name, ssh is None)
             if not connected:
                 return
-            items = discover_remote(ssh, rp, name, idf) if ssh else discover_local(rp, name)
-            with lock2:
-                discovered.extend(items)
+            for rp in paths:
+                items = discover_remote(ssh, rp, name, idf) if ssh else discover_local(rp, name)
+                with lock2:
+                    discovered.extend(items)
 
         disc_threads = [
             threading.Thread(target=discover, args=(h,), daemon=True)
@@ -691,6 +727,15 @@ class Bridge:
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+
+def _paths(entry: dict[str, Any]) -> list[str]:
+    """Normalize runspec_paths (list) or legacy runspec_path (str) to a list."""
+    paths = entry.get("runspec_paths")
+    if paths and isinstance(paths, list):
+        return [str(p) for p in paths if p]
+    rp = entry.get("runspec_path", "")
+    return [str(rp)] if rp else []
 
 
 def _parse_ssh(ssh: str) -> tuple[str, str, int | None]:

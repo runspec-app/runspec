@@ -39,7 +39,7 @@ export interface Host {
 export interface JumpHost {
   name: string        // identifier — displayed and used as SSH host alias
   hostname: string
-  runspec_path?: string  // path to runspec binary on the remote host
+  runspec_paths?: string[]  // paths to runspec binaries (one per venv) on the remote host
   user?: string       // falls back to SSH default in settings
   port?: number       // falls back to SSH default (22)
   identityFile?: string
@@ -134,7 +134,7 @@ export interface BridgeApi {
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
   test_host: (name: string) => Promise<TestResult>
-  invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[]) => Promise<string>
+  invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string) => Promise<string>
   cancel_invocation: (invId: string) => Promise<void>
   send_chat: (message: string, invocationId?: string) => Promise<string>
   get_in_flight: () => Promise<InFlightRecord[]>
@@ -143,6 +143,8 @@ export interface BridgeApi {
   minimize_window: () => Promise<void>
   toggle_maximize_window: () => Promise<void>
   close_window: () => Promise<void>
+  resize_window: (width: number, height: number) => Promise<void>
+  move_window: (x: number, y: number) => Promise<void>
 }
 
 declare global {

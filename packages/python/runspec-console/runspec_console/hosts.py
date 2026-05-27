@@ -4,15 +4,18 @@ hosts.py — read and write runspec_hosts.toml.
 A host entry:
 
   [[host]]
-  name         = "prod-1"           # display name, used as the host key everywhere
-  ssh          = "deploy@prod-1"    # SSH connection string; absent = local Windows host
-  runspec_path = "/opt/venvs/platform-core/bin/runspec"
-  group        = "Production"       # sidebar label (optional)
-  role         = "primary"          # "primary" | "secondary" (optional)
+  name          = "prod-1"          # display name, used as the host key everywhere
+  ssh           = "deploy@prod-1"   # SSH connection string; absent = local Windows host
+  runspec_paths = ["/opt/venvs/platform-core/bin/runspec", "/opt/venvs/ops/bin/runspec"]
+  group         = "Production"      # sidebar label (optional)
+  role          = "primary"         # "primary" | "secondary" (optional)
 
   [[host]]
-  name         = "local-ops"
-  runspec_path = "C:\\venvs\\ops-tools\\Scripts\\runspec.exe"
+  name          = "local-ops"
+  runspec_paths = ["C:\\venvs\\ops-tools\\Scripts\\runspec.exe"]
+
+Legacy single-path form is still accepted for backward compatibility:
+  runspec_path = "/path/to/runspec"
 """
 
 from __future__ import annotations
@@ -74,6 +77,8 @@ def site_packages(runspec_path: str) -> Path | None:
 
 
 def _toml_value(v: Any) -> str:
+    if isinstance(v, list):
+        return "[" + ", ".join(f'"{x}"' if isinstance(x, str) else str(x) for x in v) + "]"
     if isinstance(v, str):
         return f'"{v}"'
     if isinstance(v, bool):
