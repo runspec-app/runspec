@@ -93,7 +93,9 @@ def cmd_local(args: list[str]) -> None:
         _print_local_text(discovered)
     else:
         bin_dir = Path(sys.executable).parent
-        callable_only = [d for d in discovered if (bin_dir / d["runnable"]).exists()]
+        def _has_binary(name: str) -> bool:
+            return (bin_dir / name).exists() or (bin_dir / f"{name}.exe").exists()
+        callable_only = [d for d in discovered if _has_binary(d["runnable"])]
         if fmt == "json":
             print(json.dumps(callable_only, indent=2, default=str))
         elif fmt in ("mcp", "openai", "anthropic"):
@@ -840,11 +842,11 @@ def _print_local_text(discovered: list[dict[str, Any]]) -> None:
             desc = runnable.get("description") or ""
             autonomy = runnable.get("autonomy") or "confirm"
 
-            entry_point = bin_dir / name
-            callable_marker = "" if entry_point.exists() else "  [not callable]"
+            has_ep = (bin_dir / name).exists() or (bin_dir / f"{name}.exe").exists()
+            callable_marker = "" if has_ep else "  [not callable]"
             print(f"    {name:<24} {desc[:48]:<50}  [{autonomy}]{callable_marker}")
 
-            if not entry_point.exists():
+            if not has_ep:
                 errors.append(f"'{name}' entry point not registered — add to [project.scripts] in pyproject.toml and re-run pip install")
 
             if not runnable.get("description"):

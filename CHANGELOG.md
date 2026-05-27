@@ -7,6 +7,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.1] — 2026-05-26
+
+### Fixed
+
+- **Windows: `runspec local` now discovers runnables correctly** — `runspec local`
+  (text and JSON output) filtered runnables through an entry-point existence check
+  that never matched on Windows because pip installs entry points as `<name>.exe`
+  launchers, not bare `<name>` files. Both the `--format json` callable filter and
+  the `--format text` `[not callable]` marker now check for `<name>.exe` as a
+  fallback on Windows.
+
+---
+
 ## [0.16.0] — 2026-05-26
 
 ### Breaking
