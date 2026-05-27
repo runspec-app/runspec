@@ -47,6 +47,8 @@ def run_local(
     command_path: list[str],
     on_line: Callable[[str, str], None],
     on_done: Callable[[int, int], None],
+    timeout: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
@@ -55,7 +57,7 @@ def run_local(
     binary = next((bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable)
     argv = args_to_argv(args)
     cmd = [str(binary), *command_path, *argv]
-    _stream(cmd, on_line, on_done)
+    _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event)
 
 
 def ssh_flags(identity_file: str | None) -> list[str]:
@@ -75,24 +77,29 @@ def run_remote(
     on_line: Callable[[str, str], None],
     on_done: Callable[[int, int], None],
     identity_file: str | None = None,
+    timeout: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Execute a remote runnable via SSH, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args)
     cmd = ["ssh", *ssh_flags(identity_file), ssh_target, remote_bin, *command_path, *argv]
-    _stream(cmd, on_line, on_done)
+    _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event)
 
 
 def _stream(
     cmd: list[str],
     on_line: Callable[[str, str], None],
     on_done: Callable[[int, int], None],
+    timeout: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     start = time.monotonic()
     try:
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,   # never block on stdin reads
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -113,9 +120,50 @@ def _stream(
     t_err = threading.Thread(target=_read, args=(proc.stderr, "stderr"), daemon=True)
     t_out.start()
     t_err.start()
-    t_out.join()
-    t_err.join()
+
+    timed_out = threading.Event()
+    user_cancelled = threading.Event()
+    proc_done = threading.Event()
+
+    def _kill_timeout() -> None:
+        timed_out.set()
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    def _watch_cancel() -> None:
+        cancel_event.wait()  # type: ignore[union-attr]
+        if not proc_done.is_set():
+            user_cancelled.set()
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    timer = threading.Timer(timeout, _kill_timeout) if timeout is not None else None
+    if timer:
+        timer.start()
+    if cancel_event is not None:
+        threading.Thread(target=_watch_cancel, daemon=True).start()
+
+    # After a kill() the pipes close and reader threads exit naturally;
+    # give 5 s grace to drain after a kill.
+    drain_timeout = (timeout or 0) + 5 if timeout else None
+    t_out.join(timeout=drain_timeout)
+    t_err.join(timeout=drain_timeout)
     proc.wait()
+    proc_done.set()
+
+    if timer is not None:
+        timer.cancel()
 
     duration_ms = int((time.monotonic() - start) * 1000)
-    on_done(proc.returncode, duration_ms)
+    if user_cancelled.is_set():
+        on_line("✗  Cancelled", "stderr")
+        on_done(-2, duration_ms)
+    elif timed_out.is_set():
+        on_line(f"⏱  Process killed: exceeded {timeout}s timeout", "stderr")
+        on_done(-1, duration_ms)
+    else:
+        on_done(proc.returncode, duration_ms)

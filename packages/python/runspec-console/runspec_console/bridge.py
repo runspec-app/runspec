@@ -34,6 +34,8 @@ from .discovery import discover_local, discover_remote
 from .executor import args_to_argv, run_local, run_remote
 from .hosts import load_hosts, save_hosts, venv_name
 
+_CANCEL_KEY = "__cancel_event__"   # key in _in_flight dicts, not surfaced to JS
+
 
 class Bridge:
     def __init__(self) -> None:
@@ -42,7 +44,10 @@ class Bridge:
         self._in_flight: dict[str, dict[str, Any]] = {}
         self._adapter: Any = None        # ModelAdapter, loaded on demand
         self._hosts: list[dict[str, Any]] = []
+        self._connected_cache: dict[str, bool] = {}   # host name → last known state
+        self._runnables_cache: list[dict[str, Any]] = []
         self._reload_hosts()
+        self._start_refresh_watcher()
 
     def set_window(self, window: Any) -> None:
         self._window = window
@@ -56,9 +61,13 @@ class Bridge:
         result: list[dict[str, Any]] = []
         for h in all_hosts:
             rp = h.get("runspec_path", "")
+            with self._lock:
+                # Local is always connected; remotes use last cached probe result
+                # (defaults to False until first probe completes)
+                connected = self._connected_cache.get(h["name"], h.get("ssh") is None)
             result.append({
                 "name": h["name"],
-                "connected": self._check_connected(h),
+                "connected": connected,
                 "runnableCount": 0,   # filled by get_runnables
                 "groups": [venv_name(rp)] if rp else [],
                 "role": h.get("role"),
@@ -67,30 +76,11 @@ class Bridge:
         return result
 
     def get_runnables(self, host: str) -> list[dict[str, Any]]:
+        with self._lock:
+            cache = list(self._runnables_cache)
         if host == "all":
-            self._reload_hosts()
-            local = self._local_host_entry()
-            all_hosts = [local] + [h for h in self._hosts if h.get("name") != "local"]
-            result: list[dict[str, Any]] = []
-            for h in all_hosts:
-                rp = h.get("runspec_path", "")
-                ssh = h.get("ssh")
-                name = h["name"]
-                idf = h.get("identityFile")
-                if ssh:
-                    result.extend(discover_remote(ssh, rp, name, idf))
-                else:
-                    result.extend(discover_local(rp, name))
-            return result
-        entry = self._host_entry(host)
-        if entry is None:
-            return []
-        rp = entry.get("runspec_path", "")
-        ssh = entry.get("ssh")
-        idf = entry.get("identityFile")
-        if ssh:
-            return discover_remote(ssh, rp, host, idf)
-        return discover_local(rp, host)
+            return cache
+        return [r for r in cache if r.get("host") == host]
 
     # ── history ───────────────────────────────────────────────────────────────
 
@@ -290,6 +280,7 @@ class Bridge:
             entries.append(entry)
         save_hosts(hosts_path(), entries)
         self._reload_hosts()
+        threading.Thread(target=self._refresh_cycle, daemon=True).start()
 
     def import_jump_hosts(self, toml_content: str) -> list[dict[str, Any]]:
         try:
@@ -301,6 +292,7 @@ class Bridge:
         new = [h for h in imported if h.get("name") and h["name"] not in existing]
         self._hosts.extend(new)
         save_hosts(hosts_path(), self._hosts)
+        threading.Thread(target=self._refresh_cycle, daemon=True).start()
         return new
 
     # ── invocation ────────────────────────────────────────────────────────────
@@ -315,6 +307,7 @@ class Bridge:
         inv_id = uuid.uuid4().hex[:12]
         cp = command_path or []
         entry = self._host_entry(host)
+        cancel_event = threading.Event()
 
         with self._lock:
             self._in_flight[inv_id] = {
@@ -326,6 +319,7 @@ class Bridge:
                 "runAs": "",
                 "startedAt": _iso_now(),
                 "args": args,
+                _CANCEL_KEY: cancel_event,
             }
 
         def run() -> None:
@@ -345,9 +339,10 @@ class Bridge:
             rp = entry["runspec_path"]
             ssh = entry.get("ssh")
             if ssh:
-                run_remote(ssh, rp, runnable, args, cp, on_line, on_done, entry.get("identityFile"))
+                run_remote(ssh, rp, runnable, args, cp, on_line, on_done,
+                           entry.get("identityFile"), cancel_event=cancel_event)
             else:
-                run_local(rp, runnable, args, cp, on_line, on_done)
+                run_local(rp, runnable, args, cp, on_line, on_done, cancel_event=cancel_event)
 
         t = threading.Thread(target=run, daemon=True)
         t.start()
@@ -355,7 +350,18 @@ class Bridge:
 
     def get_in_flight(self) -> list[dict[str, Any]]:
         with self._lock:
-            return list(self._in_flight.values())
+            return [{k: v for k, v in inv.items() if k != _CANCEL_KEY}
+                    for inv in self._in_flight.values()]
+
+    def cancel_invocation(self, inv_id: str) -> None:
+        """Signal a running invocation to stop. Best-effort: kill the subprocess."""
+        with self._lock:
+            inv = self._in_flight.get(inv_id)
+        if inv is None:
+            return
+        ev: threading.Event | None = inv.get(_CANCEL_KEY)
+        if ev is not None:
+            ev.set()
 
     # ── chat ──────────────────────────────────────────────────────────────────
 
@@ -368,26 +374,152 @@ class Bridge:
                 self._dispatch("runspec:token", {"id": chat_id, "token": "⚠ No LLM provider configured. Set provider and API key in Settings."})
                 self._dispatch("runspec:run_end", {"id": chat_id, "exit_code": 1, "duration_ms": 0})
                 return
-            asyncio.run(self._chat_turn(chat_id, message, adapter))
+            asyncio.run(self._agentic_chat_turn(chat_id, message, adapter))
 
         t = threading.Thread(target=run, daemon=True)
         t.start()
         return chat_id
 
-    async def _chat_turn(self, chat_id: str, message: str, adapter: Any) -> None:
+    async def _agentic_chat_turn(self, chat_id: str, message: str, adapter: Any) -> None:
         start = time.monotonic()
-        messages = [{"role": "user", "content": message}]
-        try:
-            response = await adapter.chat(messages, tools=[])
-            if response.text:
-                for token in response.text.split(" "):
-                    self._dispatch("runspec:token", {"id": chat_id, "token": token + " "})
-                    await asyncio.sleep(0)
-        except Exception as exc:
-            self._dispatch("runspec:token", {"id": chat_id, "token": f"⚠ LLM error: {exc}"})
-        finally:
-            duration_ms = int((time.monotonic() - start) * 1000)
-            self._dispatch("runspec:run_end", {"id": chat_id, "exit_code": 0, "duration_ms": duration_ms})
+        history: list[dict[str, Any]] = [{"role": "user", "content": message}]
+        tools = self._runnables_to_tools()
+        total_input = 0
+        total_output = 0
+
+        for _ in range(10):  # max agentic iterations
+            response: Any = None
+            try:
+                async for event in adapter.stream_with_tools(history, tools):
+                    if event[0] == "text":
+                        self._dispatch("runspec:token", {"id": chat_id, "token": event[1]})
+                    elif event[0] == "done":
+                        response = event[1]
+            except Exception as exc:
+                self._dispatch("runspec:token", {"id": chat_id, "token": f"\n⚠ Error: {exc}"})
+                break
+
+            if response is not None:
+                inp, out = self._usage_from_response(response)
+                total_input += inp
+                total_output += out
+
+            if response is None or response.stop_reason != "tool_use" or not response.tool_calls:
+                break
+
+            # Execute each tool call and dispatch events
+            tool_results: list[tuple[Any, str]] = []
+            for tc in response.tool_calls:
+                self._dispatch("runspec:tool_start", {
+                    "id": chat_id, "tool_name": tc.name, "tool_input": tc.input,
+                })
+                output = await asyncio.to_thread(self._run_tool_sync, tc.name, tc.input)
+                self._dispatch("runspec:tool_end", {
+                    "id": chat_id, "tool_name": tc.name, "output": output[:2000],
+                })
+                tool_results.append((tc, output))
+
+            history.extend(adapter.make_tool_turn(response, tool_results))
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        self._dispatch("runspec:run_end", {"id": chat_id, "exit_code": 0, "duration_ms": duration_ms})
+        if total_input or total_output:
+            self._dispatch("runspec:chat_usage", {
+                "id": chat_id, "input_tokens": total_input, "output_tokens": total_output,
+            })
+
+    @staticmethod
+    def _usage_from_response(response: Any) -> tuple[int, int]:
+        raw = getattr(response, "_raw", None)
+        if raw is None:
+            return 0, 0
+        usage = getattr(raw, "usage", None)
+        if usage is None:
+            return 0, 0
+        inp = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", None) or 0
+        out = getattr(usage, "output_tokens", None) or getattr(usage, "completion_tokens", None) or 0
+        return int(inp), int(out)
+
+    def _runnables_to_tools(self) -> list[dict[str, Any]]:
+        """Convert cached runnables to Anthropic-format tool schemas."""
+        import re
+        with self._lock:
+            runnables = list(self._runnables_cache)
+        tools: list[dict[str, Any]] = []
+        for r in runnables:
+            host = r.get("host", "local")
+            name = r.get("name", "")
+            raw_name = f"{host}__{name}"
+            tool_name = re.sub(r"[^a-zA-Z0-9_-]", "_", raw_name)[:64]
+            description = r.get("description") or f"Run {name} on {host}"
+            args = r.get("args") or []
+            properties: dict[str, Any] = {}
+            required: list[str] = []
+            for arg in args:
+                arg_name = arg.get("name", "")
+                if not arg_name:
+                    continue
+                arg_type = arg.get("type", "str")
+                json_type = {
+                    "int": "integer", "float": "number",
+                    "flag": "boolean", "bool": "boolean", "path": "string",
+                }.get(arg_type, "string")
+                prop: dict[str, Any] = {"type": json_type}
+                # Build description: user-facing text + default hint so the LLM
+                # knows what value will be used when the arg is omitted.
+                desc_parts: list[str] = []
+                if arg.get("description") or arg.get("help"):
+                    desc_parts.append(str(arg.get("description") or arg.get("help")))
+                default = arg.get("default")
+                if default is not None:
+                    if isinstance(default, str) and default.startswith("$"):
+                        desc_parts.append(f"(default from env var {default})")
+                    else:
+                        desc_parts.append(f"(default: {default})")
+                if desc_parts:
+                    prop["description"] = " ".join(desc_parts)
+                if arg.get("options"):
+                    prop["enum"] = arg["options"]
+                properties[arg_name] = prop
+                if arg.get("required"):
+                    required.append(arg_name)
+            schema: dict[str, Any] = {"type": "object", "properties": properties}
+            if required:
+                schema["required"] = required
+            tools.append({"name": tool_name, "description": description, "input_schema": schema})
+        return tools
+
+    def _run_tool_sync(self, tool_name: str, tool_input: dict[str, Any]) -> str:
+        """Blocking runnable execution — call via asyncio.to_thread from the agentic loop."""
+        if "__" not in tool_name:
+            return f"Error: invalid tool name '{tool_name}'"
+        host, runnable = tool_name.split("__", 1)
+        entry = self._host_entry(host)
+        if entry is None:
+            return f"Error: host '{host}' not found"
+        output_lines: list[str] = []
+        exit_code_holder = [0]
+
+        def on_line(line: str, stream: str) -> None:
+            output_lines.append(line)
+
+        def on_done(exit_code: int, duration_ms: int) -> None:
+            exit_code_holder[0] = exit_code
+
+        rp = entry["runspec_path"]
+        ssh = entry.get("ssh")
+        if ssh:
+            run_remote(ssh, rp, runnable, tool_input, [], on_line, on_done,
+                       entry.get("identityFile"), timeout=120)
+        else:
+            run_local(rp, runnable, tool_input, [], on_line, on_done, timeout=120)
+
+        output = "\n".join(output_lines)
+        if len(output) > 16384:
+            output = output[:16384] + "\n[output truncated]"
+        if exit_code_holder[0] != 0:
+            return f"[exit {exit_code_holder[0]}]\n{output}"
+        return output or "(no output)"
 
     # ── internals ─────────────────────────────────────────────────────────────
 
@@ -409,6 +541,69 @@ class Bridge:
         if host == "local":
             return self._local_host_entry()
         return next((h for h in self._hosts if h.get("name") == host), None)
+
+    def _start_refresh_watcher(self) -> None:
+        """Run a full refresh cycle immediately, then repeat every 30 s."""
+        def _loop() -> None:
+            while True:
+                self._refresh_cycle()
+                time.sleep(30)
+        threading.Thread(target=_loop, daemon=True).start()
+
+    def _refresh_cycle(self) -> None:
+        """Concurrently probe connectivity, then concurrently discover runnables."""
+        self._reload_hosts()
+        local = self._local_host_entry()
+        all_hosts = [local] + [h for h in self._hosts if h.get("name") != "local"]
+
+        # ── Phase 1: connectivity probes (fast: ssh host true) ─────────────────
+        with self._lock:
+            self._connected_cache["local"] = True
+
+        def probe(h: dict[str, Any]) -> None:
+            result = self._check_connected(h)
+            with self._lock:
+                self._connected_cache[h["name"]] = result
+
+        probe_threads = [
+            threading.Thread(target=probe, args=(h,), daemon=True)
+            for h in all_hosts if h.get("ssh")
+        ]
+        for t in probe_threads:
+            t.start()
+        for t in probe_threads:
+            t.join()
+        self._dispatch("runspec:hosts_updated", {})
+
+        # ── Phase 2: runnables discovery (heavier: runspec local --format json) ─
+        discovered: list[dict[str, Any]] = []
+        lock2 = threading.Lock()
+
+        def discover(h: dict[str, Any]) -> None:
+            rp = h.get("runspec_path", "")
+            ssh = h.get("ssh")
+            idf = h.get("identityFile")
+            name = h["name"]
+            with self._lock:
+                connected = self._connected_cache.get(name, ssh is None)
+            if not connected:
+                return
+            items = discover_remote(ssh, rp, name, idf) if ssh else discover_local(rp, name)
+            with lock2:
+                discovered.extend(items)
+
+        disc_threads = [
+            threading.Thread(target=discover, args=(h,), daemon=True)
+            for h in all_hosts
+        ]
+        for t in disc_threads:
+            t.start()
+        for t in disc_threads:
+            t.join()
+
+        with self._lock:
+            self._runnables_cache = discovered
+        self._dispatch("runspec:runnables_updated", {})
 
     def _check_connected(self, host: dict[str, Any]) -> bool:
         ssh = host.get("ssh")
@@ -505,42 +700,107 @@ def _parse_log(log_file: Path, host: str) -> list[dict[str, Any]]:
 
 
 def _parse_log_text(name: str, text: str, host: str) -> list[dict[str, Any]]:
+    """Parse a log file's text into HistoryRecord dicts.
+
+    When run_id is present in records (runspec >=0.18) each invocation is
+    isolated by its UUID — multi-user interleaving is handled cleanly.
+    Older logs without run_id fall back to sequential accumulation between
+    run_summary markers.
+    """
+    entries: list[dict[str, Any]] = []
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        try:
+            entries.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+
+    if not entries:
+        return []
+
+    # Detect run_id presence — check first record that has extra.run_id
+    has_run_id = any(e.get("extra", {}).get("run_id") for e in entries)
+    if has_run_id:
+        return _parse_log_by_run_id(name, entries, host)
+    return _parse_log_sequential(name, entries, host)
+
+
+def _parse_log_by_run_id(name: str, entries: list[dict[str, Any]], host: str) -> list[dict[str, Any]]:
+    """Group log entries by run_id UUID → one HistoryRecord per invocation."""
+    # Preserve insertion order of run_ids so history is chronological
+    groups: dict[str, dict[str, Any]] = {}  # run_id → {"lines": [], "summary": None}
+    for entry in entries:
+        extra = entry.get("extra", {})
+        run_id = extra.get("run_id")
+        if not run_id:
+            continue
+        if run_id not in groups:
+            groups[run_id] = {"lines": [], "summary": None}
+        if extra.get("event") == "run_summary":
+            groups[run_id]["summary"] = entry
+        else:
+            groups[run_id]["lines"].append({
+                "ts": entry.get("ts", ""),
+                "level": entry.get("level", "INFO"),
+                "message": entry.get("message", ""),
+            })
+
+    records: list[dict[str, Any]] = []
+    for run_id, g in groups.items():
+        summary_entry = g["summary"]
+        if summary_entry is None:
+            continue   # in-progress run — no summary yet
+        extra = summary_entry.get("extra", {})
+        ts_raw = summary_entry.get("ts", "")
+        stable_id = hashlib.md5((run_id + name).encode()).hexdigest()[:12]
+        records.append({
+            "id": stable_id,
+            "runnable": name,
+            "group": "",
+            "host": host,
+            "operator": extra.get("user", ""),
+            "runAs": extra.get("user_target") or "",
+            "exitCode": extra.get("exit_code", 0),
+            "durationMs": extra.get("duration_ms", 0),
+            "ts": ts_raw,
+            "args": extra.get("args", {}),
+            "argSources": extra.get("arg_sources", {}),
+            "logLines": g["lines"],
+        })
+    return records
+
+
+def _parse_log_sequential(name: str, entries: list[dict[str, Any]], host: str) -> list[dict[str, Any]]:
+    """Legacy parser for logs without run_id (runspec <0.18)."""
     records: list[dict[str, Any]] = []
     lines: list[dict[str, Any]] = []
-    try:
-        for raw in text.splitlines():
-            if not raw.strip():
-                continue
-            try:
-                entry = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            extra = entry.get("extra", {})
-            if extra.get("event") == "run_summary":
-                ts_raw = entry.get("ts", "")
-                stable_id = hashlib.md5((ts_raw + name).encode()).hexdigest()[:12]
-                records.append({
-                    "id": stable_id,
-                    "runnable": name,
-                    "group": "",
-                    "host": host,
-                    "operator": extra.get("user", ""),
-                    "runAs": extra.get("user_target") or "",
-                    "exitCode": extra.get("exit_code", 0),
-                    "durationMs": extra.get("duration_ms", 0),
-                    "ts": entry.get("ts", ""),
-                    "args": extra.get("args", {}),
-                    "logLines": lines,
-                })
-                lines = []
-            else:
-                lines.append({
-                    "ts": entry.get("ts", ""),
-                    "level": entry.get("level", "INFO"),
-                    "message": entry.get("message", raw),
-                })
-    except Exception:
-        pass
+    for entry in entries:
+        extra = entry.get("extra", {})
+        if extra.get("event") == "run_summary":
+            ts_raw = entry.get("ts", "")
+            stable_id = hashlib.md5((ts_raw + name).encode()).hexdigest()[:12]
+            records.append({
+                "id": stable_id,
+                "runnable": name,
+                "group": "",
+                "host": host,
+                "operator": extra.get("user", ""),
+                "runAs": extra.get("user_target") or "",
+                "exitCode": extra.get("exit_code", 0),
+                "durationMs": extra.get("duration_ms", 0),
+                "ts": ts_raw,
+                "args": extra.get("args", {}),
+                "argSources": extra.get("arg_sources", {}),
+                "logLines": lines,
+            })
+            lines = []
+        else:
+            lines.append({
+                "ts": entry.get("ts", ""),
+                "level": entry.get("level", "INFO"),
+                "message": entry.get("message", ""),
+            })
     return records
 
 
@@ -571,16 +831,23 @@ def _dict_to_toml(data: dict[str, Any], _prefix: str = "") -> str:
     return "\n".join(lines) + "\n"
 
 
+def _toml_scalar(v: Any) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        return f'"{v}"'
+    return str(v)
+
+
 def _write_schedules(path: Path, schedules: list[dict[str, Any]]) -> None:
     lines = []
     for s in schedules:
         lines.append("[[schedule]]")
         for k, v in s.items():
-            if isinstance(v, str):
-                lines.append(f'{k} = "{v}"')
-            elif isinstance(v, bool):
-                lines.append(f'{k} = {"true" if v else "false"}')
+            if isinstance(v, dict):
+                inner = ", ".join(f"{ik} = {_toml_scalar(iv)}" for ik, iv in v.items())
+                lines.append(f"{k} = {{ {inner} }}")
             else:
-                lines.append(f"{k} = {v}")
+                lines.append(f"{k} = {_toml_scalar(v)}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")

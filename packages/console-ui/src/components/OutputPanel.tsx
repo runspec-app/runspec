@@ -3,6 +3,7 @@ import { Button, Input, Space, Tag, Tooltip, Typography, message } from 'antd'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
+  ApiOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -32,16 +33,30 @@ export interface RerunData {
   args: Record<string, unknown>
 }
 
+export interface ToolCallEntry {
+  name: string
+  input: Record<string, unknown>
+  output?: string
+  running: boolean
+}
+
+export type BlockSegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; entry: ToolCallEntry }
+
 export interface InvocationBlock {
   id: string
   type: 'run' | 'chat'
   label: string
   startedAt: string  // ISO string captured when block is created
   lines: OutputLine[]
+  segments: BlockSegment[]   // for chat blocks — interleaved text + tool calls
+  currentText: string        // currently-streaming text (chat blocks only)
   done: boolean
   exitCode?: number
   durationMs?: number
   rerunData?: RerunData
+  tokenUsage?: { input: number; output: number }
 }
 
 interface OutputPanelProps {
@@ -97,6 +112,56 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
   )
 }
 
+function ToolCallBlock({ entry }: { entry: ToolCallEntry }) {
+  const [expanded, setExpanded] = useState(false)
+  const args = Object.entries(entry.input)
+
+  return (
+    <div style={{ margin: '6px 0', border: '1px solid #2a2a2a', borderRadius: 6, overflow: 'hidden' }}>
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 12px',
+          background: '#1a1a1a',
+          cursor: entry.output !== undefined ? 'pointer' : 'default',
+          userSelect: 'none',
+        }}
+        onClick={() => entry.output !== undefined && setExpanded(x => !x)}
+      >
+        {entry.running
+          ? <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+          : <ApiOutlined style={{ color: '#52c41a', fontSize: 12 }} />}
+        <Text code style={{ fontSize: 12 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
+        {args.length > 0 && (
+          <Text style={{ color: '#555', fontSize: 11 }}>
+            {args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
+          </Text>
+        )}
+        {entry.running && (
+          <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto' }}>running…</Text>
+        )}
+        {entry.output !== undefined && !entry.running && (
+          <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto' }}>
+            {expanded ? '▲ hide output' : '▼ show output'}
+          </Text>
+        )}
+      </div>
+      {expanded && entry.output !== undefined && (
+        <pre style={{
+          margin: 0, padding: '8px 12px',
+          fontFamily: 'monospace', fontSize: 12,
+          color: '#d4d4d4', lineHeight: 1.5,
+          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          maxHeight: 200, overflowY: 'auto',
+          background: '#141414',
+        }}>
+          {entry.output || '(no output)'}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 function BlockCard({
   block,
   onRerun,
@@ -128,7 +193,12 @@ function BlockCard({
     setIsEditing(false)
   }
 
-  const logText = block.lines.map(l => l.line).join('\n')
+  const logText = block.type === 'chat'
+    ? [
+        ...block.segments.filter((s): s is Extract<BlockSegment, { kind: 'text' }> => s.kind === 'text').map(s => s.text),
+        block.currentText,
+      ].filter(Boolean).join('\n')
+    : block.lines.map(l => l.line).join('\n')
 
   const handleCopy = () => {
     navigator.clipboard.writeText(`Output from ${block.label}\n\n${logText}`)
@@ -138,6 +208,10 @@ function BlockCard({
   const handleAskLlm = () => {
     onAskLlm?.(`Output from ${block.label}\n\n${logText}`)
   }
+
+  const hasContent = block.type === 'chat'
+    ? (block.segments.length > 0 || block.currentText.length > 0)
+    : block.lines.length > 0
 
   return (
     <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 8, overflow: 'hidden' }}>
@@ -157,6 +231,13 @@ function BlockCard({
           <Tag style={{ marginLeft: 'auto', fontSize: 11 }} color={block.exitCode === 0 ? 'green' : 'red'}>
             {block.exitCode === 0 ? 'ok' : 'error'} · {(block.durationMs / 1000).toFixed(2)}s
           </Tag>
+        )}
+        {block.tokenUsage && (
+          <Tooltip title={`Input tokens: ${block.tokenUsage.input.toLocaleString()} · Output tokens: ${block.tokenUsage.output.toLocaleString()}`}>
+            <Tag style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: block.durationMs !== undefined ? 4 : 'auto' }}>
+              ↑{block.tokenUsage.input.toLocaleString()} ↓{block.tokenUsage.output.toLocaleString()}
+            </Tag>
+          </Tooltip>
         )}
         {block.done && block.rerunData && onRerun && (
           <>
@@ -217,9 +298,9 @@ function BlockCard({
         </div>
       )}
 
-      {/* Log output */}
+      {/* Output body */}
       <div style={{ position: 'relative' }}>
-        {block.lines.length > 0 && (
+        {hasContent && (
           <div style={{ position: 'absolute', top: 5, right: 6, display: 'flex', gap: 2, zIndex: 1 }}>
             <Tooltip title="Copy to clipboard">
               <Button
@@ -239,20 +320,56 @@ function BlockCard({
             )}
           </div>
         )}
-        <pre style={{
-          margin: 0, padding: '10px 14px',
-          fontFamily: 'monospace', fontSize: 13,
-          color: '#d4d4d4', lineHeight: 1.6,
-          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-          maxHeight: 480, overflowY: 'auto',
-        }}>
-          {block.lines.map((l, i) => (
-            <span key={i} style={{ color: _lineColor(l) }}>
-              {l.line}{'\n'}
-            </span>
-          ))}
-          {!block.done && <span style={{ color: '#555' }}>▌</span>}
-        </pre>
+
+        {/* run block: flat log lines */}
+        {block.type === 'run' && (
+          <pre style={{
+            margin: 0, padding: '10px 14px',
+            fontFamily: 'monospace', fontSize: 13,
+            color: '#d4d4d4', lineHeight: 1.6,
+            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+            maxHeight: 480, overflowY: 'auto',
+          }}>
+            {block.lines.map((l, i) => (
+              <span key={i} style={{ color: _lineColor(l) }}>
+                {l.line}{'\n'}
+              </span>
+            ))}
+            {!block.done && <span style={{ color: '#555' }}>▌</span>}
+          </pre>
+        )}
+
+        {/* chat block: interleaved text segments + tool call blocks */}
+        {block.type === 'chat' && (
+          <div style={{ padding: '10px 14px' }}>
+            {block.segments.map((seg, i) =>
+              seg.kind === 'text' ? (
+                <pre key={i} style={{
+                  margin: 0, padding: 0,
+                  fontFamily: 'monospace', fontSize: 13,
+                  color: '#d4d4d4', lineHeight: 1.6,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                }}>
+                  {seg.text}
+                </pre>
+              ) : (
+                <ToolCallBlock key={i} entry={seg.entry} />
+              )
+            )}
+            {/* currently-accumulating text */}
+            {(block.currentText || !block.done) && (
+              <pre style={{
+                margin: 0, padding: 0,
+                fontFamily: 'monospace', fontSize: 13,
+                color: '#d4d4d4', lineHeight: 1.6,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              }}>
+                {block.currentText}
+                {!block.done && <span style={{ color: '#555' }}>▌</span>}
+              </pre>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -268,31 +385,92 @@ export function useInvocationBlocks() {
         b.id === id ? { ...b, lines: [...b.lines, { id, line, stream }] } : b
       ))
     }
+
     const onToken = (e: Event) => {
       const { id, token } = (e as CustomEvent).detail as { id: string; token: string }
       setBlocks(prev => prev.map(b => {
         if (b.id !== id) return b
+        if (b.type === 'chat') {
+          return { ...b, currentText: b.currentText + token }
+        }
+        // run block receiving tokens (unusual but handle gracefully)
         const last = b.lines[b.lines.length - 1]
         if (last) {
-          const updated = [...b.lines.slice(0, -1), { ...last, line: last.line + token }]
-          return { ...b, lines: updated }
+          return { ...b, lines: [...b.lines.slice(0, -1), { ...last, line: last.line + token }] }
         }
         return { ...b, lines: [{ id, line: token, stream: 'stdout' }] }
       }))
     }
+
+    const onToolStart = (e: Event) => {
+      const { id, tool_name, tool_input } = (e as CustomEvent).detail as {
+        id: string; tool_name: string; tool_input: Record<string, unknown>
+      }
+      setBlocks(prev => prev.map(b => {
+        if (b.id !== id) return b
+        const newSegs: BlockSegment[] = [
+          ...b.segments,
+          ...(b.currentText ? [{ kind: 'text' as const, text: b.currentText }] : []),
+          { kind: 'tool' as const, entry: { name: tool_name, input: tool_input, running: true } },
+        ]
+        return { ...b, segments: newSegs, currentText: '' }
+      }))
+    }
+
+    const onToolEnd = (e: Event) => {
+      const { id, tool_name, output } = (e as CustomEvent).detail as {
+        id: string; tool_name: string; output: string
+      }
+      setBlocks(prev => prev.map(b => {
+        if (b.id !== id) return b
+        const newSegs = b.segments.map(seg => {
+          if (seg.kind === 'tool' && seg.entry.name === tool_name && seg.entry.running) {
+            return { ...seg, entry: { ...seg.entry, output, running: false } }
+          }
+          return seg
+        })
+        return { ...b, segments: newSegs }
+      }))
+    }
+
     const onEnd = (e: Event) => {
       const { id, exit_code, duration_ms } = (e as CustomEvent).detail as { id: string; exit_code: number; duration_ms: number }
+      setBlocks(prev => prev.map(b => {
+        if (b.id !== id) return b
+        if (b.type === 'chat' && b.currentText) {
+          return {
+            ...b,
+            segments: [...b.segments, { kind: 'text', text: b.currentText }],
+            currentText: '',
+            done: true, exitCode: exit_code, durationMs: duration_ms,
+          }
+        }
+        return { ...b, done: true, exitCode: exit_code, durationMs: duration_ms }
+      }))
+    }
+
+    const onChatUsage = (e: Event) => {
+      const { id, input_tokens, output_tokens } = (e as CustomEvent).detail as {
+        id: string; input_tokens: number; output_tokens: number
+      }
       setBlocks(prev => prev.map(b =>
-        b.id === id ? { ...b, done: true, exitCode: exit_code, durationMs: duration_ms } : b
+        b.id === id ? { ...b, tokenUsage: { input: input_tokens, output: output_tokens } } : b
       ))
     }
+
     window.addEventListener('runspec:output', onOutput)
     window.addEventListener('runspec:token', onToken)
+    window.addEventListener('runspec:tool_start', onToolStart)
+    window.addEventListener('runspec:tool_end', onToolEnd)
     window.addEventListener('runspec:run_end', onEnd)
+    window.addEventListener('runspec:chat_usage', onChatUsage)
     return () => {
       window.removeEventListener('runspec:output', onOutput)
       window.removeEventListener('runspec:token', onToken)
+      window.removeEventListener('runspec:tool_start', onToolStart)
+      window.removeEventListener('runspec:tool_end', onToolEnd)
       window.removeEventListener('runspec:run_end', onEnd)
+      window.removeEventListener('runspec:chat_usage', onChatUsage)
     }
   }, [])
 

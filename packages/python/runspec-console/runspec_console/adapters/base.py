@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncIterator
 
 
 @dataclass
@@ -30,6 +30,24 @@ class ChatResponse:
 class ModelAdapter(ABC):
     @abstractmethod
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ChatResponse: ...
+
+    @abstractmethod
+    def stream_chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> AsyncIterator[str]:
+        """Yield text tokens as they arrive from the model."""
+        ...
+
+    async def stream_with_tools(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ):
+        """
+        Yield ('text', str) for each text token, then ('done', ChatResponse) at the end.
+
+        Default falls back to non-streaming chat(). Override for true streaming with tools.
+        """
+        response = await self.chat(messages, tools)
+        if response.text:
+            yield ("text", response.text)
+        yield ("done", response)
 
     @abstractmethod
     def make_tool_turn(

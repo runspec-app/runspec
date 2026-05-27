@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip } from 'antd'
+import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type TestResult } from '../bridge'
 
@@ -11,39 +11,131 @@ interface SettingsDrawerProps {
   onHostsChanged?: () => void
 }
 
+const PROVIDER_MODELS: Record<string, string> = {
+  anthropic: 'claude-sonnet-4-6',
+  openai: 'gpt-4o',
+  bedrock: 'anthropic.claude-sonnet-4-6',
+}
+
 function GeneralTab() {
+  const [form] = Form.useForm()
+  const [provider, setProvider] = useState<string>('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    bridge.get_config().then(cfg => {
+      const llm = (cfg.llm ?? {}) as Record<string, string>
+      const ssh = (cfg.ssh ?? {}) as Record<string, string>
+      const p = llm.provider ?? ''
+      setProvider(p)
+      form.setFieldsValue({
+        provider: p,
+        api_key: llm.api_key ?? '',
+        model: llm.model ?? '',
+        base_url: llm.base_url ?? '',
+        aws_region: llm.aws_region ?? '',
+        ssh_user: ssh.user ?? '',
+        ssh_identity_file: ssh.identityFile ?? '',
+      })
+    })
+  }, [form])
+
+  const handleProviderChange = (val: string) => {
+    setProvider(val)
+    if (!form.getFieldValue('model') && PROVIDER_MODELS[val]) {
+      form.setFieldValue('model', PROVIDER_MODELS[val])
+    }
+  }
+
+  const handleSave = async () => {
+    const v = form.getFieldsValue()
+    const data: Record<string, unknown> = {
+      llm: {
+        ...(v.provider    ? { provider: v.provider }       : {}),
+        ...(v.api_key     ? { api_key: v.api_key }         : {}),
+        ...(v.model       ? { model: v.model }             : {}),
+        ...(v.base_url    ? { base_url: v.base_url }       : {}),
+        ...(v.aws_region  ? { aws_region: v.aws_region }   : {}),
+      },
+      ssh: {
+        ...(v.ssh_user          ? { user: v.ssh_user }                     : {}),
+        ...(v.ssh_identity_file ? { identityFile: v.ssh_identity_file }    : {}),
+      },
+    }
+    setSaving(true)
+    try {
+      await bridge.save_config(data)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <>
       <Text strong style={{ fontSize: 13 }}>LLM / API</Text>
-      <Form layout="vertical" size="small" style={{ marginTop: 10 }}>
-        <Form.Item label="API base URL">
-          <Input placeholder="https://api.anthropic.com" />
+      <Form form={form} layout="vertical" size="small" style={{ marginTop: 10 }}>
+        <Form.Item name="provider" label="Provider">
+          <Select placeholder="None — chat disabled" allowClear onChange={handleProviderChange}>
+            <Select.Option value="anthropic">Anthropic</Select.Option>
+            <Select.Option value="openai">OpenAI</Select.Option>
+            <Select.Option value="bedrock">AWS Bedrock</Select.Option>
+          </Select>
         </Form.Item>
-        <Form.Item label="API key">
-          <Input.Password placeholder="sk-ant-..." />
-        </Form.Item>
-        <Form.Item label="Model">
-          <Input placeholder="claude-opus-4-7" />
-        </Form.Item>
+        {(provider === 'anthropic' || provider === 'openai' || provider === 'bedrock') && (
+          <>
+            {provider !== 'bedrock' && (
+              <Form.Item name="api_key" label="API key">
+                <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'} />
+              </Form.Item>
+            )}
+            <Form.Item name="model" label="Model">
+              <Input placeholder={PROVIDER_MODELS[provider] ?? ''} style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+            {(provider === 'openai' || provider === 'bedrock') && (
+              <Form.Item name="base_url" label="Base URL" help={provider === 'bedrock' ? 'Corporate proxy URL (optional)' : 'Optional — for OpenAI-compatible endpoints'}>
+                <Input placeholder="https://..." style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+            )}
+            {provider === 'bedrock' && (
+              <>
+                <Form.Item name="api_key" label="Proxy API key" help="Only needed if using a corporate Bedrock proxy">
+                  <Input.Password placeholder="token" />
+                </Form.Item>
+                <Form.Item name="aws_region" label="AWS region">
+                  <Input placeholder="us-east-1" style={{ fontFamily: 'monospace' }} />
+                </Form.Item>
+              </>
+            )}
+          </>
+        )}
+        <Divider />
+
+        <Text strong style={{ fontSize: 13 }}>SSH defaults</Text>
+        <div style={{ marginTop: 10 }}>
+          <Form.Item name="ssh_user" label="Default username">
+            <Input placeholder="your-username" />
+          </Form.Item>
+          <Form.Item name="ssh_identity_file" label="Default identity file">
+            <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: 'monospace' }} />
+          </Form.Item>
+        </div>
+
+        <Divider />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Button type="primary" size="small" loading={saving} onClick={handleSave}>
+            Save
+          </Button>
+          {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
+        </div>
+
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+          Settings are saved to <code>runspec_config.toml</code>.
+        </Text>
       </Form>
-
-      <Divider />
-
-      <Text strong style={{ fontSize: 13 }}>SSH defaults</Text>
-      <Form layout="vertical" size="small" style={{ marginTop: 10 }}>
-        <Form.Item label="Default username">
-          <Input placeholder="your-username" />
-        </Form.Item>
-        <Form.Item label="Default identity file">
-          <Input placeholder="~/.ssh/runspec_ed25519" />
-        </Form.Item>
-      </Form>
-
-      <Divider />
-
-      <Text type="secondary" style={{ fontSize: 12 }}>
-        Settings are saved locally. API keys are stored in the OS keychain.
-      </Text>
     </>
   )
 }

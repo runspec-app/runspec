@@ -13,6 +13,14 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'dest', type: 'str', required: false, default: '$BACKUP_DEST', description: 'Destination path' },
       { name: 'dry-run', type: 'flag', required: false, default: false },
     ],
+    rawSpec: {
+      description: 'Back up a directory to remote storage',
+      autonomy: 'confirm',
+      run_as: 'jason',
+      become_method: 'sudo',
+      output: 'text',
+      serve: true,
+    },
   },
   {
     name: 'get-alerts',
@@ -23,6 +31,9 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'endpoint', type: 'str', required: false, default: '$ALERT_ENDPOINT', description: 'Alert source URL' },
       { name: 'since', type: 'str', required: false, default: 'yesterday' },
     ],
+    rawSpec: {
+      description: 'Pull active alerts from all configured sources',
+    },
   },
   {
     name: 'setup-keys',
@@ -33,6 +44,10 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'host', type: 'str', required: true, description: 'Remote hostname or IP' },
       { name: 'user', type: 'str', required: false, default: '$DEPLOY_USER', description: 'Remote username' },
     ],
+    rawSpec: {
+      description: 'Copy SSH public key to a remote host',
+      runspec_env: '.runspec_env',
+    },
   },
   {
     name: 'log-rotate',
@@ -45,6 +60,14 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'log-dir', type: 'path', required: false, default: '$LOG_DIR', description: 'Directory containing log files' },
       { name: 'keep', type: 'int', required: false, default: 7, description: 'Days of logs to keep' },
     ],
+    rawSpec: {
+      description: 'Rotate and compress log files on the host',
+      autonomy: 'autonomous',
+      'autonomy-reason': 'Safe to run unattended — no destructive side-effects, logs compressed in-place',
+      run_as: 'svc-runner',
+      output: 'text',
+      serve: true,
+    },
   },
   {
     name: 'cache-purge',
@@ -54,6 +77,12 @@ const MOCK_RUNNABLES: Runnable[] = [
     args: [
       { name: 'redis-url', type: 'str', required: false, default: '$REDIS_URL', description: 'Redis connection string' },
     ],
+    rawSpec: {
+      description: 'Purge stale cache entries',
+      autonomy: 'autonomous',
+      'autonomy-reason': 'Idempotent cache eviction; worst case is a cache miss on next request',
+      serve: true,
+    },
   },
   {
     // Same runnable name as ops-tools/backup — demonstrates the collision scenario
@@ -66,6 +95,13 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'bucket', type: 'str', required: false, default: '$S3_BUCKET', description: 'S3 bucket name' },
       { name: 'dry-run', type: 'flag', required: false, default: false },
     ],
+    rawSpec: {
+      description: 'Back up database snapshots to object storage',
+      autonomy: 'confirm',
+      run_as: 'svc-backup',
+      output: 'json',
+      serve: true,
+    },
   },
   {
     // Secondary-only runnable — only visible when Secondary or All is selected
@@ -77,6 +113,15 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'timeout', type: 'int', required: false, default: 30, description: 'Drain timeout in seconds' },
       { name: 'notify-url', type: 'str', required: false, default: '$SLACK_WEBHOOK', description: 'Webhook to notify on drain' },
     ],
+    rawSpec: {
+      description: 'Drain connections before failover to secondary datacenter',
+      autonomy: 'supervised',
+      'autonomy-reason': 'Irreversible during a failover window — operator must be present',
+      run_as: 'svc-ops',
+      become_method: 'sudo',
+      output: 'stream',
+      serve: false,
+    },
   },
   {
     name: 'flush-dns',
@@ -84,6 +129,40 @@ const MOCK_RUNNABLES: Runnable[] = [
     host: 'local',
     description: 'Flush the local DNS cache',
     args: [],
+    rawSpec: {
+      description: 'Flush the local DNS cache',
+    },
+  },
+  {
+    name: 'check-port',
+    group: 'ops-tools',
+    host: 'local',
+    description: 'Test whether a TCP port is open on a host',
+    autonomy: 'autonomous',
+    args: [
+      { name: 'host', type: 'str', required: true, description: 'Hostname or IP address' },
+      { name: 'port', type: 'int', required: true, description: 'TCP port number to check' },
+      { name: 'timeout', type: 'float', required: false, default: 3.0, description: 'Connection timeout in seconds' },
+    ],
+    rawSpec: {
+      description: 'Test whether a TCP port is open on a host',
+      autonomy: 'autonomous',
+    },
+  },
+  {
+    name: 'ping-host',
+    group: 'ops-tools',
+    host: 'local',
+    description: 'Check network connectivity to a host',
+    autonomy: 'autonomous',
+    args: [
+      { name: 'host', type: 'str', required: true, description: 'Hostname or IP address to ping' },
+      { name: 'count', type: 'int', required: false, default: 4, description: 'Number of ping requests to send' },
+    ],
+    rawSpec: {
+      description: 'Check network connectivity to a host',
+      autonomy: 'autonomous',
+    },
   },
   {
     name: 'set-env',
@@ -96,6 +175,12 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'env', type: 'choice', required: true, options: ['dev', 'staging', 'prod'], description: 'Target environment' },
       { name: 'confirm', type: 'flag', required: false, default: false, description: 'Skip confirmation prompt' },
     ],
+    rawSpec: {
+      description: 'Switch the active environment context',
+      autonomy: 'confirm',
+      run_as: 'jason',
+      runspec_env: '.runspec_env',
+    },
   },
   {
     name: 'tune',
@@ -112,6 +197,15 @@ const MOCK_RUNNABLES: Runnable[] = [
       { name: 'label',      type: 'str',    required: false, default: '$DEPLOY_TAG', description: 'Deployment label tag' },
       { name: 'verbose',    type: 'flag',   required: false, default: false },
     ],
+    rawSpec: {
+      description: 'Tune service resource limits — one example of every runspec arg type',
+      autonomy: 'confirm',
+      run_as: 'root',
+      become_method: 'su',
+      become_flags: '-m',
+      output: 'json',
+      runspec_env: '.runspec_env',
+    },
   },
   {
     name: 'deploy',
@@ -121,6 +215,19 @@ const MOCK_RUNNABLES: Runnable[] = [
     autonomy: 'confirm',
     runAs: 'svc-deploy',
     args: [],
+    rawSpec: {
+      description: 'Deploy the application to production',
+      autonomy: 'confirm',
+      'autonomy-reason': 'Production deployments require explicit operator sign-off',
+      run_as: 'svc-deploy',
+      become_method: 'sudo',
+      output: 'stream',
+      serve: false,
+      examples: [
+        { description: 'Blue-green deploy to v2.4.1', args: { version: '2.4.1' } },
+        { description: 'Canary at 10% traffic', args: { version: '2.4.1', 'initial-weight': 10 } },
+      ],
+    },
     commands: {
       'blue-green': {
         name: 'blue-green',
@@ -162,6 +269,18 @@ const MOCK_RUNNABLES: Runnable[] = [
     host: 'prod-2',
     description: 'Run database migrations',
     args: [],
+    rawSpec: {
+      description: 'Run database migrations',
+      autonomy: 'confirm',
+      'autonomy-reason': 'Schema changes are irreversible without a separate rollback run',
+      run_as: 'svc-migrations',
+      output: 'stream',
+      serve: false,
+      examples: [
+        { description: 'Apply all pending migrations', args: {} },
+        { description: 'Dry-run next 3 steps', args: { steps: 3, 'dry-run': true } },
+      ],
+    },
     commands: {
       'up': {
         name: 'up',
@@ -202,7 +321,8 @@ const MOCK_HISTORY: HistoryRecord[] = [
   {
     id: '1', runnable: 'backup', group: 'ops-tools', host: 'local', operator: 'Jason Finestone', runAs: 'DESKTOP\\jason',
     exitCode: 0, durationMs: 3201, ts: new Date(Date.now() - 3600000).toISOString(),
-    args: { source: 'C:/Users/jason/documents', dest: 'Z:/backups/documents', 'dry-run': false },
+    args: { source: 'C:/Users/jason/documents', dest: 'Z:/backups/documents', 'dry-run': 'False' },
+    argSources: { source: 'cli', dest: 'cli', 'dry-run': 'spec_default' },
     logLines: [
       { ts: new Date(Date.now() - 3605000).toISOString(), level: 'INFO', message: 'backup starting' },
       { ts: new Date(Date.now() - 3604000).toISOString(), level: 'INFO', message: 'scanning source: C:/Users/jason/documents' },
@@ -214,7 +334,8 @@ const MOCK_HISTORY: HistoryRecord[] = [
   {
     id: '2', runnable: 'log-rotate', group: 'platform-core', host: 'prod-1', operator: 'Scheduled Task', runAs: 'svc-runner',
     exitCode: 0, durationMs: 812, ts: new Date(Date.now() - 7200000).toISOString(),
-    args: { keep: 7 },
+    args: { keep: '7' },
+    argSources: { keep: 'env' },
     logLines: [
       { ts: new Date(Date.now() - 7205000).toISOString(), level: 'INFO', message: 'log-rotate starting, keep=7 days' },
       { ts: new Date(Date.now() - 7204000).toISOString(), level: 'INFO', message: 'rotating /var/log/app.log' },
@@ -224,7 +345,8 @@ const MOCK_HISTORY: HistoryRecord[] = [
   {
     id: '3', runnable: 'get-alerts', group: 'ops-tools', host: 'local', operator: 'Jason Finestone', runAs: 'DESKTOP\\jason',
     exitCode: 1, durationMs: 450, ts: new Date(Date.now() - 10800000).toISOString(),
-    args: { since: 'yesterday' },
+    args: { since: 'yesterday', service: 'api-gateway' },
+    argSources: { since: 'cli', service: 'runspec_env' },
     logLines: [
       { ts: new Date(Date.now() - 10805000).toISOString(), level: 'INFO',  message: 'get-alerts starting' },
       { ts: new Date(Date.now() - 10804000).toISOString(), level: 'INFO',  message: 'connecting to Datadog API' },
@@ -235,6 +357,7 @@ const MOCK_HISTORY: HistoryRecord[] = [
     id: '4', runnable: 'cache-purge', group: 'platform-core', host: 'prod-1', operator: 'Scheduled Task', runAs: 'svc-runner',
     exitCode: 0, durationMs: 201, ts: new Date(Date.now() - 86400000).toISOString(),
     args: {},
+    argSources: {},
     logLines: [
       { ts: new Date(Date.now() - 86405000).toISOString(), level: 'INFO', message: 'cache-purge starting' },
       { ts: new Date(Date.now() - 86404000).toISOString(), level: 'INFO', message: 'purged 412 stale entries' },
@@ -243,7 +366,8 @@ const MOCK_HISTORY: HistoryRecord[] = [
   {
     id: '5', runnable: 'backup', group: 'platform-core', host: 'prod-1', operator: 'Jason Finestone', runAs: 'svc-runner',
     exitCode: 0, durationMs: 2980, ts: new Date(Date.now() - 90000000).toISOString(),
-    args: { db: 'postgres-main', 'dry-run': false },
+    args: { db: 'postgres-main', 'dry-run': 'False' },
+    argSources: { db: 'cli', 'dry-run': 'spec_default' },
     logLines: [
       { ts: new Date(Date.now() - 90005000).toISOString(), level: 'INFO', message: 'backup starting — db=postgres-main' },
       { ts: new Date(Date.now() - 90004000).toISOString(), level: 'INFO', message: 'creating snapshot' },
@@ -255,7 +379,8 @@ const MOCK_HISTORY: HistoryRecord[] = [
   {
     id: '6', runnable: 'log-rotate', group: 'platform-core', host: 'prod-1', operator: 'Jason Finestone', runAs: 'svc-runner',
     exitCode: 0, durationMs: 930, ts: new Date(Date.now() - 172800000).toISOString(),
-    args: { keep: 14 },
+    args: { keep: '14' },
+    argSources: { keep: 'cli' },
     logLines: [
       { ts: new Date(Date.now() - 172805000).toISOString(), level: 'INFO', message: 'log-rotate starting, keep=14 days' },
       { ts: new Date(Date.now() - 172804000).toISOString(), level: 'INFO', message: 'rotating /var/log/app.log' },
@@ -264,9 +389,9 @@ const MOCK_HISTORY: HistoryRecord[] = [
   },
 ]
 
-const MOCK_SCHEDULES: Schedule[] = [
-  { id: 'rs-backup-daily', runnable: 'backup', host: 'local', schedule: 'Daily at 02:00', nextRun: 'Tomorrow 02:00' },
-  { id: 'rs-log-rotate-weekly', runnable: 'log-rotate', host: 'prod-1', schedule: 'Weekly Sun 03:00', nextRun: 'Sun 03:00' },
+let MOCK_SCHEDULES: Schedule[] = [
+  { id: 'rs-backup-daily', runnable: 'backup', host: 'local', schedule: '0 2 * * *', args: { db: 'postgres-main' } },
+  { id: 'rs-log-rotate-weekly', runnable: 'log-rotate', host: 'prod-1', schedule: '0 3 * * 0', args: { keep: 7 } },
 ]
 
 const MOCK_IN_FLIGHT: InFlightRecord[] = [
@@ -324,7 +449,10 @@ export const mockApi: BridgeApi = {
              stdout: '[]', stderr: '', exit_code: 0 }
   },
 
-  create_schedule: async (_data) => {},
+  create_schedule: async (data) => {
+    const s = data as unknown as Schedule
+    MOCK_SCHEDULES = [...MOCK_SCHEDULES, { ...s, id: s.id || `rs-${s.runnable}-${Date.now()}` }]
+  },
 
   delete_schedule: async (id) => { console.log('[mock] delete_schedule', id) },
 
@@ -337,7 +465,7 @@ export const mockApi: BridgeApi = {
       const line = raw.trim()
       const section = line.match(/^\[([^\]]+)\]$/)
       if (section) {
-        if (name && current.hostname) hosts.push({ name, role: 'primary', ...current } as JumpHost)
+        if (name && current.hostname) hosts.push({ name, role: 'primary', ...current } as unknown as JumpHost)
         name = section[1].trim()
         current = {}
         continue
@@ -345,7 +473,7 @@ export const mockApi: BridgeApi = {
       const kv = line.match(/^([\w-]+)\s*=\s*"([^"]*)"$/)
       if (kv && name) current[kv[1]] = kv[2]
     }
-    if (name && current.hostname) hosts.push({ name, role: 'primary', ...current } as JumpHost)
+    if (name && current.hostname) hosts.push({ name, role: 'primary', ...current } as unknown as JumpHost)
     return hosts
   },
 
@@ -376,6 +504,10 @@ export const mockApi: BridgeApi = {
     return id
   },
 
+  cancel_invocation: async (invId) => {
+    console.log('[mock] cancel_invocation', invId)
+  },
+
   get_in_flight: async () => MOCK_IN_FLIGHT,
 
   get_today: async (_host, _group) => {
@@ -404,15 +536,41 @@ export const mockApi: BridgeApi = {
 
   send_chat: async (message, _invocationId) => {
     const id = `chat-${++invocationCounter}`
-    const response = `I can help you run runnables. You said: "${message}". Try typing / to see available commands.`
-    response.split(' ').forEach((token, i) => {
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('runspec:token', { detail: { id, token: token + ' ' } }))
-        if (i === response.split(' ').length - 1) {
-          window.dispatchEvent(new CustomEvent('runspec:run_end', { detail: { id, exit_code: 0, duration_ms: 500 } }))
-        }
-      }, i * 80)
-    })
+    const dispatch = (event: string, detail: unknown) =>
+      window.dispatchEvent(new CustomEvent(event, { detail }))
+    const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+
+    ;(async () => {
+      await delay(10)  // yield so addBlock fires before first token
+      // Phase 1: stream intro text
+      const intro = `Sure, let me run the backup for you.`
+      for (const ch of intro) {
+        dispatch('runspec:token', { id, token: ch })
+        await delay(18)
+      }
+      await delay(200)
+
+      // Simulate a tool call
+      dispatch('runspec:tool_start', {
+        id, tool_name: 'local__backup', tool_input: { source: '/home/jason', dest: '/mnt/backup' },
+      })
+      await delay(900)
+      dispatch('runspec:tool_end', {
+        id, tool_name: 'local__backup', output: 'backup starting\nscanning /home/jason\n1,243 files (2.1 GB)\nbackup complete',
+      })
+      await delay(150)
+
+      // Phase 2: stream follow-up text
+      const outro = `\n\nThe backup completed successfully — 1,243 files (2.1 GB) copied to /mnt/backup.`
+      for (const ch of outro) {
+        dispatch('runspec:token', { id, token: ch })
+        await delay(14)
+      }
+
+      dispatch('runspec:run_end', { id, exit_code: 0, duration_ms: 1500 })
+      dispatch('runspec:chat_usage', { id, input_tokens: 1247, output_tokens: 342 })
+    })()
+
     return id
   },
 }

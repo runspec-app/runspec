@@ -11,7 +11,7 @@ import {
   SettingOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
-import { RunnablesView } from './views/RunnablesView'
+import { SpecsView } from './views/SpecsView'
 import { HistoryView } from './views/HistoryView'
 import { SchedulesView } from './views/SchedulesView'
 import { FormsView, type PendingForm } from './views/FormsView'
@@ -21,7 +21,7 @@ import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'console' | 'runnables' | 'history' | 'forms' | 'schedules'
+type ViewKey = 'console' | 'specs' | 'history' | 'forms' | 'schedules'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -62,6 +62,15 @@ export default function App() {
       setHosts(hs)
       setSelectedHost(hs[0]?.name ?? '')
     })
+    // Re-fetch when the background refresh cycle completes
+    const onHostsUpdated = () => bridge.get_hosts().then(setHosts)
+    const onRunnablesUpdated = () => bridge.get_runnables('all').then(setRunnables)
+    window.addEventListener('runspec:hosts_updated', onHostsUpdated)
+    window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
+    return () => {
+      window.removeEventListener('runspec:hosts_updated', onHostsUpdated)
+      window.removeEventListener('runspec:runnables_updated', onRunnablesUpdated)
+    }
   }, [])
 
   const toggleTheme = () => {
@@ -126,7 +135,7 @@ export default function App() {
         : <ThunderboltOutlined />,
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
-    { key: 'runnables' as ViewKey, label: 'Runnables', icon: <AppstoreOutlined /> },
+    { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
     { key: 'schedules' as ViewKey, label: 'Schedules', icon: <CalendarOutlined /> },
   ]
@@ -257,10 +266,10 @@ export default function App() {
               </div>
               {view !== 'console' && (
                 <div style={{ flex: 1, overflow: 'auto' }}>
-                  {view === 'runnables' && <RunnablesView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
+                  {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                   {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
                   {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
-                  {view === 'schedules' && <SchedulesView />}
+                  {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
                 </div>
               )}
             </div>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Tag, Typography } from 'antd'
-import { LoadingOutlined } from '@ant-design/icons'
+import { Tag, Tooltip, Typography } from 'antd'
+import { CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons'
 import { bridge, type InFlightRecord, type Runnable } from '../bridge'
 import { OutputPanel, useInvocationBlocks, type RerunData } from '../components/OutputPanel'
 import { useIsDark } from '../ThemeContext'
@@ -24,7 +24,7 @@ function elapsed(startedAt: string): string {
 function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
   const isDark = useIsDark()
   const [, setTick] = useState(0)
-  const ref = useRef<ReturnType<typeof setInterval>>()
+  const ref = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
   useEffect(() => {
     ref.current = setInterval(() => setTick(t => t + 1), 1000)
     return () => clearInterval(ref.current)
@@ -35,6 +35,10 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
   const bg     = isDark ? '#0d1f0d' : '#f6ffed'
   const border = isDark ? '#1a3a1a' : '#b7eb8f'
   const nameCol = isDark ? '#d4d4d4' : '#1a1a1a'
+
+  const handleCancel = async (id: string) => {
+    await bridge.cancel_invocation(id)
+  }
 
   return (
     <div style={{
@@ -51,6 +55,12 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
           <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{r.group}</Tag>
           <Text type="secondary" style={{ fontSize: 11 }}>{r.operator}</Text>
           <Text style={{ fontSize: 11, color: '#52c41a' }}>{elapsed(r.startedAt)}</Text>
+          <Tooltip title="Cancel">
+            <CloseCircleOutlined
+              style={{ fontSize: 13, color: isDark ? '#666' : '#aaa', cursor: 'pointer' }}
+              onClick={() => handleCancel(r.id)}
+            />
+          </Tooltip>
         </span>
       ))}
     </div>
@@ -69,7 +79,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const cmd = commandPath.length > 0 ? `${runnable.name} ${commandPath.join(' ')}` : runnable.name
       const label = `/${cmd} on ${runnable.host}`
       const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath)
-      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], done: false, rerunData: { host: runnable.host, runnable: runnable.name, args } })
+      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args } })
     }
     window.addEventListener('runspec:invoke_runnable', onInvoke)
     return () => window.removeEventListener('runspec:invoke_runnable', onInvoke)
@@ -80,7 +90,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     const onChat = async (e: Event) => {
       const { message } = (e as CustomEvent).detail as { message: string }
       const id = await bridge.send_chat(message)
-      addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], done: false })
+      addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
     }
     window.addEventListener('runspec:send_chat', onChat)
     return () => window.removeEventListener('runspec:send_chat', onChat)
@@ -92,7 +102,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const { host, runnable, args } = (e as CustomEvent).detail as RerunData
       const label = `/${runnable} on ${host} (rerun)`
       const id = await bridge.invoke_runnable(host, runnable, args)
-      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], done: false, rerunData: { host, runnable, args } })
+      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host, runnable, args } })
     }
     window.addEventListener('runspec:rerun', onRerun)
     return () => window.removeEventListener('runspec:rerun', onRerun)
@@ -101,7 +111,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   // Ask LLM from History: pendingChat prop triggers a chat send
   const sendChat = async (message: string) => {
     const id = await bridge.send_chat(message)
-    addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], done: false })
+    addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
   }
   const sendChatRef = useRef(sendChat)
   sendChatRef.current = sendChat

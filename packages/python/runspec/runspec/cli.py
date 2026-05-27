@@ -743,7 +743,8 @@ def _check_dist_files(dist: Any) -> list[dict[str, Any]]:
                 raw = load_raw(config_path)
                 if not raw["runnables"]:
                     return []
-                return [{"source": str(config_path), "runnable": name, "spec": spec} for name, spec in raw["runnables"].items()]
+                config_autonomy = raw.get("config", {}).get("autonomy")
+                return [{"source": str(config_path), "runnable": name, "spec": spec, "config_autonomy": config_autonomy} for name, spec in raw["runnables"].items()]
             except Exception:
                 pass
 
@@ -791,8 +792,9 @@ def _check_editable_source(dist: Any) -> list[dict[str, Any]]:
                 continue
             try:
                 raw = load_raw(candidate)
+                config_autonomy = raw.get("config", {}).get("autonomy")
                 for name, spec in raw["runnables"].items():
-                    discovered.append({"source": str(candidate), "runnable": name, "spec": spec})
+                    discovered.append({"source": str(candidate), "runnable": name, "spec": spec, "config_autonomy": config_autonomy})
             except Exception:
                 continue
     except PermissionError:

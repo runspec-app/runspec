@@ -6,6 +6,25 @@ import { bridge, type HistoryRecord, type HistoryLogLine } from '../bridge'
 
 const { Title, Text } = Typography
 
+const SOURCE_BADGE: Record<string, { label: string; color: string; title: string }> = {
+  env:          { label: 'env',      color: 'blue',    title: 'Value came from an environment variable' },
+  runspec_env:  { label: '.env',     color: 'purple',  title: 'Value came from the .runspec_env file' },
+  spec_default: { label: 'default',  color: 'default', title: 'Value is the spec default — not explicitly provided' },
+}
+
+function ArgSourceBadge({ source }: { source: string | undefined }) {
+  if (!source || source === 'cli' || source === 'not_set') return null
+  const badge = SOURCE_BADGE[source]
+  if (!badge) return null
+  return (
+    <Tooltip title={badge.title}>
+      <Tag color={badge.color} style={{ fontSize: 10, margin: '0 0 0 2px', padding: '0 4px', lineHeight: '16px', cursor: 'default' }}>
+        {badge.label}
+      </Tag>
+    </Tooltip>
+  )
+}
+
 const LOG_LEVEL_COLOUR: Record<string, string> = {
   INFO: '#4fc1ff',
   WARNING: '#faad14',
@@ -95,11 +114,12 @@ function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
             </Space>
           </div>
         ) : hasArgs ? (
-          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
+          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: '6px 16px', alignItems: 'center' }}>
             {Object.entries(args).map(([k, v]) => (
-              <span key={k}>
+              <span key={k} style={{ display: 'inline-flex', alignItems: 'center' }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>--{k}=</Text>
                 <Text code style={{ fontSize: 12 }}>{String(v)}</Text>
+                <ArgSourceBadge source={record.argSources?.[k]} />
               </span>
             ))}
           </div>

@@ -16,6 +16,17 @@ DEFAULT_SYSTEM = (
 )
 
 
+def _to_openai_function(t: dict[str, Any]) -> dict[str, Any]:
+    """Convert Anthropic-format tool (input_schema) to OpenAI function format (parameters)."""
+    func: dict[str, Any] = {"name": t["name"]}
+    if t.get("description"):
+        func["description"] = t["description"]
+    func["parameters"] = t.get("input_schema") or t.get("parameters") or {
+        "type": "object", "properties": {}
+    }
+    return func
+
+
 class OpenAIAdapter(ModelAdapter):
     def __init__(
         self,
@@ -35,7 +46,7 @@ class OpenAIAdapter(ModelAdapter):
             messages=[system_msg, *messages],
         )
         if tools:
-            kwargs["tools"] = [{"type": "function", "function": t} for t in tools]
+            kwargs["tools"] = [{"type": "function", "function": _to_openai_function(t)} for t in tools]
             kwargs["tool_choice"] = "auto"
         response = await self.client.chat.completions.create(**kwargs)
         msg = response.choices[0].message
@@ -49,6 +60,29 @@ class OpenAIAdapter(ModelAdapter):
             ]
         stop = response.choices[0].finish_reason or "stop"
         return ChatResponse(text=text, tool_calls=tool_calls, stop_reason=stop, _raw=response)
+
+    async def stream_chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]):  # type: ignore[override]
+        system_msg = {"role": "system", "content": self.system}
+        kwargs: dict[str, Any] = dict(
+            model=self.model,
+            messages=[system_msg, *messages],
+            stream=True,
+        )
+        if tools:
+            kwargs["tools"] = [{"type": "function", "function": _to_openai_function(t)} for t in tools]
+            kwargs["tool_choice"] = "auto"
+        async for chunk in await self.client.chat.completions.create(**kwargs):
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+    async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]):  # type: ignore[override]
+        # Fall back to non-streaming chat() — accumulating streaming deltas for tool calls
+        # requires complex state management; non-streaming is simpler and correct for tool turns.
+        response = await self.chat(messages, tools)
+        if response.text:
+            yield ("text", response.text)
+        yield ("done", response)
 
     def make_tool_turn(
         self, response: ChatResponse, results: list[tuple[ToolCall, str]]

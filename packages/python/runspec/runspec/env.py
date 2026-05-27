@@ -90,16 +90,20 @@ def load_env_file(raw: dict[str, Any], runnable_name: str) -> dict[str, str]:
     return _parse_dotenv(path)
 
 
-def apply_env_file(raw: dict[str, Any], runnable_name: str) -> dict[str, str]:
+def apply_env_file(raw: dict[str, Any], runnable_name: str) -> tuple[dict[str, str], frozenset[str]]:
     """Load .runspec_env and merge values into os.environ (existing vars win).
 
-    Returns the dict of values that were loaded from the file.
+    Returns (all_file_values, applied_keys) where applied_keys is the frozenset
+    of keys actually written to os.environ. Keys already present in os.environ
+    are not overwritten and are excluded from applied_keys.
     """
     values = load_env_file(raw, runnable_name)
+    applied: set[str] = set()
     for key, value in values.items():
         if key not in os.environ:
             os.environ[key] = value
-    return values
+            applied.add(key)
+    return values, frozenset(applied)
 
 
 def make_env_namespace(values: dict[str, str]) -> SimpleNamespace:

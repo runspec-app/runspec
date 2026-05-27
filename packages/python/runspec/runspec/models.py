@@ -47,8 +47,8 @@ class Arg:
     meta: dict[str, Any] | None = None
     position: int | None = None  # positional index (1-based); None = --flag arg
 
-    # Resolution metadata
-    source: str = "default"  # "cli" | "env" | "config" | "default"
+    # Resolution metadata — where this arg's value originated
+    source: str = "not_set"  # "cli" | "env" | "runspec_env" | "spec_default" | "not_set"
 
     # ── Transparent value access ──────────────────────────────────────────────
 

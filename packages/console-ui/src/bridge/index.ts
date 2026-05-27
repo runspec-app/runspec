@@ -4,7 +4,15 @@ export interface ArgDef {
   required: boolean
   description?: string
   default?: unknown
-  options?: string[]  // populated when type === 'choice'
+  options?: string[]      // populated when type === 'choice'
+  range?: [number, number]
+  multiple?: boolean
+  short?: string          // short flag alias e.g. "-v"
+  env?: string | string[] // env var aliases checked before spec default
+  deprecated?: string
+  autonomy?: string       // per-arg autonomy override
+  position?: number       // 1-based positional index
+  ui?: string             // form control hint
 }
 
 export interface Runnable {
@@ -14,8 +22,9 @@ export interface Runnable {
   description?: string
   args: ArgDef[]
   commands?: Record<string, Runnable>  // subcommands, max two levels deep
-  autonomy?: 'confirm' | 'autonomous'  // default 'confirm'; 'autonomous' = LLM can invoke without asking
-  runAs?: string                       // OS user the runnable executes as on the host
+  autonomy?: string   // effective autonomy — 'confirm' | 'autonomous' | 'supervised' | 'manual'
+  runAs?: string      // OS user the runnable executes as on the host
+  rawSpec?: Record<string, unknown>  // full raw spec dict for the holistic Specs view
 }
 
 export interface Host {
@@ -54,6 +63,7 @@ export interface HistoryRecord {
   durationMs: number
   ts: string
   args: Record<string, unknown>      // arguments used for this invocation (from run_summary)
+  argSources?: Record<string, string> // provenance of each arg: "cli" | "env" | "runspec_env" | "spec_default" | "not_set"
   logLines: HistoryLogLine[]         // log records belonging to this invocation
 }
 
@@ -62,7 +72,8 @@ export interface Schedule {
   runnable: string
   host: string
   schedule: string
-  nextRun: string
+  args?: Record<string, unknown>
+  nextRun?: string
 }
 
 export interface InFlightRecord {
@@ -124,6 +135,7 @@ export interface BridgeApi {
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
   test_host: (name: string) => Promise<TestResult>
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[]) => Promise<string>
+  cancel_invocation: (invId: string) => Promise<void>
   send_chat: (message: string, invocationId?: string) => Promise<string>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
@@ -149,17 +161,24 @@ function resolveBridge(): Promise<BridgeApi> {
       return
     }
     let settled = false
-    window.addEventListener('pywebviewready', () => {
-      if (!settled) { settled = true; resolve(window.pywebview!.api) }
-    }, { once: true })
-    // If pywebviewready hasn't fired after 500 ms we're in a plain browser
+    const settle = (api: BridgeApi) => { if (!settled) { settled = true; resolve(api) } }
+
+    window.addEventListener('pywebviewready', () => settle(window.pywebview!.api), { once: true })
+
+    // Poll — pywebview may inject the api without firing the event on some platforms
+    const poll = setInterval(() => {
+      if (window.pywebview?.api) { clearInterval(poll); settle(window.pywebview.api) }
+    }, 50)
+
+    // After 2500 ms with no pywebview, we're in a plain browser — use mock
     setTimeout(async () => {
+      clearInterval(poll)
       if (!settled) {
         settled = true
         const { mockApi } = await import('./mock')
         resolve(mockApi)
       }
-    }, 500)
+    }, 2500)
   })
   return _bridge
 }

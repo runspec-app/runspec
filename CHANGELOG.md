@@ -7,6 +7,82 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.19.0] — 2026-05-27
+
+### Added
+
+- **Arg source provenance (`Arg.source`)** — every resolved argument now carries
+  a `source` field that records where its value originated. Five values:
+  - `"cli"` — provided explicitly on the command line
+  - `"env"` — resolved from a system environment variable (auto `RUNSPEC_X_ARG_Y`
+    convention or a developer-declared `env = [...]` alias)
+  - `"runspec_env"` — resolved from the `.runspec_env` file loaded at parse time
+  - `"spec_default"` — came from `default = ...` in `runspec.toml`
+  - `"not_set"` — no value provided and no default declared (optional arg left absent)
+
+  The distinction between `"env"` and `"runspec_env"` is accurate: `apply_env_file`
+  now returns a `frozenset` of the keys it actually wrote to `os.environ` (keys
+  already present in the environment are not overwritten and are excluded). This
+  frozenset is threaded through `_apply_env` so each arg's source is definitively
+  classified.
+
+- **Arg provenance in the run_summary audit record** — `configure_logging()` now
+  accepts an optional `invocation_args` dict (`{argname: {value, source}}`).
+  `_emit_run_summary()` includes `args` (plain values) and `arg_sources`
+  (provenance strings) in the file-handler log record, closing the loop from
+  `Arg.source` to the persistent audit trail.
+
+### Changed
+
+- `apply_env_file()` return type changed from `dict[str, str]` to
+  `tuple[dict[str, str], frozenset[str]]` — callers receive both the full file
+  contents and the set of keys actually applied to `os.environ`.
+
+### Internal
+
+- Source tracking is a parallel `sources: dict[str, str]` that flows alongside
+  `parsed_values` through `_parse_argv` → `_apply_env` → `_apply_defaults` →
+  `_coerce_values`. The old `_determine_source()` stub is removed.
+- Bridge `_parse_log_by_run_id` and `_parse_log_sequential` now read
+  `extra.arg_sources` and pass it through to `HistoryRecord.argSources`.
+- `HistoryView` shows provenance badges next to arg values for non-CLI sources:
+  blue "env", purple ".env" (runspec_env), gray "default" (spec_default). CLI
+  args show no badge — the common case is uncluttered.
+
+---
+
+## [0.18.0] — 2026-05-27
+
+### Added
+
+- **Per-invocation `run_id` in every JSON log record** — `configure_logging()`
+  now generates a UUID4 for each process invocation and injects it into every
+  JSON log record as `extra.run_id` via a `_RunIdFilter` on the file handler.
+  Multi-user scenarios where several operators run the same runnable concurrently
+  produce interleaved records in a single log file; `run_id` lets the history
+  view (and any external log aggregator) separate runs cleanly without relying
+  on sequential position between `run_summary` markers.
+
+- **`print()` capture in the audit log** — a `_StdoutTee` replaces `sys.stdout`
+  after handlers are set up. Every complete line written via `print()` is
+  forwarded to `logger.info` (as `runspec.print`, marked `_from_print=True`).
+  The file handler captures these records; the stdout console handler suppresses
+  them to avoid double-printing. The result: runnables that use `print()` for
+  user-visible output (e.g. for subprocess piping) are now fully represented in
+  the audit log without any code changes required.
+
+- **`run_id` in `run_summary`** — the summary record written at process exit
+  includes `extra.run_id` alongside the existing `duration_ms`, `exit_code`, and
+  `events` fields.
+
+### Internal
+
+- Bridge `_parse_log_text` now detects `run_id` presence and routes to
+  `_parse_log_by_run_id` (one `HistoryRecord` per UUID group) or falls back to
+  `_parse_log_sequential` (legacy logs from <0.18).
+
+---
+
 ## [0.17.1] — 2026-05-26
 
 ### Fixed
