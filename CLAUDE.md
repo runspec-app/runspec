@@ -209,12 +209,21 @@ Run summary (0.12.0): same closing-line + audit-record shape as Python 0.12.3. `
 
 Both Python and Node packages are active and published.
 
-| Package | Version | PyPI / npm |
-|---|---|---|
-| `runspec` | 0.17.0 | PyPI |
-| `runspec-node` | 0.17.0 | npm |
-| `runspec-chat` | 0.4.7 | PyPI |
-| `runspec-registry` | 0.1.1 | PyPI (archived — registry was removed from `runspec serve` in favour of the SSH+MCP jump-host model) |
+| Package | Version | PyPI / npm | Notes |
+|---|---|---|---|
+| `runspec` | 0.17.0 | PyPI | Core library |
+| `runspec-node` | 0.17.0 | npm | Node port |
+| `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console, unreleased) |
+| `runspec-linux` | 0.1.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
+| `runspec-registry` | 0.1.1 | PyPI | Archived — registry removed in favour of SSH+MCP jump-host model |
+
+**Integration packages** live under `packages/integrations/`. Each is a
+self-contained package: own `pyproject.toml`, `runspec.toml`, tests, and CI
+workflow. Release tags follow `{name}-v*` (e.g. `linux-v0.1.0`).
+
+`runspec-linux` exports `nc_send(host, port, command, wait, read_timeout)` as a
+public Python API — wrapper runnables for TCP-interface apps do
+`from runspec_linux import nc_send`.
 
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").
 
