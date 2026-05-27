@@ -1,5 +1,8 @@
 import type { BridgeApi, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord, TestResult } from './index'
 
+// 80 days ago — triggers the yellow warning state in dev mode
+let MOCK_KEY_CREATED_AT: string = new Date(Date.now() - 80 * 24 * 60 * 60 * 1000).toISOString()
+
 const MOCK_RUNNABLES: Runnable[] = [
   {
     name: 'backup',
@@ -162,6 +165,20 @@ const MOCK_RUNNABLES: Runnable[] = [
     rawSpec: {
       description: 'Check network connectivity to a host',
       autonomy: 'autonomous',
+    },
+  },
+  {
+    name: 'generate-ssh-key',
+    group: 'ops-tools',
+    host: 'local',
+    description: 'Generate or rotate the runspec-console SSH key pair',
+    autonomy: 'confirm',
+    args: [
+      { name: 'key_path', type: 'str', required: false, default: '~/.ssh/runspec_ed25519', description: 'Path for the key pair (without extension)' },
+    ],
+    rawSpec: {
+      description: 'Generate or rotate the runspec-console SSH key pair',
+      autonomy: 'confirm',
     },
   },
   {
@@ -429,7 +446,7 @@ export const mockApi: BridgeApi = {
   get_schedules: async () => MOCK_SCHEDULES,
 
   get_config: async () => ({
-    ssh: { user: 'jason', identityFile: '~/.ssh/runspec_ed25519' },
+    ssh: { user: 'jason', identityFile: '~/.ssh/runspec_ed25519', key_created_at: MOCK_KEY_CREATED_AT },
     llm: { apiBaseUrl: '', model: 'claude-opus-4-7' },
   }),
 
@@ -531,6 +548,16 @@ export const mockApi: BridgeApi = {
         { scheduleId: 'sched-2', runnable: 'log-rotate',   host: 'local',  nextRun: new Date(Date.now() + 78 * 60 * 1000).toISOString() },
         { scheduleId: 'sched-3', runnable: 'health-check', host: 'prod-1', nextRun: new Date(Date.now() + 15 * 60 * 1000).toISOString() },
       ],
+    }
+  },
+
+  generate_ssh_key: async (keyPath: string) => {
+    await new Promise(r => setTimeout(r, 800))
+    MOCK_KEY_CREATED_AT = new Date().toISOString()
+    return {
+      ok: true,
+      public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPublicKeyForDevModeonlyrunspec-console',
+      message: `Key generated at ${keyPath || '~/.ssh/runspec_ed25519'}`,
     }
   },
 

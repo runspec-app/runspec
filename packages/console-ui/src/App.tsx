@@ -28,6 +28,7 @@ export default function App() {
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
   const [selectedHost, setSelectedHost] = useState<string>('')
@@ -55,6 +56,20 @@ export default function App() {
     setSelectedHost(name)
     setActiveScope([])
   }
+
+  const loadSshKeyAge = () => {
+    bridge.get_config().then(cfg => {
+      const ssh = (cfg.ssh ?? {}) as Record<string, string>
+      const createdAt = ssh.key_created_at
+      if (createdAt) {
+        setSshKeyAgeDays(Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24)))
+      } else {
+        setSshKeyAgeDays(null)
+      }
+    })
+  }
+
+  useEffect(() => { loadSshKeyAge() }, [])
 
   useEffect(() => {
     bridge.get_runnables('all').then(setRunnables)
@@ -253,8 +268,10 @@ export default function App() {
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
                 </Tooltip>
-                <Tooltip title="Settings">
-                  <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ color: iconCol }} />
+                <Tooltip title={sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : 'Settings'}>
+                  <Badge dot={sshKeyAgeDays !== null && sshKeyAgeDays >= 75} color="orange" offset={[-4, 4]}>
+                    <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ color: iconCol }} />
+                  </Badge>
                 </Tooltip>
               </div>
             </div>
@@ -333,6 +350,7 @@ export default function App() {
             bridge.get_hosts().then(setHosts)
             bridge.get_runnables('all').then(setRunnables)
           }}
+          onKeyChanged={loadSshKeyAge}
         />
       </ConfigProvider>
     </ThemeContext.Provider>

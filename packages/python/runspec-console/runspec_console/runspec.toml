@@ -55,3 +55,13 @@ description = "TCP port number to check"
 type        = "float"
 default     = 3.0
 description = "Connection timeout in seconds"
+
+[generate-ssh-key]
+description = "Generate or rotate the runspec-console SSH key pair"
+autonomy    = "confirm"
+
+[generate-ssh-key.args.key_path]
+type        = "str"
+required    = false
+default     = "~/.ssh/runspec_ed25519"
+description = "Path for the key pair (without extension)"

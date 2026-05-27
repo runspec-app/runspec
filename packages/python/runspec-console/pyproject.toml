@@ -24,6 +24,7 @@ disk-usage      = "runspec_console.tools.disk_usage:main"
 ping-host       = "runspec_console.tools.ping_host:main"
 flush-dns       = "runspec_console.tools.flush_dns:main"
 check-port      = "runspec_console.tools.check_port:main"
+generate-ssh-key = "runspec_console.tools.generate_ssh_key:main"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40.0"]

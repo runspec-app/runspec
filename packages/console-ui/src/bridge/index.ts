@@ -139,6 +139,7 @@ export interface BridgeApi {
   send_chat: (message: string, invocationId?: string) => Promise<string>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
+  generate_ssh_key: (keyPath: string) => Promise<{ ok: boolean; public_key: string; message: string }>
 }
 
 declare global {

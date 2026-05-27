@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, WarningOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type TestResult } from '../bridge'
 
 const { Text } = Typography
@@ -9,6 +9,7 @@ interface SettingsDrawerProps {
   open: boolean
   onClose: () => void
   onHostsChanged?: () => void
+  onKeyChanged?: () => void
 }
 
 const PROVIDER_MODELS: Record<string, string> = {
@@ -17,18 +18,27 @@ const PROVIDER_MODELS: Record<string, string> = {
   bedrock: 'anthropic.claude-sonnet-4-6',
 }
 
-function GeneralTab() {
+function keyAgeDays(createdAt: string | null): number | null {
+  if (!createdAt) return null
+  return Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
   const [form] = Form.useForm()
   const [provider, setProvider] = useState<string>('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [keyCreatedAt, setKeyCreatedAt] = useState<string | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [generatedPubKey, setGeneratedPubKey] = useState<string | null>(null)
 
-  useEffect(() => {
+  const loadConfig = () => {
     bridge.get_config().then(cfg => {
       const llm = (cfg.llm ?? {}) as Record<string, string>
       const ssh = (cfg.ssh ?? {}) as Record<string, string>
       const p = llm.provider ?? ''
       setProvider(p)
+      setKeyCreatedAt(ssh.key_created_at ?? null)
       form.setFieldsValue({
         provider: p,
         api_key: llm.api_key ?? '',
@@ -39,7 +49,9 @@ function GeneralTab() {
         ssh_identity_file: ssh.identityFile ?? '',
       })
     })
-  }, [form])
+  }
+
+  useEffect(() => { loadConfig() }, [form])
 
   const handleProviderChange = (val: string) => {
     setProvider(val)
@@ -61,6 +73,7 @@ function GeneralTab() {
       ssh: {
         ...(v.ssh_user          ? { user: v.ssh_user }                     : {}),
         ...(v.ssh_identity_file ? { identityFile: v.ssh_identity_file }    : {}),
+        ...(keyCreatedAt        ? { key_created_at: keyCreatedAt }         : {}),
       },
     }
     setSaving(true)
@@ -72,6 +85,29 @@ function GeneralTab() {
       setSaving(false)
     }
   }
+
+  const handleGenerateKey = async (isRotate: boolean) => {
+    const keyPath = form.getFieldValue('ssh_identity_file') || '~/.ssh/runspec_ed25519'
+    setGenerating(true)
+    setGeneratedPubKey(null)
+    try {
+      const result = await bridge.generate_ssh_key(keyPath)
+      if (result.ok) {
+        setGeneratedPubKey(result.public_key)
+        loadConfig()
+        onKeyChanged?.()
+        message.success(isRotate ? 'Key rotated — copy the new public key to your hosts' : 'Key generated')
+      } else {
+        message.error(result.message)
+      }
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const ageDays = keyAgeDays(keyCreatedAt)
+  const ageColor = ageDays === null ? undefined : ageDays >= 90 ? '#fa8c16' : ageDays >= 75 ? '#fadb14' : '#52c41a'
+  const ageLabel = ageDays === null ? null : ageDays === 0 ? 'today' : `${ageDays}d ago`
 
   return (
     <>
@@ -122,6 +158,92 @@ function GeneralTab() {
             <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: 'monospace' }} />
           </Form.Item>
         </div>
+
+        <Divider />
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <Text strong style={{ fontSize: 13 }}>SSH key</Text>
+          {ageDays !== null && ageColor && (
+            <Tag
+              color={ageDays >= 90 ? 'orange' : ageDays >= 75 ? 'gold' : 'success'}
+              style={{ margin: 0, fontSize: 11 }}
+              icon={ageDays >= 75 ? <WarningOutlined /> : <KeyOutlined />}
+            >
+              {ageLabel}
+            </Tag>
+          )}
+        </div>
+
+        {ageDays !== null && ageDays >= 75 && (
+          <div style={{
+            padding: '6px 10px', borderRadius: 6, marginBottom: 8,
+            background: ageDays >= 90 ? 'rgba(250,140,22,0.1)' : 'rgba(250,219,20,0.08)',
+            border: `1px solid ${ageDays >= 90 ? 'rgba(250,140,22,0.3)' : 'rgba(250,219,20,0.3)'}`,
+            fontSize: 12, color: ageDays >= 90 ? '#fa8c16' : '#d4b106',
+          }}>
+            {ageDays >= 90
+              ? `Key is ${ageDays} days old — rotation recommended.`
+              : `Key is ${ageDays} days old — consider rotating soon.`}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          {keyCreatedAt === null ? (
+            <Button
+              size="small"
+              icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+              disabled={generating}
+              onClick={() => handleGenerateKey(false)}
+            >
+              Generate key
+            </Button>
+          ) : (
+            <Popconfirm
+              title="Rotate SSH key?"
+              description={
+                <span style={{ fontSize: 12 }}>
+                  The existing key will be backed up.<br />
+                  You must re-authorize the new public key on all remote hosts.
+                </span>
+              }
+              onConfirm={() => handleGenerateKey(true)}
+              okText="Rotate" cancelText="Cancel"
+              placement="bottom"
+            >
+              <Button
+                size="small"
+                icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+                disabled={generating}
+              >
+                Rotate key
+              </Button>
+            </Popconfirm>
+          )}
+        </div>
+
+        {generatedPubKey && (
+          <div style={{ marginBottom: 8 }}>
+            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+              Public key — add to <code>~/.ssh/authorized_keys</code> on each host:
+            </Text>
+            <Typography.Paragraph
+              copyable
+              style={{
+                fontFamily: 'monospace', fontSize: 10, padding: '6px 10px',
+                background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
+                borderRadius: 4, wordBreak: 'break-all', margin: 0,
+                color: '#52c41a',
+              }}
+            >
+              {generatedPubKey}
+            </Typography.Paragraph>
+          </div>
+        )}
+
+        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 12 }}>
+          Key path from <em>Default identity file</em> above. Type: ed25519.
+          Existing keys are backed up before rotation.
+        </Text>
 
         <Divider />
 
@@ -481,13 +603,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   )
 }
 
-export function SettingsDrawer({ open, onClose, onHostsChanged }: SettingsDrawerProps) {
+export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged }: SettingsDrawerProps) {
   return (
     <Drawer title="Settings" placement="right" width={480} open={open} onClose={onClose}>
       <Tabs
         size="small"
         items={[
-          { key: 'general',    label: 'General',     children: <GeneralTab /> },
+          { key: 'general',    label: 'General',     children: <GeneralTab onKeyChanged={onKeyChanged} /> },
           { key: 'jumpHosts',  label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
         ]}
       />

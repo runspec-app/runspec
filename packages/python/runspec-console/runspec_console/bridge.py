@@ -29,7 +29,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-from .config import config_path, hosts_path
+from .config import config_path, hosts_path, _dict_to_toml, read_config, write_config
 from .discovery import discover_local, discover_remote
 from .executor import args_to_argv, run_local, run_remote
 from .hosts import load_hosts, save_hosts, venv_name
@@ -178,19 +178,23 @@ class Bridge:
     # ── config ────────────────────────────────────────────────────────────────
 
     def get_config(self) -> dict[str, Any]:
-        path = config_path()
-        if not path.exists():
-            return {}
-        try:
-            with open(path, "rb") as f:
-                return dict(tomllib.load(f))
-        except Exception:
-            return {}
+        return read_config()
 
     def save_config(self, data: dict[str, Any]) -> None:
-        path = config_path()
-        path.write_text(_dict_to_toml(data), encoding="utf-8")
+        write_config(data)
         self._adapter = None
+
+    def generate_ssh_key(self, key_path: str) -> dict[str, Any]:
+        from .tools.generate_ssh_key import _run_keygen
+        from datetime import datetime, timezone
+        result = _run_keygen(key_path)
+        if result["ok"]:
+            cfg = self.get_config()
+            ssh_section = dict(cfg.get("ssh", {}))
+            ssh_section["key_created_at"] = datetime.now(timezone.utc).isoformat()
+            cfg["ssh"] = ssh_section
+            self.save_config(cfg)
+        return result
 
     # ── hosts file management ─────────────────────────────────────────────────
 
@@ -802,33 +806,6 @@ def _parse_log_sequential(name: str, entries: list[dict[str, Any]], host: str) -
                 "message": entry.get("message", ""),
             })
     return records
-
-
-def _dict_to_toml(data: dict[str, Any], _prefix: str = "") -> str:
-    """Minimal TOML serialiser for flat and one-level-nested dicts."""
-    lines: list[str] = []
-    nested: list[tuple[str, dict[str, Any]]] = []
-    for k, v in data.items():
-        if isinstance(v, dict):
-            nested.append((k, v))
-        elif isinstance(v, str):
-            lines.append(f'{k} = "{v}"')
-        elif isinstance(v, bool):
-            lines.append(f'{k} = {"true" if v else "false"}')
-        elif v is None:
-            pass
-        else:
-            lines.append(f"{k} = {v}")
-    for section, sub in nested:
-        lines.append(f"\n[{section}]")
-        for k, v in sub.items():
-            if isinstance(v, str):
-                lines.append(f'{k} = "{v}"')
-            elif isinstance(v, bool):
-                lines.append(f'{k} = {"true" if v else "false"}')
-            elif v is not None:
-                lines.append(f"{k} = {v}")
-    return "\n".join(lines) + "\n"
 
 
 def _toml_scalar(v: Any) -> str:
