@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.17.0)"
+        required: true
 
 jobs:
   build:
@@ -79,8 +84,10 @@ jobs:
           path: dist/
 
       - name: Extract changelog notes
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ESCAPED="${VERSION//./\\.}"
           awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
             CHANGELOG.md > release-notes.md
@@ -88,8 +95,9 @@ jobs:
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="$RELEASE_TAG"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
             gh release edit   "$TAG" --notes-file release-notes.md
