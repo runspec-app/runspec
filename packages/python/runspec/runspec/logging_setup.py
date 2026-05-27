@@ -190,7 +190,7 @@ def configure_logging(
     _print_logger = logging.getLogger("runspec.print")
     _tee = _StdoutTee(sys.stdout, _print_logger)
     atexit.register(_tee.flush_remaining)
-    sys.stdout = _tee  # type: ignore[assignment]
+    sys.stdout = _tee
 
     _configured = True
 
@@ -296,7 +296,7 @@ class _RunIdFilter(logging.Filter):
         self._run_id = run_id
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record._run_id = self._run_id  # type: ignore[attr-defined]
+        record._run_id = self._run_id
         return True
 
 
@@ -336,7 +336,7 @@ class _StdoutTee:
             self._buf = ""
 
     def fileno(self) -> int:
-        return self._original.fileno()
+        return int(self._original.fileno())
 
     def isatty(self) -> bool:
         return False
