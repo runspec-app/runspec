@@ -1,0 +1,108 @@
+name: Linux Release
+
+on:
+  push:
+    tags:
+      - "linux-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. linux-v0.1.0)"
+        required: true
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/integrations/runspec-linux
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/system-info
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_linux')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          from runspec_linux import nc_send
+          print('Wheel contents OK')
+          "
+
+      - name: Build sdist
+        run: python -m build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: packages/integrations/runspec-linux/dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/runspec-linux
+
+    permissions:
+      id-token: write   # required for OIDC trusted publishing
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Extract changelog notes
+        run: |
+          VERSION="${{ inputs.tag || github.ref_name }}"
+          VERSION="${VERSION#linux-v}"
+          ESCAPED="${VERSION//./\\.}"
+          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
+            packages/integrations/runspec-linux/CHANGELOG.md > release-notes.md
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit   "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" dist/* \
+              --title "runspec-linux $TAG" \
+              --notes-file release-notes.md
+          fi

@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-linux"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Linux system admin runnables for runspec"
+dependencies = [
+    "runspec>=0.17.0",
+]
+
+[project.scripts]
+system-info       = "runspec_linux.system_info:main_system_info"
+disk-usage        = "runspec_linux.system_info:main_disk_usage"
+check-memory      = "runspec_linux.system_info:main_check_memory"
+list-processes    = "runspec_linux.system_info:main_list_processes"
+check-service     = "runspec_linux.services:main_check_service"
+list-services     = "runspec_linux.services:main_list_services"
+restart-service   = "runspec_linux.services:main_restart_service"
+tail-log          = "runspec_linux.logs:main_tail_log"
+search-log        = "runspec_linux.logs:main_search_log"
+journalctl        = "runspec_linux.logs:main_journalctl"
+ping-host         = "runspec_linux.network:main_ping_host"
+check-port        = "runspec_linux.network:main_check_port"
+show-connections  = "runspec_linux.network:main_show_connections"
+find-large-files  = "runspec_linux.files:main_find_large_files"
+backup-files      = "runspec_linux.files:main_backup_files"
+last-logins       = "runspec_linux.security:main_last_logins"
+who               = "runspec_linux.security:main_who"
+list-containers   = "runspec_linux.containers:main_list_containers"
+container-logs    = "runspec_linux.containers:main_container_logs"
+restart-container = "runspec_linux.containers:main_restart_container"
+nc-command        = "runspec_linux.nc_command:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+
+[tool.ruff]
+line-length = 200
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

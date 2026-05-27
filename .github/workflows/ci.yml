@@ -18,6 +18,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       node: ${{ steps.filter.outputs.node }}
       chat: ${{ steps.filter.outputs.chat }}
+      linux: ${{ steps.filter.outputs.linux }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -33,6 +34,9 @@ jobs:
               - '.github/workflows/ci.yml'
             chat:
               - 'packages/python/runspec-chat/**'
+              - '.github/workflows/ci.yml'
+            linux:
+              - 'packages/integrations/runspec-linux/**'
               - '.github/workflows/ci.yml'
 
   python:
@@ -179,9 +183,54 @@ jobs:
           print('Wheel contents OK')
           "
 
+  linux:
+    name: runspec-linux
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/integrations/runspec-linux
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/system-info
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_linux')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          from runspec_linux import nc_send
+          print('Wheel contents OK')
+          "
+
   ci:
     name: CI
-    needs: [python, node, chat]
+    needs: [python, node, chat, linux]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -206,6 +255,12 @@ jobs:
           fi
           if [[ "$chat_result" == "failure" || "$chat_result" == "cancelled" ]]; then
             echo "Chat checks failed."
+            exit 1
+          fi
+          linux_result='${{ needs.linux.result }}'
+          echo "linux:  $linux_result"
+          if [[ "$linux_result" == "failure" || "$linux_result" == "cancelled" ]]; then
+            echo "Linux checks failed."
             exit 1
           fi
           echo "All checks passed (or were correctly skipped)."

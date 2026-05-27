@@ -1,0 +1,328 @@
+[config]
+autonomy-default = "autonomous"
+
+# ── System monitoring ─────────────────────────────────────────────────────────
+
+[system-info]
+serve     = ["local"]
+description = "Report hostname, OS, kernel version, uptime, load averages, and CPU count"
+autonomy  = "autonomous"
+output    = "json"
+
+[disk-usage]
+serve     = ["local"]
+description = "Report disk usage for all mounted filesystems"
+autonomy  = "autonomous"
+output    = "json"
+
+[check-memory]
+serve     = ["local"]
+description = "Report RAM and swap usage in megabytes"
+autonomy  = "autonomous"
+output    = "json"
+
+[list-processes]
+serve     = ["local"]
+description = "List running processes, optionally filtered by name"
+autonomy  = "autonomous"
+output    = "json"
+
+[list-processes.args.filter]
+type        = "str"
+short       = "-f"
+description = "Filter processes whose command contains this string"
+required    = false
+
+[list-processes.args.limit]
+type        = "int"
+short       = "-n"
+description = "Maximum number of processes to return"
+default     = 20
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
+[check-service]
+serve       = ["local"]
+description = "Check whether a systemd service is active and report its status"
+autonomy    = "autonomous"
+output      = "json"
+
+[check-service.args.service]
+type        = "str"
+short       = "-s"
+description = "Service name (e.g. nginx or nginx.service)"
+
+[list-services]
+serve       = ["local"]
+description = "List all systemd service units and their active/sub state"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-services.args.state]
+type        = "choice"
+options     = ["all", "active", "failed", "inactive"]
+default     = "all"
+description = "Filter services by active state"
+
+[restart-service]
+serve       = ["local"]
+description = "Restart a systemd service"
+autonomy    = "confirm"
+output      = "json"
+
+[restart-service.args.service]
+type        = "str"
+short       = "-s"
+description = "Service name to restart"
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+
+[tail-log]
+serve       = ["local"]
+description = "Return the last N lines of a log file"
+autonomy    = "autonomous"
+output      = "json"
+
+[tail-log.args.file]
+type        = "path"
+short       = "-f"
+description = "Path to the log file"
+
+[tail-log.args.lines]
+type        = "int"
+short       = "-n"
+description = "Number of lines to return"
+default     = 50
+
+[search-log]
+serve       = ["local"]
+description = "Search a log file for lines matching a pattern"
+autonomy    = "autonomous"
+output      = "json"
+
+[search-log.args.file]
+type        = "path"
+short       = "-f"
+description = "Path to the log file"
+
+[search-log.args.pattern]
+type        = "str"
+short       = "-p"
+description = "Search pattern (case-insensitive substring or regex)"
+
+[search-log.args.limit]
+type        = "int"
+short       = "-n"
+description = "Maximum number of matching lines to return"
+default     = 100
+
+[journalctl]
+serve       = ["local"]
+description = "Fetch recent journal entries for a systemd unit (systemd-only)"
+autonomy    = "autonomous"
+output      = "json"
+
+[journalctl.args.unit]
+type        = "str"
+short       = "-u"
+description = "Systemd unit name (e.g. nginx or nginx.service)"
+
+[journalctl.args.lines]
+type        = "int"
+short       = "-n"
+description = "Number of lines to return"
+default     = 50
+
+[journalctl.args.since]
+type        = "str"
+description = "Return entries since this time string (e.g. '1 hour ago', '2026-05-27 08:00')"
+required    = false
+
+# ── Network ───────────────────────────────────────────────────────────────────
+
+[ping-host]
+serve       = ["local"]
+description = "Ping a host and report reachability and packet loss"
+autonomy    = "autonomous"
+output      = "json"
+
+[ping-host.args.host]
+type        = "str"
+short       = "-H"
+description = "Hostname or IP address to ping"
+
+[ping-host.args.count]
+type        = "int"
+short       = "-c"
+description = "Number of ICMP packets to send"
+default     = 4
+
+[check-port]
+serve       = ["local"]
+description = "Check whether a TCP port is open on a host"
+autonomy    = "autonomous"
+output      = "json"
+
+[check-port.args.host]
+type        = "str"
+short       = "-H"
+description = "Hostname or IP address"
+
+[check-port.args.port]
+type        = "int"
+short       = "-p"
+description = "TCP port number"
+
+[check-port.args.timeout]
+type        = "float"
+description = "Connection timeout in seconds"
+default     = 3.0
+
+[show-connections]
+serve       = ["local"]
+description = "Show active TCP/UDP connections (equivalent to ss or netstat)"
+autonomy    = "autonomous"
+output      = "json"
+
+[show-connections.args.state]
+type        = "choice"
+options     = ["all", "established", "listening"]
+default     = "all"
+description = "Filter connections by state"
+
+# ── Files ─────────────────────────────────────────────────────────────────────
+
+[find-large-files]
+serve       = ["local"]
+description = "Find files larger than a threshold in a directory tree"
+autonomy    = "autonomous"
+output      = "json"
+
+[find-large-files.args.path]
+type        = "path"
+short       = "-p"
+description = "Directory to search"
+
+[find-large-files.args.min-mb]
+type        = "float"
+description = "Minimum file size in megabytes"
+default     = 100.0
+
+[find-large-files.args.limit]
+type        = "int"
+short       = "-n"
+description = "Maximum number of results to return (sorted by size, largest first)"
+default     = 20
+
+[backup-files]
+serve       = ["local"]
+description = "Create a timestamped tar.gz archive of a directory"
+autonomy    = "confirm"
+output      = "json"
+
+[backup-files.args.source]
+type        = "path"
+short       = "-s"
+description = "Directory to archive"
+
+[backup-files.args.destination]
+type        = "path"
+short       = "-d"
+description = "Directory where the archive will be written"
+default     = "/tmp"
+
+# ── Security ──────────────────────────────────────────────────────────────────
+
+[last-logins]
+serve       = ["local"]
+description = "Show recent login history from the wtmp log"
+autonomy    = "autonomous"
+output      = "json"
+
+[last-logins.args.limit]
+type        = "int"
+short       = "-n"
+description = "Number of login records to return"
+default     = 20
+
+[who]
+serve       = ["local"]
+description = "List users currently logged in to the system"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Containers ────────────────────────────────────────────────────────────────
+
+[list-containers]
+serve       = ["local"]
+description = "List Docker containers (requires Docker)"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-containers.args.all]
+type        = "flag"
+short       = "-a"
+description = "Include stopped containers"
+default     = false
+
+[container-logs]
+serve       = ["local"]
+description = "Fetch recent log output from a Docker container"
+autonomy    = "autonomous"
+output      = "json"
+
+[container-logs.args.container]
+type        = "str"
+short       = "-c"
+description = "Container name or ID"
+
+[container-logs.args.lines]
+type        = "int"
+short       = "-n"
+description = "Number of lines to return"
+default     = 50
+
+[restart-container]
+serve       = ["local"]
+description = "Restart a Docker container"
+autonomy    = "confirm"
+output      = "json"
+
+[restart-container.args.container]
+type        = "str"
+short       = "-c"
+description = "Container name or ID"
+
+# ── TCP interfaces (nc-command) ────────────────────────────────────────────────
+
+[nc-command]
+serve       = ["local"]
+description = "Send a command over a plain TCP socket and return the response (nc-style)"
+autonomy    = "autonomous"
+output      = "json"
+
+[nc-command.args.host]
+type        = "str"
+short       = "-H"
+description = "Hostname or IP address"
+
+[nc-command.args.port]
+type        = "int"
+short       = "-p"
+description = "TCP port number"
+
+[nc-command.args.command]
+type        = "str"
+short       = "-c"
+description = "Command string to send (a newline is appended automatically)"
+
+[nc-command.args.wait]
+type        = "float"
+short       = "-w"
+description = "Seconds to keep the connection open after sending (allows server response to arrive)"
+default     = 0.3
+
+[nc-command.args.read-timeout]
+type        = "float"
+description = "Per-chunk socket read timeout in seconds"
+default     = 0.1
