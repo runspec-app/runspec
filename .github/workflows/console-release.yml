@@ -32,8 +32,8 @@ jobs:
       - name: Build wheel
         working-directory: packages/python/runspec-console
         run: |
-          pip install build
-          python -m build --wheel
+          pip install build hatchling
+          python -m build --wheel --no-isolation
 
       - name: Wheel smoke test
         working-directory: packages/python/runspec-console
@@ -51,7 +51,7 @@ jobs:
 
       - name: Build sdist
         working-directory: packages/python/runspec-console
-        run: python -m build --sdist
+        run: python -m build --sdist --no-isolation
 
       - uses: actions/upload-artifact@v4
         with:
