@@ -192,6 +192,24 @@ The flag only *adds* visibility; it never silences anything. The `debug` name
 is reserved when `[config.logging]` is present — your runnable cannot define
 its own argument by that name.
 
+#### `run_id`
+
+Each invocation gets a UUID4 assigned at `configure_logging()` time and injected
+into every JSON log record as `extra.run_id`. When multiple operators run the
+same runnable concurrently, log records from different runs are interleaved in a
+single log file; `run_id` is the key that separates them cleanly.
+
+The `run_id` field appears in every file-handler record (not console output) and
+in the run_summary audit record.
+
+#### `print()` capture
+
+Any line written to stdout via `print()` (or equivalent) is captured and
+forwarded to the `runspec.print` logger at INFO level, marked `_from_print=True`.
+The file handler records it; the stdout console handler suppresses it to prevent
+double-printing. This means runnables that use `print()` for user-visible output
+appear fully in the audit log without any code changes.
+
 #### Run summary
 
 When `summary = true` (default), the language pack records one summary at
@@ -209,6 +227,7 @@ The audit record is fixed-schema:
  "message": "run completed",
  "extra": {
    "event": "run_summary",
+   "run_id": "a3f8c2d1-...",
    "runnable": "compress",
    "command_path": [],
    "duration_ms": 1483,
@@ -216,7 +235,9 @@ The audit record is fixed-schema:
    "agent": false,
    "autonomy": "confirm",
    "exception": null,
-   "events": {"DEBUG": 0, "INFO": 12, "WARNING": 2, "ERROR": 0, "CRITICAL": 0}
+   "events": {"DEBUG": 0, "INFO": 12, "WARNING": 2, "ERROR": 0, "CRITICAL": 0},
+   "args": {"quality": 85, "dry_run": false},
+   "arg_sources": {"quality": "cli", "dry_run": "spec_default"}
  }}
 ```
 
@@ -661,8 +682,24 @@ For every argument, implementations must resolve the value in this order:
 1. Explicit CLI argument — highest priority
 2. `RUNSPEC_<RUNNABLE>_ARG_<ARGNAME>` environment variable (automatic for every arg)
 3. `env` aliases (developer-declared list, checked in order)
-4. Default from spec
-5. Error: required — if nothing above matched and `required = true`
+4. `.runspec_env` file value (loaded at parse time — does not overwrite existing env)
+5. Default from spec
+6. Error: required — if nothing above matched and `required = true`
+
+Implementations must track the source of each resolved value and expose it via
+an `Arg.source` field (or equivalent). Valid source values:
+
+| Source | Meaning |
+|---|---|
+| `"cli"` | Provided explicitly on the command line |
+| `"env"` | Resolved from a system environment variable (auto `RUNSPEC_*` or a declared `env` alias) |
+| `"runspec_env"` | Resolved from the `.runspec_env` file |
+| `"spec_default"` | Came from `default = ...` in `runspec.toml` |
+| `"not_set"` | No value — arg is optional and was left absent |
+
+The `run_summary` audit record includes both `args` (plain values) and
+`arg_sources` (provenance strings) so the full invocation context is
+reconstructable from the log alone.
 
 ---
 
