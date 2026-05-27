@@ -264,6 +264,31 @@ export default function App() {
                 </button>
               ))}
               <div style={{ flex: 1 }} />
+
+              {/* Host status pills — always-visible connectivity at a glance */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px', borderRight: `1px solid ${borderCol}` }}>
+                {hosts.map(h => (
+                  <button
+                    key={h.name}
+                    onClick={() => handleHostSelect(h.name)}
+                    title={h.connected ? `${h.name} — connected` : `${h.name} — disconnected`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '2px 7px', border: 'none', borderRadius: 10, cursor: 'pointer',
+                      background: selectedHost === h.name
+                        ? (isDark ? 'rgba(79,193,255,0.1)' : 'rgba(9,88,217,0.08)')
+                        : 'transparent',
+                      color: h.connected ? (isDark ? '#bbb' : '#333') : (isDark ? '#444' : '#bbb'),
+                      fontSize: 11, fontFamily: 'monospace',
+                      transition: 'background 0.12s',
+                    }}
+                  >
+                    <span style={{ fontSize: 8, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
+                    {h.name}
+                  </button>
+                ))}
+              </div>
+
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 10 }}>
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />

@@ -69,6 +69,8 @@ function ArgInput({ arg, value, error, onChange }: ArgInputProps) {
         onChange={onChange}
         placeholder={placeholder}
         step={arg.type === 'float' ? 0.1 : 1}
+        min={arg.range?.[0]}
+        max={arg.range?.[1]}
         style={{ width: '100%', ...inputStyle }}
         status={error ? 'error' : undefined}
       />
@@ -229,8 +231,13 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
   const handleSubmit = () => {
     const errs: Record<string, string> = {}
     for (const arg of currentNode.args ?? []) {
-      if (arg.required && (values[arg.name] === undefined || values[arg.name] === '')) {
+      const v = values[arg.name]
+      if (arg.required && (v === undefined || v === '')) {
         errs[arg.name] = 'Required'
+      } else if (arg.range && (arg.type === 'int' || arg.type === 'float') && v !== undefined && v !== '') {
+        const n = Number(v)
+        const [lo, hi] = arg.range
+        if (n < lo || n > hi) errs[arg.name] = `Must be between ${lo} and ${hi}`
       }
     }
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
