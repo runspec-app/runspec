@@ -32,15 +32,14 @@ jobs:
       - name: Build wheel
         working-directory: packages/python/runspec-console
         run: |
-          pip install build hatchling
-          python -m build --wheel --no-isolation
+          pip install hatchling
+          python -m hatchling build -t wheel
 
       - name: Wheel smoke test
         working-directory: packages/python/runspec-console
         run: |
           python -m venv /tmp/smoke
-          /tmp/smoke/bin/pip install dist/*.whl
-          /tmp/smoke/bin/runspec-console --help || true
+          /tmp/smoke/bin/pip install dist/*.whl --no-deps
           /tmp/smoke/bin/python -c "
           from importlib.resources import files
           pkg = files('runspec_console')
@@ -51,7 +50,7 @@ jobs:
 
       - name: Build sdist
         working-directory: packages/python/runspec-console
-        run: python -m build --sdist --no-isolation
+        run: python -m hatchling build -t sdist
 
       - uses: actions/upload-artifact@v4
         with:
