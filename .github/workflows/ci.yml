@@ -39,12 +39,49 @@ jobs:
               - 'packages/integrations/runspec-linux/**'
               - '.github/workflows/ci.yml'
 
-  python:
-    name: Python ${{ matrix.python-version }}
+  # ── Python ──────────────────────────────────────────────────────────────────
+
+  python-quality:
+    name: "Python quality / ${{ matrix.check }}"
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format, typecheck]
+    defaults:
+      run:
+        working-directory: packages/python/runspec
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+      - name: Type check
+        if: matrix.check == 'typecheck'
+        run: mypy runspec/
+
+  python-test:
+    name: "Python test / ${{ matrix.python-version }}"
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     defaults:
@@ -60,15 +97,6 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
-
-      - name: Lint
-        run: ruff check .
-
-      - name: Format check
-        run: ruff format --check .
-
-      - name: Type check
-        run: mypy runspec/
 
       - name: Run tests
         run: pytest
@@ -100,12 +128,15 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  # ── Node ────────────────────────────────────────────────────────────────────
+
   node:
     name: Node ${{ matrix.node }}
     needs: changes
     if: needs.changes.outputs.node == 'true'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node: ["18", "20", "22"]
     steps:
@@ -134,8 +165,44 @@ jobs:
         working-directory: packages/node
         run: npm test
 
-  chat:
-    name: runspec-chat
+  # ── runspec-chat ─────────────────────────────────────────────────────────────
+
+  chat-quality:
+    name: "chat quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.chat == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format, typecheck]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-chat
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+      - name: Type check
+        if: matrix.check == 'typecheck'
+        run: mypy runspec_chat/
+
+  chat-test:
+    name: runspec-chat test
     needs: changes
     if: needs.changes.outputs.chat == 'true'
     runs-on: ubuntu-latest
@@ -152,18 +219,8 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Lint
-        run: ruff check .
-
-      - name: Format check
-        run: ruff format --check .
-
-      - name: Type check
-        run: mypy runspec_chat/
-
       - name: Run tests
         run: pytest
-
 
       - name: Build wheel
         run: |
@@ -183,8 +240,40 @@ jobs:
           print('Wheel contents OK')
           "
 
-  linux:
-    name: runspec-linux
+  # ── runspec-linux ─────────────────────────────────────────────────────────
+
+  linux-quality:
+    name: "linux quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/integrations/runspec-linux
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  linux-test:
+    name: runspec-linux test
     needs: changes
     if: needs.changes.outputs.linux == 'true'
     runs-on: ubuntu-latest
@@ -200,12 +289,6 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
-
-      - name: Lint
-        run: ruff check .
-
-      - name: Format check
-        run: ruff format --check .
 
       - name: Run tests
         run: pytest
@@ -228,9 +311,11 @@ jobs:
           print('Wheel contents OK')
           "
 
+  # ── Aggregator ───────────────────────────────────────────────────────────────
+
   ci:
     name: CI
-    needs: [python, node, chat, linux]
+    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -239,28 +324,23 @@ jobs:
           # Fail only on real failures or cancellations. A 'skipped' result is
           # expected and OK — it means change-detection didn't see relevant
           # files for that language pack.
-          python_result='${{ needs.python.result }}'
-          node_result='${{ needs.node.result }}'
-          chat_result='${{ needs.chat.result }}'
-          echo "python: $python_result"
-          echo "node:   $node_result"
-          echo "chat:   $chat_result"
-          if [[ "$python_result" == "failure" || "$python_result" == "cancelled" ]]; then
-            echo "Python checks failed."
-            exit 1
-          fi
-          if [[ "$node_result" == "failure" || "$node_result" == "cancelled" ]]; then
-            echo "Node checks failed."
-            exit 1
-          fi
-          if [[ "$chat_result" == "failure" || "$chat_result" == "cancelled" ]]; then
-            echo "Chat checks failed."
-            exit 1
-          fi
-          linux_result='${{ needs.linux.result }}'
-          echo "linux:  $linux_result"
-          if [[ "$linux_result" == "failure" || "$linux_result" == "cancelled" ]]; then
-            echo "Linux checks failed."
+          fail=0
+          check() {
+            local name="$1" result="$2"
+            echo "$name: $result"
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              fail=1
+            fi
+          }
+          check "python-quality" "${{ needs.python-quality.result }}"
+          check "python-test"    "${{ needs.python-test.result }}"
+          check "node"           "${{ needs.node.result }}"
+          check "chat-quality"   "${{ needs.chat-quality.result }}"
+          check "chat-test"      "${{ needs.chat-test.result }}"
+          check "linux-quality"  "${{ needs.linux-quality.result }}"
+          check "linux-test"     "${{ needs.linux-test.result }}"
+          if [[ $fail -eq 1 ]]; then
+            echo "One or more checks failed."
             exit 1
           fi
           echo "All checks passed (or were correctly skipped)."

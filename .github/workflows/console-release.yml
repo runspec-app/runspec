@@ -1,0 +1,114 @@
+name: Console Release
+
+on:
+  push:
+    tags:
+      - "console-v*"
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install UI dependencies
+        working-directory: packages/console-ui
+        run: npm ci
+
+      - name: Build UI (Vite → runspec_console/dist/)
+        working-directory: packages/console-ui
+        run: npm run build
+
+      - name: Build wheel
+        working-directory: packages/python/runspec-console
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        working-directory: packages/python/runspec-console
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/runspec-console --help || true
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_console')
+          assert (pkg / 'dist' / 'index.html').is_file(), 'dist/index.html missing from wheel — run npm run build first'
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          print('Wheel contents OK')
+          "
+
+      - name: Build sdist
+        working-directory: packages/python/runspec-console
+        run: python -m build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: packages/python/runspec-console/dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/runspec-console
+
+    permissions:
+      id-token: write   # required for OIDC trusted publishing
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Extract changelog notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#console-v}"
+          ESCAPED="${VERSION//./\\.}"
+          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
+            packages/python/runspec-console/CHANGELOG.md > release-notes.md
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit   "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" dist/* \
+              --title "runspec-console $TAG" \
+              --notes-file release-notes.md
+          fi

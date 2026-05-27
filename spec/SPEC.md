@@ -53,10 +53,62 @@ Project-wide defaults. All fields are optional.
 |---|---|---|---|
 | `autonomy-default` | string | `"confirm"` | Autonomy when unspecified on a script |
 | `lang` | string | — | Preferred language for `runspec generate` |
-| `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. |
+| `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. The venv directory name must pass the naming check (see *Virtual Environment Identity*) regardless of whether this field is set. |
 | `version` | string | `"1"` | runspec spec version |
 | `logging` | table | — | Logging configuration. See [Logging](#logging). |
 | `runspec_env` | string | — | Path to a `.runspec_env` file. Relative paths resolve from `sys.prefix`. Per-runnable `runspec_env` wins. |
+
+### Virtual Environment Identity
+
+`runspec serve` derives the runnable group identifier from the execution
+environment name at startup:
+
+| Runtime | Source |
+|---|---|
+| Python | `Path(sys.prefix).name` — the venv root directory name |
+| Node | `name` field from the nearest `package.json` |
+
+This name identifies which set of runnables came from which environment. When
+two environments expose a runnable with the same name, the group label is what
+lets operators and agents tell them apart.
+
+**Naming requirement (Python):** The following venv directory names are
+rejected — `runspec serve` refuses to start if `Path(sys.prefix).name` matches
+any of them:
+
+```
+venv  .venv  env  .env  virtualenv  .virtualenv
+```
+
+These names are ambiguous — they describe nothing about what is installed or who
+owns the environment. A venv named `myapp-prod` makes an unambiguous claim that
+`venv` cannot.
+
+This check is unconditional. Setting `[config] name` does not bypass it — the
+venv directory name is the execution identity, not a display label. A display
+label over a generically-named venv is still a generically-named venv.
+
+**Remedy:** Recreate the venv with a meaningful name that reflects the
+application and deployment tier:
+
+```bash
+# wrong
+python -m venv .venv
+
+# right
+python -m venv myapp-prod
+source myapp-prod/bin/activate
+pip install -e .
+```
+
+Deployments managed by configuration management should encode the application
+name in the venv path so the identity is visible at the filesystem level:
+
+```
+/opt/myapp-prod/          ← venv root (sys.prefix basename = "myapp-prod")
+  bin/runspec
+  lib/python3.x/...
+```
 
 
 ### Logging
@@ -140,6 +192,24 @@ The flag only *adds* visibility; it never silences anything. The `debug` name
 is reserved when `[config.logging]` is present — your runnable cannot define
 its own argument by that name.
 
+#### `run_id`
+
+Each invocation gets a UUID4 assigned at `configure_logging()` time and injected
+into every JSON log record as `extra.run_id`. When multiple operators run the
+same runnable concurrently, log records from different runs are interleaved in a
+single log file; `run_id` is the key that separates them cleanly.
+
+The `run_id` field appears in every file-handler record (not console output) and
+in the run_summary audit record.
+
+#### `print()` capture
+
+Any line written to stdout via `print()` (or equivalent) is captured and
+forwarded to the `runspec.print` logger at INFO level, marked `_from_print=True`.
+The file handler records it; the stdout console handler suppresses it to prevent
+double-printing. This means runnables that use `print()` for user-visible output
+appear fully in the audit log without any code changes.
+
 #### Run summary
 
 When `summary = true` (default), the language pack records one summary at
@@ -157,6 +227,7 @@ The audit record is fixed-schema:
  "message": "run completed",
  "extra": {
    "event": "run_summary",
+   "run_id": "a3f8c2d1-...",
    "runnable": "compress",
    "command_path": [],
    "duration_ms": 1483,
@@ -164,7 +235,9 @@ The audit record is fixed-schema:
    "agent": false,
    "autonomy": "confirm",
    "exception": null,
-   "events": {"DEBUG": 0, "INFO": 12, "WARNING": 2, "ERROR": 0, "CRITICAL": 0}
+   "events": {"DEBUG": 0, "INFO": 12, "WARNING": 2, "ERROR": 0, "CRITICAL": 0},
+   "invocation_args": {"quality": 85, "dry_run": false},
+   "arg_sources": {"quality": "cli", "dry_run": "spec_default"}
  }}
 ```
 
@@ -609,8 +682,25 @@ For every argument, implementations must resolve the value in this order:
 1. Explicit CLI argument — highest priority
 2. `RUNSPEC_<RUNNABLE>_ARG_<ARGNAME>` environment variable (automatic for every arg)
 3. `env` aliases (developer-declared list, checked in order)
-4. Default from spec
-5. Error: required — if nothing above matched and `required = true`
+4. `.runspec_env` file value (loaded at parse time — does not overwrite existing env)
+5. Default from spec
+6. Error: required — if nothing above matched and `required = true`
+
+Implementations must track the source of each resolved value and expose it via
+an `Arg.source` field (or equivalent). Valid source values:
+
+| Source | Meaning |
+|---|---|
+| `"cli"` | Provided explicitly on the command line |
+| `"env"` | Resolved from a system environment variable (auto `RUNSPEC_*` or a declared `env` alias) |
+| `"runspec_env"` | Resolved from the `.runspec_env` file |
+| `"spec_default"` | Came from `default = ...` in `runspec.toml` |
+| `"not_set"` | No value — arg is optional and was left absent |
+
+The `run_summary` audit record includes both `invocation_args` (plain values) and
+`arg_sources` (provenance strings) so the full invocation context is
+reconstructable from the log alone. (`"args"` is a reserved `LogRecord` field and
+cannot be used as an `extra` key — hence `invocation_args`.)
 
 ---
 

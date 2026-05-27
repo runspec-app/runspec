@@ -151,9 +151,10 @@ def test_apply_env_file_sets_os_environ(tmp_path: Path) -> None:
     f.write_text("TEST_APPLY_KEY=injected\n")
     with patch.dict(os.environ, {"RUNSPEC_ENV_FILE": str(f)}, clear=False):
         os.environ.pop("TEST_APPLY_KEY", None)
-        result = apply_env_file({}, "myscript")
+        values, applied = apply_env_file({}, "myscript")
         assert os.environ.get("TEST_APPLY_KEY") == "injected"
-        assert result == {"TEST_APPLY_KEY": "injected"}
+        assert values == {"TEST_APPLY_KEY": "injected"}
+        assert "TEST_APPLY_KEY" in applied
     os.environ.pop("TEST_APPLY_KEY", None)
 
 

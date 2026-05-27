@@ -1,0 +1,67 @@
+[config.logging]
+
+[runspec-console]
+description = "Desktop console for runspec — run, schedule and monitor runnables"
+autonomy    = "confirm"
+
+[runspec-console.args.dev]
+type        = "flag"
+description = "Point pywebview at the Vite dev server (http://localhost:5173) instead of bundled dist"
+
+[runspec-console.args.port]
+type        = "int"
+default     = 5173
+description = "Vite dev server port (only used with --dev)"
+
+[disk-usage]
+description = "Show free/used space for all local drives or a specific path"
+autonomy    = "autonomous"
+
+[disk-usage.args.path]
+type        = "str"
+required    = false
+description = "Drive letter or path to check (default: all drives)"
+
+[ping-host]
+description = "Check network connectivity to a host"
+autonomy    = "autonomous"
+
+[ping-host.args.host]
+type        = "str"
+description = "Hostname or IP address to ping"
+
+[ping-host.args.count]
+type        = "int"
+default     = 4
+description = "Number of ping requests to send"
+
+[flush-dns]
+description = "Flush the Windows DNS resolver cache"
+autonomy    = "confirm"
+
+[check-port]
+description = "Test whether a TCP port is open on a host"
+autonomy    = "autonomous"
+
+[check-port.args.host]
+type        = "str"
+description = "Hostname or IP address"
+
+[check-port.args.port]
+type        = "int"
+description = "TCP port number to check"
+
+[check-port.args.timeout]
+type        = "float"
+default     = 3.0
+description = "Connection timeout in seconds"
+
+[generate-ssh-key]
+description = "Generate or rotate the runspec-console SSH key pair"
+autonomy    = "confirm"
+
+[generate-ssh-key.args.key_path]
+type        = "str"
+required    = false
+default     = "~/.ssh/runspec_ed25519"
+description = "Path for the key pair (without extension)"

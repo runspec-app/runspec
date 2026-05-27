@@ -758,6 +758,249 @@ One field in the spec controls both the agent's trust level and the user's exper
 
 ---
 
+## Venv Deployment Layout
+
+Every runspec-managed venv has up to four files at `{sys.prefix}/` (the venv
+root, one directory above `bin/`). Together they form the complete deployment
+unit — everything the console and the agent need is co-located with the
+environment, not scattered across user home directories or system config paths.
+
+```
+{venv_root}/
+  runspec.toml          # the interface spec — what runnables exist and what args they accept
+  .runspec_env          # deployment-time variable values (not committed to source control)
+  runspec_hosts.toml    # jump-host definitions for remote access
+  runspec_schedules.toml  # scheduled invocation definitions
+```
+
+### Why co-location matters
+
+A venv is already the deployment boundary for Python runnables. Keeping all
+four files inside it means:
+
+- The console discovers the full picture by reading one directory
+- Deployment scripts (Ansible, shell, CI) have a single target to write to
+- Upgrading or replacing a venv carries all config automatically
+- No global registry, no per-user config, no lookup ambiguity
+
+### `runspec_hosts.toml` — renamed from `jump_hosts.toml`
+
+The file was originally called `jump_hosts.toml`, mirroring the `runspec jump`
+command. The rename to `runspec_hosts.toml` happened because:
+
+- The four-file layout needed a consistent `runspec_` prefix to be recognisable
+  at a glance as runspec-owned config
+- "Jump host" is an implementation concept (`ssh -J`); the file is really a
+  host directory for the whole console, not just the jump mechanism
+- The `[config]` section already uses `hosts` as the field name for declaring
+  remote targets — `runspec_hosts.toml` matches that vocabulary
+
+The shape of the file is unchanged — it remains a TOML array of host records.
+Only the filename changed.
+
+### `runspec_schedules.toml`
+
+Stores scheduled invocation definitions — which runnable, on which host, on
+what cadence, with what args. The console reads this file and writes it (via
+the bridge) when the user creates or edits a schedule. See the `runspec
+scheduler` section below for how the schedules are actually executed.
+
+---
+
+## .runspec_env — Deployment-time Variable Injection
+
+### Why this file exists
+
+Args declared with `default = "$SOME_VAR"` are environment variable references — a
+third tier in value resolution sitting between the per-arg default and the caller-supplied
+value. The file provides a controlled way to inject per-host, per-venv values (API keys,
+endpoint URLs, bucket names) without:
+
+- Modifying the OS or shell environment (too broad)
+- Committing secrets to git (the file is gitignored per-host)
+- Requiring venv activation (values are loaded by the runspec library at parse time,
+  not by shell activation scripts)
+
+The `$VAR` syntax in a default is intentionally inert until the file is loaded — if
+`.runspec_env` is absent or the key is unset, the arg behaves as if no default was given.
+
+### Full-path invocation is fine
+
+Calling a script via full venv path (`/path/to/venv/bin/my-script`) without shell
+activation works correctly. The runspec library reads `.runspec_env` at parse time before
+arg resolution, so no shell activation step is needed. The file path resolves from
+`sys.prefix`, which is always set correctly by the venv's own Python interpreter
+regardless of how the script was invoked.
+
+### Console UI bridge design (settled 2026-05-26)
+
+When the console-ui Forms view pre-populates a form from `.runspec_env`:
+
+1. **Read the file directly** — the bridge method `get_runspec_env(host, group)` reads
+   `{sys.prefix}/.runspec_env` on the remote host and returns its `KEY=VALUE` pairs.
+   It does NOT dump `os.environ` (which would expose system credentials and unrelated
+   tooling vars). The `.runspec_env` file is the explicit contract; nothing outside it
+   is surfaced.
+
+2. **Filter to referenced keys only** — the UI pre-populates only args whose default is
+   a `$VAR` reference AND whose variable name appears as a key in the returned map.
+   Args whose `$VAR` is not in the file remain empty (the orange `$VAR` label signals
+   this clearly). All other keys in the file are silently ignored by the UI — the
+   bridge returns the full file contents and the filtering happens client-side.
+
+3. **Host-aware values** — `get_runspec_env` is scoped to a specific host+group pair,
+   so the same `$S3_BUCKET` arg can show different pre-filled values for prod-1 vs
+   prod-2, immediately surfacing host-to-host mismatches in the form before any
+   command is run.
+
+4. **The `$VAR` label persists** — even when a value is pre-filled from the file, the
+   orange `$VAR` annotation on the form field remains as a tooltip indicating the
+   value's origin. The user can edit before submitting.
+
+### What goes in the file
+
+Only vars that are actually referenced by `$VAR` defaults in the venv's `runspec.toml`
+should be in `.runspec_env`. It is not a general-purpose env file. Keys not referenced
+by any arg are dead weight and will never reach the UI or the running script via
+runspec's resolution path.
+
+---
+
+## runspec scheduler — Scheduled Invocations
+
+### Why not cron
+
+The obvious answer for scheduling is cron — it's already there on every Linux
+host. In practice, cron has real costs for a team product:
+
+- Cron tables accumulate over years. Entries added by people who have since left
+  have no owner, no description, no history. Nobody knows what they do or
+  whether it's safe to remove them.
+- Cron has no UI. Viewing, editing, or auditing schedules requires SSH access
+  and root (or the deploying user's) privilege.
+- Cron cannot emit structured output or run summaries. The only feedback
+  mechanism is email, which most teams have disabled.
+- Cron entries are not connected to the runspec interface. Args are inlined as
+  raw shell, bypassing validation, env resolution, and the audit log.
+
+### The standalone scheduler
+
+`runspec scheduler` is a long-lived process — managed by systemd, supervisor,
+or equivalent — that reads `runspec_schedules.toml` from the venv root, fires
+invocations on schedule, and emits the same structured run summaries as an
+interactive invocation.
+
+```
+[service]        systemd unit / supervisor program
+runspec scheduler --venv /opt/venvs/platform-core
+```
+
+The scheduler process:
+
+1. Reads `runspec_schedules.toml` at startup and on `SIGHUP` (so schedule
+   changes take effect without a restart)
+2. Resolves each scheduled invocation through the normal runspec pipeline —
+   args validated, `.runspec_env` applied, run summary written to the audit log
+3. Runs each invocation as the `run_as` user declared in the runspec, using the
+   same sudo mechanism as interactive invocations
+4. The console can display in-flight scheduled runs in the InFlight strip
+   alongside interactive runs — they look identical because they are identical
+
+### Why a dedicated process beats cron for runspec
+
+- `runspec_schedules.toml` is version-controlled alongside the interface spec.
+  Schedules are owned, described, and reviewed like code.
+- The console reads and writes `runspec_schedules.toml` via the bridge. Add,
+  edit, pause, or delete a schedule without touching cron at all.
+- Full audit trail — every scheduled run produces the same `HistoryRecord` as
+  an interactive run, attributed to `"Scheduled Task"` as the operator.
+- Each form modal can offer a "Schedule this" button that opens the schedule
+  editor pre-populated with the current args.
+
+### Deployment
+
+The scheduler is deployed as part of the venv setup — the same deploying sudo
+user that writes `.runspec_env` and `runspec_schedules.toml` also registers the
+systemd unit. Existing team cron habits are preserved: the sudo user that has
+always owned scheduled work continues to own it; the files just move from cron
+tables to a TOML file under version control.
+
+### The built-in `today-digest` runnable
+
+`runspec scheduler` ships with one built-in runnable: `today-digest`. It is not
+defined in a user's `runspec.toml` — it is part of the scheduler process itself
+and registered automatically when the scheduler is initialised.
+
+The deployer adds it to `runspec_schedules.toml` as part of setup:
+
+```toml
+[[schedule]]
+id       = "builtin-today-digest"
+runnable = "today-digest"
+schedule = "*/5 * * * *"   # every 5 minutes
+builtin  = true             # scheduler will not delete this entry
+```
+
+`builtin = true` is the only thing that distinguishes it from user schedules in
+the TOML. The scheduler refuses to delete entries with this flag through the
+normal delete path, and the console-ui Schedules tab renders them with a
+platform badge instead of a delete button.
+
+Every time `today-digest` runs, it reads the audit log for the current day,
+aggregates the data, and writes `{sys.prefix}/runspec_today.json`. The bridge
+reads this file directly when the console opens the Today tab — no log parsing
+on request, no per-user queries. All users of the venv see an identical,
+pre-computed view that is at most 5 minutes stale.
+
+### `TodaySummary` — the data shape
+
+`runspec_today.json` (and the bridge type that maps to it):
+
+```typescript
+interface TodaySummary {
+  date: string          // YYYY-MM-DD — the day this summary covers
+  generatedAt: string   // ISO timestamp of the last digest run
+  totalRuns: number
+  successCount: number  // exit_code === 0
+  failureCount: number  // exit_code !== 0
+  byRunnable: {
+    runnable: string
+    host: string
+    count: number
+    lastExitCode: number
+    lastRun: string     // ISO timestamp
+  }[]
+  upcomingToday: {
+    scheduleId: string
+    runnable: string
+    host: string
+    nextRun: string     // ISO timestamp — only entries whose nextRun is today
+  }[]
+}
+```
+
+When `runspec_today.json` is absent (first deploy of the day, scheduler not yet
+running), `get_today()` returns `null` and the Today tab shows a "digest not yet
+available" state rather than an error.
+
+### Why the scheduler owns this, not the bridge
+
+An alternative design would have the bridge scan the audit log directly on every
+Today tab open. This fails at scale:
+
+- Audit logs are append-only and grow without bound — scanning on every request
+  is O(log size), not O(1)
+- Multiple console users hitting the tab simultaneously would all scan
+  independently
+- The bridge runs on the local machine; reading remote audit logs means SSH per
+  request, not one pre-computed file read
+
+The scheduler is already a long-lived process with file-system access to the
+venv. It is the right owner: it runs on cadence, it owns the audit log, and its
+output is a single cheap file the bridge can read in one call.
+
+---
+
 ## Type System
 
 ### Core types
@@ -939,11 +1182,11 @@ Fuzzy matching on typos is implemented via `difflib` from the Python standard li
 - [x] Subcommand structure — `commands` key on a script section, settled and implemented
 - [x] Should `autonomy = "confirm"` be the default — yes, safe by default, opt-in to trust
 - [x] Should language packs return rich metadata objects — yes, Python's `Arg` dataclass is the model; Node mirrors it
+- [x] How do `ui` hints interact with MCP's evolving form specification — console-ui infers control from `type` (`flag`→Switch, `choice`→Select, `int`/`float`→InputNumber, `path`/`str`→Input) with `ui` as an explicit override; MCP protocol-level mapping deferred until MCP form spec stabilises
 - [ ] Should `runspec generate` use templates per language or be fully AI-driven?
 - [ ] What signals determine which packaged example best matches a given spec?
 - [ ] How should runtime detection handle version constraints (e.g. python3.11+ required)?
 - [ ] Should generated code be written to disk automatically or previewed first?
-- [ ] How do `ui` hints interact with MCP's evolving form specification — track MCP's spec or define our own and map to it?
 - [ ] Should custom type registration be per-project (in `runspec.toml`) or code-only (via `runspec.register_type()`)?
 
 ---
@@ -968,12 +1211,26 @@ Design phase complete. Core ideas, strategy, and build order are settled. Ready 
 | Type registry architecture | ✓ | |
 | `runspec-python` language pack | ✓ | |
 | Subcommands via `commands` key | ✓ | |
+| `.runspec_env` file + bridge design | ✓ | |
+| Four-file venv layout (`runspec.toml`, `.runspec_env`, `runspec_hosts.toml`, `runspec_schedules.toml`) | ✓ | |
+| `runspec_hosts.toml` rename (was `jump_hosts.toml`) | ✓ | |
+| `runspec scheduler` standalone process design | ✓ | |
+| `today-digest` built-in runnable + `TodaySummary` bridge type | ✓ | |
 | Autonomy enforcement in runtime | | ✓ |
 | Group validation logic | | ✓ |
 | Conditional requirements | | ✓ |
 | Config file fallback (third tier) | | ✓ |
-| Form rendering / `ui` hint support | | ✓ |
-| MCP chat-native form emission | | ✓ |
+| Form rendering / `ui` hint support (console-ui) | ✓ | |
+| `ui` hint support in MCP / chat-native form emission | | ✓ |
+| `runspec-console` Python bridge package skeleton | ✓ | |
+| `runspec-console` discovery via site-packages TOML scan | ✓ | |
+| `runspec-console` executor with streaming stdout/stderr | ✓ | |
+| `runspec-console` LLM adapters (anthropic, openai, bedrock extras) | ✓ | |
+| `runspec-console` pywebview app entry point (dev + prod mode) | ✓ | |
+| `runspec scheduler` implementation | | ✓ |
+| `runspec_hosts.toml` rename in UI (Settings drawer) | | ✓ |
+| Schedules tab in console-ui | | ✓ |
+| Today tab in console-ui | | ✓ |
 | `runspec-node` language pack | | ✓ |
 | `runspec-go` language pack | | ✓ |
 | `runspec generate` | | ✓ |

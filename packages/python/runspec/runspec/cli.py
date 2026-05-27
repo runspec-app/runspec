@@ -93,7 +93,11 @@ def cmd_local(args: list[str]) -> None:
         _print_local_text(discovered)
     else:
         bin_dir = Path(sys.executable).parent
-        callable_only = [d for d in discovered if (bin_dir / d["runnable"]).exists()]
+
+        def _has_binary(name: str) -> bool:
+            return (bin_dir / name).exists() or (bin_dir / f"{name}.exe").exists()
+
+        callable_only = [d for d in discovered if _has_binary(d["runnable"])]
         if fmt == "json":
             print(json.dumps(callable_only, indent=2, default=str))
         elif fmt in ("mcp", "openai", "anthropic"):
@@ -741,7 +745,8 @@ def _check_dist_files(dist: Any) -> list[dict[str, Any]]:
                 raw = load_raw(config_path)
                 if not raw["runnables"]:
                     return []
-                return [{"source": str(config_path), "runnable": name, "spec": spec} for name, spec in raw["runnables"].items()]
+                config_autonomy = raw.get("config", {}).get("autonomy")
+                return [{"source": str(config_path), "runnable": name, "spec": spec, "config_autonomy": config_autonomy} for name, spec in raw["runnables"].items()]
             except Exception:
                 pass
 
@@ -789,8 +794,9 @@ def _check_editable_source(dist: Any) -> list[dict[str, Any]]:
                 continue
             try:
                 raw = load_raw(candidate)
+                config_autonomy = raw.get("config", {}).get("autonomy")
                 for name, spec in raw["runnables"].items():
-                    discovered.append({"source": str(candidate), "runnable": name, "spec": spec})
+                    discovered.append({"source": str(candidate), "runnable": name, "spec": spec, "config_autonomy": config_autonomy})
             except Exception:
                 continue
     except PermissionError:
@@ -840,11 +846,11 @@ def _print_local_text(discovered: list[dict[str, Any]]) -> None:
             desc = runnable.get("description") or ""
             autonomy = runnable.get("autonomy") or "confirm"
 
-            entry_point = bin_dir / name
-            callable_marker = "" if entry_point.exists() else "  [not callable]"
+            has_ep = (bin_dir / name).exists() or (bin_dir / f"{name}.exe").exists()
+            callable_marker = "" if has_ep else "  [not callable]"
             print(f"    {name:<24} {desc[:48]:<50}  [{autonomy}]{callable_marker}")
 
-            if not entry_point.exists():
+            if not has_ep:
                 errors.append(f"'{name}' entry point not registered — add to [project.scripts] in pyproject.toml and re-run pip install")
 
             if not runnable.get("description"):

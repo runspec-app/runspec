@@ -527,39 +527,60 @@ class TestApplyEnv:
     def test_runspec_arg_var_provides_default(self, monkeypatch):
         """RUNSPEC_<RUNNABLE>_ARG_<ARGNAME> is picked up automatically when no CLI value."""
         monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_QUALITY", "95")
-        result = _apply_env({"quality": None}, {"quality": _spec()}, "compress")
+        result, sources = _apply_env({"quality": None}, {}, {"quality": _spec()}, "compress", frozenset())
         assert result["quality"] == "95"
+        assert sources["quality"] == "env"
 
     def test_cli_value_wins_over_runspec_arg_var(self, monkeypatch):
         """Explicit CLI arg takes precedence — RUNSPEC_<RUNNABLE>_ARG_* is ignored."""
         monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_QUALITY", "95")
-        result = _apply_env({"quality": "80"}, {"quality": _spec()}, "compress")
+        result, sources = _apply_env({"quality": "80"}, {"quality": "cli"}, {"quality": _spec()}, "compress", frozenset())
         assert result["quality"] == "80"
+        assert sources["quality"] == "cli"
 
     def test_developer_alias_fallback(self, monkeypatch):
         """env = [...] alias is checked when RUNSPEC_<RUNNABLE>_ARG_* is not set."""
         monkeypatch.setenv("CI_QUALITY", "70")
         monkeypatch.delenv("RUNSPEC_COMPRESS_ARG_QUALITY", raising=False)
-        result = _apply_env({"quality": None}, {"quality": _spec(env=["CI_QUALITY"])}, "compress")
+        result, sources = _apply_env({"quality": None}, {}, {"quality": _spec(env=["CI_QUALITY"])}, "compress", frozenset())
         assert result["quality"] == "70"
+        assert sources["quality"] == "env"
 
     def test_runspec_arg_var_wins_over_developer_alias(self, monkeypatch):
         """RUNSPEC_<RUNNABLE>_ARG_* takes precedence over developer-declared env aliases."""
         monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_QUALITY", "95")
         monkeypatch.setenv("CI_QUALITY", "70")
-        result = _apply_env({"quality": None}, {"quality": _spec(env=["CI_QUALITY"])}, "compress")
+        result, sources = _apply_env({"quality": None}, {}, {"quality": _spec(env=["CI_QUALITY"])}, "compress", frozenset())
         assert result["quality"] == "95"
+        assert sources["quality"] == "env"
 
     def test_hyphenated_arg_name(self, monkeypatch):
         """Hyphens in arg names become underscores in the RUNSPEC_<RUNNABLE>_ARG_* key."""
         monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_DRY_RUN", "1")
-        result = _apply_env({"dry_run": None}, {"dry-run": _spec(type="flag")}, "compress")
+        result, sources = _apply_env({"dry_run": None}, {}, {"dry-run": _spec(type="flag")}, "compress", frozenset())
         assert result["dry_run"] == "1"
+        assert sources["dry_run"] == "env"
 
     def test_multiple_aliases_first_match_wins(self, monkeypatch):
         """When multiple aliases declared, first one found is used."""
         monkeypatch.setenv("SECOND_VAR", "second")
         monkeypatch.delenv("RUNSPEC_COMPRESS_ARG_QUALITY", raising=False)
         monkeypatch.delenv("FIRST_VAR", raising=False)
-        result = _apply_env({"quality": None}, {"quality": _spec(env=["FIRST_VAR", "SECOND_VAR"])}, "compress")
+        result, sources = _apply_env({"quality": None}, {}, {"quality": _spec(env=["FIRST_VAR", "SECOND_VAR"])}, "compress", frozenset())
         assert result["quality"] == "second"
+        assert sources["quality"] == "env"
+
+    def test_runspec_env_source_when_key_applied_from_file(self, monkeypatch):
+        """env var sourced from .runspec_env file gets source='runspec_env'."""
+        monkeypatch.setenv("RUNSPEC_COMPRESS_ARG_QUALITY", "88")
+        result, sources = _apply_env({"quality": None}, {}, {"quality": _spec()}, "compress", frozenset({"RUNSPEC_COMPRESS_ARG_QUALITY"}))
+        assert result["quality"] == "88"
+        assert sources["quality"] == "runspec_env"
+
+    def test_env_source_when_key_not_in_applied(self, monkeypatch):
+        """env var from system (not file) gets source='env' even if key is in file values."""
+        monkeypatch.setenv("CI_QUALITY", "55")
+        monkeypatch.delenv("RUNSPEC_COMPRESS_ARG_QUALITY", raising=False)
+        result, sources = _apply_env({"quality": None}, {}, {"quality": _spec(env=["CI_QUALITY"])}, "compress", frozenset())
+        assert result["quality"] == "55"
+        assert sources["quality"] == "env"

@@ -13,6 +13,7 @@ import re
 import sys
 import time
 import traceback
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +82,7 @@ def configure_logging(
     autonomy: str | None = None,
     agent: bool = False,
     command_path: list[str] | None = None,
+    invocation_args: dict[str, Any] | None = None,
 ) -> None:
     """
     Configure root logger from normalised [config.logging].
@@ -115,22 +117,35 @@ def configure_logging(
 
     floor = logging.DEBUG if debug else logging.INFO
 
+    # Unique ID for this invocation — injected into every JSON log record so
+    # multi-user or multi-run log files can be filtered by invocation.
+    run_id = str(uuid.uuid4())
+
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
-    root.addFilter(_SensitiveFilter())
+
+    # Sensitive filter goes on each handler so it runs during propagation from
+    # child loggers (root logger-level filters are not called during callHandlers
+    # propagation — only handler-level filters are).
+    sensitive = _SensitiveFilter()
 
     # Below WARNING → stdout (treated as the runnable's primary output).
     # Drop run-summary records — they go to the file only; the human-visible
     # form is written directly to stderr by the atexit hook.
+    # Also suppress print-captured records (_from_print) to avoid double output.
     out_handler = logging.StreamHandler(sys.stdout)
+    out_handler._runspec_stream = "stdout"  # type: ignore[attr-defined]
     out_handler.setLevel(floor)
-    out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name != _RUN_SUMMARY_LOGGER)
+    out_handler.addFilter(sensitive)
+    out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name != _RUN_SUMMARY_LOGGER and not getattr(r, "_from_print", False))
     out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(out_handler)
 
     # WARNING and above → stderr (Unix convention for diagnostics).
     err_handler = logging.StreamHandler(sys.stderr)
+    err_handler._runspec_stream = "stderr"  # type: ignore[attr-defined]
     err_handler.setLevel(logging.WARNING)
+    err_handler.addFilter(sensitive)
     err_handler.addFilter(lambda r: r.name != _RUN_SUMMARY_LOGGER)
     err_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(err_handler)
@@ -141,6 +156,8 @@ def configure_logging(
     log_path = log_dir / f"{runnable_name}.log"
     fh = _make_file_handler(log_path, log_cfg["rotate"], log_cfg["keep"])
     fh.setLevel(floor)
+    fh.addFilter(sensitive)
+    fh.addFilter(_RunIdFilter(run_id))
     fh.setFormatter(_JsonFormatter())
     root.addHandler(fh)
 
@@ -163,9 +180,19 @@ def configure_logging(
             "emitted": False,
             "user": user,
             "user_target": user_target,
+            "run_id": run_id,
+            "invocation_args": invocation_args or {},
         }
         _install_excepthook()
         atexit.register(_emit_run_summary)
+
+    # Tee sys.stdout so print() calls also land in the file audit log.
+    # Handlers above captured the real sys.stdout reference before this swap.
+    # Register flush AFTER _emit_run_summary (LIFO → flush runs FIRST at exit).
+    _print_logger = logging.getLogger("runspec.print")
+    _tee = _StdoutTee(sys.stdout, _print_logger)
+    atexit.register(_tee.flush_remaining)
+    sys.stdout = _tee
 
     _configured = True
 
@@ -263,6 +290,63 @@ class _RunSummaryCounter(logging.Handler):
             self.counts[record.levelname] += 1
 
 
+class _RunIdFilter(logging.Filter):
+    """Injects _run_id onto every LogRecord so the JSON formatter can include it."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__()
+        self._run_id = run_id
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record._run_id = self._run_id
+        return True
+
+
+class _StdoutTee:
+    """Replaces sys.stdout; tees writes to original stdout AND logger.info.
+
+    print() calls reach the original stdout unchanged (so MCP piping/agent
+    capture still works), and each complete line is also forwarded to the
+    logging pipeline with _from_print=True so the file handler captures it
+    in the audit log.  The _from_print marker is checked by the out_handler
+    filter to prevent double-printing.
+    """
+
+    def __init__(self, original: Any, logger: logging.Logger) -> None:
+        self._original = original
+        self._logger = logger
+        self._buf = ""
+        self.encoding = getattr(original, "encoding", "utf-8")
+        self.errors = getattr(original, "errors", "replace")
+
+    def write(self, data: str) -> int:
+        self._original.write(data)
+        self._buf += data
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            if line:
+                self._logger.info(line, extra={"_from_print": True})
+        return len(data)
+
+    def flush(self) -> None:
+        self._original.flush()
+
+    def flush_remaining(self) -> None:
+        """atexit hook — flush any partial line still in the buffer."""
+        if self._buf:
+            self._logger.info(self._buf, extra={"_from_print": True})
+            self._buf = ""
+
+    def fileno(self) -> int:
+        return int(self._original.fileno())
+
+    def isatty(self) -> bool:
+        return False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._original, name)
+
+
 class _JsonFormatter(logging.Formatter):
     """Structured JSON: ts, level, logger, message, exc (when present)."""
 
@@ -278,6 +362,9 @@ class _JsonFormatter(logging.Formatter):
             obj["exc"] = self.formatException(record.exc_info)
             record.exc_text = obj["exc"]
         extra = _collect_extra(record)
+        run_id = getattr(record, "_run_id", None)
+        if run_id:
+            extra["run_id"] = run_id
         if extra:
             obj["extra"] = extra
         return json.dumps(obj)
@@ -385,11 +472,13 @@ def _emit_run_summary() -> None:
 
     # File record via the standard logger — picked up by the file handler only
     # (console handlers filter out runspec.runsummary by logger name).
+    invocation_args = state.get("invocation_args", {})
     with contextlib.suppress(Exception):
         logging.getLogger(_RUN_SUMMARY_LOGGER).info(
             "run completed",
             extra={
                 "event": "run_summary",
+                "run_id": state.get("run_id"),
                 "runnable": state["runnable"],
                 "command_path": state["command_path"],
                 "duration_ms": duration_ms,
@@ -400,6 +489,8 @@ def _emit_run_summary() -> None:
                 "events": dict(state["counter"].counts),
                 "user": state["user"],
                 "user_target": state["user_target"],
+                "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
+                "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
             },
         )
 

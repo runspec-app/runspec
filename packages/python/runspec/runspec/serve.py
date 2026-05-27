@@ -22,6 +22,10 @@ from typing import Any
 MCP_PROTOCOL_VERSION = "2024-11-05"
 MCP_SPEC = "https://github.com/modelcontextprotocol/specification"
 
+# Venv directory names that are too generic to serve as runnable group identifiers.
+# runspec serve refuses to start when sys.prefix ends in one of these.
+_GENERIC_VENV_NAMES = frozenset({"venv", ".venv", "env", ".env", "virtualenv", ".virtualenv"})
+
 # Standard JSON-RPC 2.0 error codes
 _ERR_PARSE = -32700
 _ERR_METHOD_NOT_FOUND = -32601
@@ -38,6 +42,21 @@ def serve() -> None:
     truth. Packages must be installed (pip install / pip install -e) to be
     served. Same convention as `runspec local` and `runspec jump`.
     """
+    venv_name = Path(sys.prefix).name
+    if venv_name in _GENERIC_VENV_NAMES:
+        sys.stderr.write(
+            f"runspec serve: virtual environment name '{venv_name}' is not allowed.\n"
+            f"The venv name is the runnable group identifier in the runspec ecosystem\n"
+            f"and must reflect what is installed — not just that a venv exists.\n"
+            f"\n"
+            f"Recreate the venv with a meaningful name, e.g.:\n"
+            f"  python -m venv myapp-prod\n"
+            f"  source myapp-prod/bin/activate\n"
+            f"  pip install -e .\n"
+        )
+        sys.stderr.flush()
+        sys.exit(1)
+
     from runspec.cli import _deduplicate, _discover_installed
     from runspec.inference import infer_script
     from runspec.loader import load_raw

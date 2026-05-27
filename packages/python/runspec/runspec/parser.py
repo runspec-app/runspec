@@ -76,7 +76,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
 
     # 3.5. Load .runspec_env file into os.environ (before _apply_env so
     # RUNSPEC_<RUNNABLE>_ARG_* vars in the file feed into arg resolution)
-    runspec_env_data = apply_env_file(raw, name)
+    runspec_env_data, runspec_env_applied = apply_env_file(raw, name)
 
     # 4. Infer defaults for the script
     raw_script = infer_script(raw["runnables"][name], config["autonomy_default"])
@@ -138,11 +138,14 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     # 7. Parse argv into raw values
     parsed_values = _parse_argv(argv_list, raw_script["args"])
 
+    # Build initial source map — anything non-None after argv parsing came from CLI
+    sources: dict[str, str] = {norm: "cli" for norm, val in parsed_values.items() if val is not None}
+
     # 8. Apply env var fallbacks
-    parsed_values = _apply_env(parsed_values, raw_script["args"], name)
+    parsed_values, sources = _apply_env(parsed_values, sources, raw_script["args"], name, runspec_env_applied)
 
     # 9. Apply defaults
-    parsed_values = _apply_defaults(parsed_values, raw_script["args"])
+    parsed_values, sources = _apply_defaults(parsed_values, sources, raw_script["args"])
 
     # 10. Pass 1 — validate individual args
     arg_errors = validate_args(parsed_values, raw_script["args"])
@@ -153,7 +156,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     raise_if_errors(group_errors)
 
     # 12. Coerce values to native Python types
-    coerced_values = _coerce_values(parsed_values, raw_script["args"])
+    coerced_values = _coerce_values(parsed_values, sources, raw_script["args"])
 
     # 13. Calculate effective autonomy
     autonomy = effective_autonomy(
@@ -189,6 +192,12 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
         ns_pair = coerced_values.get("no_summary")  # _coerce_values normalises dashes
         if ns_pair and ns_pair[0] is not None:
             no_summary = bool(ns_pair[0])
+
+    # Serialize invocation args for the run_summary audit record.
+    # Excludes auto-injected flags (debug, no_summary) from the logged args.
+    _auto_args = {"debug", "no_summary"}
+    invocation_args = {k: {"value": str(arg.value), "source": arg.source} for k, arg in runspec_obj._args.items() if arg.value is not None and k not in _auto_args}
+
     try:
         configure_logging(
             config.get("logging"),
@@ -198,6 +207,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
             autonomy=autonomy,
             agent=agent,
             command_path=command_path,
+            invocation_args=invocation_args,
         )
     except ValueError as e:
         raise errors.RunSpecError(str(e)) from e
@@ -536,9 +546,11 @@ def _append_or_set(current: Any, value: Any, spec: dict[str, Any]) -> Any:
 
 def _apply_env(
     parsed: dict[str, Any],
+    sources: dict[str, str],
     arg_specs: dict[str, Any],
     runnable_name: str,
-) -> dict[str, Any]:
+    runspec_env_applied: frozenset[str],
+) -> tuple[dict[str, Any], dict[str, str]]:
     """Apply environment variable fallbacks where values are still None.
 
     Resolution order:
@@ -547,6 +559,7 @@ def _apply_env(
     """
     runnable_prefix = runnable_name.upper().replace("-", "_")
     result = dict(parsed)
+    new_sources = dict(sources)
     for name, spec in arg_specs.items():
         norm = name.replace("-", "_")
         if result.get(norm) is not None:
@@ -556,31 +569,37 @@ def _apply_env(
         env_val = os.environ.get(auto_key)
         if env_val is not None:
             result[norm] = env_val
+            new_sources[norm] = "runspec_env" if auto_key in runspec_env_applied else "env"
             continue
         # Tier 2b: developer-declared aliases
         for alias in spec.get("env") or []:
             env_val = os.environ.get(alias)
             if env_val is not None:
                 result[norm] = env_val
+                new_sources[norm] = "runspec_env" if alias in runspec_env_applied else "env"
                 break
-    return result
+    return result, new_sources
 
 
 def _apply_defaults(
     parsed: dict[str, Any],
+    sources: dict[str, str],
     arg_specs: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, str]]:
     """Apply spec defaults where values are still None."""
     result = dict(parsed)
+    new_sources = dict(sources)
     for name, spec in arg_specs.items():
         norm = name.replace("-", "_")
         if result.get(norm) is None and spec.get("default") is not None:
             result[norm] = spec["default"]
-    return result
+            new_sources[norm] = "spec_default"
+    return result, new_sources
 
 
 def _coerce_values(
     parsed: dict[str, Any],
+    sources: dict[str, str],
     arg_specs: dict[str, Any],
 ) -> dict[str, Any]:
     """Coerce all resolved values to native Python types."""
@@ -589,22 +608,15 @@ def _coerce_values(
         norm = name.replace("-", "_")
         value = parsed.get(norm)
         if value is None:
-            result[norm] = (None, "default")
+            result[norm] = (None, "not_set")
             continue
-        source = _determine_source(norm, parsed)
+        source = sources.get(norm, "not_set")
         try:
             coerced = coerce(value, spec)
         except (ValueError, TypeError) as e:
             raise errors.RunSpecError(f"✗  {e}") from e
         result[norm] = (coerced, source)
     return result
-
-
-def _determine_source(name: str, parsed: dict[str, Any]) -> str:
-    """Determine where a value came from: cli, env, config, or default."""
-    # Simplified — a full implementation would track this through the pipeline
-    # For now: if value is non-None it came from cli or env
-    return "cli" if parsed.get(name) is not None else "default"
 
 
 def _build_runspec(
@@ -646,7 +658,7 @@ def _build_runspec(
 
     for arg_name, spec in arg_specs.items():
         norm = arg_name.replace("-", "_")
-        value, source = coerced_values.get(norm, (None, "default"))
+        value, source = coerced_values.get(norm, (None, "not_set"))
 
         arg = Arg(
             value=value,
