@@ -196,11 +196,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     # Serialize invocation args for the run_summary audit record.
     # Excludes auto-injected flags (debug, no_summary) from the logged args.
     _auto_args = {"debug", "no_summary"}
-    invocation_args = {
-        k: {"value": str(arg.value), "source": arg.source}
-        for k, arg in runspec_obj._args.items()
-        if arg.value is not None and k not in _auto_args
-    }
+    invocation_args = {k: {"value": str(arg.value), "source": arg.source} for k, arg in runspec_obj._args.items() if arg.value is not None and k not in _auto_args}
 
     try:
         configure_logging(

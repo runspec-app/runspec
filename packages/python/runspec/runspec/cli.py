@@ -93,8 +93,10 @@ def cmd_local(args: list[str]) -> None:
         _print_local_text(discovered)
     else:
         bin_dir = Path(sys.executable).parent
+
         def _has_binary(name: str) -> bool:
             return (bin_dir / name).exists() or (bin_dir / f"{name}.exe").exists()
+
         callable_only = [d for d in discovered if _has_binary(d["runnable"])]
         if fmt == "json":
             print(json.dumps(callable_only, indent=2, default=str))

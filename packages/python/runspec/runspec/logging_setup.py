@@ -136,11 +136,7 @@ def configure_logging(
     out_handler = logging.StreamHandler(sys.stdout)
     out_handler.setLevel(floor)
     out_handler.addFilter(sensitive)
-    out_handler.addFilter(
-        lambda r: r.levelno < logging.WARNING
-        and r.name != _RUN_SUMMARY_LOGGER
-        and not getattr(r, "_from_print", False)
-    )
+    out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name != _RUN_SUMMARY_LOGGER and not getattr(r, "_from_print", False))
     out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(out_handler)
 
