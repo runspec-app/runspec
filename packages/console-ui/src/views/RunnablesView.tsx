@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Table, Tag, Input, Typography } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import type { Runnable, ArgDef } from '../bridge'
 
-const { Title, Text } = Typography
+const { Text } = Typography
+
+function isVarRef(val: unknown): val is string {
+  return typeof val === 'string' && /^\$[A-Z_][A-Z0-9_]*$/.test(val)
+}
 
 function RunnableHelp({ runnable }: { runnable: Runnable }) {
   if ((runnable.args ?? []).length === 0) {
@@ -18,12 +22,15 @@ function RunnableHelp({ runnable }: { runnable: Runnable }) {
           <div key={arg.name} style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontFamily: 'monospace', fontSize: 12 }}>
             <Text code style={{ fontSize: 12, minWidth: 140 }}>--{arg.name}</Text>
             <Tag color="default" style={{ fontSize: 11 }}>{arg.type}</Tag>
-            {arg.required
-              ? <Tag color="orange" style={{ fontSize: 11 }}>required</Tag>
-              : <Text type="secondary" style={{ fontSize: 11 }}>
-                  optional{arg.default !== undefined ? ` · default: ${String(arg.default)}` : ''}
-                </Text>
-            }
+            {arg.required ? (
+              <Tag color="orange" style={{ fontSize: 11 }}>required</Tag>
+            ) : isVarRef(arg.default) ? (
+              <Text style={{ fontSize: 11, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default}</Text>
+            ) : (
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                optional{arg.default !== undefined ? ` · default: ${String(arg.default)}` : ''}
+              </Text>
+            )}
             {arg.description && (
               <Text type="secondary" style={{ fontSize: 12, marginLeft: 4 }}>{arg.description}</Text>
             )}
@@ -36,20 +43,29 @@ function RunnableHelp({ runnable }: { runnable: Runnable }) {
 
 interface RunnablesViewProps {
   runnables: Runnable[]
+  selectedHost: string
   activeScope: string[]
   onScopeToggle: (group: string) => void
 }
 
-export function RunnablesView({ runnables, activeScope, onScopeToggle }: RunnablesViewProps) {
+export function RunnablesView({ runnables, selectedHost, activeScope, onScopeToggle }: RunnablesViewProps) {
   const [search, setSearch] = useState('')
+  const [hostColumnFilter, setHostColumnFilter] = useState<string[]>(selectedHost ? [selectedHost] : [])
 
-  const filtered = runnables.filter(r =>
-    r.name.includes(search) ||
-    r.group.toLowerCase().includes(search.toLowerCase()) ||
-    r.host.includes(search) ||
-    (r.description ?? '').toLowerCase().includes(search.toLowerCase())
-  )
+  useEffect(() => {
+    setHostColumnFilter(selectedHost ? [selectedHost] : [])
+  }, [selectedHost])
 
+  const filtered = search
+    ? runnables.filter(r =>
+        r.name.toLowerCase().includes(search.toLowerCase()) ||
+        r.group.toLowerCase().includes(search.toLowerCase()) ||
+        r.host.toLowerCase().includes(search.toLowerCase()) ||
+        (r.description ?? '').toLowerCase().includes(search.toLowerCase())
+      )
+    : runnables
+
+  const hosts = [...new Set(runnables.map(r => r.host))]
   const groups = [...new Set(runnables.map(r => r.group))]
 
   const columns: ColumnType<Runnable>[] = [
@@ -62,6 +78,15 @@ export function RunnablesView({ runnables, activeScope, onScopeToggle }: Runnabl
         </span>
       ),
       sorter: (a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`),
+    },
+    {
+      title: 'Host',
+      dataIndex: 'host',
+      key: 'host',
+      render: (h: string) => <Tag>{h}</Tag>,
+      filters: hosts.map(h => ({ text: h, value: h })),
+      onFilter: (value, record) => record.host === value,
+      filteredValue: hostColumnFilter,
     },
     {
       title: 'Group',
@@ -82,14 +107,7 @@ export function RunnablesView({ runnables, activeScope, onScopeToggle }: Runnabl
       },
       filters: groups.map(g => ({ text: g, value: g })),
       onFilter: (value, record) => record.group === value,
-    },
-    {
-      title: 'Host',
-      dataIndex: 'host',
-      key: 'host',
-      render: (h: string) => <Tag>{h}</Tag>,
-      filters: [...new Set(runnables.map(r => r.host))].map(h => ({ text: h, value: h })),
-      onFilter: (value, record) => record.host === value,
+      filteredValue: [],
     },
     {
       title: 'Description',
@@ -111,10 +129,9 @@ export function RunnablesView({ runnables, activeScope, onScopeToggle }: Runnabl
 
   return (
     <div>
-      <Title level={4} style={{ marginBottom: 16 }}>Runnables</Title>
       <Input
         prefix={<SearchOutlined />}
-        placeholder="Search name, host, description…"
+        placeholder="Search name, group, host, description…"
         value={search}
         onChange={e => setSearch(e.target.value)}
         style={{ marginBottom: 16, maxWidth: 360 }}
@@ -122,8 +139,9 @@ export function RunnablesView({ runnables, activeScope, onScopeToggle }: Runnabl
       <Table
         dataSource={filtered}
         columns={columns}
-        rowKey={r => `${r.host}/${r.name}`}
+        rowKey={r => `${r.host}/${r.group}/${r.name}`}
         size="small"
+        onChange={(_, filters) => setHostColumnFilter((filters['host'] as string[]) || [])}
         expandable={{
           expandedRowRender: (r) => <RunnableHelp runnable={r} />,
           rowExpandable: (r) => (r.args ?? []).length >= 0,

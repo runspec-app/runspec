@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Typography, Space } from 'antd'
+import { Table, Tag, Button } from 'antd'
 import { DeleteOutlined } from '@ant-design/icons'
 import { bridge, type Schedule } from '../bridge'
-
-const { Title } = Typography
 
 export function SchedulesView() {
   const [schedules, setSchedules] = useState<Schedule[]>([])
@@ -32,9 +30,6 @@ export function SchedulesView() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Title level={4} style={{ margin: 0 }}>Schedules</Title>
-      </Space>
       <Table dataSource={schedules} columns={columns} rowKey="id" size="small" />
     </div>
   )
