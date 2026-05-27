@@ -3,10 +3,12 @@ import { Button, Input, Space, Tag, Tooltip, Typography, message } from 'antd'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
-  ApiOutlined,
+  ApiOutlined, DownOutlined, RightOutlined, VerticalAlignBottomOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
+
+const TRUNCATE_AT = 20
 
 function _lineColor(l: OutputLine): string {
   if (l.stream !== 'stderr') return '#d4d4d4'
@@ -69,11 +71,19 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const blockCountRef = useRef(0)
+  const [showScrollDown, setShowScrollDown] = useState(false)
 
   const handleScroll = () => {
     const el = scrollRef.current
     if (!el) return
-    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    isAtBottomRef.current = atBottom
+    setShowScrollDown(!atBottom)
+  }
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }
 
   useEffect(() => {
@@ -98,16 +108,36 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
   }
 
   return (
-    <div
-      ref={scrollRef}
-      onScroll={handleScroll}
-      style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}
-    >
-      <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {blocks.map(block => (
-          <BlockCard key={block.id} block={block} onRerun={onRerun} onAskLlm={onAskLlm} />
-        ))}
+    <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}
+      >
+        <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {blocks.map(block => (
+            <BlockCard key={block.id} block={block} onRerun={onRerun} onAskLlm={onAskLlm} />
+          ))}
+        </div>
       </div>
+
+      {/* Jump-to-bottom pill — appears when scrolled up */}
+      {showScrollDown && (
+        <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
+          <Button
+            size="small"
+            icon={<VerticalAlignBottomOutlined />}
+            onClick={scrollToBottom}
+            style={{
+              background: '#1a1a1a', borderColor: '#333', color: '#888',
+              fontSize: 11, height: 26, padding: '0 10px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+            }}
+          >
+            latest
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -152,7 +182,6 @@ function ToolCallBlock({ entry }: { entry: ToolCallEntry }) {
           fontFamily: 'monospace', fontSize: 12,
           color: '#d4d4d4', lineHeight: 1.5,
           whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-          maxHeight: 200, overflowY: 'auto',
           background: '#141414',
         }}>
           {entry.output || '(no output)'}
@@ -173,11 +202,18 @@ function BlockCard({
 }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editArgs, setEditArgs] = useState<Record<string, string>>({})
+  const [collapsed, setCollapsed] = useState(false)
+  const [showAll, setShowAll] = useState(false)
 
   const args = block.rerunData?.args ?? {}
   const hasArgs = Object.keys(args).length > 0
 
-  const icon = block.done
+  // Truncation — only for completed run blocks with many lines
+  const extraLines = block.lines.length - TRUNCATE_AT
+  const shouldTruncate = block.type === 'run' && block.done && !showAll && extraLines > 0
+  const displayLines = shouldTruncate ? block.lines.slice(0, TRUNCATE_AT) : block.lines
+
+  const statusIcon = block.done
     ? block.exitCode === 0
       ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
       : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
@@ -220,21 +256,37 @@ function BlockCard({
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 14px',
         background: '#1a1a1a',
-        borderBottom: '1px solid #2a2a2a',
+        borderBottom: collapsed ? 'none' : '1px solid #2a2a2a',
+        userSelect: 'none',
       }}>
-        {icon}
-        <Text style={{ color: '#d4d4d4', fontFamily: 'monospace', fontSize: 13 }}>{block.label}</Text>
-        <Text style={{ color: '#555', fontSize: 11, marginLeft: 6 }}>
+        {/* Collapse toggle */}
+        <span
+          onClick={() => setCollapsed(c => !c)}
+          style={{ color: '#444', cursor: 'pointer', fontSize: 11, flexShrink: 0, width: 14 }}
+        >
+          {collapsed
+            ? <RightOutlined style={{ fontSize: 10 }} />
+            : <DownOutlined style={{ fontSize: 10 }} />}
+        </span>
+
+        {statusIcon}
+        <Text
+          style={{ color: '#d4d4d4', fontFamily: 'monospace', fontSize: 13, cursor: 'pointer', flex: 1 }}
+          onClick={() => setCollapsed(c => !c)}
+        >
+          {block.label}
+        </Text>
+        <Text style={{ color: '#555', fontSize: 11 }}>
           {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </Text>
         {block.done && block.durationMs !== undefined && (
-          <Tag style={{ marginLeft: 'auto', fontSize: 11 }} color={block.exitCode === 0 ? 'green' : 'red'}>
+          <Tag style={{ marginLeft: 4, fontSize: 11 }} color={block.exitCode === 0 ? 'green' : 'red'}>
             {block.exitCode === 0 ? 'ok' : 'error'} · {(block.durationMs / 1000).toFixed(2)}s
           </Tag>
         )}
         {block.tokenUsage && (
           <Tooltip title={`Input tokens: ${block.tokenUsage.input.toLocaleString()} · Output tokens: ${block.tokenUsage.output.toLocaleString()}`}>
-            <Tag style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: block.durationMs !== undefined ? 4 : 'auto' }}>
+            <Tag style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: 4 }}>
               ↑{block.tokenUsage.input.toLocaleString()} ↓{block.tokenUsage.output.toLocaleString()}
             </Tag>
           </Tooltip>
@@ -245,10 +297,7 @@ function BlockCard({
               <Tooltip title="Edit args and rerun">
                 <EditOutlined
                   onClick={startEditing}
-                  style={{
-                    color: '#555', cursor: 'pointer', fontSize: 13,
-                    marginLeft: block.durationMs !== undefined ? 6 : 'auto',
-                  }}
+                  style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
                   onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
                   onMouseLeave={e => (e.currentTarget.style.color = '#555')}
                 />
@@ -257,10 +306,7 @@ function BlockCard({
             <Tooltip title="Rerun with same args">
               <RedoOutlined
                 onClick={() => onRerun(block.rerunData!)}
-                style={{
-                  color: '#555', cursor: 'pointer', fontSize: 13,
-                  marginLeft: (!hasArgs || isEditing) && block.durationMs !== undefined ? 6 : (hasArgs ? 6 : 'auto'),
-                }}
+                style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
                 onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
                 onMouseLeave={e => (e.currentTarget.style.color = '#555')}
               />
@@ -269,108 +315,137 @@ function BlockCard({
         )}
       </div>
 
-      {/* Edit args form */}
-      {isEditing && (
-        <div style={{
-          padding: '12px 14px',
-          borderBottom: '1px solid #2a2a2a',
-          background: 'rgba(255,255,255,0.02)',
-        }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {Object.entries(editArgs).map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Text code style={{ fontSize: 12, minWidth: 140, flexShrink: 0 }}>--{k}</Text>
-                <Input
-                  size="small"
-                  value={v}
-                  onChange={e => setEditArgs(a => ({ ...a, [k]: e.target.value }))}
-                  style={{ maxWidth: 340, fontFamily: 'monospace', fontSize: 12 }}
-                />
+      {/* Body — hidden when collapsed */}
+      {!collapsed && (
+        <>
+          {/* Edit args form */}
+          {isEditing && (
+            <div style={{
+              padding: '12px 14px',
+              borderBottom: '1px solid #2a2a2a',
+              background: 'rgba(255,255,255,0.02)',
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {Object.entries(editArgs).map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Text code style={{ fontSize: 12, minWidth: 140, flexShrink: 0 }}>--{k}</Text>
+                    <Input
+                      size="small"
+                      value={v}
+                      onChange={e => setEditArgs(a => ({ ...a, [k]: e.target.value }))}
+                      style={{ maxWidth: 340, fontFamily: 'monospace', fontSize: 12 }}
+                    />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <Space style={{ marginTop: 10 }}>
-            <Button size="small" type="primary" icon={<CaretRightOutlined />} onClick={handleEditRun}>
-              Run with edits
-            </Button>
-            <Button size="small" onClick={() => setIsEditing(false)}>Cancel</Button>
-          </Space>
-        </div>
-      )}
+              <Space style={{ marginTop: 10 }}>
+                <Button size="small" type="primary" icon={<CaretRightOutlined />} onClick={handleEditRun}>
+                  Run with edits
+                </Button>
+                <Button size="small" onClick={() => setIsEditing(false)}>Cancel</Button>
+              </Space>
+            </div>
+          )}
 
-      {/* Output body */}
-      <div style={{ position: 'relative' }}>
-        {hasContent && (
-          <div style={{ position: 'absolute', top: 5, right: 6, display: 'flex', gap: 2, zIndex: 1 }}>
-            <Tooltip title="Copy to clipboard">
-              <Button
-                type="text" size="small" icon={<CopyOutlined />}
-                onClick={handleCopy}
-                style={{ color: '#555', height: 22, padding: '0 5px' }}
-              />
-            </Tooltip>
-            {onAskLlm && (
-              <Tooltip title="Ask the LLM">
-                <Button
-                  type="text" size="small" icon={<RobotOutlined />}
-                  onClick={handleAskLlm}
-                  style={{ color: '#555', height: 22, padding: '0 5px' }}
-                />
-              </Tooltip>
+          {/* Output body */}
+          <div style={{ position: 'relative' }}>
+            {hasContent && (
+              <div style={{ position: 'absolute', top: 5, right: 6, display: 'flex', gap: 2, zIndex: 1 }}>
+                <Tooltip title="Copy to clipboard">
+                  <Button
+                    type="text" size="small" icon={<CopyOutlined />}
+                    onClick={handleCopy}
+                    style={{ color: '#555', height: 22, padding: '0 5px' }}
+                  />
+                </Tooltip>
+                {onAskLlm && (
+                  <Tooltip title="Ask the LLM">
+                    <Button
+                      type="text" size="small" icon={<RobotOutlined />}
+                      onClick={handleAskLlm}
+                      style={{ color: '#555', height: 22, padding: '0 5px' }}
+                    />
+                  </Tooltip>
+                )}
+              </div>
             )}
-          </div>
-        )}
 
-        {/* run block: flat log lines */}
-        {block.type === 'run' && (
-          <pre style={{
-            margin: 0, padding: '10px 14px',
-            fontFamily: 'monospace', fontSize: 13,
-            color: '#d4d4d4', lineHeight: 1.6,
-            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-            maxHeight: 480, overflowY: 'auto',
-          }}>
-            {block.lines.map((l, i) => (
-              <span key={i} style={{ color: _lineColor(l) }}>
-                {l.line}{'\n'}
-              </span>
-            ))}
-            {!block.done && <span style={{ color: '#555' }}>▌</span>}
-          </pre>
-        )}
-
-        {/* chat block: interleaved text segments + tool call blocks */}
-        {block.type === 'chat' && (
-          <div style={{ padding: '10px 14px' }}>
-            {block.segments.map((seg, i) =>
-              seg.kind === 'text' ? (
-                <pre key={i} style={{
-                  margin: 0, padding: 0,
+            {/* run block: flat log lines with truncation */}
+            {block.type === 'run' && (
+              <>
+                <pre style={{
+                  margin: 0, padding: '10px 14px',
                   fontFamily: 'monospace', fontSize: 13,
                   color: '#d4d4d4', lineHeight: 1.6,
                   whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                 }}>
-                  {seg.text}
+                  {displayLines.map((l, i) => (
+                    <span key={i} style={{ color: _lineColor(l) }}>
+                      {l.line}{'\n'}
+                    </span>
+                  ))}
+                  {!block.done && <span style={{ color: '#555' }}>▌</span>}
                 </pre>
-              ) : (
-                <ToolCallBlock key={i} entry={seg.entry} />
-              )
+
+                {/* Truncation footer */}
+                {shouldTruncate && (
+                  <div style={{ position: 'relative' }}>
+                    {/* gradient fade over the last few lines */}
+                    <div style={{
+                      position: 'absolute', top: -40, left: 0, right: 0, height: 40,
+                      background: 'linear-gradient(transparent, #141414)',
+                      pointerEvents: 'none',
+                    }} />
+                    <div
+                      onClick={() => setShowAll(true)}
+                      style={{
+                        padding: '5px 14px 10px',
+                        fontSize: 12, color: '#555', cursor: 'pointer',
+                        fontFamily: 'monospace',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.color = '#888')}
+                      onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+                    >
+                      ↓ {extraLines} more line{extraLines !== 1 ? 's' : ''} — click to expand
+                    </div>
+                  </div>
+                )}
+              </>
             )}
-            {/* currently-accumulating text */}
-            {(block.currentText || !block.done) && (
-              <pre style={{
-                margin: 0, padding: 0,
-                fontFamily: 'monospace', fontSize: 13,
-                color: '#d4d4d4', lineHeight: 1.6,
-                whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-              }}>
-                {block.currentText}
-                {!block.done && <span style={{ color: '#555' }}>▌</span>}
-              </pre>
+
+            {/* chat block: interleaved text segments + tool call blocks */}
+            {block.type === 'chat' && (
+              <div style={{ padding: '10px 14px' }}>
+                {block.segments.map((seg, i) =>
+                  seg.kind === 'text' ? (
+                    <pre key={i} style={{
+                      margin: 0, padding: 0,
+                      fontFamily: 'monospace', fontSize: 13,
+                      color: '#d4d4d4', lineHeight: 1.6,
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    }}>
+                      {seg.text}
+                    </pre>
+                  ) : (
+                    <ToolCallBlock key={i} entry={seg.entry} />
+                  )
+                )}
+                {(block.currentText || !block.done) && (
+                  <pre style={{
+                    margin: 0, padding: 0,
+                    fontFamily: 'monospace', fontSize: 13,
+                    color: '#d4d4d4', lineHeight: 1.6,
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                  }}>
+                    {block.currentText}
+                    {!block.done && <span style={{ color: '#555' }}>▌</span>}
+                  </pre>
+                )}
+              </div>
             )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   )
 }
