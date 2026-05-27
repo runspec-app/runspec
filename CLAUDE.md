@@ -218,6 +218,23 @@ Both Python and Node packages are active and published.
 
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").
 
+**Queued:**
+- `runspec emit --rundeck` — emit a Rundeck job YAML per runnable to
+  `jobs/{runnable}.yaml` at the git root. Always uses a Bash script step
+  (not exec) so flag args can be conditionally included. Output goes to
+  file; user uploads via Rundeck UI. See `docs/design/emit-ansible-rundeck.md`.
+- `runspec emit --ansible` — emit an Ansible module Python file per
+  runnable to `library/{runnable}.py`. Generates `DOCUMENTATION`,
+  `argument_spec`, and subprocess invocation from `runspec.toml`. Full
+  AAP survey form and ansible-lint compatibility. See
+  `docs/design/emit-ansible-rundeck.md`.
+- `runspec push --rundeck` — future: POST job YAMLs to Rundeck REST API
+  (`/api/v*/project/{project}/jobs/import`) with an API token. Deferred
+  until file emit is in production use.
+
+Build order: `emit --rundeck` first (current platform), `emit --ansible`
+second (migration target), `push --rundeck` last (CI/CD automation).
+
 ---
 
 ## Good Claude Code Prompt Patterns
