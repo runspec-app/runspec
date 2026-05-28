@@ -636,4 +636,16 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   )
 }
 
-export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged }: Settin
+export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged }: SettingsDrawerProps) {
+  return (
+    <Drawer title="Settings" placement="right" width={480} open={open} onClose={onClose}>
+      <Tabs
+        size="small"
+        items={[
+          { key: 'general',    label: 'General',     children: <GeneralTab onKeyChanged={onKeyChanged} /> },
+          { key: 'jumpHosts',  label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
+        ]}
+      />
+    </Drawer>
+  )
+}
