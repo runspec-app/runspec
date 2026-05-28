@@ -49,6 +49,7 @@ def run_local(
     on_done: Callable[[int, int], None],
     timeout: int | None = None,
     cancel_event: threading.Event | None = None,
+    agent: bool = False,
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
@@ -57,7 +58,7 @@ def run_local(
     binary = next((bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable)
     argv = args_to_argv(args)
     cmd = [str(binary), *command_path, *argv]
-    _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event)
+    _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent)
 
 
 def ssh_flags(identity_file: str | None) -> list[str]:
@@ -79,13 +80,14 @@ def run_remote(
     identity_file: str | None = None,
     timeout: int | None = None,
     cancel_event: threading.Event | None = None,
+    agent: bool = False,
 ) -> None:
     """Execute a remote runnable via SSH, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args)
     cmd = ["ssh", *ssh_flags(identity_file), ssh_target, remote_bin, *command_path, *argv]
-    _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event)
+    _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent)
 
 
 def _stream(
@@ -94,7 +96,9 @@ def _stream(
     on_done: Callable[[int, int], None],
     timeout: int | None = None,
     cancel_event: threading.Event | None = None,
+    agent: bool = False,
 ) -> None:
+    env = {**_UTF8_ENV, "RUNSPEC_AGENT": "1"} if agent else _UTF8_ENV
     start = time.monotonic()
     try:
         proc = subprocess.Popen(
@@ -105,7 +109,7 @@ def _stream(
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=_UTF8_ENV,
+            env=env,
         )
     except FileNotFoundError:
         on_line(f"✗  Command not found: {cmd[0]}", "stderr")

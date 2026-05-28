@@ -51,35 +51,6 @@ class Bridge:
 
     def set_window(self, window: Any) -> None:
         self._window = window
-        self._maximized = False
-
-    # ── window controls (frameless) ───────────────────────────────────────────
-
-    def minimize_window(self) -> None:
-        if self._window:
-            self._window.minimize()
-
-    def toggle_maximize_window(self) -> None:
-        if not self._window:
-            return
-        if self._maximized:
-            self._window.restore()
-            self._maximized = False
-        else:
-            self._window.maximize()
-            self._maximized = True
-
-    def close_window(self) -> None:
-        if self._window:
-            self._window.destroy()
-
-    def resize_window(self, width: int, height: int) -> None:
-        if self._window:
-            self._window.resize(int(width), int(height))
-
-    def move_window(self, x: int, y: int) -> None:
-        if self._window:
-            self._window.move(int(x), int(y))
 
     # ── hosts ────────────────────────────────────────────────────────────────
 
@@ -570,9 +541,9 @@ class Bridge:
         ssh = entry.get("ssh")
         if ssh:
             run_remote(ssh, rp, runnable, tool_input, [], on_line, on_done,
-                       entry.get("identityFile"), timeout=120)
+                       entry.get("identityFile"), timeout=120, agent=True)
         else:
-            run_local(rp, runnable, tool_input, [], on_line, on_done, timeout=120)
+            run_local(rp, runnable, tool_input, [], on_line, on_done, timeout=120, agent=True)
 
         output = "\n".join(output_lines)
         if len(output) > 16384:
@@ -894,3 +865,4 @@ def _write_schedules(path: Path, schedules: list[dict[str, Any]]) -> None:
                 lines.append(f"{k} = {_toml_scalar(v)}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
