@@ -106,3 +106,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
+          TAG="$RELEASE_TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit   "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" dist/* \
+              --title "$TAG" \
+              --notes-file release-notes.md
+          fi

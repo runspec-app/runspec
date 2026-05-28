@@ -76,4 +76,19 @@ jobs:
         run: |
           VERSION="${RELEASE_TAG#node-v}"
           ESCAPED="${VERSION//./\\.}"
-          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit}
+          awk "/^## \\[node-${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
+            CHANGELOG.md > release-notes.md
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          TAG="$RELEASE_TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md
+          fi
