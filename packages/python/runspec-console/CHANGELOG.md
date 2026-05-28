@@ -7,6 +7,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.4] — 2026-05-28
+
+### Fixed
+- **Corrupted wheel** — `bridge.py` was written with null bytes during the 0.1.3 build due to a stale Linux mount cache. The wheel now contains clean source files and imports correctly.
+
+---
+
 ## [0.1.3] — 2026-05-28
 
 ### Added

@@ -710,7 +710,7 @@ def _paths(entry: dict[str, Any]) -> list[str]:
 
 
 def _parse_ssh(ssh: str) -> tuple[str, str, int | None]:
-    """Parse 'user@host:port' → (user, host, port). Missing parts → empty string / None."""
+    """Parse 'user@host:port' -> (user, host, port). Missing parts -> empty string / None."""
     user = ""
     port: int | None = None
     s = ssh
@@ -768,9 +768,9 @@ def _parse_log_text(name: str, text: str, host: str) -> list[dict[str, Any]]:
 
 
 def _parse_log_by_run_id(name: str, entries: list[dict[str, Any]], host: str) -> list[dict[str, Any]]:
-    """Group log entries by run_id UUID → one HistoryRecord per invocation."""
+    """Group log entries by run_id UUID -> one HistoryRecord per invocation."""
     # Preserve insertion order of run_ids so history is chronological
-    groups: dict[str, dict[str, Any]] = {}  # run_id → {"lines": [], "summary": None}
+    groups: dict[str, dict[str, Any]] = {}  # run_id -> {"lines": [], "summary": None}
     for entry in entries:
         extra = entry.get("extra", {})
         run_id = extra.get("run_id")
@@ -865,4 +865,3 @@ def _write_schedules(path: Path, schedules: list[dict[str, Any]]) -> None:
                 lines.append(f"{k} = {_toml_scalar(v)}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
