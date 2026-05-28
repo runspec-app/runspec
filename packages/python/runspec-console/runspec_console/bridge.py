@@ -52,6 +52,31 @@ class Bridge:
     def set_window(self, window: Any) -> None:
         self._window = window
 
+
+    # -- window controls -----------------------------------------------------------
+
+    def minimize_window(self) -> None:
+        if self._window:
+            self._window.minimize()
+
+    def toggle_maximize_window(self) -> None:
+        if self._window:
+            if self._window.maximized:
+                self._window.restore()
+            else:
+                self._window.maximize()
+
+    def close_window(self) -> None:
+        if self._window:
+            self._window.destroy()
+
+    def resize_window(self, width: int, height: int) -> None:
+        if self._window:
+            self._window.resize(width, height)
+
+    def move_window(self, x: int, y: int) -> None:
+        if self._window:
+            self._window.move(x, y)
     # ── hosts ────────────────────────────────────────────────────────────────
 
     def get_hosts(self) -> list[dict[str, Any]]:

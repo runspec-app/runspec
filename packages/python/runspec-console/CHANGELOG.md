@@ -7,6 +7,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.5] — 2026-05-28
+
+### Fixed
+- **Window controls non-functional** — `minimize_window`, `toggle_maximize_window`, `close_window`, `resize_window`, and `move_window` were missing from `bridge.py`. The custom title bar buttons and resize handles now work correctly.
+
+---
+
 ## [0.1.4] — 2026-05-28
 
 ### Fixed
@@ -41,15 +48,4 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.1.0] — 2026-05-27
-
-### Added
-
-- **runspec-console** — desktop GUI for runspec, packaged as a pip-installable wheel.
-  Ships a pywebview window hosting a Vite/React UI (the `console-ui` package built
-  and bundled at release time).
-- **Frameless window** with custom title bar: drag regions on sidebar and tab bar,
-  minimize / maximize-toggle / close controls (— □ ×).
-- **Hosts view** — displays connected and disconnected jump hosts; one-click SSH
-  connection test per host.
-- **Runnables view** — l
+## [0.1.
