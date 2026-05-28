@@ -20,6 +20,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor ${{ github.sha }} origin/main \
+            || { echo "::error::Tag must point to a commit on main — merge your PR first, then push the tag."; exit 1; }
 
       - name: Set up Node 20
         uses: actions/setup-node@v4
@@ -67,14 +76,4 @@ jobs:
         run: |
           VERSION="${RELEASE_TAG#node-v}"
           ESCAPED="${VERSION//./\\.}"
-          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
-            docs/changelog.md > release-notes.md
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          gh release create "$RELEASE_TAG" \
-            --title "$RELEASE_TAG" \
-            --notes-file release-notes.md
+          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit}

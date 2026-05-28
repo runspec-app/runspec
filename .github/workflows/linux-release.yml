@@ -20,6 +20,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor ${{ github.sha }} origin/main \
+            || { echo "::error::Tag must point to a commit on main — merge your PR first, then push the tag."; exit 1; }
 
       - uses: actions/setup-python@v6
         with:
@@ -98,11 +107,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ inputs.tag || github.ref_name }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
-            gh release edit   "$TAG" --notes-file release-notes.md
-          else
-            gh release create "$TAG" dist/* \
-              --title "runspec-linux $TAG" \
-              --notes-file release-notes.md
-          fi
+  

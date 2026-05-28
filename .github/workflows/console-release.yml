@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "console-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. console-v0.1.4)"
+        required: true
 
 jobs:
   build:
@@ -12,6 +17,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor ${{ github.sha }} origin/main \
+            || { echo "::error::Tag must point to a commit on main — merge your PR first, then push the tag."; exit 1; }
 
       - uses: actions/setup-node@v4
         with:
@@ -92,22 +106,10 @@ jobs:
           path: dist/
 
       - name: Extract changelog notes
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME#console-v}"
+          VERSION="${RELEASE_TAG#console-v}"
           ESCAPED="${VERSION//./\\.}"
           awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
-            packages/python/runspec-console/CHANGELOG.md > release-notes.md
-
-      - name: Create or update GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${{ github.ref_name }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
-            gh release edit   "$TAG" --notes-file release-notes.md
-          else
-            gh release create "$TAG" dist/* \
-              --title "runspec-console $TAG" \
-              --notes-file release-notes.md
-          fi
+            packages
