@@ -36,7 +36,7 @@ jobs:
               - 'packages/python/runspec-chat/**'
               - '.github/workflows/ci.yml'
             linux:
-              - 'packages/integrations/runspec-linux/**'
+              - 'packages/python/runspec-linux/**'
               - '.github/workflows/ci.yml'
 
   # ── Python ──────────────────────────────────────────────────────────────────
@@ -253,7 +253,7 @@ jobs:
         check: [lint, format]
     defaults:
       run:
-        working-directory: packages/integrations/runspec-linux
+        working-directory: packages/python/runspec-linux
     steps:
       - uses: actions/checkout@v6
 
@@ -279,7 +279,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/integrations/runspec-linux
+        working-directory: packages/python/runspec-linux
     steps:
       - uses: actions/checkout@v6
 

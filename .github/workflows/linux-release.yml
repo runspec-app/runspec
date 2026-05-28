@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/integrations/runspec-linux
+        working-directory: packages/python/runspec-linux
 
     steps:
       - uses: actions/checkout@v6
@@ -49,7 +49,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: packages/integrations/runspec-linux/dist/
+          path: packages/python/runspec-linux/dist/
 
   publish:
     name: Publish to PyPI
@@ -91,7 +91,7 @@ jobs:
           VERSION="${VERSION#linux-v}"
           ESCAPED="${VERSION//./\\.}"
           awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
-            packages/integrations/runspec-linux/CHANGELOG.md > release-notes.md
+            packages/python/runspec-linux/CHANGELOG.md > release-notes.md
 
       - name: Create or update GitHub Release
         env:

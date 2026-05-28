@@ -217,7 +217,7 @@ Both Python and Node packages are active and published.
 | `runspec-linux` | 0.1.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
 | `runspec-registry` | 0.1.1 | PyPI | Archived — registry removed in favour of SSH+MCP jump-host model |
 
-**Integration packages** live under `packages/integrations/`. Each is a
+**Integration packages** live under `packages/python/` alongside the core library. Each is a
 self-contained package: own `pyproject.toml`, `runspec.toml`, tests, and CI
 workflow. Release tags follow `{name}-v*` (e.g. `linux-v0.1.0`).
 
