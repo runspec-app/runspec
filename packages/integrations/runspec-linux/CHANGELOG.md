@@ -1,5 +1,14 @@
 # runspec-linux Changelog
 
+## [0.1.1] — 2026-05-28
+
+Enable `[config.logging]` for all 21 runnables. Each invocation now writes a
+JSON audit record to `{venv}/logs/{runnable}.log` (rotates at 10 MB, keeps 14
+backups) and emits a one-line run summary to stderr. The auto-added `--debug`
+and `--no-summary` flags are available on every runnable. No code changes —
+existing `print(json.dumps(...))` payloads are captured into the audit log via
+the print-capture mechanism; stdout stays clean for pipe consumers.
+
 ## [0.1.0] — 2026-05-27
 
 Initial release.

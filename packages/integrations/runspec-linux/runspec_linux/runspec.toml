@@ -1,6 +1,10 @@
 [config]
 autonomy-default = "autonomous"
 
+[config.logging]
+rotate = "10 MB"
+keep   = 14
+
 # ── System monitoring ─────────────────────────────────────────────────────────
 
 [system-info]
