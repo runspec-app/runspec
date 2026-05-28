@@ -51,35 +51,6 @@ class Bridge:
 
     def set_window(self, window: Any) -> None:
         self._window = window
-        self._maximized = False
-
-    # ── window controls (frameless) ───────────────────────────────────────────
-
-    def minimize_window(self) -> None:
-        if self._window:
-            self._window.minimize()
-
-    def toggle_maximize_window(self) -> None:
-        if not self._window:
-            return
-        if self._maximized:
-            self._window.restore()
-            self._maximized = False
-        else:
-            self._window.maximize()
-            self._maximized = True
-
-    def close_window(self) -> None:
-        if self._window:
-            self._window.destroy()
-
-    def resize_window(self, width: int, height: int) -> None:
-        if self._window:
-            self._window.resize(int(width), int(height))
-
-    def move_window(self, x: int, y: int) -> None:
-        if self._window:
-            self._window.move(int(x), int(y))
 
     # ── hosts ────────────────────────────────────────────────────────────────
 
@@ -570,9 +541,9 @@ class Bridge:
         ssh = entry.get("ssh")
         if ssh:
             run_remote(ssh, rp, runnable, tool_input, [], on_line, on_done,
-                       entry.get("identityFile"), timeout=120)
+                       entry.get("identityFile"), timeout=120, agent=True)
         else:
-            run_local(rp, runnable, tool_input, [], on_line, on_done, timeout=120)
+            run_local(rp, runnable, tool_input, [], on_line, on_done, timeout=120, agent=True)
 
         output = "\n".join(output_lines)
         if len(output) > 16384:
@@ -739,7 +710,7 @@ def _paths(entry: dict[str, Any]) -> list[str]:
 
 
 def _parse_ssh(ssh: str) -> tuple[str, str, int | None]:
-    """Parse 'user@host:port' → (user, host, port). Missing parts → empty string / None."""
+    """Parse 'user@host:port' -> (user, host, port). Missing parts -> empty string / None."""
     user = ""
     port: int | None = None
     s = ssh
@@ -797,9 +768,9 @@ def _parse_log_text(name: str, text: str, host: str) -> list[dict[str, Any]]:
 
 
 def _parse_log_by_run_id(name: str, entries: list[dict[str, Any]], host: str) -> list[dict[str, Any]]:
-    """Group log entries by run_id UUID → one HistoryRecord per invocation."""
+    """Group log entries by run_id UUID -> one HistoryRecord per invocation."""
     # Preserve insertion order of run_ids so history is chronological
-    groups: dict[str, dict[str, Any]] = {}  # run_id → {"lines": [], "summary": None}
+    groups: dict[str, dict[str, Any]] = {}  # run_id -> {"lines": [], "summary": None}
     for entry in entries:
         extra = entry.get("extra", {})
         run_id = extra.get("run_id")
