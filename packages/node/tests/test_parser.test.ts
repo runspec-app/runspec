@@ -65,3 +65,95 @@ describe('env resolution', () => {
     expect(args['quality']).toBe(85);
   });
 });
+
+// ── help display ──────────────────────────────────────────────────────────────
+
+describe('help display', () => {
+  let logSpy: jest.SpyInstance;
+  let exitSpy: jest.SpyInstance;
+  let output: string[];
+
+  beforeEach(() => {
+    output = [];
+    logSpy = jest.spyOn(console, 'log').mockImplementation((...args) => {
+      output.push(args.join(' '));
+    });
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('__exit__');
+    }) as never);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  const runHelp = (toml: string, name: string, argv: string[]): string => {
+    const configPath = makeTmpConfig(toml);
+    try {
+      parse({ scriptName: name, argv, configPath });
+    } catch (e) {
+      if ((e as Error).message !== '__exit__') throw e;
+    }
+    return output.join('\n');
+  };
+
+  test('usage line renders <command> after parent args', () => {
+    const toml = `
+[pipeline]
+description = "Run a pipeline"
+[pipeline.args]
+verbose = {type = "flag"}
+config  = {type = "path"}
+[pipeline.commands.run]
+description = "Run it"
+`;
+    const out = runHelp(toml, 'pipeline', ['--help']);
+    const usage = out.split('\n').find((l) => l.startsWith('Usage:'))!;
+    expect(usage.indexOf('--verbose')).toBeLessThan(usage.indexOf('<command>'));
+    expect(usage.indexOf('--config')).toBeLessThan(usage.indexOf('<command>'));
+    expect(usage.trimEnd().endsWith('<command>')).toBe(true);
+    expect(out).toContain('Commands:');
+    expect(out).toContain('run');
+  });
+
+  test('nested subcommands resolve to full path in usage', () => {
+    const toml = `
+[outer]
+[outer.commands.inner]
+[outer.commands.inner.commands.deep]
+description = "Deepest"
+[outer.commands.inner.commands.deep.args]
+bar = {type = "str", required = true}
+`;
+    const out = runHelp(toml, 'outer', ['inner', 'deep', '--help']);
+    expect(out).toContain('Usage: outer inner deep');
+    expect(out).toContain('--bar');
+    expect(out).toContain('Deepest');
+  });
+
+  test('choice options render inline in usage', () => {
+    const toml = `
+[greet]
+[greet.args]
+fmt = {type = "choice", options = ["text", "json", "xml"], default = "text"}
+`;
+    const out = runHelp(toml, 'greet', ['--help']);
+    expect(out).toContain('[--fmt <text|json|xml>]');
+  });
+
+  test('usage places <command> before -- <rest>', () => {
+    const toml = `
+[multi]
+[multi.args]
+host  = {type = "str", position = 1}
+extra = {type = "rest"}
+[multi.commands.run]
+description = "Run it"
+`;
+    const out = runHelp(toml, 'multi', ['--help']);
+    const usage = out.split('\n').find((l) => l.startsWith('Usage:'))!;
+    expect(usage.indexOf('<host>')).toBeLessThan(usage.indexOf('<command>'));
+    expect(usage.indexOf('<command>')).toBeLessThan(usage.indexOf('-- <extra>'));
+  });
+});

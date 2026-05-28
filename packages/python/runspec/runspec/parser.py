@@ -132,7 +132,7 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
 
     # 6. Handle --help / -h before any validation
     if "--help" in argv_list or "-h" in argv_list:
-        _print_help(name, raw_script, command_path[-1] if command_path else None)
+        _print_help(name, raw_script, command_path)
         sys.exit(0)
 
     # 7. Parse argv into raw values
@@ -228,9 +228,9 @@ def load_spec(script_name: str | None = None, config_path: Path | None = None) -
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
-def _print_help(name: str, script: dict[str, Any], command: str | None) -> None:
+def _print_help(name: str, script: dict[str, Any], command_path: list[str] | None = None) -> None:
     """Print a human-readable help message for a runnable and exit."""
-    full_name = f"{name} {command}" if command else name
+    full_name = " ".join([name, *(command_path or [])])
     description = script.get("description") or ""
     args = script.get("args", {})
     commands = script.get("commands", {})
@@ -244,23 +244,32 @@ def _print_help(name: str, script: dict[str, Any], command: str | None) -> None:
     rest_args = [(arg_name, spec) for arg_name, spec in args.items() if spec.get("type") == "rest"]
     flag_args = [(arg_name, spec) for arg_name, spec in args.items() if spec.get("position") is None and spec.get("type") != "rest"]
 
+    def _arg_token(spec: dict[str, Any]) -> str:
+        # Choices render their options inline; other types render as <type>.
+        opts = spec.get("options")
+        if opts:
+            return "<" + "|".join(str(o) for o in opts) + ">"
+        return f"<{spec.get('type', 'str')}>"
+
     # ── Usage line ────────────────────────────────────────────────────────────
+    # Order: name [flags] [positionals] [<command>] [-- <rest>...]
+    # Rest stays last because '--' terminates argument parsing.
     usage_parts = [full_name]
-    if commands:
-        usage_parts.append("<command>")
     for arg_name, spec in flag_args:
         flag = f"--{arg_name}"
         if spec.get("type") == "flag":
             usage_parts.append(f"[{flag}]")
         elif spec.get("required"):
-            usage_parts.append(f"{flag} <{spec.get('type', 'str')}>")
+            usage_parts.append(f"{flag} {_arg_token(spec)}")
         else:
-            usage_parts.append(f"[{flag} <{spec.get('type', 'str')}>]")
+            usage_parts.append(f"[{flag} {_arg_token(spec)}]")
     for _, arg_name, spec in positional_args:
         if spec.get("required"):
             usage_parts.append(f"<{arg_name}>")
         else:
             usage_parts.append(f"[<{arg_name}>]")
+    if commands:
+        usage_parts.append("<command>")
     for arg_name, _ in rest_args:
         usage_parts.append(f"[-- <{arg_name}>...]")
 
@@ -339,8 +348,7 @@ def _print_help(name: str, script: dict[str, Any], command: str | None) -> None:
     # ── Trailer ───────────────────────────────────────────────────────────────
     if commands:
         print(f"\nRun '{full_name} <command> --help' for focused help on a command.")
-    else:
-        print("\n  -h, --help    Show this message and exit")
+    print("\n  -h, --help    Show this message and exit")
 
 
 def _infer_from_argv() -> str:
@@ -380,19 +388,19 @@ def _resolve_subcommand(
     argv: list[str],
 ) -> tuple[dict[str, Any], list[str], list[str]]:
     """
-    If the script has subcommands and argv[0] matches one, return the
-    subcommand spec, command path, and remaining argv. Otherwise return
-    the script unchanged with an empty path.
+    Walk into nested subcommands as long as argv[0] matches a declared
+    command name at the current depth. Returns the deepest resolved
+    script spec, the full command path, and the remaining argv.
     """
-    commands = raw_script.get("commands", {})
-    if not commands or not argv:
-        return raw_script, [], argv
-
-    candidate = argv[0]
-    if candidate in commands:
-        return commands[candidate], [candidate], argv[1:]
-
-    return raw_script, [], argv
+    path: list[str] = []
+    while argv:
+        commands = raw_script.get("commands", {})
+        if not commands or argv[0] not in commands:
+            break
+        path.append(argv[0])
+        raw_script = commands[argv[0]]
+        argv = argv[1:]
+    return raw_script, path, argv
 
 
 def _parse_argv(

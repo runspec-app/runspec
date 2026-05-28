@@ -215,6 +215,107 @@ class TestPrintHelp:
         assert "Validate without running" in out
         assert "Run 'pipeline <command> --help'" in out
 
+    def test_help_usage_places_command_after_parent_args(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [pipeline]
+                description = "Run a pipeline"
+                [pipeline.args]
+                verbose = {type = "flag", description = "Verbose output"}
+                config  = {type = "path", description = "Config file"}
+                [pipeline.commands.run]
+                description = "Run the pipeline"
+                [pipeline.commands.validate]
+                description = "Validate without running"
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="pipeline", argv=["--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        usage_line = next(line for line in out.splitlines() if line.startswith("Usage:"))
+        # <command> must appear after the parent's flags/positional args
+        assert usage_line.index("--verbose") < usage_line.index("<command>")
+        assert usage_line.index("--config") < usage_line.index("<command>")
+        # And <command> should be the final token
+        assert usage_line.rstrip().endswith("<command>")
+
+    def test_help_usage_places_command_before_rest(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [multi]
+                [multi.args]
+                host  = {type = "str", position = 1}
+                extra = {type = "rest"}
+                [multi.commands.run]
+                description = "Run it"
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit):
+            runspec.parse(script_name="multi", argv=["--help"])
+        out = capsys.readouterr().out
+        usage_line = next(line for line in out.splitlines() if line.startswith("Usage:"))
+        # Rest stays last (-- terminates argv); <command> sits between positionals and rest
+        assert usage_line.index("<host>") < usage_line.index("<command>")
+        assert usage_line.index("<command>") < usage_line.index("-- <extra>")
+
+    def test_help_resolves_nested_subcommands(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [outer]
+                [outer.commands.inner]
+                [outer.commands.inner.commands.deep]
+                description = "Deepest"
+                [outer.commands.inner.commands.deep.args]
+                bar = {type = "str", required = true}
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit):
+            runspec.parse(script_name="outer", argv=["inner", "deep", "--help"])
+        out = capsys.readouterr().out
+        # Full path renders in the usage title, not just the last segment
+        assert "Usage: outer inner deep" in out
+        assert "--bar" in out
+        assert "Deepest" in out
+
+    def test_help_renders_choice_options_inline(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [greet]
+                [greet.args]
+                fmt = {type = "choice", options = ["text", "json", "xml"], default = "text"}
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit):
+            runspec.parse(script_name="greet", argv=["--help"])
+        out = capsys.readouterr().out
+        assert "[--fmt <text|json|xml>]" in out
+
+    def test_help_trailer_with_commands_mentions_h_flag(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [pipeline]
+                [pipeline.commands.run]
+                description = "Run"
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit):
+            runspec.parse(script_name="pipeline", argv=["--help"])
+        out = capsys.readouterr().out
+        # Both the subcommand hint and the -h reminder should appear
+        assert "Run 'pipeline <command> --help'" in out
+        assert "-h, --help" in out
+
     def test_help_for_subcommand_shows_subcommand_name(self, tmp_path, monkeypatch, capsys):
         (tmp_path / "runspec.toml").write_text(
             textwrap.dedent("""\

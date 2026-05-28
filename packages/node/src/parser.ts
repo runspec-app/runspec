@@ -76,15 +76,17 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
   let activeScript = rawScript;
   let commandPath: string[] = [];
 
-  const commands = rawScript.commands ?? {};
-  if (Object.keys(commands).length > 0 && argv.length > 0 && argv[0] in commands) {
-    commandPath = [argv[0]];
-    activeScript = commands[argv[0]];
+  // Walk into nested subcommands as long as argv[0] matches a declared command.
+  while (argv.length > 0) {
+    const cmds = activeScript.commands ?? {};
+    if (Object.keys(cmds).length === 0 || !(argv[0] in cmds)) break;
+    commandPath.push(argv[0]);
+    activeScript = cmds[argv[0]];
     argv = argv.slice(1);
   }
 
   if (argv.includes('--help') || argv.includes('-h')) {
-    printHelp(name, activeScript, commandPath.length > 0 ? commandPath[commandPath.length - 1] : undefined);
+    printHelp(name, activeScript, commandPath);
     process.exit(0);
   }
 
@@ -295,28 +297,56 @@ function coerceValues(parsed: Record<string, unknown>, argSpecs: Record<string, 
   return result;
 }
 
-export function printHelp(name: string, script: ScriptSpec, command?: string): void {
-  const fullName = command ? `${name} ${command}` : name;
+export function printHelp(name: string, script: ScriptSpec, commandPath: string[] = []): void {
+  const fullName = [name, ...commandPath].join(' ');
   const args = script.args ?? {};
+  const commands = script.commands ?? {};
 
-  const usageParts = [fullName];
-  for (const [argName, spec] of Object.entries(args)) {
+  // Partition args into flags, positionals, and rest (mirrors Python's _print_help).
+  const entries = Object.entries(args);
+  const positionalArgs = entries
+    .filter(([, s]) => s.position !== undefined)
+    .sort(([, a], [, b]) => (a.position ?? 0) - (b.position ?? 0));
+  const restArgs = entries.filter(([, s]) => s.type === 'rest');
+  const flagArgs = entries.filter(([, s]) => s.position === undefined && s.type !== 'rest');
+
+  // Choices render their options inline; other types render as <type>.
+  const argToken = (spec: typeof args[string]): string =>
+    spec.options ? `<${spec.options.join('|')}>` : `<${spec.type ?? 'str'}>`;
+
+  // Usage line — order: name [flags] [positionals] [<command>] [-- <rest>...]
+  // Rest stays last because '--' terminates argument parsing.
+  const usageParts: string[] = [fullName];
+  for (const [argName, spec] of flagArgs) {
     const flag = `--${argName}`;
-    if (spec.type === 'flag') {
-      usageParts.push(`[${flag}]`);
-    } else if (spec.required) {
-      usageParts.push(`${flag} <${spec.type ?? 'str'}>`);
-    } else {
-      usageParts.push(`[${flag} <${spec.type ?? 'str'}>]`);
-    }
+    if (spec.type === 'flag') usageParts.push(`[${flag}]`);
+    else if (spec.required) usageParts.push(`${flag} ${argToken(spec)}`);
+    else usageParts.push(`[${flag} ${argToken(spec)}]`);
+  }
+  for (const [argName, spec] of positionalArgs) {
+    usageParts.push(spec.required ? `<${argName}>` : `[<${argName}>]`);
+  }
+  if (Object.keys(commands).length > 0) usageParts.push('<command>');
+  for (const [argName] of restArgs) {
+    usageParts.push(`[-- <${argName}>...]`);
   }
 
   console.log(`Usage: ${usageParts.join(' ')}`);
   if (script.description) console.log(`\n${script.description}`);
 
+  // Commands section
+  if (Object.keys(commands).length > 0) {
+    console.log('\nCommands:');
+    const cmdCol = Math.max(...Object.keys(commands).map((c) => c.length)) + 2;
+    for (const [cmdName, cmdSpec] of Object.entries(commands)) {
+      const desc = cmdSpec.description ?? '';
+      console.log(`  ${cmdName.padEnd(cmdCol)} ${desc}`);
+    }
+  }
+
   if (Object.keys(args).length > 0) {
     console.log('\nArguments:');
-    for (const [argName, spec] of Object.entries(args)) {
+    for (const [argName, spec] of entries) {
       const flag = `  --${argName}`;
       const parts: string[] = [];
       if (spec.type === 'flag') parts.push('flag');
@@ -335,5 +365,8 @@ export function printHelp(name: string, script: ScriptSpec, command?: string): v
     if (script.autonomyReason) console.log(`  ${script.autonomyReason}`);
   }
 
+  if (Object.keys(commands).length > 0) {
+    console.log(`\nRun '${fullName} <command> --help' for focused help on a command.`);
+  }
   console.log('\n  -h, --help    Show this message and exit');
 }
