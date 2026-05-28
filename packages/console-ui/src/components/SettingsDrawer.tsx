@@ -47,6 +47,7 @@ function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
         aws_region: llm.aws_region ?? '',
         ssh_user: ssh.user ?? '',
         ssh_identity_file: ssh.identityFile ?? '',
+        ssh_binary: ssh.binary ?? '',
       })
     })
   }
@@ -73,6 +74,7 @@ function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
       ssh: {
         ...(v.ssh_user          ? { user: v.ssh_user }                     : {}),
         ...(v.ssh_identity_file ? { identityFile: v.ssh_identity_file }    : {}),
+        ...(v.ssh_binary        ? { binary: v.ssh_binary }                 : {}),
         ...(keyCreatedAt        ? { key_created_at: keyCreatedAt }         : {}),
       },
     }
@@ -156,6 +158,13 @@ function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
           </Form.Item>
           <Form.Item name="ssh_identity_file" label="Default identity file">
             <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: 'monospace' }} />
+          </Form.Item>
+          <Form.Item
+            name="ssh_binary"
+            label="SSH client binary"
+            help="Leave blank to use the system ssh. Set to plink.exe (or full path) to use PuTTY's plink instead."
+          >
+            <Input placeholder="ssh" style={{ fontFamily: 'monospace' }} />
           </Form.Item>
         </div>
 
@@ -627,16 +636,4 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   )
 }
 
-export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged }: SettingsDrawerProps) {
-  return (
-    <Drawer title="Settings" placement="right" width={480} open={open} onClose={onClose}>
-      <Tabs
-        size="small"
-        items={[
-          { key: 'general',    label: 'General',     children: <GeneralTab onKeyChanged={onKeyChanged} /> },
-          { key: 'jumpHosts',  label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
-        ]}
-      />
-    </Drawer>
-  )
-}
+export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged }: Settin

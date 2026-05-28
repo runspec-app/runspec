@@ -61,9 +61,13 @@ def run_local(
     _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent)
 
 
-def ssh_flags(identity_file: str | None) -> list[str]:
-    """Common SSH flags, with optional identity file."""
-    flags = ["-o", "BatchMode=yes"]
+def ssh_flags(identity_file: str | None, binary: str = "ssh") -> list[str]:
+    """Common SSH/plink flags, with optional identity file.
+
+    Detects plink by binary name and uses -batch instead of -o BatchMode=yes.
+    """
+    is_plink = "plink" in Path(binary).stem.lower()
+    flags = ["-batch"] if is_plink else ["-o", "BatchMode=yes"]
     if identity_file:
         flags += ["-i", str(Path(identity_file).expanduser())]
     return flags
@@ -81,12 +85,13 @@ def run_remote(
     timeout: int | None = None,
     cancel_event: threading.Event | None = None,
     agent: bool = False,
+    ssh_binary: str = "ssh",
 ) -> None:
     """Execute a remote runnable via SSH, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args)
-    cmd = ["ssh", *ssh_flags(identity_file), ssh_target, remote_bin, *command_path, *argv]
+    cmd = [ssh_binary, *ssh_flags(identity_file, ssh_binary), ssh_target, remote_bin, *command_path, *argv]
     _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent)
 
 
@@ -159,15 +164,4 @@ def _stream(
     proc.wait()
     proc_done.set()
 
-    if timer is not None:
-        timer.cancel()
-
-    duration_ms = int((time.monotonic() - start) * 1000)
-    if user_cancelled.is_set():
-        on_line("✗  Cancelled", "stderr")
-        on_done(-2, duration_ms)
-    elif timed_out.is_set():
-        on_line(f"⏱  Process killed: exceeded {timeout}s timeout", "stderr")
-        on_done(-1, duration_ms)
-    else:
-        on_done(proc.returncode, duration_ms)
+    if timer i

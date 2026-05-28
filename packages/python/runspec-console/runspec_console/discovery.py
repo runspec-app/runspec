@@ -61,11 +61,11 @@ def discover_local(runspec_path: str, host: str) -> list[dict[str, Any]]:
     return runnables
 
 
-def discover_remote(ssh_target: str, runspec_path: str, host: str, identity_file: str | None = None) -> list[dict[str, Any]]:
+def discover_remote(ssh_target: str, runspec_path: str, host: str, identity_file: str | None = None, ssh_binary: str = "ssh") -> list[dict[str, Any]]:
     """SSH + runspec local --format json to discover runnables on a remote host."""
     from .executor import ssh_flags
     group = venv_name(runspec_path)
-    cmd = ["ssh", *ssh_flags(identity_file), ssh_target, runspec_path, "local", "--format", "json"]
+    cmd = [ssh_binary, *ssh_flags(identity_file, ssh_binary), ssh_target, runspec_path, "local", "--format", "json"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
                                 encoding="utf-8", errors="replace")
@@ -170,5 +170,4 @@ def _build_args(args_spec: dict[str, Any]) -> list[dict[str, Any]]:
             entry["position"] = arg["position"]
         if arg.get("autonomy"):
             entry["autonomy"] = arg["autonomy"]
-        result.append(entry)
-    return result
+       

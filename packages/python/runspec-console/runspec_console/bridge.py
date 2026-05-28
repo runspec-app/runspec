@@ -52,6 +52,31 @@ class Bridge:
     def set_window(self, window: Any) -> None:
         self._window = window
 
+    # ── window controls ───────────────────────────────────────────────────────
+
+    def minimize_window(self) -> None:
+        if self._window:
+            self._window.minimize()
+
+    def toggle_maximize_window(self) -> None:
+        if self._window:
+            if self._window.maximized:
+                self._window.restore()
+            else:
+                self._window.maximize()
+
+    def close_window(self) -> None:
+        if self._window:
+            self._window.destroy()
+
+    def resize_window(self, width: int, height: int) -> None:
+        if self._window:
+            self._window.resize(width, height)
+
+    def move_window(self, x: int, y: int) -> None:
+        if self._window:
+            self._window.move(x, y)
+
     # ── hosts ────────────────────────────────────────────────────────────────
 
     def get_hosts(self) -> list[dict[str, Any]]:
@@ -121,8 +146,9 @@ class Bridge:
             f'done 2>/dev/null'
         )
         try:
+            binary = self._ssh_binary()
             result = _sp.run(
-                ["ssh", *ssh_flags(idf), ssh, script],
+                [binary, *ssh_flags(idf, binary), ssh, script],
                 capture_output=True, text=True, timeout=20,
                 encoding="utf-8", errors="replace",
             )
@@ -218,7 +244,8 @@ class Bridge:
         idf = entry.get("identityFile")
         if ssh:
             from .executor import ssh_flags
-            cmd = ["ssh", *ssh_flags(idf), ssh, rp, "local", "--format", "json"]
+            binary = self._ssh_binary()
+            cmd = [binary, *ssh_flags(idf, binary), ssh, rp, "local", "--format", "json"]
         else:
             cmd = [rp, "local", "--format", "json"]
         try:
@@ -366,7 +393,8 @@ class Bridge:
             ssh = entry.get("ssh")
             if ssh:
                 run_remote(ssh, rp, runnable, args, cp, on_line, on_done,
-                           entry.get("identityFile"), cancel_event=cancel_event)
+                           entry.get("identityFile"), cancel_event=cancel_event,
+                           ssh_binary=self._ssh_binary())
             else:
                 run_local(rp, runnable, args, cp, on_line, on_done, cancel_event=cancel_event)
 
@@ -541,7 +569,8 @@ class Bridge:
         ssh = entry.get("ssh")
         if ssh:
             run_remote(ssh, rp, runnable, tool_input, [], on_line, on_done,
-                       entry.get("identityFile"), timeout=120, agent=True)
+                       entry.get("identityFile"), timeout=120, agent=True,
+                       ssh_binary=self._ssh_binary())
         else:
             run_local(rp, runnable, tool_input, [], on_line, on_done, timeout=120, agent=True)
 
@@ -553,6 +582,11 @@ class Bridge:
         return output or "(no output)"
 
     # ── internals ─────────────────────────────────────────────────────────────
+
+    def _ssh_binary(self) -> str:
+        """Return the configured SSH binary (plink, custom path, etc.), defaulting to 'ssh'."""
+        cfg = self.get_config()
+        return str(cfg.get("ssh", {}).get("binary", "ssh")) or "ssh"
 
     def _reload_hosts(self) -> None:
         self._hosts = load_hosts(hosts_path())
@@ -620,7 +654,7 @@ class Bridge:
             if not connected:
                 return
             for rp in paths:
-                items = discover_remote(ssh, rp, name, idf) if ssh else discover_local(rp, name)
+                items = discover_remote(ssh, rp, name, idf, self._ssh_binary()) if ssh else discover_local(rp, name)
                 with lock2:
                     discovered.extend(items)
 
@@ -642,11 +676,15 @@ class Bridge:
         if not ssh:
             return True   # local is always connected
         from .executor import ssh_flags
+        from pathlib import Path as _Path
         idf = host.get("identityFile")
+        binary = self._ssh_binary()
+        is_plink = "plink" in _Path(binary).stem.lower()
+        timeout_flag = ["-connecttimeout", "3"] if is_plink else ["-o", "ConnectTimeout=3"]
         import subprocess
         try:
             r = subprocess.run(
-                ["ssh", *ssh_flags(idf), "-o", "ConnectTimeout=3", ssh, "true"],
+                [binary, *ssh_flags(idf, binary), *timeout_flag, ssh, "true"],
                 capture_output=True, timeout=5,
             )
             return r.returncode == 0
@@ -710,7 +748,7 @@ def _paths(entry: dict[str, Any]) -> list[str]:
 
 
 def _parse_ssh(ssh: str) -> tuple[str, str, int | None]:
-    """Parse 'user@host:port' -> (user, host, port). Missing parts -> empty string / None."""
+    """Parse 'user@host:port' → (user, host, port). Missing parts → empty string / None."""
     user = ""
     port: int | None = None
     s = ssh
@@ -768,9 +806,9 @@ def _parse_log_text(name: str, text: str, host: str) -> list[dict[str, Any]]:
 
 
 def _parse_log_by_run_id(name: str, entries: list[dict[str, Any]], host: str) -> list[dict[str, Any]]:
-    """Group log entries by run_id UUID -> one HistoryRecord per invocation."""
+    """Group log entries by run_id UUID → one HistoryRecord per invocation."""
     # Preserve insertion order of run_ids so history is chronological
-    groups: dict[str, dict[str, Any]] = {}  # run_id -> {"lines": [], "summary": None}
+    groups: dict[str, dict[str, Any]] = {}  # run_id → {"lines": [], "summary": None}
     for entry in entries:
         extra = entry.get("extra", {})
         run_id = extra.get("run_id")
@@ -847,21 +885,4 @@ def _parse_log_sequential(name: str, entries: list[dict[str, Any]], host: str) -
 
 def _toml_scalar(v: Any) -> str:
     if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, str):
-        return f'"{v}"'
-    return str(v)
-
-
-def _write_schedules(path: Path, schedules: list[dict[str, Any]]) -> None:
-    lines = []
-    for s in schedules:
-        lines.append("[[schedule]]")
-        for k, v in s.items():
-            if isinstance(v, dict):
-                inner = ", ".join(f"{ik} = {_toml_scalar(iv)}" for ik, iv in v.items())
-                lines.append(f"{k} = {{ {inner} }}")
-            else:
-                lines.append(f"{k} = {_toml_scalar(v)}")
-        lines.append("")
-    path.write_text("\n".join(lines), encoding="utf-8")
+        return "true" i
