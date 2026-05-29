@@ -27,7 +27,7 @@ jobs:
           git merge-base --is-ancestor ${{ github.sha }} origin/main \
             || { echo "::error::Tag must point to a commit on main — merge your PR first, then push the tag."; exit 1; }
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
 
