@@ -20,12 +20,19 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-from .hosts import scripts_dir, site_packages, venv_name
+from .hosts import venv_name
 
 # Dirs inside site-packages that never contain user packages
-_SKIP_DIRS = frozenset({
-    "__pycache__", "bin", "lib", "lib64", "include", "share",
-})
+_SKIP_DIRS = frozenset(
+    {
+        "__pycache__",
+        "bin",
+        "lib",
+        "lib64",
+        "include",
+        "share",
+    }
+)
 
 
 _SELF_EXCLUDE = frozenset({"runspec-console"})
@@ -42,8 +49,11 @@ def discover_local(runspec_path: str, host: str) -> list[dict[str, Any]]:
     try:
         result = subprocess.run(
             [runspec_path, "local", "--format", "json"],
-            capture_output=True, text=True, timeout=15,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
@@ -57,18 +67,43 @@ def discover_local(runspec_path: str, host: str) -> list[dict[str, Any]]:
     for item in items:
         if item["runnable"] in _SELF_EXCLUDE:
             continue
-        runnables.extend(_spec_to_runnables(item["runnable"], item["spec"], host, group, item.get("config_autonomy")))
+        runnables.extend(
+            _spec_to_runnables(
+                item["runnable"], item["spec"], host, group, item.get("config_autonomy")
+            )
+        )
     return runnables
 
 
-def discover_remote(ssh_target: str, runspec_path: str, host: str, identity_file: str | None = None, ssh_binary: str = "ssh") -> list[dict[str, Any]]:
+def discover_remote(
+    ssh_target: str,
+    runspec_path: str,
+    host: str,
+    identity_file: str | None = None,
+    ssh_binary: str = "ssh",
+) -> list[dict[str, Any]]:
     """SSH + runspec local --format json to discover runnables on a remote host."""
     from .executor import ssh_flags
+
     group = venv_name(runspec_path)
-    cmd = [ssh_binary, *ssh_flags(identity_file, ssh_binary), ssh_target, runspec_path, "local", "--format", "json"]
+    cmd = [
+        ssh_binary,
+        *ssh_flags(identity_file, ssh_binary),
+        ssh_target,
+        runspec_path,
+        "local",
+        "--format",
+        "json",
+    ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
-                                encoding="utf-8", errors="replace")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
+        )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
     if result.returncode != 0:
@@ -79,7 +114,11 @@ def discover_remote(ssh_target: str, runspec_path: str, host: str, identity_file
         return []
     runnables: list[dict[str, Any]] = []
     for item in items:
-        runnables.extend(_spec_to_runnables(item["runnable"], item["spec"], host, group, item.get("config_autonomy")))
+        runnables.extend(
+            _spec_to_runnables(
+                item["runnable"], item["spec"], host, group, item.get("config_autonomy")
+            )
+        )
     return runnables
 
 
@@ -110,7 +149,10 @@ _RAW_SPEC_EXCLUDE = frozenset({"args", "commands"})
 
 
 def _spec_to_runnables(
-    name: str, spec: dict[str, Any], host: str, group: str,
+    name: str,
+    spec: dict[str, Any],
+    host: str,
+    group: str,
     config_autonomy: str | None = None,
 ) -> list[dict[str, Any]]:
     runnable: dict[str, Any] = {
@@ -150,7 +192,11 @@ def _build_args(args_spec: dict[str, Any]) -> list[dict[str, Any]]:
         # load_raw normalises args with "required": None when not set in TOML,
         # so dict.get(key, fallback) won't trigger — check for None explicitly.
         required_raw = arg.get("required")
-        required = required_raw if required_raw is not None else (arg.get("default") is None and arg_type not in ("flag",))
+        required = (
+            required_raw
+            if required_raw is not None
+            else (arg.get("default") is None and arg_type not in ("flag",))
+        )
         entry: dict[str, Any] = {
             "name": name,
             "type": arg_type,
@@ -170,4 +216,5 @@ def _build_args(args_spec: dict[str, Any]) -> list[dict[str, Any]]:
             entry["position"] = arg["position"]
         if arg.get("autonomy"):
             entry["autonomy"] = arg["autonomy"]
-       
+        result.append(entry)
+    return result

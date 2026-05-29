@@ -12,7 +12,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import sys
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -45,7 +44,7 @@ def _start_static_server(dist: Path) -> int:
             super().__init__(*a, directory=str(dist), **kw)
 
         def log_message(self, *_: object) -> None:
-            pass   # silence request logs
+            pass  # silence request logs
 
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -72,7 +71,12 @@ def _build_icon() -> Path | None:
         r, g, b, w = 9, 88, 217, 32  # runspec blue, 32×32
 
         def _chunk(tag: bytes, data: bytes) -> bytes:
-            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+            return (
+                struct.pack(">I", len(data))
+                + tag
+                + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+            )
 
         scanlines = b"".join(b"\x00" + bytes([r, g, b] * w) for _ in range(w))
         png = (
@@ -81,7 +85,11 @@ def _build_icon() -> Path | None:
             + _chunk(b"IDAT", zlib.compress(scanlines))
             + _chunk(b"IEND", b"")
         )
-        ico = struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", w, w, 0, 0, 1, 32, len(png), 22) + png
+        ico = (
+            struct.pack("<HHH", 0, 1, 1)
+            + struct.pack("<BBBBHHII", w, w, 0, 0, 1, 32, len(png), 22)
+            + png
+        )
         cache.write_bytes(ico)
         return cache
     except Exception:

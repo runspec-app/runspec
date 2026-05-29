@@ -7,39 +7,6 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.19.1] — 2026-05-28
-
-### Fixed
-
-- **Subcommand help display** — `--help` for runnables with subcommands now
-  renders correctly across all nesting depths.
-  - Nested subcommand resolution walks multi-level instead of stopping at
-    depth 1. Previously, declared `[parent.commands.X.commands.Y]` entries
-    were unreachable: typing `runnable X Y --help` silently dropped `Y` and
-    showed `X`'s help.
-  - Full command path renders in the usage title (e.g. `Usage: outer inner
-    deep` instead of just `Usage: deep`).
-  - Usage line order is now `name → flags → positionals → <command> → rest`.
-    Rest stays last because `--` terminates argument parsing.
-  - Choice args render their options inline: `[--fmt <text|json|xml>]`
-    instead of `[--fmt <choice>]`.
-  - Trailer with subcommands now also shows the `-h, --help` reminder.
-
----
-
-## [node-0.17.1] — 2026-05-28
-
-### Fixed
-
-- **Subcommand help display** — `runspec-node` now mirrors the Python pack's
-  subcommand help. `printHelp` partitions args into flags/positionals/rest,
-  renders `<command>` in the usage line (was missing entirely), adds a
-  Commands section + subcommand trailer, and renders choice options inline.
-- **Nested subcommand resolution** — `parse()` walks into nested subcommands
-  instead of stopping at depth 1.
-
----
-
 ## [0.19.0] — 2026-05-27
 
 ### Added

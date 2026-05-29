@@ -7,6 +7,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+
+## 0.1.7 (2026-05-29)
+
+### Added
+- SSH terminal tabs: right-click any connected remote host in the sidebar → **Open SSH terminal**
+- Full xterm.js terminal with ANSI colour support, scrollback, and dark theme matching the app
+- Multiple terminal tabs open simultaneously, each closeable with ×
+- Terminal panes stay mounted when switching to other tabs (session preserved)
+- Uses plink (PuTTY) on Windows for reliable PTY allocation; falls back to OpenSSH `ssh -t`
+- `open_terminal`, `terminal_input`, `resize_terminal`, `close_terminal` methods on Bridge
+- 19 unit tests covering terminal session lifecycle in `tests/test_terminal.py`
+
 ## [0.1.6] — 2026-05-28
 
 ### Added

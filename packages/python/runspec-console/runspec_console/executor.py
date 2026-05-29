@@ -54,11 +54,17 @@ def run_local(
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
     # Windows entry points are installed as <name>.exe launchers
-    candidates = ([f"{runnable}.exe", runnable] if sys.platform == "win32" else [runnable])
-    binary = next((bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable)
+    candidates = (
+        [f"{runnable}.exe", runnable] if sys.platform == "win32" else [runnable]
+    )
+    binary = next(
+        (bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable
+    )
     argv = args_to_argv(args)
     cmd = [str(binary), *command_path, *argv]
-    _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent)
+    _stream(
+        cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent
+    )
 
 
 def ssh_flags(identity_file: str | None, binary: str = "ssh") -> list[str]:
@@ -91,8 +97,17 @@ def run_remote(
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args)
-    cmd = [ssh_binary, *ssh_flags(identity_file, ssh_binary), ssh_target, remote_bin, *command_path, *argv]
-    _stream(cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent)
+    cmd = [
+        ssh_binary,
+        *ssh_flags(identity_file, ssh_binary),
+        ssh_target,
+        remote_bin,
+        *command_path,
+        *argv,
+    ]
+    _stream(
+        cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent
+    )
 
 
 def _stream(
@@ -108,7 +123,7 @@ def _stream(
     try:
         proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.DEVNULL,   # never block on stdin reads
+            stdin=subprocess.DEVNULL,  # never block on stdin reads
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -164,4 +179,15 @@ def _stream(
     proc.wait()
     proc_done.set()
 
-    if timer i
+    if timer is not None:
+        timer.cancel()
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+    if user_cancelled.is_set():
+        on_line("✗  Cancelled", "stderr")
+        on_done(-2, duration_ms)
+    elif timed_out.is_set():
+        on_line(f"⏱  Process killed: exceeded {timeout}s timeout", "stderr")
+        on_done(-1, duration_ms)
+    else:
+        on_done(proc.returncode, duration_ms)

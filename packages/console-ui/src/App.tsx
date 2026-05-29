@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { ConfigProvider, Badge, theme, Button, Tooltip, Tag } from 'antd'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -9,9 +9,7 @@ import {
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
-  MinusOutlined,
-  BorderOutlined,
-  CloseOutlined,
+  CodeOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -19,13 +17,18 @@ import { HistoryView } from './views/HistoryView'
 import { SchedulesView } from './views/SchedulesView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { CommandInput } from './components/CommandInput'
-import { ResizeHandles } from './components/ResizeHandles'
 import { SettingsDrawer } from './components/SettingsDrawer'
+import { TerminalTab } from './components/TerminalTab'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'forms' | 'schedules'
+
+interface TerminalSession {
+  id: string
+  host: string
+}
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -41,6 +44,8 @@ export default function App() {
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
+  const [terminals, setTerminals] = useState<TerminalSession[]>([])
+  const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null)
   const inFlight = useInFlight()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
@@ -81,7 +86,6 @@ export default function App() {
       setHosts(hs)
       setSelectedHost(hs[0]?.name ?? '')
     })
-    // Re-fetch when the background refresh cycle completes
     const onHostsUpdated = () => bridge.get_hosts().then(setHosts)
     const onRunnablesUpdated = () => bridge.get_runnables('all').then(setRunnables)
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
@@ -107,6 +111,7 @@ export default function App() {
   const handleHistoryRerun = (record: HistoryRecord) => {
     setHistorySearch(record.runnable)
     setView('console')
+    setActiveTerminalId(null)
     window.dispatchEvent(new CustomEvent('runspec:rerun', {
       detail: { host: record.host, runnable: record.runnable, args: record.args },
     }))
@@ -114,6 +119,7 @@ export default function App() {
 
   const handleAskLlm = (text: string) => {
     setView('console')
+    setActiveTerminalId(null)
     setPendingChat(text)
   }
 
@@ -123,18 +129,38 @@ export default function App() {
     const label = argStr ? `/${cmd} ${argStr}` : `/${cmd}`
     setInputHistory(h => [...h, label])
     setView('console')
+    setActiveTerminalId(null)
     window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args, commandPath } }))
   }
 
   const handleOpenForm = (runnable: Runnable, commandPath: string[] = []) => {
     setPendingForm({ runnable, commandPath })
     setView('forms')
+    setActiveTerminalId(null)
   }
 
   const handleSendChat = (message: string) => {
     setInputHistory(h => [...h, message])
-    if (autoSwitch) setView('console')
+    if (autoSwitch) { setView('console'); setActiveTerminalId(null) }
     window.dispatchEvent(new CustomEvent('runspec:send_chat', { detail: { message } }))
+  }
+
+  const handleOpenTerminal = async (hostName: string) => {
+    try {
+      const sessionId = await bridge.open_terminal(hostName)
+      setTerminals(prev => [...prev, { id: sessionId, host: hostName }])
+      setActiveTerminalId(sessionId)
+    } catch (err) {
+      console.error('Failed to open terminal:', err)
+    }
+  }
+
+  const handleCloseTerminal = (sessionId: string) => {
+    bridge.close_terminal(sessionId).catch(console.error)
+    setTerminals(prev => prev.filter(t => t.id !== sessionId))
+    if (activeTerminalId === sessionId) {
+      setActiveTerminalId(null)
+    }
   }
 
   const headerBg  = isDark ? '#0d0d0d' : '#fafafa'
@@ -166,8 +192,6 @@ export default function App() {
           token: { fontFamily: 'monospace' },
         }}>
         <div style={{ height: '100vh', display: 'flex', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
-          <ResizeHandles />
-
           {/* Fixed host sidebar */}
           <div style={{
             width: 180, flexShrink: 0,
@@ -178,37 +202,48 @@ export default function App() {
               padding: '13px 16px 12px',
               fontWeight: 700, fontSize: 14, color: titleCol,
               borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
-              // Drag region for frameless window — no interactive children here
-              WebkitAppRegion: 'drag',
-            } as React.CSSProperties}>
+            }}>
               runspec
             </div>
             <div style={{ flex: 1, overflowY: 'auto', paddingTop: 4 }}>
               {(() => {
                 const hostRow = (h: typeof hosts[0]) => (
-                  <div
+                  <Dropdown
                     key={h.name}
-                    onClick={() => handleHostSelect(h.name)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      padding: '8px 12px 8px 14px', cursor: 'pointer',
-                      borderLeft: selectedHost === h.name
-                        ? `2px solid ${titleCol}`
-                        : '2px solid transparent',
-                      background: selectedHost === h.name
-                        ? (isDark ? 'rgba(79,193,255,0.08)' : 'rgba(9,88,217,0.06)')
-                        : 'transparent',
+                    trigger={['contextMenu']}
+                    menu={{
+                      items: h.role !== undefined && h.connected ? [
+                        {
+                          key: 'open_terminal',
+                          icon: <CodeOutlined />,
+                          label: 'Open SSH terminal',
+                          onClick: () => handleOpenTerminal(h.name),
+                        },
+                      ] : [],
                     }}
                   >
-                    <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
-                    <span style={{
-                      fontSize: 13, color: textCol,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>{h.name}</span>
-                  </div>
+                    <div
+                      onClick={() => handleHostSelect(h.name)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '8px 12px 8px 14px', cursor: 'pointer',
+                        borderLeft: selectedHost === h.name
+                          ? `2px solid ${titleCol}`
+                          : '2px solid transparent',
+                        background: selectedHost === h.name
+                          ? (isDark ? 'rgba(79,193,255,0.08)' : 'rgba(9,88,217,0.06)')
+                          : 'transparent',
+                      }}
+                    >
+                      <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
+                      <span style={{
+                        fontSize: 13, color: textCol,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>{h.name}</span>
+                    </div>
+                  </Dropdown>
                 )
 
-                // Group all hosts — ungrouped (incl. local) → 'Hosts' heading
                 const groupMap = new Map<string, typeof hosts>()
                 const groupOrder: string[] = []
                 for (const h of hosts) {
@@ -216,7 +251,6 @@ export default function App() {
                   if (!groupMap.has(g)) { groupMap.set(g, []); groupOrder.push(g) }
                   groupMap.get(g)!.push(h)
                 }
-                // Ungrouped ('') first, named groups alphabetically after
                 const sortedGroupKeys = [...groupOrder].sort((a, b) => {
                   if (!a && b) return -1
                   if (a && !b) return 1
@@ -256,13 +290,13 @@ export default function App() {
               {navTabs.map(tab => (
                 <button
                   key={tab.key}
-                  onClick={() => setView(tab.key)}
+                  onClick={() => { setView(tab.key); setActiveTerminalId(null) }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
                     padding: '0 16px', border: 'none', background: 'transparent',
                     cursor: 'pointer', fontSize: 13,
-                    color: view === tab.key ? titleCol : iconCol,
-                    borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
+                    color: view === tab.key && activeTerminalId === null ? titleCol : iconCol,
+                    borderBottom: view === tab.key && activeTerminalId === null ? `2px solid ${titleCol}` : '2px solid transparent',
                     transition: 'color 0.15s',
                   }}
                 >
@@ -270,10 +304,49 @@ export default function App() {
                   {tab.label}
                 </button>
               ))}
-              {/* Spacer doubles as drag region for frameless window */}
-              <div style={{ flex: 1, WebkitAppRegion: 'drag' } as React.CSSProperties} />
 
-              {/* Host status pills — always-visible connectivity at a glance */}
+              {terminals.length > 0 && (
+                <div style={{
+                  width: 1, background: borderCol, alignSelf: 'stretch', margin: '8px 2px', flexShrink: 0,
+                }} />
+              )}
+              {terminals.map(t => (
+                <div
+                  key={t.id}
+                  onClick={() => setActiveTerminalId(t.id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    padding: '0 6px 0 12px', cursor: 'pointer', userSelect: 'none',
+                    color: activeTerminalId === t.id ? titleCol : iconCol,
+                    borderBottom: activeTerminalId === t.id ? `2px solid ${titleCol}` : '2px solid transparent',
+                    transition: 'color 0.15s',
+                    fontSize: 13,
+                  }}
+                >
+                  <CodeOutlined style={{ fontSize: 11 }} />
+                  <span style={{
+                    maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{t.host}</span>
+                  <button
+                    onClick={e => { e.stopPropagation(); handleCloseTerminal(t.id) }}
+                    title="Close terminal"
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      width: 18, height: 18, border: 'none', borderRadius: 3, background: 'transparent',
+                      cursor: 'pointer', fontSize: 14, lineHeight: 1,
+                      color: isDark ? '#555' : '#bbb',
+                      padding: 0, marginLeft: 2,
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.color = isDark ? '#aaa' : '#666')}
+                    onMouseLeave={e => (e.currentTarget.style.color = isDark ? '#555' : '#bbb')}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+
+              <div style={{ flex: 1 }} />
+
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px', borderRight: `1px solid ${borderCol}` }}>
                 {hosts.map(h => (
                   <button
@@ -297,7 +370,7 @@ export default function App() {
                 ))}
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 8 }}>
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
                 </Tooltip>
@@ -307,72 +380,35 @@ export default function App() {
                   </Badge>
                 </Tooltip>
               </div>
-
-              {/* Window controls — frameless title bar */}
-              <div style={{
-                display: 'flex', alignItems: 'stretch', flexShrink: 0,
-                borderLeft: `1px solid ${borderCol}`, marginLeft: 2,
-                WebkitAppRegion: 'no-drag',
-              } as React.CSSProperties}>
-                <button
-                  onClick={() => bridge.minimize_window()}
-                  title="Minimise"
-                  style={{
-                    width: 46, border: 'none', background: 'transparent',
-                    color: iconCol, cursor: 'pointer', fontSize: 11,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = isDark ? '#1f1f1f' : '#e8e8e8')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <MinusOutlined style={{ fontSize: 11 }} />
-                </button>
-                <button
-                  onClick={() => bridge.toggle_maximize_window()}
-                  title="Maximise"
-                  style={{
-                    width: 46, border: 'none', background: 'transparent',
-                    color: iconCol, cursor: 'pointer', fontSize: 11,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = isDark ? '#1f1f1f' : '#e8e8e8')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <BorderOutlined style={{ fontSize: 10 }} />
-                </button>
-                <button
-                  onClick={() => bridge.close_window()}
-                  title="Close"
-                  style={{
-                    width: 46, border: 'none', background: 'transparent',
-                    color: iconCol, cursor: 'pointer', fontSize: 11,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#c42b1c'; e.currentTarget.style.color = '#fff' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = iconCol }}
-                >
-                  <CloseOutlined style={{ fontSize: 11 }} />
-                </button>
-              </div>
             </div>
 
             {/* View area */}
-            <div style={{ flex: 1, padding: '24px 24px 16px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
-              </div>
-              {view !== 'console' && (
-                <div style={{ flex: 1, overflow: 'auto' }}>
-                  {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                  {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
-                  {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
-                  {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              {terminals.map(t => (
+                <div
+                  key={t.id}
+                  style={{ display: activeTerminalId === t.id ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}
+                >
+                  <TerminalTab sessionId={t.id} host={t.host} />
                 </div>
-              )}
+              ))}
+
+              <div style={{ display: activeTerminalId === null ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
+                <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                  <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
+                </div>
+                {view !== 'console' && (
+                  <div style={{ flex: 1, overflow: 'auto' }}>
+                    {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
+                    {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
+                    {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
+                    {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Group strip */}
-            {selectedHostGroups.length > 0 && (
+            {activeTerminalId === null && selectedHostGroups.length > 0 && (
               <div style={{
                 borderTop: `1px solid ${borderCol}`,
                 padding: '5px 16px',
