@@ -8,6 +8,14 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.1.8] — 2026-05-29
+
+### Fixed
+- Display name in log operator field now shows full Windows display name (`GetUserNameEx(3)`) instead of login name
+- Local history now correctly reads from `~/logs` fallback when the venv path has no logs directory
+- Settings drawer footer now shows correct config filename (`config.toml` in `%APPDATA%\runspec-console\`)
+
+
 ## 0.1.7 (2026-05-29)
 
 ### Added
