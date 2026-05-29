@@ -264,7 +264,7 @@ function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
         </div>
 
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
-          Settings are saved to <code>runspec_config.toml</code>.
+          Settings are saved to <code>config.toml</code> in %APPDATA%\runspec-console\.
         </Text>
       </Form>
     </>

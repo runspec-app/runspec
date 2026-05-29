@@ -128,6 +128,9 @@ class Bridge:
                 continue
             log_dir = Path(rp).parent.parent / "logs"
             if not log_dir.exists():
+                # Binary path (e.g. Scripts/runspec.exe) — fall back to ~/logs
+                log_dir = Path.home() / "logs"
+            if not log_dir.exists():
                 continue
             for log_file in sorted(
                 log_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True
@@ -1008,7 +1011,8 @@ class Bridge:
         try:
             import win32api  # type: ignore[import]
 
-            return win32api.GetUserName()
+            # NameDisplay (3) returns the full display name, e.g. "Jason Finestone"
+            return win32api.GetUserNameEx(3)  # type: ignore[attr-defined]
         except Exception:
             import os
 
