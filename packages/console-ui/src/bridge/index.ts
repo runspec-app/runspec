@@ -146,10 +146,7 @@ export interface BridgeApi {
   resize_window: (width: number, height: number) => Promise<void>
   move_window: (x: number, y: number) => Promise<void>
   // ── terminal sessions ──────────────────────────────────────────────────────
-  open_terminal: (host: string) => Promise<string>         // returns session_id
-  terminal_input: (sessionId: string, data: string) => Promise<void>   // data: base64
-  resize_terminal: (sessionId: string, cols: number, rows: number) => Promise<void>
-  close_terminal: (sessionId: string) => Promise<void>
+  launch_terminal: (host: string) => Promise<void>
 }
 
 declare global {

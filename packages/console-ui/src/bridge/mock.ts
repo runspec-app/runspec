@@ -606,38 +606,8 @@ export const mockApi: BridgeApi = {
 
     return id
   },
-  open_terminal: async (host: string): Promise<string> => {
-    const sessionId = crypto.randomUUID()
-    const _dispatch = (event: string, detail: unknown) =>
-      window.dispatchEvent(new CustomEvent(event, { detail }))
-    setTimeout(() => {
-      _dispatch('runspec:terminal_data', {
-        id: sessionId,
-        data: btoa('\r\n[mock terminal: ' + host + ']\r\n$ '),
-      })
-    }, 500)
-    return sessionId
-  },
-
-  terminal_input: async (sessionId: string, data: string): Promise<void> => {
-    const _dispatch = (event: string, detail: unknown) =>
-      window.dispatchEvent(new CustomEvent(event, { detail }))
-    const decoded = atob(data)
-    if (decoded === '\r' || decoded === '\n') {
-      _dispatch('runspec:terminal_data', { id: sessionId, data: btoa('\r\n$ ') })
-    } else {
-      _dispatch('runspec:terminal_data', { id: sessionId, data })
-    }
-  },
-
-  resize_terminal: async (_sessionId: string, _cols: number, _rows: number): Promise<void> => {
-    // no-op in mock
-  },
-
-  close_terminal: async (sessionId: string): Promise<void> => {
-    const _dispatch = (event: string, detail: unknown) =>
-      window.dispatchEvent(new CustomEvent(event, { detail }))
-    _dispatch('runspec:terminal_closed', { id: sessionId })
+  launch_terminal: async (host: string): Promise<void> => {
+    console.log('mock: launch_terminal', host)
   },
 
 }

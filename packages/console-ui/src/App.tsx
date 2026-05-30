@@ -18,17 +18,11 @@ import { SchedulesView } from './views/SchedulesView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
-import { TerminalTab } from './components/TerminalTab'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'forms' | 'schedules'
-
-interface TerminalSession {
-  id: string
-  host: string
-}
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -44,8 +38,6 @@ export default function App() {
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
-  const [terminals, setTerminals] = useState<TerminalSession[]>([])
-  const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null)
   const inFlight = useInFlight()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
@@ -111,7 +103,6 @@ export default function App() {
   const handleHistoryRerun = (record: HistoryRecord) => {
     setHistorySearch(record.runnable)
     setView('console')
-    setActiveTerminalId(null)
     window.dispatchEvent(new CustomEvent('runspec:rerun', {
       detail: { host: record.host, runnable: record.runnable, args: record.args },
     }))
@@ -119,7 +110,6 @@ export default function App() {
 
   const handleAskLlm = (text: string) => {
     setView('console')
-    setActiveTerminalId(null)
     setPendingChat(text)
   }
 
@@ -129,38 +119,18 @@ export default function App() {
     const label = argStr ? `/${cmd} ${argStr}` : `/${cmd}`
     setInputHistory(h => [...h, label])
     setView('console')
-    setActiveTerminalId(null)
     window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args, commandPath } }))
   }
 
   const handleOpenForm = (runnable: Runnable, commandPath: string[] = []) => {
     setPendingForm({ runnable, commandPath })
     setView('forms')
-    setActiveTerminalId(null)
   }
 
   const handleSendChat = (message: string) => {
     setInputHistory(h => [...h, message])
-    if (autoSwitch) { setView('console'); setActiveTerminalId(null) }
+    if (autoSwitch) { setView('console') }
     window.dispatchEvent(new CustomEvent('runspec:send_chat', { detail: { message } }))
-  }
-
-  const handleOpenTerminal = async (hostName: string) => {
-    try {
-      const sessionId = await bridge.open_terminal(hostName)
-      setTerminals(prev => [...prev, { id: sessionId, host: hostName }])
-      setActiveTerminalId(sessionId)
-    } catch (err) {
-      console.error('Failed to open terminal:', err)
-    }
-  }
-
-  const handleCloseTerminal = (sessionId: string) => {
-    bridge.close_terminal(sessionId).catch(console.error)
-    setTerminals(prev => prev.filter(t => t.id !== sessionId))
-    if (activeTerminalId === sessionId) {
-      setActiveTerminalId(null)
-    }
   }
 
   const headerBg  = isDark ? '#0d0d0d' : '#fafafa'
@@ -217,7 +187,7 @@ export default function App() {
                           key: 'open_terminal',
                           icon: <CodeOutlined />,
                           label: 'Open SSH terminal',
-                          onClick: () => handleOpenTerminal(h.name),
+                          onClick: () => bridge.launch_terminal(h.name).catch(console.error),
                         },
                       ] : [],
                     }}
@@ -290,59 +260,19 @@ export default function App() {
               {navTabs.map(tab => (
                 <button
                   key={tab.key}
-                  onClick={() => { setView(tab.key); setActiveTerminalId(null) }}
+                  onClick={() => setView(tab.key)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
                     padding: '0 16px', border: 'none', background: 'transparent',
                     cursor: 'pointer', fontSize: 13,
-                    color: view === tab.key && activeTerminalId === null ? titleCol : iconCol,
-                    borderBottom: view === tab.key && activeTerminalId === null ? `2px solid ${titleCol}` : '2px solid transparent',
+                    color: view === tab.key ? titleCol : iconCol,
+                    borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
                     transition: 'color 0.15s',
                   }}
                 >
                   {tab.icon}
                   {tab.label}
                 </button>
-              ))}
-
-              {terminals.length > 0 && (
-                <div style={{
-                  width: 1, background: borderCol, alignSelf: 'stretch', margin: '8px 2px', flexShrink: 0,
-                }} />
-              )}
-              {terminals.map(t => (
-                <div
-                  key={t.id}
-                  onClick={() => setActiveTerminalId(t.id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 5,
-                    padding: '0 6px 0 12px', cursor: 'pointer', userSelect: 'none',
-                    color: activeTerminalId === t.id ? titleCol : iconCol,
-                    borderBottom: activeTerminalId === t.id ? `2px solid ${titleCol}` : '2px solid transparent',
-                    transition: 'color 0.15s',
-                    fontSize: 13,
-                  }}
-                >
-                  <CodeOutlined style={{ fontSize: 11 }} />
-                  <span style={{
-                    maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{t.host}</span>
-                  <button
-                    onClick={e => { e.stopPropagation(); handleCloseTerminal(t.id) }}
-                    title="Close terminal"
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      width: 18, height: 18, border: 'none', borderRadius: 3, background: 'transparent',
-                      cursor: 'pointer', fontSize: 14, lineHeight: 1,
-                      color: isDark ? '#555' : '#bbb',
-                      padding: 0, marginLeft: 2,
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.color = isDark ? '#aaa' : '#666')}
-                    onMouseLeave={e => (e.currentTarget.style.color = isDark ? '#555' : '#bbb')}
-                  >
-                    ×
-                  </button>
-                </div>
               ))}
 
               <div style={{ flex: 1 }} />
@@ -384,16 +314,7 @@ export default function App() {
 
             {/* View area */}
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              {terminals.map(t => (
-                <div
-                  key={t.id}
-                  style={{ display: activeTerminalId === t.id ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}
-                >
-                  <TerminalTab sessionId={t.id} host={t.host} />
-                </div>
-              ))}
-
-              <div style={{ display: activeTerminalId === null ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
                 <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                   <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
                 </div>
@@ -408,7 +329,7 @@ export default function App() {
               </div>
             </div>
 
-            {activeTerminalId === null && selectedHostGroups.length > 0 && (
+            {selectedHostGroups.length > 0 && (
               <div style={{
                 borderTop: `1px solid ${borderCol}`,
                 padding: '5px 16px',

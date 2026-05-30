@@ -8,6 +8,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.1.9] — 2026-05-29
+
+### Changed
+- SSH terminal now launches PuTTY in a separate window instead of embedding xterm.js — simpler, no PTY resize issues, full PuTTY feature set
+- Removed @xterm/xterm and @xterm/addon-fit dependencies (wheel size reduced)
+
+
 ## [0.1.8] — 2026-05-29
 
 ### Fixed

@@ -42,7 +42,6 @@ class Bridge:
         self._window: Any = None
         self._lock = threading.Lock()
         self._in_flight: dict[str, dict[str, Any]] = {}
-        self._terminals: dict[str, dict[str, Any]] = {}  # session_id → {process, host}
         self._adapter: Any = None  # ModelAdapter, loaded on demand
         self._hosts: list[dict[str, Any]] = []
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
@@ -747,12 +746,13 @@ class Bridge:
 
     # ── terminal sessions ─────────────────────────────────────────────────────
 
-    def open_terminal(self, host: str) -> str:
-        """Open an interactive SSH terminal session. Returns session_id."""
+    def launch_terminal(self, host: str) -> None:
+        """Launch PuTTY in a separate window connected to the host.
+
+        Fire-and-forget: no stdout/stderr capture, no session tracking. PuTTY
+        runs as its own top-level process and the user closes it from there.
+        """
         import subprocess as _sp
-        import base64 as _b64
-        import os as _os
-        from .executor import ssh_flags
 
         entry = self._host_entry(host)
         if entry is None:
@@ -760,91 +760,20 @@ class Bridge:
         ssh = entry.get("ssh")
         if not ssh:
             raise ValueError(
-                "Cannot open terminal to local host — use a remote jump host"
+                "Cannot launch terminal to local host — use a remote jump host"
             )
-        session_id = uuid.uuid4().hex[:16]
-        binary = self._ssh_binary()
+        putty = Path(self._ssh_binary()).parent / "putty.exe"
+        if not putty.exists():
+            raise ValueError(
+                f"putty.exe not found next to SSH binary at {putty}. "
+                "Install PuTTY and ensure putty.exe sits in the same directory "
+                "as the configured SSH client binary."
+            )
+        cmd = [str(putty), "-ssh", ssh]
         idf = entry.get("identityFile")
-        # -t requests PTY allocation; ssh_flags adds -batch (plink) or BatchMode=yes (openssh)
-        cmd = [binary, *ssh_flags(idf, binary), "-t", ssh]
-        proc = _sp.Popen(
-            cmd,
-            stdin=_sp.PIPE,
-            stdout=_sp.PIPE,
-            stderr=_sp.STDOUT,
-        )
-        with self._lock:
-            self._terminals[session_id] = {"process": proc, "host": host}
-
-        def _read_loop() -> None:
-            try:
-                if proc.stdout is None:
-                    return
-                fd = proc.stdout.fileno()
-                while True:
-                    chunk = _os.read(fd, 4096)
-                    if not chunk:
-                        break
-                    b64 = _b64.b64encode(chunk).decode("ascii")
-                    self._dispatch(
-                        "runspec:terminal_data", {"id": session_id, "data": b64}
-                    )
-            except Exception:
-                pass
-            finally:
-                with self._lock:
-                    self._terminals.pop(session_id, None)
-                self._dispatch("runspec:terminal_closed", {"id": session_id})
-
-        threading.Thread(target=_read_loop, daemon=True).start()
-        return session_id
-
-    def terminal_input(self, session_id: str, data: str) -> None:
-        """Write base64-encoded keystroke data to the terminal subprocess stdin."""
-        import base64 as _b64
-
-        with self._lock:
-            session = self._terminals.get(session_id)
-        if session is None:
-            return
-        proc = session["process"]
-        if proc.stdin is None or proc.poll() is not None:
-            return
-        try:
-            raw = _b64.b64decode(data)
-            proc.stdin.write(raw)
-            proc.stdin.flush()
-        except Exception:
-            pass
-
-    def resize_terminal(self, session_id: str, cols: int, rows: int) -> None:
-        """Notify remote of terminal size change.
-
-        plink on Windows does not support runtime PTY resize through stdin, so
-        this is currently a no-op.  The remote shell keeps the size it had at
-        connection time.  Future improvement: send SSH window-change request via
-        a plink-compatible mechanism.
-        """
-
-    def close_terminal(self, session_id: str) -> None:
-        """Terminate a terminal session and clean up."""
-        with self._lock:
-            session = self._terminals.pop(session_id, None)
-        if session is None:
-            return
-        proc = session["process"]
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-        try:
-            proc.wait(timeout=2)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-        self._dispatch("runspec:terminal_closed", {"id": session_id})
+        if idf:
+            cmd.extend(["-i", idf])
+        _sp.Popen(cmd)
 
     # ── internals ─────────────────────────────────────────────────────────────
 
