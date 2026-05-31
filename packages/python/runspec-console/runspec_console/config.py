@@ -49,6 +49,20 @@ def write_config(data: dict[str, Any]) -> None:
     config_path().write_text(_dict_to_toml(data), encoding="utf-8")
 
 
+def _toml_str(v: str) -> str:
+    """Escape a Python string as a TOML basic string literal.
+
+    TOML basic strings (double-quoted) recognise backslash escapes — meaning
+    a Windows path like ``C:\\Program Files\\PuTTY\\plink.exe`` written
+    verbatim is invalid TOML (``\\P`` is not a recognised escape) and
+    ``tomllib`` will refuse to read the file back. Escape ``\\`` and ``"``
+    before wrapping in quotes so the round-trip preserves the original
+    string byte-for-byte.
+    """
+    escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def _dict_to_toml(data: dict[str, Any]) -> str:
     """Minimal TOML serialiser for flat and one-level-nested dicts."""
     lines: list[str] = []
@@ -57,9 +71,9 @@ def _dict_to_toml(data: dict[str, Any]) -> str:
         if isinstance(v, dict):
             nested.append((k, v))
         elif isinstance(v, str):
-            lines.append(f'{k} = "{v}"')
+            lines.append(f"{k} = {_toml_str(v)}")
         elif isinstance(v, bool):
-            lines.append(f'{k} = {"true" if v else "false"}')
+            lines.append(f"{k} = {'true' if v else 'false'}")
         elif v is None:
             pass
         else:
@@ -68,9 +82,9 @@ def _dict_to_toml(data: dict[str, Any]) -> str:
         lines.append(f"\n[{section}]")
         for k, v in sub.items():
             if isinstance(v, str):
-                lines.append(f'{k} = "{v}"')
+                lines.append(f"{k} = {_toml_str(v)}")
             elif isinstance(v, bool):
-                lines.append(f'{k} = {"true" if v else "false"}')
+                lines.append(f"{k} = {'true' if v else 'false'}")
             elif v is not None:
                 lines.append(f"{k} = {v}")
     return "\n".join(lines) + "\n"

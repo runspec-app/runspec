@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, WarningOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult } from '../bridge'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined } from '@ant-design/icons'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult } from '../bridge'
 
-const { Text } = Typography
+const { Text, Link } = Typography
 
 interface SettingsDrawerProps {
   open: boolean
   onClose: () => void
+  connectedHosts?: string[]
   onHostsChanged?: () => void
   onKeyChanged?: () => void
 }
@@ -18,41 +19,31 @@ const PROVIDER_MODELS: Record<string, string> = {
   bedrock: 'anthropic.claude-sonnet-4-6',
 }
 
-function keyAgeDays(createdAt: string | null): number | null {
-  if (!createdAt) return null
-  return Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
-}
+// ── LLM tab ───────────────────────────────────────────────────────────────────
 
-function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
+function LlmTab() {
   const [form] = Form.useForm()
   const [provider, setProvider] = useState<string>('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [keyCreatedAt, setKeyCreatedAt] = useState<string | null>(null)
-  const [generating, setGenerating] = useState(false)
-  const [generatedPubKey, setGeneratedPubKey] = useState<string | null>(null)
+  const [configDir, setConfigDir] = useState<string>('')
 
-  const loadConfig = () => {
+  useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
+
+  useEffect(() => {
     bridge.get_config().then(cfg => {
       const llm = (cfg.llm ?? {}) as Record<string, string>
-      const ssh = (cfg.ssh ?? {}) as Record<string, string>
       const p = llm.provider ?? ''
       setProvider(p)
-      setKeyCreatedAt(ssh.key_created_at ?? null)
       form.setFieldsValue({
         provider: p,
         api_key: llm.api_key ?? '',
         model: llm.model ?? '',
         base_url: llm.base_url ?? '',
         aws_region: llm.aws_region ?? '',
-        ssh_user: ssh.user ?? '',
-        ssh_identity_file: ssh.identityFile ?? '',
-        ssh_binary: ssh.binary ?? '',
       })
     })
-  }
-
-  useEffect(() => { loadConfig() }, [form])
+  }, [form])
 
   const handleProviderChange = (val: string) => {
     setProvider(val)
@@ -63,24 +54,19 @@ function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
 
   const handleSave = async () => {
     const v = form.getFieldsValue()
-    const data: Record<string, unknown> = {
-      llm: {
-        ...(v.provider    ? { provider: v.provider }       : {}),
-        ...(v.api_key     ? { api_key: v.api_key }         : {}),
-        ...(v.model       ? { model: v.model }             : {}),
-        ...(v.base_url    ? { base_url: v.base_url }       : {}),
-        ...(v.aws_region  ? { aws_region: v.aws_region }   : {}),
-      },
-      ssh: {
-        ...(v.ssh_user          ? { user: v.ssh_user }                     : {}),
-        ...(v.ssh_identity_file ? { identityFile: v.ssh_identity_file }    : {}),
-        ...(v.ssh_binary        ? { binary: v.ssh_binary }                 : {}),
-        ...(keyCreatedAt        ? { key_created_at: keyCreatedAt }         : {}),
-      },
-    }
     setSaving(true)
     try {
-      await bridge.save_config(data)
+      const cfg = await bridge.get_config()
+      await bridge.save_config({
+        ...cfg,
+        llm: {
+          ...(v.provider   ? { provider: v.provider }     : {}),
+          ...(v.api_key    ? { api_key: v.api_key }       : {}),
+          ...(v.model      ? { model: v.model }           : {}),
+          ...(v.base_url   ? { base_url: v.base_url }     : {}),
+          ...(v.aws_region ? { aws_region: v.aws_region } : {}),
+        },
+      })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -88,17 +74,120 @@ function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
     }
   }
 
-  const handleGenerateKey = async (isRotate: boolean) => {
-    const keyPath = form.getFieldValue('ssh_identity_file') || '~/.ssh/runspec_ed25519'
-    setGenerating(true)
-    setGeneratedPubKey(null)
+  return (
+    <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
+      <Form.Item name="provider" label="Provider">
+        <Select placeholder="None — chat disabled" allowClear onChange={handleProviderChange}>
+          <Select.Option value="anthropic">Anthropic</Select.Option>
+          <Select.Option value="openai">OpenAI</Select.Option>
+          <Select.Option value="bedrock">AWS Bedrock</Select.Option>
+        </Select>
+      </Form.Item>
+      {(provider === 'anthropic' || provider === 'openai' || provider === 'bedrock') && (
+        <>
+          {provider !== 'bedrock' && (
+            <Form.Item name="api_key" label="API key">
+              <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'} />
+            </Form.Item>
+          )}
+          <Form.Item name="model" label="Model">
+            <Input placeholder={PROVIDER_MODELS[provider] ?? ''} style={{ fontFamily: 'monospace' }} />
+          </Form.Item>
+          {(provider === 'openai' || provider === 'bedrock') && (
+            <Form.Item name="base_url" label="Base URL" help={provider === 'bedrock' ? 'Corporate proxy URL (optional)' : 'Optional — for OpenAI-compatible endpoints'}>
+              <Input placeholder="https://..." style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+          )}
+          {provider === 'bedrock' && (
+            <>
+              <Form.Item name="api_key" label="Proxy API key" help="Only needed if using a corporate Bedrock proxy">
+                <Input.Password placeholder="token" />
+              </Form.Item>
+              <Form.Item name="aws_region" label="AWS region">
+                <Input placeholder="us-east-1" style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+            </>
+          )}
+        </>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+        <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
+        {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
+      </div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+        Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
+      </Text>
+    </Form>
+  )
+}
+
+// ── SSH tab ───────────────────────────────────────────────────────────────────
+
+function keyAgeDays(createdAt: string | null): number | null {
+  if (!createdAt) return null
+  return Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => void; connectedHosts?: string[] }) {
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [selectedHost, setSelectedHost] = useState<string>('')
+  const [generating, setGenerating] = useState(false)
+  const [publicKey, setPublicKey] = useState<string | null>(null)
+  const [keyPath, setKeyPath] = useState<string | null>(null)
+  const [keyCreatedAt, setKeyCreatedAt] = useState<string | null>(null)
+  const [configDir, setConfigDir] = useState<string>('')
+  const [rotationResult, setRotationResult] = useState<{ committed: boolean; perHost: RotateHostResult[]; publicKey: string } | null>(null)
+
+  const loadConfig = () => {
+    bridge.get_config().then(cfg => {
+      const ssh = (cfg.ssh ?? {}) as Record<string, string>
+      setKeyCreatedAt(ssh.key_created_at ?? null)
+      setKeyPath(ssh.identityFile ?? null)
+      form.setFieldsValue({
+        ssh_user: ssh.user ?? '',
+      })
+    })
+  }
+
+  useEffect(() => { loadConfig() }, [form])
+  useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
+  useEffect(() => {
+    if (!selectedHost && connectedHosts.length > 0) setSelectedHost(connectedHosts[0])
+  }, [connectedHosts, selectedHost])
+
+  const handleSave = async () => {
+    const v = form.getFieldsValue()
+    setSaving(true)
     try {
-      const result = await bridge.generate_ssh_key(keyPath)
+      const cfg = await bridge.get_config()
+      await bridge.save_config({
+        ...cfg,
+        ssh: {
+          ...(cfg.ssh ?? {}),
+          ...(v.ssh_user ? { user: v.ssh_user } : {}),
+        },
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleGenerate = async () => {
+    setGenerating(true)
+    setPublicKey(null)
+    setRotationResult(null)
+    try {
+      const result = await bridge.generate_ssh_key()
       if (result.ok) {
-        setGeneratedPubKey(result.public_key)
+        setPublicKey(result.public_key)
+        setKeyPath(result.key_path)
         loadConfig()
         onKeyChanged?.()
-        message.success(isRotate ? 'Key rotated — copy the new public key to your hosts' : 'Key generated')
+        message.success('Key generated')
       } else {
         message.error(result.message)
       }
@@ -107,169 +196,229 @@ function GeneralTab({ onKeyChanged }: { onKeyChanged?: () => void }) {
     }
   }
 
+  const handleRotate = async () => {
+    setGenerating(true)
+    setPublicKey(null)
+    setRotationResult(null)
+    try {
+      const result = await bridge.rotate_ssh_key()
+      setRotationResult({ committed: result.committed, perHost: result.per_host, publicKey: result.public_key })
+      if (result.committed) {
+        setPublicKey(null) // committed — no need to show manual snippet
+        setKeyPath(result.key_path)
+        loadConfig()
+        onKeyChanged?.()
+        message.success('Key rotated and pushed to all hosts')
+      } else if (!result.ok) {
+        message.error(result.message)
+      } else {
+        // partial failure — show per-host results, old key still active
+        message.warning(result.message)
+      }
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   const ageDays = keyAgeDays(keyCreatedAt)
-  const ageColor = ageDays === null ? undefined : ageDays >= 90 ? '#fa8c16' : ageDays >= 75 ? '#fadb14' : '#52c41a'
-  const ageLabel = ageDays === null ? null : ageDays === 0 ? 'today' : `${ageDays}d ago`
+  const authorizedKeysLine = publicKey ? `echo "${publicKey}" >> ~/.ssh/authorized_keys` : ''
 
   return (
-    <>
-      <Text strong style={{ fontSize: 13 }}>LLM / API</Text>
-      <Form form={form} layout="vertical" size="small" style={{ marginTop: 10 }}>
-        <Form.Item name="provider" label="Provider">
-          <Select placeholder="None — chat disabled" allowClear onChange={handleProviderChange}>
-            <Select.Option value="anthropic">Anthropic</Select.Option>
-            <Select.Option value="openai">OpenAI</Select.Option>
-            <Select.Option value="bedrock">AWS Bedrock</Select.Option>
-          </Select>
-        </Form.Item>
-        {(provider === 'anthropic' || provider === 'openai' || provider === 'bedrock') && (
-          <>
-            {provider !== 'bedrock' && (
-              <Form.Item name="api_key" label="API key">
-                <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'} />
-              </Form.Item>
-            )}
-            <Form.Item name="model" label="Model">
-              <Input placeholder={PROVIDER_MODELS[provider] ?? ''} style={{ fontFamily: 'monospace' }} />
-            </Form.Item>
-            {(provider === 'openai' || provider === 'bedrock') && (
-              <Form.Item name="base_url" label="Base URL" help={provider === 'bedrock' ? 'Corporate proxy URL (optional)' : 'Optional — for OpenAI-compatible endpoints'}>
-                <Input placeholder="https://..." style={{ fontFamily: 'monospace' }} />
-              </Form.Item>
-            )}
-            {provider === 'bedrock' && (
-              <>
-                <Form.Item name="api_key" label="Proxy API key" help="Only needed if using a corporate Bedrock proxy">
-                  <Input.Password placeholder="token" />
-                </Form.Item>
-                <Form.Item name="aws_region" label="AWS region">
-                  <Input placeholder="us-east-1" style={{ fontFamily: 'monospace' }} />
-                </Form.Item>
-              </>
-            )}
-          </>
-        )}
-        <Divider />
+    <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
+      <Form.Item name="ssh_user" label="Default username">
+        <Input placeholder="your-username" />
+      </Form.Item>
 
-        <Text strong style={{ fontSize: 13 }}>SSH defaults</Text>
-        <div style={{ marginTop: 10 }}>
-          <Form.Item name="ssh_user" label="Default username">
-            <Input placeholder="your-username" />
-          </Form.Item>
-          <Form.Item name="ssh_identity_file" label="Default identity file">
-            <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: 'monospace' }} />
-          </Form.Item>
-          <Form.Item
-            name="ssh_binary"
-            label="SSH client binary"
-            help="Leave blank to use the system ssh. Set to plink.exe (or full path) to use PuTTY's plink instead."
+      <Divider />
+
+      {/* SSH key section */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <Text strong style={{ fontSize: 13 }}>SSH key</Text>
+        {ageDays !== null && (
+          <Tag
+            color={ageDays >= 90 ? 'orange' : ageDays >= 75 ? 'gold' : 'success'}
+            icon={<KeyOutlined />}
+            style={{ margin: 0, fontSize: 11 }}
           >
-            <Input placeholder="ssh" style={{ fontFamily: 'monospace' }} />
-          </Form.Item>
-        </div>
-
-        <Divider />
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Text strong style={{ fontSize: 13 }}>SSH key</Text>
-          {ageDays !== null && ageColor && (
-            <Tag
-              color={ageDays >= 90 ? 'orange' : ageDays >= 75 ? 'gold' : 'success'}
-              style={{ margin: 0, fontSize: 11 }}
-              icon={ageDays >= 75 ? <WarningOutlined /> : <KeyOutlined />}
-            >
-              {ageLabel}
-            </Tag>
-          )}
-        </div>
-
-        {ageDays !== null && ageDays >= 75 && (
-          <div style={{
-            padding: '6px 10px', borderRadius: 6, marginBottom: 8,
-            background: ageDays >= 90 ? 'rgba(250,140,22,0.1)' : 'rgba(250,219,20,0.08)',
-            border: `1px solid ${ageDays >= 90 ? 'rgba(250,140,22,0.3)' : 'rgba(250,219,20,0.3)'}`,
-            fontSize: 12, color: ageDays >= 90 ? '#fa8c16' : '#d4b106',
-          }}>
-            {ageDays >= 90
-              ? `Key is ${ageDays} days old — rotation recommended.`
-              : `Key is ${ageDays} days old — consider rotating soon.`}
-          </div>
+            {ageDays === 0 ? 'created today' : `${ageDays}d old`}
+          </Tag>
         )}
+      </div>
 
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          {keyCreatedAt === null ? (
+      {ageDays !== null && ageDays >= 75 && (
+        <div style={{
+          padding: '6px 10px', borderRadius: 6, marginBottom: 10,
+          background: ageDays >= 90 ? 'rgba(250,140,22,0.1)' : 'rgba(250,219,20,0.08)',
+          border: `1px solid ${ageDays >= 90 ? 'rgba(250,140,22,0.3)' : 'rgba(250,219,20,0.3)'}`,
+          fontSize: 12, color: ageDays >= 90 ? '#fa8c16' : '#d4b106',
+        }}>
+          {ageDays >= 90 ? `Key is ${ageDays} days old — rotation recommended.` : `Key is ${ageDays} days old — consider rotating soon.`}
+        </div>
+      )}
+
+      {keyPath && (
+        <div style={{ marginBottom: 10 }}>
+          <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+            {keyPath}
+          </Text>
+        </div>
+      )}
+
+      <Space wrap style={{ marginBottom: 8 }}>
+        {!keyPath ? (
+          <Button
+            type="primary"
+            size="small"
+            icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+            disabled={generating}
+            onClick={handleGenerate}
+          >
+            Generate key
+          </Button>
+        ) : (
+          <Popconfirm
+            title="Generate new key?"
+            description={
+              <span style={{ fontSize: 12 }}>
+                The current key will be backed up and replaced immediately.<br />
+                You'll need to add the new public key to each host manually.<br />
+                Use <strong>Rotate key</strong> instead if your remote hosts are reachable.
+              </span>
+            }
+            onConfirm={handleGenerate}
+            okText="Generate" cancelText="Cancel"
+            placement="bottom"
+          >
             <Button
               size="small"
               icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
               disabled={generating}
-              onClick={() => handleGenerateKey(false)}
             >
-              Generate key
+              Generate new key
             </Button>
-          ) : (
-            <Popconfirm
-              title="Rotate SSH key?"
-              description={
-                <span style={{ fontSize: 12 }}>
-                  The existing key will be backed up.<br />
-                  You must re-authorize the new public key on all remote hosts.
-                </span>
-              }
-              onConfirm={() => handleGenerateKey(true)}
-              okText="Rotate" cancelText="Cancel"
-              placement="bottom"
+          </Popconfirm>
+        )}
+        {keyPath && (
+          <Popconfirm
+            title="Rotate SSH key?"
+            description={
+              <span style={{ fontSize: 12 }}>
+                A new key will be pushed to all connected hosts using the current key,<br />
+                then verified before swapping. Active sessions stay alive throughout.
+              </span>
+            }
+            onConfirm={handleRotate}
+            okText="Rotate" cancelText="Cancel"
+            placement="bottom"
+          >
+            <Button
+              size="small"
+              icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+              disabled={generating}
+              loading={generating}
             >
-              <Button
-                size="small"
-                icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
-                disabled={generating}
-              >
-                Rotate key
-              </Button>
-            </Popconfirm>
+              {generating ? 'Rotating…' : 'Rotate key'}
+            </Button>
+          </Popconfirm>
+        )}
+      </Space>
+
+      {/* Per-host rotation results */}
+      {rotationResult && rotationResult.perHost.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          {rotationResult.perHost.map(h => {
+            const icon = h.skipped ? '⚠' : h.verified ? '✓' : '✗'
+            const color = h.skipped ? '#d4b106' : h.verified ? '#52c41a' : '#ff4d4f'
+            return (
+              <div key={h.host} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 3 }}>
+                <span style={{ color, fontFamily: 'monospace', fontSize: 11, flexShrink: 0 }}>{icon} {h.host}</span>
+                {h.error && <Text type="secondary" style={{ fontSize: 10 }}>{h.error}</Text>}
+              </div>
+            )
+          })}
+          {!rotationResult.committed && (
+            <Text type="warning" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+              Old key still active — fix the failures above and retry.
+            </Text>
           )}
         </div>
+      )}
 
-        {generatedPubKey && (
-          <div style={{ marginBottom: 8 }}>
-            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
-              Public key — add to <code>~/.ssh/authorized_keys</code> on each host:
-            </Text>
-            <Typography.Paragraph
-              copyable
-              style={{
-                fontFamily: 'monospace', fontSize: 10, padding: '6px 10px',
-                background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
-                borderRadius: 4, wordBreak: 'break-all', margin: 0,
-                color: '#52c41a',
-              }}
-            >
-              {generatedPubKey}
-            </Typography.Paragraph>
-          </div>
-        )}
-
-        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 12 }}>
-          Key path from <em>Default identity file</em> above. Type: ed25519.
-          Existing keys are backed up before rotation.
-        </Text>
-
-        <Divider />
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Button type="primary" size="small" loading={saving} onClick={handleSave}>
-            Save
-          </Button>
-          {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
+      {/* Manual snippet — only shown when no connected hosts or partial failure */}
+      {rotationResult && !rotationResult.committed && rotationResult.publicKey && (
+        <div style={{ marginBottom: 10 }}>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+            Run on each failing host to authorise the new key manually:
+          </Text>
+          <Typography.Paragraph
+            copyable={{ tooltips: ['Copy', 'Copied!'] }}
+            style={{
+              fontFamily: 'monospace', fontSize: 10, padding: '6px 10px',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
+              borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+            }}
+          >
+            {`echo "${rotationResult.publicKey}" >> ~/.ssh/authorized_keys`}
+          </Typography.Paragraph>
         </div>
+      )}
 
-        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
-          Settings are saved to <code>config.toml</code> in %APPDATA%\runspec-console\.
-        </Text>
-      </Form>
-    </>
+      {/* First-time generate — show manual snippet since there are no sessions to push via */}
+      {publicKey && !rotationResult && (
+        <div style={{ marginBottom: 10 }}>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+            Run on each host to authorise this key:
+          </Text>
+          <Typography.Paragraph
+            copyable={{ tooltips: ['Copy', 'Copied!'] }}
+            style={{
+              fontFamily: 'monospace', fontSize: 10, padding: '6px 10px',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
+              borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+            }}
+          >
+            {authorizedKeysLine}
+          </Typography.Paragraph>
+        </div>
+      )}
+
+      <Divider />
+
+      <Text strong style={{ fontSize: 13 }}>Quick connect</Text>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+        <Select
+          size="small"
+          value={connectedHosts.length === 0 ? undefined : selectedHost}
+          placeholder={connectedHosts.length === 0 ? 'No connected hosts' : 'Select host'}
+          disabled={connectedHosts.length === 0}
+          onChange={setSelectedHost}
+          options={connectedHosts.map(h => ({ value: h, label: h }))}
+          style={{ flex: 1, minWidth: 0 }}
+        />
+        <Button
+          size="small"
+          icon={<DesktopOutlined />}
+          disabled={connectedHosts.length === 0 || !selectedHost}
+          onClick={() => bridge.launch_terminal(selectedHost).catch(e => message.error(String(e)))}
+        >
+          Open PuTTY
+        </Button>
+      </div>
+
+      <Divider />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
+        {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
+      </div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+        Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
+      </Text>
+    </Form>
   )
 }
+
+// ── Jump Hosts tab ────────────────────────────────────────────────────────────
 
 interface HostFormValues {
   name: string
@@ -308,7 +457,7 @@ function downloadToml(content: string, filename = 'jump_hosts.toml') {
 
 function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [hosts, setHosts] = useState<JumpHost[]>([])
-  const [editingKey, setEditingKey] = useState<string | null>(null) // null=none ''=new
+  const [editingKey, setEditingKey] = useState<string | null>(null)
   const [form] = Form.useForm<HostFormValues>()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [testingHost, setTestingHost] = useState<string | null>(null)
@@ -324,24 +473,14 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     onHostsChanged?.()
   }
 
-  const startAdd = () => {
-    form.resetFields()
-    setEditingKey('')
-  }
+  const startAdd = () => { form.resetFields(); setEditingKey('') }
 
   const startEdit = (h: JumpHost) => {
-    const values: HostFormValues = {
-      ...h,
-      runspec_paths: h.runspec_paths ?? [],
-    }
-    form.setFieldsValue(values)
+    form.setFieldsValue({ ...h, runspec_paths: h.runspec_paths ?? [] })
     setEditingKey(h.name)
   }
 
-  const cancel = () => {
-    setEditingKey(null)
-    form.resetFields()
-  }
+  const cancel = () => { setEditingKey(null); form.resetFields() }
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -351,7 +490,6 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     const content = await file.text()
     const imported = await bridge.import_jump_hosts(content)
     if (imported.length === 0) { message.warning('No hosts found in file'); return }
-    // Reload from bridge so format is always normalised (ssh → hostname/user/port)
     const updated = await bridge.get_jump_hosts()
     setHosts(updated)
     message.success(`Imported ${imported.length} host${imported.length !== 1 ? 's' : ''}`)
@@ -435,51 +573,20 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
 
   return (
     <div>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".toml"
-        style={{ display: 'none' }}
-        onChange={handleImport}
-      />
+      <input ref={fileInputRef} type="file" accept=".toml" style={{ display: 'none' }} onChange={handleImport} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          Saved to <code>jump_hosts.toml</code>. Adding a host connects and discovers runnables automatically.
+          Saved to <code>jump_hosts.toml</code>. Hosts are probed on startup.
         </Text>
         <Space size={6}>
-          <Button
-            size="small"
-            icon={<UploadOutlined />}
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isEditing}
-          >
-            Import
-          </Button>
-          <Button
-            size="small"
-            icon={<DownloadOutlined />}
-            onClick={() => { downloadToml(toToml(hosts)); message.success('Exported jump_hosts.toml') }}
-            disabled={isEditing || hosts.length === 0}
-          >
-            Export
-          </Button>
-          <Button
-            size="small"
-            icon={<PlusOutlined />}
-            onClick={startAdd}
-            disabled={isEditing}
-          >
-            Add host
-          </Button>
+          <Button size="small" icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()} disabled={isEditing}>Import</Button>
+          <Button size="small" icon={<DownloadOutlined />} onClick={() => { downloadToml(toToml(hosts)); message.success('Exported') }} disabled={isEditing || hosts.length === 0}>Export</Button>
+          <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add host</Button>
         </Space>
       </div>
 
-      {/* Inline add/edit form */}
       {editingKey !== null && (
-        <div style={{
-          border: '1px solid #333', borderRadius: 8, padding: '14px 14px 6px',
-          marginBottom: 12, background: 'rgba(255,255,255,0.02)',
-        }}>
+        <div style={{ border: '1px solid #333', borderRadius: 8, padding: '14px 14px 6px', marginBottom: 12, background: 'rgba(255,255,255,0.02)' }}>
           <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
             {editingKey === '' ? 'New jump host' : `Edit — ${editingKey}`}
           </Text>
@@ -498,9 +605,6 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 <Input placeholder="22" type="number" />
               </Form.Item>
             </div>
-            <Form.Item name="identityFile" label="Identity file">
-              <Input placeholder="~/.ssh/id_ed25519 (leave blank for SSH default)" />
-            </Form.Item>
             <Form.Item label="runspec path(s) on host">
               <Form.List name="runspec_paths">
                 {(fields, { add, remove }) => (
@@ -513,15 +617,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                         <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#666', cursor: 'pointer' }} />
                       </Space>
                     ))}
-                    <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />} style={{ marginTop: 2 }}>
-                      Add path
-                    </Button>
+                    <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />} style={{ marginTop: 2 }}>Add path</Button>
                   </>
                 )}
               </Form.List>
             </Form.Item>
             <Form.Item name="group" label="Group">
-              <Input placeholder="e.g. Production, Staging (optional — for sidebar organisation)" />
+              <Input placeholder="e.g. Production, Staging (optional)" />
             </Form.Item>
             <Space style={{ marginTop: 2, marginBottom: 8 }}>
               <Button size="small" type="primary" icon={<CheckOutlined />} onClick={save}>Save</Button>
@@ -531,66 +633,39 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         </div>
       )}
 
-      {/* Host list — grouped */}
       {hosts.length === 0 && editingKey === null && (
         <Text type="secondary" style={{ fontSize: 12 }}>No jump hosts configured. Add one to get started.</Text>
       )}
+
       {(() => {
         const groups = buildGroups(hosts)
         return groups.map(({ name: groupName, hosts: groupHosts }, groupIdx) => (
           <div key={groupName || '__ungrouped__'} style={{ marginBottom: 12 }}>
-            {(
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-                <Text type="secondary" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
-                  {groupName || 'Hosts'}
-                </Text>
-                <Button
-                  type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />}
-                  onClick={() => moveGroupUp(groupIdx)}
-                  disabled={isEditing || groupIdx === 0}
-                  style={{ padding: '0 4px', color: '#555', height: 18 }}
-                />
-                <Button
-                  type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />}
-                  onClick={() => moveGroupDown(groupIdx)}
-                  disabled={isEditing || groupIdx === groups.length - 1}
-                  style={{ padding: '0 4px', color: '#555', height: 18 }}
-                />
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
+              <Text type="secondary" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
+                {groupName || 'Hosts'}
+              </Text>
+              <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupUp(groupIdx)} disabled={isEditing || groupIdx === 0} style={{ padding: '0 4px', color: '#555', height: 18 }} />
+              <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupDown(groupIdx)} disabled={isEditing || groupIdx === groups.length - 1} style={{ padding: '0 4px', color: '#555', height: 18 }} />
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {groupHosts.map((h, hostIdx) => (
-                <div key={h.name} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '7px 10px', borderRadius: 6,
-                  border: '1px solid #2a2a2a', background: editingKey === h.name ? 'rgba(255,255,255,0.03)' : 'transparent',
-                }}>
+                <div key={h.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingKey === h.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-                    <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />}
-                      onClick={() => moveHostUp(h)}
-                      disabled={isEditing || hostIdx === 0}
-                      style={{ padding: '0 3px', color: '#555', height: 14, lineHeight: 1 }}
-                    />
-                    <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />}
-                      onClick={() => moveHostDown(h)}
-                      disabled={isEditing || hostIdx === groupHosts.length - 1}
-                      style={{ padding: '0 3px', color: '#555', height: 14, lineHeight: 1 }}
-                    />
+                    <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostUp(h)} disabled={isEditing || hostIdx === 0} style={{ padding: '0 3px', color: '#555', height: 14, lineHeight: 1 }} />
+                    <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || hostIdx === groupHosts.length - 1} style={{ padding: '0 3px', color: '#555', height: 14, lineHeight: 1 }} />
                   </div>
                   <Text style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 110, flexShrink: 0 }}>{h.name}</Text>
-                  <Text type="secondary" title={`${h.user ? h.user + '@' : ''}${h.hostname}${h.port ? ':' + h.port : ''}`} style={{
-                    fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{h.user ? `${h.user}@` : ''}{h.hostname}{h.port ? `:${h.port}` : ''}</Text>
+                  <Text type="secondary" title={`${h.user ? h.user + '@' : ''}${h.hostname}${h.port ? ':' + h.port : ''}`} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {h.user ? `${h.user}@` : ''}{h.hostname}{h.port ? `:${h.port}` : ''}
+                  </Text>
                   {(() => {
                     const r = testResults[h.name]
                     if (!r) return null
                     const ok = r.runspec_ok
                     const sshOnly = r.connected && !r.runspec_ok
                     const color = ok ? 'success' : sshOnly ? 'warning' : 'error'
-                    const label = ok
-                      ? `✓ ${r.runnable_count} runnable${r.runnable_count !== 1 ? 's' : ''}`
-                      : sshOnly ? '✓ SSH · runspec failed' : '✗ failed'
+                    const label = ok ? `✓ ${r.runnable_count} runnable${r.runnable_count !== 1 ? 's' : ''}` : sshOnly ? '✓ SSH · runspec failed' : '✗ failed'
                     const detail = r.stderr || r.stdout || `exit ${r.exit_code}`
                     return (
                       <Tooltip title={<pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap', maxWidth: 340 }}>{detail}</pre>} placement="left">
@@ -599,32 +674,11 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                     )
                   })()}
                   <Tooltip title="Test connection">
-                    <Button
-                      type="text" size="small"
-                      icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />}
-                      onClick={() => handleTest(h.name)}
-                      disabled={isEditing || testingHost !== null}
-                      style={{ padding: '0 4px', color: '#666' }}
-                    />
+                    <Button type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: '#666' }} />
                   </Tooltip>
-                  <Button
-                    type="text" size="small" icon={<EditOutlined />}
-                    onClick={() => startEdit(h)}
-                    disabled={isEditing}
-                    style={{ padding: '0 4px', color: '#666' }}
-                  />
-                  <Popconfirm
-                    title={`Remove ${h.name}?`}
-                    onConfirm={() => remove(h.name)}
-                    okText="Remove" cancelText="Cancel"
-                    placement="left"
-                  >
-                    <Button
-                      type="text" size="small" icon={<DeleteOutlined />}
-                      disabled={isEditing}
-                      style={{ padding: '0 4px', color: '#666' }}
-                      danger
-                    />
+                  <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+                  <Popconfirm title={`Remove ${h.name}?`} onConfirm={() => remove(h.name)} okText="Remove" cancelText="Cancel" placement="left">
+                    <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
                   </Popconfirm>
                 </div>
               ))}
@@ -636,14 +690,17 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   )
 }
 
-export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged }: SettingsDrawerProps) {
+// ── Drawer ────────────────────────────────────────────────────────────────────
+
+export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts }: SettingsDrawerProps) {
   return (
     <Drawer title="Settings" placement="right" width={480} open={open} onClose={onClose}>
       <Tabs
         size="small"
         items={[
-          { key: 'general',    label: 'General',     children: <GeneralTab onKeyChanged={onKeyChanged} /> },
-          { key: 'jumpHosts',  label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
+          { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} /> },
+          { key: 'llm',       label: 'LLM / API',  children: <LlmTab /> },
+          { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
         ]}
       />
     </Drawer>

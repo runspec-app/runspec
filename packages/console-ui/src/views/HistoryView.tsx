@@ -232,8 +232,13 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       title: 'Runnable',
       key: 'runnable',
       render: (_: unknown, r: HistoryRecord) => (
-        <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
-          <span style={{ color: '#666' }}>{r.group}/</span>{r.runnable}
+        <span style={{ fontFamily: 'monospace', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span><span style={{ color: '#666' }}>{r.group}/</span>{r.runnable}</span>
+          {r.initiatedBy === 'llm' && (
+            <Tooltip title="Triggered by LLM">
+              <RobotOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+            </Tooltip>
+          )}
         </span>
       ),
       sorter: (a, b) => `${a.group}/${a.runnable}`.localeCompare(`${b.group}/${b.runnable}`),

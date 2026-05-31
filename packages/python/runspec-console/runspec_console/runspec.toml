@@ -60,8 +60,6 @@ description = "Connection timeout in seconds"
 description = "Generate or rotate the runspec-console SSH key pair"
 autonomy    = "confirm"
 
-[generate-ssh-key.args.key_path]
-type        = "str"
-required    = false
-default     = "~/.ssh/runspec_ed25519"
-description = "Path for the key pair (without extension)"
+[generate-ssh-key.args.rotate]
+type        = "flag"
+description = "Back up any existing key before generating a new one"

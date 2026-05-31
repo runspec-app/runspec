@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import uuid
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -142,8 +143,7 @@ class Bridge:
         self, entry: dict[str, Any], runnable: str | None
     ) -> list[dict[str, Any]]:
         from pathlib import PurePosixPath
-        import subprocess as _sp
-        from .executor import ssh_flags
+        from .executor import ssh_run
 
         ssh = entry["ssh"]
         idf = entry.get("identityFile")
@@ -151,28 +151,22 @@ class Bridge:
         rp = paths[0] if paths else ""
         log_dir = str(PurePosixPath(rp).parent.parent / "logs")
         pattern = f"{log_dir}/{runnable}.log" if runnable else f"{log_dir}/*.log"
-        # One SSH call: emit a marker line before each file then its content
         script = (
             f"for f in {pattern}; do "
             f'[ -f "$f" ] && printf "\\x00RUNSPEC_LOG:%s\\n" "$(basename "$f" .log)" && cat "$f"; '
             f"done 2>/dev/null"
         )
-        try:
-            binary = self._ssh_binary()
-            result = _sp.run(
-                [binary, *ssh_flags(idf, binary), ssh, script],
-                capture_output=True,
-                text=True,
-                timeout=20,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except Exception:
-            return []
+        _, stdout, _ = ssh_run(
+            ssh,
+            script,
+            identity_file=idf,
+            global_ssh_config=self.get_config().get("ssh"),
+            timeout=20,
+        )
         records: list[dict[str, Any]] = []
         current_name: str | None = None
         current_lines: list[str] = []
-        for line in result.stdout.splitlines():
+        for line in stdout.splitlines():
             if line.startswith("\x00RUNSPEC_LOG:"):
                 if current_name is not None:
                     records.extend(
@@ -237,22 +231,349 @@ class Bridge:
     def get_config(self) -> dict[str, Any]:
         return read_config()
 
+    def config_dir(self) -> str:
+        """Return the resolved config directory path (e.g. C:/Users/jason/AppData/Roaming/runspec-console)."""
+        from .config import config_path
+
+        return _normalize_path(str(config_path().parent))
+
     def save_config(self, data: dict[str, Any]) -> None:
+        ssh = data.get("ssh")
+        if isinstance(ssh, dict):
+            data = {**data, "ssh": _normalize_ssh_section(ssh)}
         write_config(data)
         self._adapter = None
 
-    def generate_ssh_key(self, key_path: str) -> dict[str, Any]:
-        from .tools.generate_ssh_key import _run_keygen
+    def _generate_keypair_to_path(self, dest: Path) -> dict[str, Any]:
+        """Write a new ed25519 key pair to dest (OpenSSH PEM + PPK v2). Does not touch config."""
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                Ed25519PrivateKey,
+            )
+            from cryptography.hazmat.primitives import serialization as _serial
+        except ImportError:
+            return {
+                "ok": False,
+                "public_key": "",
+                "key_path": "",
+                "message": "pip install cryptography — required for key generation",
+            }
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        private_key = Ed25519PrivateKey.generate()
+
+        dest.write_bytes(
+            private_key.private_bytes(
+                encoding=_serial.Encoding.PEM,
+                format=_serial.PrivateFormat.OpenSSH,
+                encryption_algorithm=_serial.NoEncryption(),
+            )
+        )
+
+        raw_priv = private_key.private_bytes(
+            encoding=_serial.Encoding.Raw,
+            format=_serial.PrivateFormat.Raw,
+            encryption_algorithm=_serial.NoEncryption(),
+        )
+        raw_pub = private_key.public_key().public_bytes(
+            encoding=_serial.Encoding.Raw,
+            format=_serial.PublicFormat.Raw,
+        )
+        _write_ppk_v2(Path(str(dest) + ".ppk"), raw_priv, raw_pub)
+
+        pub = (
+            private_key.public_key()
+            .public_bytes(
+                encoding=_serial.Encoding.OpenSSH,
+                format=_serial.PublicFormat.OpenSSH,
+            )
+            .decode()
+            .strip()
+        )
+        return {
+            "ok": True,
+            "public_key": pub,
+            "key_path": _normalize_path(str(dest)),
+            "message": "",
+        }
+
+    def generate_ssh_key(self) -> dict[str, Any]:
+        """Generate a fresh ed25519 key pair, backing up any existing key.
+
+        Commits to config immediately — use rotate_ssh_key() when you want the
+        safe automated push to remote hosts before committing.
+        """
+        import os
+        import time
         from datetime import datetime, timezone
 
-        result = _run_keygen(key_path)
-        if result["ok"]:
-            cfg = self.get_config()
-            ssh_section = dict(cfg.get("ssh", {}))
-            ssh_section["key_created_at"] = datetime.now(timezone.utc).isoformat()
-            cfg["ssh"] = ssh_section
-            self.save_config(cfg)
-        return result
+        key_dir = Path(os.environ.get("APPDATA", "~")).expanduser() / "runspec-console"
+        canonical = key_dir / "runspec_ed25519"
+
+        if canonical.exists():
+            backup = key_dir / f"runspec_ed25519.bak.{int(time.time())}"
+            canonical.rename(backup)
+
+        result = self._generate_keypair_to_path(canonical)
+        if not result["ok"]:
+            return {**result, "committed": False, "per_host": []}
+
+        cfg = self.get_config()
+        ssh_section = dict(cfg.get("ssh", {}))
+        ssh_section["identityFile"] = _normalize_path(str(canonical))
+        ssh_section["key_created_at"] = datetime.now(timezone.utc).isoformat()
+        self.save_config({**cfg, "ssh": ssh_section})
+
+        return {
+            "ok": True,
+            "committed": True,
+            "per_host": [],
+            "public_key": result["public_key"],
+            "key_path": _normalize_path(str(canonical)),
+            "message": f"Key generated at {_normalize_path(str(canonical))}",
+        }
+
+    def rotate_ssh_key(self) -> dict[str, Any]:
+        """Safely rotate the SSH key: generate new, push to all remote hosts using the
+        old key, verify the new key works, then swap. Active sessions stay alive
+        throughout because the old key is not replaced until all hosts are verified."""
+        if getattr(self, "_rotating", False):
+            return {
+                "ok": False,
+                "committed": False,
+                "public_key": "",
+                "key_path": "",
+                "per_host": [],
+                "message": "Rotation already in progress",
+            }
+        self._rotating = True
+        try:
+            return self._do_rotate_ssh_key()
+        finally:
+            self._rotating = False
+
+    def _do_rotate_ssh_key(self) -> dict[str, Any]:
+        import os
+        from .executor import ssh_run
+
+        key_dir = Path(os.environ.get("APPDATA", "~")).expanduser() / "runspec-console"
+        canonical = key_dir / "runspec_ed25519"
+        new_path = key_dir / "runspec_ed25519.new"
+
+        # Step 1 — generate to side path (old key untouched)
+        result = self._generate_keypair_to_path(new_path)
+        if not result["ok"]:
+            return {
+                "ok": False,
+                "committed": False,
+                "public_key": "",
+                "key_path": "",
+                "per_host": [],
+                "message": result["message"],
+            }
+
+        public_key = result["public_key"]
+        cfg = self.get_config()
+        global_ssh = dict(cfg.get("ssh", {}))
+        global_idf = global_ssh.get("identityFile", "")
+
+        # Step 2 — collect push targets
+        self._reload_hosts()
+        remote_hosts = [h for h in self._hosts if h.get("ssh")]
+
+        if not remote_hosts:
+            self._commit_key_rotation(canonical, new_path, global_ssh, cfg)
+            return {
+                "ok": True,
+                "committed": True,
+                "per_host": [],
+                "public_key": public_key,
+                "key_path": _normalize_path(str(canonical)),
+                "message": "Key rotated — no remote hosts configured. Add the public key to each host's authorized_keys before reconnecting.",
+            }
+
+        if global_idf and not Path(global_idf).expanduser().exists():
+            if new_path.exists():
+                new_path.unlink()
+            return {
+                "ok": False,
+                "committed": False,
+                "public_key": "",
+                "key_path": "",
+                "per_host": [],
+                "message": f"Current key file not found: {global_idf}. Restore the file or generate a fresh key.",
+            }
+
+        # Steps 3 & 4 — push then verify each host
+        per_host: list[dict[str, Any]] = []
+        for host in remote_hosts:
+            name = host.get("name", "?")
+            ssh_target = host.get("ssh", "")
+            host_idf = host.get("identityFile") or global_idf
+
+            # Skip hosts with a different per-host key — their session uses a different key
+            if host.get("identityFile") and host.get("identityFile") != global_idf:
+                per_host.append(
+                    {
+                        "host": name,
+                        "pushed": False,
+                        "verified": False,
+                        "skipped": True,
+                        "error": "per-host key override — rotate manually",
+                    }
+                )
+                continue
+
+            # Push new public key using old key
+            push_cmd = (
+                f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+                f"touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
+                f"grep -qF '{public_key}' ~/.ssh/authorized_keys || "
+                f"printf '%s\\n' '{public_key}' >> ~/.ssh/authorized_keys"
+            )
+            exit_code, _out, stderr = ssh_run(
+                ssh_target,
+                push_cmd,
+                identity_file=host_idf,
+                global_ssh_config=global_ssh,
+            )
+            if exit_code != 0:
+                per_host.append(
+                    {
+                        "host": name,
+                        "pushed": False,
+                        "verified": False,
+                        "skipped": False,
+                        "error": stderr.strip() or f"push failed (exit {exit_code})",
+                    }
+                )
+                continue
+
+            # Verify new key works
+            v_code, v_out, v_err = ssh_run(
+                ssh_target,
+                "echo ok",
+                identity_file=str(new_path),
+                global_ssh_config=global_ssh,
+            )
+            verified = v_code == 0 and "ok" in v_out
+            per_host.append(
+                {
+                    "host": name,
+                    "pushed": True,
+                    "verified": verified,
+                    "skipped": False,
+                    "error": ""
+                    if verified
+                    else (
+                        v_err.strip()
+                        or v_out.strip()
+                        or f"verify failed (exit {v_code})"
+                    ),
+                }
+            )
+
+        # Step 5 — commit gate: all non-skipped hosts must be verified
+        can_commit = all(h["verified"] or h["skipped"] for h in per_host)
+
+        if not can_commit:
+            failed = [
+                h["host"] for h in per_host if not h["verified"] and not h["skipped"]
+            ]
+            return {
+                "ok": True,
+                "committed": False,
+                "public_key": public_key,
+                "key_path": "",
+                "per_host": per_host,
+                "message": f"Push or verification failed on: {', '.join(failed)}. Old key still active.",
+            }
+
+        # Step 6 — commit
+        self._commit_key_rotation(canonical, new_path, global_ssh, cfg)
+        return {
+            "ok": True,
+            "committed": True,
+            "public_key": public_key,
+            "key_path": _normalize_path(str(canonical)),
+            "per_host": per_host,
+            "message": "Key rotated — pushed and verified on all hosts.",
+        }
+
+    def _commit_key_rotation(
+        self, canonical: Path, new_path: Path, global_ssh: dict, cfg: dict
+    ) -> None:
+        import time
+        from datetime import datetime, timezone
+
+        ts = int(time.time())
+        if canonical.exists():
+            canonical.rename(canonical.parent / f"runspec_ed25519.bak.{ts}")
+        new_path.rename(canonical)
+
+        # Rotate the PPK alongside the OpenSSH key
+        canonical_ppk = Path(str(canonical) + ".ppk")
+        new_ppk = Path(str(new_path) + ".ppk")
+        if canonical_ppk.exists():
+            canonical_ppk.rename(canonical.parent / f"runspec_ed25519.ppk.bak.{ts}")
+        if new_ppk.exists():
+            new_ppk.rename(canonical_ppk)
+
+        ssh_section = dict(global_ssh)
+        ssh_section["identityFile"] = _normalize_path(str(canonical))
+        ssh_section["key_created_at"] = datetime.now(timezone.utc).isoformat()
+        self.save_config({**cfg, "ssh": ssh_section})
+
+    # ── PuTTY integration ─────────────────────────────────────────────────────
+
+    def puttygen_path(self) -> str:
+        """Locate puttygen.exe in common PuTTY install locations or on PATH."""
+        found = _find_putty_exe("puttygen.exe")
+        return str(found) if found else ""
+
+    def launch_puttygen(self) -> None:
+        """Launch puttygen.exe in the background (fire and forget)."""
+        import subprocess as _sp
+
+        path = self.puttygen_path()
+        if not path:
+            return
+        try:
+            _sp.Popen([path], close_fds=True)
+        except Exception:
+            pass
+
+    def open_putty_url(self, url: str) -> None:
+        """Open a URL in the user's default browser."""
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    def browse_ssh_binary(self) -> str:
+        """Open a native file picker for an SSH binary; returns the chosen path or ''.
+
+        The path is normalised to forward slashes before returning so the UI
+        input field and config.toml see a consistent representation.
+        """
+        import webview
+
+        windows = getattr(webview, "windows", None) or []
+        if not windows:
+            return ""
+        try:
+            result = windows[0].create_file_dialog(
+                webview.FileDialog.OPEN,
+                file_types=("Executables (*.exe)",),
+            )
+        except Exception:
+            return ""
+        if not result:
+            return ""
+        if isinstance(result, (list, tuple)):
+            chosen = str(result[0]) if result else ""
+        else:
+            chosen = str(result)
+        return _normalize_path(chosen)
 
     # ── hosts file management ─────────────────────────────────────────────────
 
@@ -267,80 +588,77 @@ class Bridge:
                 "stderr": f"Host '{name}' not found in hosts file",
                 "exit_code": -1,
             }
-        import subprocess as _sp
 
         ssh = entry.get("ssh")
         paths = _paths(entry)
         rp = paths[0] if paths else ""
         idf = entry.get("identityFile")
+
         if ssh:
-            from .executor import ssh_flags
+            from .executor import ssh_run
 
-            binary = self._ssh_binary()
-            cmd = [
-                binary,
-                *ssh_flags(idf, binary),
+            code, out, err = ssh_run(
                 ssh,
-                rp,
-                "local",
-                "--format",
-                "json",
-            ]
-        else:
-            cmd = [rp, "local", "--format", "json"]
-        try:
-            r = _sp.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
-                encoding="utf-8",
-                errors="replace",
+                f"{rp} local --format json",
+                identity_file=idf,
+                global_ssh_config=self.get_config().get("ssh"),
             )
-        except FileNotFoundError:
-            return {
-                "connected": bool(ssh),
-                "runspec_ok": False,
-                "runnable_count": 0,
-                "stdout": "",
-                "stderr": f"Command not found: {cmd[0]}",
-                "exit_code": -1,
-            }
-        except _sp.TimeoutExpired:
-            return {
-                "connected": False,
-                "runspec_ok": False,
-                "runnable_count": 0,
-                "stdout": "",
-                "stderr": "Timed out after 15s",
-                "exit_code": -1,
-            }
-        except Exception as exc:
-            return {
-                "connected": False,
-                "runspec_ok": False,
-                "runnable_count": 0,
-                "stdout": "",
-                "stderr": str(exc),
-                "exit_code": -1,
-            }
-        ok = r.returncode == 0
-        count = 0
-        if ok:
-            try:
-                import json as _json
+            connected = code != -1  # -1 means connection itself failed
+            ok = code == 0
+            count = 0
+            if ok:
+                try:
+                    import json as _json
 
-                count = len(_json.loads(r.stdout))
-            except Exception:
-                ok = False
-        return {
-            "connected": True,
-            "runspec_ok": ok,
-            "runnable_count": count,
-            "stdout": r.stdout[:2000],
-            "stderr": r.stderr[:2000],
-            "exit_code": r.returncode,
-        }
+                    count = len(_json.loads(out))
+                except Exception:
+                    ok = False
+            return {
+                "connected": connected,
+                "runspec_ok": ok,
+                "runnable_count": count,
+                "stdout": out[:2000],
+                "stderr": err[:2000],
+                "exit_code": code,
+            }
+        else:
+            import subprocess as _sp
+
+            try:
+                r = _sp.run(
+                    [rp, "local", "--format", "json"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except Exception as exc:
+                return {
+                    "connected": False,
+                    "runspec_ok": False,
+                    "runnable_count": 0,
+                    "stdout": "",
+                    "stderr": str(exc),
+                    "exit_code": -1,
+                }
+            ok = r.returncode == 0
+            count = 0
+            if ok:
+                try:
+                    import json as _json
+
+                    count = len(_json.loads(r.stdout))
+                except Exception:
+                    ok = False
+            return {
+                "connected": True,
+                "runspec_ok": ok,
+                "runnable_count": count,
+                "stdout": r.stdout[:2000],
+                "stderr": r.stderr[:2000],
+                "exit_code": r.returncode,
+            }
 
     def get_jump_hosts(self) -> list[dict[str, Any]]:
         self._reload_hosts()
@@ -376,13 +694,17 @@ class Bridge:
             raw_paths = h.get("runspec_paths") or []
             if not raw_paths and h.get("runspec_path"):
                 raw_paths = [h["runspec_path"]]
+            # Normalise filesystem paths to forward slashes for TOML storage.
+            # Remote runspec paths are POSIX so this is a no-op for them;
+            # identityFile on Windows benefits from the conversion.
+            normalised_paths = [_normalize_path(p) for p in raw_paths]
             entry: dict[str, Any] = {
                 "name": h["name"],
                 "ssh": ssh,
-                "runspec_paths": raw_paths or ["runspec"],
+                "runspec_paths": normalised_paths or ["runspec"],
             }
             if h.get("identityFile"):
-                entry["identityFile"] = h["identityFile"]
+                entry["identityFile"] = _normalize_path(h["identityFile"])
             if h.get("group"):
                 entry["group"] = h["group"]
             entries.append(entry)
@@ -481,7 +803,7 @@ class Bridge:
                     on_done,
                     entry.get("identityFile"),
                     cancel_event=cancel_event,
-                    ssh_binary=self._ssh_binary(),
+                    global_ssh_config=self.get_config().get("ssh"),
                 )
             else:
                 run_local(
@@ -515,7 +837,14 @@ class Bridge:
         chat_id = uuid.uuid4().hex[:12]
 
         def run() -> None:
-            adapter = self._get_adapter()
+            try:
+                adapter = self._get_adapter()
+            except Exception as exc:
+                self._dispatch("runspec:token", {"id": chat_id, "token": f"⚠ {exc}"})
+                self._dispatch(
+                    "runspec:run_end", {"id": chat_id, "exit_code": 1, "duration_ms": 0}
+                )
+                return
             if adapter is None:
                 self._dispatch(
                     "runspec:token",
@@ -730,7 +1059,7 @@ class Bridge:
                 entry.get("identityFile"),
                 timeout=120,
                 agent=True,
-                ssh_binary=self._ssh_binary(),
+                global_ssh_config=self.get_config().get("ssh"),
             )
         else:
             run_local(
@@ -762,25 +1091,52 @@ class Bridge:
             raise ValueError(
                 "Cannot launch terminal to local host — use a remote jump host"
             )
-        putty = Path(self._ssh_binary()).parent / "putty.exe"
-        if not putty.exists():
+        putty = _find_putty_exe("putty.exe")
+        if putty is None:
             raise ValueError(
-                f"putty.exe not found next to SSH binary at {putty}. "
-                "Install PuTTY and ensure putty.exe sits in the same directory "
-                "as the configured SSH client binary."
+                r"putty.exe not found. Install PuTTY from putty.org — "
+                r"expected at C:\Program Files\PuTTY\putty.exe."
             )
-        cmd = [str(putty), "-ssh", ssh]
-        idf = entry.get("identityFile")
+        # Parse ssh target for hostname/port; get username from host or global config.
+        cfg_ssh = self.get_config().get("ssh", {})
+        user, hostname, port = _parse_ssh(ssh)
+        if not user:
+            user = cfg_ssh.get("user", "")
+
+        cmd = [str(putty), "-ssh"]
+        if user:
+            cmd.extend(["-l", user])
+        cmd.append(hostname)
+        if port:
+            cmd.extend(["-P", str(port)])
+
+        # Prefer PPK v2 (works with all PuTTY versions) over raw OpenSSH key.
+        idf = cfg_ssh.get("identityFile", "")
         if idf:
-            cmd.extend(["-i", idf])
+            expanded = Path(idf).expanduser()
+            ppk = Path(str(expanded) + ".ppk")
+            key_file = ppk if ppk.exists() else expanded
+            if not key_file.exists():
+                raise ValueError(
+                    f"SSH key file not found: {idf}\n"
+                    "Generate a new key in Settings → SSH."
+                )
+            cmd.extend(["-i", str(key_file)])
         _sp.Popen(cmd)
 
-    # ── internals ─────────────────────────────────────────────────────────────
+    def launch_local_terminal(self) -> None:
+        """Open a local terminal window — tries Windows Terminal, then PowerShell, then cmd."""
+        import subprocess as _sp
 
-    def _ssh_binary(self) -> str:
-        """Return the configured SSH binary (plink, custom path, etc.), defaulting to 'ssh'."""
-        cfg = self.get_config()
-        return str(cfg.get("ssh", {}).get("binary", "ssh")) or "ssh"
+        for exe in ("wt.exe", "powershell.exe", "cmd.exe"):
+            try:
+                _sp.Popen([exe])
+                return
+            except FileNotFoundError:
+                continue
+        raise ValueError("Could not open a terminal window")
+
+    # ── internals ─────────────────────────────────────────────────────────────
 
     def _reload_hosts(self) -> None:
         self._hosts = load_hosts(hosts_path())
@@ -856,7 +1212,13 @@ class Bridge:
                 return
             for rp in paths:
                 items = (
-                    discover_remote(ssh, rp, name, idf, self._ssh_binary())
+                    discover_remote(
+                        ssh,
+                        rp,
+                        name,
+                        idf,
+                        global_ssh_config=self.get_config().get("ssh"),
+                    )
                     if ssh
                     else discover_local(rp, name)
                 )
@@ -878,27 +1240,17 @@ class Bridge:
     def _check_connected(self, host: dict[str, Any]) -> bool:
         ssh = host.get("ssh")
         if not ssh:
-            return True  # local is always connected
-        from .executor import ssh_flags
-        from pathlib import Path as _Path
+            return True
+        from .executor import ssh_run
 
-        idf = host.get("identityFile")
-        binary = self._ssh_binary()
-        is_plink = "plink" in _Path(binary).stem.lower()
-        timeout_flag = (
-            ["-connecttimeout", "3"] if is_plink else ["-o", "ConnectTimeout=3"]
+        code, _, _ = ssh_run(
+            ssh,
+            "true",
+            identity_file=host.get("identityFile"),
+            global_ssh_config=self.get_config().get("ssh"),
+            timeout=5,
         )
-        import subprocess
-
-        try:
-            r = subprocess.run(
-                [binary, *ssh_flags(idf, binary), *timeout_flag, ssh, "true"],
-                capture_output=True,
-                timeout=5,
-            )
-            return r.returncode == 0
-        except Exception:
-            return False
+        return code == 0
 
     def _get_adapter(self) -> Any:
         if self._adapter is not None:
@@ -921,8 +1273,13 @@ class Bridge:
             from .adapters.base import load_adapter
 
             self._adapter = load_adapter(provider, **kwargs)
-        except (ImportError, ValueError):
-            pass
+        except ImportError:
+            raise ImportError(
+                f"LLM provider '{provider}' requires an optional dependency. "
+                f"Install it with: pip install runspec-console[{provider}]"
+            )
+        except ValueError as exc:
+            raise ValueError(f"LLM configuration error: {exc}") from exc
         return self._adapter
 
     def _dispatch(self, event: str, detail: dict[str, Any]) -> None:
@@ -951,6 +1308,50 @@ class Bridge:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
+def _normalize_path(p: str) -> str:
+    """Normalise a filesystem path to forward slashes for TOML storage.
+
+    Browse buttons return native Windows paths with backslashes, which the
+    custom TOML serialiser must escape (``\\\\``) — those escaped paths are
+    valid but ugly. Forward slashes work fine for Windows file APIs and avoid
+    escaping entirely. Empty / non-string inputs are passed through unchanged.
+    """
+    if not isinstance(p, str) or not p:
+        return p
+    return p.replace("\\", "/")
+
+
+def _normalize_ssh_section(ssh: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of an [ssh] config section with path fields normalised."""
+    out = dict(ssh)
+    for k in ("binary", "identityFile"):
+        if isinstance(out.get(k), str):
+            out[k] = _normalize_path(out[k])
+    return out
+
+
+def _find_putty_exe(name: str = "putty.exe") -> Path | None:
+    """Locate a PuTTY-suite executable (putty.exe, plink.exe, puttygen.exe, …).
+
+    Checks common Windows install locations then falls back to PATH.
+    Returns the resolved Path or None if not found.
+    """
+    import shutil
+
+    for install_root in (
+        Path(r"C:\Program Files\PuTTY"),
+        Path(r"C:\Program Files (x86)\PuTTY"),
+    ):
+        candidate = install_root / name
+        if candidate.exists():
+            return candidate
+
+    found = shutil.which(name)
+    if found:
+        return Path(found)
+    return None
+
+
 def _paths(entry: dict[str, Any]) -> list[str]:
     """Normalize runspec_paths (list) or legacy runspec_path (str) to a list."""
     paths = entry.get("runspec_paths")
@@ -958,6 +1359,72 @@ def _paths(entry: dict[str, Any]) -> list[str]:
         return [str(p) for p in paths if p]
     rp = entry.get("runspec_path", "")
     return [str(rp)] if rp else []
+
+
+def _write_ppk_v2(
+    dest: Path, raw_priv: bytes, raw_pub: bytes, comment: str = "runspec-console"
+) -> None:
+    """Write a PuTTY PPK v2 file for an ed25519 key pair (no passphrase).
+
+    Generates a PPK v2 file compatible with all PuTTY versions, so launch_terminal
+    works even on PuTTY < 0.75 which cannot read OpenSSH new-format keys.
+    """
+    import base64
+    import hashlib
+    import hmac as _hmac
+    import struct
+    import textwrap
+
+    key_type = b"ssh-ed25519"
+    enc_type = b"none"
+    comment_b = comment.encode()
+
+    # SSH wire-format public blob
+    pub_blob = (
+        struct.pack(">I", len(key_type))
+        + key_type
+        + struct.pack(">I", len(raw_pub))
+        + raw_pub
+    )
+    # PPK private blob: seed then public key, each length-prefixed
+    priv_blob = (
+        struct.pack(">I", len(raw_priv))
+        + raw_priv
+        + struct.pack(">I", len(raw_pub))
+        + raw_pub
+    )
+
+    # MAC key = SHA1("putty-private-key-file-mac-key")
+    mac_key = hashlib.sha1(b"putty-private-key-file-mac-key").digest()
+    mac_data = b"".join(
+        struct.pack(">I", len(f)) + f
+        for f in (key_type, enc_type, comment_b, pub_blob, priv_blob)
+    )
+    mac_hex = _hmac.new(mac_key, mac_data, hashlib.sha1).hexdigest()
+
+    def b64lines(data: bytes) -> tuple[int, str]:
+        lines = textwrap.wrap(base64.b64encode(data).decode(), 64)
+        return len(lines), "\n".join(lines)
+
+    pub_n, pub_s = b64lines(pub_blob)
+    priv_n, priv_s = b64lines(priv_blob)
+
+    dest.write_text(
+        "\n".join(
+            [
+                "PuTTY-User-Key-File-2: ssh-ed25519",
+                "Encryption: none",
+                f"Comment: {comment}",
+                f"Public-Lines: {pub_n}",
+                pub_s,
+                f"Private-Lines: {priv_n}",
+                priv_s,
+                f"Private-MAC: {mac_hex}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _parse_ssh(ssh: str) -> tuple[str, str, int | None]:
@@ -1065,6 +1532,7 @@ def _parse_log_by_run_id(
                 "args": extra.get("args", {}),
                 "argSources": extra.get("arg_sources", {}),
                 "logLines": g["lines"],
+                "initiatedBy": "llm" if extra.get("agent") else "user",
             }
         )
     return records
@@ -1095,6 +1563,7 @@ def _parse_log_sequential(
                     "args": extra.get("args", {}),
                     "argSources": extra.get("arg_sources", {}),
                     "logLines": lines,
+                    "initiatedBy": "llm" if extra.get("agent") else "user",
                 }
             )
             lines = []

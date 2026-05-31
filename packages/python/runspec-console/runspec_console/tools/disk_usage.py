@@ -29,7 +29,14 @@ def main() -> None:
             logger.error("Cannot read %s: %s", path, exc)
             sys.exit(1)
         pct = used / total * 100
-        logger.info("%s: %s used / %s total, %s free (%.1f%%)", path, _fmt(used), _fmt(total), _fmt(free), pct)
+        logger.info(
+            "%s: %s used / %s total, %s free (%.1f%%)",
+            path,
+            _fmt(used),
+            _fmt(total),
+            _fmt(free),
+            pct,
+        )
     else:
         found = False
         for letter in string.ascii_uppercase:
@@ -40,6 +47,13 @@ def main() -> None:
                 continue
             found = True
             pct = used / total * 100
-            logger.info("%s  %s used / %s total, %s free (%.1f%%)", drive, _fmt(used), _fmt(total), _fmt(free), pct)
+            logger.info(
+                "%s  %s used / %s total, %s free (%.1f%%)",
+                drive,
+                _fmt(used),
+                _fmt(total),
+                _fmt(free),
+                pct,
+            )
         if not found:
             logger.warning("No drives found")

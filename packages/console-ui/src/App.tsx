@@ -10,6 +10,7 @@ import {
   MoonOutlined,
   SettingOutlined,
   CodeOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -31,6 +32,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
   const [runnables, setRunnables] = useState<Runnable[]>([])
+  const [runnablesLoading, setRunnablesLoading] = useState(true)
   const [hosts, setHosts] = useState<Host[]>([])
   const [selectedHost, setSelectedHost] = useState<string>('')
   const [inputHistory, setInputHistory] = useState<string[]>([])
@@ -73,7 +75,7 @@ export default function App() {
   useEffect(() => { loadSshKeyAge() }, [])
 
   useEffect(() => {
-    bridge.get_runnables('all').then(setRunnables)
+    bridge.get_runnables('all').then(r => { setRunnables(r); setRunnablesLoading(false) })
     bridge.get_hosts().then(hs => {
       setHosts(hs)
       setSelectedHost(hs[0]?.name ?? '')
@@ -161,7 +163,8 @@ export default function App() {
           algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
           token: { fontFamily: 'monospace' },
         }}>
-        <div style={{ height: '100vh', display: 'flex', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
+        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
           {/* Fixed host sidebar */}
           <div style={{
             width: 180, flexShrink: 0,
@@ -182,14 +185,23 @@ export default function App() {
                     key={h.name}
                     trigger={['contextMenu']}
                     menu={{
-                      items: h.role !== undefined && h.connected ? [
-                        {
-                          key: 'open_terminal',
-                          icon: <CodeOutlined />,
-                          label: 'Open SSH terminal',
-                          onClick: () => bridge.launch_terminal(h.name).catch(console.error),
-                        },
-                      ] : [],
+                      items: h.connected ? (
+                        h.name === 'local' ? [
+                          {
+                            key: 'open_terminal',
+                            icon: <CodeOutlined />,
+                            label: 'Open terminal',
+                            onClick: () => bridge.launch_local_terminal().catch(console.error),
+                          },
+                        ] : [
+                          {
+                            key: 'open_terminal',
+                            icon: <CodeOutlined />,
+                            label: 'Open SSH terminal',
+                            onClick: () => bridge.launch_terminal(h.name).catch(console.error),
+                          },
+                        ]
+                      ) : [],
                     }}
                   >
                     <div
@@ -207,9 +219,10 @@ export default function App() {
                     >
                       <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
                       <span style={{
-                        fontSize: 13, color: textCol,
+                        fontSize: 13, color: textCol, flex: 1,
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}>{h.name}</span>
+                      {runnablesLoading && <LoadingOutlined style={{ fontSize: 10, color: '#595959' }} spin />}
                     </div>
                   </Dropdown>
                 )
@@ -276,29 +289,6 @@ export default function App() {
               ))}
 
               <div style={{ flex: 1 }} />
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px', borderRight: `1px solid ${borderCol}` }}>
-                {hosts.map(h => (
-                  <button
-                    key={h.name}
-                    onClick={() => handleHostSelect(h.name)}
-                    title={h.connected ? `${h.name} — connected` : `${h.name} — disconnected`}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 4,
-                      padding: '2px 7px', border: 'none', borderRadius: 10, cursor: 'pointer',
-                      background: selectedHost === h.name
-                        ? (isDark ? 'rgba(79,193,255,0.1)' : 'rgba(9,88,217,0.08)')
-                        : 'transparent',
-                      color: h.connected ? (isDark ? '#bbb' : '#333') : (isDark ? '#444' : '#bbb'),
-                      fontSize: 11, fontFamily: 'monospace',
-                      transition: 'background 0.12s',
-                    }}
-                  >
-                    <span style={{ fontSize: 8, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
-                    {h.name}
-                  </button>
-                ))}
-              </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 8 }}>
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
@@ -379,10 +369,12 @@ export default function App() {
 
           </div>
         </div>
+        </div>
 
         <SettingsDrawer
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
+          connectedHosts={hosts.filter(h => h.connected && h.name !== 'local' && h.role !== undefined).map(h => h.name)}
           onHostsChanged={() => {
             bridge.get_hosts().then(setHosts)
             bridge.get_runnables('all').then(setRunnables)

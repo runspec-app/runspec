@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef } from 'react'
 import { bridge } from '../bridge'
 
-const H = 6    // handle thickness px
+const H = 8    // handle thickness px
 const MIN_W = 1024
 const MIN_H = 600
 

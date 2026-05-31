@@ -43,36 +43,39 @@ def _make_bridge():
 class TestLaunchTerminal(unittest.TestCase):
     def test_launches_putty_with_ssh_and_identity(self):
         b = _make_bridge()
-        ssh_binary = "C:/Program Files/PuTTY/plink.exe"
-        expected_putty = str(Path(ssh_binary).parent / "putty.exe")
+        putty_path = Path("C:/Program Files/PuTTY/putty.exe")
+        idf = "C:/Users/jason/.ssh/runspec_ed25519"
         with (
+            patch("runspec_console.bridge._find_putty_exe", return_value=putty_path),
+            patch.object(b, "get_config", return_value={"ssh": {"identityFile": idf}}),
             patch("runspec_console.bridge.Path.exists", return_value=True),
-            patch("runspec_console.bridge.Bridge._ssh_binary", return_value=ssh_binary),
             patch("subprocess.Popen") as popen,
         ):
             b.launch_terminal("myhost")
         popen.assert_called_once()
         cmd = popen.call_args.args[0]
-        self.assertEqual(cmd[0], expected_putty)
+        self.assertEqual(cmd[0], str(putty_path))
         self.assertIn("-ssh", cmd)
-        self.assertIn("user@myhost", cmd)
+        self.assertIn("myhost", cmd)
+        self.assertIn("-l", cmd)
+        self.assertIn("user", cmd)
         self.assertIn("-i", cmd)
-        self.assertIn("C:/Users/jason/.ssh/runspec_ed25519", cmd)
+        # PPK is preferred when it exists; the path has .ppk suffix
+        self.assertTrue(any(".ppk" in arg for arg in cmd))
 
     def test_launches_putty_without_identity_when_none_configured(self):
         b = _make_bridge()
+        putty_path = Path("C:/Program Files/PuTTY/putty.exe")
         with (
+            patch("runspec_console.bridge._find_putty_exe", return_value=putty_path),
+            patch.object(b, "get_config", return_value={"ssh": {}}),
             patch("runspec_console.bridge.Path.exists", return_value=True),
-            patch(
-                "runspec_console.bridge.Bridge._ssh_binary",
-                return_value="C:/Program Files/PuTTY/plink.exe",
-            ),
             patch("subprocess.Popen") as popen,
         ):
             b.launch_terminal("no-key")
         cmd = popen.call_args.args[0]
         self.assertNotIn("-i", cmd)
-        self.assertIn("user@no-key", cmd)
+        self.assertIn("no-key", cmd)
 
     def test_raises_for_unknown_host(self):
         b = _make_bridge()
@@ -87,11 +90,7 @@ class TestLaunchTerminal(unittest.TestCase):
     def test_raises_when_putty_missing(self):
         b = _make_bridge()
         with (
-            patch("runspec_console.bridge.Path.exists", return_value=False),
-            patch(
-                "runspec_console.bridge.Bridge._ssh_binary",
-                return_value="C:/Program Files/PuTTY/plink.exe",
-            ),
+            patch("runspec_console.bridge._find_putty_exe", return_value=None),
             patch("subprocess.Popen") as popen,
         ):
             with self.assertRaises(ValueError) as cm:

@@ -23,16 +23,20 @@ class ToolCall:
 class ChatResponse:
     text: str | None
     tool_calls: list[ToolCall]
-    stop_reason: str   # "tool_use" | "end_turn" | "stop"
+    stop_reason: str  # "tool_use" | "end_turn" | "stop"
     _raw: Any = field(repr=False, default=None)
 
 
 class ModelAdapter(ABC):
     @abstractmethod
-    async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ChatResponse: ...
+    async def chat(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> ChatResponse: ...
 
     @abstractmethod
-    def stream_chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> AsyncIterator[str]:
+    def stream_chat(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AsyncIterator[str]:
         """Yield text tokens as they arrive from the model."""
         ...
 
@@ -68,6 +72,7 @@ def load_adapter(provider: str, **kwargs: Any) -> ModelAdapter:
     if provider == "anthropic":
         try:
             from .anthropic import AnthropicAdapter
+
             return AnthropicAdapter(**kwargs)
         except ImportError:
             raise ImportError(
@@ -76,6 +81,7 @@ def load_adapter(provider: str, **kwargs: Any) -> ModelAdapter:
     if provider == "openai":
         try:
             from .openai import OpenAIAdapter
+
             return OpenAIAdapter(**kwargs)
         except ImportError:
             raise ImportError(
@@ -84,9 +90,12 @@ def load_adapter(provider: str, **kwargs: Any) -> ModelAdapter:
     if provider == "bedrock":
         try:
             from .bedrock import BedrockAdapter
+
             return BedrockAdapter(**kwargs)
         except ImportError:
             raise ImportError(
                 "Install the Bedrock extra: pip install runspec-console[bedrock]"
             )
-    raise ValueError(f"Unknown LLM provider: {provider!r}. Choose from: anthropic, openai, bedrock")
+    raise ValueError(
+        f"Unknown LLM provider: {provider!r}. Choose from: anthropic, openai, bedrock"
+    )

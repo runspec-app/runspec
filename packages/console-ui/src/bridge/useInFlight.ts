@@ -18,9 +18,20 @@ export function useInFlight() {
       }
     }
 
+    // Immediate re-poll when a run starts (dispatched by ConsoleView after invoke_runnable)
+    // or when a run ends (dispatched by the Python bridge)
+    const onUpdate = () => { if (!cancelled) poll() }
+
     poll()
     const id = setInterval(poll, POLL_MS)
-    return () => { cancelled = true; clearInterval(id) }
+    window.addEventListener('runspec:in_flight_updated', onUpdate)
+    window.addEventListener('runspec:run_end', onUpdate)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+      window.removeEventListener('runspec:in_flight_updated', onUpdate)
+      window.removeEventListener('runspec:run_end', onUpdate)
+    }
   }, [])
 
   return inFlight

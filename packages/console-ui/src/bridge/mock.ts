@@ -338,6 +338,7 @@ const MOCK_HISTORY: HistoryRecord[] = [
   {
     id: '1', runnable: 'backup', group: 'ops-tools', host: 'local', operator: 'Jason Finestone', runAs: 'DESKTOP\\jason',
     exitCode: 0, durationMs: 3201, ts: new Date(Date.now() - 3600000).toISOString(),
+    initiatedBy: 'llm',
     args: { source: 'C:/Users/jason/documents', dest: 'Z:/backups/documents', 'dry-run': 'False' },
     argSources: { source: 'cli', dest: 'cli', 'dry-run': 'spec_default' },
     logLines: [
@@ -445,8 +446,9 @@ export const mockApi: BridgeApi = {
 
   get_schedules: async () => MOCK_SCHEDULES,
 
+  config_dir: async () => 'C:/Users/jason/AppData/Roaming/runspec-console',
   get_config: async () => ({
-    ssh: { user: 'jason', identityFile: '~/.ssh/runspec_ed25519', key_created_at: MOCK_KEY_CREATED_AT },
+    ssh: { user: 'jason', identityFile: 'C:/Users/jason/AppData/Roaming/runspec-console/runspec_ed25519', key_created_at: MOCK_KEY_CREATED_AT },
     llm: { apiBaseUrl: '', model: 'claude-opus-4-7' },
   }),
 
@@ -557,15 +559,36 @@ export const mockApi: BridgeApi = {
     }
   },
 
-  generate_ssh_key: async (keyPath: string) => {
-    await new Promise(r => setTimeout(r, 800))
+  generate_ssh_key: async () => {
+    await new Promise(r => setTimeout(r, 600))
     MOCK_KEY_CREATED_AT = new Date().toISOString()
     return {
-      ok: true,
+      ok: true, committed: true, per_host: [],
       public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPublicKeyForDevModeonlyrunspec-console',
-      message: `Key generated at ${keyPath || '~/.ssh/runspec_ed25519'}`,
+      key_path: 'C:/Users/jason/AppData/Roaming/runspec-console/runspec_ed25519',
+      message: 'Key generated at C:/Users/jason/AppData/Roaming/runspec-console/runspec_ed25519',
     }
   },
+
+  rotate_ssh_key: async () => {
+    await new Promise(r => setTimeout(r, 1800))
+    MOCK_KEY_CREATED_AT = new Date().toISOString()
+    return {
+      ok: true, committed: true,
+      public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPublicKeyForDevModeonlyrunspec-console',
+      key_path: 'C:/Users/jason/AppData/Roaming/runspec-console/runspec_ed25519',
+      per_host: [
+        { host: 'prod-1', pushed: true, verified: true, skipped: false, error: '' },
+        { host: 'prod-2', pushed: true, verified: false, skipped: false, error: 'verify failed: sshd rejected key' },
+      ],
+      message: 'Push or verification failed on: prod-2. Old key still active.',
+    }
+  },
+
+  puttygen_path: async () => 'C:/Program Files/PuTTY/puttygen.exe',
+  launch_puttygen: async () => { console.log('mock: launch_puttygen') },
+  open_putty_url: async (url: string) => { console.log('mock: open_putty_url', url) },
+  browse_ssh_binary: async () => '',
 
   send_chat: async (message, _invocationId) => {
     const id = `chat-${++invocationCounter}`
@@ -608,6 +631,9 @@ export const mockApi: BridgeApi = {
   },
   launch_terminal: async (host: string): Promise<void> => {
     console.log('mock: launch_terminal', host)
+  },
+  launch_local_terminal: async (): Promise<void> => {
+    console.log('mock: launch_local_terminal')
   },
 
 }

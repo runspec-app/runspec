@@ -96,7 +96,55 @@ def _build_icon() -> Path | None:
         return None
 
 
+def _apply_dwm_title_bar(title: str) -> None:
+    """Style the native Windows title bar: dark mode + runspec-blue caption color.
+
+    Called from the webview `started` callback so the window HWND is available.
+    Requires Windows 11 build 22000+ for DWMWA_CAPTION_COLOR (attr 35).
+    """
+    import ctypes
+    import time
+
+    try:
+        import win32gui
+    except ImportError:
+        return
+
+    # Brief wait for the window to be fully painted before we style it
+    time.sleep(0.15)
+    hwnd = win32gui.FindWindow(None, title)
+    if not hwnd:
+        return
+
+    try:
+        dwm = ctypes.windll.dwmapi
+
+        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        dark = ctypes.c_int(1)
+        dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark))
+
+        # DWMWA_CAPTION_COLOR = 35  (COLORREF is 0x00BBGGRR)
+        # Runspec blue #0958D9 = R=0x09 G=0x58 B=0xD9 → 0x00D95809
+        blue = ctypes.c_int(0x00D95809)
+        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(blue), ctypes.sizeof(blue))
+
+        # DWMWA_TEXT_COLOR = 36 — white
+        white = ctypes.c_int(0x00FFFFFF)
+        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(white), ctypes.sizeof(white))
+    except Exception:
+        pass
+
+
+def _suppress_noisy_loggers() -> None:
+    import logging
+
+    for name in ("paramiko", "paramiko.transport"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def main() -> None:
+    _suppress_noisy_loggers()
+
     import runspec
 
     args = runspec.parse("runspec-console")
@@ -120,18 +168,21 @@ def main() -> None:
             print(f"✗  {exc}", file=sys.stderr)
             sys.exit(1)
 
+    window_title = "runspec console"
     window = webview.create_window(
-        "runspec console",
+        window_title,
         url,
         js_api=bridge,
         width=1440,
         height=900,
         min_size=(1024, 600),
-        frameless=True,
     )
     bridge.set_window(window)
 
-    start_kwargs: dict[str, object] = {"debug": dev}
+    start_kwargs: dict[str, object] = {
+        "debug": dev,
+        "func": lambda: _apply_dwm_title_bar(window_title),
+    }
     icon = _build_icon()
     if icon:
         start_kwargs["icon"] = str(icon)

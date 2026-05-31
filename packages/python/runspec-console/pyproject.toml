@@ -4,12 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.1.9"
+version = "0.1.10"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
-    "runspec>=0.18.0",
+    "runspec>=0.19.1",
     "pywin32>=306",
+    "cryptography>=42.0",
+    "paramiko>=3.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -45,3 +47,7 @@ testpaths = ["tests"]
 [tool.mypy]
 python_version = "3.11"
 mypy_path = "../runspec"
+
+[[tool.mypy.overrides]]
+module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*"]
+ignore_missing_imports = true

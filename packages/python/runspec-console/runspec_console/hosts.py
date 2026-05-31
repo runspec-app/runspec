@@ -43,7 +43,7 @@ def save_hosts(path: Path, hosts: list[dict[str, Any]]) -> None:
     for h in hosts:
         lines.append("[[host]]")
         for k, v in h.items():
-            lines.append(f'{k} = {_toml_value(v)}')
+            lines.append(f"{k} = {_toml_value(v)}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -78,7 +78,9 @@ def site_packages(runspec_path: str) -> Path | None:
 
 def _toml_value(v: Any) -> str:
     if isinstance(v, list):
-        return "[" + ", ".join(f'"{x}"' if isinstance(x, str) else str(x) for x in v) + "]"
+        return (
+            "[" + ", ".join(f'"{x}"' if isinstance(x, str) else str(x) for x in v) + "]"
+        )
     if isinstance(v, str):
         return f'"{v}"'
     if isinstance(v, bool):

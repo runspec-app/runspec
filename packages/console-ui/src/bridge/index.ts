@@ -65,6 +65,7 @@ export interface HistoryRecord {
   args: Record<string, unknown>      // arguments used for this invocation (from run_summary)
   argSources?: Record<string, string> // provenance of each arg: "cli" | "env" | "runspec_env" | "spec_default" | "not_set"
   logLines: HistoryLogLine[]         // log records belonging to this invocation
+  initiatedBy?: 'llm' | 'user'      // 'llm' when triggered by the agentic chat loop
 }
 
 export interface Schedule {
@@ -112,6 +113,14 @@ export interface TodaySummary {
   upcomingToday: TodayUpcoming[]
 }
 
+export interface RotateHostResult {
+  host: string
+  pushed: boolean
+  verified: boolean
+  skipped: boolean
+  error: string
+}
+
 export interface TestResult {
   connected: boolean
   runspec_ok: boolean
@@ -127,6 +136,7 @@ export interface BridgeApi {
   get_history: (host: string, runnable?: string) => Promise<HistoryRecord[]>
   get_schedules: () => Promise<Schedule[]>
   get_config: () => Promise<Record<string, unknown>>
+  config_dir: () => Promise<string>
   save_config: (data: Record<string, unknown>) => Promise<void>
   create_schedule: (data: Record<string, unknown>) => Promise<void>
   delete_schedule: (id: string) => Promise<void>
@@ -139,7 +149,12 @@ export interface BridgeApi {
   send_chat: (message: string, invocationId?: string) => Promise<string>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
-  generate_ssh_key: (keyPath: string) => Promise<{ ok: boolean; public_key: string; message: string }>
+  generate_ssh_key: () => Promise<{ ok: boolean; public_key: string; key_path: string; committed: boolean; per_host: RotateHostResult[]; message: string }>
+  rotate_ssh_key: () => Promise<{ ok: boolean; committed: boolean; public_key: string; key_path: string; per_host: RotateHostResult[]; message: string }>
+  puttygen_path: () => Promise<string>
+  launch_puttygen: () => Promise<void>
+  open_putty_url: (url: string) => Promise<void>
+  browse_ssh_binary: () => Promise<string>
   minimize_window: () => Promise<void>
   toggle_maximize_window: () => Promise<void>
   close_window: () => Promise<void>
@@ -147,6 +162,7 @@ export interface BridgeApi {
   move_window: (x: number, y: number) => Promise<void>
   // ── terminal sessions ──────────────────────────────────────────────────────
   launch_terminal: (host: string) => Promise<void>
+  launch_local_terminal: () => Promise<void>
 }
 
 declare global {

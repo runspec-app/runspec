@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Tag, Tooltip, Typography } from 'antd'
-import { CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons'
+import { Button, Popconfirm, Tag, Tooltip, Typography } from 'antd'
+import { CloseOutlined, LoadingOutlined } from '@ant-design/icons'
 import { bridge, type InFlightRecord, type Runnable } from '../bridge'
 import { OutputPanel, useInvocationBlocks, type RerunData } from '../components/OutputPanel'
 import { useIsDark } from '../ThemeContext'
@@ -55,12 +55,16 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
           <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{r.group}</Tag>
           <Text type="secondary" style={{ fontSize: 11 }}>{r.operator}</Text>
           <Text style={{ fontSize: 11, color: '#52c41a' }}>{elapsed(r.startedAt)}</Text>
-          <Tooltip title="Cancel">
-            <CloseCircleOutlined
-              style={{ fontSize: 13, color: isDark ? '#666' : '#aaa', cursor: 'pointer' }}
-              onClick={() => handleCancel(r.id)}
-            />
-          </Tooltip>
+          <Popconfirm
+            title="Cancel this run?"
+            onConfirm={() => handleCancel(r.id)}
+            okText="Cancel run" okButtonProps={{ danger: true }}
+            cancelText="Keep running"
+            placement="bottom"
+          >
+            <Button size="small" type="text" danger icon={<CloseOutlined style={{ fontSize: 10 }} />}
+              style={{ padding: '0 4px', height: 18, lineHeight: 1 }} />
+          </Popconfirm>
         </span>
       ))}
     </div>
@@ -80,6 +84,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const label = `/${cmd} on ${runnable.host}`
       const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath, runnable.group)
       addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args } })
+      window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:invoke_runnable', onInvoke)
     return () => window.removeEventListener('runspec:invoke_runnable', onInvoke)
@@ -91,6 +96,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const { message } = (e as CustomEvent).detail as { message: string }
       const id = await bridge.send_chat(message)
       addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
+      window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:send_chat', onChat)
     return () => window.removeEventListener('runspec:send_chat', onChat)
@@ -103,6 +109,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const label = `/${runnable} on ${host} (rerun)`
       const id = await bridge.invoke_runnable(host, runnable, args)
       addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host, runnable, args } })
+      window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:rerun', onRerun)
     return () => window.removeEventListener('runspec:rerun', onRerun)

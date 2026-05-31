@@ -56,7 +56,9 @@ class BedrockAdapter(ModelAdapter):
                 kwargs["aws_session_token"] = aws_session_token
             self.client = anthropic.AsyncAnthropicBedrock(**kwargs)
 
-    async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ChatResponse:
+    async def chat(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> ChatResponse:
         kwargs: dict[str, Any] = dict(
             model=self.model,
             max_tokens=4096,
@@ -74,9 +76,16 @@ class BedrockAdapter(ModelAdapter):
             for block in response.content
             if block.type == "tool_use"
         ]
-        return ChatResponse(text=text, tool_calls=tool_calls, stop_reason=response.stop_reason, _raw=response)
+        return ChatResponse(
+            text=text,
+            tool_calls=tool_calls,
+            stop_reason=response.stop_reason,
+            _raw=response,
+        )
 
-    async def stream_chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]):  # type: ignore[override]
+    async def stream_chat(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ):  # type: ignore[override]
         kwargs: dict[str, Any] = dict(
             model=self.model,
             max_tokens=4096,
@@ -89,8 +98,11 @@ class BedrockAdapter(ModelAdapter):
             async for token in stream.text_stream:
                 yield token
 
-    async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]):  # type: ignore[override]
+    async def stream_with_tools(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ):  # type: ignore[override]
         import json
+
         kwargs: dict[str, Any] = dict(
             model=self.model,
             max_tokens=4096,
@@ -107,7 +119,11 @@ class BedrockAdapter(ModelAdapter):
                 if ev_type == "content_block_start":
                     cb = getattr(event, "content_block", None)
                     if cb and getattr(cb, "type", None) == "tool_use":
-                        tool_map[event.index] = {"id": cb.id, "name": cb.name, "json": ""}
+                        tool_map[event.index] = {
+                            "id": cb.id,
+                            "name": cb.name,
+                            "json": "",
+                        }
                 elif ev_type == "content_block_delta":
                     d = getattr(event, "delta", None)
                     if d:
@@ -119,7 +135,9 @@ class BedrockAdapter(ModelAdapter):
                 elif ev_type == "message_delta":
                     d = getattr(event, "delta", None)
                     if d:
-                        stop_reason = getattr(d, "stop_reason", stop_reason) or stop_reason
+                        stop_reason = (
+                            getattr(d, "stop_reason", stop_reason) or stop_reason
+                        )
             final = await stream.get_final_message()
         tool_calls = []
         for tc in tool_map.values():
@@ -128,7 +146,12 @@ class BedrockAdapter(ModelAdapter):
             except Exception:
                 inp = {}
             tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], input=inp))
-        yield ("done", ChatResponse(text=None, tool_calls=tool_calls, stop_reason=stop_reason, _raw=final))
+        yield (
+            "done",
+            ChatResponse(
+                text=None, tool_calls=tool_calls, stop_reason=stop_reason, _raw=final
+            ),
+        )
 
     def make_tool_turn(
         self, response: ChatResponse, results: list[tuple[ToolCall, str]]

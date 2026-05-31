@@ -2,10 +2,10 @@
 executor.py — run runnables as subprocesses, streaming stdout/stderr line by line.
 
 For local hosts: run the binary directly from the venv Scripts dir.
-For remote hosts: ssh <target> <remote_bin_path> [args...]
+For remote hosts: paramiko SSH channel, same streaming callback interface.
 
 The caller supplies two callbacks:
-  on_line(line, stream)  — called for each stdout/stderr line
+  on_line(line, stream)       — called for each stdout/stderr line
   on_done(exit_code, duration_ms) — called once when the process exits
 """
 
@@ -53,7 +53,6 @@ def run_local(
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
-    # Windows entry points are installed as <name>.exe launchers
     candidates = (
         [f"{runnable}.exe", runnable] if sys.platform == "win32" else [runnable]
     )
@@ -67,16 +66,55 @@ def run_local(
     )
 
 
-def ssh_flags(identity_file: str | None, binary: str = "ssh") -> list[str]:
-    """Common SSH/plink flags, with optional identity file.
+def _parse_ssh_target(target: str) -> tuple[str, str, int]:
+    """Parse 'user@host:port' → (user, host, port). Missing parts → '' / 22."""
+    user = ""
+    port = 22
+    s = target
+    if "@" in s:
+        user, s = s.split("@", 1)
+    if ":" in s:
+        host, port_str = s.rsplit(":", 1)
+        try:
+            port = int(port_str)
+        except ValueError:
+            host = s
+    else:
+        host = s
+    return user, host, port
 
-    Detects plink by binary name and uses -batch instead of -o BatchMode=yes.
+
+def _make_ssh_client(
+    ssh_target: str,
+    identity_file: str | None,
+    global_ssh_config: dict[str, Any] | None = None,
+) -> Any:
+    """Create and connect a paramiko SSHClient.
+
+    Falls back to global config for username and identity file when the host
+    entry doesn't specify them.
     """
-    is_plink = "plink" in Path(binary).stem.lower()
-    flags = ["-batch"] if is_plink else ["-o", "BatchMode=yes"]
-    if identity_file:
-        flags += ["-i", str(Path(identity_file).expanduser())]
-    return flags
+    import paramiko
+
+    cfg = global_ssh_config or {}
+    user, hostname, port = _parse_ssh_target(ssh_target)
+
+    if not user:
+        user = cfg.get("user", "")
+    key_path = identity_file or cfg.get("identityFile", "")
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    connect_kwargs: dict[str, Any] = {"hostname": hostname, "port": port, "timeout": 10}
+    if user:
+        connect_kwargs["username"] = user
+    if key_path:
+        expanded = str(Path(key_path).expanduser())
+        connect_kwargs["key_filename"] = expanded
+
+    client.connect(**connect_kwargs)
+    return client
 
 
 def run_remote(
@@ -91,23 +129,127 @@ def run_remote(
     timeout: int | None = None,
     cancel_event: threading.Event | None = None,
     agent: bool = False,
-    ssh_binary: str = "ssh",
+    global_ssh_config: dict[str, Any] | None = None,
+    # Legacy kwarg kept so existing call sites don't break immediately
+    ssh_binary: str = "",
 ) -> None:
-    """Execute a remote runnable via SSH, streaming output via callbacks."""
+    """Execute a remote runnable via paramiko SSH, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args)
-    cmd = [
-        ssh_binary,
-        *ssh_flags(identity_file, ssh_binary),
-        ssh_target,
-        remote_bin,
-        *command_path,
-        *argv,
-    ]
-    _stream(
-        cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent
-    )
+    parts = [remote_bin, *command_path, *argv]
+    if agent:
+        parts = ["RUNSPEC_AGENT=1", *parts]
+    remote_cmd = " ".join(parts)
+
+    start = time.monotonic()
+    try:
+        client = _make_ssh_client(ssh_target, identity_file, global_ssh_config)
+    except Exception as exc:
+        on_line(f"✗  SSH connection failed: {exc}", "stderr")
+        on_done(-1, 0)
+        return
+
+    try:
+        transport = client.get_transport()
+        channel = transport.open_session()  # type: ignore[union-attr]
+        channel.set_combine_stderr(False)
+        channel.exec_command(remote_cmd)
+
+        cancelled = threading.Event()
+        done = threading.Event()
+
+        def _watch_cancel() -> None:
+            if cancel_event:
+                cancel_event.wait()
+                if not done.is_set():
+                    cancelled.set()
+                    channel.close()
+
+        if cancel_event:
+            threading.Thread(target=_watch_cancel, daemon=True).start()
+
+        buf_out = b""
+        buf_err = b""
+        deadline = time.monotonic() + timeout if timeout else None
+
+        while True:
+            if deadline and time.monotonic() > deadline:
+                channel.close()
+                on_line(f"⏱  Process killed: exceeded {timeout}s timeout", "stderr")
+                on_done(-1, int((time.monotonic() - start) * 1000))
+                return
+
+            if channel.recv_ready():
+                buf_out += channel.recv(4096)
+                while b"\n" in buf_out:
+                    line, buf_out = buf_out.split(b"\n", 1)
+                    on_line(line.decode("utf-8", errors="replace"), "stdout")
+
+            if channel.recv_stderr_ready():
+                buf_err += channel.recv_stderr(4096)
+                while b"\n" in buf_err:
+                    line, buf_err = buf_err.split(b"\n", 1)
+                    on_line(line.decode("utf-8", errors="replace"), "stderr")
+
+            if channel.exit_status_ready():
+                # Drain remaining output
+                while True:
+                    chunk = channel.recv(4096)
+                    if not chunk:
+                        break
+                    buf_out += chunk
+                chunk_err = b""
+                while True:
+                    chunk_err = channel.recv_stderr(4096)
+                    if not chunk_err:
+                        break
+                    buf_err += chunk_err
+                for remainder, stream in ((buf_out, "stdout"), (buf_err, "stderr")):
+                    for line in remainder.decode(
+                        "utf-8", errors="replace"
+                    ).splitlines():
+                        on_line(line, stream)
+                break
+
+            time.sleep(0.01)
+
+        done.set()
+        if cancelled.is_set():
+            on_line("✗  Cancelled", "stderr")
+            on_done(-2, int((time.monotonic() - start) * 1000))
+        else:
+            on_done(channel.recv_exit_status(), int((time.monotonic() - start) * 1000))
+    finally:
+        client.close()
+
+
+def ssh_run(
+    ssh_target: str,
+    command: str,
+    identity_file: str | None = None,
+    global_ssh_config: dict[str, Any] | None = None,
+    timeout: int = 15,
+) -> tuple[int, str, str]:
+    """Run a single command over SSH, return (exit_code, stdout, stderr).
+
+    Used for discovery, connectivity checks, and log fetching.
+    """
+    try:
+        client = _make_ssh_client(ssh_target, identity_file, global_ssh_config)
+    except Exception as exc:
+        return -1, "", str(exc)
+
+    try:
+        _, stdout, stderr = client.exec_command(command, timeout=timeout)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        code = stdout.channel.recv_exit_status()
+        return code, out, err
+    except Exception as exc:
+        return -1, "", str(exc)
+    finally:
+        client.close()
 
 
 def _stream(
@@ -123,7 +265,7 @@ def _stream(
     try:
         proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.DEVNULL,  # never block on stdin reads
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -171,8 +313,6 @@ def _stream(
     if cancel_event is not None:
         threading.Thread(target=_watch_cancel, daemon=True).start()
 
-    # After a kill() the pipes close and reader threads exit naturally;
-    # give 5 s grace to drain after a kill.
     drain_timeout = (timeout or 0) + 5 if timeout else None
     t_out.join(timeout=drain_timeout)
     t_err.join(timeout=drain_timeout)

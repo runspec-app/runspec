@@ -80,36 +80,24 @@ def discover_remote(
     runspec_path: str,
     host: str,
     identity_file: str | None = None,
-    ssh_binary: str = "ssh",
+    global_ssh_config: dict[str, Any] | None = None,
+    # Legacy kwarg kept so existing call sites don't break immediately
+    ssh_binary: str = "",
 ) -> list[dict[str, Any]]:
-    """SSH + runspec local --format json to discover runnables on a remote host."""
-    from .executor import ssh_flags
+    """Discover runnables on a remote host via paramiko SSH."""
+    from .executor import ssh_run
 
     group = venv_name(runspec_path)
-    cmd = [
-        ssh_binary,
-        *ssh_flags(identity_file, ssh_binary),
+    code, out, _err = ssh_run(
         ssh_target,
-        runspec_path,
-        "local",
-        "--format",
-        "json",
-    ]
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return []
-    if result.returncode != 0:
+        f"{runspec_path} local --format json",
+        identity_file=identity_file,
+        global_ssh_config=global_ssh_config,
+    )
+    if code != 0:
         return []
     try:
-        items = json.loads(result.stdout)
+        items = json.loads(out)
     except json.JSONDecodeError:
         return []
     runnables: list[dict[str, Any]] = []

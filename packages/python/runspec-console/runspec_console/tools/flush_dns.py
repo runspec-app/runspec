@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    runspec.parse("flush-dns")   # validates args (none), sets up logging
+    runspec.parse("flush-dns")  # validates args (none), sets up logging
 
     result = subprocess.run(
         ["ipconfig", "/flushdns"],
