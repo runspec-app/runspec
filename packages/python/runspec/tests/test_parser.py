@@ -877,3 +877,38 @@ class TestSubcommandGlobals:
         globals_section = out.split("Global options")[1].split("Command options:")[0]
         assert "--symbols" not in globals_section
         assert "--region" in globals_section
+
+
+class TestHyphenatedArgValidation:
+    """Regression: a hyphenated arg name must survive the full parse pipeline.
+    parsed_values is keyed by underscore; validation normalises before lookup."""
+
+    def test_required_hyphenated_arg_provided(self, tmp_path, monkeypatch):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [my-tool.args.output-file]
+                type = "path"
+                required = true
+                description = "Destination file"
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runspec.parse(script_name="my-tool", argv=["--output-file", "/tmp/out.txt"])
+        # `path` coerces to a Path; the point is the value survives, not its type
+        assert str(result.output_file.value) == "/tmp/out.txt"
+
+    def test_required_hyphenated_arg_missing_errors(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [my-tool.args.output-file]
+                type = "path"
+                required = true
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="my-tool", argv=[])
+        assert exc.value.code == 1
+        assert "--output-file" in capsys.readouterr().out

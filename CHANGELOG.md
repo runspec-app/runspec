@@ -7,6 +7,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.20.2] — 2026-06-01
+
+### Fixed
+
+- **Hyphenated arg names failed validation** — an argument whose TOML key
+  contained a hyphen (e.g. `output-file`) was never seen as provided during
+  validation: a required hyphenated arg always raised "Missing required
+  argument" even when supplied, and group constraints on hyphenated args never
+  triggered. `_parse_argv` stores values under the underscore-normalised name
+  (`output_file`), but `validate_args` and `validate_groups` looked them up by
+  the raw hyphenated name. Both now normalise the name before the lookup (the
+  raw name is still used for display in error messages).
+
+---
+
 ## [0.20.1] — 2026-06-01
 
 ### Fixed

@@ -29,7 +29,11 @@ def validate_args(
     error_messages: list[str] = []
 
     for name, spec in arg_specs.items():
-        value = parsed_values.get(name)
+        # parsed_values is keyed by the underscore-normalised name (see
+        # _parse_argv / _apply_env / _apply_defaults). Spec names may be
+        # hyphenated, so normalise before the lookup — the raw name is kept for
+        # display in error messages.
+        value = parsed_values.get(name.replace("-", "_"))
 
         # Required check
         if spec.get("required") and value is None:
@@ -66,7 +70,9 @@ def validate_groups(
 
     for group_name, group in group_specs.items():
         group_args = group.get("args", [])
-        provided = [a for a in group_args if parsed_values.get(a) is not None]
+        # parsed_values is keyed by the underscore-normalised name; group args
+        # may be hyphenated, so normalise at every lookup site below.
+        provided = [a for a in group_args if parsed_values.get(a.replace("-", "_")) is not None]
 
         if group.get("exclusive") and len(provided) > 1:
             error_messages.append(errors.format_group_exclusive(group_name, provided))
@@ -83,9 +89,9 @@ def validate_groups(
 
         elif group.get("condition"):
             condition_arg = group["condition"]
-            if parsed_values.get(condition_arg) is not None:
+            if parsed_values.get(condition_arg.replace("-", "_")) is not None:
                 required_args = group.get("requires", [])
-                missing = [a for a in required_args if parsed_values.get(a) is None]
+                missing = [a for a in required_args if parsed_values.get(a.replace("-", "_")) is None]
                 if missing:
                     error_messages.append(errors.format_group_inclusive(group_name, missing))
 

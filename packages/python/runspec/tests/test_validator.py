@@ -167,3 +167,56 @@ class TestRaiseIfErrors:
 
     def test_no_raise_on_empty(self):
         raise_if_errors([])  # should not raise
+
+
+class TestHyphenatedNames:
+    """parsed_values is keyed by the underscore-normalised name, while spec /
+    group names may be hyphenated. Validation must normalise before lookup."""
+
+    def test_required_hyphenated_arg_provided_no_error(self):
+        specs = {"output-file": {"name": "output-file", "type": "path", "required": True}}
+        # value stored under the normalised key, as _parse_argv produces it
+        errors = validate_args({"output_file": "/tmp/out.txt"}, specs)
+        assert errors == []
+
+    def test_required_hyphenated_arg_missing_errors(self):
+        specs = {"output-file": {"name": "output-file", "type": "path", "required": True}}
+        errors = validate_args({"output_file": None}, specs)
+        assert len(errors) == 1
+        # the hyphenated name is preserved for display
+        assert "--output-file" in errors[0]
+
+    def test_group_exclusive_with_hyphenated_args(self):
+        groups = {
+            "output": {
+                "name": "output",
+                "args": ["dry-run", "force-write"],
+                "exclusive": True,
+                "inclusive": False,
+                "at_least_one": False,
+                "exactly_one": False,
+                "condition": None,
+                "requires": [],
+            }
+        }
+        errors = validate_groups({"dry_run": True, "force_write": True}, groups)
+        assert len(errors) == 1
+        assert "output" in errors[0]
+
+    def test_group_conditional_with_hyphenated_args(self):
+        groups = {
+            "tls": {
+                "name": "tls",
+                "args": ["use-tls", "cert-path"],
+                "exclusive": False,
+                "inclusive": False,
+                "at_least_one": False,
+                "exactly_one": False,
+                "condition": "use-tls",
+                "requires": ["cert-path"],
+            }
+        }
+        # condition arg present (under normalised key) but required arg missing
+        errors = validate_groups({"use_tls": True, "cert_path": None}, groups)
+        assert len(errors) == 1
+        assert "tls" in errors[0]
