@@ -7,6 +7,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.20.0] — 2026-06-01
+
+### Added
+
+- **Global (inherited) arguments for subcommands** — a runnable's top-level
+  `args` now act as *global args* that every subcommand inherits. The effective
+  argument set for a subcommand invocation is the runnable's top-level args
+  merged with the args declared at each level along the resolved command path;
+  a subcommand arg with the same name as an inherited one overrides the parent.
+  A required global is required regardless of which subcommand is invoked.
+  Documented in `spec/SPEC.md` → *Subcommands → Global (inherited) arguments*.
+
+### Fixed
+
+- **Subcommand resolution with global flags** — a runnable that declared both
+  required top-level args and subcommands could not be invoked at all:
+  `_resolve_subcommand` bailed as soon as the first argv token was a flag, and
+  descending into a subcommand replaced the parent spec wholesale, dropping the
+  top-level args. Global flags may now appear **before** the command token
+  (`tool --region eu --env qa show --symbol X`), matching `git`/`docker` and
+  Python's `argparse` subparsers. A flag value that happens to match a command
+  name (`--region show`) is consumed as the value, not read as the command.
+
+### Changed
+
+- **Subcommand help** now surfaces inherited globals: `--help` for a subcommand
+  renders a *Global options (inherited)* section alongside the command's own
+  *Command options*, and the usage line places globals before the command path
+  — the only ordering the parser accepts.
+
+---
+
 ## [0.19.0] — 2026-05-27
 
 ### Added

@@ -922,6 +922,42 @@ description = "Validate without running"
 autonomy    = "autonomous"
 ```
 
+### Global (inherited) arguments
+
+The runnable's own top-level `args` are **global arguments**: every subcommand
+inherits them. The effective argument set for a subcommand invocation is the
+runnable's top-level args merged with the args declared at each level along the
+resolved command path. When a subcommand declares an arg with the same name as
+an inherited one, the subcommand's definition wins (child overrides parent).
+
+A required global arg is required regardless of which subcommand is invoked.
+
+```toml
+[deploy]
+[deploy.args]
+region = {type = "choice", options = ["us", "eu"], required = true}
+env    = {required = true}
+
+[deploy.commands.show]
+[deploy.commands.show.args]
+symbol = {required = true}
+```
+
+```
+deploy --region eu --env qa show --symbol ABC123
+```
+
+**Ordering.** Global flags must appear **before** the command token, matching
+`git`/`docker`/`kubectl` and Python's `argparse` subparsers
+(`deploy --region eu show`, not `deploy show --region eu`). The command token is
+the first bare (non-flag, non-flag-value) token that names a subcommand at the
+current depth. A flag value that happens to match a command name
+(`--region show`) is consumed as the value, not treated as the command.
+
+**Help.** Subcommand help (`deploy show --help`) must surface inherited global
+args alongside the subcommand's own args, so required globals are visible from
+any command's help.
+
 ---
 
 ## Form Control Inference

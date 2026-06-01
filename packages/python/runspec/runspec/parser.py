@@ -126,13 +126,15 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
             "range": None,
         }
 
-    # 5. Resolve subcommand if any
+    # 5. Resolve subcommand if any. Global (top-level) args are merged into the
+    # effective arg set so subcommands inherit them; command tokens are stripped
+    # from argv_list, leaving flags/positionals for _parse_argv.
     argv_list = argv if argv is not None else sys.argv[1:]
-    raw_script, command_path, argv_list = _resolve_subcommand(raw_script, argv_list)
+    raw_script, command_path, argv_list, local_args = _resolve_subcommand(raw_script, argv_list)
 
     # 6. Handle --help / -h before any validation
     if "--help" in argv_list or "-h" in argv_list:
-        _print_help(name, raw_script, command_path)
+        _print_help(name, raw_script, command_path, local_args)
         sys.exit(0)
 
     # 7. Parse argv into raw values
@@ -228,8 +230,30 @@ def load_spec(script_name: str | None = None, config_path: Path | None = None) -
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
-def _print_help(name: str, script: dict[str, Any], command_path: list[str] | None = None) -> None:
-    """Print a human-readable help message for a runnable and exit."""
+def _format_flag_line(arg_name: str, spec: dict[str, Any]) -> str:
+    """Render a single flag/option line for the help output."""
+    short = spec.get("short")
+    flag = f"  {short}, --{arg_name}" if short else f"  --{arg_name}"
+    arg_type = spec.get("type", "str")
+    parts = ["flag"] if arg_type == "flag" else [arg_type]
+    if spec.get("required"):
+        parts.append("required")
+    elif spec.get("default") is not None:
+        parts.append(f"default: {spec['default']}")
+    if spec.get("options"):
+        parts.append(f"one of: {', '.join(str(o) for o in spec['options'])}")
+    if spec.get("description"):
+        return f"{flag:<28} {spec['description']}  ({', '.join(parts)})"
+    return f"{flag:<28} ({', '.join(parts)})"
+
+
+def _print_help(name: str, script: dict[str, Any], command_path: list[str] | None = None, local_arg_names: set[str] | None = None) -> None:
+    """Print a human-readable help message for a runnable and exit.
+
+    When `command_path` is set, `local_arg_names` distinguishes the
+    subcommand's own args from inherited global args so the two render under
+    separate sections.
+    """
     full_name = " ".join([name, *(command_path or [])])
     description = script.get("description") or ""
     args = script.get("args", {})
@@ -251,25 +275,42 @@ def _print_help(name: str, script: dict[str, Any], command_path: list[str] | Non
             return "<" + "|".join(str(o) for o in opts) + ">"
         return f"<{spec.get('type', 'str')}>"
 
-    # ── Usage line ────────────────────────────────────────────────────────────
-    # Order: name [flags] [positionals] [<command>] [-- <rest>...]
-    # Rest stays last because '--' terminates argument parsing.
-    usage_parts = [full_name]
-    for arg_name, spec in flag_args:
+    def _flag_usage(arg_name: str, spec: dict[str, Any]) -> str:
         flag = f"--{arg_name}"
         if spec.get("type") == "flag":
-            usage_parts.append(f"[{flag}]")
-        elif spec.get("required"):
-            usage_parts.append(f"{flag} {_arg_token(spec)}")
-        else:
-            usage_parts.append(f"[{flag} {_arg_token(spec)}]")
-    for _, arg_name, spec in positional_args:
+            return f"[{flag}]"
         if spec.get("required"):
-            usage_parts.append(f"<{arg_name}>")
-        else:
-            usage_parts.append(f"[<{arg_name}>]")
-    if commands:
-        usage_parts.append("<command>")
+            return f"{flag} {_arg_token(spec)}"
+        return f"[{flag} {_arg_token(spec)}]"
+
+    def _pos_usage(arg_name: str, spec: dict[str, Any]) -> str:
+        return f"<{arg_name}>" if spec.get("required") else f"[<{arg_name}>]"
+
+    # ── Usage line ────────────────────────────────────────────────────────────
+    # Root order:       name [flags] [positionals] [<command>] [-- <rest>...]
+    # Subcommand order: name [globals] <command path> [command args] [-- <rest>...]
+    #   — globals render *before* the command path because that is the only
+    #     position the parser accepts them. Rest stays last ('--' terminates argv).
+    in_subcommand = bool(command_path) and local_arg_names is not None
+    if in_subcommand:
+        assert local_arg_names is not None
+        global_flags = [(n, s) for n, s in flag_args if n not in local_arg_names]
+        command_flags = [(n, s) for n, s in flag_args if n in local_arg_names]
+        global_pos = [(n, s) for _, n, s in positional_args if n not in local_arg_names]
+        command_pos = [(n, s) for _, n, s in positional_args if n in local_arg_names]
+
+        usage_parts = [name]
+        usage_parts += [_flag_usage(n, s) for n, s in global_flags]
+        usage_parts += [_pos_usage(n, s) for n, s in global_pos]
+        usage_parts += command_path or []
+        usage_parts += [_flag_usage(n, s) for n, s in command_flags]
+        usage_parts += [_pos_usage(n, s) for n, s in command_pos]
+    else:
+        usage_parts = [full_name]
+        usage_parts += [_flag_usage(n, s) for n, s in flag_args]
+        usage_parts += [_pos_usage(n, s) for _, n, s in positional_args]
+        if commands:
+            usage_parts.append("<command>")
     for arg_name, _ in rest_args:
         usage_parts.append(f"[-- <{arg_name}>...]")
 
@@ -304,27 +345,25 @@ def _print_help(name: str, script: dict[str, Any], command_path: list[str] | Non
 
     # ── Options ───────────────────────────────────────────────────────────────
     if flag_args:
-        header = "Options:" if (positional_args or rest_args) else "Arguments:"
-        print(f"\n{header}")
-        for arg_name, spec in flag_args:
-            short = spec.get("short")
-            flag = f"  {short}, --{arg_name}" if short else f"  --{arg_name}"
-            arg_type = spec.get("type", "str")
-            parts = []
-            if arg_type == "flag":
-                parts.append("flag")
-            else:
-                parts.append(arg_type)
-            if spec.get("required"):
-                parts.append("required")
-            elif spec.get("default") is not None:
-                parts.append(f"default: {spec['default']}")
-            if spec.get("options"):
-                parts.append(f"one of: {', '.join(str(o) for o in spec['options'])}")
-            if spec.get("description"):
-                print(f"{flag:<28} {spec['description']}  ({', '.join(parts)})")
-            else:
-                print(f"{flag:<28} ({', '.join(parts)})")
+        # Inside a subcommand, split inherited globals from the command's own
+        # flags so required globals are clearly surfaced (e.g. `show --help`
+        # still shows --region/--env). At the root there is no distinction.
+        if command_path and local_arg_names is not None:
+            global_flags = [(n, s) for n, s in flag_args if n not in local_arg_names]
+            command_flags = [(n, s) for n, s in flag_args if n in local_arg_names]
+            if global_flags:
+                print("\nGlobal options (inherited; pass before the command):")
+                for arg_name, spec in global_flags:
+                    print(_format_flag_line(arg_name, spec))
+            if command_flags:
+                print("\nCommand options:")
+                for arg_name, spec in command_flags:
+                    print(_format_flag_line(arg_name, spec))
+        else:
+            header = "Options:" if (positional_args or rest_args) else "Arguments:"
+            print(f"\n{header}")
+            for arg_name, spec in flag_args:
+                print(_format_flag_line(arg_name, spec))
 
     # ── Autonomy ──────────────────────────────────────────────────────────────
     autonomy = script.get("autonomy")
@@ -383,24 +422,108 @@ def _detect_caller_file() -> Path | None:
     return None
 
 
+def _lookup_arg(token: str, arg_specs: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve a flag token (`--name`, `--norm_name`, or `-short`) to its spec.
+
+    Mirrors the lookup _parse_argv builds, so the command scan agrees with the
+    real parser on which flags consume a following value.
+    """
+    for name, spec in arg_specs.items():
+        spec_dict: dict[str, Any] = spec
+        if token == f"--{name}" or token == f"--{name.replace('-', '_')}":
+            return spec_dict
+        if spec_dict.get("short") and token == spec_dict["short"]:
+            return spec_dict
+    return None
+
+
 def _resolve_subcommand(
     raw_script: dict[str, Any],
     argv: list[str],
-) -> tuple[dict[str, Any], list[str], list[str]]:
+) -> tuple[dict[str, Any], list[str], list[str], set[str]]:
     """
-    Walk into nested subcommands as long as argv[0] matches a declared
-    command name at the current depth. Returns the deepest resolved
-    script spec, the full command path, and the remaining argv.
+    Resolve the subcommand path, allowing global flags to precede the command
+    token (`tool --region eu show --symbol X`).
+
+    A runnable's top-level args are *global args* that every subcommand
+    inherits: the effective arg set is the root args merged with each
+    command-level args along the resolved path, child overriding parent on a
+    name clash. Global flags must appear *before* the command token
+    (git/docker/argparse style).
+
+    The scan walks argv left to right, keeping flags (and their values) for the
+    real parser and treating the first bare token that names a command at the
+    current depth as the descent point. A flag value matching a command name
+    (`--region show`) is consumed as the value, not read as the command.
+
+    Returns:
+        merged_script:  leaf command spec with `args`/`groups` merged across the
+                        path (globals inherited). Unchanged root when no
+                        subcommand resolved — so non-command runnables are
+                        byte-for-byte unaffected.
+        path:           resolved command path, e.g. ['multi', 'show'].
+        remaining_argv: argv with command tokens removed, flags preserved in
+                        order, for _parse_argv.
+        local_args:     names of args declared on the leaf command itself;
+                        every other name in merged_script['args'] is inherited.
     """
     path: list[str] = []
-    while argv:
-        commands = raw_script.get("commands", {})
-        if not commands or argv[0] not in commands:
+    current = raw_script
+    merged_args: dict[str, Any] = dict(raw_script.get("args", {}))
+    merged_groups: dict[str, Any] = dict(raw_script.get("groups", {}))
+    local_args: set[str] = set(raw_script.get("args", {}).keys())
+    remaining: list[str] = []
+
+    i = 0
+    n = len(argv)
+    while i < n:
+        token = argv[i]
+
+        # `--` terminates parsing — the rest is pass-through and must not be
+        # scanned for command tokens.
+        if token == "--":
+            remaining.extend(argv[i:])
             break
-        path.append(argv[0])
-        raw_script = commands[argv[0]]
-        argv = argv[1:]
-    return raw_script, path, argv
+
+        if token.startswith("-"):
+            # A flag belonging to the args resolved so far (a global, or a
+            # current-level flag). Keep it for _parse_argv; consume its value
+            # token when the flag takes one, so a value that happens to match a
+            # command name is not mis-read as the command.
+            remaining.append(token)
+            if "=" not in token:
+                spec = _lookup_arg(token, merged_args)
+                if spec and spec.get("type") != "flag" and i + 1 < n and not argv[i + 1].startswith("-"):
+                    remaining.append(argv[i + 1])
+                    i += 2
+                    continue
+            i += 1
+            continue
+
+        # A bare token: descend if it names a command at the current depth.
+        commands = current.get("commands", {})
+        if commands and token in commands:
+            path.append(token)
+            current = commands[token]
+            merged_args.update(current.get("args", {}))
+            merged_groups.update(current.get("groups", {}))
+            local_args = set(current.get("args", {}).keys())
+            i += 1
+            continue
+
+        # Otherwise it is a positional/unknown — leave it for _parse_argv.
+        remaining.append(token)
+        i += 1
+
+    if not path:
+        # No subcommand resolved — return the script and argv untouched so the
+        # common (no-command) path behaves exactly as before.
+        return raw_script, [], list(argv), set(raw_script.get("args", {}).keys())
+
+    merged_script = dict(current)
+    merged_script["args"] = merged_args
+    merged_script["groups"] = merged_groups
+    return merged_script, path, remaining, local_args
 
 
 def _parse_argv(

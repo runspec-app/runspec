@@ -36,3 +36,17 @@ Allow the Jump Hosts list to be pulled from a git repo URL (central team config)
 
 ---
 
+## Parity
+
+### Node: subcommand global-arg inheritance
+Port the Python fix for global (top-level) args inheriting into subcommands to
+`packages/node/src/parser.ts`, keeping the two ports in lockstep.
+- Behaviour spec: `spec/SPEC.md` → *Subcommands → Global (inherited) arguments*
+- Python reference: `packages/python/runspec/runspec/parser.py`
+  (`_resolve_subcommand` arg/group merge + globals-before-command scan) and
+  `_print_help` (Global vs Command option sections, usage-line ordering)
+- Mirror the regression tests in `TestSubcommandGlobals` on the Node side
+- Ordering rule: global flags must appear **before** the command token
+
+---
+

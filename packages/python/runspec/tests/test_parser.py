@@ -685,3 +685,160 @@ class TestApplyEnv:
         result, sources = _apply_env({"quality": None}, {}, {"quality": _spec(env=["CI_QUALITY"])}, "compress", frozenset())
         assert result["quality"] == "55"
         assert sources["quality"] == "env"
+
+
+class TestSubcommandGlobals:
+    """Global (top-level) args are inherited by subcommands and may appear
+    before the command token. See spec/SPEC.md → Subcommands → Global arguments."""
+
+    def _write(self, tmp_path, monkeypatch):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [sample-tool]
+                description = "Sample tool with globals + subcommands"
+                [sample-tool.args]
+                region = {type = "choice", options = ["us", "europe"], required = true, short = "-r"}
+                env    = {required = true, short = "-e"}
+                [sample-tool.commands.show]
+                description = "Show a symbol"
+                [sample-tool.commands.show.args]
+                symbol = {required = true}
+                [sample-tool.commands.multi]
+                description = "Nested group"
+                [sample-tool.commands.multi.commands.show]
+                description = "Nested show"
+                [sample-tool.commands.multi.commands.show.args]
+                symbol = {required = true}
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+    def test_globals_before_command_then_leaf_args(self, tmp_path, monkeypatch):
+        """The plan's primary failing case now parses cleanly."""
+        self._write(tmp_path, monkeypatch)
+        result = runspec.parse(
+            script_name="sample-tool",
+            argv=["-r", "europe", "-e", "qa", "show", "--symbol", "ABC123"],
+        )
+        assert result.region.value == "europe"
+        assert result.env.value == "qa"
+        assert result.symbol.value == "ABC123"
+        assert result.runspec_command_path == ["show"]
+        assert result.runspec_command == "show"
+
+    def test_globals_with_long_flags(self, tmp_path, monkeypatch):
+        self._write(tmp_path, monkeypatch)
+        result = runspec.parse(
+            script_name="sample-tool",
+            argv=["--region", "us", "--env", "prod", "show", "--symbol", "ABC"],
+        )
+        assert result.region.value == "us"
+        assert result.symbol.value == "ABC"
+
+    def test_required_global_enforced_in_subcommand(self, tmp_path, monkeypatch, capsys):
+        """Omitting a required global is an error even when a subcommand is given."""
+        self._write(tmp_path, monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="sample-tool", argv=["-r", "europe", "show", "--symbol", "X"])
+        assert exc.value.code == 1
+        assert "env" in capsys.readouterr().out
+
+    def test_required_leaf_arg_enforced(self, tmp_path, monkeypatch, capsys):
+        self._write(tmp_path, monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="sample-tool", argv=["-r", "europe", "-e", "qa", "show"])
+        assert exc.value.code == 1
+        assert "symbol" in capsys.readouterr().out
+
+    def test_nested_command_inherits_globals(self, tmp_path, monkeypatch):
+        self._write(tmp_path, monkeypatch)
+        result = runspec.parse(
+            script_name="sample-tool",
+            argv=["-r", "us", "-e", "qa", "multi", "show", "--symbol", "Z"],
+        )
+        assert result.region.value == "us"
+        assert result.symbol.value == "Z"
+        assert result.runspec_command_path == ["multi", "show"]
+        assert result.runspec_command == "show"
+
+    def test_flag_value_matching_command_name_not_consumed_as_command(self, tmp_path, monkeypatch):
+        """`--region show` — 'show' is the value, not the command token."""
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [t]
+                [t.args]
+                region = {required = true}
+                [t.commands.show]
+                [t.commands.show.args]
+                symbol = {required = true}
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runspec.parse(script_name="t", argv=["--region", "show", "show", "--symbol", "S"])
+        assert result.region.value == "show"
+        assert result.symbol.value == "S"
+        assert result.runspec_command_path == ["show"]
+
+    def test_child_arg_overrides_parent_of_same_name(self, tmp_path, monkeypatch):
+        """A subcommand arg with the same name as a global shadows the parent spec."""
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [t]
+                [t.args]
+                mode = {default = "global-default"}
+                [t.commands.run]
+                [t.commands.run.args]
+                mode = {default = "run-default"}
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        # No --mode given: the run-level default wins, proving the child spec is active.
+        result = runspec.parse(script_name="t", argv=["run"])
+        assert result.mode.value == "run-default"
+
+    def test_subcommand_help_shows_inherited_globals(self, tmp_path, monkeypatch, capsys):
+        self._write(tmp_path, monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="sample-tool", argv=["show", "--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert out.startswith("Usage: sample-tool ")
+        # Inherited globals are surfaced under their own section…
+        assert "Global options" in out
+        assert "--region" in out
+        assert "--env" in out
+        # …and the command's own arg under Command options.
+        assert "Command options:" in out
+        assert "--symbol" in out
+        # Usage line places globals before the command, command args after —
+        # the only ordering the parser accepts.
+        usage_line = next(line for line in out.splitlines() if line.startswith("Usage:"))
+        assert usage_line.index("--region") < usage_line.index("show")
+        assert usage_line.index("--env") < usage_line.index("show")
+        assert usage_line.index("show") < usage_line.index("--symbol")
+
+    def test_globals_before_command_then_help(self, tmp_path, monkeypatch, capsys):
+        """`-r .. -e .. show --help` resolves command-focused help, not root help."""
+        self._write(tmp_path, monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="sample-tool", argv=["-r", "europe", "-e", "qa", "show", "--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        # Command-focused help, not root help: the command and its own arg show.
+        assert "show --symbol" in out
+        assert "Command options:" in out
+
+    def test_nested_subcommand_help_shows_inherited_globals(self, tmp_path, monkeypatch, capsys):
+        self._write(tmp_path, monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="sample-tool", argv=["multi", "show", "--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        # Full nested path renders; globals are inherited; the command path tokens
+        # stay contiguous (globals sort before the whole path).
+        assert "multi show" in out
+        assert "--region" in out
+        assert "--symbol" in out
