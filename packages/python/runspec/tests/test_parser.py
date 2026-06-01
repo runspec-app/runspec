@@ -842,3 +842,38 @@ class TestSubcommandGlobals:
         assert "multi show" in out
         assert "--region" in out
         assert "--symbol" in out
+
+    def test_intermediate_command_arg_renders_after_path(self, tmp_path, monkeypatch, capsys):
+        """Only the root runnable's args are globals; an arg declared on an
+        intermediate command renders after the command path, not before it."""
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [sample]
+                [sample.args]
+                region = {required = true}
+                [sample.commands.multi]
+                [sample.commands.multi.args]
+                symbols = {required = true}
+                [sample.commands.multi.commands.show]
+                [sample.commands.multi.commands.show.args]
+                limit = {type = "int", default = 10}
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="sample", argv=["multi", "show", "--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        usage_line = next(line for line in out.splitlines() if line.startswith("Usage:"))
+        # Root global before the path; intermediate (--symbols) and leaf (--limit)
+        # command args after it.
+        assert usage_line.index("--region") < usage_line.index("multi show")
+        assert usage_line.index("multi show") < usage_line.index("--symbols")
+        assert usage_line.index("multi show") < usage_line.index("--limit")
+        # --symbols belongs to the command, so it is not in the globals section.
+        assert "Global options" in out
+        assert "Command options:" in out
+        globals_section = out.split("Global options")[1].split("Command options:")[0]
+        assert "--symbols" not in globals_section
+        assert "--region" in globals_section

@@ -7,6 +7,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.20.1] — 2026-06-01
+
+### Fixed
+
+- **Subcommand help usage-line ordering** — an arg declared on an *intermediate*
+  command in a nested path was rendered before the command path in the `--help`
+  usage line (e.g. `sample --region <…> --symbols <str> multi show`), as if it
+  were a global. Only the root runnable's own args are globals now; any arg
+  declared on a command along the path renders *after* the command path
+  (`sample --region <…> multi show --symbols <str>`), and the *Global options*
+  vs *Command options* sections are split on the same rule.
+
+---
+
 ## [0.20.0] — 2026-06-01
 
 ### Added

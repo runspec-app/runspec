@@ -130,11 +130,11 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     # effective arg set so subcommands inherit them; command tokens are stripped
     # from argv_list, leaving flags/positionals for _parse_argv.
     argv_list = argv if argv is not None else sys.argv[1:]
-    raw_script, command_path, argv_list, local_args = _resolve_subcommand(raw_script, argv_list)
+    raw_script, command_path, argv_list, global_args = _resolve_subcommand(raw_script, argv_list)
 
     # 6. Handle --help / -h before any validation
     if "--help" in argv_list or "-h" in argv_list:
-        _print_help(name, raw_script, command_path, local_args)
+        _print_help(name, raw_script, command_path, global_args)
         sys.exit(0)
 
     # 7. Parse argv into raw values
@@ -247,12 +247,14 @@ def _format_flag_line(arg_name: str, spec: dict[str, Any]) -> str:
     return f"{flag:<28} ({', '.join(parts)})"
 
 
-def _print_help(name: str, script: dict[str, Any], command_path: list[str] | None = None, local_arg_names: set[str] | None = None) -> None:
+def _print_help(name: str, script: dict[str, Any], command_path: list[str] | None = None, global_arg_names: set[str] | None = None) -> None:
     """Print a human-readable help message for a runnable and exit.
 
-    When `command_path` is set, `local_arg_names` distinguishes the
-    subcommand's own args from inherited global args so the two render under
-    separate sections.
+    When `command_path` is set, `global_arg_names` (the root runnable's own
+    args — the inherited globals) separates globals from args declared on
+    commands in the path, so the two render under different sections and in the
+    order the parser accepts (globals before the command path, command args
+    after).
     """
     full_name = " ".join([name, *(command_path or [])])
     description = script.get("description") or ""
@@ -291,13 +293,13 @@ def _print_help(name: str, script: dict[str, Any], command_path: list[str] | Non
     # Subcommand order: name [globals] <command path> [command args] [-- <rest>...]
     #   — globals render *before* the command path because that is the only
     #     position the parser accepts them. Rest stays last ('--' terminates argv).
-    in_subcommand = bool(command_path) and local_arg_names is not None
+    in_subcommand = bool(command_path) and global_arg_names is not None
     if in_subcommand:
-        assert local_arg_names is not None
-        global_flags = [(n, s) for n, s in flag_args if n not in local_arg_names]
-        command_flags = [(n, s) for n, s in flag_args if n in local_arg_names]
-        global_pos = [(n, s) for _, n, s in positional_args if n not in local_arg_names]
-        command_pos = [(n, s) for _, n, s in positional_args if n in local_arg_names]
+        assert global_arg_names is not None
+        global_flags = [(n, s) for n, s in flag_args if n in global_arg_names]
+        command_flags = [(n, s) for n, s in flag_args if n not in global_arg_names]
+        global_pos = [(n, s) for _, n, s in positional_args if n in global_arg_names]
+        command_pos = [(n, s) for _, n, s in positional_args if n not in global_arg_names]
 
         usage_parts = [name]
         usage_parts += [_flag_usage(n, s) for n, s in global_flags]
@@ -348,9 +350,9 @@ def _print_help(name: str, script: dict[str, Any], command_path: list[str] | Non
         # Inside a subcommand, split inherited globals from the command's own
         # flags so required globals are clearly surfaced (e.g. `show --help`
         # still shows --region/--env). At the root there is no distinction.
-        if command_path and local_arg_names is not None:
-            global_flags = [(n, s) for n, s in flag_args if n not in local_arg_names]
-            command_flags = [(n, s) for n, s in flag_args if n in local_arg_names]
+        if command_path and global_arg_names is not None:
+            global_flags = [(n, s) for n, s in flag_args if n in global_arg_names]
+            command_flags = [(n, s) for n, s in flag_args if n not in global_arg_names]
             if global_flags:
                 print("\nGlobal options (inherited; pass before the command):")
                 for arg_name, spec in global_flags:
@@ -464,14 +466,15 @@ def _resolve_subcommand(
         path:           resolved command path, e.g. ['multi', 'show'].
         remaining_argv: argv with command tokens removed, flags preserved in
                         order, for _parse_argv.
-        local_args:     names of args declared on the leaf command itself;
-                        every other name in merged_script['args'] is inherited.
+        global_args:    names of the root runnable's own args — the inherited
+                        globals. Every other name in merged_script['args'] was
+                        declared on a command along the path.
     """
     path: list[str] = []
     current = raw_script
     merged_args: dict[str, Any] = dict(raw_script.get("args", {}))
     merged_groups: dict[str, Any] = dict(raw_script.get("groups", {}))
-    local_args: set[str] = set(raw_script.get("args", {}).keys())
+    global_args: set[str] = set(raw_script.get("args", {}).keys())
     remaining: list[str] = []
 
     i = 0
@@ -507,7 +510,6 @@ def _resolve_subcommand(
             current = commands[token]
             merged_args.update(current.get("args", {}))
             merged_groups.update(current.get("groups", {}))
-            local_args = set(current.get("args", {}).keys())
             i += 1
             continue
 
@@ -523,7 +525,7 @@ def _resolve_subcommand(
     merged_script = dict(current)
     merged_script["args"] = merged_args
     merged_script["groups"] = merged_groups
-    return merged_script, path, remaining, local_args
+    return merged_script, path, remaining, global_args
 
 
 def _parse_argv(
