@@ -370,7 +370,7 @@ jobs:
       # (anthropic for the adapter, paramiko for the SSH executor) and run
       # against the source tree via PYTHONPATH.
       - name: Install test deps
-        run: pip install pytest anthropic paramiko
+        run: pip install pytest anthropic paramiko cryptography
 
       - name: Run tests
         env:

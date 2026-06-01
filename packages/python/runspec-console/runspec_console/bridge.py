@@ -289,6 +289,12 @@ class Bridge:
             .decode()
             .strip()
         )
+        # Persist the public key next to the private key so it can be copied
+        # again later (e.g. to authorise it on a host after the fact).
+        try:
+            Path(str(dest) + ".pub").write_text(pub + "\n", encoding="utf-8")
+        except Exception:
+            pass
         return {
             "ok": True,
             "public_key": pub,
@@ -331,6 +337,46 @@ class Bridge:
             "key_path": _normalize_path(str(canonical)),
             "message": f"Key generated at {_normalize_path(str(canonical))}",
         }
+
+    def get_public_key(self) -> dict[str, Any]:
+        """Return the current SSH public key, so it can be copied at any time.
+
+        Reads the persisted ``<identityFile>.pub`` if present; otherwise derives
+        it from the private key (and writes the ``.pub`` for next time). This is
+        what lets the UI show the public key long after generation, even for
+        keys created before ``.pub`` files were written.
+        """
+        cfg = self.get_config()
+        idf = (cfg.get("ssh") or {}).get("identityFile", "")
+        if not idf:
+            return {"ok": False, "public_key": "", "message": "No SSH key configured."}
+        priv = Path(idf).expanduser()
+        pub_file = Path(str(priv) + ".pub")
+        if pub_file.is_file():
+            return {
+                "ok": True,
+                "public_key": pub_file.read_text(encoding="utf-8").strip(),
+                "message": "",
+            }
+        if not priv.is_file():
+            return {
+                "ok": False,
+                "public_key": "",
+                "message": f"Key file not found: {idf}",
+            }
+        try:
+            pub = _public_key_from_private(priv)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "public_key": "",
+                "message": f"Could not read public key: {exc}",
+            }
+        try:
+            pub_file.write_text(pub + "\n", encoding="utf-8")
+        except Exception:
+            pass
+        return {"ok": True, "public_key": pub, "message": ""}
 
     def rotate_ssh_key(self) -> dict[str, Any]:
         """Safely rotate the SSH key: generate new, push to all remote hosts using the
@@ -517,6 +563,14 @@ class Bridge:
             canonical_ppk.rename(canonical.parent / f"runspec_ed25519.ppk.bak.{ts}")
         if new_ppk.exists():
             new_ppk.rename(canonical_ppk)
+
+        # Rotate the .pub alongside too
+        canonical_pub = Path(str(canonical) + ".pub")
+        new_pub = Path(str(new_path) + ".pub")
+        if canonical_pub.exists():
+            canonical_pub.rename(canonical.parent / f"runspec_ed25519.pub.bak.{ts}")
+        if new_pub.exists():
+            new_pub.rename(canonical_pub)
 
         ssh_section = dict(global_ssh)
         ssh_section["identityFile"] = _normalize_path(str(canonical))
@@ -1386,6 +1440,22 @@ def _ensure_putty_proxy_session(
         winreg.SetValueEx(key, "ProxyUsername", 0, winreg.REG_SZ, "")
         winreg.SetValueEx(key, "ProxyPassword", 0, winreg.REG_SZ, "")
     return session
+
+
+def _public_key_from_private(path: Path) -> str:
+    """Derive the OpenSSH public-key line from an OpenSSH private key file."""
+    from cryptography.hazmat.primitives import serialization
+
+    key = serialization.load_ssh_private_key(path.read_bytes(), password=None)
+    return (
+        key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        )
+        .decode()
+        .strip()
+    )
 
 
 def _find_putty_exe(name: str = "putty.exe") -> Path | None:

@@ -559,6 +559,12 @@ export const mockApi: BridgeApi = {
     }
   },
 
+  get_public_key: async () => ({
+    ok: true,
+    public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPublicKeyForDevModeonlyrunspec-console',
+    message: '',
+  }),
+
   generate_ssh_key: async () => {
     await new Promise(r => setTimeout(r, 600))
     MOCK_KEY_CREATED_AT = new Date().toISOString()

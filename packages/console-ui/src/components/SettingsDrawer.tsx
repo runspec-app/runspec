@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select } from 'antd'
+import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type TestResult, type RotateHostResult } from '../bridge'
 
@@ -135,6 +135,7 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
   const [selectedHost, setSelectedHost] = useState<string>('')
   const [generating, setGenerating] = useState(false)
   const [publicKey, setPublicKey] = useState<string | null>(null)
+  const [storedPublicKey, setStoredPublicKey] = useState<string | null>(null)
   const [keyPath, setKeyPath] = useState<string | null>(null)
   const [keyCreatedAt, setKeyCreatedAt] = useState<string | null>(null)
   const [configDir, setConfigDir] = useState<string>('')
@@ -147,8 +148,13 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
       setKeyPath(ssh.identityFile ?? null)
       form.setFieldsValue({
         ssh_user: ssh.user ?? '',
+        ssh_proxy: ssh.proxy ?? '',
+        ssh_use_ssh_config: !!ssh.use_ssh_config,
       })
     })
+    bridge.get_public_key()
+      .then(r => setStoredPublicKey(r.ok ? r.public_key : null))
+      .catch(() => setStoredPublicKey(null))
   }
 
   useEffect(() => { loadConfig() }, [form])
@@ -162,13 +168,12 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
     setSaving(true)
     try {
       const cfg = await bridge.get_config()
-      await bridge.save_config({
-        ...cfg,
-        ssh: {
-          ...(cfg.ssh ?? {}),
-          ...(v.ssh_user ? { user: v.ssh_user } : {}),
-        },
-      })
+      const sshOut: Record<string, unknown> = { ...((cfg.ssh as Record<string, unknown>) ?? {}) }
+      if (v.ssh_user) sshOut.user = v.ssh_user
+      if (v.ssh_proxy) sshOut.proxy = v.ssh_proxy
+      else delete sshOut.proxy
+      sshOut.use_ssh_config = !!v.ssh_use_ssh_config
+      await bridge.save_config({ ...cfg, ssh: sshOut })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -227,6 +232,23 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
       <Form.Item name="ssh_user" label="Default username">
         <Input placeholder="your-username" />
+      </Form.Item>
+
+      <Form.Item
+        name="ssh_proxy"
+        label="HTTP proxy"
+        help="Routes SSH — running runnables and Launch terminal — through an HTTP CONNECT proxy. Leave blank for none."
+      >
+        <Input placeholder="http://proxy.corp:8080" style={{ fontFamily: 'monospace' }} />
+      </Form.Item>
+
+      <Form.Item
+        name="ssh_use_ssh_config"
+        label="Honor ~/.ssh/config"
+        valuePropName="checked"
+        help="Also read ~/.ssh/config (HostName, User, Port, IdentityFile, ProxyCommand) when running runnables. PuTTY uses the HTTP proxy above, not ~/.ssh/config."
+      >
+        <Switch size="small" />
       </Form.Item>
 
       <Divider />
@@ -378,6 +400,25 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
             }}
           >
             {authorizedKeysLine}
+          </Typography.Paragraph>
+        </div>
+      )}
+
+      {/* Persistent public key — always available to copy, derived if no .pub */}
+      {keyPath && storedPublicKey && !publicKey && !rotationResult && (
+        <div style={{ marginBottom: 10 }}>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+            Public key — add to each host's authorized_keys:
+          </Text>
+          <Typography.Paragraph
+            copyable={{ text: storedPublicKey, tooltips: ['Copy', 'Copied!'] }}
+            style={{
+              fontFamily: 'monospace', fontSize: 10, padding: '6px 10px',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
+              borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+            }}
+          >
+            {`echo "${storedPublicKey}" >> ~/.ssh/authorized_keys`}
           </Typography.Paragraph>
         </div>
       )}

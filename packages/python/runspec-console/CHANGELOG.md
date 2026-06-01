@@ -8,6 +8,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.1.12] — 2026-06-01
+
+### Added
+- **Settings → SSH: HTTP proxy field.** The `[ssh] proxy` setting (0.1.11) is now configurable from Settings → SSH instead of hand-editing `config.toml`. A companion **Honor ~/.ssh/config** switch toggles `[ssh] use_ssh_config`.
+- **Persistent public key.** Key generation now writes a `<key>.pub` next to the private key (and rotation rotates it alongside the `.ppk`). Settings → SSH shows the public key with a copy button **at any time**, not just immediately after generating — and `get_public_key()` derives it from the private key for keys created before this release (no `.pub` yet), writing the `.pub` for next time.
+
+### Fixed
+- After generating a key, the public key was only shown once and then unrecoverable in-app (no `.pub` was written). It can now always be copied from Settings.
+
+
 ## [0.1.11] — 2026-06-01
 
 ### Added

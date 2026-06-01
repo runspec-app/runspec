@@ -151,6 +151,7 @@ export interface BridgeApi {
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   generate_ssh_key: () => Promise<{ ok: boolean; public_key: string; key_path: string; committed: boolean; per_host: RotateHostResult[]; message: string }>
   rotate_ssh_key: () => Promise<{ ok: boolean; committed: boolean; public_key: string; key_path: string; per_host: RotateHostResult[]; message: string }>
+  get_public_key: () => Promise<{ ok: boolean; public_key: string; message: string }>
   puttygen_path: () => Promise<string>
   launch_puttygen: () => Promise<void>
   open_putty_url: (url: string) => Promise<void>
