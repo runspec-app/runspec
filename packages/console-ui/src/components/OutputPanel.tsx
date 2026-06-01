@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { Button, Input, Space, Tag, Tooltip, Typography, message, Modal } from 'antd'
+import { Button, Input, Space, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
   ApiOutlined, DownOutlined, RightOutlined, VerticalAlignBottomOutlined,
-  TableOutlined, CodeOutlined,
+  TableOutlined, CodeOutlined, PauseCircleOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -208,11 +208,48 @@ interface OutputPanelProps {
   onAskLlm?: (text: string) => void
 }
 
+interface PendingConfirm {
+  request_id: string
+  id: string          // chat block this confirm belongs to
+  tool_name: string   // full host__tool name, matches the tool segment's entry.name
+  tool_input: Record<string, unknown>
+  autonomy: string
+}
+
 export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const blockCountRef = useRef(0)
   const [showScrollDown, setShowScrollDown] = useState(false)
+
+  // Agent autonomy gate: the bridge dispatches runspec:tool_confirm and blocks
+  // until we answer via resolve_tool_confirmation. Rendered as a normal element
+  // in this (always-mounted, already-rendering) component — not an antd static
+  // Modal, which does not render reliably inside the WebView2 host.
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
+
+  useEffect(() => {
+    const onToolConfirm = (e: Event) => {
+      const { id, request_id, tool_name, tool_input, autonomy } = (e as CustomEvent).detail as {
+        id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>; autonomy: string
+      }
+      console.log('[runspec] tool_confirm received', { id, request_id, tool_name, autonomy })
+      setPendingConfirm({ request_id, id, tool_name, tool_input: tool_input ?? {}, autonomy })
+    }
+    window.addEventListener('runspec:tool_confirm', onToolConfirm)
+    return () => window.removeEventListener('runspec:tool_confirm', onToolConfirm)
+  }, [])
+
+  const answerConfirm = (approved: boolean) => {
+    setPendingConfirm(prev => {
+      if (prev) {
+        console.log('[runspec] resolving tool_confirm', { request_id: prev.request_id, approved })
+        bridge.resolve_tool_confirmation(prev.request_id, approved)
+          .catch(err => console.error('[runspec] resolve_tool_confirmation failed', err))
+      }
+      return null
+    })
+  }
 
   const handleScroll = () => {
     const el = scrollRef.current
@@ -257,7 +294,14 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
       >
         <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           {blocks.map(block => (
-            <BlockCard key={block.id} block={block} onRerun={onRerun} onAskLlm={onAskLlm} />
+            <BlockCard
+              key={block.id}
+              block={block}
+              onRerun={onRerun}
+              onAskLlm={onAskLlm}
+              pendingConfirm={pendingConfirm && pendingConfirm.id === block.id ? pendingConfirm : null}
+              onAnswerConfirm={answerConfirm}
+            />
           ))}
         </div>
       </div>
@@ -283,32 +327,50 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
   )
 }
 
-function ToolCallBlock({ entry }: { entry: ToolCallEntry }) {
+function ToolCallBlock({
+  entry,
+  awaiting,
+  onAnswer,
+}: {
+  entry: ToolCallEntry
+  // non-null = this call is parked at the autonomy gate; value is the level
+  awaiting?: string | null
+  onAnswer?: (approved: boolean) => void
+}) {
   const [expanded, setExpanded] = useState(false)
   const args = Object.entries(entry.input)
 
   return (
-    <div style={{ margin: '6px 0', border: '1px solid #2a2a2a', borderRadius: 6, overflow: 'hidden' }}>
+    <div style={{
+      margin: '6px 0',
+      border: `1px solid ${awaiting ? '#5a4a1a' : '#2a2a2a'}`,
+      borderRadius: 6, overflow: 'hidden',
+    }}>
       <div
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '6px 12px',
-          background: '#1a1a1a',
+          background: awaiting ? '#241f12' : '#1a1a1a',
           cursor: entry.output !== undefined ? 'pointer' : 'default',
           userSelect: 'none',
         }}
         onClick={() => entry.output !== undefined && setExpanded(x => !x)}
       >
-        {entry.running
-          ? <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} />
-          : <ApiOutlined style={{ color: '#52c41a', fontSize: 12 }} />}
+        {awaiting
+          ? <PauseCircleOutlined style={{ color: '#e6a23c', fontSize: 12 }} />
+          : entry.running
+            ? <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+            : <ApiOutlined style={{ color: '#52c41a', fontSize: 12 }} />}
         <Text code style={{ fontSize: 12 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
         {args.length > 0 && (
           <Text style={{ color: '#555', fontSize: 11 }}>
             {args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
           </Text>
         )}
-        {entry.running && (
+        {awaiting && (
+          <Text style={{ color: '#e6a23c', fontSize: 11, marginLeft: 'auto' }}>needs approval</Text>
+        )}
+        {!awaiting && entry.running && (
           <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto' }}>running…</Text>
         )}
         {entry.output !== undefined && !entry.running && (
@@ -317,6 +379,22 @@ function ToolCallBlock({ entry }: { entry: ToolCallEntry }) {
           </Text>
         )}
       </div>
+
+      {awaiting && (
+        <div style={{ padding: '10px 12px', background: '#1c1810', borderTop: '1px solid #5a4a1a' }}>
+          <div style={{ fontSize: 12, color: '#bbb', marginBottom: 10 }}>
+            The assistant wants to run this. Autonomy is{' '}
+            <strong style={{ color: '#e6a23c' }}>{awaiting}</strong>, so it needs your go-ahead.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={() => onAnswer?.(true)}>
+              Approve &amp; run
+            </Button>
+            <Button size="small" danger onClick={() => onAnswer?.(false)}>Deny</Button>
+          </div>
+        </div>
+      )}
+
       {expanded && entry.output !== undefined && (
         <pre style={{
           margin: 0, padding: '8px 12px',
@@ -336,10 +414,14 @@ function BlockCard({
   block,
   onRerun,
   onAskLlm,
+  pendingConfirm,
+  onAnswerConfirm,
 }: {
   block: InvocationBlock
   onRerun?: (data: RerunData) => void
   onAskLlm?: (text: string) => void
+  pendingConfirm?: PendingConfirm | null
+  onAnswerConfirm?: (approved: boolean) => void
 }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editArgs, setEditArgs] = useState<Record<string, string>>({})
@@ -633,7 +715,16 @@ function BlockCard({
                       {seg.text}
                     </pre>
                   ) : (
-                    <ToolCallBlock key={i} entry={seg.entry} />
+                    <ToolCallBlock
+                      key={i}
+                      entry={seg.entry}
+                      awaiting={
+                        pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
+                          ? pendingConfirm.autonomy
+                          : null
+                      }
+                      onAnswer={onAnswerConfirm}
+                    />
                   )
                 )}
                 {(block.currentText || !block.done) && (
@@ -739,46 +830,10 @@ export function useInvocationBlocks() {
       ))
     }
 
-    // The agent wants to run a runnable whose autonomy requires approval
-    // (confirm / supervised). Ask the user; the bridge blocks until we answer.
-    const onToolConfirm = (e: Event) => {
-      const { request_id, tool_name, tool_input, autonomy } = (e as CustomEvent).detail as {
-        request_id: string; tool_name: string; tool_input: Record<string, unknown>; autonomy: string
-      }
-      const display = tool_name.includes('__') ? tool_name.split('__').slice(1).join('__') : tool_name
-      let settled = false
-      const settle = (approved: boolean) => {
-        if (settled) return
-        settled = true
-        bridge.resolve_tool_confirmation(request_id, approved)
-      }
-      Modal.confirm({
-        title: `Run "${display}"?`,
-        content: (
-          <div>
-            <div style={{ marginBottom: 8 }}>
-              The assistant wants to run this tool. Autonomy is <strong>{autonomy}</strong>, so your approval is required.
-            </div>
-            <pre style={{
-              fontSize: 11, background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
-              borderRadius: 4, padding: 8, margin: 0, maxHeight: 200, overflow: 'auto',
-            }}>
-              {JSON.stringify(tool_input ?? {}, null, 2)}
-            </pre>
-          </div>
-        ),
-        okText: 'Approve & run',
-        cancelText: 'Deny',
-        onOk: () => settle(true),
-        onCancel: () => settle(false),
-      })
-    }
-
     window.addEventListener('runspec:output', onOutput)
     window.addEventListener('runspec:token', onToken)
     window.addEventListener('runspec:tool_start', onToolStart)
     window.addEventListener('runspec:tool_end', onToolEnd)
-    window.addEventListener('runspec:tool_confirm', onToolConfirm)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:chat_usage', onChatUsage)
     return () => {
@@ -786,7 +841,6 @@ export function useInvocationBlocks() {
       window.removeEventListener('runspec:token', onToken)
       window.removeEventListener('runspec:tool_start', onToolStart)
       window.removeEventListener('runspec:tool_end', onToolEnd)
-      window.removeEventListener('runspec:tool_confirm', onToolConfirm)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:chat_usage', onChatUsage)
     }

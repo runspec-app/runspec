@@ -8,6 +8,7 @@ a UI; we assert on the gate decision and the confirm round-trip.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 
@@ -15,6 +16,8 @@ from runspec_console.bridge import Bridge
 
 
 class _StubBridge:
+    _CONFIRM_TIMEOUT_S = 5  # short so a "no answer" path doesn't hang the suite
+
     def __init__(self, runnables, run_result="RAN"):
         self._lock = threading.Lock()
         self._runnables_cache = runnables
@@ -29,7 +32,11 @@ class _StubBridge:
         return self._run_result
 
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
+    _confirm_decision = Bridge._confirm_decision
+    _register_confirm = Bridge._register_confirm
+    _finish_confirm = Bridge._finish_confirm
     _gated_run_tool = Bridge._gated_run_tool
+    _gated_run_tool_async = Bridge._gated_run_tool_async
     _await_confirmation = Bridge._await_confirmation
     resolve_tool_confirmation = Bridge.resolve_tool_confirmation
 
@@ -125,3 +132,59 @@ def test_supervised_also_prompts():
 def test_resolve_unknown_id_is_noop():
     b = _StubBridge(_runnable())
     b.resolve_tool_confirmation("does-not-exist", True)  # must not raise
+
+
+# ── async gate (the path the agentic loop actually uses) ───────────────────────
+#
+# The async gate dispatches the prompt itself (from the event-loop thread, which
+# is the fix for the silent-timeout bug) and offloads only the blocking wait.
+
+
+def _run_async_gate(b, tool_input, decision):
+    """Drive _gated_run_tool_async, answering from a watcher thread."""
+
+    def answer():
+        for _ in range(400):
+            if b._dispatched:
+                break
+            time.sleep(0.005)
+        assert b._dispatched, "expected a tool_confirm dispatch"
+        event, detail = b._dispatched[0]
+        assert event == "runspec:tool_confirm"
+        b.resolve_tool_confirmation(detail["request_id"], decision)
+
+    async def main():
+        watcher = threading.Thread(target=answer)
+        watcher.start()
+        out = await b._gated_run_tool_async("local__flush-dns", tool_input, "chat1")
+        watcher.join(timeout=5)
+        return out
+
+    return asyncio.run(main())
+
+
+def test_async_autonomous_runs_without_prompt():
+    b = _StubBridge(_runnable("autonomous"), run_result="RAN")
+    out = asyncio.run(b._gated_run_tool_async("local__flush-dns", {}, "chat1"))
+    assert out == "RAN"
+    assert b._dispatched == []
+
+
+def test_async_manual_is_hard_blocked():
+    b = _StubBridge(_runnable("manual"), run_result="RAN")
+    out = asyncio.run(b._gated_run_tool_async("local__flush-dns", {}, "chat1"))
+    assert "manual-only" in out
+    assert b._dispatched == []
+
+
+def test_async_confirm_approve_runs():
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+    out = _run_async_gate(b, {}, True)
+    assert out == "RAN"
+
+
+def test_async_confirm_deny_does_not_run():
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+    out = _run_async_gate(b, {}, False)
+    assert "declined" in out
+    assert out != "RAN"

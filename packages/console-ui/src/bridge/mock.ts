@@ -437,6 +437,9 @@ const MOCK_IN_FLIGHT: InFlightRecord[] = [
 
 let invocationCounter = 0
 
+// request_id → resolver, for the simulated autonomy-confirm round-trip.
+const _pendingConfirms = new Map<string, (approved: boolean) => void>()
+
 export const mockApi: BridgeApi = {
   get_hosts: async () => MOCK_HOSTS,
 
@@ -596,8 +599,14 @@ export const mockApi: BridgeApi = {
   open_putty_url: async (url: string) => { console.log('mock: open_putty_url', url) },
   browse_ssh_binary: async () => '',
 
+  // Mirrors the Python bridge's gate round-trip: send_chat parks a resolver
+  // keyed by request_id; resolve_tool_confirmation (called by the UI's
+  // Approve/Deny buttons) wakes it. Lets the browser mock exercise the real
+  // autonomy modal instead of pretending every tool is autonomous.
   resolve_tool_confirmation: async (requestId, approved) => {
     console.log('[mock] resolve_tool_confirmation', requestId, approved)
+    const resolve = _pendingConfirms.get(requestId)
+    if (resolve) { _pendingConfirms.delete(requestId); resolve(approved) }
   },
 
   send_chat: async (message, _invocationId) => {
@@ -609,31 +618,43 @@ export const mockApi: BridgeApi = {
     ;(async () => {
       await delay(10)  // yield so addBlock fires before first token
       // Phase 1: stream intro text
-      const intro = `Sure, let me run the backup for you.`
+      const intro = `Sure, let me run the DNS flush for you.`
       for (const ch of intro) {
         dispatch('runspec:token', { id, token: ch })
         await delay(18)
       }
       await delay(200)
 
-      // Simulate a tool call
-      dispatch('runspec:tool_start', {
-        id, tool_name: 'local__backup', tool_input: { source: '/home/jason', dest: '/mnt/backup' },
+      // Simulate a tool call whose autonomy is `confirm` — the gate must
+      // prompt the user before running it.
+      const tool_name = 'local__flush-dns'
+      const tool_input = { scope: 'system' }
+      dispatch('runspec:tool_start', { id, tool_name, tool_input })
+
+      const request_id = `mock-${id}`
+      const approved = await new Promise<boolean>(resolve => {
+        _pendingConfirms.set(request_id, resolve)
+        dispatch('runspec:tool_confirm', {
+          id, request_id, tool_name, tool_input, autonomy: 'confirm',
+        })
       })
-      await delay(900)
-      dispatch('runspec:tool_end', {
-        id, tool_name: 'local__backup', output: 'backup starting\nscanning /home/jason\n1,243 files (2.1 GB)\nbackup complete',
-      })
+
+      const output = approved
+        ? 'flushing system DNS cache…\nDNS cache flushed'
+        : "✗ The user declined to run 'flush-dns' (autonomy = confirm)."
+      dispatch('runspec:tool_end', { id, tool_name, output })
       await delay(150)
 
-      // Phase 2: stream follow-up text
-      const outro = `\n\nThe backup completed successfully — 1,243 files (2.1 GB) copied to /mnt/backup.`
+      // Phase 2: stream follow-up text reflecting the decision
+      const outro = approved
+        ? `\n\nDone — the system DNS cache has been flushed.`
+        : `\n\nNo problem, I won't run it. Just say the word when you're ready.`
       for (const ch of outro) {
         dispatch('runspec:token', { id, token: ch })
         await delay(14)
       }
 
-      dispatch('runspec:run_end', { id, exit_code: 0, duration_ms: 1500 })
+      dispatch('runspec:run_end', { id, exit_code: approved ? 0 : 1, duration_ms: 1500 })
       dispatch('runspec:chat_usage', { id, input_tokens: 1247, output_tokens: 342 })
     })()
 

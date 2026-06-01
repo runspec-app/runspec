@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import sys
 import threading
 import time
@@ -34,6 +35,8 @@ from .config import hosts_path, read_config, write_config
 from .discovery import discover_local, discover_remote
 from .executor import run_local, run_remote
 from .hosts import load_hosts, save_hosts, venv_name
+
+logger = logging.getLogger(__name__)
 
 _CANCEL_KEY = "__cancel_event__"  # key in _in_flight dicts, not surfaced to JS
 
@@ -970,9 +973,7 @@ class Bridge:
                         "tool_input": tc.input,
                     },
                 )
-                output = await asyncio.to_thread(
-                    self._gated_run_tool, tc.name, tc.input, chat_id
-                )
+                output = await self._gated_run_tool_async(tc.name, tc.input, chat_id)
                 self._dispatch(
                     "runspec:tool_end",
                     {
@@ -1104,32 +1105,36 @@ class Bridge:
                     level = arg["autonomy"]
         return level
 
-    def _gated_run_tool(
-        self, tool_name: str, tool_input: dict[str, Any], chat_id: str
-    ) -> str:
-        """Enforce the runnable's autonomy before the agent runs it.
+    # Confirmation timeout — no answer from the UI within this window is a deny.
+    _CONFIRM_TIMEOUT_S = 300
 
-        autonomous → run; confirm/supervised → ask the user (Approve/Deny);
-        manual → refuse (human-only; the user must use the Run button)."""
+    def _confirm_decision(self, tool_name: str, tool_input: dict[str, Any]) -> str:
+        """Resolve the gate decision string: 'run' | 'manual' | <level needing prompt>."""
         level = self._effective_tool_autonomy(tool_name, tool_input)
-        display = tool_name.split("__", 1)[-1]
+        if level == "autonomous":
+            return "run"
         if level == "manual":
-            return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
-        if level in ("confirm", "supervised"):
-            if not self._await_confirmation(tool_name, tool_input, level, chat_id):
-                return f"✗ The user declined to run '{display}' (autonomy = {level})."
-        return self._run_tool_sync(tool_name, tool_input)
+            return "manual"
+        return level  # confirm / supervised → needs a prompt
 
-    def _await_confirmation(
-        self, tool_name: str, tool_input: dict[str, Any], level: str, chat_id: str
-    ) -> bool:
-        """Ask the UI to approve an agent tool call; block (in a worker thread)
-        until resolve_tool_confirmation() fires. Times out as a deny."""
+    def _register_confirm(
+        self, chat_id: str, tool_name: str, tool_input: dict[str, Any], level: str
+    ) -> tuple[str, threading.Event, dict[str, bool]]:
+        """Register a pending confirmation and emit the UI prompt event.
+
+        Returns (request_id, event, holder). The event is set by
+        resolve_tool_confirmation() when the UI answers."""
         request_id = uuid.uuid4().hex
         event = threading.Event()
         holder = {"approved": False}
         with self._lock:
             self._pending_confirms[request_id] = (event, holder)
+        logger.info(
+            "autonomy gate: prompting for %s (autonomy=%s) request_id=%s",
+            tool_name,
+            level,
+            request_id,
+        )
         self._dispatch(
             "runspec:tool_confirm",
             {
@@ -1140,19 +1145,97 @@ class Bridge:
                 "autonomy": level,
             },
         )
-        event.wait(timeout=300)  # no answer in 5 min → treat as deny
+        return request_id, event, holder
+
+    def _finish_confirm(
+        self, request_id: str, holder: dict[str, bool], timed_out: bool
+    ) -> bool:
         with self._lock:
             self._pending_confirms.pop(request_id, None)
+        if timed_out:
+            logger.warning(
+                "autonomy gate: request_id=%s timed out after %ds — treating as deny",
+                request_id,
+                self._CONFIRM_TIMEOUT_S,
+            )
+        else:
+            logger.info(
+                "autonomy gate: request_id=%s answered approved=%s",
+                request_id,
+                holder["approved"],
+            )
         return holder["approved"]
+
+    async def _gated_run_tool_async(
+        self, tool_name: str, tool_input: dict[str, Any], chat_id: str
+    ) -> str:
+        """Async autonomy gate used by the agentic loop.
+
+        The UI prompt is dispatched from the event-loop thread (the same thread
+        that streams tokens, which is known to reach the frontend) — only the
+        blocking wait is offloaded to a worker thread. Dispatching the prompt
+        from a worker thread was unreliable and produced silent timeouts."""
+        decision = self._confirm_decision(tool_name, tool_input)
+        display = tool_name.split("__", 1)[-1]
+        logger.info("autonomy gate: tool=%s decision=%s", tool_name, decision)
+        if decision == "manual":
+            return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
+        if decision != "run":
+            request_id, event, holder = self._register_confirm(
+                chat_id, tool_name, tool_input, decision
+            )
+            timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
+            if not self._finish_confirm(request_id, holder, timed_out):
+                return (
+                    f"✗ The user declined to run '{display}' (autonomy = {decision})."
+                )
+        return await asyncio.to_thread(self._run_tool_sync, tool_name, tool_input)
+
+    def _gated_run_tool(
+        self, tool_name: str, tool_input: dict[str, Any], chat_id: str
+    ) -> str:
+        """Synchronous autonomy gate (kept for direct/unit-test use).
+
+        autonomous → run; confirm/supervised → ask the user (Approve/Deny);
+        manual → refuse (human-only; the user must use the Run button)."""
+        decision = self._confirm_decision(tool_name, tool_input)
+        display = tool_name.split("__", 1)[-1]
+        if decision == "manual":
+            return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
+        if decision != "run":
+            if not self._await_confirmation(tool_name, tool_input, decision, chat_id):
+                return (
+                    f"✗ The user declined to run '{display}' (autonomy = {decision})."
+                )
+        return self._run_tool_sync(tool_name, tool_input)
+
+    def _await_confirmation(
+        self, tool_name: str, tool_input: dict[str, Any], level: str, chat_id: str
+    ) -> bool:
+        """Ask the UI to approve an agent tool call; block (in a worker thread)
+        until resolve_tool_confirmation() fires. Times out as a deny."""
+        request_id, event, holder = self._register_confirm(
+            chat_id, tool_name, tool_input, level
+        )
+        timed_out = not event.wait(timeout=self._CONFIRM_TIMEOUT_S)
+        return self._finish_confirm(request_id, holder, timed_out)
 
     def resolve_tool_confirmation(self, request_id: str, approved: bool) -> None:
         """Frontend callback: resolve a pending agent tool-call confirmation."""
+        logger.info(
+            "autonomy gate: UI resolved request_id=%s approved=%s", request_id, approved
+        )
         with self._lock:
             entry = self._pending_confirms.get(request_id)
         if entry is not None:
             event, holder = entry
             holder["approved"] = bool(approved)
             event.set()
+        else:
+            logger.warning(
+                "autonomy gate: resolve for unknown request_id=%s (already timed out?)",
+                request_id,
+            )
 
     def _run_tool_sync(self, tool_name: str, tool_input: dict[str, Any]) -> str:
         """Blocking runnable execution — call via asyncio.to_thread from the agentic loop."""
@@ -1441,13 +1524,16 @@ class Bridge:
 
     def _dispatch(self, event: str, detail: dict[str, Any]) -> None:
         if self._window is None:
+            logger.warning("dispatch %s dropped: no window attached", event)
             return
         payload = json.dumps(detail)
         js = f"window.dispatchEvent(new CustomEvent({json.dumps(event)},{{detail:{payload}}}))"
         try:
             self._window.evaluate_js(js)
         except Exception:
-            pass
+            # Previously swallowed — that hid event-delivery failures (e.g. the
+            # autonomy confirm prompt) and left nothing to diagnose. Log it.
+            logger.exception("dispatch %s failed (evaluate_js raised)", event)
 
     @staticmethod
     def _current_user() -> str:
