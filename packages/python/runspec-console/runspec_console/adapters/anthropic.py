@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import time
 from typing import Any
 
 import anthropic
@@ -22,14 +24,74 @@ class AnthropicAdapter(ModelAdapter):
         model: str = DEFAULT_MODEL,
         system: str = DEFAULT_SYSTEM,
         api_key: str | None = None,
+        base_url: str | None = None,
+        api_key_command: str | None = None,
+        api_key_ttl_ms: int = 0,
     ) -> None:
-        self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        """
+        Args:
+            api_key: Static API key. Used directly unless api_key_command is set.
+            base_url: Override the Anthropic API endpoint (e.g. a corporate AI proxy).
+            api_key_command: Shell command whose stdout (stripped) is used as the
+                API key. Mirrors Claude Code's apiKeyHelper. When set, api_key is
+                ignored and the client is (re)built from the command's output.
+            api_key_ttl_ms: How long to cache the command's result before re-running
+                it. 0 re-runs the command on every request.
+        """
         self.model = model
         self.system = system
+        self._base_url = base_url
+        self._api_key_command = api_key_command
+        self._api_key_ttl_s = api_key_ttl_ms / 1000.0
+        self._cached_key: str | None = None
+        self._key_fetched_at: float = 0.0
+
+        # anthropic is an optional, untyped dependency here, so the client is Any.
+        self.client: Any
+        if api_key_command:
+            # Built lazily on the first request via _refresh_key_if_needed.
+            self.client = None
+        else:
+            self.client = anthropic.AsyncAnthropic(**self._client_kwargs(api_key))
+
+    def _client_kwargs(self, api_key: str | None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if self._base_url:
+            kwargs["base_url"] = self._base_url
+        return kwargs
+
+    def _refresh_key_if_needed(self) -> None:
+        """Re-run api_key_command and rebuild the client when the cache is stale.
+
+        No-op when no command is configured (static-key path)."""
+        if not self._api_key_command:
+            return
+        now = time.monotonic()
+        if (
+            self._cached_key is not None
+            and self._api_key_ttl_s > 0
+            and (now - self._key_fetched_at) < self._api_key_ttl_s
+        ):
+            return  # cached key still valid
+        result = subprocess.run(
+            self._api_key_command,
+            capture_output=True,
+            text=True,
+            shell=True,
+        )
+        key = result.stdout.strip()
+        if not key:
+            raise RuntimeError(
+                f"api_key_command returned no output (exit {result.returncode}): {result.stderr.strip()}"
+            )
+        self._cached_key = key
+        self._key_fetched_at = now
+        self.client = anthropic.AsyncAnthropic(**self._client_kwargs(key))
 
     async def chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> ChatResponse:
+        self._refresh_key_if_needed()
         kwargs: dict[str, Any] = dict(
             model=self.model,
             max_tokens=4096,
@@ -57,6 +119,7 @@ class AnthropicAdapter(ModelAdapter):
     async def stream_chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ):  # type: ignore[override]
+        self._refresh_key_if_needed()
         kwargs: dict[str, Any] = dict(
             model=self.model,
             max_tokens=4096,
@@ -74,6 +137,7 @@ class AnthropicAdapter(ModelAdapter):
     ):  # type: ignore[override]
         import json
 
+        self._refresh_key_if_needed()
         kwargs: dict[str, Any] = dict(
             model=self.model,
             max_tokens=4096,

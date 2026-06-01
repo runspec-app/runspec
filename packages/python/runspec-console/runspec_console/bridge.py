@@ -1103,7 +1103,16 @@ class Bridge:
         if not user:
             user = cfg_ssh.get("user", "")
 
-        cmd = [str(putty), "-ssh"]
+        cmd = [str(putty)]
+        # Route through the HTTP proxy by loading a saved session that carries
+        # the proxy config (PuTTY has no proxy CLI flag). Host/user/key below
+        # still override the session.
+        proxy = cfg_ssh.get("proxy") or ""
+        if proxy:
+            session = _ensure_putty_proxy_session(proxy)
+            if session:
+                cmd.extend(["-load", session])
+        cmd.append("-ssh")
         if user:
             cmd.extend(["-l", user])
         cmd.append(hostname)
@@ -1269,10 +1278,14 @@ class Bridge:
             kwargs["aws_region"] = llm_cfg["aws_region"]
         if llm_cfg.get("base_url"):
             kwargs["base_url"] = llm_cfg["base_url"]
+        if llm_cfg.get("api_key_command"):
+            kwargs["api_key_command"] = llm_cfg["api_key_command"]
+        if llm_cfg.get("api_key_ttl_ms") is not None:
+            kwargs["api_key_ttl_ms"] = int(llm_cfg["api_key_ttl_ms"])
         try:
             from .adapters.base import load_adapter
 
-            self._adapter = load_adapter(provider, **kwargs)
+            adapter = load_adapter(provider, **kwargs)
         except ImportError:
             raise ImportError(
                 f"LLM provider '{provider}' requires an optional dependency. "
@@ -1280,7 +1293,11 @@ class Bridge:
             )
         except ValueError as exc:
             raise ValueError(f"LLM configuration error: {exc}") from exc
-        return self._adapter
+        # When a key-vending command is configured, don't cache the adapter — the
+        # adapter's own TTL controls refresh. Static-key configs cache as before.
+        if not llm_cfg.get("api_key_command"):
+            self._adapter = adapter
+        return adapter
 
     def _dispatch(self, event: str, detail: dict[str, Any]) -> None:
         if self._window is None:
@@ -1328,6 +1345,47 @@ def _normalize_ssh_section(ssh: dict[str, Any]) -> dict[str, Any]:
         if isinstance(out.get(k), str):
             out[k] = _normalize_path(out[k])
     return out
+
+
+PUTTY_PROXY_SESSION = "runspec-console-proxy"
+
+
+def _ensure_putty_proxy_session(
+    proxy: str, session: str = PUTTY_PROXY_SESSION
+) -> str | None:
+    """Write a PuTTY saved session carrying an HTTP proxy; return its name.
+
+    PuTTY has no command-line proxy flag — proxy config lives in a saved session
+    (Windows registry). We maintain a dedicated session holding only the proxy
+    settings; `putty -load <session> -ssh -l user host` then applies the proxy
+    while host/user/key still come from the command line.
+
+    Returns the session name, or None if the proxy URL is unusable or winreg is
+    unavailable (non-Windows). No proxy auth — front an auth proxy with a local
+    bridge (cntlm/px) and point at http://localhost:<port>.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(proxy if "://" in proxy else f"http://{proxy}")
+    phost = parsed.hostname
+    pport = parsed.port or 8080
+    if not phost:
+        return None
+    try:
+        import winreg  # Windows-only
+    except ImportError:
+        return None
+
+    key_path = rf"Software\SimonTatham\PuTTY\Sessions\{session}"
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+        winreg.SetValueEx(key, "ProxyMethod", 0, winreg.REG_DWORD, 3)  # 3 = HTTP
+        winreg.SetValueEx(key, "ProxyHost", 0, winreg.REG_SZ, phost)
+        winreg.SetValueEx(key, "ProxyPort", 0, winreg.REG_DWORD, pport)
+        winreg.SetValueEx(key, "ProxyDNS", 0, winreg.REG_DWORD, 1)  # 1 = Auto
+        winreg.SetValueEx(key, "ProxyLocalhost", 0, winreg.REG_DWORD, 0)
+        winreg.SetValueEx(key, "ProxyUsername", 0, winreg.REG_SZ, "")
+        winreg.SetValueEx(key, "ProxyPassword", 0, winreg.REG_SZ, "")
+    return session
 
 
 def _find_putty_exe(name: str = "putty.exe") -> Path | None:

@@ -19,6 +19,7 @@ jobs:
       node: ${{ steps.filter.outputs.node }}
       chat: ${{ steps.filter.outputs.chat }}
       linux: ${{ steps.filter.outputs.linux }}
+      console: ${{ steps.filter.outputs.console }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -37,6 +38,9 @@ jobs:
               - '.github/workflows/ci.yml'
             linux:
               - 'packages/python/runspec-linux/**'
+              - '.github/workflows/ci.yml'
+            console:
+              - 'packages/python/runspec-console/**'
               - '.github/workflows/ci.yml'
 
   # ── Python ──────────────────────────────────────────────────────────────────
@@ -311,11 +315,73 @@ jobs:
           print('Wheel contents OK')
           "
 
+  # ── runspec-console ──────────────────────────────────────────────────────────
+
+  # runspec-console is not type-checked here: it carries pre-existing mypy debt
+  # (Windows-only attrs, http handler typing) that's out of scope for this gate.
+  # Lint + format + tests give it real coverage without that landmine.
+  console-quality:
+    name: "console quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.console == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-console
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install ruff
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  console-test:
+    name: runspec-console test
+    needs: changes
+    if: needs.changes.outputs.console == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-console
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # runspec-console declares pywin32 as an unconditional dependency, so
+      # `pip install -e .` fails on Linux. Install only what the tests import
+      # (anthropic for the adapter, paramiko for the SSH executor) and run
+      # against the source tree via PYTHONPATH.
+      - name: Install test deps
+        run: pip install pytest anthropic paramiko
+
+      - name: Run tests
+        env:
+          PYTHONPATH: .
+        run: pytest
+
   # ── Aggregator ───────────────────────────────────────────────────────────────
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test]
+    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, console-quality, console-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -339,6 +405,8 @@ jobs:
           check "chat-test"      "${{ needs.chat-test.result }}"
           check "linux-quality"  "${{ needs.linux-quality.result }}"
           check "linux-test"     "${{ needs.linux-test.result }}"
+          check "console-quality" "${{ needs.console-quality.result }}"
+          check "console-test"    "${{ needs.console-test.result }}"
           if [[ $fail -eq 1 ]]; then
             echo "One or more checks failed."
             exit 1

@@ -12,12 +12,14 @@ The caller supplies two callbacks:
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 # Ensure child Python processes use UTF-8 for print()/sys.stdout
 _UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
@@ -84,6 +86,47 @@ def _parse_ssh_target(target: str) -> tuple[str, str, int]:
     return user, host, port
 
 
+def _http_connect_sock(
+    proxy: str, host: str, port: int, timeout: float = 10.0
+) -> socket.socket:
+    """Open a socket to ``host:port`` tunnelled through an HTTP CONNECT proxy.
+
+    ``proxy`` is like ``"http://proxy.corp:8080"`` (scheme optional). No proxy
+    authentication is sent — for an auth-required proxy, front it with a local
+    auth bridge (cntlm/px) and point this at ``http://localhost:<port>``.
+
+    The returned socket is connected straight through to the target and is
+    suitable as paramiko's ``sock=`` argument.
+    """
+    parsed = urlparse(proxy if "://" in proxy else f"http://{proxy}")
+    phost = parsed.hostname
+    pport = parsed.port or 8080
+    if not phost:
+        raise ValueError(f"Invalid proxy URL: {proxy!r}")
+
+    sock = socket.create_connection((phost, pport), timeout=timeout)
+    try:
+        request = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n"
+        sock.sendall(request.encode("ascii"))
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+        status_line = resp.split(b"\r\n", 1)[0].decode("latin-1", "replace")
+        fields = status_line.split(None, 2)
+        if len(fields) < 2 or fields[1] != "200":
+            raise OSError(
+                f"HTTP proxy CONNECT to {host}:{port} failed: {status_line!r}"
+            )
+    except Exception:
+        sock.close()
+        raise
+    sock.settimeout(None)
+    return sock
+
+
 def _make_ssh_client(
     ssh_target: str,
     identity_file: str | None,
@@ -92,7 +135,17 @@ def _make_ssh_client(
     """Create and connect a paramiko SSHClient.
 
     Falls back to global config for username and identity file when the host
-    entry doesn't specify them.
+    entry doesn't specify them. Two optional ``[ssh]`` settings shape the
+    connection:
+
+      proxy           — HTTP CONNECT proxy URL; the SSH transport is tunnelled
+                        through it (corporate egress).
+      use_ssh_config  — when true, ~/.ssh/config is consulted for HostName,
+                        User, Port, IdentityFile, and ProxyCommand (the latter
+                        only when no explicit ``proxy`` is set).
+
+    Precedence: per-host/global explicit fields > ~/.ssh/config. An explicit
+    ``proxy`` takes precedence over a ProxyCommand from ~/.ssh/config.
     """
     import paramiko
 
@@ -102,6 +155,31 @@ def _make_ssh_client(
     if not user:
         user = cfg.get("user", "")
     key_path = identity_file or cfg.get("identityFile", "")
+    proxy = cfg.get("proxy") or ""
+    sock: Any = None
+
+    # ~/.ssh/config (opt-in) fills in anything not set explicitly.
+    if cfg.get("use_ssh_config"):
+        ssh_config_path = Path("~/.ssh/config").expanduser()
+        if ssh_config_path.is_file():
+            ssh_conf = paramiko.SSHConfig()
+            with open(ssh_config_path) as fh:
+                ssh_conf.parse(fh)
+            host_conf = ssh_conf.lookup(hostname)
+            hostname = host_conf.get("hostname", hostname)
+            if not user and host_conf.get("user"):
+                user = host_conf["user"]
+            if port == 22 and host_conf.get("port"):
+                port = int(host_conf["port"])
+            if not key_path and host_conf.get("identityfile"):
+                ids = host_conf["identityfile"]
+                key_path = ids[0] if isinstance(ids, list) else ids
+            if not proxy and host_conf.get("proxycommand"):
+                sock = paramiko.ProxyCommand(host_conf["proxycommand"])
+
+    # An explicit HTTP proxy wins over a ProxyCommand from ssh_config.
+    if proxy:
+        sock = _http_connect_sock(proxy, hostname, port)
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -110,8 +188,9 @@ def _make_ssh_client(
     if user:
         connect_kwargs["username"] = user
     if key_path:
-        expanded = str(Path(key_path).expanduser())
-        connect_kwargs["key_filename"] = expanded
+        connect_kwargs["key_filename"] = str(Path(key_path).expanduser())
+    if sock is not None:
+        connect_kwargs["sock"] = sock
 
     client.connect(**connect_kwargs)
     return client
