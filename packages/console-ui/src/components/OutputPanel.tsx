@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { Button, Input, Space, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Input, Space, Tag, Tooltip, Typography, message, Modal } from 'antd'
+import { bridge } from '../bridge'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
@@ -738,10 +739,46 @@ export function useInvocationBlocks() {
       ))
     }
 
+    // The agent wants to run a runnable whose autonomy requires approval
+    // (confirm / supervised). Ask the user; the bridge blocks until we answer.
+    const onToolConfirm = (e: Event) => {
+      const { request_id, tool_name, tool_input, autonomy } = (e as CustomEvent).detail as {
+        request_id: string; tool_name: string; tool_input: Record<string, unknown>; autonomy: string
+      }
+      const display = tool_name.includes('__') ? tool_name.split('__').slice(1).join('__') : tool_name
+      let settled = false
+      const settle = (approved: boolean) => {
+        if (settled) return
+        settled = true
+        bridge.resolve_tool_confirmation(request_id, approved)
+      }
+      Modal.confirm({
+        title: `Run "${display}"?`,
+        content: (
+          <div>
+            <div style={{ marginBottom: 8 }}>
+              The assistant wants to run this tool. Autonomy is <strong>{autonomy}</strong>, so your approval is required.
+            </div>
+            <pre style={{
+              fontSize: 11, background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
+              borderRadius: 4, padding: 8, margin: 0, maxHeight: 200, overflow: 'auto',
+            }}>
+              {JSON.stringify(tool_input ?? {}, null, 2)}
+            </pre>
+          </div>
+        ),
+        okText: 'Approve & run',
+        cancelText: 'Deny',
+        onOk: () => settle(true),
+        onCancel: () => settle(false),
+      })
+    }
+
     window.addEventListener('runspec:output', onOutput)
     window.addEventListener('runspec:token', onToken)
     window.addEventListener('runspec:tool_start', onToolStart)
     window.addEventListener('runspec:tool_end', onToolEnd)
+    window.addEventListener('runspec:tool_confirm', onToolConfirm)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:chat_usage', onChatUsage)
     return () => {
@@ -749,6 +786,7 @@ export function useInvocationBlocks() {
       window.removeEventListener('runspec:token', onToken)
       window.removeEventListener('runspec:tool_start', onToolStart)
       window.removeEventListener('runspec:tool_end', onToolEnd)
+      window.removeEventListener('runspec:tool_confirm', onToolConfirm)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:chat_usage', onChatUsage)
     }

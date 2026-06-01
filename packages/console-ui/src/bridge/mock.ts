@@ -596,6 +596,10 @@ export const mockApi: BridgeApi = {
   open_putty_url: async (url: string) => { console.log('mock: open_putty_url', url) },
   browse_ssh_binary: async () => '',
 
+  resolve_tool_confirmation: async (requestId, approved) => {
+    console.log('[mock] resolve_tool_confirmation', requestId, approved)
+  },
+
   send_chat: async (message, _invocationId) => {
     const id = `chat-${++invocationCounter}`
     const dispatch = (event: string, detail: unknown) =>

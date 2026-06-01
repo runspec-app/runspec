@@ -37,6 +37,9 @@ from .hosts import load_hosts, save_hosts, venv_name
 
 _CANCEL_KEY = "__cancel_event__"  # key in _in_flight dicts, not surfaced to JS
 
+# Autonomy escalation order — higher = more restrictive (must check before run).
+_AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
+
 
 class Bridge:
     def __init__(self) -> None:
@@ -47,6 +50,8 @@ class Bridge:
         self._hosts: list[dict[str, Any]] = []
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
         self._runnables_cache: list[dict[str, Any]] = []
+        # request_id → (Event, {"approved": bool}) for agent tool-call confirmations
+        self._pending_confirms: dict[str, tuple[threading.Event, dict[str, bool]]] = {}
         self._reload_hosts()
         self._start_refresh_watcher()
 
@@ -965,7 +970,9 @@ class Bridge:
                         "tool_input": tc.input,
                     },
                 )
-                output = await asyncio.to_thread(self._run_tool_sync, tc.name, tc.input)
+                output = await asyncio.to_thread(
+                    self._gated_run_tool, tc.name, tc.input, chat_id
+                )
                 self._dispatch(
                     "runspec:tool_end",
                     {
@@ -1067,6 +1074,85 @@ class Bridge:
                 {"name": tool_name, "description": description, "input_schema": schema}
             )
         return tools
+
+    def _effective_tool_autonomy(
+        self, tool_name: str, tool_input: dict[str, Any]
+    ) -> str:
+        """Autonomy the agent must honour for this call: the runnable's level,
+        escalated by any provided arg's per-arg autonomy (most restrictive wins).
+        Unknown runnable → 'confirm' (gated by default — never silently run)."""
+        host, runnable = (
+            tool_name.split("__", 1) if "__" in tool_name else (None, tool_name)
+        )
+        with self._lock:
+            r = next(
+                (
+                    r
+                    for r in self._runnables_cache
+                    if r.get("host") == host and r.get("name") == runnable
+                ),
+                None,
+            )
+        if not r:
+            return "confirm"
+        level = r.get("autonomy") or "confirm"
+        for arg in r.get("args") or []:
+            if arg.get("name") in (tool_input or {}) and arg.get("autonomy"):
+                if _AUTONOMY_RANK.get(arg["autonomy"], 0) > _AUTONOMY_RANK.get(
+                    level, 0
+                ):
+                    level = arg["autonomy"]
+        return level
+
+    def _gated_run_tool(
+        self, tool_name: str, tool_input: dict[str, Any], chat_id: str
+    ) -> str:
+        """Enforce the runnable's autonomy before the agent runs it.
+
+        autonomous → run; confirm/supervised → ask the user (Approve/Deny);
+        manual → refuse (human-only; the user must use the Run button)."""
+        level = self._effective_tool_autonomy(tool_name, tool_input)
+        display = tool_name.split("__", 1)[-1]
+        if level == "manual":
+            return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
+        if level in ("confirm", "supervised"):
+            if not self._await_confirmation(tool_name, tool_input, level, chat_id):
+                return f"✗ The user declined to run '{display}' (autonomy = {level})."
+        return self._run_tool_sync(tool_name, tool_input)
+
+    def _await_confirmation(
+        self, tool_name: str, tool_input: dict[str, Any], level: str, chat_id: str
+    ) -> bool:
+        """Ask the UI to approve an agent tool call; block (in a worker thread)
+        until resolve_tool_confirmation() fires. Times out as a deny."""
+        request_id = uuid.uuid4().hex
+        event = threading.Event()
+        holder = {"approved": False}
+        with self._lock:
+            self._pending_confirms[request_id] = (event, holder)
+        self._dispatch(
+            "runspec:tool_confirm",
+            {
+                "id": chat_id,
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "autonomy": level,
+            },
+        )
+        event.wait(timeout=300)  # no answer in 5 min → treat as deny
+        with self._lock:
+            self._pending_confirms.pop(request_id, None)
+        return holder["approved"]
+
+    def resolve_tool_confirmation(self, request_id: str, approved: bool) -> None:
+        """Frontend callback: resolve a pending agent tool-call confirmation."""
+        with self._lock:
+            entry = self._pending_confirms.get(request_id)
+        if entry is not None:
+            event, holder = entry
+            holder["approved"] = bool(approved)
+            event.set()
 
     def _run_tool_sync(self, tool_name: str, tool_input: dict[str, Any]) -> str:
         """Blocking runnable execution — call via asyncio.to_thread from the agentic loop."""

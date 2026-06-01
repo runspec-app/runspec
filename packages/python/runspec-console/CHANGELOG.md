@@ -8,6 +8,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.1.13] — 2026-06-01
+
+### Fixed
+- **Autonomy is now enforced on the agent (chat) path.** Previously the LLM ran any runnable immediately regardless of its `autonomy` — the chip was shown but never gated. Now, before the assistant runs a tool:
+  - `autonomous` → runs immediately (unchanged);
+  - `confirm` / `supervised` → an **Approve / Deny** dialog appears and the run waits for your decision (denial is reported back to the assistant so it adapts; no answer within 5 min = deny);
+  - `manual` → **hard-blocked** — the assistant cannot run it and is told to ask you to use the Run button.
+  Per-arg `autonomy` escalates the level when that arg is supplied (most-restrictive wins). The manual **Run** button is unaffected — a human clicking Run has already chosen the action.
+
+### Bridge
+- New `resolve_tool_confirmation(request_id, approved)` callback; chat tool-calls route through an autonomy gate that emits a `runspec:tool_confirm` event and blocks until the UI answers.
+
+
 ## [0.1.12] — 2026-06-01
 
 ### Added

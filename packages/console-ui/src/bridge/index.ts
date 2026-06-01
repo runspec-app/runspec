@@ -147,6 +147,7 @@ export interface BridgeApi {
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string) => Promise<string>
   cancel_invocation: (invId: string) => Promise<void>
   send_chat: (message: string, invocationId?: string) => Promise<string>
+  resolve_tool_confirmation: (requestId: string, approved: boolean) => Promise<void>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   generate_ssh_key: () => Promise<{ ok: boolean; public_key: string; key_path: string; committed: boolean; per_host: RotateHostResult[]; message: string }>
