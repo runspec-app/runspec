@@ -740,9 +740,9 @@ export const mockApi: BridgeApi = {
       key_path: 'C:/Users/jason/AppData/Roaming/runspec-console/runspec_ed25519',
       per_host: [
         { host: 'prod-1', pushed: true, verified: true, skipped: false, error: '' },
-        { host: 'prod-2', pushed: true, verified: false, skipped: false, error: 'verify failed: sshd rejected key' },
+        { host: 'prod-2', pushed: false, verified: false, skipped: true, error: 'disconnected — new key not pushed; update manually' },
       ],
-      message: 'Push or verification failed on: prod-2. Old key still active.',
+      message: 'Key rotated — verified on 1 host(s). 1 host(s) skipped (disconnected or per-host key) — update them manually.',
     }
   },
 

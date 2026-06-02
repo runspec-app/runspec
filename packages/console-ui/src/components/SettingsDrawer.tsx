@@ -9,6 +9,7 @@ interface SettingsDrawerProps {
   open: boolean
   onClose: () => void
   connectedHosts?: string[]
+  allRemoteHosts?: string[]
   onHostsChanged?: () => void
   onKeyChanged?: () => void
 }
@@ -140,7 +141,7 @@ function keyAgeDays(createdAt: string | null): number | null {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
 }
 
-function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => void; connectedHosts?: string[] }) {
+function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { onKeyChanged?: () => void; connectedHosts?: string[]; allRemoteHosts?: string[] }) {
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -220,12 +221,15 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
     try {
       const result = await bridge.rotate_ssh_key()
       setRotationResult({ committed: result.committed, perHost: result.per_host, publicKey: result.public_key })
+      const anySkipped = result.per_host.some(h => h.skipped)
       if (result.committed) {
-        setPublicKey(null) // committed — no need to show manual snippet
+        setPublicKey(null) // committed — manual snippet still shown below if any host was skipped
         setKeyPath(result.key_path)
         loadConfig()
         onKeyChanged?.()
-        message.success('Key rotated and pushed to all hosts')
+        // Use the backend message — it reports how many hosts verified vs. skipped
+        if (anySkipped) message.warning(result.message)
+        else message.success(result.message)
       } else if (!result.ok) {
         message.error(result.message)
       } else {
@@ -239,6 +243,8 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
 
   const ageDays = keyAgeDays(keyCreatedAt)
   const authorizedKeysLine = publicKey ? `echo "${publicKey}" >> ~/.ssh/authorized_keys` : ''
+  // Configured remotes that aren't currently connected — they won't receive the new key.
+  const disconnected = allRemoteHosts.filter(h => !connectedHosts.includes(h))
 
   return (
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
@@ -335,14 +341,29 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
         {keyPath && (
           <Popconfirm
             title="Rotate SSH key?"
+            icon={disconnected.length > 0 ? <KeyOutlined style={{ color: '#fa8c16' }} /> : undefined}
             description={
-              <span style={{ fontSize: 12 }}>
-                A new key will be pushed to all connected hosts using the current key,<br />
-                then verified before swapping. Active sessions stay alive throughout.
-              </span>
+              disconnected.length === 0 ? (
+                <span style={{ fontSize: 12 }}>
+                  A new key will be pushed to every connected host using the current key,<br />
+                  then verified before swapping. Active sessions stay alive throughout.
+                </span>
+              ) : (
+                <span style={{ fontSize: 12, maxWidth: 320, display: 'inline-block' }}>
+                  <strong style={{ color: '#fa8c16' }}>
+                    {disconnected.length} host{disconnected.length !== 1 ? 's' : ''} disconnected:
+                  </strong>{' '}
+                  <span style={{ fontFamily: 'monospace' }}>{disconnected.join(', ')}</span>.<br />
+                  {disconnected.length !== 1 ? 'They' : 'It'} will <strong>not</strong> receive the new key —
+                  you may be locked out until you update {disconnected.length !== 1 ? 'them' : 'it'} manually.<br />
+                  Connected hosts rotate now. Continue?
+                </span>
+              )
             }
             onConfirm={handleRotate}
-            okText="Rotate" cancelText="Cancel"
+            okText={disconnected.length > 0 ? 'Rotate anyway' : 'Rotate'}
+            okButtonProps={disconnected.length > 0 ? { danger: true } : undefined}
+            cancelText="Cancel"
             placement="bottom"
           >
             <Button
@@ -378,11 +399,13 @@ function SshTab({ onKeyChanged, connectedHosts = [] }: { onKeyChanged?: () => vo
         </div>
       )}
 
-      {/* Manual snippet — only shown when no connected hosts or partial failure */}
-      {rotationResult && !rotationResult.committed && rotationResult.publicKey && (
+      {/* Manual snippet — shown on partial/total failure, or when a committed rotation
+          skipped some hosts (disconnected / per-host key) that still need the new key */}
+      {rotationResult && rotationResult.publicKey &&
+        (!rotationResult.committed || rotationResult.perHost.some(h => h.skipped)) && (
         <div style={{ marginBottom: 10 }}>
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
-            Run on each failing host to authorise the new key manually:
+            Run on each skipped/failing host to authorise the new key manually:
           </Text>
           <Typography.Paragraph
             copyable={{ tooltips: ['Copy', 'Copied!'] }}
@@ -745,13 +768,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
 
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
-export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts }: SettingsDrawerProps) {
+export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
   return (
     <Drawer title="Settings" placement="right" width={480} open={open} onClose={onClose}>
       <Tabs
         size="small"
         items={[
-          { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} /> },
+          { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
           { key: 'llm',       label: 'LLM / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
         ]}

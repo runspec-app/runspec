@@ -622,6 +622,12 @@ class Bridge:
         self._reload_hosts()
         remote_hosts = [h for h in self._hosts if h.get("ssh")]
 
+        # Snapshot connection status once (same source as the green dot in the UI)
+        # so the slow SSH loop below doesn't hold the lock. Every entry here has an
+        # `ssh` target, so a never-probed remote defaults to disconnected (False).
+        with self._lock:
+            connected_snapshot = dict(self._connected_cache)
+
         if not remote_hosts:
             self._commit_key_rotation(canonical, new_path, global_ssh, cfg)
             return {
@@ -651,6 +657,21 @@ class Bridge:
             name = host.get("name", "?")
             ssh_target = host.get("ssh", "")
             host_idf = host.get("identityFile") or global_idf
+
+            # Skip disconnected hosts — pushing would just fail and block the whole
+            # rotation. They keep only the old key and must be updated manually once
+            # reconnected (surfaced in per_host + the manual snippet in the UI).
+            if not connected_snapshot.get(name, False):
+                per_host.append(
+                    {
+                        "host": name,
+                        "pushed": False,
+                        "verified": False,
+                        "skipped": True,
+                        "error": "disconnected — new key not pushed; update manually",
+                    }
+                )
+                continue
 
             # Skip hosts with a different per-host key — their session uses a different key
             if host.get("identityFile") and host.get("identityFile") != global_idf:
@@ -714,8 +735,28 @@ class Bridge:
                 }
             )
 
-        # Step 5 — commit gate: all non-skipped hosts must be verified
-        can_commit = all(h["verified"] or h["skipped"] for h in per_host)
+        # Step 5 — commit gate: all non-skipped hosts must be verified, AND at least
+        # one host must have actually been verified. The second clause prevents
+        # silently committing a key that no reachable host authorizes (every remote
+        # skipped because disconnected) — that would lock us out everywhere.
+        any_verified = any(h["verified"] for h in per_host)
+        can_commit = (
+            all(h["verified"] or h["skipped"] for h in per_host) and any_verified
+        )
+
+        if not any_verified:
+            return {
+                "ok": True,
+                "committed": False,
+                "public_key": public_key,
+                "key_path": "",
+                "per_host": per_host,
+                "message": (
+                    "No connected host could be verified — old key kept. "
+                    "Connect at least one host and retry, or use Generate new key "
+                    "to swap manually."
+                ),
+            }
 
         if not can_commit:
             failed = [
@@ -732,13 +773,21 @@ class Bridge:
 
         # Step 6 — commit
         self._commit_key_rotation(canonical, new_path, global_ssh, cfg)
+        verified_n = sum(1 for h in per_host if h["verified"])
+        skipped_n = sum(1 for h in per_host if h["skipped"])
+        message = f"Key rotated — verified on {verified_n} host(s)."
+        if skipped_n:
+            message += (
+                f" {skipped_n} host(s) skipped (disconnected or per-host key) "
+                "— update them manually."
+            )
         return {
             "ok": True,
             "committed": True,
             "public_key": public_key,
             "key_path": _normalize_path(str(canonical)),
             "per_host": per_host,
-            "message": "Key rotated — pushed and verified on all hosts.",
+            "message": message,
         }
 
     def _commit_key_rotation(

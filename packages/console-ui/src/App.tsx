@@ -396,6 +396,7 @@ export default function App() {
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           connectedHosts={hosts.filter(h => h.connected && h.name !== 'local' && h.role !== undefined).map(h => h.name)}
+          allRemoteHosts={hosts.filter(h => h.name !== 'local' && h.role !== undefined).map(h => h.name)}
           onHostsChanged={() => {
             bridge.get_hosts().then(setHosts)
             bridge.get_runnables('all').then(setRunnables)
