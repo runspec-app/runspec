@@ -526,6 +526,59 @@ print(info["datacenter"])   # "us-east"
 Lookup data lives in the same place as the argument definition — no separate
 config files, no hardcoded mappings.
 
+For a small, flat metadata bag, an inline TOML table keeps it on one line with
+the argument definition — no separate `[...meta]` section needed:
+
+```toml
+[deploy.args.timeout]
+default = 30
+meta = { unit = "seconds", help-url = "https://wiki/timeouts" }
+```
+
+```python
+args = parse()
+print(args.timeout.meta["unit"])   # "seconds"
+```
+
+The section form and the inline form are equivalent — runspec treats `meta` as
+pass-through either way. Reach for inline when the table is short; use a
+`[...meta]` section when it spans many keys or nests deeply.
+
+### Combining two values
+
+`meta` is keyed by a single argument's value, and runspec does no
+interpolation — there is no `"${region}-${tier}"` template syntax. When a
+value depends on two arguments, compose the lookup in your own code. Nest the
+table and index it twice:
+
+```toml
+[deploy.args.region.meta]
+us-east = {web = "10.0.1.0/24", db = "10.0.2.0/24"}
+us-west = {web = "10.1.1.0/24", db = "10.1.2.0/24"}
+```
+
+```python
+args = parse()
+subnet = args.region.meta[args.region.value][args.tier.value]
+```
+
+Or build a composite key from both values:
+
+```toml
+[deploy.args.target.meta]
+"us-east|web" = {subnet = "10.0.1.0/24"}
+"us-east|db"  = {subnet = "10.0.2.0/24"}
+```
+
+```python
+args = parse()
+info = args.target.meta[f"{args.region.value}|{args.tier.value}"]
+```
+
+Because `meta` is pure pass-through, any composition — string formatting like
+`f"View {args.jira_key.value}"`, joining multiple values, computed defaults —
+happens in your runnable, not in `runspec.toml`.
+
 ---
 
 ## Complete example
