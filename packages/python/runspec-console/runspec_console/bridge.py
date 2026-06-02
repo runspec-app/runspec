@@ -234,6 +234,153 @@ class Bridge:
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return records[:200]
 
+    # ── analytics ─────────────────────────────────────────────────────────────
+
+    def _collect_host_records(
+        self, entry: dict[str, Any], runnable: str | None
+    ) -> list[dict[str, Any]]:
+        """Parse every run_summary across all of a host's venvs (uncapped).
+
+        Unlike get_history this keeps the rich ``extra`` fields and tags each
+        record with its venv ``group``. Local hosts read the log files directly;
+        remote hosts stream them over SSH using the same framing as
+        _get_remote_history. Raises on hard failure so the caller can mark the
+        host partial.
+        """
+        from pathlib import PurePosixPath
+
+        paths = _paths(entry)
+        records: list[dict[str, Any]] = []
+        pattern = f"{runnable}.log" if runnable else "*.log"
+
+        if entry.get("ssh"):
+            from .executor import ssh_run
+
+            ssh = entry["ssh"]
+            idf = entry.get("identityFile")
+            for rp in paths:
+                if not rp:
+                    continue
+                group = PurePosixPath(rp).parent.parent.name
+                log_dir = str(PurePosixPath(rp).parent.parent / "logs")
+                glob = f"{log_dir}/{runnable}.log" if runnable else f"{log_dir}/*.log"
+                script = (
+                    f"for f in {glob}; do "
+                    f'[ -f "$f" ] && printf "\\x00RUNSPEC_LOG:%s\\n" '
+                    f'"$(basename "$f" .log)" && cat "$f"; '
+                    f"done 2>/dev/null"
+                )
+                code, stdout, stderr = ssh_run(
+                    ssh,
+                    script,
+                    identity_file=idf,
+                    global_ssh_config=self.get_config().get("ssh"),
+                    timeout=45,
+                )
+                if code != 0 and not stdout:
+                    raise RuntimeError(stderr.strip() or f"ssh exit {code}")
+                current_name: str | None = None
+                current_lines: list[str] = []
+
+                def _flush() -> None:
+                    if current_name is not None:
+                        for rec in _parse_log_text(
+                            current_name,
+                            "\n".join(current_lines),
+                            entry["name"],
+                            include_extra=True,
+                        ):
+                            rec["group"] = group
+                            records.append(rec)
+
+                for line in stdout.splitlines():
+                    if line.startswith("\x00RUNSPEC_LOG:"):
+                        _flush()
+                        current_name = line[len("\x00RUNSPEC_LOG:") :]
+                        current_lines = []
+                    else:
+                        current_lines.append(line)
+                _flush()
+            return records
+
+        # Local host
+        for rp in paths:
+            if not rp:
+                continue
+            group = venv_name(rp)
+            log_dir = Path(rp).parent.parent / "logs"
+            if not log_dir.exists():
+                log_dir = Path.home() / "logs"
+            if not log_dir.exists():
+                continue
+            for log_file in log_dir.glob(pattern):
+                for rec in _parse_log(log_file, entry["name"], include_extra=True):
+                    rec["group"] = group
+                    records.append(rec)
+        return records
+
+    def get_analytics(
+        self,
+        hosts: list[str] | None = None,
+        since_days: int = 30,
+        runnable: str | None = None,
+    ) -> dict[str, Any]:
+        """Aggregate run history across the fleet into drill-ready analytics.
+
+        Scans full (uncapped) audit logs across the requested hosts' venvs,
+        buckets by day and by every drill dimension, and surfaces the rich
+        run_summary fields. Heavy work (parsing, SSH) happens here so the
+        frontend can re-filter the compact ``buckets`` instantly.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        if not hosts or "all" in hosts:
+            target_names = ["local"] + [
+                h["name"] for h in self._hosts if h.get("name") != "local"
+            ]
+        else:
+            target_names = list(hosts)
+
+        entries: list[dict[str, Any]] = []
+        for name in target_names:
+            e = self._host_entry(name)
+            if e is not None:
+                entries.append(e)
+
+        now = datetime.now(timezone.utc)
+        since_dt = now - timedelta(days=max(0, since_days - 1))
+        since = since_dt.date().isoformat()
+        until = now.date().isoformat()
+
+        all_records: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        lock = threading.Lock()
+
+        def collect(entry: dict[str, Any]) -> None:
+            try:
+                recs = self._collect_host_records(entry, runnable)
+            except Exception as exc:  # noqa: BLE001 — degrade gracefully per host
+                with lock:
+                    errors.append({"host": entry["name"], "message": str(exc)})
+                return
+            with lock:
+                all_records.extend(recs)
+
+        threads = [
+            threading.Thread(target=collect, args=(e,), daemon=True) for e in entries
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Window filter (UTC day, inclusive lower bound)
+        in_window = [r for r in all_records if r.get("ts", "")[:10] >= since]
+
+        return _aggregate_analytics(
+            in_window, since, until, partial=bool(errors), errors=errors
+        )
+
     # ── schedules ─────────────────────────────────────────────────────────────
 
     def get_schedules(self) -> list[dict[str, Any]]:
@@ -1952,21 +2099,46 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_log(log_file: Path, host: str) -> list[dict[str, Any]]:
+def _summary_extra(extra: dict[str, Any]) -> dict[str, Any]:
+    """Pull the rich run_summary fields the Analytics tab needs.
+
+    These are dropped from the lean HistoryRecord shape (used by the History
+    tab) and only attached when ``include_extra=True`` is requested.
+    """
+    return {
+        "autonomy": extra.get("autonomy"),
+        "agent": bool(extra.get("agent")),
+        "exception": extra.get("exception"),
+        "events": extra.get("events", {}),
+        "command_path": extra.get("command_path", []),
+        "user_target": extra.get("user_target"),
+        "invocation_args": extra.get("invocation_args", {}),
+    }
+
+
+def _parse_log(
+    log_file: Path, host: str, include_extra: bool = False
+) -> list[dict[str, Any]]:
     try:
         text = log_file.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return []
-    return _parse_log_text(log_file.stem, text, host)
+    return _parse_log_text(log_file.stem, text, host, include_extra=include_extra)
 
 
-def _parse_log_text(name: str, text: str, host: str) -> list[dict[str, Any]]:
+def _parse_log_text(
+    name: str, text: str, host: str, include_extra: bool = False
+) -> list[dict[str, Any]]:
     """Parse a log file's text into HistoryRecord dicts.
 
     When run_id is present in records (runspec >=0.18) each invocation is
     isolated by its UUID — multi-user interleaving is handled cleanly.
     Older logs without run_id fall back to sequential accumulation between
     run_summary markers.
+
+    When ``include_extra`` is set, each record gains a nested ``extra`` dict
+    carrying the rich run_summary fields (autonomy, events, exception, …) the
+    Analytics tab aggregates over. The default keeps the lean History shape.
     """
     entries: list[dict[str, Any]] = []
     for raw in text.splitlines():
@@ -1983,12 +2155,12 @@ def _parse_log_text(name: str, text: str, host: str) -> list[dict[str, Any]]:
     # Detect run_id presence — check first record that has extra.run_id
     has_run_id = any(e.get("extra", {}).get("run_id") for e in entries)
     if has_run_id:
-        return _parse_log_by_run_id(name, entries, host)
-    return _parse_log_sequential(name, entries, host)
+        return _parse_log_by_run_id(name, entries, host, include_extra=include_extra)
+    return _parse_log_sequential(name, entries, host, include_extra=include_extra)
 
 
 def _parse_log_by_run_id(
-    name: str, entries: list[dict[str, Any]], host: str
+    name: str, entries: list[dict[str, Any]], host: str, include_extra: bool = False
 ) -> list[dict[str, Any]]:
     """Group log entries by run_id UUID → one HistoryRecord per invocation."""
     # Preserve insertion order of run_ids so history is chronological
@@ -2019,8 +2191,39 @@ def _parse_log_by_run_id(
         extra = summary_entry.get("extra", {})
         ts_raw = summary_entry.get("ts", "")
         stable_id = hashlib.md5((run_id + name).encode()).hexdigest()[:12]
-        records.append(
-            {
+        record = {
+            "id": stable_id,
+            "runnable": name,
+            "group": "",
+            "host": host,
+            "operator": extra.get("user", ""),
+            "runAs": extra.get("user_target") or "",
+            "exitCode": extra.get("exit_code", 0),
+            "durationMs": extra.get("duration_ms", 0),
+            "ts": ts_raw,
+            "args": extra.get("args", {}),
+            "argSources": extra.get("arg_sources", {}),
+            "logLines": g["lines"],
+            "initiatedBy": "llm" if extra.get("agent") else "user",
+        }
+        if include_extra:
+            record["extra"] = _summary_extra(extra)
+        records.append(record)
+    return records
+
+
+def _parse_log_sequential(
+    name: str, entries: list[dict[str, Any]], host: str, include_extra: bool = False
+) -> list[dict[str, Any]]:
+    """Legacy parser for logs without run_id (runspec <0.18)."""
+    records: list[dict[str, Any]] = []
+    lines: list[dict[str, Any]] = []
+    for entry in entries:
+        extra = entry.get("extra", {})
+        if extra.get("event") == "run_summary":
+            ts_raw = entry.get("ts", "")
+            stable_id = hashlib.md5((ts_raw + name).encode()).hexdigest()[:12]
+            record = {
                 "id": stable_id,
                 "runnable": name,
                 "group": "",
@@ -2032,41 +2235,12 @@ def _parse_log_by_run_id(
                 "ts": ts_raw,
                 "args": extra.get("args", {}),
                 "argSources": extra.get("arg_sources", {}),
-                "logLines": g["lines"],
+                "logLines": lines,
                 "initiatedBy": "llm" if extra.get("agent") else "user",
             }
-        )
-    return records
-
-
-def _parse_log_sequential(
-    name: str, entries: list[dict[str, Any]], host: str
-) -> list[dict[str, Any]]:
-    """Legacy parser for logs without run_id (runspec <0.18)."""
-    records: list[dict[str, Any]] = []
-    lines: list[dict[str, Any]] = []
-    for entry in entries:
-        extra = entry.get("extra", {})
-        if extra.get("event") == "run_summary":
-            ts_raw = entry.get("ts", "")
-            stable_id = hashlib.md5((ts_raw + name).encode()).hexdigest()[:12]
-            records.append(
-                {
-                    "id": stable_id,
-                    "runnable": name,
-                    "group": "",
-                    "host": host,
-                    "operator": extra.get("user", ""),
-                    "runAs": extra.get("user_target") or "",
-                    "exitCode": extra.get("exit_code", 0),
-                    "durationMs": extra.get("duration_ms", 0),
-                    "ts": ts_raw,
-                    "args": extra.get("args", {}),
-                    "argSources": extra.get("arg_sources", {}),
-                    "logLines": lines,
-                    "initiatedBy": "llm" if extra.get("agent") else "user",
-                }
-            )
+            if include_extra:
+                record["extra"] = _summary_extra(extra)
+            records.append(record)
             lines = []
         else:
             lines.append(
@@ -2077,6 +2251,190 @@ def _parse_log_sequential(
                 }
             )
     return records
+
+
+def _percentile(sorted_vals: list[float], pct: float) -> float:
+    """Linear-interpolated percentile over a pre-sorted list. Empty → 0."""
+    if not sorted_vals:
+        return 0.0
+    if len(sorted_vals) == 1:
+        return float(sorted_vals[0])
+    rank = (pct / 100.0) * (len(sorted_vals) - 1)
+    lo = int(rank)
+    hi = min(lo + 1, len(sorted_vals) - 1)
+    frac = rank - lo
+    return float(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * frac)
+
+
+_EVENT_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def _aggregate_analytics(
+    records: list[dict[str, Any]],
+    since: str,
+    until: str,
+    partial: bool = False,
+    errors: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Fold parsed run_summary records into the Analytics data contract."""
+    from datetime import date, timedelta
+
+    daily: dict[str, dict[str, Any]] = {}
+    buckets: dict[tuple, dict[str, Any]] = {}
+    exceptions: dict[tuple, dict[str, Any]] = {}
+    hosts_seen: set[str] = set()
+    groups_seen: set[str] = set()
+    runnables_seen: set[str] = set()
+    operators_seen: set[str] = set()
+    all_durations: list[float] = []
+    total = success = failure = 0
+
+    for r in records:
+        day = r.get("ts", "")[:10]
+        if not day:
+            continue
+        ok = r.get("exitCode", 0) == 0
+        dur = r.get("durationMs", 0) or 0
+        host = r.get("host", "")
+        group = r.get("group", "") or ""
+        run = r.get("runnable", "")
+        operator = r.get("operator", "") or ""
+        initiated = r.get("initiatedBy", "user")
+        extra = r.get("extra", {}) or {}
+        autonomy = extra.get("autonomy") or ""
+
+        total += 1
+        success += 1 if ok else 0
+        failure += 0 if ok else 1
+        all_durations.append(dur)
+        hosts_seen.add(host)
+        if group:
+            groups_seen.add(group)
+        runnables_seen.add(run)
+        if operator:
+            operators_seen.add(operator)
+
+        d = daily.setdefault(
+            day, {"total": 0, "success": 0, "failure": 0, "durations": []}
+        )
+        d["total"] += 1
+        d["success"] += 1 if ok else 0
+        d["failure"] += 0 if ok else 1
+        d["durations"].append(dur)
+
+        bkey = (day, host, group, run, operator, initiated, autonomy)
+        b = buckets.get(bkey)
+        if b is None:
+            b = {
+                "date": day,
+                "host": host,
+                "group": group,
+                "runnable": run,
+                "operator": operator,
+                "initiatedBy": initiated,
+                "autonomy": autonomy,
+                "total": 0,
+                "success": 0,
+                "failure": 0,
+                "durationMsSum": 0,
+                "events": {lvl: 0 for lvl in _EVENT_LEVELS},
+            }
+            buckets[bkey] = b
+        b["total"] += 1
+        b["success"] += 1 if ok else 0
+        b["failure"] += 0 if ok else 1
+        b["durationMsSum"] += dur
+        for lvl, n in (extra.get("events") or {}).items():
+            if lvl in b["events"]:
+                b["events"][lvl] += n
+
+        exc = extra.get("exception")
+        if exc:
+            msg = exc.get("message") if isinstance(exc, dict) else str(exc)
+            etype = exc.get("type", "") if isinstance(exc, dict) else ""
+            label = f"{etype}: {msg}" if etype else str(msg)
+            ekey = (label, run, host)
+            ex = exceptions.get(ekey)
+            if ex is None:
+                ex = {
+                    "exception": label,
+                    "runnable": run,
+                    "host": host,
+                    "count": 0,
+                    "lastTs": "",
+                }
+                exceptions[ekey] = ex
+            ex["count"] += 1
+            if r.get("ts", "") > ex["lastTs"]:
+                ex["lastTs"] = r.get("ts", "")
+
+    # Zero-filled daily series across the whole window
+    daily_series: list[dict[str, Any]] = []
+    try:
+        start = date.fromisoformat(since)
+        end = date.fromisoformat(until)
+    except ValueError:
+        start = end = None
+    if start and end and start <= end:
+        cur = start
+        while cur <= end:
+            key = cur.isoformat()
+            d = daily.get(key)
+            if d:
+                durs = sorted(d["durations"])
+                daily_series.append(
+                    {
+                        "date": key,
+                        "total": d["total"],
+                        "success": d["success"],
+                        "failure": d["failure"],
+                        "p50DurationMs": round(_percentile(durs, 50)),
+                        "p95DurationMs": round(_percentile(durs, 95)),
+                    }
+                )
+            else:
+                daily_series.append(
+                    {
+                        "date": key,
+                        "total": 0,
+                        "success": 0,
+                        "failure": 0,
+                        "p50DurationMs": 0,
+                        "p95DurationMs": 0,
+                    }
+                )
+            cur += timedelta(days=1)
+
+    durs_sorted = sorted(all_durations)
+    duration_stats = {
+        "p50": round(_percentile(durs_sorted, 50)),
+        "p95": round(_percentile(durs_sorted, 95)),
+        "max": round(durs_sorted[-1]) if durs_sorted else 0,
+        "mean": round(sum(durs_sorted) / len(durs_sorted)) if durs_sorted else 0,
+    }
+
+    exc_list = sorted(exceptions.values(), key=lambda e: e["count"], reverse=True)
+
+    return {
+        "since": since,
+        "until": until,
+        "totalRuns": total,
+        "successCount": success,
+        "failureCount": failure,
+        "durationMs": duration_stats,
+        "daily": daily_series,
+        "buckets": list(buckets.values()),
+        "exceptions": exc_list[:50],
+        "dimensions": {
+            "hosts": sorted(hosts_seen),
+            "groups": sorted(groups_seen),
+            "runnables": sorted(runnables_seen),
+            "operators": sorted(operators_seen),
+            "initiatedBy": ["user", "llm"],
+        },
+        "partial": partial,
+        "errors": errors or [],
+    }
 
 
 def _toml_scalar(v: Any) -> str:

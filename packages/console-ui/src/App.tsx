@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react'
-import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown } from 'antd'
+import React, { useEffect, useState, Suspense } from 'react'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
   FormOutlined,
   HistoryOutlined,
   CalendarOutlined,
+  BarChartOutlined,
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
@@ -19,13 +20,16 @@ import { HistoryView } from './views/HistoryView'
 import { SchedulesView } from './views/SchedulesView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
+// Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
+// so it stays out of the initial bundle.
+const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'forms' | 'schedules' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'forms' | 'schedules' | 'analytics' | 'dev'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -163,6 +167,7 @@ export default function App() {
         : <ThunderboltOutlined />,
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
+    { key: 'analytics' as ViewKey, label: 'Analytics', icon: <BarChartOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
     { key: 'schedules' as ViewKey, label: 'Schedules', icon: <CalendarOutlined /> },
@@ -324,6 +329,7 @@ export default function App() {
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
+                    {view === 'analytics' && <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}><AnalyticsView selectedHost={selectedHost} activeScope={activeScope} /></Suspense>}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
                     {view === 'dev'       && <DevView />}

@@ -26,4 +26,5 @@ nav:
   - Agent Integration: agents.md
   - Jump Hosts: jump-hosts.md
   - runspec-chat: runspec-chat.md
+  - Releasing: releasing.md
   - Changelog: changelog.md

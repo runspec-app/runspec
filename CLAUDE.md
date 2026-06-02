@@ -221,6 +221,14 @@ Both Python and Node packages are active and published.
 self-contained package: own `pyproject.toml`, `runspec.toml`, tests, and CI
 workflow. Release tags follow `{name}-v*` (e.g. `linux-v0.1.0`).
 
+**Releasing — read `docs/releasing.md` before cutting a release.** Tagging is
+automated, publishing is manual, and they're decoupled: bumping a package's
+`version` on `main` makes `auto-tag.yml` write the `{prefix}v{version}` tag, but
+that tag is pushed with `GITHUB_TOKEN` so it does **not** trigger the
+`*-release.yml` workflow. You publish by manually running the package's release
+workflow (`workflow_dispatch`) on that tag. Agents: stop at the version bump +
+changelog on the branch; never push a `{prefix}v*` tag yourself.
+
 `runspec-linux` exports `nc_send(host, port, command, wait, read_timeout)` as a
 public Python API — wrapper runnables for TCP-interface apps do
 `from runspec_linux import nc_send`.

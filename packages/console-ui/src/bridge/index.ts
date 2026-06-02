@@ -115,6 +115,68 @@ export interface TodaySummary {
   upcomingToday: TodayUpcoming[]
 }
 
+export interface AnalyticsDaily {
+  date: string          // YYYY-MM-DD
+  total: number
+  success: number
+  failure: number
+  p50DurationMs: number
+  p95DurationMs: number
+}
+
+export interface AnalyticsBucket {
+  date: string
+  host: string
+  group: string
+  runnable: string
+  operator: string
+  initiatedBy: 'user' | 'llm'
+  autonomy: string
+  total: number
+  success: number
+  failure: number
+  durationMsSum: number
+  events: Record<string, number>   // per-level log counts (DEBUG…CRITICAL)
+}
+
+export interface AnalyticsException {
+  exception: string
+  runnable: string
+  host: string
+  count: number
+  lastTs: string
+}
+
+export interface AnalyticsDimensions {
+  hosts: string[]
+  groups: string[]
+  runnables: string[]
+  operators: string[]
+  initiatedBy: string[]
+}
+
+export interface AnalyticsDurationStats {
+  p50: number
+  p95: number
+  max: number
+  mean: number
+}
+
+export interface AnalyticsData {
+  since: string          // YYYY-MM-DD inclusive lower bound (UTC)
+  until: string          // YYYY-MM-DD upper bound (today, UTC)
+  totalRuns: number
+  successCount: number
+  failureCount: number
+  durationMs: AnalyticsDurationStats
+  daily: AnalyticsDaily[]
+  buckets: AnalyticsBucket[]       // pre-aggregated drill grain — filtered client-side
+  exceptions: AnalyticsException[]
+  dimensions: AnalyticsDimensions
+  partial: boolean                 // true if any host scan failed/timed out
+  errors: { host: string; message: string }[]
+}
+
 export interface RotateHostResult {
   host: string
   pushed: boolean
@@ -154,6 +216,7 @@ export interface BridgeApi {
   resolve_tool_confirmation: (requestId: string, approved: boolean) => Promise<void>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
+  get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>
   generate_ssh_key: () => Promise<{ ok: boolean; public_key: string; key_path: string; committed: boolean; per_host: RotateHostResult[]; message: string }>
   rotate_ssh_key: () => Promise<{ ok: boolean; committed: boolean; public_key: string; key_path: string; per_host: RotateHostResult[]; message: string }>
   get_public_key: () => Promise<{ ok: boolean; public_key: string; message: string }>

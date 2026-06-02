@@ -1,4 +1,4 @@
-import type { BridgeApi, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord, TestResult } from './index'
+import type { BridgeApi, Host, JumpHost, Runnable, HistoryRecord, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket } from './index'
 
 // 80 days ago — triggers the yellow warning state in dev mode
 let MOCK_KEY_CREATED_AT: string = new Date(Date.now() - 80 * 24 * 60 * 60 * 1000).toISOString()
@@ -407,6 +407,144 @@ const MOCK_HISTORY: HistoryRecord[] = [
   },
 ]
 
+// ── Analytics mock ──────────────────────────────────────────────────────────
+// Generate ~30 days of synthetic runs across the mock fleet so the Analytics
+// tab — filters, charts and drill-down — behaves realistically in the browser
+// (no pywebview). A small in-file reducer mirrors the Python aggregation shape.
+
+interface SyntheticRun {
+  ts: string; host: string; group: string; runnable: string
+  operator: string; initiatedBy: 'user' | 'llm'; autonomy: string
+  ok: boolean; durationMs: number
+  events: Record<string, number>; exception?: string
+}
+
+function _seeded(seed: number): () => number {
+  // Deterministic PRNG so dev reloads show a stable dataset.
+  let s = seed
+  return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff }
+}
+
+const _ANALYTICS_RUNS: SyntheticRun[] = (() => {
+  const rng = _seeded(42)
+  const fleet = [
+    { host: 'local',  group: 'ops-tools',      runnables: ['backup', 'get-alerts', 'log-rotate'] },
+    { host: 'prod-1', group: 'platform-core',  runnables: ['backup', 'cache-purge', 'deploy', 'health-check'] },
+    { host: 'prod-2', group: 'platform-core',  runnables: ['migrate', 'health-check'] },
+  ]
+  const operators = ['Jason Finestone', 'Scheduled Task', 'Priya Nair']
+  const autonomies = ['confirm', 'autonomous', 'manual']
+  const runs: SyntheticRun[] = []
+  for (let day = 29; day >= 0; day--) {
+    const base = Date.now() - day * 86400000
+    const runsToday = 6 + Math.floor(rng() * 22)   // 6–27 runs/day
+    for (let i = 0; i < runsToday; i++) {
+      const f = fleet[Math.floor(rng() * fleet.length)]
+      const runnable = f.runnables[Math.floor(rng() * f.runnables.length)]
+      const operator = operators[Math.floor(rng() * operators.length)]
+      const initiatedBy = rng() < 0.25 ? 'llm' : 'user'
+      const fail = rng() < (runnable === 'get-alerts' ? 0.35 : runnable === 'deploy' ? 0.18 : 0.05)
+      const durationMs = Math.round(150 + rng() * (runnable === 'backup' ? 6000 : 2500))
+      const warn = Math.floor(rng() * 4)
+      const errs = fail ? 1 + Math.floor(rng() * 3) : 0
+      runs.push({
+        ts: new Date(base - Math.floor(rng() * 86400000)).toISOString(),
+        host: f.host, group: f.group, runnable, operator, initiatedBy,
+        autonomy: autonomies[Math.floor(rng() * autonomies.length)],
+        ok: !fail, durationMs,
+        events: { DEBUG: Math.floor(rng() * 6), INFO: 4 + Math.floor(rng() * 30), WARNING: warn, ERROR: errs, CRITICAL: 0 },
+        exception: fail
+          ? (runnable === 'get-alerts' ? 'HTTPError: Datadog API request failed: 401 Unauthorized'
+            : runnable === 'deploy' ? 'TimeoutError: health check did not pass within 60s'
+            : 'RuntimeError: unexpected non-zero exit')
+          : undefined,
+      })
+    }
+  }
+  return runs
+})()
+
+function _aggregateMock(runs: SyntheticRun[], sinceDays: number): AnalyticsData {
+  const now = new Date()
+  const sinceDate = new Date(now.getTime() - (sinceDays - 1) * 86400000)
+  const since = sinceDate.toISOString().slice(0, 10)
+  const until = now.toISOString().slice(0, 10)
+  const inWindow = runs.filter(r => r.ts.slice(0, 10) >= since)
+
+  const pct = (vals: number[], p: number): number => {
+    if (vals.length === 0) return 0
+    const s = [...vals].sort((a, b) => a - b)
+    if (s.length === 1) return s[0]
+    const rank = (p / 100) * (s.length - 1)
+    const lo = Math.floor(rank), hi = Math.min(lo + 1, s.length - 1)
+    return Math.round(s[lo] + (s[hi] - s[lo]) * (rank - lo))
+  }
+
+  const dailyMap = new Map<string, { total: number; success: number; failure: number; durs: number[] }>()
+  const bucketMap = new Map<string, AnalyticsBucket>()
+  const excMap = new Map<string, { exception: string; runnable: string; host: string; count: number; lastTs: string }>()
+  const hosts = new Set<string>(), groups = new Set<string>(), runnables = new Set<string>(), operators = new Set<string>()
+  const allDurs: number[] = []
+  let total = 0, success = 0, failure = 0
+
+  for (const r of inWindow) {
+    const day = r.ts.slice(0, 10)
+    total++; r.ok ? success++ : failure++
+    allDurs.push(r.durationMs)
+    hosts.add(r.host); groups.add(r.group); runnables.add(r.runnable); operators.add(r.operator)
+
+    const d = dailyMap.get(day) ?? { total: 0, success: 0, failure: 0, durs: [] }
+    d.total++; r.ok ? d.success++ : d.failure++; d.durs.push(r.durationMs)
+    dailyMap.set(day, d)
+
+    const bkey = [day, r.host, r.group, r.runnable, r.operator, r.initiatedBy, r.autonomy].join('|')
+    const b = bucketMap.get(bkey) ?? {
+      date: day, host: r.host, group: r.group, runnable: r.runnable, operator: r.operator,
+      initiatedBy: r.initiatedBy, autonomy: r.autonomy,
+      total: 0, success: 0, failure: 0, durationMsSum: 0,
+      events: { DEBUG: 0, INFO: 0, WARNING: 0, ERROR: 0, CRITICAL: 0 },
+    }
+    b.total++; r.ok ? b.success++ : b.failure++; b.durationMsSum += r.durationMs
+    for (const k of Object.keys(b.events)) b.events[k] += r.events[k] ?? 0
+    bucketMap.set(bkey, b)
+
+    if (r.exception) {
+      const ekey = [r.exception, r.runnable, r.host].join('|')
+      const ex = excMap.get(ekey) ?? { exception: r.exception, runnable: r.runnable, host: r.host, count: 0, lastTs: '' }
+      ex.count++; if (r.ts > ex.lastTs) ex.lastTs = r.ts
+      excMap.set(ekey, ex)
+    }
+  }
+
+  const daily: AnalyticsData['daily'] = []
+  const start = new Date(since + 'T00:00:00Z')
+  const end = new Date(until + 'T00:00:00Z')
+  for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+    const key = new Date(t).toISOString().slice(0, 10)
+    const d = dailyMap.get(key)
+    daily.push(d
+      ? { date: key, total: d.total, success: d.success, failure: d.failure, p50DurationMs: pct(d.durs, 50), p95DurationMs: pct(d.durs, 95) }
+      : { date: key, total: 0, success: 0, failure: 0, p50DurationMs: 0, p95DurationMs: 0 })
+  }
+
+  return {
+    since, until, totalRuns: total, successCount: success, failureCount: failure,
+    durationMs: {
+      p50: pct(allDurs, 50), p95: pct(allDurs, 95),
+      max: allDurs.length ? Math.max(...allDurs) : 0,
+      mean: allDurs.length ? Math.round(allDurs.reduce((a, b) => a + b, 0) / allDurs.length) : 0,
+    },
+    daily,
+    buckets: [...bucketMap.values()],
+    exceptions: [...excMap.values()].sort((a, b) => b.count - a.count).slice(0, 50),
+    dimensions: {
+      hosts: [...hosts].sort(), groups: [...groups].sort(), runnables: [...runnables].sort(),
+      operators: [...operators].sort(), initiatedBy: ['user', 'llm'],
+    },
+    partial: false, errors: [],
+  }
+}
+
 let MOCK_SCHEDULES: Schedule[] = [
   { id: 'rs-backup-daily', runnable: 'backup', host: 'local', schedule: '0 2 * * *', args: { db: 'postgres-main' } },
   { id: 'rs-log-rotate-weekly', runnable: 'log-rotate', host: 'prod-1', schedule: '0 3 * * 0', args: { keep: 7 } },
@@ -564,6 +702,16 @@ export const mockApi: BridgeApi = {
         { scheduleId: 'sched-3', runnable: 'health-check', host: 'prod-1', nextRun: new Date(Date.now() + 15 * 60 * 1000).toISOString() },
       ],
     }
+  },
+
+  get_analytics: async (hosts, sinceDays = 30, runnable) => {
+    await new Promise(r => setTimeout(r, 250))   // simulate the heavier scan
+    let runs = _ANALYTICS_RUNS
+    if (hosts.length > 0 && !hosts.includes('all')) {
+      runs = runs.filter(r => hosts.includes(r.host))
+    }
+    if (runnable) runs = runs.filter(r => r.runnable === runnable)
+    return _aggregateMock(runs, sinceDays)
   },
 
   get_public_key: async () => ({

@@ -8,7 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.3.0] — 2026-06-02
+## [0.4.0] — 2026-06-02
+
+### Added
+- **Analytics tab — fleet-wide usage insight.** A new **Analytics** tab mines the
+  JSON-lines audit logs that already live on every host into rich, drill-down
+  charts aimed at engineer-level users. A new `get_analytics` bridge method scans
+  the full (uncapped) logs across the fleet's venvs concurrently — local files
+  directly, remote hosts over the same SSH framing as History — buckets every run
+  by day and by host/group/runnable/operator/initiated-by/autonomy, computes
+  duration percentiles and a top-exceptions ranking, and degrades gracefully per
+  host (`partial`/`errors`) when a scan fails. The view (built on
+  `@ant-design/plots`, lazy-loaded so it stays out of the initial bundle) shows KPI
+  cards, runs-over-time with a success/failure split, per-day success rate,
+  duration p50/p95 trend, top runnables, operator and user-vs-agent breakdowns, and
+  a top-exceptions table. A filter bar (date range, host, group, runnable, operator,
+  user/LLM) plus click-to-drill on the charts re-filters everything instantly from
+  the pre-aggregated buckets, and the charts follow the dark/light theme.
+- The log parsers gained an opt-in `include_extra` flag that surfaces the rich
+  `run_summary` fields (autonomy, per-level event counts, exception, command path)
+  for analytics. The History tab's record shape is unchanged.
 
 ### Added
 - **Dev tab — a domain-specific DevTools for the console.** A new **Dev** tab
