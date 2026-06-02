@@ -86,6 +86,26 @@ class TestScriptNormalisation:
         assert s["args"] == {}
         assert s["groups"] == {}
         assert s["commands"] == {}
+        assert s["require_command"] is False
+
+    def test_require_command_hyphen_normalised(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("""
+[db]
+require-command = true
+
+[db.commands.migrate]
+
+[db.commands.migrate.commands.up]
+require-command = true
+""")
+        result = load_raw(p)
+        db = result["runnables"]["db"]
+        assert db["require_command"] is True
+        # Default False on a command that does not declare it…
+        assert db["commands"]["migrate"]["require_command"] is False
+        # …and recursion carries the flag into nested commands.
+        assert db["commands"]["migrate"]["commands"]["up"]["require_command"] is True
 
     def test_autonomy_reason_hyphen_normalised(self, tmp_path):
         p = tmp_path / "runspec.toml"

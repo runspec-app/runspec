@@ -212,6 +212,11 @@
           "description": "Argument group constraints (exclusive, inclusive, at-least-one, exactly-one, conditional).",
           "additionalProperties": { "$ref": "#/$defs/group" }
         },
+        "require-command": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, invoking this runnable without naming one of its commands errors with the list of available commands (like argparse add_subparsers(required=True))."
+        },
         "commands": {
           "type": "object",
           "description": "Subcommands. Each key is a subcommand name with its own args, groups, autonomy, and description.",
@@ -421,6 +426,11 @@
           "type": "object",
           "description": "Argument group constraints for this subcommand.",
           "additionalProperties": { "$ref": "#/$defs/group" }
+        },
+        "require-command": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, invoking this subcommand without naming one of its nested commands errors with the list of available commands (like argparse add_subparsers(required=True))."
         },
         "commands": {
           "type": "object",

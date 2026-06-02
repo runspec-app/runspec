@@ -879,6 +879,104 @@ class TestSubcommandGlobals:
         assert "--region" in globals_section
 
 
+class TestRequireCommand:
+    """`require-command = true` makes choosing a command mandatory at that level.
+    See spec/SPEC.md → Subcommands → Requiring a command."""
+
+    def _write_db(self, tmp_path, monkeypatch):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [db]
+                require-command = true
+                [db.commands.migrate]
+                [db.commands.seed]
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+    def test_no_command_errors_and_lists_commands(self, tmp_path, monkeypatch, capsys):
+        self._write_db(tmp_path, monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="db", argv=[])
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "requires a command" in out
+        assert "migrate" in out
+        assert "seed" in out
+
+    def test_valid_command_passes(self, tmp_path, monkeypatch):
+        self._write_db(tmp_path, monkeypatch)
+        result = runspec.parse(script_name="db", argv=["migrate"])
+        assert result.runspec_command_path == ["migrate"]
+        assert result.runspec_command == "migrate"
+
+    def test_typo_suggests_closest_command(self, tmp_path, monkeypatch, capsys):
+        self._write_db(tmp_path, monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="db", argv=["migrho"])
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "Unknown command" in out
+        assert "Did you mean: migrate?" in out
+
+    def test_nested_requirement_enforced(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [cluster]
+                require-command = true
+                [cluster.commands.node]
+                require-command = true
+                [cluster.commands.node.commands.list]
+                [cluster.commands.node.commands.drain]
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        # Choosing the parent command but not the required sub-sub-command errors,
+        # listing the nested commands under the resolved path.
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="cluster", argv=["node"])
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "cluster node" in out
+        assert "list" in out
+        assert "drain" in out
+        # Descending all the way is fine.
+        result = runspec.parse(script_name="cluster", argv=["node", "drain"])
+        assert result.runspec_command_path == ["node", "drain"]
+
+    def test_backward_compat_without_flag(self, tmp_path, monkeypatch):
+        """Commands present but require-command absent → runs at root, no error."""
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [db]
+                [db.commands.migrate]
+                [db.commands.seed]
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runspec.parse(script_name="db", argv=[])
+        assert result.runspec_command_path == []
+
+    def test_help_still_works_at_required_level(self, tmp_path, monkeypatch, capsys):
+        self._write_db(tmp_path, monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="db", argv=["--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert "Commands (required):" in out
+        assert "migrate" in out
+        assert "seed" in out
+
+    def test_load_spec_bypasses_enforcement(self, tmp_path, monkeypatch):
+        """Introspection/emit must succeed even when a command is mandatory."""
+        self._write_db(tmp_path, monkeypatch)
+        spec = runspec.load_spec(script_name="db")
+        assert spec.runspec_runnable == "db"
+
+
 class TestHyphenatedArgValidation:
     """Regression: a hyphenated arg name must survive the full parse pipeline.
     parsed_values is keyed by underscore; validation normalises before lookup."""

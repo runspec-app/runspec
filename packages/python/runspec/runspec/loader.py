@@ -102,6 +102,7 @@ def _normalise_script(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "examples": _normalise_examples(raw.get("examples", [])),
         "args": _normalise_args(raw.get("args", {})),
         "groups": _normalise_groups(raw.get("groups", {})),
+        "require_command": bool(raw.get("require-command", False)),
         "commands": {cmd_name: _normalise_script(cmd_name, cmd_data) for cmd_name, cmd_data in raw.get("commands", {}).items()},
     }
 

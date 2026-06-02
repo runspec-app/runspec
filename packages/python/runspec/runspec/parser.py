@@ -23,7 +23,7 @@ from runspec.types import coerce
 from runspec.validator import raise_if_errors, validate_args, validate_groups
 
 
-def parse(script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None) -> RunSpec:
+def parse(script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None, *, _enforce_required_command: bool = True) -> RunSpec:
     """
     Parse arguments for the calling runnable.
 
@@ -40,7 +40,7 @@ def parse(script_name: str | None = None, argv: list[str] | None = None, config_
         RunSpec — the fully parsed, validated, coerced argument namespace.
     """
     try:
-        return _parse_impl(script_name, argv, config_path)
+        return _parse_impl(script_name, argv, config_path, enforce_required_command=_enforce_required_command)
     except errors.RunSpecError as e:
         print(str(e))
         sys.exit(1)
@@ -49,7 +49,12 @@ def parse(script_name: str | None = None, argv: list[str] | None = None, config_
         sys.exit(1)
 
 
-def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None) -> RunSpec:
+def _parse_impl(
+    script_name: str | None = None,
+    argv: list[str] | None = None,
+    config_path: Path | None = None,
+    enforce_required_command: bool = True,
+) -> RunSpec:
     """Internal: full parse pipeline. Raises on error — call parse() for CLI use."""
     # 1. Find config — explicit arg > RUNSPEC_CONFIG > caller's package > cwd.
     # The caller-relative walk locates runspec.toml shipped inside an installed
@@ -136,12 +141,25 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
     # effective arg set so subcommands inherit them; command tokens are stripped
     # from argv_list, leaving flags/positionals for _parse_argv.
     argv_list = argv if argv is not None else sys.argv[1:]
-    raw_script, command_path, argv_list, global_args = _resolve_subcommand(raw_script, argv_list)
+    raw_script, command_path, argv_list, global_args, leftover_token = _resolve_subcommand(raw_script, argv_list)
 
     # 6. Handle --help / -h before any validation
     if "--help" in argv_list or "-h" in argv_list:
         _print_help(name, raw_script, command_path, global_args)
         sys.exit(0)
+
+    # 6.5. Enforce require-command. The resolved leaf carries the deepest node's
+    # own commands/require_command, so this single check enforces at every depth
+    # (root or nested). Runs after --help so `<name> --help` still lists
+    # commands; skipped by load_spec (introspection/emit must not be blocked).
+    if enforce_required_command and raw_script.get("require_command") and raw_script.get("commands"):
+        raise errors.RunSpecError(
+            errors.format_missing_command(
+                " ".join([name, *command_path]),
+                list(raw_script["commands"].keys()),
+                mistyped_token=leftover_token,
+            )
+        )
 
     # 7. Parse argv into raw values
     parsed_values = _parse_argv(argv_list, raw_script["args"])
@@ -229,8 +247,11 @@ def load_spec(script_name: str | None = None, config_path: Path | None = None) -
     emit, and scaffold operations.
 
     Returns a RunSpec with default values only — no CLI args applied.
+
+    require-command is not enforced here: introspection/emit must succeed even
+    for a runnable that mandates a subcommand on the CLI.
     """
-    return parse(script_name=script_name, argv=[], config_path=config_path)
+    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -328,7 +349,7 @@ def _print_help(name: str, script: dict[str, Any], command_path: list[str] | Non
 
     # ── Commands ──────────────────────────────────────────────────────────────
     if commands:
-        print("\nCommands:")
+        print("\nCommands (required):" if script.get("require_command") else "\nCommands:")
         cmd_col = max(len(c) for c in commands) + 2
         for cmd_name, cmd_spec in commands.items():
             cmd_desc = cmd_spec.get("description") or ""
@@ -448,7 +469,7 @@ def _lookup_arg(token: str, arg_specs: dict[str, Any]) -> dict[str, Any] | None:
 def _resolve_subcommand(
     raw_script: dict[str, Any],
     argv: list[str],
-) -> tuple[dict[str, Any], list[str], list[str], set[str]]:
+) -> tuple[dict[str, Any], list[str], list[str], set[str], str | None]:
     """
     Resolve the subcommand path, allowing global flags to precede the command
     token (`tool --region eu show --symbol X`).
@@ -475,6 +496,9 @@ def _resolve_subcommand(
         global_args:    names of the root runnable's own args — the inherited
                         globals. Every other name in merged_script['args'] was
                         declared on a command along the path.
+        leftover_token: the first bare token that did *not* name a command at the
+                        depth it was seen, or None. Used by the require-command
+                        check to offer a `Did you mean` suggestion on a typo.
     """
     path: list[str] = []
     current = raw_script
@@ -482,6 +506,7 @@ def _resolve_subcommand(
     merged_groups: dict[str, Any] = dict(raw_script.get("groups", {}))
     global_args: set[str] = set(raw_script.get("args", {}).keys())
     remaining: list[str] = []
+    leftover_token: str | None = None
 
     i = 0
     n = len(argv)
@@ -520,18 +545,20 @@ def _resolve_subcommand(
             continue
 
         # Otherwise it is a positional/unknown — leave it for _parse_argv.
+        if leftover_token is None:
+            leftover_token = token
         remaining.append(token)
         i += 1
 
     if not path:
         # No subcommand resolved — return the script and argv untouched so the
         # common (no-command) path behaves exactly as before.
-        return raw_script, [], list(argv), set(raw_script.get("args", {}).keys())
+        return raw_script, [], list(argv), set(raw_script.get("args", {}).keys()), leftover_token
 
     merged_script = dict(current)
     merged_script["args"] = merged_args
     merged_script["groups"] = merged_groups
-    return merged_script, path, remaining, global_args
+    return merged_script, path, remaining, global_args, leftover_token
 
 
 def _parse_argv(

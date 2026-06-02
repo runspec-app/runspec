@@ -211,7 +211,7 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm | Notes |
 |---|---|---|---|
-| `runspec` | 0.22.0 | PyPI | Core library |
+| `runspec` | 0.23.0 | PyPI | Core library |
 | `runspec-node` | 0.17.0 | npm | Node port |
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console, unreleased) |
 | `runspec-linux` | 0.1.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
@@ -254,6 +254,12 @@ public Python API — wrapper runnables for TCP-interface apps do
   implemented these. The shared compliance fixtures
   (`tests/integration/fixtures/`) were intentionally left untouched so CI
   stays green — add these fields to a fixture only once Node matches.
+- **Node parity: `require-command`** — Python 0.23.0 added a parent-level
+  `require-command = true` field on a runnable/subcommand that mandates choosing
+  a command (argparse `add_subparsers(required=True)` semantics; enforced only on
+  real CLI parsing, not `load_spec`/emit). Node has not yet implemented this.
+  Shared compliance fixtures (`tests/integration/fixtures/`) stay untouched until
+  Node matches.
 
 Build order: `emit --rundeck` first (current platform), `emit --ansible`
 second (migration target), `push --rundeck` last (CI/CD automation).

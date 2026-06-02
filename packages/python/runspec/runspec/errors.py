@@ -42,6 +42,10 @@ class UnknownArg(RunSpecError):
     """An argument was provided that is not in the spec."""
 
 
+class MissingCommand(RunSpecError):
+    """A runnable level requires a command but none was chosen."""
+
+
 class GroupViolation(RunSpecError):
     """A group constraint was violated."""
 
@@ -127,6 +131,21 @@ def format_unknown_arg(name: str, known_args: list[str]) -> str:
     suggestion = _suggest(name, known_args)
     if suggestion:
         lines.append(f"\n   Did you mean: --{suggestion}?")
+    return "\n".join(lines)
+
+
+def format_missing_command(
+    runnable_display_name: str,
+    available_commands: list[str],
+    mistyped_token: str | None = None,
+) -> str:
+    lines = [f"✗  '{runnable_display_name}' requires a command." if mistyped_token is None else f"✗  Unknown command for '{runnable_display_name}': {mistyped_token!r}"]
+    lines.append(f"   Available commands: {', '.join(available_commands)}")
+    if mistyped_token is not None:
+        suggestion = _suggest(mistyped_token, available_commands)
+        if suggestion:
+            lines.append(f"\n   Did you mean: {suggestion}?")
+    lines.append(f"\n   Run '{runnable_display_name} <command> --help' for details.")
     return "\n".join(lines)
 
 

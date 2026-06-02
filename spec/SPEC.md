@@ -965,6 +965,59 @@ current depth. A flag value that happens to match a command name
 args alongside the subcommand's own args, so required globals are visible from
 any command's help.
 
+### Requiring a command
+
+By default a runnable that defines `commands` may still be invoked without
+naming one — it runs at the parent level. Set `require-command = true` on the
+runnable (or on any nested command that itself has commands) to make choosing a
+command mandatory, matching `argparse`'s `add_subparsers(required=True)`, Click
+groups, and `git`/`docker`/`kubectl`. Invoking that level with no command — or
+with a bare token that is not one of its commands — errors and lists the
+available commands; a mistyped token gets a `Did you mean` suggestion.
+
+`require-command` is a **parent-level** flag: it attaches to the act of choosing
+among the commands, not to any individual child. Put it on whichever level must
+force a choice, and repeat it at each such level; omit it on a level that is
+fine to run as-is. A leaf command (one with no `commands` of its own) never
+takes the flag — there is nothing below to choose.
+
+```toml
+[db]
+require-command = true
+
+[db.commands.migrate]
+[db.commands.seed]
+```
+
+```
+db            # ✗  'db' requires a command. Available commands: migrate, seed
+db migrate    # ok
+```
+
+Nested, required at both levels:
+
+```toml
+[cluster]
+require-command = true
+
+[cluster.commands.node]
+require-command = true
+
+[cluster.commands.node.commands.list]
+[cluster.commands.node.commands.drain]
+```
+
+```
+cluster              # ✗  'cluster' requires a command. Available commands: node
+cluster node         # ✗  'cluster node' requires a command. Available commands: list, drain
+cluster node drain   # ok
+```
+
+`require-command` is a static field, **not** an inferred one — it adds no row to
+the inference table. It is enforced only when parsing real CLI arguments;
+introspection via `load_spec()` (and therefore `emit`) is unaffected, and
+emitted MCP/JSON-Schema tool sets already expose only fully-pathed leaf commands.
+
 ---
 
 ## Form Control Inference

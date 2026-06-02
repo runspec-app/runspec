@@ -7,6 +7,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.23.0] — 2026-06-02
+
+### Added
+
+- **Required subcommands: `require-command`.** A runnable (or any nested command
+  that itself has `commands`) can set `require-command = true` to make choosing a
+  command mandatory, matching `argparse`'s `add_subparsers(required=True)`, Click
+  groups, and `git`/`docker`/`kubectl`. Invoking that level with no command — or
+  with a bare token that is not one of its commands — errors with the list of
+  available commands; a mistyped token gets a `Did you mean` suggestion.
+
+  ```toml
+  [db]
+  require-command = true
+
+  [db.commands.migrate]
+  [db.commands.seed]
+  ```
+
+  It is a **parent-level** flag (it governs the act of choosing among the
+  commands, not any individual child) and is enforced only when parsing real CLI
+  arguments — `load_spec()` introspection and `emit` are unaffected. New
+  `MissingCommand` error class with a human-first formatter. (Node port pending —
+  see Queued in `CLAUDE.md`.)
+
 ## [0.22.0] — 2026-06-02
 
 ### Added
