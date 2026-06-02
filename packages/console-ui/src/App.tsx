@@ -40,6 +40,7 @@ export default function App() {
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
+  const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const inFlight = useInFlight()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
@@ -134,6 +135,14 @@ export default function App() {
     if (autoSwitch) { setView('console') }
     window.dispatchEvent(new CustomEvent('runspec:send_chat', { detail: { message } }))
   }
+
+  // ConsoleView broadcasts the in-flight chat turn so the command bar's send
+  // button can flip to a Stop control while the assistant is working.
+  useEffect(() => {
+    const onActive = (e: Event) => setActiveChatId((e as CustomEvent).detail?.id ?? null)
+    window.addEventListener('runspec:chat_active', onActive)
+    return () => window.removeEventListener('runspec:chat_active', onActive)
+  }, [])
 
   const headerBg  = isDark ? '#0d0d0d' : '#fafafa'
   const siderBg   = isDark ? '#111'    : '#fafafa'
@@ -361,6 +370,8 @@ export default function App() {
                 onRunRunnable={handleRunRunnable}
                 onOpenForm={handleOpenForm}
                 onSendChat={handleSendChat}
+                activeChatId={activeChatId}
+                onStopChat={(id) => { bridge.cancel_chat(id).catch(console.error) }}
                 history={inputHistory}
                 autoSwitch={autoSwitch}
                 onToggleAutoSwitch={toggleAutoSwitch}

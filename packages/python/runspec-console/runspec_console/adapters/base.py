@@ -61,6 +61,35 @@ class ModelAdapter(ABC):
         ...
 
 
+def apply_prompt_caching(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Add ephemeral cache_control breakpoints to the static prompt prefix.
+
+    Prompt caching is a *prefix match* in render order ``tools → system →
+    messages``: a breakpoint on the last tool caches the whole (large, static)
+    tools block, and turning ``system`` into a cached text block caches
+    tools+system together. The tools array is rebuilt from the same discovered
+    runnables each turn, so it's byte-stable within a session — subsequent turns
+    read the prefix at ~0.1x instead of full price. Below the model's minimum
+    cacheable prefix (~2K tokens on Sonnet 4.6, ~4K on Opus/Haiku) the API
+    silently skips caching with no error, so this is always safe to apply.
+
+    Pure and SDK-free: takes the messages.create()/stream() kwargs dict, returns
+    it with caching applied. Copies the tool dicts it annotates rather than
+    mutating the caller's shared tool list.
+    """
+    tools = kwargs.get("tools")
+    if tools:
+        annotated = [dict(t) for t in tools]
+        annotated[-1] = {**annotated[-1], "cache_control": {"type": "ephemeral"}}
+        kwargs["tools"] = annotated
+    system = kwargs.get("system")
+    if isinstance(system, str) and system.strip():
+        kwargs["system"] = [
+            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+        ]
+    return kwargs
+
+
 def load_adapter(provider: str, **kwargs: Any) -> ModelAdapter:
     """
     Instantiate the named adapter.  Raises ImportError with install instructions

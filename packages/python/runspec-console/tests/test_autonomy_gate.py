@@ -22,6 +22,7 @@ class _StubBridge:
         self._lock = threading.Lock()
         self._runnables_cache = runnables
         self._pending_confirms = {}
+        self._chat_cancels = {}
         self._dispatched = []
         self._run_result = run_result
 
@@ -39,6 +40,7 @@ class _StubBridge:
     _gated_run_tool_async = Bridge._gated_run_tool_async
     _await_confirmation = Bridge._await_confirmation
     resolve_tool_confirmation = Bridge.resolve_tool_confirmation
+    cancel_chat = Bridge.cancel_chat
 
 
 def _runnable(autonomy="confirm", args=None):
@@ -188,3 +190,33 @@ def test_async_confirm_deny_does_not_run():
     out = _run_async_gate(b, {}, False)
     assert "declined" in out
     assert out != "RAN"
+
+
+def test_async_cancel_during_pending_confirm_unblocks_and_refuses():
+    """Stop pressed while the Approve/Deny dialog is up must wake the gate
+    promptly (not wait out the 5-min timeout) and refuse the tool."""
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+
+    def stop():
+        for _ in range(400):
+            if b._dispatched:
+                break
+            time.sleep(0.005)
+        assert b._dispatched, "expected a tool_confirm dispatch"
+        b.cancel_chat("chat1")  # user hits Stop instead of answering
+
+    async def main():
+        watcher = threading.Thread(target=stop)
+        watcher.start()
+        out = await b._gated_run_tool_async("local__flush-dns", {}, "chat1")
+        watcher.join(timeout=5)
+        return out
+
+    start = time.monotonic()
+    out = asyncio.run(main())
+    elapsed = time.monotonic() - start
+
+    assert out != "RAN"  # tool never executed
+    assert "stopped" in out.lower()
+    assert elapsed < 2  # woke immediately, didn't sit on the confirm timeout
+    assert not b._pending_confirms  # entry cleaned up

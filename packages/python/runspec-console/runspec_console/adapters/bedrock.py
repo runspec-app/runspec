@@ -14,7 +14,7 @@ from typing import Any
 
 import anthropic
 
-from .base import ChatResponse, ModelAdapter, ToolCall
+from .base import ChatResponse, ModelAdapter, ToolCall, apply_prompt_caching
 
 DEFAULT_MODEL = "anthropic.claude-sonnet-4-6"
 DEFAULT_SYSTEM = (
@@ -67,6 +67,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_prompt_caching(kwargs)
         response = await self.client.messages.create(**kwargs)
         text = next(
             (block.text for block in response.content if hasattr(block, "text")), None
@@ -94,6 +95,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_prompt_caching(kwargs)
         async with self.client.messages.stream(**kwargs) as stream:
             async for token in stream.text_stream:
                 yield token
@@ -111,6 +113,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_prompt_caching(kwargs)
         tool_map: dict[int, dict[str, Any]] = {}
         stop_reason = "end_turn"
         async with self.client.messages.stream(**kwargs) as stream:

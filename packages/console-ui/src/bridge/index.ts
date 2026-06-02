@@ -147,6 +147,8 @@ export interface BridgeApi {
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string) => Promise<string>
   cancel_invocation: (invId: string) => Promise<void>
   send_chat: (message: string, invocationId?: string) => Promise<string>
+  cancel_chat: (chatId: string) => Promise<void>
+  clear_chat: () => Promise<void>
   resolve_tool_confirmation: (requestId: string, approved: boolean) => Promise<void>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>

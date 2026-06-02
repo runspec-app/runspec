@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, Popconfirm, Tag, Tooltip, Typography } from 'antd'
-import { CloseOutlined, LoadingOutlined } from '@ant-design/icons'
+import { CloseOutlined, LoadingOutlined, PlusOutlined } from '@ant-design/icons'
 import { bridge, type InFlightRecord, type Runnable } from '../bridge'
 import { OutputPanel, useInvocationBlocks, type RerunData } from '../components/OutputPanel'
 import { useIsDark } from '../ThemeContext'
@@ -72,9 +72,23 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 }
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
-  const { blocks, addBlock } = useInvocationBlocks()
+  const { blocks, addBlock, clearBlocks } = useInvocationBlocks()
   const addBlockRef = useRef(addBlock)
   addBlockRef.current = addBlock
+
+  // Reset the conversation: clear the transcript and the model's memory of
+  // prior turns (the agent chat is otherwise one rolling conversation).
+  const handleNewChat = async () => {
+    await bridge.clear_chat()
+    clearBlocks()
+  }
+
+  // Tell the command bar which chat turn (if any) is in flight, so its send
+  // button can become a Stop control while the assistant is working.
+  const activeChatId = blocks.find(b => b.type === 'chat' && !b.done)?.id ?? null
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('runspec:chat_active', { detail: { id: activeChatId } }))
+  }, [activeChatId])
 
   // Invoked from the App-level command bar
   useEffect(() => {
@@ -139,6 +153,15 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
       <InFlightStrip inFlight={inFlight} />
+      {blocks.length > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Tooltip title="Clear the transcript and the assistant's memory of this conversation">
+            <Button size="small" icon={<PlusOutlined />} onClick={handleNewChat}>
+              New chat
+            </Button>
+          </Tooltip>
+        </div>
+      )}
       <OutputPanel blocks={blocks} onRerun={handleRerun} onAskLlm={handleAskLlm} />
     </div>
   )

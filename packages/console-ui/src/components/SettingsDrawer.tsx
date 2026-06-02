@@ -41,6 +41,7 @@ function LlmTab() {
         model: llm.model ?? '',
         base_url: llm.base_url ?? '',
         aws_region: llm.aws_region ?? '',
+        system: llm.system ?? '',
       })
     })
   }, [form])
@@ -65,6 +66,7 @@ function LlmTab() {
           ...(v.model      ? { model: v.model }           : {}),
           ...(v.base_url   ? { base_url: v.base_url }     : {}),
           ...(v.aws_region ? { aws_region: v.aws_region } : {}),
+          ...(v.system?.trim() ? { system: v.system.trim() } : {}),
         },
       })
       setSaved(true)
@@ -92,6 +94,16 @@ function LlmTab() {
           )}
           <Form.Item name="model" label="Model">
             <Input placeholder={PROVIDER_MODELS[provider] ?? ''} style={{ fontFamily: 'monospace' }} />
+          </Form.Item>
+          <Form.Item
+            name="system"
+            label="System prompt"
+            help="Optional standing instructions applied to every chat turn — site policy, host context, tone. For rules you must enforce, use a runnable's autonomy level; this is guidance, not a guard."
+          >
+            <Input.TextArea
+              autoSize={{ minRows: 3, maxRows: 10 }}
+              placeholder={'You are a helpful assistant with access to runspec tools on local and remote hosts.\nUse tools when they help; briefly explain each call before running it.'}
+            />
           </Form.Item>
           {(provider === 'openai' || provider === 'bedrock') && (
             <Form.Item name="base_url" label="Base URL" help={provider === 'bedrock' ? 'Corporate proxy URL (optional)' : 'Optional — for OpenAI-compatible endpoints'}>

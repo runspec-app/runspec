@@ -53,8 +53,20 @@ class Bridge:
         self._hosts: list[dict[str, Any]] = []
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
         self._runnables_cache: list[dict[str, Any]] = []
-        # request_id → (Event, {"approved": bool}) for agent tool-call confirmations
-        self._pending_confirms: dict[str, tuple[threading.Event, dict[str, bool]]] = {}
+        # Persistent agent conversation so the model remembers prior turns. One
+        # rolling conversation per app session; reset via clear_chat(). The lock
+        # serialises turns so two quick sends can't interleave the history.
+        self._chat_history: list[dict[str, Any]] = []
+        self._chat_lock = threading.Lock()
+        # chat_id → cancel Event, so a turn can be stopped mid-run (guarded by
+        # self._lock, NOT _chat_lock — cancel must fire while a turn holds that).
+        self._chat_cancels: dict[str, threading.Event] = {}
+        # request_id → (chat_id, Event, {"approved", "cancelled"}) for agent
+        # tool-call confirmations. chat_id lets cancel_chat wake a pending
+        # prompt so Stop works while the Approve/Deny dialog is up.
+        self._pending_confirms: dict[
+            str, tuple[str, threading.Event, dict[str, bool]]
+        ] = {}
         self._reload_hosts()
         self._start_refresh_watcher()
 
@@ -897,129 +909,238 @@ class Bridge:
 
     def send_chat(self, message: str, invocation_id: str | None = None) -> str:
         chat_id = uuid.uuid4().hex[:12]
+        with self._lock:
+            self._chat_cancels[chat_id] = threading.Event()
 
         def run() -> None:
             try:
-                adapter = self._get_adapter()
-            except Exception as exc:
-                self._dispatch("runspec:token", {"id": chat_id, "token": f"⚠ {exc}"})
-                self._dispatch(
-                    "runspec:run_end", {"id": chat_id, "exit_code": 1, "duration_ms": 0}
-                )
-                return
-            if adapter is None:
-                self._dispatch(
-                    "runspec:token",
-                    {
-                        "id": chat_id,
-                        "token": "⚠ No LLM provider configured. Set provider and API key in Settings.",
-                    },
-                )
-                self._dispatch(
-                    "runspec:run_end", {"id": chat_id, "exit_code": 1, "duration_ms": 0}
-                )
-                return
-            asyncio.run(self._agentic_chat_turn(chat_id, message, adapter))
+                try:
+                    adapter = self._get_adapter()
+                except Exception as exc:
+                    self._dispatch(
+                        "runspec:token", {"id": chat_id, "token": f"⚠ {exc}"}
+                    )
+                    self._dispatch(
+                        "runspec:run_end",
+                        {"id": chat_id, "exit_code": 1, "duration_ms": 0},
+                    )
+                    return
+                if adapter is None:
+                    self._dispatch(
+                        "runspec:token",
+                        {
+                            "id": chat_id,
+                            "token": "⚠ No LLM provider configured. Set provider and API key in Settings.",
+                        },
+                    )
+                    self._dispatch(
+                        "runspec:run_end",
+                        {"id": chat_id, "exit_code": 1, "duration_ms": 0},
+                    )
+                    return
+                asyncio.run(self._agentic_chat_turn(chat_id, message, adapter))
+            finally:
+                with self._lock:
+                    self._chat_cancels.pop(chat_id, None)
 
         t = threading.Thread(target=run, daemon=True)
         t.start()
         return chat_id
 
+    def cancel_chat(self, chat_id: str) -> None:
+        """Signal an in-flight chat turn to stop. Best-effort: it halts at the
+        next safe checkpoint — no further model calls and no further tool runs.
+        A tool already executing (e.g. a remote command) is left to finish."""
+        with self._lock:
+            event = self._chat_cancels.get(chat_id)
+        if event is not None:
+            logger.info("chat %s: cancel requested", chat_id)
+            event.set()
+        # Wake any confirmation prompt waiting on this turn — otherwise Stop does
+        # nothing while the Approve/Deny dialog is up (the gate is parked in
+        # event.wait, which the cancel flag alone never interrupts). Mark them
+        # cancelled so the gate refuses the tool rather than running it.
+        with self._lock:
+            pending = [
+                (confirm_event, holder)
+                for cid, confirm_event, holder in self._pending_confirms.values()
+                if cid == chat_id
+            ]
+        for confirm_event, holder in pending:
+            holder["cancelled"] = True
+            confirm_event.set()
+
+    def clear_chat(self) -> None:
+        """Start a fresh conversation — drop the model's memory of prior turns.
+
+        Blocks on the conversation lock so it can't run mid-turn (a turn in
+        flight finishes against its history, then the next turn starts empty)."""
+        with self._chat_lock:
+            self._chat_history = []
+
+    def _trim_chat_history(self, max_messages: int = 60) -> None:
+        """Bound the rolling conversation so a long-lived session doesn't grow
+        context without limit. Trims oldest messages, then drops any leading
+        assistant / tool-result turn so the kept history still starts on a plain
+        user message — the API requires that, and it keeps tool_use/tool_result
+        pairs intact. Caller must hold self._chat_lock."""
+        hist = self._chat_history
+        if len(hist) <= max_messages:
+            return
+        del hist[: len(hist) - max_messages]
+        while hist and not (
+            hist[0].get("role") == "user" and isinstance(hist[0].get("content"), str)
+        ):
+            hist.pop(0)
+
     async def _agentic_chat_turn(
         self, chat_id: str, message: str, adapter: Any
     ) -> None:
         start = time.monotonic()
-        history: list[dict[str, Any]] = [{"role": "user", "content": message}]
         tools = self._runnables_to_tools()
-        total_input = 0
-        total_output = 0
+        usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+        cancel = self._chat_cancels.get(chat_id) or threading.Event()
+        stopped = False
 
-        for _ in range(10):  # max agentic iterations
-            response: Any = None
-            try:
-                async for event in adapter.stream_with_tools(history, tools):
-                    if event[0] == "text":
-                        self._dispatch(
-                            "runspec:token", {"id": chat_id, "token": event[1]}
+        # Hold the conversation lock for the whole turn: it both serialises
+        # concurrent sends and is the single owner of self._chat_history.
+        with self._chat_lock:
+            history = self._chat_history
+            history.append({"role": "user", "content": message})
+
+            for _ in range(10):  # max agentic iterations
+                if cancel.is_set():
+                    stopped = True
+                    break
+                response: Any = None
+                assistant_text = ""  # this iteration's streamed assistant text
+                try:
+                    async for event in adapter.stream_with_tools(history, tools):
+                        if cancel.is_set():
+                            stopped = True
+                            break  # abort streaming (closes the provider stream)
+                        if event[0] == "text":
+                            assistant_text += event[1]
+                            self._dispatch(
+                                "runspec:token", {"id": chat_id, "token": event[1]}
+                            )
+                        elif event[0] == "done":
+                            response = event[1]
+                except Exception as exc:
+                    self._dispatch(
+                        "runspec:token", {"id": chat_id, "token": f"\n⚠ Error: {exc}"}
+                    )
+                    break
+
+                if response is not None:
+                    for key, value in self._usage_from_response(response).items():
+                        usage_total[key] += value
+
+                # Persisting any clean assistant text is always safe (text-only,
+                # no tool pairing); do it whenever we're about to leave the loop.
+                if stopped:
+                    if assistant_text.strip():
+                        history.append({"role": "assistant", "content": assistant_text})
+                    break
+
+                if (
+                    response is None
+                    or response.stop_reason != "tool_use"
+                    or not response.tool_calls
+                ):
+                    # Final turn — persist the assistant's reply so the next user
+                    # message sees it (tool-calling turns are persisted below via
+                    # make_tool_turn, which already carries the assistant turn).
+                    if response is not None and assistant_text.strip():
+                        history.append({"role": "assistant", "content": assistant_text})
+                    break
+
+                # About to act on hosts — honour a stop requested while the model
+                # was producing the tool calls, before running any of them.
+                if cancel.is_set():
+                    stopped = True
+                    if assistant_text.strip():
+                        history.append({"role": "assistant", "content": assistant_text})
+                    break
+
+                # Execute each tool call and dispatch events
+                tool_results: list[tuple[Any, str]] = []
+                for tc in response.tool_calls:
+                    self._dispatch(
+                        "runspec:tool_start",
+                        {
+                            "id": chat_id,
+                            "tool_name": tc.name,
+                            "tool_input": tc.input,
+                        },
+                    )
+                    if cancel.is_set():
+                        # Stopped mid-batch — refuse the rest without prompting
+                        # or running, but still record a paired tool_result.
+                        output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — you stopped the assistant."
+                    else:
+                        output = await self._gated_run_tool_async(
+                            tc.name, tc.input, chat_id
                         )
-                    elif event[0] == "done":
-                        response = event[1]
-            except Exception as exc:
-                self._dispatch(
-                    "runspec:token", {"id": chat_id, "token": f"\n⚠ Error: {exc}"}
-                )
-                break
+                    self._dispatch(
+                        "runspec:tool_end",
+                        {
+                            "id": chat_id,
+                            "tool_name": tc.name,
+                            "output": output[:2000],
+                        },
+                    )
+                    tool_results.append((tc, output))
 
-            if response is not None:
-                inp, out = self._usage_from_response(response)
-                total_input += inp
-                total_output += out
+                history.extend(adapter.make_tool_turn(response, tool_results))
 
-            if (
-                response is None
-                or response.stop_reason != "tool_use"
-                or not response.tool_calls
-            ):
-                break
-
-            # Execute each tool call and dispatch events
-            tool_results: list[tuple[Any, str]] = []
-            for tc in response.tool_calls:
-                self._dispatch(
-                    "runspec:tool_start",
-                    {
-                        "id": chat_id,
-                        "tool_name": tc.name,
-                        "tool_input": tc.input,
-                    },
-                )
-                output = await self._gated_run_tool_async(tc.name, tc.input, chat_id)
-                self._dispatch(
-                    "runspec:tool_end",
-                    {
-                        "id": chat_id,
-                        "tool_name": tc.name,
-                        "output": output[:2000],
-                    },
-                )
-                tool_results.append((tc, output))
-
-            history.extend(adapter.make_tool_turn(response, tool_results))
+            self._trim_chat_history()
 
         duration_ms = int((time.monotonic() - start) * 1000)
+        if stopped:
+            self._dispatch("runspec:token", {"id": chat_id, "token": "\n⏹ Stopped."})
         self._dispatch(
             "runspec:run_end",
             {"id": chat_id, "exit_code": 0, "duration_ms": duration_ms},
         )
-        if total_input or total_output:
+        if any(usage_total.values()):
             self._dispatch(
                 "runspec:chat_usage",
                 {
                     "id": chat_id,
-                    "input_tokens": total_input,
-                    "output_tokens": total_output,
+                    # input_tokens is the uncached remainder (full price); the cached
+                    # portion is reported separately so the UI can show cache savings.
+                    "input_tokens": usage_total["input"],
+                    "output_tokens": usage_total["output"],
+                    "cache_read_tokens": usage_total["cache_read"],
+                    "cache_creation_tokens": usage_total["cache_creation"],
                 },
             )
 
     @staticmethod
-    def _usage_from_response(response: Any) -> tuple[int, int]:
-        raw = getattr(response, "_raw", None)
-        if raw is None:
-            return 0, 0
-        usage = getattr(raw, "usage", None)
+    def _usage_from_response(response: Any) -> dict[str, int]:
+        """Pull token counts off a provider response. Anthropic/Bedrock split the
+        prompt into uncached `input_tokens` plus `cache_read_input_tokens` (served
+        at ~0.1x) and `cache_creation_input_tokens` (the first-turn write); OpenAI
+        reports only prompt/completion totals (cache fields resolve to 0)."""
+        zero = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+        usage = getattr(getattr(response, "_raw", None), "usage", None)
         if usage is None:
-            return 0, 0
-        inp = (
-            getattr(usage, "input_tokens", None)
-            or getattr(usage, "prompt_tokens", None)
-            or 0
-        )
-        out = (
-            getattr(usage, "output_tokens", None)
-            or getattr(usage, "completion_tokens", None)
-            or 0
-        )
-        return int(inp), int(out)
+            return zero
+
+        def field(*names: str) -> int:
+            for name in names:
+                value = getattr(usage, name, None)
+                if value:
+                    return int(value)
+            return 0
+
+        return {
+            "input": field("input_tokens", "prompt_tokens"),
+            "output": field("output_tokens", "completion_tokens"),
+            "cache_read": field("cache_read_input_tokens"),
+            "cache_creation": field("cache_creation_input_tokens"),
+        }
 
     def _runnables_to_tools(self) -> list[dict[str, Any]]:
         """Convert cached runnables to Anthropic-format tool schemas."""
@@ -1126,9 +1247,9 @@ class Bridge:
         resolve_tool_confirmation() when the UI answers."""
         request_id = uuid.uuid4().hex
         event = threading.Event()
-        holder = {"approved": False}
+        holder = {"approved": False, "cancelled": False}
         with self._lock:
-            self._pending_confirms[request_id] = (event, holder)
+            self._pending_confirms[request_id] = (chat_id, event, holder)
         logger.info(
             "autonomy gate: prompting for %s (autonomy=%s) request_id=%s",
             tool_name,
@@ -1185,7 +1306,12 @@ class Bridge:
                 chat_id, tool_name, tool_input, decision
             )
             timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
-            if not self._finish_confirm(request_id, holder, timed_out):
+            approved = self._finish_confirm(request_id, holder, timed_out)
+            # Stop pressed while the dialog was up: don't run, and let the loop
+            # halt at its next checkpoint (cancel flag is already set).
+            if holder.get("cancelled"):
+                return f"⏹ '{display}' was not run — you stopped the assistant before approving it."
+            if not approved:
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
@@ -1228,7 +1354,7 @@ class Bridge:
         with self._lock:
             entry = self._pending_confirms.get(request_id)
         if entry is not None:
-            event, holder = entry
+            _chat_id, event, holder = entry
             holder["approved"] = bool(approved)
             event.set()
         else:
@@ -1497,6 +1623,10 @@ class Bridge:
             kwargs["api_key"] = llm_cfg["api_key"]
         if llm_cfg.get("model"):
             kwargs["model"] = llm_cfg["model"]
+        # Optional standing instructions for the assistant (site policy, host
+        # context, tone). Only override when set so adapters keep their default.
+        if str(llm_cfg.get("system", "")).strip():
+            kwargs["system"] = llm_cfg["system"]
         if llm_cfg.get("aws_region"):
             kwargs["aws_region"] = llm_cfg["aws_region"]
         if llm_cfg.get("base_url"):

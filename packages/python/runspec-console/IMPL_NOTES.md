@@ -66,6 +66,27 @@ Scripts that prompt for confirmation will stall and time out.
 
 ## Chat / LLM (agentic loop)
 
+**Conversation memory.** The agent keeps **one rolling conversation per app
+session** in `Bridge._chat_history` — each `send_chat` appends the user message,
+the assistant reply, and any tool_use/tool_result turns, and the next message is
+sent with the full prior history (so follow-ups like "restart the first one"
+resolve). A `_chat_lock` serialises turns; `_trim_chat_history` caps the history
+to the most recent ~60 messages, dropping leading turns only down to a real user
+message so tool_use/tool_result pairs are never split. `clear_chat()` (wired to
+the Console's **New chat** button) resets it. Caching note: history sits *after*
+the tools+system cache breakpoint, so growing it doesn't invalidate the cached
+prefix.
+
+**Stopping a turn.** `send_chat` registers a per-`chat_id` cancel `Event` in
+`_chat_cancels` (guarded by `self._lock`, *not* `_chat_lock` — cancel must fire
+while a turn holds `_chat_lock`). `cancel_chat(chat_id)` sets it; the loop checks
+it before each model call, while streaming (breaking the async-for closes the
+provider stream), and before running any tool — so Stop takes effect without
+further model calls or host actions. A tool already mid-execution is left to
+finish (chat-cancel ≠ runnable-cancel). On stop the partial assistant text is
+persisted (text-only, so no orphaned tool_use) and a `⏹ Stopped.` token is
+dispatched. The run() thread pops the cancel entry in a `finally`.
+
 `send_chat` always runs `_agentic_chat_turn`, which loops up to **10 iterations**:
 
 1. Call `adapter.stream_with_tools(history, tools)` — yields `('text', token)` then
@@ -110,8 +131,40 @@ the runnable name (host prefix stripped), args inline, and a collapsible output 
   - `model` — defaults: `claude-sonnet-4-6`, `gpt-4o`, `anthropic.claude-sonnet-4-6`
   - `base_url` — optional; for OpenAI-compatible endpoints or Bedrock corporate proxy
   - `aws_region` — Bedrock only
+  - `system` — optional standing instructions (system prompt). `_get_adapter`
+    passes it to the adapter only when non-blank, so adapters keep their
+    `DEFAULT_SYSTEM` otherwise. Editable in Settings → LLM; `save_config` clears
+    the cached adapter so it applies on the next message.
+
+**Stop in the command bar.** `ConsoleView` derives the in-flight chat id from its
+blocks (a `chat` block that isn't `done`) and broadcasts it via a
+`runspec:chat_active` window event; `App` tracks it and passes `activeChatId` +
+`onStopChat` to `CommandInput`, whose send arrow becomes a red Stop control while
+a turn runs (and submit/Enter is gated off so a second turn isn't queued behind
+the conversation lock). The running chat block also keeps its own Stop button —
+both call `bridge.cancel_chat(id)`.
 - Configurable in-app via Settings → General. Provider dropdown shows relevant fields
   only (e.g. AWS Region only appears for Bedrock).
+
+---
+
+## Prompt caching
+
+The agentic loop sends the entire tool-schema list every turn (one entry per
+discovered runnable). That block is static within a session, so the Anthropic and
+Bedrock adapters apply ephemeral `cache_control` breakpoints via the pure helper
+`adapters.base.apply_prompt_caching(kwargs)` before each API call.
+
+Caching is a **prefix match** in render order `tools → system → messages`:
+- the **last tool** definition is annotated → caches the whole tools block;
+- `system` is sent as a cached text block → caches tools+system together.
+
+Subsequent turns read the prefix at ~0.1× input cost. No behavior change — every
+action is still a normal gated tool call. Below the model's minimum cacheable
+prefix (~2K tokens on Sonnet 4.6, ~4K on Opus/Haiku) the API silently skips
+caching, so small tool sets are unaffected. Confirm hits via the response
+`usage.cache_read_input_tokens`. The helper is SDK-free and unit-tested without
+`anthropic` installed (`tests/test_prompt_caching.py`).
 
 ---
 

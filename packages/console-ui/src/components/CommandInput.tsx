@@ -1,6 +1,6 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, Tooltip } from 'antd'
-import { SendOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { SendOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
 import type { Runnable } from '../bridge'
 import { ThemeContext } from '../ThemeContext'
 
@@ -15,6 +15,8 @@ interface CommandInputProps {
   onRunRunnable: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[]) => void
   onOpenForm: (runnable: Runnable, commandPath: string[]) => void
   onSendChat: (message: string) => void
+  activeChatId?: string | null   // set while a chat turn is in flight
+  onStopChat?: (id: string) => void
   history: string[]
   autoSwitch?: boolean
   onToggleAutoSwitch?: () => void
@@ -66,7 +68,7 @@ function flattenToSlashItems(runnables: Runnable[]): SlashItem[] {
   return items
 }
 
-export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat, history, autoSwitch, onToggleAutoSwitch }: CommandInputProps) {
+export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat, activeChatId, onStopChat, history, autoSwitch, onToggleAutoSwitch }: CommandInputProps) {
   const isDark = useContext(ThemeContext)
   const [value, setValue] = useState('')
   const [slashItems, setSlashItems] = useState<SlashItem[]>([])
@@ -136,6 +138,9 @@ export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat,
       selectSlashItem(filteredItems[slashIndex])
       return
     }
+    // While a chat turn is in flight the primary action is Stop, not send —
+    // ignore Enter/submit so we don't queue a second turn behind the lock.
+    if (activeChatId) return
     onSendChat(trimmed)
     setValue('')
     setSlashOpen(false)
@@ -270,12 +275,23 @@ export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat,
               />
             </Tooltip>
           )}
-          <Button
-            type="text"
-            icon={<SendOutlined />}
-            onClick={submit}
-            style={{ color: value.trim() ? '#1677ff' : (isDark ? '#444' : '#ccc'), padding: 4 }}
-          />
+          {activeChatId ? (
+            <Tooltip title="Stop — halt the assistant" placement="top">
+              <Button
+                type="text"
+                icon={<StopOutlined />}
+                onClick={() => onStopChat?.(activeChatId)}
+                style={{ color: '#ff4d4f', padding: 4, transition: 'color 0.15s ease' }}
+              />
+            </Tooltip>
+          ) : (
+            <Button
+              type="text"
+              icon={<SendOutlined />}
+              onClick={submit}
+              style={{ color: value.trim() ? '#1677ff' : (isDark ? '#444' : '#ccc'), padding: 4, transition: 'color 0.15s ease' }}
+            />
+          )}
         </div>
       </div>
     </div>

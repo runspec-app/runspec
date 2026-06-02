@@ -440,6 +440,10 @@ let invocationCounter = 0
 // request_id → resolver, for the simulated autonomy-confirm round-trip.
 const _pendingConfirms = new Map<string, (approved: boolean) => void>()
 
+// The chat turn currently streaming, so cancel_chat can stop it (including
+// while its Approve/Deny prompt is up — the case the real bridge handles).
+let _activeChat: { id: string; cancelled: boolean } | null = null
+
 export const mockApi: BridgeApi = {
   get_hosts: async () => MOCK_HOSTS,
 
@@ -609,8 +613,19 @@ export const mockApi: BridgeApi = {
     if (resolve) { _pendingConfirms.delete(requestId); resolve(approved) }
   },
 
+  clear_chat: async () => {},
+  cancel_chat: async (chatId: string) => {
+    if (_activeChat && (!chatId || _activeChat.id === chatId)) {
+      _activeChat.cancelled = true
+      // Wake a pending confirm prompt for this turn, mirroring the real bridge.
+      const resolve = _pendingConfirms.get(`mock-${_activeChat.id}`)
+      if (resolve) { _pendingConfirms.delete(`mock-${_activeChat.id}`); resolve(false) }
+    }
+  },
+
   send_chat: async (message, _invocationId) => {
     const id = `chat-${++invocationCounter}`
+    _activeChat = { id, cancelled: false }
     const dispatch = (event: string, detail: unknown) =>
       window.dispatchEvent(new CustomEvent(event, { detail }))
     const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -639,6 +654,18 @@ export const mockApi: BridgeApi = {
         })
       })
 
+      // Stop pressed while the confirm dialog was up — refuse and halt.
+      if (_activeChat?.cancelled) {
+        dispatch('runspec:tool_end', {
+          id, tool_name,
+          output: "⏹ 'flush-dns' was not run — you stopped the assistant before approving it.",
+        })
+        dispatch('runspec:token', { id, token: '\n⏹ Stopped.' })
+        dispatch('runspec:run_end', { id, exit_code: 0, duration_ms: 800 })
+        _activeChat = null
+        return
+      }
+
       const output = approved
         ? 'flushing system DNS cache…\nDNS cache flushed'
         : "✗ The user declined to run 'flush-dns' (autonomy = confirm)."
@@ -655,7 +682,11 @@ export const mockApi: BridgeApi = {
       }
 
       dispatch('runspec:run_end', { id, exit_code: approved ? 0 : 1, duration_ms: 1500 })
-      dispatch('runspec:chat_usage', { id, input_tokens: 1247, output_tokens: 342 })
+      dispatch('runspec:chat_usage', {
+        id, input_tokens: 1247, output_tokens: 342,
+        cache_read_tokens: 8912, cache_creation_tokens: 0,
+      })
+      _activeChat = null
     })()
 
     return id

@@ -5,7 +5,7 @@ import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
   ApiOutlined, DownOutlined, RightOutlined, VerticalAlignBottomOutlined,
-  TableOutlined, CodeOutlined, PauseCircleOutlined,
+  TableOutlined, CodeOutlined, PauseCircleOutlined, StopOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -199,7 +199,7 @@ export interface InvocationBlock {
   exitCode?: number
   durationMs?: number
   rerunData?: RerunData
-  tokenUsage?: { input: number; output: number }
+  tokenUsage?: { input: number; output: number; cacheRead: number; cacheCreation: number }
 }
 
 interface OutputPanelProps {
@@ -238,6 +238,17 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
     }
     window.addEventListener('runspec:tool_confirm', onToolConfirm)
     return () => window.removeEventListener('runspec:tool_confirm', onToolConfirm)
+  }, [])
+
+  // If the turn ends while its confirm prompt is still open — e.g. the user hit
+  // Stop instead of answering — drop the now-stale prompt so it doesn't linger.
+  useEffect(() => {
+    const onEnd = (e: Event) => {
+      const { id } = (e as CustomEvent).detail as { id: string }
+      setPendingConfirm(prev => (prev && prev.id === id ? null : prev))
+    }
+    window.addEventListener('runspec:run_end', onEnd)
+    return () => window.removeEventListener('runspec:run_end', onEnd)
   }, [])
 
   const answerConfirm = (approved: boolean) => {
@@ -534,18 +545,52 @@ function BlockCard({
         <Text style={{ color: '#555', fontSize: 11 }}>
           {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </Text>
+        {block.type === 'chat' && !block.done && (
+          <Tooltip title="Stop — halt the assistant; no further steps or tool runs">
+            <Button
+              size="small" danger icon={<StopOutlined />}
+              style={{ marginLeft: 4 }}
+              onClick={(e) => { e.stopPropagation(); bridge.cancel_chat(block.id) }}
+            >
+              Stop
+            </Button>
+          </Tooltip>
+        )}
         {block.done && block.durationMs !== undefined && (
           <Tag style={{ marginLeft: 4, fontSize: 11 }} color={block.exitCode === 0 ? 'green' : 'red'}>
             {block.exitCode === 0 ? 'ok' : 'error'} · {(block.durationMs / 1000).toFixed(2)}s
           </Tag>
         )}
-        {block.tokenUsage && (
-          <Tooltip title={`Input tokens: ${block.tokenUsage.input.toLocaleString()} · Output tokens: ${block.tokenUsage.output.toLocaleString()}`}>
-            <Tag style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: 4 }}>
-              ↑{block.tokenUsage.input.toLocaleString()} ↓{block.tokenUsage.output.toLocaleString()}
-            </Tag>
-          </Tooltip>
-        )}
+        {block.tokenUsage && (() => {
+          const { input, output, cacheRead, cacheCreation } = block.tokenUsage!
+          const promptTotal = input + cacheRead + cacheCreation
+          const cached = cacheRead + cacheCreation
+          const hitPct = promptTotal > 0 ? Math.round((cacheRead / promptTotal) * 100) : 0
+          return (
+            <>
+              <Tooltip title={
+                `Prompt ${promptTotal.toLocaleString()} tokens = ` +
+                `${input.toLocaleString()} new + ${cacheRead.toLocaleString()} cache read (~0.1×) + ` +
+                `${cacheCreation.toLocaleString()} cache write (~1.25×) · ` +
+                `Output ${output.toLocaleString()}`
+              }>
+                <Tag style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: 4 }}>
+                  ↑{promptTotal.toLocaleString()} ↓{output.toLocaleString()}
+                </Tag>
+              </Tooltip>
+              {cached > 0 && (
+                <Tooltip title={
+                  `${cacheRead.toLocaleString()} tokens served from cache at ~10% cost` +
+                  (cacheCreation > 0 ? ` · ${cacheCreation.toLocaleString()} written to cache this turn` : '')
+                }>
+                  <Tag color="green" style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: 4 }}>
+                    ⚡{hitPct}% cached
+                  </Tag>
+                </Tooltip>
+              )}
+            </>
+          )
+        })()}
         {block.done && block.rerunData && onRerun && (
           <Fragment>
             {hasArgs && !isEditing && (
@@ -822,11 +867,16 @@ export function useInvocationBlocks() {
     }
 
     const onChatUsage = (e: Event) => {
-      const { id, input_tokens, output_tokens } = (e as CustomEvent).detail as {
-        id: string; input_tokens: number; output_tokens: number
-      }
+      const { id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens } =
+        (e as CustomEvent).detail as {
+          id: string; input_tokens: number; output_tokens: number
+          cache_read_tokens?: number; cache_creation_tokens?: number
+        }
       setBlocks(prev => prev.map(b =>
-        b.id === id ? { ...b, tokenUsage: { input: input_tokens, output: output_tokens } } : b
+        b.id === id ? { ...b, tokenUsage: {
+          input: input_tokens, output: output_tokens,
+          cacheRead: cache_read_tokens ?? 0, cacheCreation: cache_creation_tokens ?? 0,
+        } } : b
       ))
     }
 
