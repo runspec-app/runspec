@@ -7,6 +7,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.22.0] — 2026-06-02
+
+### Added
+
+- **String validation: `pattern`, `min-length`, `max-length`.** `str` args can
+  now declare format constraints. `pattern` is a regex the value must **fully**
+  match (`re.fullmatch` semantics — anchored at both ends, so no `^`/`$`
+  needed); `min-length`/`max-length` bound the character count. All three are
+  `str`-only.
+
+  ```toml
+  jira-key = { type = "str", pattern = "[A-Z]+-[0-9]+", description = "e.g. PROJ-123" }
+  slug     = { type = "str", min-length = 3, max-length = 40 }
+  ```
+
+  New `InvalidPattern` / `InvalidLength` error classes with human-first
+  formatters. Emit maps these to native JSON Schema `pattern` / `minLength` /
+  `maxLength`, so MCP hosts and survey forms enforce the same constraints.
+  (Node port pending — see Queued in `CLAUDE.md`.)
+
+### Fixed
+
+- **Parsed args now type-check ergonomically.** `RunSpec.__getattr__` was
+  annotated `-> Arg`, so direct attribute access returned an `Arg`, which a type
+  checker won't accept where the underlying `int`/`str`/`Path` value is expected
+  — `workers: int = args.workers` failed with an assignment error, forcing
+  callers to unwrap (`int(args.workers)` / `args.workers.value`) purely to
+  satisfy the checker, defeating the transparent-value protocol. It is now typed
+  `-> Any` (the same idiom as `argparse.Namespace` / `SimpleNamespace`): args are
+  dynamic — their names and types come from `runspec.toml` at runtime — so `Any`
+  is the honest static type, and gradual typing lets callers pin the type at the
+  use site. Runtime behaviour is unchanged; the value is still a transparent
+  `Arg`. A new `tests/test_typing.py` runs mypy over fixtures to guard this.
+
+---
+
 ## [0.21.0] — 2026-06-02
 
 ### Added

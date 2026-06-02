@@ -211,7 +211,7 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm | Notes |
 |---|---|---|---|
-| `runspec` | 0.17.0 | PyPI | Core library |
+| `runspec` | 0.22.0 | PyPI | Core library |
 | `runspec-node` | 0.17.0 | npm | Node port |
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console, unreleased) |
 | `runspec-linux` | 0.1.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
@@ -240,6 +240,14 @@ public Python API — wrapper runnables for TCP-interface apps do
 - `runspec push --rundeck` — future: POST job YAMLs to Rundeck REST API
   (`/api/v*/project/{project}/jobs/import`) with an API token. Deferred
   until file emit is in production use.
+- `runspec emit --stubs` — generate a PEP 561 `.pyi` per package from
+  `runspec.toml` so a parsed `RunSpec` types precisely (`args.workers` →
+  `int`, typos caught, choices as `Literal[...]`) instead of `Any`. The
+  consuming-side counterpart to the SchemaStore JSON Schema (authoring
+  side). Generated artifact, committed and regenerated only when
+  `runspec.toml` changes; staleness enforced via `--check` in CI /
+  pre-commit — not run on every edit. Realizes the `emit --python-types`
+  flag referenced in the emit doc. See `docs/design/emit-stubs.md`.
 - **Node parity: string validation** — Python 0.22.0 added `pattern`,
   `min-length`, `max-length` arg fields (str-only; `re.fullmatch` semantics;
   emit → JSON Schema `pattern`/`minLength`/`maxLength`). Node has not yet

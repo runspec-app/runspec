@@ -214,8 +214,25 @@ class RunSpec:
     # Values loaded from the .runspec_env file at parse time
     _runspec_env: dict[str, str] = field(default_factory=dict)
 
-    def __getattr__(self, name: str) -> Arg:
-        """Access args as attributes: args.quality, args.input_dir."""
+    def __getattr__(self, name: str) -> Any:
+        """Access args as attributes: args.quality, args.input_dir.
+
+        Annotated ``-> Any`` (not ``-> Arg``) on purpose. Args are dynamic —
+        their names and value types come from runspec.toml at runtime, so a
+        type checker can't know them statically. Returning ``Any`` makes the
+        transparent-value design hold up under type checking: the runtime value
+        is still an Arg that behaves as its native type, and gradual typing lets
+        callers pin the type at the use site —
+
+            workers: int = args.workers      # ok — Any flows into int
+            for tag in args.tags: ...        # ok — Arg.__iter__ at runtime
+            args.out_dir / "f.txt"           # ok — Path methods via delegation
+
+        Same idiom as argparse.Namespace / SimpleNamespace, whose __getattr__
+        is also typed Any. Returning Arg here would force every call site to
+        unwrap (int(args.workers), args.workers.value) just to satisfy the
+        checker, defeating the transparent protocol.
+        """
         try:
             args: dict[str, Arg] = object.__getattribute__(self, "_args")
             return args[name]
