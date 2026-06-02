@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-linux"
-version = "0.1.1"
-requires-python = ">=3.11"
+version = "0.1.2"
+requires-python = ">=3.10"
 description = "Linux system admin runnables for runspec"
 dependencies = [
-    "runspec>=0.17.0",
+    "runspec>=0.23.0",
 ]
 
 [project.scripts]
@@ -45,11 +45,11 @@ dev = [
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 
 [tool.ruff]
 line-length = 200
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

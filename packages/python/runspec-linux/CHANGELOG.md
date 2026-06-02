@@ -1,5 +1,11 @@
 # runspec-linux Changelog
 
+## [0.1.2] — 2026-06-02
+
+Lower the Python floor to 3.10 to match the core `runspec` library (no
+3.11-only features are used). Bump the `runspec` dependency floor to
+`>=0.23.0`.
+
 ## [0.1.1] — 2026-05-28
 
 Enable `[config.logging]` for all 21 runnables. Each invocation now writes a
