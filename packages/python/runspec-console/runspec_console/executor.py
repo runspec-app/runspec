@@ -52,6 +52,9 @@ def run_local(
     timeout: int | None = None,
     cancel_event: threading.Event | None = None,
     agent: bool = False,
+    run_as: str = "",
+    become_method: str = "sudo",
+    become_flags: str | None = None,
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
@@ -63,6 +66,12 @@ def run_local(
     )
     argv = args_to_argv(args)
     cmd = [str(binary), *command_path, *argv]
+    if run_as:
+        # sudo/su strip the environment — carry RUNSPEC_AGENT through env(1).
+        from runspec.become import build_become_argv
+
+        env = {"RUNSPEC_AGENT": "1"} if agent else {}
+        cmd = build_become_argv(cmd, run_as, become_method, become_flags, env=env)
     _stream(
         cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent
     )
@@ -211,14 +220,26 @@ def run_remote(
     global_ssh_config: dict[str, Any] | None = None,
     # Legacy kwarg kept so existing call sites don't break immediately
     ssh_binary: str = "",
+    run_as: str = "",
+    become_method: str = "sudo",
+    become_flags: str | None = None,
 ) -> None:
     """Execute a remote runnable via paramiko SSH, streaming output via callbacks."""
+    from runspec.become import build_become_argv
+
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args)
-    parts = [remote_bin, *command_path, *argv]
-    if agent:
-        parts = ["RUNSPEC_AGENT=1", *parts]
+    # build_become_argv handles both the plain (RUNSPEC_AGENT=1 cmd) and the
+    # escalated (sudo -u user env RUNSPEC_AGENT=1 cmd) forms.
+    env = {"RUNSPEC_AGENT": "1"} if agent else {}
+    parts = build_become_argv(
+        [remote_bin, *command_path, *argv],
+        run_as,
+        become_method,
+        become_flags,
+        env=env,
+    )
     remote_cmd = " ".join(parts)
 
     start = time.monotonic()

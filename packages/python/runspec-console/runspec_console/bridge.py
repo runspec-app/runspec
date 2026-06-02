@@ -801,6 +801,20 @@ class Bridge:
 
     # ── invocation ────────────────────────────────────────────────────────────
 
+    def _become_params(
+        self, cached: dict[str, Any] | None, hostname: str
+    ) -> tuple[str, str, str | None]:
+        """Resolve run_as + become method/flags for a runnable on a host.
+
+        Reads the runnable's raw spec (carried through discovery as ``rawSpec``)
+        and resolves ``run_as`` for this host. Returns ("", ...) when no
+        privilege escalation is configured."""
+        from runspec.become import resolve_run_as
+
+        raw = (cached or {}).get("rawSpec") or {}
+        run_as = resolve_run_as(raw.get("run_as"), hostname)
+        return run_as, str(raw.get("become_method") or "sudo"), raw.get("become_flags")
+
     def invoke_runnable(
         self,
         host: str,
@@ -815,23 +829,25 @@ class Bridge:
         cancel_event = threading.Event()
 
         entry_paths = _paths(entry) if entry else []
-        # If group not specified, look up the runnable's venv from the discovery cache
-        if group is None and entry_paths:
-            with self._lock:
-                cached = next(
-                    (
-                        r
-                        for r in self._runnables_cache
-                        if r.get("host") == host and r.get("name") == runnable
-                    ),
-                    None,
-                )
-            if cached:
-                group = cached.get("group")
+        # Look up the runnable's discovery record — needed for its venv (group)
+        # and its run_as / become_method (privilege escalation).
+        with self._lock:
+            cached = next(
+                (
+                    r
+                    for r in self._runnables_cache
+                    if r.get("host") == host and r.get("name") == runnable
+                ),
+                None,
+            )
+        if group is None and cached:
+            group = cached.get("group")
         rp = next(
             (p for p in entry_paths if venv_name(p) == group),
             entry_paths[0] if entry_paths else "",
         )
+
+        run_as, become_method, become_flags = self._become_params(cached, host)
 
         with self._lock:
             self._in_flight[inv_id] = {
@@ -840,7 +856,7 @@ class Bridge:
                 "group": venv_name(rp) if rp else "",
                 "host": host,
                 "operator": self._current_user(),
-                "runAs": "",
+                "runAs": run_as,
                 "startedAt": _iso_now(),
                 "args": args,
                 _CANCEL_KEY: cancel_event,
@@ -878,10 +894,22 @@ class Bridge:
                     entry.get("identityFile"),
                     cancel_event=cancel_event,
                     global_ssh_config=self.get_config().get("ssh"),
+                    run_as=run_as,
+                    become_method=become_method,
+                    become_flags=become_flags,
                 )
             else:
                 run_local(
-                    rp, runnable, args, cp, on_line, on_done, cancel_event=cancel_event
+                    rp,
+                    runnable,
+                    args,
+                    cp,
+                    on_line,
+                    on_done,
+                    cancel_event=cancel_event,
+                    run_as=run_as,
+                    become_method=become_method,
+                    become_flags=become_flags,
                 )
 
         t = threading.Thread(target=run, daemon=True)
@@ -1395,6 +1423,7 @@ class Bridge:
             (p for p in tool_paths if venv_name(p) == run_group),
             tool_paths[0] if tool_paths else "",
         )
+        run_as, become_method, become_flags = self._become_params(cached_r, host)
         ssh = entry.get("ssh")
         if ssh:
             run_remote(
@@ -1409,10 +1438,23 @@ class Bridge:
                 timeout=120,
                 agent=True,
                 global_ssh_config=self.get_config().get("ssh"),
+                run_as=run_as,
+                become_method=become_method,
+                become_flags=become_flags,
             )
         else:
             run_local(
-                rp, runnable, tool_input, [], on_line, on_done, timeout=120, agent=True
+                rp,
+                runnable,
+                tool_input,
+                [],
+                on_line,
+                on_done,
+                timeout=120,
+                agent=True,
+                run_as=run_as,
+                become_method=become_method,
+                become_flags=become_flags,
             )
 
         output = "\n".join(output_lines)

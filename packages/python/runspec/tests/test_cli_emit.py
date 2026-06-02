@@ -108,3 +108,34 @@ def test_rest_type_with_description_and_meta():
     assert prop["items"] == {"type": "string"}
     assert prop["description"] == "Pass-through"
     assert prop["x-meta"] == {"shape": "list"}
+
+
+# ── inferred types reach the schema (args often omit explicit `type`) ──────────
+
+
+def test_inferred_types_emitted_not_defaulted_to_string():
+    """Args that rely on inference (no explicit `type`) must emit the inferred
+    JSON Schema type — not fall back to "string"."""
+    script = _script(
+        args={
+            "label": {"description": "title"},  # no default → required str
+            "format": {"options": ["text", "json"], "default": "text"},  # choice
+            "threshold": {"default": 0.85},  # float → number
+            "verbose": {"default": False},  # flag → boolean
+            "limit": {"default": 10},  # int → integer
+        }
+    )
+    props = _build_schema("sysreport", script, "anthropic")["inputSchema"]["properties"]
+    assert props["label"]["type"] == "string"
+    assert props["format"]["type"] == "string" and props["format"]["enum"] == ["text", "json"]
+    assert props["threshold"]["type"] == "number"
+    assert props["verbose"]["type"] == "boolean"
+    assert props["limit"]["type"] == "integer"
+
+
+def test_inferred_required_listed_in_schema():
+    """An arg with no default is inferred required and must appear in the
+    schema's `required` list, even though the raw spec never said so."""
+    script = _script(args={"label": {"description": "title"}, "limit": {"default": 10}})
+    schema = _build_schema("sysreport", script, "mcp")
+    assert schema["inputSchema"]["required"] == ["label"]

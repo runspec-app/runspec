@@ -620,10 +620,16 @@ def _load_toml_file(path: Path) -> dict[str, Any]:
 
 def _build_schema(name: str, script: dict[str, Any], fmt: str) -> dict[str, Any]:
     """Build a tool schema for a script in the requested format."""
+    from runspec.inference import infer_arg
+
     properties: dict[str, Any] = {}
     required_args: list[str] = []
 
     for arg_name, arg in script.get("args", {}).items():
+        # Resolve inferred type/required first — args often omit `type` and rely
+        # on inference (default 0.85 → float, default false → flag, no default →
+        # required). Without this the schema would type everything as "string".
+        arg = infer_arg(arg)
         prop = _arg_to_json_schema(arg)
         properties[arg_name] = prop
         if arg.get("required"):
@@ -672,7 +678,8 @@ def _arg_to_json_schema(arg: dict[str, Any]) -> dict[str, Any]:
     if arg.get("description"):
         prop["description"] = arg["description"]
 
-    if arg.get("default") is not None:
+    # rest captures trailing varargs; its inferred [] default is implicit noise.
+    if arg_type != "rest" and arg.get("default") is not None:
         prop["default"] = arg["default"]
 
     if arg.get("options"):
@@ -862,9 +869,9 @@ def _print_local_text(discovered: list[dict[str, Any]]) -> None:
                     warnings.append(f"'{name}.{arg_name}' is required but has no description")
             run_as = runnable.get("run_as")
             if isinstance(run_as, dict):
-                from runspec.serve import _validate_run_as_patterns
+                from runspec.become import validate_run_as_patterns
 
-                for err in _validate_run_as_patterns(run_as):
+                for err in validate_run_as_patterns(run_as):
                     errors.append(f"'{name}' run_as: {err}")
         print()
 

@@ -237,6 +237,58 @@ def test_tools_call_failure(tmp_path):
     assert isinstance(meta["duration_ms"], int)
 
 
+def test_tools_call_applies_run_as_sudo(monkeypatch, tmp_path):
+    """A runnable with run_as must execute under the resolved become command —
+    RUNSPEC_AGENT carried via env(1) so it survives sudo's env stripping."""
+    import subprocess
+
+    script = tmp_path / "restart-service"
+    script.write_text("#!/bin/sh\necho ok", encoding="utf-8")
+    script.chmod(0o755)
+
+    tools = {"restart-service": {"name": "restart-service", "inputSchema": {"type": "object", "properties": {}}}}
+    exec_specs = {
+        "restart-service": {
+            "command": [str(script)],
+            "run_as": "deploy",
+            "become_method": "sudo",
+            "become_flags": "-H",
+        }
+    }
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr("runspec.serve.subprocess.run", fake_run)
+
+    _handle_tools_call(5, {"name": "restart-service", "arguments": {}}, tools, {}, exec_specs)
+    cmd = captured["cmd"]
+    assert cmd[:5] == ["sudo", "-H", "-u", "deploy", "env"]
+    assert "RUNSPEC_AGENT=1" in cmd
+    assert cmd[-1] == str(script)
+
+
+def test_tools_call_no_run_as_does_not_escalate(monkeypatch, tmp_path):
+    import subprocess
+
+    script = tmp_path / "report"
+    script.write_text("#!/bin/sh\necho ok", encoding="utf-8")
+    script.chmod(0o755)
+    tools = {"report": {"name": "report", "inputSchema": {"type": "object", "properties": {}}}}
+    exec_specs = {"report": {"command": [str(script)]}}  # no run_as
+
+    captured: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        "runspec.serve.subprocess.run",
+        lambda cmd, **kw: captured.__setitem__("cmd", cmd) or subprocess.CompletedProcess(cmd, 0, stdout="ok\n", stderr=""),
+    )
+    _handle_tools_call(6, {"name": "report", "arguments": {}}, tools, {}, exec_specs)
+    assert captured["cmd"] == [str(script)]  # plain, no sudo
+
+
 def test_tools_call_sets_runspec_agent_env(tmp_path):
     script = tmp_path / "check_env"
     script.write_text("#!/bin/sh\necho $RUNSPEC_AGENT", encoding="utf-8")

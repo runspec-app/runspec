@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import socket
 import subprocess
 import sys
@@ -18,6 +17,13 @@ import sysconfig
 import time
 from pathlib import Path
 from typing import Any
+
+# run_as resolution/validation/command-building live in runspec.become (shared
+# with external executing clients). Aliased to the old private names so existing
+# imports (cli.py, tests) keep working.
+from runspec.become import build_become_argv as _build_become_argv
+from runspec.become import resolve_run_as as _resolve_run_as
+from runspec.become import validate_run_as_patterns as _validate_run_as_patterns
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 MCP_SPEC = "https://github.com/modelcontextprotocol/specification"
@@ -258,12 +264,32 @@ def _handle_tools_call(
     # Tell the subprocess where its runspec.toml lives. Otherwise the tool's
     # parse() would walk up from cwd (typically $HOME for SSH-launched serves)
     # and fail to find the spec — even though serve already knew its location.
-    config_path = exec_specs.get(name, {}).get("config_path")
+    spec = exec_specs.get(name, {})
+    config_path = spec.get("config_path")
     if config_path:
         env["RUNSPEC_CONFIG"] = str(config_path)
 
+    # Apply privilege escalation (run_as / become_method) when configured. The
+    # run_as string was already resolved for this host at startup. sudo and
+    # friends strip the environment, so the RUNSPEC_* vars are re-supplied via
+    # env(1) inside the escalated command rather than the subprocess env.
+    run_as = spec.get("run_as") or ""
+    if run_as:
+        become_env = {"RUNSPEC_AGENT": "1", **runspec_env}
+        if config_path:
+            become_env["RUNSPEC_CONFIG"] = str(config_path)
+        final_cmd = _build_become_argv(
+            [*cmd, *argv],
+            run_as,
+            spec.get("become_method", "sudo"),
+            spec.get("become_flags"),
+            env=become_env,
+        )
+    else:
+        final_cmd = [*cmd, *argv]
+
     start = time.monotonic()
-    result = subprocess.run([*cmd, *argv], capture_output=True, text=True, env=env)
+    result = subprocess.run(final_cmd, capture_output=True, text=True, env=env)
     duration_ms = int((time.monotonic() - start) * 1000)
 
     # _meta is the MCP-standard extension point; clients that don't understand
@@ -327,49 +353,6 @@ def _args_to_argv(arguments: dict[str, Any], arg_specs: dict[str, Any]) -> list[
             argv.extend([flag, str(value)])
 
     return argv
-
-
-# ── run_as helpers ────────────────────────────────────────────────────────────
-
-
-def _resolve_run_as(run_as_spec: Any, hostname: str) -> str:
-    """Resolve run_as to a plain string for the current host."""
-    if run_as_spec is None:
-        return ""
-
-    # Simple string or $ENV_VAR reference
-    if isinstance(run_as_spec, str):
-        if run_as_spec.startswith("$"):
-            return os.environ.get(run_as_spec[1:], "")
-        return run_as_spec
-
-    # Table form: hosts / patterns / default
-    if isinstance(run_as_spec, dict):
-        hosts = run_as_spec.get("hosts", {})
-        if hostname in hosts:
-            return str(hosts[hostname])
-
-        for pattern, user in run_as_spec.get("patterns", {}).items():
-            if re.fullmatch(pattern, hostname):
-                return str(user)
-
-        return str(run_as_spec.get("default", ""))
-
-    return ""
-
-
-def _validate_run_as_patterns(run_as_spec: Any) -> list[str]:
-    """Return a list of error messages for any invalid regex patterns."""
-    if not isinstance(run_as_spec, dict):
-        return []
-
-    errors: list[str] = []
-    for pattern in run_as_spec.get("patterns", {}):
-        try:
-            re.compile(pattern)
-        except re.error as e:
-            errors.append(f"invalid pattern '{pattern}': {e}")
-    return errors
 
 
 # ── serve context helpers ─────────────────────────────────────────────────────

@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.2.1] — 2026-06-02
+
+### Fixed
+- **The Console now actually escalates with `run_as`.** The SSH executor
+  (`run_remote`/`run_local`) and the chat bridge (`_run_tool_sync`/
+  `invoke_runnable`) resolved `run_as` per host but never applied it, so a
+  runnable declaring `run_as`/`become_method` still ran as the login user —
+  the same gap that was fixed core-side. Both paths now build the escalation
+  command via the shared `runspec.become` module and run through it, so manual
+  runs *and* agent/chat tool calls escalate for real. An empty `run_as` never
+  escalates. Requires `runspec >= 0.21.0` (the dependency floor is raised to
+  match, since the executor now imports `runspec.become`).
+
+
 ## [0.2.0] — 2026-06-02
 
 ### Fixed

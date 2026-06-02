@@ -7,6 +7,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.21.0] — 2026-06-02
+
+### Added
+
+- **`runspec.become` module — privilege escalation is now actually applied.**
+  `run_as` was parsed, resolved, and validated but never used at execution
+  time: both `runspec serve` and the console SSH executor ran the runnable as
+  the login user, silently ignoring `run_as`/`become_method`. A new shared
+  `runspec.become` module is the single source of truth for the SPEC *Remote
+  Execution* command table:
+  - `resolve_run_as()` — resolves the effective user from a literal string, a
+    `$ENV` reference, a per-host mapping, or pattern rules, falling back to the
+    declared default. An empty/unset `run_as` never escalates.
+  - `validate_run_as_patterns()` — validates the pattern rules at parse time.
+  - `build_become_argv()` — builds the escalation command for `sudo`, `su`,
+    `pbrun`, and `dzdo`, honouring `become_flags` and passing the environment
+    through `env(1)` so `RUNSPEC_*` variables survive `sudo`.
+
+  `serve.py` builds the become command in `_handle_tools_call` and re-exports
+  the former private names for compatibility. Verified end to end: a real
+  `runspec serve` emits `sudo -H -u svc-deploy env RUNSPEC_AGENT=1 … <bin>`.
+
+### Fixed
+
+- **Inferred arg types were missing from emitted tool schemas.** `_build_schema`
+  read the raw arg dicts, so an arg relying on type inference (no explicit
+  `type`) was emitted as JSON Schema `"string"`, and inferred-required args were
+  omitted from the `required` list. Each arg now runs through `infer_arg` before
+  the schema is built, so `int`→`integer`, `float`→`number`, `flag`→`boolean`,
+  `choice`→`string`+`enum`, and no-default→required all reach the emitted
+  MCP / OpenAI / Anthropic schema. The implicit `[]` default on rest args is
+  suppressed.
+
+---
+
 ## [0.20.2] — 2026-06-01
 
 ### Fixed
