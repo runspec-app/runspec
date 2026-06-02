@@ -1,0 +1,101 @@
+name: Auto-tag releases
+
+# Keeps release history complete. When a package's `version` field changes on
+# main, this creates the matching `{prefix}v{version}` git tag so every
+# published version has a corresponding tag.
+#
+# Tags are pushed with the default GITHUB_TOKEN, which by GitHub design does
+# NOT trigger the *-release.yml workflows. Publishing therefore stays a manual
+# `workflow_dispatch`, exactly as today — this workflow only backfills history,
+# it never releases. Pushing a tag also does not re-trigger this workflow,
+# since it listens on `push: branches: [main]`, not on tags.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/python/runspec/pyproject.toml"
+      - "packages/python/runspec-linux/pyproject.toml"
+      - "packages/python/runspec-console/pyproject.toml"
+      - "packages/python/runspec-chat/pyproject.toml"
+      - "packages/registry/pyproject.toml"
+      - "packages/node/package.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so we can diff before/after
+
+      - name: Tag packages whose version changed
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # manifest path | tag prefix (prefix already includes the trailing 'v')
+          PKGS=(
+            "packages/python/runspec/pyproject.toml|v"
+            "packages/python/runspec-linux/pyproject.toml|linux-v"
+            "packages/python/runspec-console/pyproject.toml|console-v"
+            "packages/python/runspec-chat/pyproject.toml|chat-v"
+            "packages/registry/pyproject.toml|registry-v"
+            "packages/node/package.json|node-v"
+          )
+
+          # Print the version field of $file as it exists at git ref $ref, or nothing.
+          version_of() {
+            local ref="$1" file="$2"
+            case "$file" in
+              *.toml) git show "${ref}:${file}" 2>/dev/null | python3 -c "import tomllib,sys; print(tomllib.load(sys.stdin.buffer)['project']['version'])" 2>/dev/null || true ;;
+              *.json) git show "${ref}:${file}" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])" 2>/dev/null || true ;;
+            esac
+          }
+
+          # Fall back to AFTER~1 if `before` is unavailable (e.g. first push).
+          base="$BEFORE"
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git rev-parse "${AFTER}~1" 2>/dev/null || true)"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          made_any=0
+          for entry in "${PKGS[@]}"; do
+            file="${entry%%|*}"
+            prefix="${entry##*|}"
+
+            new_v="$(version_of "$AFTER" "$file")"
+            [ -n "$new_v" ] || continue
+
+            old_v=""
+            [ -n "$base" ] && old_v="$(version_of "$base" "$file")"
+            if [ "$new_v" = "$old_v" ]; then
+              echo "unchanged: $file ($new_v)"
+              continue
+            fi
+
+            tag="${prefix}${new_v}"
+            if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              echo "tag exists, skip: ${tag}"
+              continue
+            fi
+
+            echo "tagging ${tag} at ${AFTER:0:7} (was '${old_v:-none}')"
+            git tag -a "${tag}" -m "${tag}" "${AFTER}"
+            git push origin "refs/tags/${tag}"
+            made_any=1
+          done
+
+          if [ "$made_any" = 1 ]; then echo "done."; else echo "no new tags."; fi
