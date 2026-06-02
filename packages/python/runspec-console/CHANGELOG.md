@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.3.0] — 2026-06-02
+
+### Added
+- **Dev tab — a domain-specific DevTools for the console.** A new **Dev** tab
+  surfaces the app's live, in-session activity across both sides of the pywebview
+  bridge: every frontend→backend bridge call (with arguments, duration, and
+  result/error) and every backend→frontend `runspec:*` event (output, tokens,
+  tool calls, run completion, usage, discovery). It renders as a filterable,
+  auto-scrolling timeline with expandable JSON rows, category filters, counters,
+  and pause/clear. Capture comes from two instrumentation choke points — a wrap of
+  the bridge `Proxy` and a one-time `window.dispatchEvent` tap — so coverage is
+  complete with minimal wiring. High-frequency token/output streams are coalesced
+  into a single row with a count badge. The buffer is in-memory only and resets
+  each launch (no disk persistence).
+- **Reach the native Chromium inspector from a production build.** pywebview's
+  Chromium inspector was previously available only in `--dev`. A new `--devtools`
+  flag (or `RUNSPEC_CONSOLE_DEVTOOLS=1`) now enables debug mode in production so
+  right-click → Inspect / F12 works. The Dev tab's **Open Chromium Inspector**
+  button is gated on the backend's `is_debug_enabled()` and is explicit about the
+  pywebview limitation (there is no reliable cross-platform programmatic open).
+
+### Internal
+- Established Vitest in `console-ui` with a `devbus` unit suite, and wired a
+  `console-ui` job (typecheck + test) into CI alongside Python tests covering the
+  debug-resolution precedence and the new `Bridge` debug helpers.
+
+
 ## [0.2.1] — 2026-06-02
 
 ### Fixed
