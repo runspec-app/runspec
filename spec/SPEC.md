@@ -531,6 +531,7 @@ workers = 4        # int, default 4
 input-dir = {type = "path"}
 quality   = {default = 85, range = [1, 100]}
 format    = {options = ["json", "csv"], default = "json"}
+jira-key  = {type = "str", pattern = "[A-Z]+-[0-9]+"}
 ```
 
 **Full block** — for args needing prose descriptions:
@@ -551,6 +552,9 @@ description = "Controls output quality. Values below 60 rarely useful."
 | `description` | string | Human and agent readable. Doubles as form label. |
 | `options` | array | Valid choices. Infers `type = "choice"`. |
 | `range` | [min, max] | Valid range for numeric types. |
+| `pattern` | string | Regex the value must fully match. `str` type only. |
+| `min-length` | int | Minimum string length. `str` type only. |
+| `max-length` | int | Maximum string length. `str` type only. |
 | `multiple` | bool | Accept multiple values (repeated flag style). |
 | `delimiter` | string | Split a single value by this delimiter. |
 | `short` | string | Short flag alias e.g. `"-v"`. |
@@ -576,6 +580,9 @@ fields that *are* present.
 | `description` | `None` | Recommended in practice — agents lean on this. |
 | `options` | `None` | Setting this also infers `type = "choice"`. |
 | `range` | `None` | |
+| `pattern` | `None` | Anchored — the *whole* value must match (`re.fullmatch` semantics). Applied to `str` values only; ignored for other types. |
+| `min-length` | `None` | Applied to `str` values only. |
+| `max-length` | `None` | Applied to `str` values only. |
 | `multiple` | `False` | |
 | `delimiter` | `None` | When set, a single value is `.split(delimiter)`. |
 | `short` | `None` | |

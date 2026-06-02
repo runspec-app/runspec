@@ -37,6 +37,9 @@ class Arg:
     description: str | None = None
     options: list[Any] | None = None
     range: tuple[Any, Any] | None = None
+    pattern: str | None = None  # regex the value must fully match (str only)
+    min_length: int | None = None  # minimum string length (str only)
+    max_length: int | None = None  # maximum string length (str only)
     multiple: bool = False
     delimiter: str | None = None
     short: str | None = None

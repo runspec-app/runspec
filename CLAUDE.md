@@ -240,6 +240,12 @@ public Python API — wrapper runnables for TCP-interface apps do
 - `runspec push --rundeck` — future: POST job YAMLs to Rundeck REST API
   (`/api/v*/project/{project}/jobs/import`) with an API token. Deferred
   until file emit is in production use.
+- **Node parity: string validation** — Python 0.22.0 added `pattern`,
+  `min-length`, `max-length` arg fields (str-only; `re.fullmatch` semantics;
+  emit → JSON Schema `pattern`/`minLength`/`maxLength`). Node has not yet
+  implemented these. The shared compliance fixtures
+  (`tests/integration/fixtures/`) were intentionally left untouched so CI
+  stays green — add these fields to a fixture only once Node matches.
 
 Build order: `emit --rundeck` first (current platform), `emit --ansible`
 second (migration target), `push --rundeck` last (CI/CD automation).

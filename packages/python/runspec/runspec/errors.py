@@ -30,6 +30,14 @@ class OutOfRange(RunSpecError):
     """A numeric value was outside the declared range."""
 
 
+class InvalidPattern(RunSpecError):
+    """A string value did not match the declared pattern."""
+
+
+class InvalidLength(RunSpecError):
+    """A string value violated the declared min-/max-length bounds."""
+
+
 class UnknownArg(RunSpecError):
     """An argument was provided that is not in the spec."""
 
@@ -77,6 +85,36 @@ def format_out_of_range(
             f"✗  Value out of range for --{name}: {value}",
             f"   Expected: between {min_val} and {max_val}",
             f"   Got: {value}",
+        ]
+    )
+
+
+def format_invalid_pattern(value: str, pattern: str, name: str) -> str:
+    return "\n".join(
+        [
+            f"✗  Invalid value for --{name}: {value!r}",
+            f"   Expected: a value matching pattern {pattern!r}",
+            f"   Got: {value!r}",
+        ]
+    )
+
+
+def format_too_short(value: str, min_length: int, name: str) -> str:
+    return "\n".join(
+        [
+            f"✗  Value too short for --{name}: {value!r}",
+            f"   Expected: at least {min_length} character{'' if min_length == 1 else 's'}",
+            f"   Got: {len(value)}",
+        ]
+    )
+
+
+def format_too_long(value: str, max_length: int, name: str) -> str:
+    return "\n".join(
+        [
+            f"✗  Value too long for --{name}: {value!r}",
+            f"   Expected: at most {max_length} character{'' if max_length == 1 else 's'}",
+            f"   Got: {len(value)}",
         ]
     )
 

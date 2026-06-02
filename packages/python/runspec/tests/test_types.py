@@ -83,6 +83,48 @@ class TestRangeValidation:
         assert coerce("0.5", spec) == 0.5
 
 
+class TestPatternValidation:
+    def test_str_matches_pattern(self):
+        spec = {"type": "str", "name": "jira-key", "pattern": "[A-Z]+-[0-9]+"}
+        assert coerce("PROJ-123", spec) == "PROJ-123"
+
+    def test_str_violates_pattern(self):
+        spec = {"type": "str", "name": "jira-key", "pattern": "[A-Z]+-[0-9]+"}
+        with pytest.raises(ValueError):
+            coerce("proj-123", spec)
+
+    def test_pattern_is_anchored_fullmatch(self):
+        # A partial match must fail — pattern is fullmatch, not search.
+        spec = {"type": "str", "name": "jira-key", "pattern": "[A-Z]+-[0-9]+"}
+        with pytest.raises(ValueError):
+            coerce("PROJ-123-extra", spec)
+
+    def test_no_pattern_accepts_anything(self):
+        spec = {"type": "str", "name": "free"}
+        assert coerce("anything at all", spec) == "anything at all"
+
+
+class TestLengthValidation:
+    def test_within_bounds(self):
+        spec = {"type": "str", "name": "slug", "min_length": 3, "max_length": 10}
+        assert coerce("hello", spec) == "hello"
+
+    def test_too_short(self):
+        spec = {"type": "str", "name": "slug", "min_length": 3}
+        with pytest.raises(ValueError):
+            coerce("ab", spec)
+
+    def test_too_long(self):
+        spec = {"type": "str", "name": "slug", "max_length": 5}
+        with pytest.raises(ValueError):
+            coerce("abcdef", spec)
+
+    def test_boundaries_inclusive(self):
+        spec = {"type": "str", "name": "slug", "min_length": 3, "max_length": 5}
+        assert coerce("abc", spec) == "abc"
+        assert coerce("abcde", spec) == "abcde"
+
+
 class TestCustomTypes:
     def test_register_and_use_custom_type(self):
         register_type("upper-str", lambda v, arg: str(v).upper())

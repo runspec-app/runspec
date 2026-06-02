@@ -175,6 +175,9 @@ description = "Output quality. Values below 60 are rarely useful."
 | `description` | string | Shown in `--help` and emitted schemas. |
 | `options` | array | Valid choices. Infers `type = "choice"`. |
 | `range` | [min, max] | Valid range for numeric types. |
+| `pattern` | string | Regex the value must fully match. `str` type only. |
+| `min-length` | int | Minimum string length. `str` type only. |
+| `max-length` | int | Maximum string length. `str` type only. |
 | `multiple` | bool | Accept multiple values (repeated-flag style). |
 | `delimiter` | string | Split a single value by this character. |
 | `short` | string | Short flag alias, e.g. `"-v"`. Must be unique within a runnable; `-h` is reserved. |
@@ -200,6 +203,29 @@ release = {type = "str", description = "Release tag", position = 2, required = f
 deploy prod v1.2.3       # target=prod, release=v1.2.3
 deploy prod              # target=prod, release=None
 ```
+
+### String validation (`pattern`, `min-length`, `max-length`)
+
+`str` args can declare format constraints. `pattern` is a regex the value must
+**fully** match (`re.fullmatch` semantics — anchored at both ends, so you don't
+need `^`/`$`); `min-length`/`max-length` bound the character count:
+
+```toml
+[ticket.args]
+jira-key = {type = "str", pattern = "[A-Z]+-[0-9]+", description = "e.g. PROJ-123"}
+slug     = {type = "str", min-length = 3, max-length = 40}
+```
+
+```bash
+ticket --jira-key PROJ-123     # ok
+ticket --jira-key proj-123     # ✗  Invalid value for --jira-key: 'proj-123'
+                               #    Expected: a value matching pattern '[A-Z]+-[0-9]+'
+```
+
+These apply to the `str` type only and are ignored for other types. When you
+emit a schema (`runspec emit`), they map to the native JSON Schema keywords
+`pattern`, `minLength`, and `maxLength`, so MCP hosts and survey forms enforce
+them too.
 
 ### Pass-through arguments (`type = "rest"`)
 

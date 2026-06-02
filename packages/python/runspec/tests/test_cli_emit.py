@@ -90,6 +90,41 @@ def test_x_meta_preserves_full_dict():
     assert prop["x-meta"] == meta
 
 
+# ── string validation → JSON Schema keywords ────────────────────────────────
+
+
+def test_pattern_emitted_as_json_schema_pattern():
+    script = _script(args={"key": {"type": "str", "pattern": "[A-Z]+-[0-9]+"}})
+    schema = _build_schema("ticket", script, "mcp")
+    prop = schema["inputSchema"]["properties"]["key"]
+    assert prop["pattern"] == "[A-Z]+-[0-9]+"
+
+
+def test_min_max_length_emitted():
+    script = _script(args={"slug": {"type": "str", "min_length": 3, "max_length": 40}})
+    schema = _build_schema("ticket", script, "mcp")
+    prop = schema["inputSchema"]["properties"]["slug"]
+    assert prop["minLength"] == 3
+    assert prop["maxLength"] == 40
+
+
+def test_zero_min_length_emitted():
+    # 0 is falsy — guard against `if arg.get(...)` dropping a legitimate bound.
+    script = _script(args={"slug": {"type": "str", "min_length": 0}})
+    schema = _build_schema("ticket", script, "mcp")
+    prop = schema["inputSchema"]["properties"]["slug"]
+    assert prop["minLength"] == 0
+
+
+def test_string_validation_omitted_when_absent():
+    script = _script(args={"name": {"type": "str"}})
+    schema = _build_schema("ticket", script, "mcp")
+    prop = schema["inputSchema"]["properties"]["name"]
+    assert "pattern" not in prop
+    assert "minLength" not in prop
+    assert "maxLength" not in prop
+
+
 # ── rest type emission ───────────────────────────────────────────────────────
 
 

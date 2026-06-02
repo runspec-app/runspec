@@ -12,6 +12,7 @@ Custom types can be registered by downstream packages or user code:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -80,7 +81,10 @@ def list_types() -> list[str]:
 
 
 def _coerce_str(value: Any, arg: dict[str, Any]) -> str:
-    return str(value)
+    coerced = str(value)
+    _check_length(coerced, arg)
+    _check_pattern(coerced, arg)
+    return coerced
 
 
 def _coerce_int(value: Any, arg: dict[str, Any]) -> int:
@@ -143,6 +147,28 @@ def _check_range(value: int | float, arg: dict[str, Any]) -> None:
         min_val, max_val = range_
         if not (min_val <= value <= max_val):
             raise ValueError(f"Value {value} is out of range [{min_val}, {max_val}]")
+
+
+def _check_length(value: str, arg: dict[str, Any]) -> None:
+    """Validate a string value against declared min-/max-length bounds."""
+    from runspec.errors import format_too_long, format_too_short
+
+    name = arg.get("name", "?")
+    min_length = arg.get("min_length")
+    if min_length is not None and len(value) < min_length:
+        raise ValueError(format_too_short(value, min_length, name))
+    max_length = arg.get("max_length")
+    if max_length is not None and len(value) > max_length:
+        raise ValueError(format_too_long(value, max_length, name))
+
+
+def _check_pattern(value: str, arg: dict[str, Any]) -> None:
+    """Validate a string value fully matches the declared regex pattern."""
+    pattern = arg.get("pattern")
+    if pattern is not None and re.fullmatch(pattern, value) is None:
+        from runspec.errors import format_invalid_pattern
+
+        raise ValueError(format_invalid_pattern(value, pattern, arg.get("name", "?")))
 
 
 # Register all built-in coercers

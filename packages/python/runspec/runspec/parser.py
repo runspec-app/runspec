@@ -102,6 +102,9 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
             "meta": None,
             "position": None,
             "range": None,
+            "pattern": None,
+            "min_length": None,
+            "max_length": None,
         }
 
     # Auto-inject --no-summary when [config.logging] is present. Suppresses the
@@ -124,6 +127,9 @@ def _parse_impl(script_name: str | None = None, argv: list[str] | None = None, c
             "meta": None,
             "position": None,
             "range": None,
+            "pattern": None,
+            "min_length": None,
+            "max_length": None,
         }
 
     # 5. Resolve subcommand if any. Global (top-level) args are merged into the
@@ -802,6 +808,9 @@ def _build_runspec(
             description=spec.get("description"),
             options=spec.get("options"),
             range=spec.get("range"),
+            pattern=spec.get("pattern"),
+            min_length=spec.get("min_length"),
+            max_length=spec.get("max_length"),
             multiple=spec.get("multiple", False),
             delimiter=spec.get("delimiter"),
             short=spec.get("short"),

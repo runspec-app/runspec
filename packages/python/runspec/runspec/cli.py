@@ -690,6 +690,15 @@ def _arg_to_json_schema(arg: dict[str, Any]) -> dict[str, Any]:
         prop["minimum"] = min_val
         prop["maximum"] = max_val
 
+    if arg.get("pattern"):
+        prop["pattern"] = arg["pattern"]
+
+    if arg.get("min_length") is not None:
+        prop["minLength"] = arg["min_length"]
+
+    if arg.get("max_length") is not None:
+        prop["maxLength"] = arg["max_length"]
+
     if arg.get("multiple"):
         prop = {"type": "array", "items": prop}
 

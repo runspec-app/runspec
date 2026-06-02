@@ -74,6 +74,8 @@ def parse(
 | `MissingRequiredArg` | A required arg was not provided |
 | `InvalidChoice` | Value not in declared `options` |
 | `OutOfRange` | Numeric value outside declared `range` |
+| `InvalidPattern` | String value didn't fully match declared `pattern` |
+| `InvalidLength` | String value outside declared `min-length`/`max-length` |
 | `UnknownArg` | An arg was passed that isn't in the spec |
 | `GroupViolation` | A group constraint was violated |
 | `AutonomyViolation` | Per-arg autonomy escalation was attempted unsafely |
