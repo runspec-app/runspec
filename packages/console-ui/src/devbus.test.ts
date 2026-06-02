@@ -178,7 +178,9 @@ describe('installDispatchTap', () => {
 
   beforeEach(() => {
     original = vi.fn(() => true)
-    fakeWindow = { dispatchEvent: original }
+    // vitest 4's Mock type isn't directly assignable to the precise
+    // dispatchEvent signature; cast (original stays a Mock for .mock access).
+    fakeWindow = { dispatchEvent: original as unknown as (e: Event) => boolean }
     // Minimal globals so the tap installs and CustomEvent works in node env.
     vi.stubGlobal('window', fakeWindow)
     if (typeof CustomEvent === 'undefined') {
