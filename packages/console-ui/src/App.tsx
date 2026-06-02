@@ -11,11 +11,13 @@ import {
   SettingOutlined,
   CodeOutlined,
   LoadingOutlined,
+  BugOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
 import { HistoryView } from './views/HistoryView'
 import { SchedulesView } from './views/SchedulesView'
+import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
@@ -23,7 +25,7 @@ import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'forms' | 'schedules'
+type ViewKey = 'console' | 'specs' | 'history' | 'forms' | 'schedules' | 'dev'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -164,6 +166,7 @@ export default function App() {
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
     { key: 'schedules' as ViewKey, label: 'Schedules', icon: <CalendarOutlined /> },
+    { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ]
 
   return (
@@ -323,6 +326,7 @@ export default function App() {
                     {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
+                    {view === 'dev'       && <DevView />}
                   </div>
                 )}
               </div>

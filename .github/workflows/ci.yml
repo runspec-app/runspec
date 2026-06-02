@@ -41,6 +41,7 @@ jobs:
               - '.github/workflows/ci.yml'
             console:
               - 'packages/python/runspec-console/**'
+              - 'packages/console-ui/**'
               - '.github/workflows/ci.yml'
 
   # ── Python ──────────────────────────────────────────────────────────────────
@@ -377,11 +378,38 @@ jobs:
           PYTHONPATH: .
         run: pytest
 
+  console-ui:
+    name: console-ui (frontend)
+    needs: changes
+    if: needs.changes.outputs.console == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/console-ui
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: packages/console-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
   # ── Aggregator ───────────────────────────────────────────────────────────────
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, console-quality, console-test]
+    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, console-quality, console-test, console-ui]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -407,6 +435,7 @@ jobs:
           check "linux-test"     "${{ needs.linux-test.result }}"
           check "console-quality" "${{ needs.console-quality.result }}"
           check "console-test"    "${{ needs.console-test.result }}"
+          check "console-ui"      "${{ needs.console-ui.result }}"
           if [[ $fail -eq 1 ]]; then
             echo "One or more checks failed."
             exit 1

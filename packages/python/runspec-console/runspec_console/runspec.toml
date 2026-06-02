@@ -13,6 +13,10 @@ type        = "int"
 default     = 5173
 description = "Vite dev server port (only used with --dev)"
 
+[runspec-console.args.devtools]
+type        = "flag"
+description = "Enable the Chromium inspector (right-click → Inspect / F12) in production builds"
+
 [disk-usage]
 description = "Show free/used space for all local drives or a specific path"
 autonomy    = "autonomous"

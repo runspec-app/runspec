@@ -697,5 +697,9 @@ export const mockApi: BridgeApi = {
   launch_local_terminal: async (): Promise<void> => {
     console.log('mock: launch_local_terminal')
   },
+  is_debug_enabled: async (): Promise<boolean> => true,
+  open_devtools: async (): Promise<void> => {
+    console.log('mock: open_devtools')
+  },
 
 }

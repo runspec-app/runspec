@@ -12,10 +12,20 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
+
+
+def _resolve_debug(dev: bool, devtools_arg: bool) -> bool:
+    """Whether to enable the Chromium inspector.
+
+    `--dev` implies it; `--devtools` or RUNSPEC_CONSOLE_DEVTOOLS=1 opt into it for
+    production (bundled-dist) builds where the inspector is otherwise off.
+    """
+    return dev or devtools_arg or os.environ.get("RUNSPEC_CONSOLE_DEVTOOLS") == "1"
 
 
 def _find_dist() -> Path:
@@ -150,12 +160,14 @@ def main() -> None:
     args = runspec.parse("runspec-console")
     dev: bool = bool(args.dev.value)
     port: int = int(args.port.value) if args.port.value is not None else 5173
+    debug_enabled: bool = _resolve_debug(dev, bool(args.devtools.value))
 
     import webview
 
     from .bridge import Bridge
 
     bridge = Bridge()
+    bridge.set_debug(debug_enabled)
 
     if dev:
         url = f"http://localhost:{port}"
@@ -180,7 +192,7 @@ def main() -> None:
     bridge.set_window(window)
 
     start_kwargs: dict[str, object] = {
-        "debug": dev,
+        "debug": debug_enabled,
         "func": lambda: _apply_dwm_title_bar(window_title),
     }
     icon = _build_icon()

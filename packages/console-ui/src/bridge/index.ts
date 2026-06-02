@@ -1,3 +1,5 @@
+import { recordCallStart, recordCallEnd, recordCallError } from '../devbus'
+
 export interface ArgDef {
   name: string
   type: string
@@ -167,6 +169,9 @@ export interface BridgeApi {
   // ── terminal sessions ──────────────────────────────────────────────────────
   launch_terminal: (host: string) => Promise<void>
   launch_local_terminal: () => Promise<void>
+  // ── dev tools ────────────────────────────────────────────────────────────
+  is_debug_enabled: () => Promise<boolean>
+  open_devtools: () => Promise<void>
 }
 
 declare global {
@@ -213,9 +218,22 @@ function resolveBridge(): Promise<BridgeApi> {
 
 export const bridge: BridgeApi = new Proxy({} as BridgeApi, {
   get(_target, prop) {
+    // Symbol probes (thenable checks, etc.) must not be mistaken for methods —
+    // returning a function here would make the Proxy look like a Promise.
+    if (typeof prop === 'symbol') return undefined
+    const name = String(prop)
     return async (...args: unknown[]) => {
-      const api = await resolveBridge()
-      return (api[prop as keyof BridgeApi] as (...a: unknown[]) => unknown)(...args)
+      const entryId = recordCallStart(name, args)
+      const t0 = performance.now()
+      try {
+        const api = await resolveBridge()
+        const result = await (api[prop as keyof BridgeApi] as (...a: unknown[]) => unknown)(...args)
+        recordCallEnd(entryId, result, performance.now() - t0)
+        return result
+      } catch (err) {
+        recordCallError(entryId, err, performance.now() - t0)
+        throw err
+      }
     }
   },
 })

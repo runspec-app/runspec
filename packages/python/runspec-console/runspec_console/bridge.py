@@ -47,6 +47,7 @@ _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 class Bridge:
     def __init__(self) -> None:
         self._window: Any = None
+        self._debug: bool = False
         self._lock = threading.Lock()
         self._in_flight: dict[str, dict[str, Any]] = {}
         self._adapter: Any = None  # ModelAdapter, loaded on demand
@@ -72,6 +73,34 @@ class Bridge:
 
     def set_window(self, window: Any) -> None:
         self._window = window
+
+    def set_debug(self, debug: bool) -> None:
+        """Record whether the Chromium inspector was enabled at startup."""
+        self._debug = debug
+
+    def is_debug_enabled(self) -> bool:
+        """Exposed to the Dev tab so its inspector button behaves honestly."""
+        return self._debug
+
+    def open_devtools(self) -> None:
+        """Best-effort open of the native Chromium inspector.
+
+        pywebview 5.x has no reliable cross-platform API for this — debug mode
+        (set at startup) enables right-click → Inspect / F12. We attempt any hook
+        the backend happens to expose and otherwise no-op; the Dev tab tells the
+        user to use the context menu / F12.
+        """
+        win = self._window
+        if win is None:
+            return
+        for attr in ("open_devtools", "show_devtools"):
+            fn = getattr(win, attr, None)
+            if callable(fn):
+                try:
+                    fn()
+                    return
+                except Exception:
+                    logger.debug("%s failed", attr, exc_info=True)
 
     # ── window controls ───────────────────────────────────────────────────────
 
