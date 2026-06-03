@@ -18,6 +18,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Migrating from argparse: migration.md
   - Format Reference: format.md
   - Logging: logging.md
   - Python Library: python.md
@@ -25,6 +26,6 @@ nav:
   - CLI Reference: cli.md
   - Agent Integration: agents.md
   - Jump Hosts: jump-hosts.md
-  - runspec-chat: runspec-chat.md
+  - runspec-chat (deprecated): runspec-chat.md
   - Releasing: releasing.md
   - Changelog: changelog.md

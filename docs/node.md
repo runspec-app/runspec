@@ -5,8 +5,17 @@ Node.js and TypeScript projects. Same TOML format, same CLI, same MCP server
 — just `parse()` returning a `ParsedArgs` object instead of a Python `RunSpec`.
 
 !!! info "Version"
-    This page documents **runspec-node 0.10.0**. Node 18+ is required; CI
-    covers 18, 20, and 22.
+    This page tracks the latest published **runspec-node** release (see the
+    [Changelog](changelog.md)); API additions are annotated with the version
+    that introduced them. Node 18+ is required; CI covers 18, 20, and 22.
+
+!!! success "Python parity (node-0.18.0)"
+    As of **node-0.18.0**, the Node pack is at feature parity with the Python
+    reference for argument handling — including string validation
+    (`pattern` / `min-length` / `max-length`) and required subcommands
+    (`require-command`). The same `runspec.toml` produces identical parsing,
+    validation, and tool schemas in both languages. Any remaining
+    language-specific differences are called out inline below.
 
 ---
 

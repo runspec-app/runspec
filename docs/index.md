@@ -6,9 +6,11 @@ A single TOML interface specification for anything runnable. Define your
 arguments once, get a fully validated CLI with `--help`, structured logging,
 and MCP-ready tool schemas — without writing argument-parsing code.
 
-<small>
-runspec 0.11.0 (Python) &middot; runspec-node 0.10.0
-</small>
+!!! info "Versions"
+    This reference tracks the latest published `runspec` (Python) and
+    `runspec-node` (Node) releases. See the [Changelog](changelog.md) for what
+    landed in each version; features below are annotated with the version that
+    introduced them.
 
 ---
 
@@ -133,6 +135,7 @@ the dogfooding.
 ## Next
 
 - [Quickstart](quickstart.md) — zero to a working CLI in five minutes
+- [Migrating from argparse](migration.md) — convert an existing Python script
 - [Format Reference](format.md) — every field, every option
 - [Python Library](python.md) — `parse()`, `RunSpec`, `Arg`, custom types
 - [Node Library](node.md) — `parse()`, `ParsedArgs`, `getLogger`, custom types

@@ -226,6 +226,31 @@ The `rotate` field accepts time-based and size-based policies:
 
 ---
 
+## Run summary
+
+When `[config.logging]` is present, runspec emits a **run summary** at process
+exit — one structured record to the audit log plus one human-readable line to
+stderr:
+
+```
+runspec: deploy completed in 1.84s — 12 events (2 warnings, 0 errors)
+```
+
+The record captures the run's duration, exit code, log-event counts by level,
+the effective autonomy, whether it ran under an agent (`runspec serve`), the
+command path, and any uncaught exception. It gives every invocation an audit
+trail entry even when the tool itself logs nothing.
+
+Summaries are on by default. Suppress a single invocation with `--no-summary`
+(or `RUNSPEC_ARG_NO_SUMMARY=1`), or turn them off entirely with
+`summary = false` under `[config.logging]`.
+
+!!! note "Availability"
+    Run summaries landed in **runspec 0.12.x** and **node-0.12.0** (same
+    closing-line and record shape in both).
+
+---
+
 ## See also
 
 - [Python Library](python.md) — `parse()` integration details

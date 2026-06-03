@@ -4,9 +4,11 @@ The Python library is the reference implementation. Install it, call
 `parse()`, and you get a fully validated, type-coerced `RunSpec` object back.
 
 !!! info "Version"
-    This page documents **runspec 0.11.0**. Python 3.10+ is supported.
-    Python 3.11+ has **zero runtime dependencies**; on 3.10, `tomli` is the
-    only dependency (used as the `tomllib` backport).
+    This page tracks the latest published **runspec** release (see the
+    [Changelog](changelog.md)); API additions are annotated with the version
+    that introduced them. Python 3.10+ is supported. Python 3.11+ has **zero
+    runtime dependencies**; on 3.10, `tomli` is the only dependency (used as
+    the `tomllib` backport).
 
 ---
 

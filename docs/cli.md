@@ -339,6 +339,34 @@ and the `run_as` / `become_method` / `become_flags` privilege-escalation matrix.
 
 ---
 
+## `runspec env`
+
+Show the resolved `.runspec_env` deployment file for a runnable — the path,
+where that path was resolved from, and the variables it would inject at run
+time. Useful for debugging deployment-time variable injection without running
+the tool.
+
+```bash
+runspec env              # the default .runspec_env
+runspec env deploy       # the file that applies to the 'deploy' runnable
+```
+
+```
+Resolved .runspec_env for 'deploy':
+  Path:   /opt/app/.runspec_env
+  Source: [config] runspec_env
+
+  DEPLOY_SERVER = web-01
+  DEPLOY_TOKEN  = ****
+```
+
+The resolution order (per-runnable `runspec_env` → `[config] runspec_env` →
+default location) is described under
+[Environment variable fallbacks](format.md#environment-variable-fallbacks) and
+the `.runspec_env` section of the format reference.
+
+---
+
 ## Bash and shell runnables
 
 Any executable on `PATH` can be a runspec runnable — bash, Python, Node,

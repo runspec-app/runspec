@@ -181,7 +181,7 @@ description = "Output quality. Values below 60 are rarely useful."
 | `multiple` | bool | Accept multiple values (repeated-flag style). |
 | `delimiter` | string | Split a single value by this character. |
 | `short` | string | Short flag alias, e.g. `"-v"`. Must be unique within a runnable; `-h` is reserved. |
-| `env` | string | Environment variable fallback. |
+| `env` | string \| array | Environment variable fallback(s), checked after the CLI and before the default. |
 | `deprecated` | string | Deprecation message shown on use. |
 | `autonomy` | string | Per-arg autonomy override. Most restrictive level wins. |
 | `ui` | string | Form control hint. Inferred from type if omitted. |
@@ -223,9 +223,14 @@ ticket --jira-key proj-123     # ✗  Invalid value for --jira-key: 'proj-123'
 ```
 
 These apply to the `str` type only and are ignored for other types. When you
-emit a schema (`runspec emit`), they map to the native JSON Schema keywords
-`pattern`, `minLength`, and `maxLength`, so MCP hosts and survey forms enforce
-them too.
+emit a schema (`runspec local --format mcp`), they map to the native JSON
+Schema keywords `pattern`, `minLength`, and `maxLength`, so MCP hosts and
+survey forms enforce them too.
+
+!!! note "Availability"
+    String validation was added in **runspec 0.22.0** and **node-0.18.0**. The
+    Node pack anchors `pattern` as `^(?:…)$` to match Python's `re.fullmatch`
+    exactly, including patterns with a top-level alternation.
 
 ### Pass-through arguments (`type = "rest"`)
 
@@ -264,6 +269,10 @@ When fields are omitted, runspec infers them. Rules apply in this order:
 !!! note
     `options` is checked before `default` — if both are present, `type = "choice"` wins.
     Bool is checked before int — `false` and `true` are flags, not integers.
+
+The canonical definition of these rules lives in
+[`spec/SPEC.md`](https://github.com/JasonFinestone/runspec/blob/main/spec/SPEC.md);
+every language pack is tested against it, and the table above mirrors it.
 
 ---
 
@@ -456,6 +465,36 @@ strict = {default = false}
 
 `runspec serve` flattens nested subcommands into MCP tools with
 underscore-joined names (e.g. `portal-api_orders_get-list`).
+
+### Requiring a subcommand (`require-command`)
+
+By default a runnable with subcommands can still run "bare" (no subcommand).
+Set `require-command = true` on the parent to make choosing one mandatory —
+the equivalent of `argparse`'s `add_subparsers(required=True)`, Click groups,
+or `git` / `docker` / `kubectl`:
+
+```toml
+[db]
+description     = "Database administration"
+require-command = true        # `db` on its own is an error
+
+[db.commands.migrate]
+description = "Apply pending migrations"
+
+[db.commands.seed]
+description = "Seed the database with fixtures"
+```
+
+Invoking the level with no command — or a token that is not one of its
+commands — errors with the list of available commands (a mistyped token also
+gets a `Did you mean` suggestion). It is a **parent-level** flag and applies at
+any nesting depth: a nested command that itself declares `require-command`
+enforces its own children. Enforcement happens only when parsing real CLI
+arguments — `load_spec()` / `loadSpec()` introspection and schema emission are
+unaffected, so agent tooling still sees the runnable.
+
+!!! note "Availability"
+    `require-command` was added in **runspec 0.23.0** and **node-0.18.0**.
 
 ---
 
