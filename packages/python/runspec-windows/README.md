@@ -1,7 +1,7 @@
 # runspec-windows
 
-Windows system-administration and Microsoft 365 (Outlook + Teams) runnables for
-[runspec](https://pypi.org/project/runspec/). The Windows counterpart to
+Windows system-administration and Microsoft 365 (Outlook · Teams · Calendar ·
+OneDrive) runnables for [runspec](https://pypi.org/project/runspec/). The Windows counterpart to
 [`runspec-linux`](../runspec-linux): `pip install` it into a venv and the
 runnables are discoverable by `runspec local`, `runspec serve` (MCP), and
 runspec-console.
@@ -14,7 +14,7 @@ All runnables emit JSON on stdout. Read-only runnables are `autonomy =
 
 ```
 pip install runspec-windows          # system utilities only
-pip install "runspec-windows[graph]" # + Microsoft 365 (Outlook/Teams) runnables
+pip install "runspec-windows[graph]" # + Microsoft 365 (Outlook/Teams/Calendar/OneDrive) runnables
 ```
 
 ## Runnables
@@ -42,7 +42,7 @@ query-eventlog --log System --level error --count 20
 installed-software --filter "Microsoft"
 ```
 
-## Microsoft 365 (Outlook + Teams) — one-time setup
+## Microsoft 365 (Outlook · Teams · Calendar · OneDrive) — one-time setup
 
 The Graph runnables authenticate as the signed-in user via the OAuth
 **device-code** flow (no client secret, no admin app password). You need a
