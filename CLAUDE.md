@@ -233,6 +233,19 @@ changelog on the branch; never push a `{prefix}v*` tag yourself.
 public Python API — wrapper runnables for TCP-interface apps do
 `from runspec_linux import nc_send`.
 
+**Docs drift checks.** `scripts/check_docs.py` guards the MkDocs site against
+drift and runs in CI (`docs-check` job, gated by a `docs` paths filter) and
+optionally via `.pre-commit-config.yaml`. Three checks: (1) **version-sync** —
+each package manifest version must have a matching `CHANGELOG.md` entry
+(`## [x]` for Python, `## [node-x]` for Node); (2) **toml-examples** — every
+runspec ` ```toml ` block in `docs/` validates against
+`schema/runspec.schema.json`; (3) **format-reference** — the arg-field and type
+tables in `docs/format.md` must match the schema. Practical upshot: when you
+add or change a format field/type, update `schema/runspec.schema.json` and the
+`docs/format.md` tables in the same change, and add a CHANGELOG entry for any
+version bump — or `docs-check` fails. (`KNOWN_CUSTOM_TYPES` in the script lists
+the custom `register_type` names demonstrated in the docs.)
+
 **Next:** Config-file value fallback (third tier in value resolution, currently "design for now").
 
 **Queued:**

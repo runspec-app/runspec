@@ -42,9 +42,12 @@
           "properties": {
             "rotate": {
               "type": "string",
-              "description": "Log rotation strategy. 'daily' rotates at midnight.",
-              "enum": ["daily"],
-              "default": "daily"
+              "description": "Log rotation policy: a time keyword (midnight, daily, weekly) or a size like '10 MB'.",
+              "default": "midnight",
+              "anyOf": [
+                { "enum": ["midnight", "daily", "weekly"] },
+                { "pattern": "^[0-9]+\\s*(KB|MB|GB)$" }
+              ]
             },
             "keep": {
               "type": "integer",
@@ -288,7 +291,7 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["str", "int", "float", "bool", "flag", "path", "choice"],
+          "enum": ["str", "int", "float", "bool", "flag", "path", "choice", "rest"],
           "description": "Argument type. Inferred from default or options if omitted."
         },
         "default": {
@@ -313,6 +316,20 @@
           "items": { "type": "number" },
           "minItems": 2,
           "maxItems": 2
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Regex the value must fully match (re.fullmatch semantics). str type only."
+        },
+        "min-length": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum string length. str type only."
+        },
+        "max-length": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum string length. str type only."
         },
         "multiple": {
           "type": "boolean",

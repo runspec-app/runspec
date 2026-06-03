@@ -1,0 +1,13 @@
+# Optional local hooks. Install with:  pip install pre-commit && pre-commit install
+# The docs drift check also runs in CI (see .github/workflows/ci.yml), so this
+# is a convenience for catching drift before you push.
+repos:
+  - repo: local
+    hooks:
+      - id: docs-drift-check
+        name: docs drift check
+        entry: python scripts/check_docs.py
+        language: python
+        additional_dependencies: [jsonschema]
+        pass_filenames: false
+        files: '^(docs/|schema/runspec\.schema\.json|spec/SPEC\.md|CHANGELOG\.md|scripts/check_docs\.py|packages/python/runspec/pyproject\.toml|packages/node/package\.json)'

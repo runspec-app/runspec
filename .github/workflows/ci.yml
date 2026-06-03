@@ -20,6 +20,7 @@ jobs:
       chat: ${{ steps.filter.outputs.chat }}
       linux: ${{ steps.filter.outputs.linux }}
       console: ${{ steps.filter.outputs.console }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -42,6 +43,16 @@ jobs:
             console:
               - 'packages/python/runspec-console/**'
               - 'packages/console-ui/**'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'docs/**'
+              - 'mkdocs.yml'
+              - 'schema/runspec.schema.json'
+              - 'spec/SPEC.md'
+              - 'CHANGELOG.md'
+              - 'scripts/check_docs.py'
+              - 'packages/python/runspec/pyproject.toml'
+              - 'packages/node/package.json'
               - '.github/workflows/ci.yml'
 
   # ── Python ──────────────────────────────────────────────────────────────────
@@ -407,9 +418,27 @@ jobs:
 
   # ── Aggregator ───────────────────────────────────────────────────────────────
 
+  docs-check:
+    name: docs drift check
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install check deps
+        run: pip install jsonschema
+
+      - name: Check docs are in sync with the source of truth
+        run: python scripts/check_docs.py
+
   ci:
     name: CI
-    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, console-quality, console-test, console-ui]
+    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, console-quality, console-test, console-ui, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -436,6 +465,7 @@ jobs:
           check "console-quality" "${{ needs.console-quality.result }}"
           check "console-test"    "${{ needs.console-test.result }}"
           check "console-ui"      "${{ needs.console-ui.result }}"
+          check "docs-check"      "${{ needs.docs-check.result }}"
           if [[ $fail -eq 1 ]]; then
             echo "One or more checks failed."
             exit 1
