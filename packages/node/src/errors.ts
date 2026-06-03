@@ -41,6 +41,38 @@ export function formatOutOfRange(value: number, range: [number, number], name: s
   ].join('\n');
 }
 
+export function formatInvalidPattern(value: string, pattern: string, name: string): string {
+  return [
+    `✗  Invalid value for --${name}: ${JSON.stringify(value)}`,
+    `   Expected: a value matching pattern ${JSON.stringify(pattern)}`,
+    `   Got: ${JSON.stringify(value)}`,
+  ].join('\n');
+}
+
+export function formatTooShort(value: string, minLength: number, name: string): string {
+  return [
+    `✗  Value too short for --${name}: ${JSON.stringify(value)}`,
+    `   Expected: at least ${minLength} character${minLength === 1 ? '' : 's'}`,
+    `   Got: ${value.length}`,
+  ].join('\n');
+}
+
+export function formatTooLong(value: string, maxLength: number, name: string): string {
+  return [
+    `✗  Value too long for --${name}: ${JSON.stringify(value)}`,
+    `   Expected: at most ${maxLength} character${maxLength === 1 ? '' : 's'}`,
+    `   Got: ${value.length}`,
+  ].join('\n');
+}
+
+export function formatMissingCommand(runnablePath: string, availableCommands: string[]): string {
+  return [
+    `✗  '${runnablePath}' requires a command.`,
+    `   Available commands: ${availableCommands.join(', ')}`,
+    `\n   Run '${runnablePath} <command> --help' for details.`,
+  ].join('\n');
+}
+
 export function formatUnknownArg(name: string, knownArgs: string[]): string {
   const lines = [
     `✗  Unknown argument: --${name}`,

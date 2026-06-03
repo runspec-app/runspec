@@ -1,6 +1,6 @@
 import * as path from 'path';
 import type { ArgSpec } from './models';
-import { formatInvalidChoice } from './errors';
+import { formatInvalidChoice, formatInvalidPattern, formatTooShort, formatTooLong } from './errors';
 
 export type TypeCoercer = (value: unknown, spec: ArgSpec) => unknown;
 
@@ -31,8 +31,11 @@ export function listTypes(): string[] {
   return [...registry.keys()].sort();
 }
 
-function coerceStr(value: unknown): string {
-  return String(value);
+function coerceStr(value: unknown, spec: ArgSpec): string {
+  const coerced = String(value);
+  checkLength(coerced, spec);
+  checkPattern(coerced, spec);
+  return coerced;
 }
 
 function coerceInt(value: unknown, spec: ArgSpec): number {
@@ -84,6 +87,26 @@ function checkRange(value: number, spec: ArgSpec): void {
     if (value < min || value > max) {
       throw new Error(`Value ${value} is out of range [${min}, ${max}]`);
     }
+  }
+}
+
+// String-only validation (str coercer). Mirrors Python's _check_length/_check_pattern.
+function checkLength(value: string, spec: ArgSpec): void {
+  if (spec.minLength !== undefined && value.length < spec.minLength) {
+    throw new Error(formatTooShort(value, spec.minLength, spec.name ?? '?'));
+  }
+  if (spec.maxLength !== undefined && value.length > spec.maxLength) {
+    throw new Error(formatTooLong(value, spec.maxLength, spec.name ?? '?'));
+  }
+}
+
+function checkPattern(value: string, spec: ArgSpec): void {
+  if (spec.pattern === undefined) return;
+  // (?:…) anchoring reproduces Python's re.fullmatch even when the pattern
+  // contains a top-level alternation (plain ^p$ would mis-bind `a|b`).
+  const regex = new RegExp(`^(?:${spec.pattern})$`);
+  if (!regex.test(value)) {
+    throw new Error(formatInvalidPattern(value, spec.pattern, spec.name ?? '?'));
   }
 }
 

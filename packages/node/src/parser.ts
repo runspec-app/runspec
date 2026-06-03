@@ -4,7 +4,7 @@ import { loadRaw } from './loader';
 import { inferScript, effectiveAutonomy } from './inference';
 import { coerce } from './types';
 import { validateArgs, validateGroups, raiseIfErrors } from './validator';
-import { RunSpecError } from './errors';
+import { RunSpecError, formatMissingCommand } from './errors';
 import { configureLogging } from './logging_setup';
 import type { ParsedArgs, ScriptSpec, ArgSpec } from './models';
 
@@ -13,10 +13,12 @@ export interface ParseOptions {
   argv?: string[];
   cwd?: string;
   configPath?: string;
+  /** Internal: enforce `require-command` (real CLI parsing). loadSpec sets false. */
+  _enforceRequiredCommand?: boolean;
 }
 
 export function parse(opts: ParseOptions = {}): ParsedArgs {
-  const { scriptName, argv: argvOverride, cwd, configPath: configPathOverride } = opts;
+  const { scriptName, argv: argvOverride, cwd, configPath: configPathOverride, _enforceRequiredCommand = true } = opts;
 
   const { configPath } = configPathOverride ? { configPath: configPathOverride } : findConfig(cwd);
   const raw = loadRaw(configPath);
@@ -90,6 +92,21 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
     process.exit(0);
   }
 
+  // Enforce require-command on the resolved leaf: if the deepest matched node
+  // still requires a command and has commands, none was chosen at that level.
+  // Checking the leaf (not commandPath.length) enforces at every nesting depth.
+  // Skipped by loadSpec — introspection/emit must not be blocked. Runs after
+  // --help so `<name> --help` still lists the commands.
+  if (
+    _enforceRequiredCommand &&
+    activeScript.requireCommand &&
+    Object.keys(activeScript.commands ?? {}).length > 0
+  ) {
+    throw new RunSpecError(
+      formatMissingCommand([name, ...commandPath].join(' '), Object.keys(activeScript.commands)),
+    );
+  }
+
   let parsedValues = parseArgv(argv, activeScript.args ?? {});
   parsedValues = applyEnv(parsedValues, activeScript.args ?? {}, name);
   parsedValues = applyDefaults(parsedValues, activeScript.args ?? {});
@@ -144,7 +161,7 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
 }
 
 export function loadSpec(opts: ParseOptions = {}): ParsedArgs {
-  return parse({ ...opts, argv: [] });
+  return parse({ ...opts, argv: [], _enforceRequiredCommand: false });
 }
 
 function inferFromArgv(): string {
@@ -336,7 +353,7 @@ export function printHelp(name: string, script: ScriptSpec, commandPath: string[
 
   // Commands section
   if (Object.keys(commands).length > 0) {
-    console.log('\nCommands:');
+    console.log(script.requireCommand ? '\nCommands (required):' : '\nCommands:');
     const cmdCol = Math.max(...Object.keys(commands).map((c) => c.length)) + 2;
     for (const [cmdName, cmdSpec] of Object.entries(commands)) {
       const desc = cmdSpec.description ?? '';

@@ -106,6 +106,39 @@ workers = {default = 4, range = [1, 32]}
   expect(raw.runnables['greet'].args['workers'].range).toEqual([1, 32]);
 });
 
+test('normalises pattern / min-length / max-length fields', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `
+[greet]
+description = "hi"
+
+[greet.args]
+slug = {type = "str", pattern = "[a-z]+-[0-9]+", min-length = 3, max-length = 10}
+`);
+  const raw = loadRaw(file);
+  const slug = raw.runnables['greet'].args['slug'];
+  expect(slug.pattern).toBe('[a-z]+-[0-9]+');
+  expect(slug.minLength).toBe(3);
+  expect(slug.maxLength).toBe(10);
+});
+
+test('normalises require-command on a runnable', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `
+[db]
+require-command = true
+
+[db.commands.migrate]
+description = "run migrations"
+`);
+  const raw = loadRaw(file);
+  expect(raw.runnables['db'].requireCommand).toBe(true);
+  // Defaults to false when absent.
+  expect(raw.runnables['db'].commands['migrate'].requireCommand).toBe(false);
+});
+
 test('normalises group fields', () => {
   const dir = tmpDir();
   const file = path.join(dir, 'runspec.toml');

@@ -171,6 +171,26 @@ describe('complex.toml', () => {
     const run = inferred.commands['run'];
     expect(run.autonomyReason).toBe('Writes output files and may call external APIs');
   });
+
+  test('run subcommand: label has pattern / min-length / max-length', () => {
+    const raw = loadRaw(COMPLEX);
+    const inferred = inferScript(raw.runnables['pipeline'], raw.config.autonomyDefault);
+    const label = inferred.commands['run'].args['label'];
+    expect(label.type).toBe('str');
+    expect(label.pattern).toBe('[a-z][a-z0-9-]+');
+    expect(label.minLength).toBe(3);
+    expect(label.maxLength).toBe(32);
+  });
+
+  test('db runnable: require-command with subcommands', () => {
+    const raw = loadRaw(COMPLEX);
+    const db = raw.runnables['db'];
+    expect(db.requireCommand).toBe(true);
+    expect(db.commands['migrate']).toBeDefined();
+    expect(db.commands['seed']).toBeDefined();
+    // Defaults to false where unset.
+    expect(raw.runnables['pipeline'].requireCommand).toBe(false);
+  });
 });
 
 // ── cross-fixture: inference rules ────────────────────────────────────────────

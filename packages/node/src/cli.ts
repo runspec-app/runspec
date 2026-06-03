@@ -210,6 +210,9 @@ function argToJsonSchema(arg: ArgSpec): Record<string, unknown> {
     prop['minimum'] = arg.range[0];
     prop['maximum'] = arg.range[1];
   }
+  if (arg.pattern) prop['pattern'] = arg.pattern;
+  if (arg.minLength !== undefined) prop['minLength'] = arg.minLength;
+  if (arg.maxLength !== undefined) prop['maxLength'] = arg.maxLength;
   if (arg.multiple) prop = { type: 'array', items: prop };
 
   return prop;

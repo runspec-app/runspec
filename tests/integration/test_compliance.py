@@ -79,7 +79,7 @@ class TestComplexFixture:
 
     def test_run_args_present(self, spec):
         args = spec["runnables"]["pipeline"]["commands"]["run"]["args"]
-        expected = {"input", "tag", "fields", "format", "workers", "batch-size", "dry-run", "verbose", "strict", "api-key", "timeout", "threads"}
+        expected = {"input", "tag", "fields", "format", "workers", "batch-size", "dry-run", "verbose", "strict", "api-key", "timeout", "threads", "label"}
         assert set(args.keys()) == expected
 
     def test_choice_arg(self, spec):
@@ -127,3 +127,17 @@ class TestComplexFixture:
         group = spec["runnables"]["pipeline"]["commands"]["run"]["groups"]["api-auth"]
         assert group["inclusive"] is True
         assert "api-key" in group["args"]
+
+    def test_string_validation_arg(self, spec):
+        label = spec["runnables"]["pipeline"]["commands"]["run"]["args"]["label"]
+        assert label["pattern"] == "[a-z][a-z0-9-]+"
+        assert label["min_length"] == 3
+        assert label["max_length"] == 32
+
+    def test_require_command_runnable(self, spec):
+        db = spec["runnables"]["db"]
+        assert db["require_command"] is True
+        assert "migrate" in db["commands"]
+        assert "seed" in db["commands"]
+        # Defaults to False where unset (e.g. the pipeline runnable).
+        assert spec["runnables"]["pipeline"]["require_command"] is False

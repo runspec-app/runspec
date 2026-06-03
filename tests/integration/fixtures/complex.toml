@@ -1,6 +1,7 @@
 # Integration fixture: complex.toml
 # Tests subcommands, groups, multiple values, autonomy escalation,
-# env vars, choices, ranges, flags, and deprecated args.
+# env vars, choices, ranges, flags, deprecated args, string validation
+# (pattern / min-length / max-length), and require-command.
 
 [config]
 autonomy-default = "confirm"
@@ -29,6 +30,7 @@ strict     = {default = false}
 api-key    = {type = "str", env = "PIPELINE_API_KEY", autonomy = "manual"}
 timeout    = {default = 30, range = [1, 300]}
 threads    = {default = 4, deprecated = "use --workers instead"}
+label      = {type = "str", pattern = "[a-z][a-z0-9-]+", min-length = 3, max-length = 32}
 
 [pipeline.commands.run.groups.input-format]
 exclusive = true
@@ -47,3 +49,14 @@ input  = {type = "path"}
 schema = {type = "path"}
 strict = {default = false}
 format = {options = ["json", "csv", "parquet"], default = "json"}
+
+# require-command: choosing a subcommand is mandatory at the db level.
+[db]
+description     = "Database administration"
+require-command = true
+
+[db.commands.migrate]
+description = "Apply pending migrations"
+
+[db.commands.seed]
+description = "Seed the database with fixtures"

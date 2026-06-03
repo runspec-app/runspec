@@ -15,6 +15,38 @@ test('coerces number to string', () => {
   expect(coerce(42, spec({ type: 'str' }))).toBe('42');
 });
 
+// ── str validation: pattern / min-length / max-length (str only) ───────────────
+
+test('str matches pattern', () => {
+  expect(coerce('PROJ-123', spec({ type: 'str', pattern: '[A-Z]+-[0-9]+' }))).toBe('PROJ-123');
+});
+
+test('str violates pattern', () => {
+  expect(() => coerce('proj-123', spec({ type: 'str', pattern: '[A-Z]+-[0-9]+' }))).toThrow();
+});
+
+test('pattern is anchored (fullmatch, not substring)', () => {
+  expect(() => coerce('PROJ-123-extra', spec({ type: 'str', pattern: '[A-Z]+-[0-9]+' }))).toThrow();
+});
+
+test('anchored pattern wraps top-level alternation correctly', () => {
+  // ^(?:a|b)$ accepts only "a" or "b" exactly, not a string ending in "b".
+  expect(coerce('a', spec({ type: 'str', pattern: 'a|b' }))).toBe('a');
+  expect(() => coerce('xb', spec({ type: 'str', pattern: 'a|b' }))).toThrow();
+});
+
+test('str respects minLength', () => {
+  expect(() => coerce('ab', spec({ type: 'str', minLength: 3 }))).toThrow();
+});
+
+test('str respects maxLength', () => {
+  expect(() => coerce('abcdef', spec({ type: 'str', maxLength: 5 }))).toThrow();
+});
+
+test('str within length bounds passes', () => {
+  expect(coerce('hello', spec({ type: 'str', minLength: 3, maxLength: 10 }))).toBe('hello');
+});
+
 // ── int ───────────────────────────────────────────────────────────────────────
 
 test('coerces integer string', () => {

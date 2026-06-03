@@ -19,6 +19,9 @@ export interface ArgSpec {
   description?: string;
   options?: string[];
   range?: [number, number];
+  pattern?: string; // regex the value must fully match (str only)
+  minLength?: number; // minimum string length (str only)
+  maxLength?: number; // maximum string length (str only)
   multiple?: boolean;
   delimiter?: string;
   short?: string;
@@ -48,6 +51,7 @@ export interface ScriptSpec {
   autonomyReason?: string;
   output?: string;
   serve?: boolean | string[];
+  requireCommand?: boolean;
   args: Record<string, ArgSpec>;
   groups: Record<string, GroupSpec>;
   commands: Record<string, ScriptSpec>;

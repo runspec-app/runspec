@@ -7,6 +7,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.18.0] — 2026-06-03
+
+### Added
+
+- **Node parity: string validation (`pattern`, `min-length`, `max-length`).**
+  Ports Python 0.22.0 to the Node pack. `str` args accept a `pattern` regex
+  (full-match semantics — anchored as `^(?:…)$`, reproducing Python's
+  `re.fullmatch` even for top-level alternations) plus `min-length`/`max-length`
+  character bounds. New `formatInvalidPattern` / `formatTooShort` /
+  `formatTooLong` error formatters mirror the Python messages, and `runspec
+  local --format mcp/openai/anthropic` emits native JSON Schema
+  `pattern`/`minLength`/`maxLength`.
+
+- **Node parity: required subcommands (`require-command`).** Ports Python
+  0.23.0. A runnable or any nested command with its own `commands` can set
+  `require-command = true`; parsing that level with no command throws a
+  `RunSpecError` listing the available commands, while `loadSpec()` and schema
+  emit stay unaffected (introspection must not be blocked). Help output labels
+  the section `Commands (required):`.
+
+  The shared compliance fixtures (`tests/integration/fixtures/complex.toml`) now
+  exercise both features, verified identically by the Python and Node compliance
+  suites.
+
 ## [0.23.0] — 2026-06-02
 
 ### Added
@@ -29,8 +53,8 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   It is a **parent-level** flag (it governs the act of choosing among the
   commands, not any individual child) and is enforced only when parsing real CLI
   arguments — `load_spec()` introspection and `emit` are unaffected. New
-  `MissingCommand` error class with a human-first formatter. (Node port pending —
-  see Queued in `CLAUDE.md`.)
+  `MissingCommand` error class with a human-first formatter. (Node parity added
+  in [node-0.18.0].)
 
 ## [0.22.0] — 2026-06-02
 
@@ -50,7 +74,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   New `InvalidPattern` / `InvalidLength` error classes with human-first
   formatters. Emit maps these to native JSON Schema `pattern` / `minLength` /
   `maxLength`, so MCP hosts and survey forms enforce the same constraints.
-  (Node port pending — see Queued in `CLAUDE.md`.)
+  (Node parity added in [node-0.18.0].)
 
 ### Fixed
 

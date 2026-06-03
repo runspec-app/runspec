@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { parse } from '../src/parser';
+import { parse, loadSpec } from '../src/parser';
 
 function makeTmpConfig(toml: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runspec-parser-test-'));
@@ -155,5 +155,87 @@ description = "Run it"
     const usage = out.split('\n').find((l) => l.startsWith('Usage:'))!;
     expect(usage.indexOf('<host>')).toBeLessThan(usage.indexOf('<command>'));
     expect(usage.indexOf('<command>')).toBeLessThan(usage.indexOf('-- <extra>'));
+  });
+});
+
+// ── require-command ─────────────────────────────────────────────────────────────
+
+describe('require-command', () => {
+  const DB_TOML = `
+[db]
+require-command = true
+[db.commands.migrate]
+[db.commands.seed]
+`;
+
+  test('no command errors and lists commands', () => {
+    const configPath = makeTmpConfig(DB_TOML);
+    let msg = '';
+    try {
+      parse({ scriptName: 'db', argv: [], configPath });
+      throw new Error('expected parse to throw');
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toContain('requires a command');
+    expect(msg).toContain('migrate');
+    expect(msg).toContain('seed');
+  });
+
+  test('valid command passes', () => {
+    const configPath = makeTmpConfig(DB_TOML);
+    const args = parse({ scriptName: 'db', argv: ['migrate'], configPath });
+    expect(args.runspec_command_path).toEqual(['migrate']);
+    expect(args.runspec_command).toBe('migrate');
+  });
+
+  test('nested requirement enforced at each depth', () => {
+    const toml = `
+[app]
+require-command = true
+[app.commands.db]
+require-command = true
+[app.commands.db.commands.migrate]
+`;
+    const configPath = makeTmpConfig(toml);
+    // Choosing the intermediate command isn't enough — db itself requires one.
+    expect(() => parse({ scriptName: 'app', argv: ['db'], configPath })).toThrow(/requires a command/);
+    // Going all the way down satisfies it.
+    const args = parse({ scriptName: 'app', argv: ['db', 'migrate'], configPath });
+    expect(args.runspec_command_path).toEqual(['db', 'migrate']);
+  });
+
+  test('backward compatible: commands without require-command run at root', () => {
+    const toml = `
+[tool]
+[tool.commands.run]
+`;
+    const configPath = makeTmpConfig(toml);
+    const args = parse({ scriptName: 'tool', argv: [], configPath });
+    expect(args.runspec_command_path).toEqual([]);
+  });
+
+  test('loadSpec bypasses enforcement', () => {
+    const configPath = makeTmpConfig(DB_TOML);
+    const spec = loadSpec({ scriptName: 'db', configPath });
+    expect(spec.runspec_command_path).toEqual([]);
+  });
+
+  test('--help still works at a required level', () => {
+    const configPath = makeTmpConfig(DB_TOML);
+    const output: string[] = [];
+    const logSpy = jest.spyOn(console, 'log').mockImplementation((...a) => { output.push(a.join(' ')); });
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => { throw new Error('__exit__'); }) as never);
+    try {
+      parse({ scriptName: 'db', argv: ['--help'], configPath });
+    } catch (e) {
+      if ((e as Error).message !== '__exit__') throw e;
+    } finally {
+      logSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+    const out = output.join('\n');
+    expect(out).toContain('Commands (required):');
+    expect(out).toContain('migrate');
   });
 });
