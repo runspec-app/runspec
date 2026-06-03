@@ -298,3 +298,33 @@ class TestRunSpecMetadataProperties:
         rs = self._make(__runspec_command_path__=["run", "stage"])
         assert rs.runspec_command == "stage"
         assert rs.runspec_command_path == ["run", "stage"]
+
+
+class TestPythonType:
+    """Arg.python_type reflects the effective value type, including lists for
+    multiple-valued args (where .type alone is just the item type)."""
+
+    def test_scalar_types(self):
+        assert Arg(value="x", name="s", type="str").python_type == "str"
+        assert Arg(value=1, name="i", type="int").python_type == "int"
+        assert Arg(value=1.0, name="f", type="float").python_type == "float"
+        assert Arg(value=True, name="b", type="flag").python_type == "bool"
+
+    def test_path_maps_to_Path(self):
+        assert Arg(value="/x", name="p", type="path").python_type == "Path"
+
+    def test_multiple_wraps_in_list(self):
+        assert Arg(value=["a", "b"], name="t", type="str", multiple=True).python_type == "list[str]"
+        assert Arg(value=[1, 2], name="n", type="int", multiple=True).python_type == "list[int]"
+
+    def test_rest_is_list_str(self):
+        assert Arg(value=["--x"], name="e", type="rest").python_type == "list[str]"
+
+    def test_custom_type_passthrough(self):
+        a = Arg(value=[1], name="j", type="json-file", multiple=True)
+        assert a.python_type == "list[json-file]"
+
+    def test_type_field_unchanged(self):
+        # .type stays the item type — it drives per-item coercion.
+        a = Arg(value=["a"], name="t", type="str", multiple=True)
+        assert a.type == "str"

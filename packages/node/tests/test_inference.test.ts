@@ -1,4 +1,4 @@
-import { inferArg, inferScript, effectiveAutonomy, isMoreRestrictive } from '../src/inference';
+import { inferArg, inferScript, effectiveAutonomy, isMoreRestrictive, tsTypeOf } from '../src/inference';
 import { RunSpecError } from '../src/errors';
 import type { ArgSpec, ScriptSpec } from '../src/models';
 
@@ -150,4 +150,32 @@ test('manual is more restrictive than confirm', () => {
 
 test('autonomous is not more restrictive than confirm', () => {
   expect(isMoreRestrictive('autonomous', 'confirm')).toBe(false);
+});
+
+// ── tsTypeOf (derived value type, computed on demand) ──────────────────────────
+
+test('tsTypeOf: scalar types', () => {
+  expect(tsTypeOf(makeArg({ type: 'str' }))).toBe('string');
+  expect(tsTypeOf(makeArg({ type: 'int' }))).toBe('number');
+  expect(tsTypeOf(makeArg({ type: 'flag' }))).toBe('boolean');
+  expect(tsTypeOf(makeArg({ type: 'path' }))).toBe('string');
+});
+
+test('tsTypeOf: multiple suffixes []', () => {
+  expect(tsTypeOf(makeArg({ type: 'str', multiple: true }))).toBe('string[]');
+  expect(tsTypeOf(makeArg({ type: 'int', multiple: true }))).toBe('number[]');
+});
+
+test('tsTypeOf: rest is string[]', () => {
+  expect(tsTypeOf(makeArg({ type: 'rest' }))).toBe('string[]');
+});
+
+test('tsTypeOf: custom type falls back to unknown', () => {
+  expect(tsTypeOf(makeArg({ type: 'json-file', multiple: true }))).toBe('unknown[]');
+});
+
+test('tsTypeOf works on an inferred ArgSpec; type stays the item type', () => {
+  const arg = inferArg(makeArg({ type: 'str', multiple: true }));
+  expect(arg.type).toBe('str');
+  expect(tsTypeOf(arg)).toBe('string[]');
 });

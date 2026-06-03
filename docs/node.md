@@ -134,6 +134,31 @@ function get<T>(args: ParsedArgs, key: string): T {
 const workers = get<number>(args, 'workers');
 ```
 
+### Effective value type — `tsTypeOf()`
+
+A `multiple` arg's value is an **array**, and per-item validation applies the
+arg's `type` to each element — so `type` stays the *item* type. At runtime
+`args.tag` is already the array, so `Array.isArray(args.tag)` answers the
+question directly. For tooling, codegen, or debugging, `tsTypeOf` computes the
+parsed value's TypeScript type from a (typically inferred) `ArgSpec`:
+
+```typescript
+import { tsTypeOf } from 'runspec-node';
+
+const spec = args.__runspec_spec__;
+spec.args.tag.type            // 'str'        — item type (unchanged)
+tsTypeOf(spec.args.tag)       // 'string[]'   — multiple → array
+tsTypeOf(spec.args.workers)   // 'number'
+args.tag                      // ['a', 'b']   — the value is already an array
+```
+
+It's a pure helper (not a field on the spec); custom registered types fall back
+to `'unknown'`. The canonical machine-readable shape is the emitted JSON Schema
+(`runspec local --format json`), where a `multiple` arg is
+`{"type":"array","items":{…}}`. (Per-argument editor types via generated `.d.ts`
+are a possible future follow-up — see the
+[stubs design](https://github.com/JasonFinestone/runspec/blob/main/docs/design/emit-stubs.md).)
+
 ### Metadata properties
 
 `ParsedArgs` exposes invocation context. The `__runspec_*__` keys are the
@@ -318,6 +343,7 @@ Everything `runspec-node` exposes from the package root:
 | `loadSpec` | function | Load spec without parsing argv |
 | `registerType` | function | Register a custom type coercer |
 | `listTypes` | function | List all registered type names |
+| `tsTypeOf` | function | The TS type of an arg's parsed value (e.g. `"string[]"`) |
 | `getLogger` | function | Get a named logger (no-op without `[config.logging]`) |
 | `findConfig` | function | Locate the nearest `runspec.toml` |
 | `loadRaw` | function | Read and parse a `runspec.toml` to its raw dict form |

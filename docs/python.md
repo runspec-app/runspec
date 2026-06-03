@@ -268,6 +268,9 @@ Every `Arg` carries its full spec:
 | `description` | `str \| None` | Description from spec |
 | `options` | `list \| None` | Valid choices for `choice` type |
 | `range` | `tuple \| None` | `(min, max)` for numeric types |
+| `pattern` | `str \| None` | Regex each value must fully match (`str` only) |
+| `min_length` | `int \| None` | Minimum string length (`str` only) |
+| `max_length` | `int \| None` | Maximum string length (`str` only) |
 | `multiple` | `bool` | Whether the arg accepts multiple values |
 | `delimiter` | `str \| None` | Split character for delimiter-separated values |
 | `short` | `str \| None` | Short flag alias |
@@ -285,6 +288,31 @@ print(args.quality.range)       # (1, 100)
 print(args.api_key.env)         # 'PIPELINE_API_KEY'
 print(args.name.source)         # 'cli' | 'env' | 'default'
 ```
+
+### `python_type` — effective value type
+
+`type` is the **item** type — it drives coercion and, for a `multiple` arg, is
+applied to *each* element. So a `multiple` arg's `value` is a **list**, but
+`type` alone still reads as the scalar item type. `python_type` composes the two
+into the effective Python type of `value`:
+
+```python
+# tags = {type = "str", multiple = true}
+args.tags.type          # 'str'          — the item type (unchanged)
+args.tags.value         # ['a', 'b']     — the parsed value is a list
+args.tags.python_type   # 'list[str]'    — the effective type
+
+args.quality.python_type   # 'int'
+args.input.python_type     # 'Path'
+```
+
+!!! tip "Precise editor types"
+    `python_type` is a runtime/debug aid — to a static type checker `args.tags`
+    is still `Any` (see [`parse()`](#parse)). Per-argument **editor** type hints
+    (`args.tags: list[str]`) are slated for a generated `.pyi` via
+    `runspec emit --stubs`; see the
+    [stubs design](https://github.com/JasonFinestone/runspec/blob/main/docs/design/emit-stubs.md).
+    Not yet implemented.
 
 ### `meta` — pass-through data
 

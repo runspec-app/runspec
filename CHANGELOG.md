@@ -7,6 +7,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.25.0] / [node-0.20.0] — 2026-06-03
+
+### Added
+
+- **Effective value type for `multiple` args.** After per-item coercion, a
+  `multiple = true` arg returns a list, but `type` stays the *item* type
+  (`"str"`), which made the parsed result confusing to introspect. Both packs
+  now expose the composed type:
+  - Python: `Arg.python_type` → e.g. `"list[str]"` / `"int"` / `"Path"`
+    (a computed property; `Arg.type` is unchanged).
+  - Node: new exported `tsTypeOf(arg)` helper → e.g. `"string[]"` (a pure
+    function computed on demand from an `ArgSpec`, mirroring the Python
+    property; custom registered types fall back to `"unknown"`). `arg.type`
+    stays the item type.
+
+  Editor-level per-argument hints (`args.tag: list[str]`) still require the
+  planned `runspec emit --stubs`; this is the runtime/introspection signal in
+  the meantime.
+
+### Fixed
+
+- Documented the string-validation `Arg` fields (`pattern` / `min_length` /
+  `max_length`) that were missing from the Python library reference.
+
+### Internal
+
+- Regression tests pinning that a `multiple` arg emits JSON Schema
+  `{"type":"array","items":{…per-item constraints…}}` in both packs (behavior
+  was already correct; now covered).
+
 ## [0.24.0] / [node-0.19.0] — 2026-06-03
 
 ### Fixed

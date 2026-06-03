@@ -4,6 +4,31 @@ import { RunSpecError } from './errors';
 export const AUTONOMY_LEVELS = ['autonomous', 'confirm', 'supervised', 'manual'] as const;
 export const AUTONOMY_RANK = Object.fromEntries(AUTONOMY_LEVELS.map((l, i) => [l, i]));
 
+// Item-type name → its TypeScript type. Mirrors the JSON-Schema type map used
+// by emit; custom (register_type) names fall back to `unknown`.
+const TS_TYPE_NAMES: Record<string, string> = {
+  str: 'string',
+  int: 'number',
+  float: 'number',
+  bool: 'boolean',
+  flag: 'boolean',
+  path: 'string',
+  choice: 'string',
+  rest: 'string[]',
+};
+
+/** The TypeScript type of an arg's parsed value: the item type, suffixed `[]`
+ *  when the arg is `multiple` (`rest` is always `string[]`). `arg.type` itself
+ *  stays the item type — it drives per-item coercion. Pure helper, computed on
+ *  demand from a (typically inferred) ArgSpec; custom registered types fall
+ *  back to `"unknown"`. e.g. `tsTypeOf({type:"str", multiple:true})` → `"string[]"`. */
+export function tsTypeOf(arg: ArgSpec): string {
+  const type = arg.type ?? 'str';
+  if (type === 'rest') return 'string[]';
+  const base = TS_TYPE_NAMES[type] ?? 'unknown';
+  return arg.multiple ? `${base}[]` : base;
+}
+
 export function inferArg(raw: ArgSpec): ArgSpec {
   const result = { ...raw };
   const def = result.default;

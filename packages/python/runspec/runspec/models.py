@@ -14,6 +14,21 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+# Item-type name → its Python type repr, for `Arg.python_type`. Mirrors the type
+# map used by schema emit (cli._arg_to_json_schema) and the planned stub
+# generator. `rest` is inherently list-valued; everything else is the scalar
+# item type, wrapped in `list[...]` when the arg is `multiple`.
+_PYTHON_TYPE_NAMES = {
+    "str": "str",
+    "int": "int",
+    "float": "float",
+    "bool": "bool",
+    "flag": "bool",
+    "path": "Path",
+    "choice": "str",
+    "rest": "list[str]",
+}
+
 
 @dataclass
 class Arg:
@@ -52,6 +67,20 @@ class Arg:
 
     # Resolution metadata — where this arg's value originated
     source: str = "not_set"  # "cli" | "env" | "runspec_env" | "spec_default" | "not_set"
+
+    @property
+    def python_type(self) -> str:
+        """Effective Python type of ``value`` as a string — e.g. ``"list[str]"``.
+
+        ``type`` is the *item* type (it drives per-item coercion); on its own it
+        doesn't convey that a ``multiple`` arg's parsed value is a list. This
+        composes the two: ``{type="str", multiple=true}`` → ``"list[str]"``,
+        ``{type="int"}`` → ``"int"``, ``type="rest"`` → ``"list[str]"``.
+        """
+        if self.type == "rest":
+            return "list[str]"
+        base = _PYTHON_TYPE_NAMES.get(self.type, self.type)
+        return f"list[{base}]" if self.multiple else base
 
     # ── Transparent value access ──────────────────────────────────────────────
 

@@ -145,6 +145,30 @@ def test_rest_type_with_description_and_meta():
     assert prop["x-meta"] == {"shape": "list"}
 
 
+# ── multiple emits array-of-items with per-item constraints inside `items` ─────
+
+
+def test_multiple_emits_array_of_items():
+    script = _script(args={"tag": {"type": "str", "multiple": True}})
+    prop = _build_schema("deploy", script, "mcp")["inputSchema"]["properties"]["tag"]
+    assert prop == {"type": "array", "items": {"type": "string"}}
+
+
+def test_multiple_str_pattern_lands_inside_items():
+    script = _script(args={"ticket": {"type": "str", "multiple": True, "pattern": "[A-Z]+-[0-9]+"}})
+    prop = _build_schema("deploy", script, "mcp")["inputSchema"]["properties"]["ticket"]
+    assert prop["type"] == "array"
+    # The per-item constraint validates each element, so it belongs in `items`.
+    assert prop["items"] == {"type": "string", "pattern": "[A-Z]+-[0-9]+"}
+
+
+def test_multiple_int_range_lands_inside_items():
+    script = _script(args={"port": {"type": "int", "multiple": True, "range": [1, 65535]}})
+    prop = _build_schema("deploy", script, "mcp")["inputSchema"]["properties"]["port"]
+    assert prop["type"] == "array"
+    assert prop["items"] == {"type": "integer", "minimum": 1, "maximum": 65535}
+
+
 # ── inferred types reach the schema (args often omit explicit `type`) ──────────
 
 
