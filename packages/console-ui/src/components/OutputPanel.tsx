@@ -14,18 +14,29 @@ const TRUNCATE_AT = 20
 
 // ── Smart output detection ────────────────────────────────────────────────────
 
+interface TableSection {
+  title?: string
+  rows: Record<string, unknown>[]
+}
+
 interface ParsedOutput {
-  /** 'table' when stdout is a JSON array of uniform objects, 'object' for a JSON
-   *  dict, 'raw' for everything else (plain text, mixed output, stderr-only). */
-  kind: 'table' | 'object' | 'raw'
+  /** 'table' for a JSON array of objects, 'object' for a plain dict, 'sections'
+   *  for a dict that wraps one or more arrays-of-objects (grouped tables, or
+   *  metadata + rows), 'raw' for everything else (plain text, stderr-only). */
+  kind: 'table' | 'object' | 'sections' | 'raw'
   rows?: Record<string, unknown>[]    // kind === 'table'
   obj?:  Record<string, unknown>      // kind === 'object'
+  sections?: TableSection[]           // kind === 'sections'
+  meta?: Record<string, unknown>      // kind === 'sections' — scalar caption fields
   rawText: string                     // always set — used for "Send to LLM"
 }
 
+const isRowArray = (v: unknown): boolean =>
+  Array.isArray(v) && (v.length === 0 || (typeof v[0] === 'object' && v[0] !== null && !Array.isArray(v[0])))
+
 /** Try to extract a single JSON value from the stdout lines of a *completed*
  *  run block. Returns null while the block is still running. */
-function parseOutput(lines: OutputLine[]): ParsedOutput {
+export function parseOutput(lines: OutputLine[]): ParsedOutput {
   const stdout = lines
     .filter(l => l.stream === 'stdout')
     .map(l => l.line)
@@ -41,6 +52,20 @@ function parseOutput(lines: OutputLine[]): ParsedOutput {
       return { kind: 'table', rows: parsed as Record<string, unknown>[], rawText }
     }
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const entries = Object.entries(parsed as Record<string, unknown>)
+      const tableEntries = entries.filter(([, v]) => isRowArray(v))
+      const scalarEntries = entries.filter(([, v]) => v === null || typeof v !== 'object')
+      // A dict that wraps array(s)-of-objects (+ optional scalar metadata) —
+      // e.g. {System:[…], Application:[…]} or {log, level, events:[…]} — renders
+      // as titled section tables instead of an [object Object] grid.
+      if (tableEntries.length > 0 && tableEntries.length + scalarEntries.length === entries.length) {
+        return {
+          kind: 'sections',
+          sections: tableEntries.map(([title, v]) => ({ title, rows: v as Record<string, unknown>[] })),
+          meta: Object.fromEntries(scalarEntries),
+          rawText,
+        }
+      }
       return { kind: 'object', obj: parsed as Record<string, unknown>, rawText }
     }
   } catch {
@@ -49,8 +74,17 @@ function parseOutput(lines: OutputLine[]): ParsedOutput {
   return { kind: 'raw', rawText }
 }
 
-/** Humanise a number value: round floats, add units for *_mb / *_kb / *_bytes keys */
-function _humanVal(key: string, val: unknown): string {
+/** Compact, length-capped JSON — the safety net so nested values never render
+ *  as "[object Object]". */
+function _compactJson(val: unknown): string {
+  const s = JSON.stringify(val)
+  return s.length > 120 ? s.slice(0, 117) + '…' : s
+}
+
+/** Humanise a value for text/clipboard: round floats, add units for *_mb /
+ *  *_kb / *_bytes keys, join scalar arrays, and fall back to compact JSON for
+ *  nested objects/arrays (never "[object Object]"). */
+export function _humanVal(key: string, val: unknown): string {
   if (typeof val === 'number') {
     const k = key.toLowerCase()
     if (k.endsWith('_mb')) {
@@ -70,7 +104,16 @@ function _humanVal(key: string, val: unknown): string {
     }
     return Number.isInteger(val) ? String(val) : val.toFixed(2)
   }
-  return String(val ?? '')
+  if (val === null || val === undefined) return ''
+  if (typeof val === 'boolean') return val ? 'true' : 'false'
+  if (Array.isArray(val)) {
+    // array of scalars → comma list; array of objects → compact JSON
+    return val.length > 0 && typeof val[0] === 'object' && val[0] !== null
+      ? _compactJson(val)
+      : val.map(v => _humanVal(key, v)).join(', ')
+  }
+  if (typeof val === 'object') return _compactJson(val)
+  return String(val)
 }
 
 /** Build a plain-text table string (for clipboard). */
@@ -95,7 +138,47 @@ function objectToText(obj: Record<string, unknown>): string {
     .join('\n')
 }
 
+/** Plain-text rendering for grouped/section tables (clipboard). */
+function sectionsToText(meta: Record<string, unknown> | undefined, sections: TableSection[]): string {
+  const parts: string[] = []
+  const metaEntries = meta ? Object.entries(meta) : []
+  if (metaEntries.length) parts.push(metaEntries.map(([k, v]) => `${k}: ${_humanVal(k, v)}`).join('  '))
+  for (const s of sections) {
+    const body = s.rows.length ? tableToText(s.rows) : '(no rows)'
+    parts.push(s.title ? `\n${s.title}\n${body}` : body)
+  }
+  return parts.join('\n').trim()
+}
+
 // ── JSON table renderer ───────────────────────────────────────────────────────
+
+/** Render one value: primitives and scalar arrays inline via `_humanVal`; a
+ *  nested object or array-of-objects as an expandable disclosure (sub-table or
+ *  pretty JSON) so it never collapses to "[object Object]". */
+function JsonCell({ keyName, value }: { keyName: string; value: unknown }) {
+  const [open, setOpen] = useState(false)
+  const isObj = typeof value === 'object' && value !== null
+  const isScalarArray = Array.isArray(value)
+    && (value.length === 0 || value.every(x => x === null || typeof x !== 'object'))
+  // primitives + arrays of scalars render inline as text
+  if (!isObj || isScalarArray) return <>{_humanVal(keyName, value)}</>
+
+  const rowArray = isRowArray(value)
+  const label = Array.isArray(value) ? `[${(value as unknown[]).length}]` : '{…}'
+  return (
+    <span>
+      <a onClick={() => setOpen(o => !o)} style={{ color: '#1677ff', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        {open ? '▾' : '▸'} {label}
+      </a>
+      {open && (rowArray
+        ? <JsonTable rows={value as Record<string, unknown>[]} />
+        : <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#9ab', fontSize: 11 }}>
+            {JSON.stringify(value, null, 2)}
+          </pre>
+      )}
+    </span>
+  )
+}
 
 function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
   if (!rows.length) return null
@@ -128,7 +211,7 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
                   borderBottom: '1px solid #1a1a1a',
                   whiteSpace: 'nowrap',
                 }}>
-                  {_humanVal(k, row[k])}
+                  <JsonCell keyName={k} value={row[k]} />
                 </td>
               ))}
             </tr>
@@ -145,8 +228,35 @@ function JsonObject({ obj }: { obj: Record<string, unknown> }) {
     <div style={{ padding: '8px 14px', display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 16px', fontFamily: 'monospace', fontSize: 12 }}>
       {Object.entries(obj).map(([k, v]) => [
         <span key={`k-${k}`} style={{ color: '#888', whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>,
-        <span key={`v-${k}`} style={{ color: '#d4d4d4' }}>{_humanVal(k, v)}</span>,
+        <span key={`v-${k}`} style={{ color: '#d4d4d4' }}><JsonCell keyName={k} value={v} /></span>,
       ])}
+    </div>
+  )
+}
+
+/** Render a dict that wraps array(s)-of-objects: optional scalar caption, then
+ *  one titled table per array (grouped tables / metadata + rows). */
+function JsonSections({ meta, sections }: { meta?: Record<string, unknown>; sections: TableSection[] }) {
+  const metaEntries = meta ? Object.entries(meta) : []
+  return (
+    <div style={{ padding: '8px 14px' }}>
+      {metaEntries.length > 0 && (
+        <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#888', marginBottom: 8 }}>
+          {metaEntries.map(([k, v]) => `${k.replace(/_/g, ' ')}: ${_humanVal(k, v)}`).join('   ')}
+        </div>
+      )}
+      {sections.map((s, i) => (
+        <div key={i} style={{ marginBottom: i < sections.length - 1 ? 14 : 0 }}>
+          {s.title && (
+            <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#d4d4d4', fontWeight: 600 }}>
+              {s.title.replace(/_/g, ' ')}
+            </div>
+          )}
+          {s.rows.length > 0
+            ? <JsonTable rows={s.rows} />
+            : <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#666', padding: '4px 14px' }}>(no rows)</div>}
+        </div>
+      ))}
     </div>
   )
 }
@@ -478,6 +588,8 @@ function BlockCard({
     let text: string
     if (!viewRaw && parsed?.kind === 'table' && parsed.rows) {
       text = tableToText(parsed.rows)
+    } else if (!viewRaw && parsed?.kind === 'sections' && parsed.sections) {
+      text = sectionsToText(parsed.meta, parsed.sections)
     } else if (!viewRaw && parsed?.kind === 'object' && parsed.obj) {
       text = objectToText(parsed.obj)
     } else {
@@ -696,6 +808,11 @@ function BlockCard({
                 {/* Structured table view */}
                 {!viewRaw && parsed?.kind === 'table' && parsed.rows && (
                   <JsonTable rows={parsed.rows} />
+                )}
+
+                {/* Structured grouped / section tables */}
+                {!viewRaw && parsed?.kind === 'sections' && parsed.sections && (
+                  <JsonSections meta={parsed.meta} sections={parsed.sections} />
                 )}
 
                 {/* Structured key-value view */}

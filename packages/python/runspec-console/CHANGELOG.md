@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.9.0] — 2026-06-03
+
+### Added
+- **Grouped/section tables.** Runnable output shaped as a dict that wraps
+  array(s)-of-objects now renders as titled section tables instead of an
+  `[object Object]` grid: `{System:[…], Application:[…]}` becomes one table per
+  key, and `{log, level, events:[…]}` renders the rows as a table with the
+  scalar fields as a caption.
+- **Expandable nested cells.** A nested object or array-of-objects inside a row
+  expands inline (sub-table or pretty JSON) on click.
+
+### Fixed
+- **No more `[object Object]`.** The cell/value formatter now renders nested
+  objects and arrays as compact JSON (and joins scalar arrays), so any runnable
+  emitting nested JSON degrades gracefully instead of showing `[object Object]`.
+
+
 ## [0.8.0] — 2026-06-03
 
 ### Added
