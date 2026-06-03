@@ -2,9 +2,9 @@
 
 !!! warning "Superseded"
     `runspec-chat` (the Chainlit UI documented here) has been **superseded by
-    runspec-console**, a desktop application that replaces it. `runspec-chat`
-    is no longer actively developed; this page is kept for existing users.
-    Prefer runspec-console for new setups.
+    [runspec-console](console.md)**, a desktop application that replaces it.
+    `runspec-chat` is no longer actively developed; this page is kept for
+    existing users. Prefer runspec-console for new setups.
 
 A browser-based chat interface for your runspec tools. Describe what you want
 in plain language, or call tools directly with slash commands. Tools run on your

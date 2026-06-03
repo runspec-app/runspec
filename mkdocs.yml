@@ -26,6 +26,7 @@ nav:
   - CLI Reference: cli.md
   - Agent Integration: agents.md
   - Jump Hosts: jump-hosts.md
+  - Desktop Console: console.md
   - runspec-chat (deprecated): runspec-chat.md
   - Releasing: releasing.md
   - Changelog: changelog.md
