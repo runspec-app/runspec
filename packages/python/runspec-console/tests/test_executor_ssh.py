@@ -12,6 +12,7 @@ import socket
 import threading
 from unittest.mock import MagicMock, patch
 
+import paramiko
 import pytest
 
 from runspec_console import executor
@@ -103,6 +104,89 @@ def test_connect_timeouts_overridable_via_ssh_config():
     assert kwargs["timeout"] == 5.0
     assert kwargs["banner_timeout"] == 60.0
     assert kwargs["auth_timeout"] == 45.0
+
+
+# ── host-key verification ─────────────────────────────────────────────────────
+
+
+def _policy_of(MockClient) -> object:
+    return MockClient.return_value.set_missing_host_key_policy.call_args.args[0]
+
+
+def test_default_host_key_checking_is_accept_new(monkeypatch, tmp_path):
+    """Default mode loads known hosts and installs a TOFU policy — NOT the blind
+    AutoAddPolicy/RejectPolicy. accept-new is a bespoke MissingHostKeyPolicy."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))  # app-managed known_hosts → tmp
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {})
+    MockClient.return_value.load_system_host_keys.assert_called_once()
+    policy = _policy_of(MockClient)
+    assert isinstance(policy, paramiko.MissingHostKeyPolicy)
+    assert not isinstance(policy, (paramiko.AutoAddPolicy, paramiko.RejectPolicy))
+
+
+def test_host_key_checking_yes_is_strict_reject():
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {"host_key_checking": "yes"})
+    assert isinstance(_policy_of(MockClient), paramiko.RejectPolicy)
+
+
+def test_no_blind_autoadd_policy_is_ever_installed(monkeypatch, tmp_path):
+    """There is no 'accept anything' mode — even a 'no'/'off' value must not
+    install paramiko's AutoAddPolicy (the MITM hole / CWE-295 this change closes).
+    """
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    for value in ("no", "off", "false", "anything-else"):
+        with patch("paramiko.SSHClient") as MockClient:
+            _make_ssh_client("deploy@prod-1", None, {"host_key_checking": value})
+        assert not isinstance(_policy_of(MockClient), paramiko.AutoAddPolicy)
+
+
+def test_unrecognised_mode_falls_back_to_accept_new(monkeypatch, tmp_path):
+    """A typo must not silently disable verification — unknown → safe TOFU."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {"host_key_checking": "lenient?"})
+    policy = _policy_of(MockClient)
+    assert not isinstance(policy, (paramiko.AutoAddPolicy, paramiko.RejectPolicy))
+
+
+def test_known_hosts_override_loaded_when_present(tmp_path):
+    kh = tmp_path / "known_hosts"
+    kh.write_text("", encoding="utf-8")
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {"known_hosts": str(kh)})
+    MockClient.return_value.load_host_keys.assert_called_once_with(str(kh))
+
+
+def test_accept_new_policy_records_and_persists_unknown_key(tmp_path):
+    """The accept-new policy adds the key and writes it to the app-managed file,
+    creating the parent dir lazily on first use."""
+    kh = tmp_path / "nested" / "known_hosts"  # parent does not exist yet
+    policy = executor._accept_new_policy(kh)
+    client = MagicMock()
+    key = MagicMock()
+    key.get_name.return_value = "ssh-ed25519"
+
+    policy.missing_host_key(client, "prod-1", key)
+
+    client._host_keys.add.assert_called_once_with("prod-1", "ssh-ed25519", key)
+    client.save_host_keys.assert_called_once_with(str(kh))
+    assert kh.parent.is_dir()
+
+
+def test_accept_new_policy_survives_unwritable_known_hosts(tmp_path):
+    """A failed persist must not break the connection — trust holds in-memory."""
+    kh = tmp_path / "known_hosts"
+    policy = executor._accept_new_policy(kh)
+    client = MagicMock()
+    client.save_host_keys.side_effect = OSError("read-only filesystem")
+    key = MagicMock()
+    key.get_name.return_value = "ssh-rsa"
+
+    policy.missing_host_key(client, "prod-1", key)  # must not raise
+
+    client._host_keys.add.assert_called_once()
 
 
 def test_ssh_config_applies_hostname_user_port_identity(tmp_path, monkeypatch):

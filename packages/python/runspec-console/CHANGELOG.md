@@ -8,6 +8,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.6.0] — 2026-06-03
+
+### Security
+- **SSH host-key verification is now on by default.** `_make_ssh_client`
+  previously installed paramiko's `AutoAddPolicy` with no `known_hosts` loaded,
+  which accepts whatever key a server presents — host-key verification was
+  effectively disabled, leaving connections open to man-in-the-middle
+  impersonation (flagged by code scanning). Connections now default to
+  **`accept-new`** (trust-on-first-use): a never-before-seen host is accepted
+  and remembered, but a *changed* key for a known host is rejected. The user's
+  `~/.ssh/known_hosts` is read for verification (never rewritten); accept-new
+  additions persist to an app-managed `known_hosts` file.
+
+  Configurable via `[ssh] host_key_checking` in `config.toml`:
+  `"accept-new"` (default) or `"yes"`/`"strict"` (only connect to already-known
+  hosts). An unrecognised value falls back to the safe `accept-new` default
+  rather than disabling verification. There is deliberately **no** "accept
+  anything, including changed keys" mode — that is the man-in-the-middle hole
+  being closed, and accept-new already covers unattended first-contact trust.
+  The app-managed file location is overridable via `[ssh] known_hosts`.
+
+  **Note:** if a host's key legitimately changes (e.g. a rebuild), connections
+  will now fail until the stale entry is removed — matching OpenSSH behaviour.
+
+
 ## [0.5.0] — 2026-06-03
 
 ### Added

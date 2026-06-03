@@ -35,6 +35,86 @@ DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_BANNER_TIMEOUT = 30.0
 DEFAULT_AUTH_TIMEOUT = 30.0
 
+# SSH host-key verification mode, mirroring OpenSSH's StrictHostKeyChecking.
+# Default is "accept-new" (trust-on-first-use): a never-before-seen host is
+# accepted and remembered, but a *changed* key for a known host is rejected —
+# so a later man-in-the-middle is caught. This replaces blind AutoAddPolicy
+# (accept any key, every time), which disables host-key verification entirely.
+# Overridable via ``[ssh] host_key_checking`` in config.toml:
+#   "accept-new"           — TOFU; remember new hosts, reject changed keys (default)
+#   "yes"/"true"/"strict"  — only connect to hosts already in known_hosts
+# There is deliberately no "accept anything, including changed keys" mode — that
+# is the man-in-the-middle hole this change closes, and accept-new already covers
+# unattended first-contact trust.
+DEFAULT_HOST_KEY_CHECKING = "accept-new"
+_HOST_KEY_STRICT = {"yes", "true", "strict", "on", "1"}
+
+
+def _known_hosts_path(cfg: dict[str, Any]) -> Path:
+    """App-managed known_hosts file for persisting accept-new keys.
+
+    Overridable via ``[ssh] known_hosts``. Defaults under the app-data dir so
+    we never rewrite the user's ``~/.ssh/known_hosts`` (which is still read for
+    verification via ``load_system_host_keys``). Computed without creating any
+    directories — the accept-new policy makes the parent lazily, only when it
+    actually records a key.
+    """
+    override = cfg.get("known_hosts")
+    if override:
+        return Path(str(override)).expanduser()
+    base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    return Path(base) / "runspec-console" / "known_hosts"
+
+
+def _accept_new_policy(known_hosts: Path) -> Any:
+    """Build a paramiko missing-host-key policy implementing accept-new (TOFU).
+
+    Defined lazily so importing this module doesn't pull in paramiko. A changed
+    key for an *already known* host never reaches this policy — paramiko raises
+    ``BadHostKeyException`` before calling it — so this only ever fires for a
+    genuinely new host, which it records and persists to the app-managed file.
+    """
+    import paramiko
+
+    class _AcceptNewPolicy(paramiko.MissingHostKeyPolicy):  # type: ignore[misc]
+        def missing_host_key(self, client: Any, hostname: str, key: Any) -> None:
+            client._host_keys.add(hostname, key.get_name(), key)
+            try:
+                known_hosts.parent.mkdir(parents=True, exist_ok=True)
+                client.save_host_keys(str(known_hosts))
+            except OSError:
+                # Persisting failed (e.g. read-only home) — the in-memory trust
+                # still holds for this session; we just won't remember it.
+                pass
+
+    return _AcceptNewPolicy()
+
+
+def _apply_host_key_policy(client: Any, cfg: dict[str, Any]) -> None:
+    """Configure host-key verification on a fresh SSHClient per ``cfg``."""
+    import paramiko
+
+    mode = str(cfg.get("host_key_checking", DEFAULT_HOST_KEY_CHECKING)).strip().lower()
+
+    # Load known hosts so paramiko can detect a changed key (MITM) for any host
+    # we've seen before — both the user's ~/.ssh/known_hosts (read-only) and our
+    # app-managed file feed that check.
+    try:
+        client.load_system_host_keys()
+    except Exception:
+        pass
+    known_hosts = _known_hosts_path(cfg)
+    if known_hosts.is_file():
+        try:
+            client.load_host_keys(str(known_hosts))
+        except OSError:
+            pass
+
+    if mode in _HOST_KEY_STRICT:
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    else:  # "accept-new" and any unrecognised value → safe TOFU default
+        client.set_missing_host_key_policy(_accept_new_policy(known_hosts))
+
 
 def args_to_argv(args: dict[str, Any]) -> list[str]:
     """Convert a {name: value} args dict to a CLI argv list."""
@@ -155,14 +235,18 @@ def _make_ssh_client(
     """Create and connect a paramiko SSHClient.
 
     Falls back to global config for username and identity file when the host
-    entry doesn't specify them. Two optional ``[ssh]`` settings shape the
+    entry doesn't specify them. Optional ``[ssh]`` settings shape the
     connection:
 
-      proxy           — HTTP CONNECT proxy URL; the SSH transport is tunnelled
-                        through it (corporate egress).
-      use_ssh_config  — when true, ~/.ssh/config is consulted for HostName,
-                        User, Port, IdentityFile, and ProxyCommand (the latter
-                        only when no explicit ``proxy`` is set).
+      proxy             — HTTP CONNECT proxy URL; the SSH transport is tunnelled
+                          through it (corporate egress).
+      use_ssh_config    — when true, ~/.ssh/config is consulted for HostName,
+                          User, Port, IdentityFile, and ProxyCommand (the latter
+                          only when no explicit ``proxy`` is set).
+      host_key_checking — host-key verification mode (see DEFAULT_HOST_KEY_CHECKING):
+                          "accept-new" (default, TOFU) or "yes" (strict).
+      known_hosts       — path to the app-managed known_hosts file used for
+                          accept-new persistence (default under the app-data dir).
 
     Precedence: per-host/global explicit fields > ~/.ssh/config. An explicit
     ``proxy`` takes precedence over a ProxyCommand from ~/.ssh/config.
@@ -202,7 +286,7 @@ def _make_ssh_client(
         sock = _http_connect_sock(proxy, hostname, port)
 
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    _apply_host_key_policy(client, cfg)
 
     connect_kwargs: dict[str, Any] = {
         "hostname": hostname,
