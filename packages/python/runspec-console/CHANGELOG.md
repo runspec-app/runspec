@@ -8,6 +8,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.8.0] — 2026-06-03
+
+### Added
+- **Windows runnables surface automatically.** Declared a dependency on
+  `runspec-windows[graph]`, gated to `sys_platform == "win32"`, so its Windows
+  system-admin + Microsoft 365 (Outlook/Teams/Calendar/OneDrive) runnables are
+  discovered in the console UI without a separate install. No code changes —
+  the marker keeps it off non-Windows installs and CI.
+
+
 ## [0.7.0] — 2026-06-03
 
 ### Changed
