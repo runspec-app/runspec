@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.9.1"
+version = "0.10.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -29,10 +29,6 @@ packages = ["runspec_console"]
 
 [project.scripts]
 runspec-console = "runspec_console.app:main"
-disk-usage      = "runspec_console.tools.disk_usage:main"
-ping-host       = "runspec_console.tools.ping_host:main"
-flush-dns       = "runspec_console.tools.flush_dns:main"
-check-port      = "runspec_console.tools.check_port:main"
 generate-ssh-key = "runspec_console.tools.generate_ssh_key:main"
 
 [project.optional-dependencies]

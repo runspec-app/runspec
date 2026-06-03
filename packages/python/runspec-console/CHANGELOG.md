@@ -8,7 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.9.0] — 2026-06-03
+## [0.10.0] — 2026-06-03
+
+### Removed
+- **Bundled `disk-usage`, `ping-host`, `check-port`, and `flush-dns` runnables.**
+  These now ship in `runspec-windows` (a dependency on `win32`), where they have
+  newer implementations. Keeping local copies meant the two packages declared the
+  same `[project.scripts]` entry points, which conflict on install. The console
+  surfaces the `runspec-windows` versions automatically via `runspec local`
+  discovery, so there is no loss of functionality on Windows.
+
+
 
 ### Added
 - **Grouped/section tables.** Runnable output shaped as a dict that wraps
