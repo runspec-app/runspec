@@ -146,6 +146,12 @@ def _apply_dwm_title_bar(title: str) -> None:
 
 
 def _suppress_noisy_loggers() -> None:
+    """Quiet paramiko before the Bridge attaches its Dev-tab log forwarder.
+
+    Once ``Bridge`` is constructed it re-routes the paramiko loggers into the
+    Dev tab (``runspec:ssh`` events) and turns off propagation to the terminal;
+    this pre-window default keeps any stray pre-Bridge record off the console.
+    """
     import logging
 
     for name in ("paramiko", "paramiko.transport"):

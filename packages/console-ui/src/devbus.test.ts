@@ -108,6 +108,7 @@ describe('event category + summary mapping', () => {
     ['runspec:chat_usage', { id: '1', input_tokens: 5, output_tokens: 9 }, 'usage'],
     ['runspec:hosts_updated', {}, 'discovery'],
     ['runspec:runnables_updated', {}, 'discovery'],
+    ['runspec:ssh', { level: 'INFO', message: 'Connected' }, 'ssh'],
     ['runspec:invoke_runnable', { runnable: 'x' }, 'event'],
   ]
 
@@ -121,6 +122,28 @@ describe('event category + summary mapping', () => {
     recordEvent('runspec:run_end', { id: '1', exit_code: 2, duration_ms: 42 })
     const last = getSnapshot()[0]
     expect(last.summary).toBe('exit 2 in 42ms')
+  })
+
+  it('summarizes ssh records with level prefix', () => {
+    recordEvent('runspec:ssh', { level: 'ERROR', message: 'Error reading SSH protocol banner' })
+    const last = getSnapshot()[0]
+    expect(last.summary).toBe('[ERROR] Error reading SSH protocol banner')
+  })
+})
+
+describe('ssh error rows', () => {
+  it('marks ERROR-level ssh records as error and counts them', () => {
+    recordEvent('runspec:ssh', { level: 'ERROR', message: 'banner timeout' })
+    const last = getSnapshot()[0]
+    expect(last.status).toBe('error')
+    expect(getStats().errors).toBe(1)
+  })
+
+  it('leaves INFO-level ssh records as ok and uncounted', () => {
+    recordEvent('runspec:ssh', { level: 'INFO', message: 'Authentication (publickey) successful' })
+    const last = getSnapshot()[0]
+    expect(last.status).toBe('ok')
+    expect(getStats().errors).toBe(0)
   })
 })
 

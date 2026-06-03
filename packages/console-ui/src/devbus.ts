@@ -22,6 +22,7 @@ export type DevCategory =
   | 'run_end'
   | 'usage'
   | 'discovery'
+  | 'ssh'
   | 'event'
   | 'error'
 
@@ -209,6 +210,10 @@ export function recordEvent(type: string, detail: unknown): void {
   }
 
   statEvents++
+  // SSH log records carry their own level; surface ERROR records as error rows
+  // (red, and counted) so a banner-timeout storm is visible at a glance.
+  const isError = type === 'runspec:ssh' && (detail as Record<string, unknown>)?.level === 'ERROR'
+  if (isError) statErrors++
   const entry: DevEntry & { _ckey?: string } = {
     id: ++seq,
     ts: Date.now(),
@@ -216,7 +221,7 @@ export function recordEvent(type: string, detail: unknown): void {
     category,
     name: type,
     summary: summarizeEvent(type, detail),
-    status: 'ok',
+    status: isError ? 'error' : 'ok',
     detail,
     count: key ? 1 : undefined,
   }
@@ -230,6 +235,7 @@ function categoryOf(type: string): DevCategory {
   if (type.startsWith('runspec:tool')) return 'tool'
   if (type === 'runspec:run_end') return 'run_end'
   if (type === 'runspec:chat_usage') return 'usage'
+  if (type === 'runspec:ssh') return 'ssh'
   if (type === 'runspec:hosts_updated' || type === 'runspec:runnables_updated') return 'discovery'
   return 'event'
 }
@@ -268,6 +274,8 @@ function summarizeEvent(type: string, detail: unknown): string {
       return `exit ${d.exit_code ?? '?'} in ${d.duration_ms ?? '?'}ms`
     case 'runspec:chat_usage':
       return `in ${d.input_tokens ?? 0} · out ${d.output_tokens ?? 0} · cache_read ${d.cache_read_tokens ?? 0}`
+    case 'runspec:ssh':
+      return `[${d.level ?? 'INFO'}] ${truncate(String(d.message ?? ''), 120)}`
     case 'runspec:hosts_updated':
       return 'hosts refreshed'
     case 'runspec:runnables_updated':

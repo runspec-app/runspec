@@ -83,6 +83,28 @@ def test_no_proxy_no_sock():
     assert kwargs["hostname"] == "prod-1"
 
 
+def test_connect_uses_default_banner_and_auth_timeouts():
+    """The connect phase carries explicit banner/auth timeouts (not paramiko's
+    tight 15s defaults) — the mitigation for 'Error reading SSH protocol banner'.
+    """
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {})
+    kwargs = MockClient.return_value.connect.call_args.kwargs
+    assert kwargs["timeout"] == executor.DEFAULT_CONNECT_TIMEOUT
+    assert kwargs["banner_timeout"] == executor.DEFAULT_BANNER_TIMEOUT
+    assert kwargs["auth_timeout"] == executor.DEFAULT_AUTH_TIMEOUT
+
+
+def test_connect_timeouts_overridable_via_ssh_config():
+    cfg = {"connect_timeout": 5, "banner_timeout": 60, "auth_timeout": 45}
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, cfg)
+    kwargs = MockClient.return_value.connect.call_args.kwargs
+    assert kwargs["timeout"] == 5.0
+    assert kwargs["banner_timeout"] == 60.0
+    assert kwargs["auth_timeout"] == 45.0
+
+
 def test_ssh_config_applies_hostname_user_port_identity(tmp_path, monkeypatch):
     ssh_dir = tmp_path / ".ssh"
     ssh_dir.mkdir()

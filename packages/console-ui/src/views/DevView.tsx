@@ -24,7 +24,7 @@ import { useIsDark } from '../ThemeContext'
 const { Text } = Typography
 
 const CATEGORIES: DevCategory[] = [
-  'bridge-call', 'output', 'token', 'tool', 'run_end', 'usage', 'discovery', 'event', 'error',
+  'bridge-call', 'output', 'token', 'tool', 'run_end', 'usage', 'discovery', 'ssh', 'event', 'error',
 ]
 
 const CATEGORY_COLOR: Record<DevCategory, string> = {
@@ -35,6 +35,7 @@ const CATEGORY_COLOR: Record<DevCategory, string> = {
   run_end: 'green',
   usage: 'gold',
   discovery: 'default',
+  ssh: 'magenta',
   event: 'default',
   error: 'red',
 }

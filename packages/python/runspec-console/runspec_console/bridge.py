@@ -40,6 +40,43 @@ logger = logging.getLogger(__name__)
 
 _CANCEL_KEY = "__cancel_event__"  # key in _in_flight dicts, not surfaced to JS
 
+
+class _ParamikoDevHandler(logging.Handler):
+    """Forward paramiko log records into the Dev tab as ``runspec:ssh`` events.
+
+    paramiko logs the full "Error reading SSH protocol banner" traceback from
+    its transport thread at ERROR. With no handler configured those records hit
+    Python's last-resort handler and spill into the launching terminal as raw
+    tracebacks. Routing them here turns each into a filterable, timestamped
+    Dev-tab row (the connect/banner/auth lifecycle, with the exact failure), and
+    — because the paramiko logger's ``propagate`` is turned off when this is
+    installed — keeps the terminal clean.
+    """
+
+    def __init__(self, bridge: Bridge) -> None:
+        super().__init__()
+        self._bridge = bridge
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            detail: dict[str, Any] = {
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+            }
+            # format() appends the traceback after the (bare) message when the
+            # record carries exc_info — that's the banner-timeout stack we want
+            # expandable in the Dev tab.
+            if record.exc_info or record.exc_text:
+                detail["traceback"] = self.format(record)
+            self._bridge._emit_ssh_log(detail)
+        except Exception:
+            # A logging handler must never raise — that would break the call
+            # site that emitted the log (here, paramiko's transport thread).
+            pass
+
+
 # Autonomy escalation order — higher = more restrictive (must check before run).
 _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 
@@ -68,6 +105,8 @@ class Bridge:
         self._pending_confirms: dict[
             str, tuple[str, threading.Event, dict[str, bool]]
         ] = {}
+        self._ssh_log_handler: _ParamikoDevHandler | None = None
+        self._install_ssh_log_forwarder()
         self._reload_hosts()
         self._start_refresh_watcher()
 
@@ -75,8 +114,46 @@ class Bridge:
         self._window = window
 
     def set_debug(self, debug: bool) -> None:
-        """Record whether the Chromium inspector was enabled at startup."""
+        """Record whether the Chromium inspector was enabled at startup.
+
+        Also widens SSH log capture to DEBUG when debug is on, so the Dev tab's
+        ``ssh`` rows include paramiko's packet/kex detail for deep investigation.
+        """
         self._debug = debug
+        logging.getLogger("paramiko").setLevel(logging.DEBUG if debug else logging.INFO)
+
+    def _install_ssh_log_forwarder(self) -> None:
+        """Route paramiko's loggers into the Dev tab and off the terminal.
+
+        Attaches one handler to the top ``paramiko`` logger (child loggers such
+        as ``paramiko.transport`` propagate up to it) and disables propagation
+        so records never reach the root logger / launching terminal.
+        """
+        handler = _ParamikoDevHandler(self)
+        self._ssh_log_handler = handler
+        root = logging.getLogger("paramiko")
+        # Idempotent: drop any handler we installed on a previous construction
+        # (matters under tests / repeated Bridge() in one process).
+        root.handlers = [
+            h for h in root.handlers if not isinstance(h, _ParamikoDevHandler)
+        ]
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        root.propagate = False
+        # Let paramiko.transport inherit the parent level so its records flow to
+        # the shared handler at the level we set above (app._suppress_noisy_loggers
+        # pins it to WARNING at startup; clear that so INFO connect logs surface).
+        logging.getLogger("paramiko.transport").setLevel(logging.NOTSET)
+
+    def _emit_ssh_log(self, detail: dict[str, Any]) -> None:
+        """Dispatch a captured paramiko record as a ``runspec:ssh`` event.
+
+        Silently no-ops before the window is attached (the first refresh cycle
+        fires from __init__) so early connect logs don't spam dispatch warnings.
+        """
+        if self._window is None:
+            return
+        self._dispatch("runspec:ssh", detail)
 
     def is_debug_enabled(self) -> bool:
         """Exposed to the Dev tab so its inspector button behaves honestly."""

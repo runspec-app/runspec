@@ -24,6 +24,17 @@ from urllib.parse import urlparse
 # Ensure child Python processes use UTF-8 for print()/sys.stdout
 _UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
 
+# SSH connect-phase timeouts (seconds). The TCP connect uses ``timeout``;
+# ``banner_timeout`` covers the wait for the server's SSH protocol banner, and
+# ``auth_timeout`` the authentication exchange. paramiko's defaults for the
+# latter two (15s) are often too tight for slow servers, reverse-DNS-on-connect
+# (sshd UseDNS), or a server throttling new connections (sshd MaxStartups) — the
+# common cause of "Error reading SSH protocol banner". All three are overridable
+# per deployment via ``[ssh]`` in config.toml.
+DEFAULT_CONNECT_TIMEOUT = 10.0
+DEFAULT_BANNER_TIMEOUT = 30.0
+DEFAULT_AUTH_TIMEOUT = 30.0
+
 
 def args_to_argv(args: dict[str, Any]) -> list[str]:
     """Convert a {name: value} args dict to a CLI argv list."""
@@ -193,7 +204,13 @@ def _make_ssh_client(
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-    connect_kwargs: dict[str, Any] = {"hostname": hostname, "port": port, "timeout": 10}
+    connect_kwargs: dict[str, Any] = {
+        "hostname": hostname,
+        "port": port,
+        "timeout": float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT)),
+        "banner_timeout": float(cfg.get("banner_timeout", DEFAULT_BANNER_TIMEOUT)),
+        "auth_timeout": float(cfg.get("auth_timeout", DEFAULT_AUTH_TIMEOUT)),
+    }
     if user:
         connect_kwargs["username"] = user
     if key_path:

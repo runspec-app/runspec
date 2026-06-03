@@ -8,6 +8,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.5.0] — 2026-06-03
+
+### Added
+- **Dev tab — SSH log capture.** A new `ssh` category in the Dev tab surfaces
+  paramiko's connection lifecycle (connect / banner read / auth / disconnect)
+  as timestamped, filterable, expandable rows — `ERROR` records (e.g. the
+  `Error reading SSH protocol banner` banner-timeout traceback) render red and
+  count toward the error tally. The `Bridge` installs a logging handler on the
+  `paramiko` loggers that forwards records as `runspec:ssh` events and turns
+  off propagation, so the raw tracebacks no longer leak into the terminal
+  runspec-console was launched from. Capture widens to `DEBUG` (packet/kex
+  detail) when started with `--dev`/`--devtools`.
+
+### Changed
+- **SSH connect resilience.** `_make_ssh_client` now sets explicit
+  `banner_timeout` (30s) and `auth_timeout` (30s) on connect instead of
+  relying on paramiko's tighter 15s defaults — a common cause of
+  `Error reading SSH protocol banner` against slow servers, reverse-DNS-on-connect
+  (`sshd UseDNS`), or new-connection throttling (`sshd MaxStartups`). All three
+  connect timeouts are overridable via `[ssh]` in `config.toml`
+  (`connect_timeout`, `banner_timeout`, `auth_timeout`).
+
+See `docs/design/paramiko-errors-in-terminal.md` for the full diagnosis.
+
+
 ## [0.4.0] — 2026-06-02
 
 ### Added
