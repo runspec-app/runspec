@@ -65,6 +65,22 @@ export function formatTooLong(value: string, maxLength: number, name: string): s
   ].join('\n');
 }
 
+export function formatInvalidItems(
+  name: string,
+  total: number,
+  failures: Array<[number, unknown, string]>,
+): string {
+  const header = `--${name}: ${failures.length} of ${total} item(s) failed validation:`;
+  const blocks = failures.map(([index, value, reason]) => {
+    const detail = reason
+      .split('\n')
+      .map((line) => '     ' + line)
+      .join('\n');
+    return `   • item ${index} (${JSON.stringify(value)}):\n${detail}`;
+  });
+  return header + '\n\n' + blocks.join('\n\n');
+}
+
 export function formatMissingCommand(runnablePath: string, availableCommands: string[]): string {
   return [
     `✗  '${runnablePath}' requires a command.`,

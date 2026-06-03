@@ -129,6 +129,47 @@ test('rejects invalid choice', () => {
   expect(() => coerce('xml', spec({ type: 'choice', options: ['json', 'csv'] }))).toThrow();
 });
 
+// ── multiple (per-item coercion) ───────────────────────────────────────────────
+
+test('multiple returns a list of coerced items', () => {
+  expect(coerce(['a', 'b', 'c'], spec({ type: 'str', multiple: true }))).toEqual(['a', 'b', 'c']);
+});
+
+test('multiple int coerces each item', () => {
+  expect(coerce(['1', '2', '3'], spec({ type: 'int', multiple: true }))).toEqual([1, 2, 3]);
+});
+
+test('multiple applies pattern per item', () => {
+  const s = spec({ type: 'str', multiple: true, pattern: '[a-z]+' });
+  expect(coerce(['ab', 'cd'], s)).toEqual(['ab', 'cd']);
+});
+
+test('multiple wraps a scalar value into a one-item list', () => {
+  expect(coerce('solo', spec({ type: 'str', multiple: true }))).toEqual(['solo']);
+});
+
+test('multiple collects all failing items with index and value', () => {
+  const s = spec({ name: 'tag', type: 'str', multiple: true, pattern: '[a-z]+' });
+  let msg = '';
+  try {
+    coerce(['ab', 'XY', 'z9', 'de'], s);
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toContain('2 of 4 item(s) failed');
+  expect(msg).toContain('item 2 ("XY")');
+  expect(msg).toContain('item 3 ("z9")');
+});
+
+test('multiple range applies per item', () => {
+  const s = spec({ name: 'n', type: 'int', multiple: true, range: [1, 10] });
+  expect(() => coerce(['5', '99'], s)).toThrow(/item 2 \("99"\)/);
+});
+
+test('rest type is not treated as per-item', () => {
+  expect(coerce(['--flag', 'value'], spec({ type: 'rest' }))).toEqual(['--flag', 'value']);
+});
+
 // ── custom types ──────────────────────────────────────────────────────────────
 
 test('registerType adds custom coercer', () => {

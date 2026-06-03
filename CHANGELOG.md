@@ -7,6 +7,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.24.0] / [node-0.19.0] — 2026-06-03
+
+### Fixed
+
+- **`multiple` args now coerce and validate per item.** A `multiple = true`
+  arg previously passed the whole accumulated list to the scalar type coercer,
+  so `type = "str"` stringified the list (`"['a', 'b']"` in Python, `"a,b"` in
+  Node) instead of returning a list, and `pattern` matched against that mangled
+  string rather than each element. The arg's type is now applied to **each
+  item**, returning a real list of coerced values (`type = "int"` →
+  `[1, 2, 3]`), and every per-item check — `pattern` / `min-length` /
+  `max-length` for `str`, `range` for numbers, `options` for `choice` — runs on
+  each element.
+
+### Added
+
+- **Per-item failure reporting.** When one or more items in a `multiple` arg
+  fail validation, the whole list is checked and every offending element is
+  reported together by position and value:
+
+  ```
+  ✗  --ticket: 2 of 3 item(s) failed validation:
+
+     • item 2 ('bad-2'):
+       ✗  Invalid value for --ticket: 'bad-2'
+          Expected: a value matching pattern '[A-Z]+-[0-9]+'
+          Got: 'bad-2'
+     • item 3 ('nope'):
+       ...
+  ```
+
+  New `format_invalid_items` / `formatInvalidItems` formatter. `type = "rest"`
+  (which manages its own list) is unaffected. Applied to Python and Node
+  simultaneously.
+
 ## [node-0.18.0] — 2026-06-03
 
 ### Added

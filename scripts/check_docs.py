@@ -59,14 +59,20 @@ def _manifest_version(path: Path) -> str:
 def check_versions() -> list[str]:
     """Every manifest version must have a `## [<prefix><version>]` changelog entry."""
     errors: list[str] = []
-    changelog = CHANGELOG.read_text(encoding="utf-8")
+    # Heading lines look like `## [0.24.0] — date` or, when a release ships both
+    # packs together, `## [0.24.0] / [node-0.19.0] — date`. Accept the version
+    # token in either form by scanning `##` heading lines for `[<prefix><ver>]`.
+    headings = [
+        ln for ln in CHANGELOG.read_text(encoding="utf-8").splitlines()
+        if ln.startswith("## ")
+    ]
     for rel, label, prefix in MANIFESTS:
         version = _manifest_version(REPO / rel)
-        heading = f"## [{prefix}{version}]"
-        if heading not in changelog:
+        token = f"[{prefix}{version}]"
+        if not any(token in ln for ln in headings):
             errors.append(
                 f"{rel}: {label} version {version} has no CHANGELOG entry "
-                f"(expected a heading '{heading}')."
+                f"(expected a '## ' heading containing '{token}')."
             )
     return errors
 

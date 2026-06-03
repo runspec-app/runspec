@@ -123,6 +123,17 @@ def format_too_long(value: str, max_length: int, name: str) -> str:
     )
 
 
+def format_invalid_items(name: str, total: int, failures: list[tuple[int, Any, str]]) -> str:
+    """Combine per-item coercion failures for a multiple-valued arg into one
+    message. `failures` is a list of (1-based index, item value, reason)."""
+    header = f"--{name}: {len(failures)} of {total} item(s) failed validation:"
+    blocks = []
+    for index, value, reason in failures:
+        detail = "\n".join("     " + line for line in reason.splitlines())
+        blocks.append(f"   • item {index} ({value!r}):\n{detail}")
+    return header + "\n\n" + "\n\n".join(blocks)
+
+
 def format_unknown_arg(name: str, known_args: list[str]) -> str:
     lines = [
         f"✗  Unknown argument: --{name}",

@@ -232,6 +232,40 @@ survey forms enforce them too.
     Node pack anchors `pattern` as `^(?:…)$` to match Python's `re.fullmatch`
     exactly, including patterns with a top-level alternation.
 
+### Multiple values (`multiple`, `delimiter`)
+
+`multiple = true` collects repeated flags (`--tag a --tag b`) into a list;
+add `delimiter` to also split a single value (`--fields a,b,c`). The arg's
+**type is applied to each item**, and the parsed value is a **list of coerced
+items** — `multiple` with `type = "int"` yields `[1, 2, 3]`, not strings.
+
+Per-item coercion means every per-item check runs **on each element**:
+`pattern` / `min-length` / `max-length` for `str`, `range` for numbers,
+`options` for `choice`. When items fail, the error reports *which* ones by
+position and value, validating the whole list before reporting:
+
+```toml
+[deploy.args]
+ticket = {type = "str", multiple = true, pattern = "[A-Z]+-[0-9]+"}
+```
+
+```bash
+deploy --ticket PROJ-1 --ticket bad-2 --ticket nope
+# ✗  --ticket: 2 of 3 item(s) failed validation:
+#
+#    • item 2 ('bad-2'):
+#      ✗  Invalid value for --ticket: 'bad-2'
+#         Expected: a value matching pattern '[A-Z]+-[0-9]+'
+#         Got: 'bad-2'
+#    • item 3 ('nope'):
+#      ...
+```
+
+!!! note "Availability"
+    Per-item coercion and validation for `multiple` args landed in
+    **runspec 0.24.0** and **node-0.19.0**. (Earlier versions stringified the
+    list instead of coercing each element.)
+
 ### Pass-through arguments (`type = "rest"`)
 
 One arg per runnable can have `type = "rest"`. It captures everything after a

@@ -125,6 +125,50 @@ class TestLengthValidation:
         assert coerce("abcde", spec) == "abcde"
 
 
+class TestMultipleCoercion:
+    """multiple=true args coerce + validate each item, returning a list."""
+
+    def test_returns_list_of_coerced_items(self):
+        spec = {"type": "str", "name": "tag", "multiple": True}
+        assert coerce(["a", "b", "c"], spec) == ["a", "b", "c"]
+
+    def test_int_items_coerced_per_item(self):
+        spec = {"type": "int", "name": "n", "multiple": True}
+        assert coerce(["1", "2", "3"], spec) == [1, 2, 3]
+
+    def test_pattern_applied_per_item(self):
+        spec = {"type": "str", "name": "tag", "multiple": True, "pattern": "[a-z]+"}
+        assert coerce(["ab", "cd"], spec) == ["ab", "cd"]
+
+    def test_range_applied_per_item(self):
+        spec = {"type": "int", "name": "n", "multiple": True, "range": [1, 10]}
+        assert coerce(["1", "5", "9"], spec) == [1, 5, 9]
+
+    def test_scalar_value_wrapped_to_single_item_list(self):
+        spec = {"type": "str", "name": "tag", "multiple": True}
+        assert coerce("solo", spec) == ["solo"]
+
+    def test_collects_all_failing_items_with_index_and_value(self):
+        spec = {"type": "str", "name": "tag", "multiple": True, "pattern": "[a-z]+"}
+        with pytest.raises(ValueError) as exc:
+            coerce(["ab", "XY", "z9", "de"], spec)
+        msg = str(exc.value)
+        assert "2 of 4 item(s) failed" in msg
+        assert "item 2 ('XY')" in msg
+        assert "item 3 ('z9')" in msg
+
+    def test_per_item_length_failure(self):
+        spec = {"type": "str", "name": "code", "multiple": True, "min_length": 2}
+        with pytest.raises(ValueError) as exc:
+            coerce(["ok", "x", "fine"], spec)
+        assert "item 2 ('x')" in str(exc.value)
+
+    def test_rest_type_not_treated_as_per_item(self):
+        # rest manages its own list and is excluded from per-item coercion.
+        spec = {"type": "rest", "name": "extra"}
+        assert coerce(["--flag", "value"], spec) == ["--flag", "value"]
+
+
 class TestCustomTypes:
     def test_register_and_use_custom_type(self):
         register_type("upper-str", lambda v, arg: str(v).upper())

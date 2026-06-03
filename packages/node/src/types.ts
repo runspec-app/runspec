@@ -1,6 +1,12 @@
 import * as path from 'path';
 import type { ArgSpec } from './models';
-import { formatInvalidChoice, formatInvalidPattern, formatTooShort, formatTooLong } from './errors';
+import {
+  formatInvalidChoice,
+  formatInvalidPattern,
+  formatTooShort,
+  formatTooLong,
+  formatInvalidItems,
+} from './errors';
 
 export type TypeCoercer = (value: unknown, spec: ArgSpec) => unknown;
 
@@ -17,6 +23,25 @@ export function coerce(value: unknown, spec: ArgSpec): unknown {
     throw new TypeError(
       `Unknown type '${typeName}' for argument '${spec.name}'. Registered types: ${[...registry.keys()].sort().join(', ')}\nRegister custom types with registerType().`,
     );
+  }
+  // Multiple-valued args coerce and validate each item independently and return
+  // a list. The arg's type (and its pattern / length / range / choice checks)
+  // applies per item. `rest` manages its own list, so it is excluded.
+  if (spec.multiple && typeName !== 'rest') {
+    const items = Array.isArray(value) ? value : [value];
+    const out: unknown[] = [];
+    const failures: Array<[number, unknown, string]> = [];
+    items.forEach((item, i) => {
+      try {
+        out.push(coercer(item, spec));
+      } catch (e) {
+        failures.push([i + 1, item, (e as Error).message]);
+      }
+    });
+    if (failures.length > 0) {
+      throw new Error(formatInvalidItems(spec.name ?? '?', items.length, failures));
+    }
+    return out;
   }
   try {
     return coercer(value, spec);

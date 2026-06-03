@@ -66,6 +66,24 @@ def coerce(raw_value: Any, arg_spec: dict[str, Any]) -> Any:
             f"Unknown type '{type_name}' for argument '{arg_spec.get('name', '?')}'. Registered types: {', '.join(sorted(_REGISTRY.keys()))}\nRegister custom types with runspec.register_type()."
         )
 
+    # Multiple-valued args coerce and validate each item independently and
+    # return a list. The arg's type (and its pattern / length / range / choice
+    # checks) applies per item. `rest` manages its own list, so it is excluded.
+    if arg_spec.get("multiple") and type_name != "rest":
+        items = raw_value if isinstance(raw_value, list) else [raw_value]
+        coerced_items: list[Any] = []
+        failures: list[tuple[int, Any, str]] = []
+        for index, item in enumerate(items, start=1):
+            try:
+                coerced_items.append(coercer(item, arg_spec))
+            except (ValueError, TypeError) as e:
+                failures.append((index, item, str(e)))
+        if failures:
+            from runspec.errors import format_invalid_items
+
+            raise ValueError(format_invalid_items(arg_spec.get("name", "?"), len(items), failures))
+        return coerced_items
+
     try:
         return coercer(raw_value, arg_spec)
     except (ValueError, TypeError) as e:
