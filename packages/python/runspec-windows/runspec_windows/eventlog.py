@@ -57,11 +57,13 @@ def main_query_eventlog() -> None:
     level = str(spec.level)
     count = int(spec.count)
     try:
-        print(json.dumps({"log": log, "level": level, "events": _query(log, count, level)}))
+        # Emit a top-level array of flat rows (like list-processes/list-services)
+        # so the console renders a table; log/level just echo the input args.
+        print(json.dumps(_query(log, count, level)))
     except RuntimeError as e:
         # Get-WinEvent raises "No events were found" when the filter matches nothing.
         if "No events were found" in str(e):
-            print(json.dumps({"log": log, "level": level, "events": []}))
+            print(json.dumps([]))
         else:
             _platform.fail(str(e), log=log)
     except Exception as e:
@@ -72,16 +74,18 @@ def main_recent_errors() -> None:
     spec = rs.parse("recent-errors")
     _platform.ensure_windows()
     count = int(spec.count)
-    result: dict[str, list[dict]] = {}
+    rows: list[dict] = []
     try:
         for log in ("System", "Application"):
             try:
-                result[log] = _query(log, count, "error")
+                events = _query(log, count, "error")
             except RuntimeError as e:
                 if "No events were found" in str(e):
-                    result[log] = []
+                    events = []
                 else:
                     raise
-        print(json.dumps(result))
+            # Flatten both logs into one table, tagged with a leading `log` column.
+            rows.extend({"log": log, **ev} for ev in events)
+        print(json.dumps(rows))
     except Exception as e:
         _platform.fail(str(e))

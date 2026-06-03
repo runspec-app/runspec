@@ -1,5 +1,15 @@
 # runspec-windows Changelog
 
+## [0.1.1] — 2026-06-03
+
+### Fixed
+- `query-eventlog` and `recent-errors` now emit a top-level JSON array of flat
+  rows (like `list-processes`/`list-services`) instead of a dict wrapping nested
+  arrays — so runspec-console renders them as tables instead of `[object
+  Object]`. `recent-errors` flattens both logs into one array, tagging each row
+  with a leading `log` column (`System`/`Application`).
+
+
 ## [0.1.0] — 2026-06-03
 
 Initial release.
