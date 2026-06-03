@@ -19,6 +19,7 @@ jobs:
       node: ${{ steps.filter.outputs.node }}
       chat: ${{ steps.filter.outputs.chat }}
       linux: ${{ steps.filter.outputs.linux }}
+      windows: ${{ steps.filter.outputs.windows }}
       console: ${{ steps.filter.outputs.console }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
@@ -39,6 +40,9 @@ jobs:
               - '.github/workflows/ci.yml'
             linux:
               - 'packages/python/runspec-linux/**'
+              - '.github/workflows/ci.yml'
+            windows:
+              - 'packages/python/runspec-windows/**'
               - '.github/workflows/ci.yml'
             console:
               - 'packages/python/runspec-console/**'
@@ -327,6 +331,95 @@ jobs:
           print('Wheel contents OK')
           "
 
+  # ── runspec-windows ─────────────────────────────────────────────────────────
+
+  windows-quality:
+    name: "windows quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-windows
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,graph]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  windows-unit:
+    name: runspec-windows unit (parsers + graph)
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-windows
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,graph]"
+
+      # Pure parsers + mocked Graph + the off-Windows platform-guard behaviour.
+      - name: Run tests
+        run: pytest
+
+  windows-smoke:
+    name: runspec-windows smoke (windows-latest)
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-windows
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      # Install the wheel into a clean venv and actually run a few Windows-only
+      # runnables, asserting each emits parseable JSON.
+      - name: Wheel smoke test
+        shell: pwsh
+        run: |
+          python -m venv $env:TEMP\smoke
+          & "$env:TEMP\smoke\Scripts\pip" install (Get-ChildItem dist\*.whl)[0].FullName
+          $bin = "$env:TEMP\smoke\Scripts"
+          foreach ($cmd in @("system-info", "list-processes", "disk-usage")) {
+            $out = & "$bin\$cmd"
+            $out | ConvertFrom-Json | Out-Null
+            Write-Host "$cmd -> OK"
+          }
+          & "$env:TEMP\smoke\Scripts\python" -c "from importlib.resources import files; assert (files('runspec_windows') / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'; import runspec_windows; assert runspec_windows.graph_get and runspec_windows.get_token; print('Wheel contents OK')"
+
   # ── runspec-console ──────────────────────────────────────────────────────────
 
   # runspec-console is not type-checked here: it carries pre-existing mypy debt
@@ -438,7 +531,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, console-quality, console-test, console-ui, docs-check]
+    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -462,6 +555,9 @@ jobs:
           check "chat-test"      "${{ needs.chat-test.result }}"
           check "linux-quality"  "${{ needs.linux-quality.result }}"
           check "linux-test"     "${{ needs.linux-test.result }}"
+          check "windows-quality" "${{ needs.windows-quality.result }}"
+          check "windows-unit"    "${{ needs.windows-unit.result }}"
+          check "windows-smoke"   "${{ needs.windows-smoke.result }}"
           check "console-quality" "${{ needs.console-quality.result }}"
           check "console-test"    "${{ needs.console-test.result }}"
           check "console-ui"      "${{ needs.console-ui.result }}"

@@ -1,0 +1,93 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-windows"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Windows system admin + Microsoft 365 (Outlook, Teams) runnables for runspec"
+dependencies = [
+    "runspec>=0.23.0",
+]
+
+[project.optional-dependencies]
+# Microsoft Graph runnables (Outlook + Teams). Pure HTTP — no pywin32 needed.
+graph = [
+    "msal>=1.28",
+    "httpx>=0.27",
+]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest>=8.0",
+    "msal>=1.28",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+# System monitoring
+system-info          = "runspec_windows.system_info:main_system_info"
+disk-usage           = "runspec_windows.system_info:main_disk_usage"
+check-memory         = "runspec_windows.system_info:main_check_memory"
+uptime               = "runspec_windows.system_info:main_uptime"
+# Processes
+list-processes       = "runspec_windows.processes:main_list_processes"
+process-info         = "runspec_windows.processes:main_process_info"
+kill-process         = "runspec_windows.processes:main_kill_process"
+# Services
+list-services        = "runspec_windows.services:main_list_services"
+check-service        = "runspec_windows.services:main_check_service"
+restart-service      = "runspec_windows.services:main_restart_service"
+stop-service         = "runspec_windows.services:main_stop_service"
+# Network
+ping-host            = "runspec_windows.network:main_ping_host"
+check-port           = "runspec_windows.network:main_check_port"
+show-connections     = "runspec_windows.network:main_show_connections"
+list-adapters        = "runspec_windows.network:main_list_adapters"
+flush-dns            = "runspec_windows.network:main_flush_dns"
+# Event log
+query-eventlog       = "runspec_windows.eventlog:main_query_eventlog"
+recent-errors        = "runspec_windows.eventlog:main_recent_errors"
+# Scheduled tasks
+list-scheduled-tasks = "runspec_windows.tasks:main_list_scheduled_tasks"
+# Installed software
+installed-software   = "runspec_windows.software:main_installed_software"
+# Sessions
+who                  = "runspec_windows.sessions:main_who"
+current-user         = "runspec_windows.sessions:main_current_user"
+# Microsoft Graph — account
+graph-login          = "runspec_windows.graph.account:main_graph_login"
+graph-whoami         = "runspec_windows.graph.account:main_graph_whoami"
+# Microsoft Graph — Outlook
+outlook-unread       = "runspec_windows.graph.outlook:main_outlook_unread"
+outlook-search       = "runspec_windows.graph.outlook:main_outlook_search"
+outlook-folders      = "runspec_windows.graph.outlook:main_outlook_folders"
+# Microsoft Graph — Calendar
+calendar-upcoming    = "runspec_windows.graph.calendar:main_calendar_upcoming"
+calendar-today       = "runspec_windows.graph.calendar:main_calendar_today"
+next-meeting         = "runspec_windows.graph.calendar:main_next_meeting"
+# Microsoft Graph — OneDrive / Files
+onedrive-recent      = "runspec_windows.graph.files:main_onedrive_recent"
+onedrive-search      = "runspec_windows.graph.files:main_onedrive_search"
+onedrive-list        = "runspec_windows.graph.files:main_onedrive_list"
+# Microsoft Graph — Teams
+teams-list-chats     = "runspec_windows.graph.teams:main_teams_list_chats"
+teams-read-chat      = "runspec_windows.graph.teams:main_teams_read_chat"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[[tool.mypy.overrides]]
+module = ["msal.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

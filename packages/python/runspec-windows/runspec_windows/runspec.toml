@@ -1,0 +1,425 @@
+[config]
+autonomy-default = "autonomous"
+
+[config.logging]
+rotate = "10 MB"
+keep   = 14
+
+# ── System monitoring ─────────────────────────────────────────────────────────
+
+[system-info]
+serve       = ["local"]
+description = "Report hostname, OS edition and build, architecture, and uptime"
+autonomy    = "autonomous"
+output      = "json"
+
+[disk-usage]
+serve       = ["local"]
+description = "Report free/used space for all local drives or a single path"
+autonomy    = "autonomous"
+output      = "json"
+
+[disk-usage.args.path]
+type        = "str"
+short       = "-p"
+description = "A specific drive or path to report (default: all local drives)"
+required    = false
+
+[check-memory]
+serve       = ["local"]
+description = "Report physical RAM and page-file usage in megabytes"
+autonomy    = "autonomous"
+output      = "json"
+
+[uptime]
+serve       = ["local"]
+description = "Report system boot time and uptime in seconds"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Processes ─────────────────────────────────────────────────────────────────
+
+[list-processes]
+serve       = ["local"]
+description = "List running processes, optionally filtered by image name"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-processes.args.filter]
+type        = "str"
+short       = "-f"
+description = "Only include processes whose image name contains this string"
+required    = false
+
+[list-processes.args.limit]
+type        = "int"
+short       = "-n"
+description = "Maximum number of processes to return"
+default     = 25
+
+[process-info]
+serve       = ["local"]
+description = "Show details for a single process by PID"
+autonomy    = "autonomous"
+output      = "json"
+
+[process-info.args.pid]
+type        = "int"
+description = "Process ID to look up"
+
+[kill-process]
+serve       = ["local"]
+description = "Terminate a process by PID (taskkill /F)"
+autonomy    = "confirm"
+output      = "json"
+
+[kill-process.args.pid]
+type        = "int"
+description = "Process ID to terminate"
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
+[list-services]
+serve       = ["local"]
+description = "List Windows services and their status, optionally filtered by status"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-services.args.status]
+type        = "choice"
+options     = ["all", "running", "stopped"]
+default     = "all"
+description = "Filter services by status"
+
+[check-service]
+serve       = ["local"]
+description = "Report the status and start type of a single Windows service"
+autonomy    = "autonomous"
+output      = "json"
+
+[check-service.args.service]
+type        = "str"
+short       = "-s"
+description = "Service name (e.g. Spooler or wuauserv)"
+
+[restart-service]
+serve       = ["local"]
+description = "Restart a Windows service"
+autonomy    = "confirm"
+output      = "json"
+
+[restart-service.args.service]
+type        = "str"
+short       = "-s"
+description = "Service name to restart"
+
+[stop-service]
+serve       = ["local"]
+description = "Stop a Windows service"
+autonomy    = "confirm"
+output      = "json"
+
+[stop-service.args.service]
+type        = "str"
+short       = "-s"
+description = "Service name to stop"
+
+# ── Network ───────────────────────────────────────────────────────────────────
+
+[ping-host]
+serve       = ["local"]
+description = "Ping a host and report reachability and packet loss"
+autonomy    = "autonomous"
+output      = "json"
+
+[ping-host.args.host]
+type        = "str"
+short       = "-H"
+description = "Hostname or IP address to ping"
+
+[ping-host.args.count]
+type        = "int"
+short       = "-c"
+description = "Number of echo requests to send"
+default     = 4
+
+[check-port]
+serve       = ["local"]
+description = "Check whether a TCP port is open on a host"
+autonomy    = "autonomous"
+output      = "json"
+
+[check-port.args.host]
+type        = "str"
+short       = "-H"
+description = "Hostname or IP address"
+
+[check-port.args.port]
+type        = "int"
+short       = "-p"
+description = "TCP port number"
+
+[check-port.args.timeout]
+type        = "float"
+description = "Connection timeout in seconds"
+default     = 3.0
+
+[show-connections]
+serve       = ["local"]
+description = "Show active TCP connections and listening ports (netstat -ano)"
+autonomy    = "autonomous"
+output      = "json"
+
+[show-connections.args.state]
+type        = "choice"
+options     = ["all", "established", "listening"]
+default     = "all"
+description = "Filter connections by state"
+
+[list-adapters]
+serve       = ["local"]
+description = "List network adapters with their IPv4 addresses (ipconfig /all)"
+autonomy    = "autonomous"
+output      = "json"
+
+[flush-dns]
+serve       = ["local"]
+description = "Flush the Windows DNS resolver cache"
+autonomy    = "confirm"
+output      = "json"
+
+# ── Event log ─────────────────────────────────────────────────────────────────
+
+[query-eventlog]
+serve       = ["local"]
+description = "Query a Windows event log (System/Application/Security) for recent entries"
+autonomy    = "autonomous"
+output      = "json"
+
+[query-eventlog.args.log]
+type        = "choice"
+options     = ["System", "Application", "Security"]
+default     = "System"
+description = "Event log name to query"
+
+[query-eventlog.args.level]
+type        = "choice"
+options     = ["all", "critical", "error", "warning", "information"]
+default     = "all"
+description = "Minimum severity to include"
+
+[query-eventlog.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of events to return"
+default     = 20
+
+[recent-errors]
+serve       = ["local"]
+description = "Show recent error and critical events from the System and Application logs"
+autonomy    = "autonomous"
+output      = "json"
+
+[recent-errors.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of events to return per log"
+default     = 20
+
+# ── Scheduled tasks ───────────────────────────────────────────────────────────
+
+[list-scheduled-tasks]
+serve       = ["local"]
+description = "List Windows scheduled tasks and their state (schtasks)"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-scheduled-tasks.args.filter]
+type        = "str"
+short       = "-f"
+description = "Only include tasks whose name contains this string"
+required    = false
+
+# ── Installed software ────────────────────────────────────────────────────────
+
+[installed-software]
+serve       = ["local"]
+description = "List installed software from the registry uninstall keys"
+autonomy    = "autonomous"
+output      = "json"
+
+[installed-software.args.filter]
+type        = "str"
+short       = "-f"
+description = "Only include entries whose display name contains this string"
+required    = false
+
+# ── Sessions ──────────────────────────────────────────────────────────────────
+
+[who]
+serve       = ["local"]
+description = "List interactive logon sessions on this machine (query user)"
+autonomy    = "autonomous"
+output      = "json"
+
+[current-user]
+serve       = ["local"]
+description = "Report the current user, domain, and computer name"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Microsoft Graph — account ─────────────────────────────────────────────────
+
+[graph-login]
+serve       = ["local"]
+description = "Sign in to Microsoft 365 via device-code flow and cache the token"
+autonomy    = "confirm"
+output      = "json"
+
+[graph-whoami]
+serve       = ["local"]
+description = "Report the signed-in Microsoft 365 user (Graph /me)"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Microsoft Graph — Outlook ─────────────────────────────────────────────────
+
+[outlook-unread]
+serve       = ["local"]
+description = "List unread Outlook messages from the inbox via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[outlook-unread.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of messages to return"
+default     = 20
+
+[outlook-search]
+serve       = ["local"]
+description = "Search Outlook messages by free-text query via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[outlook-search.args.query]
+type        = "str"
+short       = "-q"
+description = "Search terms (matched across subject, body, and sender)"
+
+[outlook-search.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of messages to return"
+default     = 20
+
+[outlook-folders]
+serve       = ["local"]
+description = "List Outlook mail folders with unread/total counts via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Microsoft Graph — Calendar ────────────────────────────────────────────────
+
+[calendar-upcoming]
+serve       = ["local"]
+description = "List upcoming calendar events over the next N days via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[calendar-upcoming.args.days]
+type        = "int"
+short       = "-d"
+description = "Look-ahead window in days"
+default     = 7
+
+[calendar-upcoming.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of events to return"
+default     = 20
+
+[calendar-today]
+serve       = ["local"]
+description = "List today's calendar events via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[next-meeting]
+serve       = ["local"]
+description = "Show the next upcoming calendar event via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Microsoft Graph — OneDrive / Files ────────────────────────────────────────
+
+[onedrive-recent]
+serve       = ["local"]
+description = "List recently used OneDrive/SharePoint files via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[onedrive-recent.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of files to return"
+default     = 20
+
+[onedrive-search]
+serve       = ["local"]
+description = "Search OneDrive/SharePoint files by name or content via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[onedrive-search.args.query]
+type        = "str"
+short       = "-q"
+description = "Search text"
+
+[onedrive-search.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of results to return"
+default     = 20
+
+[onedrive-list]
+serve       = ["local"]
+description = "List the contents of a OneDrive folder via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[onedrive-list.args.path]
+type        = "str"
+short       = "-p"
+description = "Folder path relative to the drive root (default: root)"
+default     = "/"
+
+# ── Microsoft Graph — Teams ───────────────────────────────────────────────────
+
+[teams-list-chats]
+serve       = ["local"]
+description = "List the signed-in user's Teams chats via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[teams-list-chats.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of chats to return"
+default     = 20
+
+[teams-read-chat]
+serve       = ["local"]
+description = "Read recent messages from a Teams chat via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[teams-read-chat.args.chat-id]
+type        = "str"
+description = "Chat id (from teams-list-chats)"
+
+[teams-read-chat.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of messages to return"
+default     = 20

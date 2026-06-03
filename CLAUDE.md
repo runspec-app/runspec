@@ -215,6 +215,7 @@ Both Python and Node packages are active and published.
 | `runspec-node` | 0.18.0 | npm | Node port |
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console, unreleased) |
 | `runspec-linux` | 0.1.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
+| `runspec-windows` | 0.1.0 | PyPI (unreleased) | 35 Windows system admin + Microsoft 365 (Outlook/Teams/Calendar/OneDrive) runnables |
 | `runspec-registry` | 0.1.1 | PyPI | Archived — registry removed in favour of SSH+MCP jump-host model |
 
 **Integration packages** live under `packages/python/` alongside the core library. Each is a
@@ -232,6 +233,18 @@ changelog on the branch; never push a `{prefix}v*` tag yourself.
 `runspec-linux` exports `nc_send(host, port, command, wait, read_timeout)` as a
 public Python API — wrapper runnables for TCP-interface apps do
 `from runspec_linux import nc_send`.
+
+`runspec-windows` is the Windows counterpart: 35 runnables across system admin
+(`subprocess`/`ctypes`/`winreg` — no pywin32) and Microsoft 365 via Graph
+(Outlook + Teams + Calendar + OneDrive). OS-specific calls sit behind `_platform.py` helpers; the pure
+output parsers and Graph formatters are unit-tested on any platform (CI runs them
+on ubuntu plus a `windows-latest` smoke job). Graph auth is MSAL **device-code**
+(public client, no secret); the `[graph]` extra carries `msal`/`httpx`, and the
+package exports `graph_get()` / `get_token()` as a public API (parallel to
+`nc_send`). runspec-console depends on it (`sys_platform == 'win32'` marker) so
+the runnables surface in the console UI automatically. CI mirrors the linux jobs
+(`windows-quality`/`windows-unit`/`windows-smoke`); release tag prefix is
+`windows-v`.
 
 **Docs drift checks.** `scripts/check_docs.py` guards the MkDocs site against
 drift and runs in CI (`docs-check` job, gated by a `docs` paths filter) and

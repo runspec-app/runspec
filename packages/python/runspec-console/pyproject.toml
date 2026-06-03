@@ -12,6 +12,10 @@ dependencies = [
     "pywin32>=306",
     "cryptography>=42.0",
     "paramiko>=3.0",
+    # Surfaces the Windows system-admin + Microsoft 365 runnables in the console
+    # UI automatically (discovered via `runspec local`). Windows-only — the
+    # marker keeps it off non-Windows installs and CI.
+    "runspec-windows[graph]>=0.1.0 ; sys_platform == 'win32'",
 ]
 
 [tool.hatch.build.targets.wheel]
