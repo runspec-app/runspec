@@ -1472,11 +1472,20 @@ class Bridge:
         with self._lock:
             runnables = list(self._runnables_cache)
         tools: list[dict[str, Any]] = []
+        seen_tool_names: set[str] = set()
         for r in runnables:
             host = r.get("host", "local")
             name = r.get("name", "")
             raw_name = f"{host}__{name}"
             tool_name = re.sub(r"[^a-zA-Z0-9_-]", "_", raw_name)[:64]
+            if tool_name in seen_tool_names:
+                sys.stderr.write(
+                    f"runspec-console: warning: duplicate tool name '{tool_name}' skipped"
+                    f" ('{name}' defined in multiple installed packages)\n"
+                )
+                sys.stderr.flush()
+                continue
+            seen_tool_names.add(tool_name)
             description = r.get("description") or f"Run {name} on {host}"
             args = r.get("args") or []
             properties: dict[str, Any] = {}
@@ -1928,8 +1937,21 @@ class Bridge:
         for t in disc_threads:
             t.join()
 
+        seen_keys: set[tuple[str, str]] = set()
+        deduped: list[dict[str, Any]] = []
+        for r in discovered:
+            key = (r.get("host", ""), r.get("name", ""))
+            if key in seen_keys:
+                sys.stderr.write(
+                    f"runspec-console: warning: '{key[1]}' defined in multiple"
+                    f" installed packages on host '{key[0]}', keeping first\n"
+                )
+                sys.stderr.flush()
+            else:
+                seen_keys.add(key)
+                deduped.append(r)
         with self._lock:
-            self._runnables_cache = discovered
+            self._runnables_cache = deduped
         self._dispatch("runspec:runnables_updated", {})
 
     def _check_connected(self, host: dict[str, Any]) -> bool:
