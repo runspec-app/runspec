@@ -36,6 +36,7 @@ import pytest
 
 _PKG_NAME = "runspec_e2e_pkg"
 _TOOL_NAME = "runspec_e2e_echo"
+_BOOM_TOOL = "runspec_e2e_boom"
 
 # ── Session fixture: build + install the test package ─────────────────────────
 
@@ -59,6 +60,17 @@ def e2e_pkg(tmp_path_factory: pytest.TempPathFactory) -> Any:
         """)
     )
 
+    # Script: raise an uncaught exception so tests can assert the audit-file
+    # exc_structured record and the MCP error envelope.
+    (pkg_dir / "boom.py").write_text(
+        textwrap.dedent("""\
+            def main():
+                from runspec import parse
+                parse()
+                raise ValueError("e2e boom")
+        """)
+    )
+
     # runspec.toml inside the package subdirectory — _check_editable_source finds
     # it by iterating subdirectories of the editable install's source dir.
     (pkg_dir / "runspec.toml").write_text(
@@ -75,6 +87,10 @@ def e2e_pkg(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
             [{_TOOL_NAME}.args]
             message = {{type = "str", description = "Message to echo", default = "spec-default"}}
+
+            [{_BOOM_TOOL}]
+            description = "E2E test tool that raises"
+            autonomy    = "autonomous"
         """)
     )
 
@@ -91,6 +107,7 @@ def e2e_pkg(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
             [project.scripts]
             {_TOOL_NAME} = "{_PKG_NAME}.echo:main"
+            {_BOOM_TOOL} = "{_PKG_NAME}.boom:main"
 
             [tool.setuptools.packages.find]
             where   = ["."]
@@ -322,3 +339,39 @@ def test_log_file_created_at_sys_prefix(e2e_pkg: Any) -> None:
         _stop(proc)
 
     assert expected_log.exists(), f"Log file not found at {expected_log}"
+
+
+def test_uncaught_exception_writes_structured_audit_record(e2e_pkg: Any) -> None:
+    """An uncaught exception returns an MCP error AND lands as a structured record.
+
+    Guards the "UIs read the JSON audit file" story end-to-end: serve stays pure
+    transport (no exc_structured in _meta), but the runnable's audit log gains a
+    runspec.exception record with the structured exception a UI can tabulate.
+    """
+    log_path = Path(sys.prefix) / "logs" / f"{_BOOM_TOOL}.log"
+    log_path.unlink(missing_ok=True)
+
+    proc = _start_serve()
+    try:
+        _initialize(proc)
+        resp = _rpc(
+            proc,
+            {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": _BOOM_TOOL, "arguments": {}}},
+        )
+        assert resp["result"]["isError"] is True
+        assert resp["result"]["_meta"]["runspec"]["exit_code"] != 0
+        # Without --debug the subprocess stderr must NOT carry a full traceback.
+        assert "Traceback (most recent call last)" not in resp["result"]["content"][0]["text"]
+    finally:
+        _stop(proc)
+
+    rec = None
+    for line in log_path.read_text().splitlines():
+        obj = json.loads(line)
+        if obj.get("logger") == "runspec.exception":
+            rec = obj
+            break
+    assert rec is not None, "no runspec.exception record in the audit log"
+    assert rec["exc_structured"]["type"] == "ValueError"
+    assert rec["exc_structured"]["message"] == "e2e boom"
+    assert rec["exc_structured"]["frames"]

@@ -251,6 +251,60 @@ Summaries are on by default. Suppress a single invocation with `--no-summary`
 
 ---
 
+## Uncaught exceptions
+
+You don't need `try`/`except` wrappers in your runnable. When `[config.logging]`
+is present, runspec installs a process-level handler so **every** uncaught
+exception is treated the same way — automatically. Just let exceptions
+propagate.
+
+On a crash, runspec always writes a structured record to the audit file (even
+without `--debug`, even with `summary = false`), and gates the console output on
+`--debug`:
+
+```json
+{"ts": "...", "level": "CRITICAL", "logger": "runspec.exception",
+ "message": "uncaught exception",
+ "exc": "Traceback (most recent call last):\n ...full traceback...",
+ "exc_structured": {
+   "type": "ValueError",
+   "message": "invalid release tag 'v9.9.9-bad'",
+   "module": "release",
+   "frames": [
+     {"file": "/abs/deploy.py",  "line": 48,  "func": "main",            "code": "main()"},
+     {"file": "/abs/release.py", "line": 212, "func": "resolve_release", "code": "raise ValueError(...)"}
+   ]
+ },
+ "extra": {"run_id": "..."}}
+```
+
+The `exc_structured` object is what UI tools render in a table — type, message,
+and a frame list (innermost last, absolute paths for click-to-open).
+
+On the console:
+
+```console
+$ deploy            # without --debug — one concise line
+ERROR: ValueError: invalid release tag 'v9.9.9-bad'  (run with --debug for traceback)
+
+$ deploy --debug    # neat, aligned trace; internal runspec frames filtered out
+ValueError: invalid release tag 'v9.9.9-bad'
+
+  deploy.py:48        main()
+  release.py:212      raise ValueError(f"invalid release tag {tag!r}")
+```
+
+This reuses the existing `--debug` knob: the full traceback shows on the console
+only with `--debug`, while the audit file always has the complete record.
+
+!!! note "Behaviour change"
+    Before this, an uncaught exception always dumped a full traceback to the
+    console. It now prints the one-liner above unless `--debug` is set — the full
+    traceback is always in the audit file. Landed in **runspec 0.26.0** and
+    **node-0.21.0**.
+
+---
+
 ## See also
 
 - [Python Library](python.md) — `parse()` integration details

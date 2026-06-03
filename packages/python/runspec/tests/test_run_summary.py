@@ -44,6 +44,7 @@ def _reset(monkeypatch):
             root.removeFilter(f)
     ls._configured = False
     ls._summary_state = None
+    ls._debug = False
 
 
 def _cfg(summary=True):
@@ -154,6 +155,97 @@ class TestExceptionCapture:
         assert "runspec: failing failed" in err
         assert "exit 1" in err
         assert "RuntimeError" in err
+
+    def _read_exc_record(self, tmp_path, runnable):
+        """Return the parsed runspec.exception record from the audit log, or None."""
+        log_path = tmp_path / "logs" / f"{runnable}.log"
+        for line in log_path.read_text().splitlines():
+            rec = json.loads(line)
+            if rec.get("logger") == "runspec.exception":
+                return rec
+        return None
+
+    def test_structured_record_written_even_without_summary(self, tmp_path, capsys):
+        # The decoupling fix: with summary OFF the exception must still reach the file.
+        configure_logging(_cfg(summary=False), runnable_name="nosum")
+        assert ls._summary_state is None  # summary genuinely disabled
+        try:
+            raise ValueError("invalid quality 200")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+        rec = self._read_exc_record(tmp_path, "nosum")
+        assert rec is not None
+        assert rec["level"] == "CRITICAL"
+        es = rec["exc_structured"]
+        assert es["type"] == "ValueError"
+        assert es["message"] == "invalid quality 200"
+        assert es["module"] == "test_run_summary"
+        assert es["frames"][-1]["func"] == "test_structured_record_written_even_without_summary"
+        assert "exc" in rec  # full string traceback also present
+
+    def test_no_debug_prints_one_liner_not_traceback(self, tmp_path, capsys):
+        configure_logging(_cfg(), runnable_name="quiet", debug=False)
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+        err = capsys.readouterr().err
+        assert "ERROR: ValueError: boom" in err
+        assert "run with --debug" in err
+        assert "Traceback (most recent call last)" not in err
+        # File still carries the full structured form.
+        assert self._read_exc_record(tmp_path, "quiet") is not None
+
+    def test_debug_prints_compact_trace(self, tmp_path, capsys):
+        configure_logging(_cfg(), runnable_name="loud", debug=True)
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+        err = capsys.readouterr().err
+        assert "ValueError: boom" in err
+        assert "test_run_summary.py:" in err  # compact frame line (basename)
+        assert "run with --debug" not in err  # the hint only shows in quiet mode
+
+    def test_exception_record_not_double_printed_to_console(self, tmp_path, capsys):
+        # The structured CRITICAL record must be dropped by the stdout/stderr
+        # handlers (routed file-only); only our explicit one-liner appears.
+        configure_logging(_cfg(), runnable_name="x", debug=False)
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+        captured = capsys.readouterr()
+        assert "uncaught exception" not in captured.err  # the logger message text
+        assert "uncaught exception" not in captured.out
+
+
+class TestExcStructuredHelpers:
+    def test_build_exc_structured_shape(self):
+        try:
+            raise KeyError("missing")
+        except KeyError:
+            es = ls._build_exc_structured(*sys.exc_info())
+        assert es["type"] == "KeyError"
+        assert es["module"] == "test_run_summary"
+        assert es["frames"]
+        assert set(es["frames"][0]) == {"file", "line", "func", "code"}
+
+    def test_compact_traceback_filters_internal_frames(self):
+        # A frame inside the runspec package dir is dropped from the display,
+        # user frames are kept; full list is preserved by the caller.
+        frames = [
+            {"file": ls._RUNSPEC_DIR + "/parser.py", "line": 10, "func": "parse", "code": "do()"},
+            {"file": "/app/deploy.py", "line": 42, "func": "main", "code": "boom()"},
+        ]
+        out = ls._format_compact_traceback(ValueError, ValueError("x"), frames)
+        assert "deploy.py:42" in out
+        assert "parser.py:10" not in out
+
+    def test_compact_traceback_falls_back_when_all_internal(self):
+        frames = [{"file": ls._RUNSPEC_DIR + "/parser.py", "line": 10, "func": "parse", "code": "do()"}]
+        out = ls._format_compact_traceback(ValueError, ValueError("x"), frames)
+        assert "parser.py:10" in out  # not left empty
 
 
 # ── Disable switches ─────────────────────────────────────────────────────────

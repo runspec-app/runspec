@@ -267,6 +267,65 @@ the MCP `_meta` extension:
 `_meta` is the MCP-standard extension point — clients that don't read it
 ignore the block. The tool response body is unaffected.
 
+#### Uncaught exceptions
+
+When `[config.logging]` is present, the language pack installs a process-level
+handler (Python `sys.excepthook`; Node `uncaughtException` / `unhandledRejection`)
+so **every** uncaught exception is handled the same way — automatically, with no
+per-runnable `try`/`except` and no code template. A runnable just lets the
+exception propagate.
+
+On an uncaught exception:
+
+1. **Audit log (always):** one structured record on the `runspec.exception`
+   logger, written to the audit file regardless of `--debug` *and* regardless of
+   the `summary` toggle. Like `runspec.runsummary`, this logger is file-only —
+   the console handlers filter it out. The record carries the human `exc` string
+   (full traceback) **and** a machine-readable `exc_structured` object that UI
+   tools can render in a table:
+
+   ```json
+   {"ts": "...", "level": "CRITICAL", "logger": "runspec.exception",
+    "message": "uncaught exception",
+    "exc": "Traceback (most recent call last):\n ...full string...",
+    "exc_structured": {
+      "type": "ValueError",
+      "message": "invalid release tag 'v9.9.9-bad'",
+      "module": "release",
+      "frames": [
+        {"file": "/abs/path/deploy.py",  "line": 48,  "func": "main",            "code": "main()"},
+        {"file": "/abs/path/release.py", "line": 212, "func": "resolve_release", "code": "raise ValueError(...)"}
+      ]
+    },
+    "extra": {"run_id": "..."}}
+   ```
+
+   `frames` is the full call stack, innermost last; `file` is an absolute path so
+   a UI can offer click-to-open. (Node cannot recover the source `code` line from
+   a stack string, so `code` is `null` there.)
+
+2. **Console (debug-gated):** with `--debug`, a neat, aligned traceback is
+   written to stderr — internal runspec frames are filtered out of the *display*
+   (the full trace is still in the audit file):
+
+   ```
+   ValueError: invalid release tag 'v9.9.9-bad'
+
+     deploy.py:48        main()
+     release.py:212      raise ValueError(f"invalid release tag {tag!r}")
+   ```
+
+   Without `--debug`, only a single concise line is written to stderr:
+
+   ```
+   ERROR: ValueError: invalid release tag 'v9.9.9-bad'  (run with --debug for traceback)
+   ```
+
+This reuses the existing `--debug` knob — uncaught exceptions behave like every
+other record (verbose on the console only with `--debug`, always full in the
+file). It is **not** chained to the language's default handler, so the full
+traceback no longer dumps to the console unless `--debug` is set.
+
 #### Sensitive data filtering
 
 All log output (console and file) is filtered for sensitive data before emission.

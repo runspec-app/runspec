@@ -6,7 +6,11 @@ import {
   getLogger,
   emitRunSummary,
   _resetForTest,
+  _handleUncaught,
+  buildExcStructured,
+  formatCompactTrace,
   RUN_SUMMARY_LOGGER,
+  EXCEPTION_LOGGER,
 } from '../src/logging_setup';
 
 function tmpDir(): string {
@@ -259,4 +263,99 @@ test('sudo user_target written to audit record', () => {
   const summary = content.trim().split('\n').map(l => JSON.parse(l)).find(o => o.logger === RUN_SUMMARY_LOGGER);
   expect(summary.extra.user).toBe('alice');
   expect(summary.extra.user_target).toBe('root');
+});
+
+// ── uncaught exceptions ────────────────────────────────────────────────────────
+
+function readExcRecord(dir: string): Record<string, any> | undefined {
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8');
+  return content.trim().split('\n').map(l => JSON.parse(l)).find(o => o.logger === EXCEPTION_LOGGER);
+}
+
+test('uncaught exception writes a structured record even with summary off', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir, { summary: false }));
+  const cap = captureStderr();
+  _handleUncaught(new TypeError('invalid quality 200'));
+  cap.restore();
+  const rec = readExcRecord(dir);
+  expect(rec).toBeDefined();
+  expect(rec!.level).toBe('CRITICAL');
+  expect(rec!.exc_structured.type).toBe('TypeError');
+  expect(rec!.exc_structured.message).toBe('invalid quality 200');
+  expect(Array.isArray(rec!.exc_structured.frames)).toBe(true);
+  expect(rec!.exc).toBeDefined(); // full stack string also present
+});
+
+test('without --debug the console shows a one-liner, not a traceback', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir, { debug: false }));
+  const cap = captureStderr();
+  _handleUncaught(new Error('boom'));
+  cap.restore();
+  const joined = cap.lines.join('');
+  expect(joined).toContain('ERROR: Error: boom');
+  expect(joined).toContain('run with --debug');
+  expect(joined).not.toContain('\n    at '); // no raw V8 stack dump
+  expect(readExcRecord(dir)).toBeDefined();
+});
+
+test('with --debug the console shows a compact aligned trace', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir, { debug: true }));
+  const cap = captureStderr();
+  _handleUncaught(new Error('boom'));
+  cap.restore();
+  const joined = cap.lines.join('');
+  expect(joined).toContain('Error: boom');
+  expect(joined).not.toContain('run with --debug'); // hint only in quiet mode
+});
+
+test('the exception record is not echoed to the console handlers', () => {
+  const dir = tmpDir();
+  const stdoutLines: string[] = [];
+  const stderrLines: string[] = [];
+  const o = jest.spyOn(process.stdout, 'write').mockImplementation((c) => { stdoutLines.push(String(c)); return true; });
+  const e = jest.spyOn(process.stderr, 'write').mockImplementation((c) => { stderrLines.push(String(c)); return true; });
+  configureLogging(makeCfg(dir, { debug: false }));
+  _handleUncaught(new Error('boom'));
+  o.mockRestore();
+  e.mockRestore();
+  // The structured JSON record is file-only; only our one-liner hits stderr.
+  expect(stdoutLines.join('')).not.toContain('uncaught exception');
+  expect(stderrLines.join('')).not.toContain('"logger":"runspec.exception"');
+});
+
+test('buildExcStructured parses frames innermost-last with module', () => {
+  const err = new Error('x');
+  err.stack = [
+    'Error: x',
+    '    at inner (/app/deep.js:5:10)',
+    '    at outer (/app/main.js:20:3)',
+  ].join('\n');
+  const es = buildExcStructured(err);
+  expect(es.type).toBe('Error');
+  expect(es.frames.map(f => f.func)).toEqual(['outer', 'inner']); // innermost last
+  expect(es.module).toBe('deep');
+  expect(es.frames[0]).toEqual({ func: 'outer', file: '/app/main.js', line: 20, code: null });
+});
+
+test('formatCompactTrace drops internal runspec frames but keeps user frames', () => {
+  const err = new Error('x');
+  // RUNSPEC_PKG_DIR is the dir of the logging_setup module (the package source).
+  const pkgDir = path.resolve(__dirname, '..', 'src');
+  const frames = [
+    { func: 'parse', file: path.join(pkgDir, 'parser.ts'), line: 10, code: null },
+    { func: 'main', file: '/app/deploy.js', line: 42, code: null },
+  ];
+  const out = formatCompactTrace(err, frames);
+  expect(out).toContain('deploy.js:42');
+  expect(out).not.toContain('parser.ts:10');
+});
+
+test('formatCompactTrace falls back to full list when every frame is internal', () => {
+  const err = new Error('x');
+  const pkgDir = path.resolve(__dirname, '..', 'src');
+  const frames = [{ func: 'parse', file: path.join(pkgDir, 'parser.ts'), line: 10, code: null }];
+  expect(formatCompactTrace(err, frames)).toContain('parser.ts:10');
 });

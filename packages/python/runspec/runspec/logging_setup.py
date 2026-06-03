@@ -19,6 +19,7 @@ from typing import Any
 
 _configured: bool = False  # idempotency guard — reset in tests via monkeypatch
 _summary_state: dict[str, Any] | None = None  # populated when summary is enabled
+_debug: bool = False  # mirrors the --debug flag; read by the excepthook for console rendering
 
 _SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(KB|MB|GB)$", re.IGNORECASE)
 _SIZE_MULT: dict[str, int] = {"KB": 1024, "MB": 1024**2, "GB": 1024**3}
@@ -71,6 +72,14 @@ _SENSITIVE: list[tuple[re.Pattern[str], str]] = [
 ]
 
 _RUN_SUMMARY_LOGGER = "runspec.runsummary"
+# Uncaught exceptions are emitted on this dedicated logger so the file handler
+# records them while the console handlers drop them by name — console display is
+# handled explicitly inside the excepthook (debug-gated).
+_EXCEPTION_LOGGER = "runspec.exception"
+
+# Directory of the installed runspec package — used to filter internal library
+# frames out of the *displayed* compact traceback (the full trace still hits the file).
+_RUNSPEC_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def configure_logging(
@@ -111,10 +120,11 @@ def configure_logging(
     counts log events by level and emits a single record at process exit
     with duration, exit code, exception class, and per-level counts.
     """
-    global _configured, _summary_state
+    global _configured, _summary_state, _debug
     if log_cfg is None or _configured:
         return
 
+    _debug = debug
     floor = logging.DEBUG if debug else logging.INFO
 
     # Unique ID for this invocation — injected into every JSON log record so
@@ -137,7 +147,7 @@ def configure_logging(
     out_handler._runspec_stream = "stdout"  # type: ignore[attr-defined]
     out_handler.setLevel(floor)
     out_handler.addFilter(sensitive)
-    out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name != _RUN_SUMMARY_LOGGER and not getattr(r, "_from_print", False))
+    out_handler.addFilter(lambda r: r.levelno < logging.WARNING and r.name != _RUN_SUMMARY_LOGGER and r.name != _EXCEPTION_LOGGER and not getattr(r, "_from_print", False))
     out_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(out_handler)
 
@@ -146,7 +156,7 @@ def configure_logging(
     err_handler._runspec_stream = "stderr"  # type: ignore[attr-defined]
     err_handler.setLevel(logging.WARNING)
     err_handler.addFilter(sensitive)
-    err_handler.addFilter(lambda r: r.name != _RUN_SUMMARY_LOGGER)
+    err_handler.addFilter(lambda r: r.name != _RUN_SUMMARY_LOGGER and r.name != _EXCEPTION_LOGGER)
     err_handler.setFormatter(_ConsoleFormatter(show_tracebacks=debug))
     root.addHandler(err_handler)
 
@@ -164,6 +174,11 @@ def configure_logging(
     # Run-summary counter handler — silently increments per-level counts.
     counter = _RunSummaryCounter()
     root.addHandler(counter)
+
+    # Uncaught-exception handling is always installed (independent of the summary
+    # toggle) so the structured exception record reaches the audit file even when
+    # summary is off. The hook also reads _summary_state when present.
+    _install_excepthook()
 
     runnable_prefix = runnable_name.upper().replace("-", "_")
     summary_enabled = bool(log_cfg.get("summary", True)) and not no_summary and not _env_truthy(f"RUNSPEC_{runnable_prefix}_ARG_NO_SUMMARY")
@@ -183,7 +198,6 @@ def configure_logging(
             "run_id": run_id,
             "invocation_args": invocation_args or {},
         }
-        _install_excepthook()
         atexit.register(_emit_run_summary)
 
     # Tee sys.stdout so print() calls also land in the file audit log.
@@ -240,7 +254,7 @@ def _collect_extra(record: logging.LogRecord) -> dict[str, Any]:
     """Collect user-supplied extra fields, redacting sensitive string values."""
     result: dict[str, Any] = {}
     for key, val in list(record.__dict__.items()):
-        if key in _LOGRECORD_ATTRS or key.startswith("_"):
+        if key in _LOGRECORD_ATTRS or key == "exc_structured" or key.startswith("_"):
             continue
         result[key] = _redact_value(key, val) if isinstance(val, str) else val
     return result
@@ -283,8 +297,10 @@ class _RunSummaryCounter(logging.Handler):
         self.counts: dict[str, int] = {"DEBUG": 0, "INFO": 0, "WARNING": 0, "ERROR": 0, "CRITICAL": 0}
 
     def emit(self, record: logging.LogRecord) -> None:
-        # Don't count the summary record itself.
-        if record.name == _RUN_SUMMARY_LOGGER:
+        # Don't count runspec's own bookkeeping records (the summary record and
+        # the uncaught-exception record) — the exception is surfaced via the
+        # summary's exit_code/exception fields, not as a user-visible event.
+        if record.name in (_RUN_SUMMARY_LOGGER, _EXCEPTION_LOGGER):
             return
         if record.levelname in self.counts:
             self.counts[record.levelname] += 1
@@ -361,6 +377,9 @@ class _JsonFormatter(logging.Formatter):
         if record.exc_info:
             obj["exc"] = self.formatException(record.exc_info)
             record.exc_text = obj["exc"]
+        exc_structured = getattr(record, "exc_structured", None)
+        if exc_structured:
+            obj["exc_structured"] = exc_structured
         extra = _collect_extra(record)
         run_id = getattr(record, "_run_id", None)
         if run_id:
@@ -407,17 +426,59 @@ class _ConsoleFormatter(logging.Formatter):
         return line
 
 
-# ── Run summary ──────────────────────────────────────────────────────────────
+# ── Uncaught exceptions ──────────────────────────────────────────────────────
 
 _original_excepthook = sys.excepthook
 _excepthook_installed: bool = False
 
 
-def _install_excepthook() -> None:
-    """Wrap sys.excepthook so uncaught exceptions land in the run summary.
+def _build_exc_structured(exc_type: type[BaseException], exc_value: BaseException, tb: Any) -> dict[str, Any]:
+    """Clean, machine-readable form of an exception for the JSON audit / UI tables.
 
-    Chains the original hook so default behaviour (printing the traceback) is
-    preserved. Idempotent.
+    `frames` is the full, unfiltered call stack (innermost last). `file` is the
+    absolute path so a UI can offer click-to-open; the console render shortens it.
+    """
+    frames = [
+        {
+            "file": fs.filename,
+            "line": fs.lineno,
+            "func": fs.name,
+            "code": fs.line or None,
+        }
+        for fs in traceback.extract_tb(tb)
+    ]
+    module = os.path.splitext(os.path.basename(str(frames[-1]["file"])))[0] if frames else None
+    return {
+        "type": exc_type.__name__,
+        "message": str(exc_value),
+        "module": module,
+        "frames": frames,
+    }
+
+
+def _format_compact_traceback(exc_type: type[BaseException], exc_value: BaseException, frames: list[dict[str, Any]]) -> str:
+    """Neat, aligned, stdlib-only traceback for --debug console output.
+
+    Internal runspec frames are dropped from the *display* (the full trace still
+    lands in the audit file). Falls back to the full list if filtering empties it.
+    """
+    shown = [f for f in frames if not str(f["file"]).startswith(_RUNSPEC_DIR)] or frames
+    locs = [f"{os.path.basename(str(f['file']))}:{f['line']}" for f in shown]
+    width = max((len(loc) for loc in locs), default=0)
+    lines = [f"{exc_type.__name__}: {exc_value}", ""]
+    for loc, frame in zip(locs, shown, strict=False):
+        code = (frame.get("code") or "").strip()
+        lines.append(f"  {loc.ljust(width)}  {code}".rstrip())
+    return "\n".join(lines)
+
+
+def _install_excepthook() -> None:
+    """Wrap sys.excepthook so uncaught exceptions are recorded uniformly.
+
+    Always emits a structured record to the audit file (via the file-only
+    `runspec.exception` logger). On the console it prints a neat compact
+    traceback when --debug is set, otherwise a single concise line. The default
+    hook is *not* chained — that is the deliberate behaviour change. Idempotent.
     """
     global _excepthook_installed, _original_excepthook
     if _excepthook_installed:
@@ -425,16 +486,39 @@ def _install_excepthook() -> None:
     _original_excepthook = sys.excepthook
 
     def hook(exc_type: type[BaseException], exc_value: BaseException, tb: Any) -> None:
+        structured = _build_exc_structured(exc_type, exc_value, tb)
+
+        # Always to the audit file (independent of --debug and of the summary toggle).
+        with contextlib.suppress(Exception):
+            logging.getLogger(_EXCEPTION_LOGGER).critical(
+                "uncaught exception",
+                exc_info=(exc_type, exc_value, tb),
+                extra={"exc_structured": structured},
+            )
+
+        # Feed the run-summary line (when summary is on) — unchanged shape.
         if _summary_state is not None:
             _summary_state["exception"] = {
                 "type": exc_type.__name__,
                 "message": str(exc_value),
                 "traceback": "".join(traceback.format_exception(exc_type, exc_value, tb)),
             }
-        _original_excepthook(exc_type, exc_value, tb)
+
+        # Console: full compact trace only with --debug, else a one-liner.
+        try:
+            if _debug:
+                sys.stderr.write(_format_compact_traceback(exc_type, exc_value, structured["frames"]) + "\n")
+            else:
+                sys.stderr.write(f"ERROR: {exc_type.__name__}: {exc_value}  (run with --debug for traceback)\n")
+            sys.stderr.flush()
+        except Exception:
+            _original_excepthook(exc_type, exc_value, tb)  # safety fallback
 
     sys.excepthook = hook
     _excepthook_installed = True
+
+
+# ── Run summary ──────────────────────────────────────────────────────────────
 
 
 def _format_summary_line(state: dict[str, Any], duration_ms: int, exit_code: int) -> str:

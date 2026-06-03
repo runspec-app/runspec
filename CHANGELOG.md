@@ -7,6 +7,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.26.0] / [node-0.21.0] — 2026-06-03
+
+### Added
+
+- **Uniform uncaught-exception handling.** When `[config.logging]` is present,
+  both packs now route every uncaught exception through one automatic path — no
+  `try`/`except` wrappers or code template needed in runnables:
+  - A structured record is always written to the audit file on a dedicated
+    file-only `runspec.exception` logger — independent of `--debug` *and* of the
+    `summary` toggle (previously the exception was only captured when summaries
+    were on). The record adds an `exc_structured` object (`type`, `message`,
+    `module`, `frames[]`) alongside the existing `exc` string, so UI tools can
+    render the exception in a table. (Node frames carry no source `code` line —
+    it isn't recoverable from a V8 stack string.)
+  - On the console, the verbose traceback is shown only with `--debug`, rendered
+    as a neat, aligned, dependency-free trace with internal runspec frames
+    filtered out of the display.
+
+### Changed
+
+- **Uncaught exceptions no longer dump a full traceback to the console by
+  default.** Without `--debug`, a single concise line is written to stderr
+  (`ERROR: <Type>: <message>  (run with --debug for traceback)`); the full
+  traceback is always in the audit file, and `--debug` restores it (neater) on
+  the console. This reuses the existing `--debug` knob — uncaught exceptions now
+  behave like every other log record.
+
 ## [0.25.0] / [node-0.20.0] — 2026-06-03
 
 ### Added

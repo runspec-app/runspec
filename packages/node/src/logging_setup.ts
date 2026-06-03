@@ -16,11 +16,35 @@ const _loggers = new Map<string, Logger>();
 const _handlers: Handler[] = [];
 
 const RUN_SUMMARY_LOGGER = 'runspec.runsummary';
+// Uncaught exceptions are emitted on this dedicated logger so the file handler
+// records them while the console handlers drop them by name — console display is
+// handled explicitly in _handleUncaught (debug-gated).
+const EXCEPTION_LOGGER = 'runspec.exception';
+
+// Directory of the installed runspec-node package — used to filter internal
+// library frames out of the *displayed* compact trace (full trace still hits the file).
+const RUNSPEC_PKG_DIR = __dirname;
+
+let _debug = false; // mirrors the --debug flag; read by _handleUncaught for console rendering
 
 interface CapturedException {
   type: string;
   message: string;
   traceback: string;
+}
+
+interface ExcFrame {
+  func: string;
+  file: string;
+  line: number | null;
+  code: string | null;
+}
+
+interface ExcStructured {
+  type: string;
+  message: string;
+  module: string | null;
+  frames: ExcFrame[];
 }
 
 interface SummaryState {
@@ -83,6 +107,7 @@ interface LogRecord {
   message: string;
   error?: Error;
   extra?: Record<string, unknown>;
+  excStructured?: Record<string, unknown>;
 }
 
 interface Handler {
@@ -145,6 +170,7 @@ function formatJson(record: LogRecord): string {
     message: record.message,
   };
   if (record.error) obj['exc'] = record.error.stack ?? record.error.message;
+  if (record.excStructured) obj['exc_structured'] = record.excStructured;
   if (record.extra) obj['extra'] = record.extra;
   return JSON.stringify(obj);
 }
@@ -183,7 +209,7 @@ class StdoutHandler implements Handler {
 
   emit(record: LogRecord): void {
     if (record.levelNum >= 30) return; // WARNING+ belongs on stderr
-    if (record.loggerName === RUN_SUMMARY_LOGGER) return;
+    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER) return;
     try {
       process.stdout.write(formatConsole(record, this.showTracebacks) + '\n');
     } catch {
@@ -204,7 +230,7 @@ class StderrHandler implements Handler {
 
   emit(record: LogRecord): void {
     if (record.levelNum < 30) return;
-    if (record.loggerName === RUN_SUMMARY_LOGGER) return;
+    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER) return;
     try {
       process.stderr.write(formatConsole(record, this.showTracebacks) + '\n');
     } catch {
@@ -226,8 +252,8 @@ class RunSummaryCounter implements Handler {
   };
 
   emit(record: LogRecord): void {
-    // Don't count the summary record itself.
-    if (record.loggerName === RUN_SUMMARY_LOGGER) return;
+    // Don't count runspec's own bookkeeping records (summary + uncaught-exception).
+    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER) return;
     const label = LEVEL_LABEL[record.levelNum];
     if (label && label in this.counts) {
       this.counts[label]++;
@@ -462,6 +488,99 @@ export function emitRunSummary(): void {
   }
 }
 
+// ── uncaught exceptions ────────────────────────────────────────────────────────
+
+const STACK_FRAME_RE = /^\s*at (?:(.+?) \()?(.+?):(\d+):(\d+)\)?$/;
+
+/**
+ * Parse a V8 stack string into frames, innermost LAST (mirroring Python's
+ * traceback.extract_tb order). `code` is unavailable from a stack string.
+ */
+function parseStackFrames(stack: string): ExcFrame[] {
+  const frames: ExcFrame[] = [];
+  for (const lineStr of stack.split('\n')) {
+    const m = STACK_FRAME_RE.exec(lineStr);
+    if (!m) continue;
+    frames.push({ func: m[1] ?? '<anonymous>', file: m[2], line: parseInt(m[3], 10), code: null });
+  }
+  frames.reverse();
+  return frames;
+}
+
+/** Clean, machine-readable form of an error for the JSON audit / UI tables. */
+function buildExcStructured(err: Error): ExcStructured {
+  const frames = parseStackFrames(err.stack ?? '');
+  const last = frames.length ? frames[frames.length - 1] : null;
+  const module = last ? path.basename(last.file).replace(/\.[^.]+$/, '') : null;
+  return { type: err.name || 'Error', message: err.message || String(err), module, frames };
+}
+
+/**
+ * Neat, aligned, stdlib-only trace for --debug console output. Internal
+ * runspec frames are dropped from the *display* (full trace still hits the
+ * file). Falls back to the full list if filtering empties it.
+ */
+function formatCompactTrace(err: Error, frames: ExcFrame[]): string {
+  const shown = frames.filter((f) => !f.file.includes(RUNSPEC_PKG_DIR));
+  const use = shown.length ? shown : frames;
+  const locs = use.map((f) => `${path.basename(f.file)}:${f.line}`);
+  const width = Math.max(0, ...locs.map((l) => l.length));
+  const lines = [`${err.name || 'Error'}: ${err.message}`, ''];
+  use.forEach((f, i) => {
+    lines.push(`  ${locs[i].padEnd(width)}  ${f.func}`.trimEnd());
+  });
+  return lines.join('\n');
+}
+
+/** Emit the structured exception record straight to the handlers (file keeps it). */
+function emitExceptionRecord(err: Error, structured: ExcStructured): void {
+  if (_handlers.length === 0) return;
+  const record: LogRecord = {
+    ts: new Date(),
+    levelNum: 50,
+    loggerName: EXCEPTION_LOGGER,
+    message: 'uncaught exception',
+    error: err,
+    excStructured: structured as unknown as Record<string, unknown>,
+  };
+  for (const h of _handlers) {
+    try {
+      if (record.levelNum >= h.level) h.emit(record);
+    } catch {
+      // never disrupt
+    }
+  }
+}
+
+/**
+ * Uniform handling for an uncaught error: always write a structured record to
+ * the audit file, feed the run summary (when on), and show a neat compact
+ * trace on the console only with --debug (otherwise a single concise line).
+ * Exported for tests so they can exercise it without triggering process.exit.
+ */
+export function _handleUncaught(err: Error): void {
+  const structured = buildExcStructured(err);
+
+  // Always to the audit file (independent of --debug and of the summary toggle).
+  emitExceptionRecord(err, structured);
+
+  if (_summaryState) {
+    _summaryState.exception = { type: structured.type, message: structured.message, traceback: err.stack ?? '' };
+    _summaryState.exitCode = 1;
+  }
+
+  // Console: full compact trace only with --debug, else a one-liner.
+  try {
+    if (_debug) {
+      process.stderr.write(formatCompactTrace(err, structured.frames) + '\n');
+    } else {
+      process.stderr.write(`ERROR: ${structured.type}: ${structured.message}  (run with --debug for traceback)\n`);
+    }
+  } catch {
+    process.stderr.write((err.stack ?? String(err)) + '\n'); // safety fallback
+  }
+}
+
 function installExitHooks(): void {
   if (_exitHooksInstalled) return;
   _exitHooksInstalled = true;
@@ -469,43 +588,25 @@ function installExitHooks(): void {
   process.on('exit', (code) => {
     if (_summaryState && !_summaryState.emitted) {
       // process.exitCode wins over the explicit exception capture only if
-      // it's non-zero — uncaughtException already set state.exitCode=1.
+      // it's non-zero — _handleUncaught already set state.exitCode=1.
       if (code !== 0 && _summaryState.exitCode === 0) _summaryState.exitCode = code;
       emitRunSummary();
     }
   });
 
   // Skip the crash-handlers under jest — they call process.exit(1), which
-  // would tear down the test runner if any test ever produced an unhandled
-  // rejection. The 'exit' hook above is harmless and still runs.
+  // would tear down the test runner. _handleUncaught is unit-tested directly.
+  // The 'exit' hook above is harmless and still runs.
   if (process.env['JEST_WORKER_ID'] !== undefined) return;
 
   process.on('uncaughtException', (err: Error) => {
-    if (_summaryState) {
-      _summaryState.exception = {
-        type: err.name || 'Error',
-        message: err.message || String(err),
-        traceback: err.stack ?? '',
-      };
-      _summaryState.exitCode = 1;
-    }
-    // Preserve default Node behaviour: print and exit non-zero. The 'exit'
-    // hook above will fire and run emitRunSummary().
-    process.stderr.write((err.stack ?? String(err)) + '\n');
+    _handleUncaught(err);
     process.exit(1);
   });
 
   process.on('unhandledRejection', (reason: unknown) => {
-    if (_summaryState) {
-      const err = reason instanceof Error ? reason : new Error(String(reason));
-      _summaryState.exception = {
-        type: err.name || 'Error',
-        message: err.message || String(reason),
-        traceback: err.stack ?? '',
-      };
-      _summaryState.exitCode = 1;
-    }
-    process.stderr.write(`Unhandled rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}\n`);
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    _handleUncaught(err);
     process.exit(1);
   });
 }
@@ -554,6 +655,7 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
   if (!opts.logCfg || _configured) return;
 
   const debug = opts.debug ?? false;
+  _debug = debug;
   const floor = debug ? LEVEL_NUM['debug'] : LEVEL_NUM['info'];
 
   _handlers.push(new StdoutHandler(floor, debug));
@@ -589,8 +691,12 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
       user,
       userTarget,
     };
-    installExitHooks();
   }
+
+  // Uncaught-exception handling is always installed (independent of the summary
+  // toggle) so the structured exception record reaches the audit file even when
+  // summary is off. The exit hook only flushes a summary when _summaryState is set.
+  installExitHooks();
 
   _configured = true;
 }
@@ -599,6 +705,7 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
 
 export function _resetForTest(): void {
   _configured = false;
+  _debug = false;
   _loggers.clear();
   _handlers.length = 0;
   _summaryState = null;
@@ -606,4 +713,4 @@ export function _resetForTest(): void {
   // they no-op when _summaryState is null, which is the test-time state.
 }
 
-export { _periodForDate, RUN_SUMMARY_LOGGER };
+export { _periodForDate, RUN_SUMMARY_LOGGER, EXCEPTION_LOGGER, buildExcStructured, formatCompactTrace };
