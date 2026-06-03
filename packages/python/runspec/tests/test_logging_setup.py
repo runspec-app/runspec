@@ -79,9 +79,9 @@ def reset_logging():
     ls._summary_state = None
 
 
-def _cfg(rotate="midnight", keep=7, summary=False):
+def _cfg(rotate="midnight", keep=7, summary=False, store="single"):
     # Summary defaults False here so tests don't accidentally trigger atexit work.
-    return {"rotate": rotate, "keep": keep, "summary": summary}
+    return {"rotate": rotate, "keep": keep, "summary": summary, "store": store}
 
 
 # ── TestNoop ──────────────────────────────────────────────────────────────────
@@ -249,6 +249,61 @@ class TestFileLogging:
         log_file = tmp_path / "logs" / "myscript.log"
         lines = [json.loads(line) for line in log_file.read_text().strip().splitlines()]
         assert any("exc" in obj for obj in lines)
+
+
+# ── TestPerRunStore ───────────────────────────────────────────────────────────
+
+
+_PER_RUN_RE = re.compile(r"^myscript\.\d{8}T\d{6}Z\.[0-9a-fA-F-]{36}\.log$")
+
+
+class TestPerRunStore:
+    """store='per-run' writes one {runnable}.{utc-ts}.{run_id}.log per invocation."""
+
+    def test_filename_pattern(self, tmp_path):
+        configure_logging(_cfg(store="per-run"), runnable_name="myscript")
+        name = Path(_our_file_handlers()[0].baseFilename).name
+        assert _PER_RUN_RE.match(name), name
+
+    def test_uses_plain_filehandler_even_when_rotate_set(self, tmp_path):
+        # rotate/keep are inert under per-run — must NOT produce a rotating handler.
+        configure_logging(_cfg(store="per-run", rotate="10 MB"), runnable_name="myscript")
+        h = _our_file_handlers()[0]
+        assert type(h) is logging.FileHandler
+        assert not isinstance(h, logging.handlers.RotatingFileHandler)
+        assert not isinstance(h, logging.handlers.TimedRotatingFileHandler)
+
+    def test_run_id_in_filename_matches_record(self, tmp_path):
+        configure_logging(_cfg(store="per-run"), runnable_name="myscript")
+        h = _our_file_handlers()[0]
+        file_run_id = Path(h.baseFilename).stem.split(".")[-1]
+        logging.getLogger("test.perrun").info("hi")
+        h.flush()
+        obj = json.loads(Path(h.baseFilename).read_text().strip().splitlines()[0])
+        assert obj["extra"]["run_id"] == file_run_id
+
+    def test_no_empty_file_when_nothing_logged(self, tmp_path):
+        # delay=True → the file is not created until the first record is emitted.
+        configure_logging(_cfg(store="per-run", summary=False), runnable_name="myscript")
+        assert not Path(_our_file_handlers()[0].baseFilename).exists()
+
+    def test_file_created_on_first_log(self, tmp_path):
+        configure_logging(_cfg(store="per-run"), runnable_name="myscript")
+        h = _our_file_handlers()[0]
+        logging.getLogger("test.perrun2").info("hi")
+        h.flush()
+        assert Path(h.baseFilename).exists()
+
+    def test_default_store_is_single_rotating(self, tmp_path):
+        # _cfg() defaults store='single', rotate='midnight' → one rotating file.
+        configure_logging(_cfg(), runnable_name="myscript")
+        assert (tmp_path / "logs" / "myscript.log").exists()
+        assert isinstance(_our_file_handlers()[0], logging.handlers.TimedRotatingFileHandler)
+
+    def test_missing_store_key_defaults_to_single(self, tmp_path):
+        # A log_cfg dict with no 'store' key at all (e.g. an older loader) → single.
+        configure_logging({"rotate": "midnight", "keep": 7, "summary": False}, runnable_name="myscript")
+        assert (tmp_path / "logs" / "myscript.log").exists()
 
 
 # ── TestLogDir ────────────────────────────────────────────────────────────────

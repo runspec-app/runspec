@@ -367,6 +367,62 @@ the `.runspec_env` section of the format reference.
 
 ---
 
+## `runspec logs`
+
+View, prune, and compact per-invocation audit logs — the read and maintenance
+side of `[config.logging] store = "per-run"` (see
+[Logging → Per-invocation files](logging.md#per-invocation-files-shared-venvs)).
+In per-run mode each invocation writes its own file with **no in-process
+rotation**, so `runspec logs` is how you read them as one stream and how you do
+retention.
+
+### View — many files, one stream
+
+```bash
+runspec logs deploy                       # merged, timestamp-sorted, one record per line
+runspec logs deploy --follow              # live tail across invocations
+runspec logs deploy --since 1h            # only the last hour
+runspec logs deploy --user alice          # only runs alice launched
+runspec logs deploy --run <run_id>        # one invocation
+runspec logs deploy --json                # raw JSON lines (for jq)
+```
+
+The view is a plain stdout stream that composes with the usual tools — it's
+TTY-aware and SIGPIPE-clean, so piping to `grep`/`head`/`less` just works, and
+process substitution makes the files look like a single file to anything that
+wants a path:
+
+```bash
+runspec logs deploy | grep ERROR | less
+awk '$2=="WARNING"' <(runspec logs deploy --since 1h)
+```
+
+### Prune / compact — retention you schedule
+
+There is no automatic rotation in per-run mode, so an operator schedules
+cleanup. Both verbs default to **all** runnables in the venv when none is
+given, take `--dry-run` to preview, and **never touch a single-mode
+`{runnable}.log`** — only per-run files and archives.
+
+```bash
+runspec logs compact --older-than 7d --gzip   # roll runs >7d old into a dated .gz archive
+runspec logs prune   --older-than 90d         # delete files older than 90 days
+runspec logs prune deploy --max-files 50 --dry-run     # preview keeping newest 50
+runspec logs prune --max-total-size 5GB                # cap total size (oldest deleted first)
+```
+
+A typical nightly cron line:
+
+```cron
+30 2 * * *  /opt/venv/bin/runspec logs compact --older-than 7d --gzip && \
+            /opt/venv/bin/runspec logs prune   --older-than 90d
+```
+
+Archives stay JSON-lines (gzipped), so `runspec logs <runnable>` and the
+console's History/Analytics keep reading them after compaction.
+
+---
+
 ## Bash and shell runnables
 
 Any executable on `PATH` can be a runspec runnable — bash, Python, Node,

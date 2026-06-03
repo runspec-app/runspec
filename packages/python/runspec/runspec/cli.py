@@ -57,6 +57,7 @@ def main() -> None:
         "serve": cmd_serve,
         "jump": cmd_jump,
         "env": cmd_env,
+        "logs": cmd_logs,
     }
 
     if command not in commands:
@@ -201,6 +202,60 @@ def cmd_env(args: list[str]) -> None:
     pad = max(len(k) for k in values)
     for key, value in values.items():
         print(f"  {key:<{pad}} = {value}")
+
+
+def cmd_logs(args: list[str]) -> None:
+    """View / prune / compact per-invocation audit logs (store = "per-run")."""
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["logs"] + args, config_path=_CLI_CONFIG)
+
+    from runspec import logs as _logs
+
+    # `runspec logs prune|compact [runnable]` vs `runspec logs <runnable>`.
+    target: str | None = parsed.target.value
+    if target in ("prune", "compact"):
+        verb = target
+        runnable: str | None = parsed.runnable.value
+    else:
+        verb = "view"
+        runnable = target
+
+    try:
+        if verb == "view":
+            if not runnable:
+                print("✗  A runnable is required: runspec logs <runnable>")
+                sys.exit(1)
+            since = _logs.parse_duration(parsed.since.value) if parsed.since.value else None
+            _logs.view(
+                runnable,
+                since=since,
+                run=parsed.run.value,
+                user=parsed.user.value,
+                as_json=bool(parsed.json),
+                follow=bool(parsed.follow),
+            )
+        elif verb == "prune":
+            _logs.prune(
+                runnable,
+                older_than=_logs.parse_duration(parsed.older_than.value) if parsed.older_than.value else None,
+                max_files=parsed.max_files.value,
+                max_total_size=_logs.parse_size(parsed.max_total_size.value) if parsed.max_total_size.value else None,
+                dry_run=bool(parsed.dry_run),
+            )
+        elif verb == "compact":
+            if not parsed.older_than.value:
+                print("✗  compact requires --older-than (e.g. --older-than 7d)")
+                sys.exit(1)
+            _logs.compact(
+                runnable,
+                older_than=_logs.parse_duration(parsed.older_than.value),
+                gzip_=bool(parsed.gzip),
+                dry_run=bool(parsed.dry_run),
+            )
+    except ValueError as exc:
+        print(f"✗  {exc}")
+        sys.exit(1)
 
 
 def cmd_init(args: list[str]) -> None:

@@ -59,6 +59,12 @@
               "type": "boolean",
               "description": "Emit a closing summary line after each run.",
               "default": true
+            },
+            "store": {
+              "type": "string",
+              "enum": ["single", "per-run"],
+              "default": "single",
+              "description": "Log file layout. 'single' = one rotating {runnable}.log per runnable (default). 'per-run' = one {runnable}.{utc-ts}.{run_id}.log per invocation — multi-writer safe (no in-process rotation; use 'runspec logs' to view/compact/prune)."
             }
           },
           "additionalProperties": false

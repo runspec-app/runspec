@@ -7,6 +7,64 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.22.0] — 2026-06-03
+
+### Added
+
+- **Per-invocation log files — `[config.logging] store = "per-run"`.** Node
+  parity with `runspec` 0.27.0: opt-in layout writing one
+  `{runnable}.{utc-ts}.{run_id}.log` per invocation (plain non-rotating handler)
+  instead of a single rotating `{runnable}.log`. Safe for shared venvs with
+  multiple users / parallel runs. Default `store = "single"` is unchanged.
+- **`run_id` on every file record.** Each invocation now mints a UUID4 at
+  `configureLogging()` time and injects it as `extra.run_id` on every
+  file-handler record and the run-summary record (SPEC §run_id) — previously
+  the Node pack omitted `run_id` entirely. This is what lets the per-run
+  filename token match the records, and lets runspec-console attribute Node
+  logs by run, not filename.
+
+---
+
+## [0.28.0] — 2026-06-03
+
+### Added
+
+- **`runspec logs` — view / prune / compact per-invocation logs.** The read and
+  maintenance side of `store = "per-run"`:
+  - `runspec logs <runnable>` merges a runnable's per-invocation files into one
+    timestamp-sorted stream (filters: `--since`, `--user`, `--run`, `--json`;
+    `--follow` live-tails). The stream is TTY-aware and SIGPIPE-clean so it
+    composes with `grep`/`head`/`less`/`jq` and process substitution.
+  - `runspec logs prune [runnable]` deletes old per-invocation files by
+    `--older-than` / `--max-files` / `--max-total-size` (combine freely;
+    at least one is required). `--dry-run` previews.
+  - `runspec logs compact [runnable] --older-than <dur> [--gzip]` rolls old
+    per-invocation files into a dated `{runnable}.archive.{date}.log[.gz]`
+    archive (raw JSON lines preserved, including `exc_structured`) and deletes
+    the originals.
+  - Both prune and compact default to all runnables in the venv and **never
+    touch a single-mode `{runnable}.log`** — only per-run files and archives,
+    matched by an exact suffix so a dotted runnable name is safe.
+
+---
+
+## [0.27.0] — 2026-06-03
+
+### Added
+
+- **Per-invocation log files — `[config.logging] store = "per-run"`.** Opt-in
+  log layout that writes one `{runnable}.{utc-ts}.{run_id}.log` file per
+  invocation instead of a single rotating `{runnable}.log`. Built for shared
+  deployment venvs where multiple users — or one user running in parallel — log
+  at once: because no file is ever shared there is no in-process rotation race
+  and no cross-user ownership conflict. The `run_id` in the filename matches the
+  `run_id` field in the records it contains. `rotate`/`keep` are inert in this
+  mode; retention is an explicit operator action (the forthcoming `runspec logs`
+  command). The default `store = "single"` is unchanged, so existing
+  deployments are unaffected.
+
+---
+
 ## [0.26.0] / [node-0.21.0] — 2026-06-03
 
 ### Added

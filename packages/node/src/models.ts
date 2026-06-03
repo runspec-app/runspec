@@ -2,6 +2,9 @@ export interface LoggingConfig {
   rotate: string;
   keep: number;
   summary: boolean;
+  /** Log file layout: 'single' (default, one rotating {runnable}.log) or
+   *  'per-run' (one {runnable}.{utc-ts}.{run_id}.log per invocation). */
+  store?: string;
 }
 
 export interface RawConfig {

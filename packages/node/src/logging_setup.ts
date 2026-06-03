@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { randomUUID } from 'crypto';
 import type { LoggingConfig } from './models';
 
 // ── internal state ────────────────────────────────────────────────────────────
@@ -14,6 +15,11 @@ import type { LoggingConfig } from './models';
 let _configured = false;
 const _loggers = new Map<string, Logger>();
 const _handlers: Handler[] = [];
+
+// UUID4 assigned at configureLogging() time, injected into every file record as
+// extra.run_id (SPEC §run_id). Separates interleaved runs in a shared log, and
+// matches the run_id token in a per-run filename.
+let _runId: string | null = null;
 
 const RUN_SUMMARY_LOGGER = 'runspec.runsummary';
 // Uncaught exceptions are emitted on this dedicated logger so the file handler
@@ -171,7 +177,11 @@ function formatJson(record: LogRecord): string {
   };
   if (record.error) obj['exc'] = record.error.stack ?? record.error.message;
   if (record.excStructured) obj['exc_structured'] = record.excStructured;
-  if (record.extra) obj['extra'] = record.extra;
+  // run_id rides in extra on every file record (console output omits it — that
+  // handler uses formatConsole). Mirrors Python's _RunIdFilter.
+  if (record.extra || _runId !== null) {
+    obj['extra'] = { ...(record.extra ?? {}), ...(_runId !== null ? { run_id: _runId } : {}) };
+  }
   return JSON.stringify(obj);
 }
 
@@ -341,6 +351,32 @@ class TimedRotatingFileHandler implements Handler {
     if (filePeriod === _periodForDate(new Date(), this.when)) return;
     doRotate(this.logPath, this.keep);
   }
+}
+
+/**
+ * Plain append-only handler for `store = "per-run"` — one file per invocation,
+ * so there is nothing to rotate (and no rotation race across writers). The file
+ * is created lazily on first append, so a run that logs nothing leaves no empty
+ * file behind.
+ */
+class PlainFileHandler implements Handler {
+  constructor(
+    private readonly logPath: string,
+    readonly level: number,
+  ) {}
+
+  emit(record: LogRecord): void {
+    try {
+      fs.appendFileSync(this.logPath, formatJson(record) + '\n', 'utf-8');
+    } catch {
+      // never disrupt
+    }
+  }
+}
+
+/** Compact UTC stamp for per-run filenames: `YYYYMMDDThhmmssZ`. */
+function _perRunStamp(d: Date): string {
+  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
 }
 
 // ── size/rotate parser ────────────────────────────────────────────────────────
@@ -658,12 +694,23 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
   _debug = debug;
   const floor = debug ? LEVEL_NUM['debug'] : LEVEL_NUM['info'];
 
+  // Unique ID for this invocation — injected into every file record (formatJson)
+  // and reused as the per-run filename token so file run_id == record run_id.
+  _runId = randomUUID();
+
   _handlers.push(new StdoutHandler(floor, debug));
   _handlers.push(new StderrHandler(debug));
 
   const logDir = resolveLogDir(opts.configPath);
-  const logPath = path.join(logDir, `${opts.runnableName}.log`);
-  _handlers.push(makeFileHandler(logPath, opts.logCfg.rotate, opts.logCfg.keep, floor));
+  if (opts.logCfg.store === 'per-run') {
+    // One file per invocation — multi-writer safe (no shared file, so no
+    // rotation race). rotate/keep are inert; retention is `runspec logs`.
+    const logPath = path.join(logDir, `${opts.runnableName}.${_perRunStamp(new Date())}.${_runId}.log`);
+    _handlers.push(new PlainFileHandler(logPath, floor));
+  } else {
+    const logPath = path.join(logDir, `${opts.runnableName}.log`);
+    _handlers.push(makeFileHandler(logPath, opts.logCfg.rotate, opts.logCfg.keep, floor));
+  }
 
   // Always attach the counter — cost is one dict increment per log call.
   // Only the exit hook + state population are conditional on summary mode.
@@ -706,6 +753,7 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
 export function _resetForTest(): void {
   _configured = false;
   _debug = false;
+  _runId = null;
   _loggers.clear();
   _handlers.length = 0;
   _summaryState = null;

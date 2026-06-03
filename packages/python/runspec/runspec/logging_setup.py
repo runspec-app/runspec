@@ -116,6 +116,12 @@ def configure_logging(
     across package directories; falls back to `~/logs/` if the venv root
     isn't writable.
 
+    `log_cfg["store"]` selects the file layout: `"single"` (default) is one
+    rotating `{runnable}.log`; `"per-run"` writes one
+    `{runnable}.{utc-ts}.{run_id}.log` per invocation — safe for multiple
+    users / parallel runs (no shared file, hence no rotation race) at the cost
+    of moving retention to `runspec logs compact`/`prune`.
+
     Run summary (when `log_cfg["summary"]` is true and `no_summary` is false)
     counts log events by level and emits a single record at process exit
     with duration, exit code, exception class, and per-level counts.
@@ -163,8 +169,19 @@ def configure_logging(
     # File handler: always active, always JSON; level follows --debug
     # (INFO by default — keeps third-party DEBUG noise out of the audit log).
     log_dir = _resolve_log_dir()
-    log_path = log_dir / f"{runnable_name}.log"
-    fh = _make_file_handler(log_path, log_cfg["rotate"], log_cfg["keep"])
+    if log_cfg.get("store") == "per-run":
+        # One file per invocation — multi-writer safe (no shared file, so no
+        # rotation race when many users / parallel runs log at once). The
+        # run_id in the name matches extra.run_id in the records, and the UTC
+        # timestamp makes `ls` sort chronologically. rotate/keep are inert
+        # here; retention is delegated to `runspec logs compact`/`prune`.
+        # delay=True so a run that emits nothing leaves no empty file behind.
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = log_dir / f"{runnable_name}.{ts}.{run_id}.log"
+        fh: logging.Handler = logging.FileHandler(log_path, encoding="utf-8", delay=True)
+    else:
+        log_path = log_dir / f"{runnable_name}.log"
+        fh = _make_file_handler(log_path, log_cfg["rotate"], log_cfg["keep"])
     fh.setLevel(floor)
     fh.addFilter(sensitive)
     fh.addFilter(_RunIdFilter(run_id))

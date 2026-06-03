@@ -1,6 +1,6 @@
 {
   "name": "runspec-node",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "Node/TypeScript language pack for runspec",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,7 +13,13 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "keywords": ["runspec", "cli", "arguments", "agents", "mcp"],
+  "keywords": [
+    "runspec",
+    "cli",
+    "arguments",
+    "agents",
+    "mcp"
+  ],
   "author": "Jason Finestone",
   "license": "MIT",
   "repository": {

@@ -15,6 +15,7 @@ background threads via window.evaluate_js().  The frontend listens for:
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import json
 import logging
@@ -248,7 +249,7 @@ class Bridge:
             return self._get_remote_history(entry, runnable)
         paths = _paths(entry)
         records: list[dict[str, Any]] = []
-        pattern = f"{runnable}.log" if runnable else "*.log"
+        globs = _log_globs(runnable)
         for rp in paths:
             if not rp:
                 continue
@@ -258,8 +259,9 @@ class Bridge:
                 log_dir = Path.home() / "logs"
             if not log_dir.exists():
                 continue
+            matches = {f for pat in globs for f in log_dir.glob(pat)}
             for log_file in sorted(
-                log_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True
+                matches, key=lambda p: p.stat().st_mtime, reverse=True
             ):
                 records.extend(_parse_log(log_file, host))
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
@@ -276,12 +278,7 @@ class Bridge:
         paths = _paths(entry)
         rp = paths[0] if paths else ""
         log_dir = str(PurePosixPath(rp).parent.parent / "logs")
-        pattern = f"{log_dir}/{runnable}.log" if runnable else f"{log_dir}/*.log"
-        script = (
-            f"for f in {pattern}; do "
-            f'[ -f "$f" ] && printf "\\x00RUNSPEC_LOG:%s\\n" "$(basename "$f" .log)" && cat "$f"; '
-            f"done 2>/dev/null"
-        )
+        script = _remote_log_script(log_dir, runnable)
         _, stdout, _ = ssh_run(
             ssh,
             script,
@@ -328,7 +325,7 @@ class Bridge:
 
         paths = _paths(entry)
         records: list[dict[str, Any]] = []
-        pattern = f"{runnable}.log" if runnable else "*.log"
+        globs = _log_globs(runnable)
 
         if entry.get("ssh"):
             from .executor import ssh_run
@@ -340,13 +337,7 @@ class Bridge:
                     continue
                 group = PurePosixPath(rp).parent.parent.name
                 log_dir = str(PurePosixPath(rp).parent.parent / "logs")
-                glob = f"{log_dir}/{runnable}.log" if runnable else f"{log_dir}/*.log"
-                script = (
-                    f"for f in {glob}; do "
-                    f'[ -f "$f" ] && printf "\\x00RUNSPEC_LOG:%s\\n" '
-                    f'"$(basename "$f" .log)" && cat "$f"; '
-                    f"done 2>/dev/null"
-                )
+                script = _remote_log_script(log_dir, runnable)
                 code, stdout, stderr = ssh_run(
                     ssh,
                     script,
@@ -380,17 +371,19 @@ class Bridge:
                 _flush()
             return records
 
-        # Local host
+        # Local host (distinct Path var — `log_dir` above is a str for the
+        # remote branch, so reusing the name would muddle its type).
         for rp in paths:
             if not rp:
                 continue
             group = venv_name(rp)
-            log_dir = Path(rp).parent.parent / "logs"
-            if not log_dir.exists():
-                log_dir = Path.home() / "logs"
-            if not log_dir.exists():
+            local_dir = Path(rp).parent.parent / "logs"
+            if not local_dir.exists():
+                local_dir = Path.home() / "logs"
+            if not local_dir.exists():
                 continue
-            for log_file in log_dir.glob(pattern):
+            matches = {f for pat in globs for f in local_dir.glob(pat)}
+            for log_file in matches:
                 for rec in _parse_log(log_file, entry["name"], include_extra=True):
                     rec["group"] = group
                     records.append(rec)
@@ -2135,6 +2128,40 @@ def _paths(entry: dict[str, Any]) -> list[str]:
     return [str(rp)] if rp else []
 
 
+def _log_globs(runnable: str | None) -> list[str]:
+    """Filename patterns to read for a runnable (or all of them).
+
+    Matches the legacy single file (``{runnable}.log``), per-invocation files
+    (``{runnable}.{ts}.{run_id}.log``, store="per-run"), and compacted archives
+    (``{runnable}.archive.*.log.gz``). Discovery only — the runnable a record
+    belongs to is read from the record body (``extra.runnable``), not the
+    filename, so over-matching is harmless. ``{runnable}.log`` is listed
+    separately because ``{runnable}.*.log`` does not match it.
+    """
+    if runnable:
+        return [f"{runnable}.*.log", f"{runnable}.log", f"{runnable}.*.log.gz"]
+    return ["*.log", "*.log.gz"]
+
+
+def _remote_log_script(log_dir: str, runnable: str | None) -> str:
+    """Shell snippet that frames and streams every matching log file over SSH.
+
+    Each file is preceded by a ``\\x00RUNSPEC_LOG:<basename>`` frame (the name is
+    only a fallback — attribution comes from the record body). Compacted
+    ``.gz`` archives are decompressed with ``gzip -dc``; plain files are
+    ``cat``-ed. Non-matching globs expand to themselves and are skipped by the
+    ``[ -f ]`` guard, so no ``nullglob`` is required.
+    """
+    patterns = " ".join(f"{log_dir}/{g}" for g in _log_globs(runnable))
+    return (
+        f"for f in {patterns}; do "
+        f'[ -f "$f" ] || continue; '
+        f'printf "\\x00RUNSPEC_LOG:%s\\n" "$(basename "$f" .log)"; '
+        f'case "$f" in *.gz) gzip -dc "$f";; *) cat "$f";; esac; '
+        f"done 2>/dev/null"
+    )
+
+
 def _write_ppk_v2(
     dest: Path, raw_priv: bytes, raw_pub: bytes, comment: str = "runspec-console"
 ) -> None:
@@ -2246,9 +2273,16 @@ def _parse_log(
     log_file: Path, host: str, include_extra: bool = False
 ) -> list[dict[str, Any]]:
     try:
-        text = log_file.read_text(encoding="utf-8", errors="replace")
+        if log_file.suffix == ".gz":
+            with gzip.open(log_file, "rt", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        else:
+            text = log_file.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return []
+    # log_file.stem is only a fallback runnable name — attribution comes from
+    # extra.runnable in the records (see _parse_log_by_run_id). This keeps the
+    # parser correct for per-invocation filenames whose stem isn't the runnable.
     return _parse_log_text(log_file.stem, text, host, include_extra=include_extra)
 
 
@@ -2290,18 +2324,21 @@ def _parse_log_by_run_id(
 ) -> list[dict[str, Any]]:
     """Group log entries by run_id UUID → one HistoryRecord per invocation."""
     # Preserve insertion order of run_ids so history is chronological
-    groups: dict[str, dict[str, Any]] = {}  # run_id → {"lines": [], "summary": None}
+    groups: dict[str, dict[str, Any]] = {}  # run_id → {lines, summary, exc}
     for entry in entries:
         extra = entry.get("extra", {})
         run_id = extra.get("run_id")
         if not run_id:
             continue
-        if run_id not in groups:
-            groups[run_id] = {"lines": [], "summary": None}
-        if extra.get("event") == "run_summary":
-            groups[run_id]["summary"] = entry
+        g = groups.setdefault(run_id, {"lines": [], "summary": None, "exc": None})
+        if entry.get("exc_structured"):
+            # Uncaught-exception record (runspec >=0.26): lift the structured
+            # frames out, don't surface it as a generic CRITICAL log line.
+            g["exc"] = entry["exc_structured"]
+        elif extra.get("event") == "run_summary":
+            g["summary"] = entry
         else:
-            groups[run_id]["lines"].append(
+            g["lines"].append(
                 {
                     "ts": entry.get("ts", ""),
                     "level": entry.get("level", "INFO"),
@@ -2315,11 +2352,14 @@ def _parse_log_by_run_id(
         if summary_entry is None:
             continue  # in-progress run — no summary yet
         extra = summary_entry.get("extra", {})
+        # Attribution comes from the record, not the filename — robust to
+        # per-invocation filenames; `name` (filename stem) is only a fallback.
+        runnable = extra.get("runnable") or name
         ts_raw = summary_entry.get("ts", "")
-        stable_id = hashlib.md5((run_id + name).encode()).hexdigest()[:12]
+        stable_id = hashlib.md5((run_id + runnable).encode()).hexdigest()[:12]
         record = {
             "id": stable_id,
-            "runnable": name,
+            "runnable": runnable,
             "group": "",
             "host": host,
             "operator": extra.get("user", ""),
@@ -2332,6 +2372,16 @@ def _parse_log_by_run_id(
             "logLines": g["lines"],
             "initiatedBy": "llm" if extra.get("agent") else "user",
         }
+        exc = g["exc"]
+        if exc:
+            # Richer than the summary's extra.exception (type/message/traceback):
+            # carries the structured, table-ready call frames from #102.
+            record["exception"] = {
+                "type": exc.get("type"),
+                "message": exc.get("message"),
+                "module": exc.get("module"),
+                "frames": exc.get("frames", []),
+            }
         if include_extra:
             record["extra"] = _summary_extra(extra)
         records.append(record)
@@ -2348,10 +2398,11 @@ def _parse_log_sequential(
         extra = entry.get("extra", {})
         if extra.get("event") == "run_summary":
             ts_raw = entry.get("ts", "")
-            stable_id = hashlib.md5((ts_raw + name).encode()).hexdigest()[:12]
+            runnable = extra.get("runnable") or name
+            stable_id = hashlib.md5((ts_raw + runnable).encode()).hexdigest()[:12]
             record = {
                 "id": stable_id,
-                "runnable": name,
+                "runnable": runnable,
                 "group": "",
                 "host": host,
                 "operator": extra.get("user", ""),

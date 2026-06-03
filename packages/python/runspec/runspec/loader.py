@@ -74,10 +74,15 @@ def _normalise_logging(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     """
     if raw is None:
         return None
+    store = str(raw.get("store", "single"))
     return {
         "rotate": str(raw.get("rotate", "midnight")),
         "keep": int(raw.get("keep", 7)),
         "summary": bool(raw.get("summary", True)),
+        # 'single' = one rotating {runnable}.log; 'per-run' = one file per
+        # invocation. Unknown values fall back to 'single' — the schema check
+        # flags typos; runtime stays lenient like the rest of this normaliser.
+        "store": store if store in ("single", "per-run") else "single",
     }
 
 

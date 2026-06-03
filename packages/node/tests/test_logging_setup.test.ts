@@ -407,17 +407,20 @@ test('extra fields appear under "extra" key in JSON', () => {
   getLogger('test').info('connected', { user_id: '42', region: 'eu-west' });
   const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
   const record = JSON.parse(content);
-  expect(record.extra).toEqual({ user_id: '42', region: 'eu-west' });
+  // run_id is always present on file records (SPEC §run_id); user fields ride alongside.
+  expect(record.extra).toMatchObject({ user_id: '42', region: 'eu-west' });
+  expect(typeof record.extra.run_id).toBe('string');
   expect(record.message).toBe('connected');
 });
 
-test('no "extra" key when no extra fields', () => {
+test('run_id is the only extra field when none supplied', () => {
   const dir = tmpDir();
   configureLogging(makeCfg(dir));
   getLogger('test').info('plain message');
   const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
   const record = JSON.parse(content);
-  expect(record.extra).toBeUndefined();
+  expect(Object.keys(record.extra)).toEqual(['run_id']);
+  expect(typeof record.extra.run_id).toBe('string');
 });
 
 test('error key extracted from fields, not placed in extra', () => {
@@ -428,17 +431,17 @@ test('error key extracted from fields, not placed in extra', () => {
   const record = JSON.parse(content);
   expect(typeof record.exc).toBe('string');
   expect(record.exc).toContain('oops');
-  expect(record.extra).toEqual({ user_id: '42' });
+  expect(record.extra).toMatchObject({ user_id: '42' });
   expect(record.extra?.error).toBeUndefined();
 });
 
-test('error-only fields: no extra key', () => {
+test('error-only fields: extra holds just run_id', () => {
   const dir = tmpDir();
   configureLogging(makeCfg(dir));
   getLogger('test').error('boom', { error: new Error('oops') });
   const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
   const record = JSON.parse(content);
-  expect(record.extra).toBeUndefined();
+  expect(Object.keys(record.extra)).toEqual(['run_id']);
   expect(typeof record.exc).toBe('string');
 });
 
@@ -472,4 +475,59 @@ test('extra fields appear in console output', () => {
   getLogger('test').info('connected', { user_id: '42' });
   expect(lines.some(l => l.includes('user_id=42'))).toBe(true);
   stdoutWrite.mockRestore();
+});
+
+// ── store = "per-run" ───────────────────────────────────────────────────────────
+
+const PER_RUN_RE = /^myscript\.\d{8}T\d{6}Z\.[0-9a-fA-F-]{8,}\.log$/;
+
+function perRunFile(dir: string): string | undefined {
+  return fs.readdirSync(path.join(dir, 'logs')).find(f => PER_RUN_RE.test(f));
+}
+
+test('per-run: writes {runnable}.{ts}.{run_id}.log, not {runnable}.log', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir, { store: 'per-run' }));
+  getLogger('test').info('hi');
+  const files = fs.readdirSync(path.join(dir, 'logs'));
+  expect(files.some(f => PER_RUN_RE.test(f))).toBe(true);
+  expect(files).not.toContain('myscript.log');
+});
+
+test('per-run: run_id in filename matches extra.run_id in records', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir, { store: 'per-run' }));
+  getLogger('test').info('hi');
+  const fname = perRunFile(dir)!;
+  const fileRunId = fname.replace(/\.log$/, '').split('.').pop();
+  const record = JSON.parse(fs.readFileSync(path.join(dir, 'logs', fname), 'utf-8').trim());
+  expect(record.extra.run_id).toBe(fileRunId);
+});
+
+test('per-run: no rotation even when rotate is set', () => {
+  const dir = tmpDir();
+  // a tiny size threshold would rotate a single file immediately; per-run must not.
+  configureLogging(makeCfg(dir, { store: 'per-run', rotate: '1 KB' }));
+  const log = getLogger('test');
+  // ~30 × ~60 bytes well exceeds the 1 KB threshold a rotating handler would act on.
+  for (let i = 0; i < 30; i++) log.info(`line ${i} ${'x'.repeat(50)}`);
+  const files = fs.readdirSync(path.join(dir, 'logs'));
+  // exactly one per-run file, and no rotated backups (.log.1 etc.)
+  expect(files.filter(f => PER_RUN_RE.test(f))).toHaveLength(1);
+  expect(files.some(f => /\.log\.\d+$/.test(f))).toBe(false);
+});
+
+test('per-run: no empty file when nothing is logged', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir, { store: 'per-run' }));
+  // summary is off in makeCfg and we log nothing → lazy append means no file.
+  expect(perRunFile(dir)).toBeUndefined();
+});
+
+test('default store is single ({runnable}.log)', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir)); // no store override
+  getLogger('test').info('hi');
+  expect(fs.existsSync(path.join(dir, 'logs', 'myscript.log'))).toBe(true);
+  expect(perRunFile(dir)).toBeUndefined();
 });

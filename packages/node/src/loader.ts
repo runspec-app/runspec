@@ -40,10 +40,15 @@ function normaliseLogging(raw: Record<string, unknown> | undefined): LoggingConf
   // log-event counts by level. Suppress per-invocation with `--no-summary`
   // or `RUNSPEC_NO_SUMMARY=1`.
   if (raw === undefined) return undefined;
+  // `store` selects the file layout: 'single' = one rotating {runnable}.log;
+  // 'per-run' = one file per invocation. Unknown values fall back to 'single'
+  // — the schema check flags typos; runtime stays lenient.
+  const store = String(raw['store'] ?? 'single');
   return {
     rotate: String(raw['rotate'] ?? 'midnight'),
     keep: Number(raw['keep'] ?? 7),
     summary: raw['summary'] !== undefined ? Boolean(raw['summary']) : true,
+    store: store === 'per-run' ? 'per-run' : 'single',
   };
 }
 

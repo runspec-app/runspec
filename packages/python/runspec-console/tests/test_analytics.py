@@ -14,6 +14,7 @@ Covers three layers:
 
 from __future__ import annotations
 
+import gzip
 import json
 import unittest
 from datetime import datetime, timezone
@@ -23,8 +24,11 @@ from unittest.mock import patch
 
 from runspec_console.bridge import (
     _aggregate_analytics,
+    _log_globs,
+    _parse_log,
     _parse_log_text,
     _percentile,
+    _remote_log_script,
 )
 
 
@@ -339,6 +343,222 @@ class TestGetAnalyticsRemote(unittest.TestCase):
         ):
             out = b.get_analytics(["prod-1"], since_days=30)
         self.assertEqual(out["totalRuns"], 0)
+
+
+# ── 4. Per-invocation files (store="per-run") ────────────────────────────────
+
+
+def _exc_line(
+    run_id: str,
+    *,
+    exc_type: str = "ValueError",
+    message: str = "bad tag",
+    module: str = "release",
+    frames: list | None = None,
+    ts: str | None = None,
+) -> str:
+    """A runspec.exception record (runspec >=0.26) carrying structured frames."""
+    ts = ts or datetime.now(timezone.utc).isoformat()
+    return json.dumps(
+        {
+            "ts": ts,
+            "level": "CRITICAL",
+            "logger": "runspec.exception",
+            "message": "uncaught exception",
+            "exc": "Traceback (most recent call last):\n  ...",
+            "exc_structured": {
+                "type": exc_type,
+                "message": message,
+                "module": module,
+                "frames": frames
+                or [
+                    {
+                        "file": "/abs/deploy.py",
+                        "line": 48,
+                        "func": "main",
+                        "code": "main()",
+                    },
+                    {
+                        "file": "/abs/release.py",
+                        "line": 212,
+                        "func": "go",
+                        "code": "raise ValueError(...)",
+                    },
+                ],
+            },
+            "extra": {"run_id": run_id},
+        }
+    )
+
+
+class TestRecordAttribution(unittest.TestCase):
+    """Runnable name comes from extra.runnable, not the (per-invocation) filename."""
+
+    def test_runnable_from_record_not_filename(self) -> None:
+        # `name` simulates a per-invocation filename stem (polluted) — record wins.
+        text = "\n".join(
+            [
+                _info_line("r1", "starting"),
+                _summary_line(run_id="r1", runnable="backup"),
+            ]
+        )
+        rec = _parse_log_text("backup.20260603T142201Z.r1", text, "local")[0]
+        self.assertEqual(rec["runnable"], "backup")
+
+    def test_falls_back_to_name_when_record_lacks_runnable(self) -> None:
+        line = json.dumps(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "level": "INFO",
+                "logger": "runspec.runsummary",
+                "message": "run completed",
+                "extra": {"event": "run_summary", "run_id": "r1", "exit_code": 0},
+            }
+        )
+        rec = _parse_log_text("legacy-name", line, "local")[0]
+        self.assertEqual(rec["runnable"], "legacy-name")
+
+
+class TestExcStructuredLifting(unittest.TestCase):
+    def test_exception_frames_surface_on_record(self) -> None:
+        text = "\n".join(
+            [
+                _exc_line("r1"),
+                _summary_line(run_id="r1", runnable="deploy", exit_code=1),
+            ]
+        )
+        rec = _parse_log_text("deploy", text, "local")[0]
+        self.assertIn("exception", rec)
+        self.assertEqual(rec["exception"]["type"], "ValueError")
+        self.assertEqual(rec["exception"]["module"], "release")
+        self.assertEqual(len(rec["exception"]["frames"]), 2)
+
+    def test_exception_not_duplicated_as_log_line(self) -> None:
+        text = "\n".join(
+            [
+                _exc_line("r1"),
+                _summary_line(run_id="r1", runnable="deploy", exit_code=1),
+            ]
+        )
+        rec = _parse_log_text("deploy", text, "local")[0]
+        self.assertNotIn(
+            "uncaught exception", [ln["message"] for ln in rec["logLines"]]
+        )
+
+
+class TestLogGlobs(unittest.TestCase):
+    def test_runnable_specific_patterns(self) -> None:
+        self.assertEqual(
+            _log_globs("backup"), ["backup.*.log", "backup.log", "backup.*.log.gz"]
+        )
+
+    def test_all_patterns(self) -> None:
+        self.assertEqual(_log_globs(None), ["*.log", "*.log.gz"])
+
+
+class TestRemoteLogScript(unittest.TestCase):
+    def test_includes_both_patterns_and_gz_handling(self) -> None:
+        s = _remote_log_script("/v/logs", "backup")
+        self.assertIn("/v/logs/backup.*.log", s)
+        self.assertIn("/v/logs/backup.log", s)
+        self.assertIn("gzip -dc", s)
+        self.assertIn("RUNSPEC_LOG", s)
+
+
+class TestParseGzip(unittest.TestCase):
+    def test_reads_gzip_archive(self) -> None:
+        with TemporaryDirectory() as td:
+            p = Path(td) / "backup.archive.20260603.log.gz"
+            with gzip.open(p, "wt", encoding="utf-8") as fh:
+                fh.write(_summary_line(run_id="r1", runnable="backup") + "\n")
+            recs = _parse_log(p, "local")
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["runnable"], "backup")
+
+
+class TestPerInvocationDiscovery(unittest.TestCase):
+    def _venv(self, td: str, files: dict[str, str]) -> dict:
+        venv = Path(td) / "ops-tools"
+        (venv / "bin").mkdir(parents=True)
+        (venv / "logs").mkdir()
+        for fname, content in files.items():
+            (venv / "logs" / fname).write_text(content, encoding="utf-8")
+        return {
+            "name": "h",
+            "runspec_paths": [str(venv / "bin" / "runspec")],
+            "ssh": None,
+        }
+
+    def test_collects_per_invocation_files(self) -> None:
+        b = _make_bridge()
+        with TemporaryDirectory() as td:
+            entry = self._venv(
+                td,
+                {
+                    "backup.20260603T142201Z.r1.log": _summary_line(
+                        run_id="r1", runnable="backup"
+                    ),
+                    "backup.20260603T150000Z.r2.log": _summary_line(
+                        run_id="r2", runnable="backup"
+                    ),
+                },
+            )
+            recs = b._collect_host_records(entry, None)
+        self.assertEqual(len(recs), 2)
+        self.assertTrue(all(r["runnable"] == "backup" for r in recs))
+
+    def test_mixed_single_and_per_run(self) -> None:
+        b = _make_bridge()
+        with TemporaryDirectory() as td:
+            entry = self._venv(
+                td,
+                {
+                    "backup.log": _summary_line(run_id="r0", runnable="backup"),
+                    "backup.20260603T142201Z.r1.log": _summary_line(
+                        run_id="r1", runnable="backup"
+                    ),
+                },
+            )
+            recs = b._collect_host_records(entry, None)
+        self.assertEqual(len(recs), 2)
+        self.assertEqual({r["runnable"] for r in recs}, {"backup"})
+
+    def test_runnable_filter_glob_boundary(self) -> None:
+        # filtering 'foo' must not pick up 'foobar' files
+        b = _make_bridge()
+        with TemporaryDirectory() as td:
+            entry = self._venv(
+                td,
+                {
+                    "foo.20260603T142201Z.r1.log": _summary_line(
+                        run_id="r1", runnable="foo"
+                    ),
+                    "foobar.20260603T142201Z.r2.log": _summary_line(
+                        run_id="r2", runnable="foobar"
+                    ),
+                },
+            )
+            recs = b._collect_host_records(entry, "foo")
+        self.assertEqual([r["runnable"] for r in recs], ["foo"])
+
+    def test_get_history_attributes_per_invocation(self) -> None:
+        b = _make_bridge()
+        with TemporaryDirectory() as td:
+            entry = self._venv(
+                td,
+                {
+                    "backup.20260603T142201Z.r1.log": "\n".join(
+                        [
+                            _info_line("r1", "hi"),
+                            _summary_line(run_id="r1", runnable="backup"),
+                        ]
+                    )
+                },
+            )
+            b._hosts = [entry]
+            recs = b.get_history("h", "backup")
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["runnable"], "backup")
 
 
 if __name__ == "__main__":

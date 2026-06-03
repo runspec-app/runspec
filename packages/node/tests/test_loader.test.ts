@@ -178,7 +178,35 @@ test('normalises [config.logging] with defaults', () => {
 description = "hi"
 `);
   const raw = loadRaw(file);
-  expect(raw.config.logging).toEqual({ rotate: 'midnight', keep: 7, summary: true });
+  expect(raw.config.logging).toEqual({ rotate: 'midnight', keep: 7, summary: true, store: 'single' });
+});
+
+test('normalises [config.logging] store = per-run', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `
+[config.logging]
+store = "per-run"
+
+[greet]
+description = "hi"
+`);
+  const raw = loadRaw(file);
+  expect(raw.config.logging?.store).toBe('per-run');
+});
+
+test('normalises [config.logging] unknown store falls back to single', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(file, `
+[config.logging]
+store = "bogus"
+
+[greet]
+description = "hi"
+`);
+  const raw = loadRaw(file);
+  expect(raw.config.logging?.store).toBe('single');
 });
 
 test('normalises [config.logging] all fields', () => {
@@ -194,7 +222,7 @@ summary = false
 description = "hi"
 `);
   const raw = loadRaw(file);
-  expect(raw.config.logging).toEqual({ rotate: '10 MB', keep: 3, summary: false });
+  expect(raw.config.logging).toEqual({ rotate: '10 MB', keep: 3, summary: false, store: 'single' });
 });
 
 test('[config.logging] summary defaults to true when omitted', () => {

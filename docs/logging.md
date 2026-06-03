@@ -226,6 +226,46 @@ The `rotate` field accepts time-based and size-based policies:
 
 ---
 
+## Per-invocation files (shared venvs)
+
+The default `store = "single"` keeps one rotating `{runnable}.log`. That's
+correct for local, single-user runs — but in-process rotation is **not safe**
+when several users (or one user running in parallel) write the same file at
+once: a rotation in one process can lose records from another. For that case,
+switch to one file per invocation:
+
+```toml
+[config.logging]
+store = "per-run"
+```
+
+Each run then writes its own file:
+
+```
+{runnable}.{utc-ts}.{run_id}.log     e.g.  deploy.20260603T142201Z.4f3c…e7.log
+```
+
+Because no file is ever shared, there is no rotation race and no cross-user
+ownership conflict — it just works for a shared deployment venv with many
+operators. The `run_id` in the filename matches the `run_id` field in the
+records inside it.
+
+There is **no automatic rotation** in this mode (`rotate`/`keep` are ignored) —
+files accumulate until you clean them up. Viewing and retention are handled by
+the `runspec logs` command:
+
+```bash
+runspec logs deploy                 # merged view of every invocation, as one stream
+runspec logs deploy --follow        # live tail across runs
+runspec logs compact --older-than 7d --gzip   # roll old runs into an archive
+runspec logs prune   --older-than 90d          # delete old files
+```
+
+Schedule `compact`/`prune` from cron or a systemd timer so retention is
+automatic. See the shared-venv deployment guide for copy-paste schedules.
+
+---
+
 ## Run summary
 
 When `[config.logging]` is present, runspec emits a **run summary** at process

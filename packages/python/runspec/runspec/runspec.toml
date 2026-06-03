@@ -15,6 +15,7 @@ examples = [
   {cmd = "runspec serve",                  description = "Start the MCP stdio server"},
   {cmd = "runspec jump user@host",          description = "List tools available on a remote host"},
   {cmd = "runspec env",                    description = "Show the resolved .runspec_env file"},
+  {cmd = "runspec logs deploy",            description = "View merged per-invocation logs for a runnable"},
 ]
 
 [runspec.commands.init]
@@ -92,3 +93,31 @@ tool      = {type = "str",    description = "Tool to run on the remote host",   
 bin       = {type = "str",    description = "Path to runspec binary on the remote",            required = false}
 format    = {type = "choice", description = "Output format when listing", options = ["text", "json"], short = "-f", default = "text"}
 tool-args = {type = "rest",   description = "Args passed to the remote tool"}
+
+[runspec.commands.logs]
+description = "View, prune, or compact per-invocation audit logs (store = 'per-run')"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "runspec logs deploy",                          description = "Merged view of every invocation, as one stream"},
+  {cmd = "runspec logs deploy --since 1h --user alice",  description = "Filter by recency and operator"},
+  {cmd = "runspec logs deploy --follow",                 description = "Live tail across invocations"},
+  {cmd = "runspec logs deploy --json",                   description = "Raw JSON lines (for jq)"},
+  {cmd = "runspec logs compact --older-than 7d --gzip",  description = "Roll runs older than 7 days into a gzip archive"},
+  {cmd = "runspec logs prune --older-than 90d",          description = "Delete files older than 90 days"},
+  {cmd = "runspec logs prune deploy --max-files 50 --dry-run", description = "Preview keeping only the newest 50 files"},
+]
+
+[runspec.commands.logs.args]
+target         = {type = "str",  description = "Runnable to view, or a verb: 'prune' / 'compact'", position = 1, required = false}
+runnable       = {type = "str",  description = "Runnable to prune/compact (default: all in the venv)", position = 2, required = false}
+follow         = {type = "flag", description = "Live tail across invocations (view)", short = "-f", default = false}
+since          = {type = "str",  description = "Only show records newer than this (view), e.g. 1h, 30m, 7d", required = false}
+user           = {type = "str",  description = "Only show runs launched by this user (view)", short = "-u", required = false}
+run            = {type = "str",  description = "Only show one invocation by run_id (view)", required = false}
+json           = {type = "flag", description = "Emit raw JSON lines instead of formatted text (view)", default = false}
+older-than     = {type = "str",  description = "Age threshold for prune/compact, e.g. 7d, 90d, 24h", required = false}
+max-files      = {type = "int",  description = "Keep only the newest N files per runnable (prune)", required = false}
+max-total-size = {type = "str",  description = "Cap total managed size; delete oldest over budget (prune), e.g. 5GB", required = false}
+gzip           = {type = "flag", description = "Gzip the archive (compact)", default = false}
+dry-run        = {type = "flag", description = "Show what would change without deleting/archiving (prune/compact)", default = false}

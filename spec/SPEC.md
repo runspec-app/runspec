@@ -120,9 +120,10 @@ just works.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `rotate` | string | `"midnight"` | Rotation policy: `"N MB"`, `"N KB"`, `"N GB"` (size-based), `"daily"`, `"midnight"`, `"weekly"` (time-based). |
-| `keep` | int | `7` | Number of rotated backup files to retain. |
+| `rotate` | string | `"midnight"` | Rotation policy: `"N MB"`, `"N KB"`, `"N GB"` (size-based), `"daily"`, `"midnight"`, `"weekly"` (time-based). Inert when `store = "per-run"`. |
+| `keep` | int | `7` | Number of rotated backup files to retain. Inert when `store = "per-run"`. |
 | `summary` | bool | `true` | Emit one run-summary record (file) + one stderr line at process exit. See *Run summary* below. |
+| `store` | string | `"single"` | Log file layout — `"single"` or `"per-run"`. See *File layout* below. |
 
 There is no `level` knob. Console routing is fixed (see below); the file
 handler follows the same `--debug` toggle as stdout — INFO by default,
@@ -140,6 +141,27 @@ scattering logs across package directories.
 |---|---|
 | Python (`runspec`) | `sys.prefix` — the venv root |
 | Node (`runspec-node`) | nearest ancestor `package.json`, skipping `node_modules` — the project root |
+
+#### File layout
+
+`store` selects how the audit file is laid out:
+
+- **`"single"` (default):** one rotating file per runnable,
+  `{installation_root}/logs/{runnable_name}.log`, rotated in-process per
+  `rotate`/`keep`. Correct for single-user / local use.
+- **`"per-run"`:** one file per invocation,
+  `{installation_root}/logs/{runnable_name}.{utc-ts}.{run_id}.log`, where
+  `utc-ts` is `YYYYMMDDThhmmssZ` and `run_id` is the same UUID injected into
+  every record's `run_id` field. There is **no in-process rotation** — each
+  invocation owns its own file, so the layout is safe for multiple users and
+  for the same user running in parallel (no shared file means no rotation race
+  and no cross-user ownership conflict). `rotate` and `keep` are inert;
+  retention is an explicit operator action (`runspec logs compact` / `prune`).
+
+`"per-run"` is opt-in; the default stays `"single"` so existing deployments are
+unaffected. Both layouts emit identical JSON records (including the run-summary
+and uncaught-exception records), so the only difference is how records are
+distributed across files.
 
 #### Console routing
 

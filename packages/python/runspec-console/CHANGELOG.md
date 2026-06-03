@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.7.0] — 2026-06-03
+
+### Changed
+- **History & Analytics are now filename-agnostic.** The runnable a record
+  belongs to is read from the record body (`extra.runnable`), not parsed from
+  the log filename, and log discovery globs widened to match per-invocation
+  files (`{runnable}.{ts}.{run_id}.log`, runspec `store = "per-run"`) and
+  compacted `.gz` archives alongside the legacy `{runnable}.log`. This lets the
+  console consume shared-venv per-invocation logs without fragmenting History
+  or Analytics, while remaining fully compatible with existing single-file
+  logs. `.gz` archives are read transparently (local) and decompressed over SSH
+  (`gzip -dc`).
+
+### Added
+- **Crash frames in History/Analytics.** The structured `exc_structured` record
+  (runspec ≥ 0.26 uncaught-exception handling) is lifted into a per-run
+  `exception` field with the full call `frames`, instead of appearing as a
+  generic `CRITICAL` log line — giving the UI a table-ready stack for failed
+  runs.
+
+---
+
+
 ## [0.6.0] — 2026-06-03
 
 ### Security

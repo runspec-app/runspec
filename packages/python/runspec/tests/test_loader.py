@@ -340,7 +340,7 @@ class TestLoggingNormalisation:
         p = tmp_path / "runspec.toml"
         p.write_text("[config.logging]\n\n[greet]\n")
         cfg = load_raw(p)["config"]["logging"]
-        assert cfg == {"rotate": "midnight", "keep": 7, "summary": True}
+        assert cfg == {"rotate": "midnight", "keep": 7, "summary": True, "store": "single"}
 
     def test_logging_summary_explicit_false(self, tmp_path):
         p = tmp_path / "runspec.toml"
@@ -351,6 +351,16 @@ class TestLoggingNormalisation:
         p = tmp_path / "runspec.toml"
         p.write_text("[config.logging]\nsummary = true\n\n[greet]\n")
         assert load_raw(p)["config"]["logging"]["summary"] is True
+
+    def test_logging_store_per_run(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[config.logging]\nstore = 'per-run'\n\n[greet]\n")
+        assert load_raw(p)["config"]["logging"]["store"] == "per-run"
+
+    def test_logging_store_unknown_falls_back_to_single(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[config.logging]\nstore = 'bogus'\n\n[greet]\n")
+        assert load_raw(p)["config"]["logging"]["store"] == "single"
 
 
 class TestIntegrationFixtures:
