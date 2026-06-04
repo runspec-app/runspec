@@ -7,6 +7,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.24.0] — 2026-06-04
+
+### Added
+
+- **`runspec bin` — generate a venv-shaped `bin/`.** Writes a `bin/runspec`
+  shim plus one `bin/<runnable>` per runnable declared in `runspec.toml` (and a
+  `logs/`), so a controller (runspec-console) can invoke `bin/<runnable>` and
+  discover the folder via `bin/runspec` from any working directory, incl. over
+  SSH — the same language-agnostic contract it already uses for Python venvs.
+  Builds on caller-relative `findConfig` (node-0.23.0): the shims resolve their
+  own location and need no `cd`. Each runnable's script is resolved from
+  `package.json` `bin[name]`, falling back to `./<name>.{js,cjs,mjs}` next to
+  `runspec.toml`. Re-run after adding a runnable or `npm install`. POSIX shims
+  (Windows is a follow-up).
+
+---
+
 ## [node-0.23.0] — 2026-06-04
 
 ### Changed

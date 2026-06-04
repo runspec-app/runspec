@@ -32,6 +32,7 @@ export function main(): void {
   const commands: Record<string, (args: string[]) => void | Promise<void>> = {
     init: cmdInit,
     local: cmdLocal,
+    bin: cmdBin,
     jump: cmdJump,
     serve: cmdServe,
   };
@@ -110,6 +111,123 @@ function cmdLocal(args: string[]): void {
     console.log('   Available formats: text, json, mcp, openai, anthropic');
     process.exit(1);
   }
+}
+
+function cmdBin(_args: string[]): void {
+  let configPath: string;
+  try {
+    configPath = findConfig(process.cwd()).configPath;
+  } catch {
+    console.log("✗  No runspec.toml found. Run 'runspec init' first.");
+    process.exit(1);
+  }
+  const projectRoot = path.dirname(configPath);
+  const result = scaffoldBin(projectRoot);
+
+  console.log(`Wrote ${result.written.length} shim(s) to ${path.join(projectRoot, 'bin')}/:\n`);
+  for (const w of result.written) console.log(`  ✓  bin/${w.name}${w.target ? `  →  ${w.target}` : ''}`);
+  if (result.warnings.length) {
+    console.log('\nIssues:\n');
+    for (const msg of result.warnings) console.log(`  ✗  ${msg}`);
+  }
+  console.log('\nThis folder is now venv-shaped — a controller can invoke bin/<runnable> and');
+  console.log('discover/manage it via bin/runspec, from any working directory.');
+  if (result.warnings.length) process.exit(1);
+}
+
+/**
+ * Generate a venv-shaped `bin/` for the runnables declared in `{projectRoot}/
+ * runspec.toml`: a `bin/runspec` shim plus one `bin/<runnable>` per runnable.
+ * The shims resolve their own location, so the folder stays relocatable and
+ * works from any cwd (paired with caller-relative findConfig). Returns a
+ * summary; performs the filesystem writes. Exported for testing.
+ */
+export function scaffoldBin(projectRoot: string): { written: Array<{ name: string; target: string }>; warnings: string[] } {
+  const raw = loadRaw(configPathOf(projectRoot));
+  const runnables = Object.keys(raw.runnables);
+  const binMap = readBinMap(projectRoot);
+  const binDir = path.join(projectRoot, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  // The venv shape includes a logs/ dir (created lazily on first run anyway).
+  fs.mkdirSync(path.join(projectRoot, 'logs'), { recursive: true });
+
+  const written: Array<{ name: string; target: string }> = [];
+  const warnings: string[] = [];
+
+  // bin/runspec — the CLI a controller shells for discovery + log management.
+  const cliTarget = resolveRunspecCli(projectRoot);
+  if (cliTarget) {
+    writeShim(path.join(binDir, 'runspec'), toPosix(path.relative(projectRoot, cliTarget)));
+    written.push({ name: 'runspec', target: toPosix(path.relative(projectRoot, cliTarget)) });
+  } else {
+    warnings.push("runspec-node is not installed — run 'npm install runspec-node', then 'runspec bin' again (bin/runspec skipped)");
+  }
+
+  // bin/<runnable> — one per declared runnable.
+  for (const name of runnables) {
+    const script = resolveScript(projectRoot, name, binMap);
+    if (!script) {
+      warnings.push(`${name}: no script found — add package.json bin["${name}"] or create ./${name}.js`);
+      continue;
+    }
+    const rel = toPosix(path.relative(projectRoot, script));
+    writeShim(path.join(binDir, name), rel);
+    written.push({ name, target: rel });
+  }
+  return { written, warnings };
+}
+
+const SCRIPT_EXTS = ['.js', '.cjs', '.mjs'];
+
+function configPathOf(projectRoot: string): string {
+  return path.join(projectRoot, 'runspec.toml');
+}
+
+/** Resolve a runnable's script: package.json bin first, then ./<name>.{js,cjs,mjs}. */
+export function resolveScript(projectRoot: string, name: string, binMap: Record<string, string>): string | null {
+  if (binMap[name]) {
+    const p = path.resolve(projectRoot, binMap[name]);
+    return fs.existsSync(p) ? p : null;
+  }
+  for (const ext of SCRIPT_EXTS) {
+    const p = path.join(projectRoot, name + ext);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+/** package.json `bin` as a {name: relPath} map. A string bin maps the package name. */
+export function readBinMap(projectRoot: string): Record<string, string> {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'));
+    if (typeof pkg.bin === 'string') return pkg.name ? { [pkg.name]: pkg.bin } : {};
+    if (pkg.bin && typeof pkg.bin === 'object') return pkg.bin as Record<string, string>;
+  } catch {
+    // no package.json / unparseable — fall back to the file-name convention
+  }
+  return {};
+}
+
+function resolveRunspecCli(projectRoot: string): string | null {
+  const candidates = [
+    path.join(projectRoot, 'node_modules', 'runspec-node', 'bin', 'runspec.js'),
+    path.join(projectRoot, 'node_modules', '.bin', 'runspec'),
+  ];
+  return candidates.find((c) => fs.existsSync(c)) ?? null;
+}
+
+/** POSIX shim that resolves the project root relative to itself, then execs node. */
+export function shimContent(relPath: string): string {
+  return ['#!/bin/sh', '# Generated by `runspec bin` — do not edit.', 'DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)', `exec node "$DIR/${relPath}" "$@"`, ''].join('\n');
+}
+
+function writeShim(shimPath: string, relPath: string): void {
+  fs.writeFileSync(shimPath, shimContent(relPath), 'utf-8');
+  fs.chmodSync(shimPath, 0o755);
+}
+
+function toPosix(p: string): string {
+  return p.split(path.sep).join('/');
 }
 
 async function cmdJump(args: string[]): Promise<void> {
@@ -632,6 +750,7 @@ Usage:
 Commands:
   init        Create runspec.toml and a code stub
   local       List runnables and emit tool schemas
+  bin         Generate a venv-shaped bin/ so a controller can run this folder
   jump        Execute a runnable on a remote host via SSH
   serve       Start the MCP stdio server for local runnables
 
@@ -642,6 +761,7 @@ Examples:
   runspec init --example
   runspec local
   runspec local --format mcp
+  runspec bin
   runspec serve`);
 }
 
@@ -671,6 +791,20 @@ Examples:
   runspec local --format mcp
   runspec local --format mcp --script deploy
   runspec local --format json`,
+
+    bin: `runspec bin — Generate a venv-shaped bin/ for this folder's runnables
+
+  Writes bin/runspec plus one bin/<runnable> shim per runnable in runspec.toml,
+  so a controller (e.g. runspec-console) can invoke bin/<runnable> and discover
+  the folder via bin/runspec — from any working directory, including over SSH.
+
+  Each runnable's script is resolved from package.json "bin", falling back to
+  ./<runnable>.js | .cjs | .mjs next to runspec.toml. Re-run after adding a
+  runnable or 'npm install'. (POSIX shims; Windows support is a follow-up.)
+
+  Examples:
+    npm install runspec-node
+    runspec bin`,
 
     jump: `runspec jump — Execute a runnable on a remote host via SSH
 
