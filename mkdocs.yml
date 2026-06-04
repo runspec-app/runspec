@@ -23,6 +23,7 @@ nav:
   - Logging: logging.md
   - Python Library: python.md
   - Node Library: node.md
+  - Deploying Node folders: node-deploy.md
   - CLI Reference: cli.md
   - Agent Integration: agents.md
   - Jump Hosts: jump-hosts.md
