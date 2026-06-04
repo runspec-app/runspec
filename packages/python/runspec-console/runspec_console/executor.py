@@ -149,14 +149,22 @@ def run_local(
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
+    # On Windows a Node folder (`runspec bin`) ships .cmd shims alongside the
+    # POSIX ones; a Python venv has .exe entry points. Prefer .exe, then .cmd/.bat.
     candidates = (
-        [f"{runnable}.exe", runnable] if sys.platform == "win32" else [runnable]
+        [f"{runnable}.exe", f"{runnable}.cmd", f"{runnable}.bat", runnable]
+        if sys.platform == "win32"
+        else [runnable]
     )
     binary = next(
         (bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable
     )
     argv = args_to_argv(args)
     cmd = [str(binary), *command_path, *argv]
+    # A .cmd/.bat shim isn't directly executable by CreateProcess — run it
+    # through the command interpreter so the Node-folder shims work on Windows.
+    if sys.platform == "win32" and binary.suffix.lower() in (".cmd", ".bat"):
+        cmd = ["cmd", "/c", *cmd]
     if run_as:
         # sudo/su strip the environment — carry RUNSPEC_AGENT through env(1).
         from runspec.become import build_become_argv

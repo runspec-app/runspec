@@ -419,6 +419,31 @@ class TestRecordAttribution(unittest.TestCase):
         self.assertEqual(rec["runnable"], "legacy-name")
 
 
+class TestPrintCaptureSurfaced(unittest.TestCase):
+    """A runnable's captured stdout (runspec.print records) shows in History.
+
+    runspec-node 0.25.0 tees console.log into the audit log as `runspec.print`
+    records — the same shape Python already emits — so History surfaces a Node
+    runnable's output identically. This guards that the parser keeps including
+    those records as log lines (not dropping them by logger name).
+    """
+
+    def test_print_record_appears_in_log_lines(self) -> None:
+        printed = json.dumps(
+            {
+                "ts": "2026-06-04T10:00:00Z",
+                "level": "INFO",
+                "logger": "runspec.print",
+                "message": "Hello from the node runnable",
+                "extra": {"run_id": "r1"},
+            }
+        )
+        text = "\n".join([printed, _summary_line(run_id="r1", runnable="greet")])
+        rec = _parse_log_text("greet", text, "local")[0]
+        messages = [line["message"] for line in rec["logLines"]]
+        self.assertIn("Hello from the node runnable", messages)
+
+
 class TestExcStructuredLifting(unittest.TestCase):
     def test_exception_frames_surface_on_record(self) -> None:
         text = "\n".join(

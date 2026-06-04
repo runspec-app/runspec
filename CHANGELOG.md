@@ -7,6 +7,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.26.0] — 2026-06-04
+
+### Added
+
+- **`runspec bin` now writes Windows `.cmd` shims** alongside the POSIX ones —
+  a `bin/<runnable>.cmd` (and `bin/runspec.cmd`) per runnable that resolves the
+  folder relative to itself (`%~dp0..`) and runs `node` with the args forwarded.
+  A venv-shaped Node folder is now cross-platform: the same folder runs on
+  Linux/macOS (POSIX shim) and Windows (`.cmd`), so a controller can invoke
+  `bin/<runnable>` on either OS.
+
+---
+
 ## [node-0.25.0] — 2026-06-04
 
 Node logging parity with Python — the two pieces a node-only deployment folder

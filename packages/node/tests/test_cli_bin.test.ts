@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { scaffoldBin, resolveScript, readBinMap, shimContent } from '../src/cli';
+import { scaffoldBin, resolveScript, readBinMap, shimContent, cmdShimContent } from '../src/cli';
 
 function tmp(): string {
   return fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'runspec-bin-'));
@@ -32,6 +32,15 @@ describe('shimContent', () => {
     expect(s.startsWith('#!/bin/sh')).toBe(true);
     expect(s).toContain('dirname');
     expect(s).toContain('exec node "$DIR/greet.js" "$@"');
+  });
+});
+
+describe('cmdShimContent', () => {
+  it('is a Windows batch shim that resolves its own root and runs node', () => {
+    const s = cmdShimContent('cmd/greet.js');
+    expect(s.startsWith('@echo off')).toBe(true);
+    expect(s).toContain('node "%~dp0..\\cmd\\greet.js" %*'); // forward slashes → backslashes
+    expect(s).toContain('\r\n'); // CRLF line endings
   });
 });
 
@@ -98,6 +107,11 @@ describe('scaffoldBin', () => {
     // bin/runspec points at the installed CLI; bin/greet at the runnable script.
     expect(fs.readFileSync(path.join(dir, 'bin', 'runspec'), 'utf-8')).toContain('node_modules/runspec-node/bin/runspec.js');
     expect(fs.readFileSync(path.join(dir, 'bin', 'greet'), 'utf-8')).toContain('exec node "$DIR/greet.js"');
+    // Windows .cmd shims sit alongside each POSIX shim.
+    for (const name of ['runspec', 'greet', 'backup']) {
+      expect(fs.existsSync(path.join(dir, 'bin', name + '.cmd'))).toBe(true);
+    }
+    expect(fs.readFileSync(path.join(dir, 'bin', 'greet.cmd'), 'utf-8')).toContain('node "%~dp0..\\greet.js" %*');
     // venv shape includes logs/
     expect(fs.existsSync(path.join(dir, 'logs'))).toBe(true);
   });

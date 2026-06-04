@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.12.0] — 2026-06-04
+
+### Added
+- **Run Node folders on Windows.** `run_local` now finds and invokes a Node
+  runnable's `.cmd`/`.bat` shim (from `runspec bin`) on Windows — `.exe` first
+  (Python venvs), then `.cmd`/`.bat` (Node folders) — running the batch shim
+  through `cmd /c` since it isn't directly executable by `CreateProcess`.
+
+### Notes
+- **Node runnable output already shows in History.** Since `runspec-node`
+  0.25.0 tees `console.log` into the audit log as `runspec.print` records (the
+  same shape Python emits), the History tab surfaces a Node runnable's output
+  with no console change. Added a regression test locking that the parser keeps
+  including those records as log lines.
+
+
 ## [0.11.0] — 2026-06-04
 
 ### Added
