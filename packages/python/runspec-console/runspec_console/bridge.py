@@ -451,6 +451,234 @@ class Bridge:
             in_window, since, until, partial=bool(errors), errors=errors
         )
 
+    # ── logs management ───────────────────────────────────────────────────────
+    #
+    # The Logs tab drives `runspec logs <verb> --json` against each venv — local
+    # via subprocess, remote via SSH — the same uniform, version-correct
+    # interface discovery uses (`runspec local`). status is read-only inventory;
+    # prune/compact mutate, so the UI gates them behind a --dry-run preview.
+
+    def logs_status(
+        self, host: str, runnable: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Per-venv per-runnable log inventory for a host (read-only).
+
+        Returns one dict per venv: ``{group, ok, dirs, runnables, total_bytes,
+        total_files}`` (or ``{group, ok: False, error}`` on failure). Drives
+        ``runspec logs status --json``.
+        """
+        argv = ["logs", "status"]
+        if runnable:
+            argv.append(runnable)
+        argv.append("--json")
+
+        out: list[dict[str, Any]] = []
+        for group, rp in self._venvs(host):
+            code, stdout, stderr = self._run_logs(host, rp, argv, timeout=30)
+            if code != 0 and not stdout.strip():
+                out.append(
+                    {
+                        "group": group,
+                        "ok": False,
+                        "error": stderr.strip() or f"exit {code}",
+                    }
+                )
+                continue
+            try:
+                payload = json.loads(stdout)
+            except json.JSONDecodeError:
+                out.append(
+                    {"group": group, "ok": False, "error": "unparseable status output"}
+                )
+                continue
+            payload["group"] = group
+            payload["ok"] = True
+            out.append(payload)
+        return out
+
+    def logs_view(
+        self,
+        host: str,
+        group: str,
+        runnable: str,
+        since: str | None = None,
+        user: str | None = None,
+        run: str | None = None,
+    ) -> dict[str, Any]:
+        """Merged per-invocation stream for one runnable in one venv.
+
+        Returns ``{ok, records}`` where each record is a parsed JSON log line
+        (timestamp-sorted, archives included). Drives ``runspec logs <runnable>
+        --json``.
+        """
+        rp = self._venv_path(host, group)
+        if not rp:
+            return {"ok": False, "error": f"no venv '{group}' on {host}", "records": []}
+        argv = ["logs", runnable, "--json"]
+        if since:
+            argv += ["--since", since]
+        if user:
+            argv += ["--user", user]
+        if run:
+            argv += ["--run", run]
+        code, stdout, stderr = self._run_logs(host, rp, argv, timeout=45)
+        if code != 0 and not stdout.strip():
+            return {
+                "ok": False,
+                "error": stderr.strip() or f"exit {code}",
+                "records": [],
+            }
+        records: list[dict[str, Any]] = []
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return {"ok": True, "records": records}
+
+    def logs_prune(
+        self,
+        host: str,
+        group: str,
+        runnable: str | None = None,
+        older_than: str | None = None,
+        max_files: int | None = None,
+        max_total_size: str | None = None,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """Prune old per-invocation files in one venv. Drives ``runspec logs prune``.
+
+        At least one policy is required. Returns the engine's structured result
+        (``{dry_run, count, freed_bytes, deleted}``) plus ``{group, ok}``.
+        """
+        if older_than is None and max_files is None and max_total_size is None:
+            return {
+                "ok": False,
+                "error": "prune needs at least one policy (--older-than / --max-files / --max-total-size)",
+            }
+        rp = self._venv_path(host, group)
+        if not rp:
+            return {"ok": False, "error": f"no venv '{group}' on {host}"}
+        argv = ["logs", "prune"]
+        if runnable:
+            argv.append(runnable)
+        if older_than:
+            argv += ["--older-than", older_than]
+        if max_files is not None:
+            argv += ["--max-files", str(max_files)]
+        if max_total_size:
+            argv += ["--max-total-size", max_total_size]
+        if dry_run:
+            argv.append("--dry-run")
+        argv.append("--json")
+        return self._logs_action(host, rp, group, argv, timeout=120)
+
+    def logs_compact(
+        self,
+        host: str,
+        group: str,
+        runnable: str | None = None,
+        older_than: str | None = None,
+        gzip: bool = True,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """Compact old per-invocation files into archives in one venv.
+
+        ``--older-than`` is required. Returns the engine's structured result
+        (``{dry_run, compacted, archives}``) plus ``{group, ok}``.
+        """
+        if not older_than:
+            return {"ok": False, "error": "compact requires --older-than (e.g. 7d)"}
+        rp = self._venv_path(host, group)
+        if not rp:
+            return {"ok": False, "error": f"no venv '{group}' on {host}"}
+        argv = ["logs", "compact"]
+        if runnable:
+            argv.append(runnable)
+        argv += ["--older-than", older_than]
+        if gzip:
+            argv.append("--gzip")
+        if dry_run:
+            argv.append("--dry-run")
+        argv.append("--json")
+        return self._logs_action(host, rp, group, argv, timeout=180)
+
+    def _logs_action(
+        self, host: str, rp: str, group: str, argv: list[str], timeout: int
+    ) -> dict[str, Any]:
+        """Run a prune/compact action and merge its JSON result with {group, ok}."""
+        code, stdout, stderr = self._run_logs(host, rp, argv, timeout=timeout)
+        if code != 0 and not stdout.strip():
+            return {
+                "group": group,
+                "ok": False,
+                "error": stderr.strip() or f"exit {code}",
+            }
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError:
+            return {"group": group, "ok": False, "error": "unparseable result output"}
+        payload["group"] = group
+        payload["ok"] = True
+        return payload
+
+    def _venvs(self, host: str) -> list[tuple[str, str]]:
+        """(group, runspec_path) for every venv on a host."""
+        entry = self._host_entry(host)
+        if entry is None:
+            return []
+        return [(venv_name(rp), rp) for rp in _paths(entry) if rp]
+
+    def _venv_path(self, host: str, group: str) -> str:
+        """Resolve a host+venv group to its runspec binary path, or ''."""
+        return next((rp for g, rp in self._venvs(host) if g == group), "")
+
+    def _run_logs(
+        self, host: str, rp: str, argv: list[str], timeout: int
+    ) -> tuple[int, str, str]:
+        """Run ``<rp> <argv...>`` on a venv — local subprocess or remote SSH.
+
+        Mirrors discovery: local hosts shell out directly; remote hosts go over
+        SSH with the path + args joined into a quoted command string.
+        """
+        import shlex
+
+        entry = self._host_entry(host)
+        if entry is None:
+            return -1, "", f"unknown host {host}"
+
+        if entry.get("ssh"):
+            from .executor import ssh_run
+
+            command = " ".join(shlex.quote(p) for p in [rp, *argv])
+            return ssh_run(
+                entry["ssh"],
+                command,
+                identity_file=entry.get("identityFile"),
+                global_ssh_config=self.get_config().get("ssh"),
+                timeout=timeout,
+            )
+
+        import subprocess
+
+        try:
+            proc = subprocess.run(
+                [rp, *argv],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError:
+            return -1, "", f"runspec not found at {rp}"
+        except subprocess.TimeoutExpired:
+            return -1, "", f"timed out after {timeout}s"
+        return proc.returncode, proc.stdout, proc.stderr
+
     # ── schedules ─────────────────────────────────────────────────────────────
 
     def get_schedules(self) -> list[dict[str, Any]]:

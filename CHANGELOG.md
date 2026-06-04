@@ -25,6 +25,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.29.0] — 2026-06-04
+
+### Added
+
+- **`runspec logs status` — per-runnable file + disk inventory.** A read-only
+  "what's on disk" verb for `store = "per-run"`: lists each runnable's per-run
+  file count, archive count, total size, and newest record. `--json` emits a
+  single machine-readable object (`dirs`, `runnables[]`, `total_bytes`,
+  `total_files`). This is the inventory the runspec-console **Logs tab** reads
+  to populate per-venv usage before offering compact/prune — over SSH it's the
+  same uniform, version-correct interface as `runspec local`.
+- **`--json` for `runspec logs prune` / `compact`.** Both verbs now emit a
+  structured result object instead of per-file text lines when `--json` is
+  given (prune: `count`/`freed_bytes`/`deleted[]`; compact:
+  `compacted`/`archives[]`), so a UI can render dry-run previews and applied
+  results without parsing human text. Text output is unchanged by default.
+
+---
+
 ## [0.28.0] — 2026-06-03
 
 ### Added

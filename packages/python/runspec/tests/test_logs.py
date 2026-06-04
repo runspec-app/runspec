@@ -125,6 +125,48 @@ class TestView:
         assert "run=r1" in first and "user=carol" in first  # resolved onto the info line
 
 
+# ── status ─────────────────────────────────────────────────────────────────────
+
+
+class TestStatus:
+    def test_inventory_counts_runs_and_archives(self, tmp_path):
+        _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00"))
+        _write_run(tmp_path, "deploy", "r2", "20260602T100000Z", _summary("r2", "deploy", ts="2026-06-02T10:00:00+00:00"))
+        _write_run(tmp_path, "scan", "r3", "20260601T100000Z", _summary("r3", "scan", ts="2026-06-01T10:00:00+00:00"))
+        inv = logs.inventory([tmp_path])
+        assert inv["deploy"]["per_run_files"] == 2
+        assert inv["scan"]["per_run_files"] == 1
+        assert inv["deploy"]["total_bytes"] > 0
+
+    def test_inventory_ignores_single_mode_file(self, tmp_path):
+        single = tmp_path / "deploy.log"
+        single.write_text(_summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00") + "\n", encoding="utf-8")
+        inv = logs.inventory([tmp_path])
+        assert inv == {}  # single-mode active file is never counted
+
+    def test_inventory_counts_archives_separately(self, tmp_path):
+        _write_run(tmp_path, "d", "r1", "20260101T100000Z", _summary("r1", "d", ts="2026-01-01T10:00:00+00:00"), age_days=30)
+        logs.compact("d", dirs=[tmp_path], older_than=timedelta(days=7), gzip_=True, out=io.StringIO())
+        inv = logs.inventory([tmp_path])
+        assert inv["d"]["archives"] == 1
+        assert inv["d"]["per_run_files"] == 0
+
+    def test_status_json_shape(self, tmp_path):
+        _write_run(tmp_path, "deploy", "r1", "20260601T100000Z", _summary("r1", "deploy", ts="2026-06-01T10:00:00+00:00"))
+        buf = io.StringIO()
+        logs.status(dirs=[tmp_path], as_json=True, out=buf)
+        payload = json.loads(buf.getvalue())
+        assert payload["total_files"] == 1
+        assert payload["runnables"][0]["runnable"] == "deploy"
+        assert payload["runnables"][0]["newest"].endswith("Z")
+        assert str(tmp_path) in payload["dirs"]
+
+    def test_status_text_empty(self, tmp_path):
+        buf = io.StringIO()
+        logs.status(dirs=[tmp_path], out=buf)
+        assert "No per-invocation logs" in buf.getvalue()
+
+
 # ── prune ──────────────────────────────────────────────────────────────────────
 
 
@@ -169,6 +211,16 @@ class TestPrune:
         assert count == 1
         assert not f.exists()
 
+    def test_json_output_dry_run(self, tmp_path):
+        f = _write_run(tmp_path, "d", "r1", "20260101T100000Z", _summary("r1", "d", ts="2026-01-01T10:00:00+00:00"), age_days=30)
+        buf = io.StringIO()
+        logs.prune("d", dirs=[tmp_path], older_than=timedelta(days=7), dry_run=True, as_json=True, out=buf)
+        payload = json.loads(buf.getvalue())
+        assert payload["dry_run"] is True
+        assert payload["count"] == 1
+        assert payload["deleted"][0]["path"] == str(f)
+        assert f.exists()  # dry-run preview removed nothing
+
 
 # ── compact ────────────────────────────────────────────────────────────────────
 
@@ -210,3 +262,11 @@ class TestCompact:
         logs.compact("d", dirs=[tmp_path], older_than=timedelta(days=7), gzip_=True, out=io.StringIO())
         n = logs.compact("d", dirs=[tmp_path], older_than=timedelta(days=7), gzip_=True, out=io.StringIO())
         assert n == 0  # nothing left to compact; the archive is skipped
+
+    def test_json_output(self, tmp_path):
+        _write_run(tmp_path, "d", "r1", "20260101T100000Z", _summary("r1", "d", ts="2026-01-01T10:00:00+00:00"), age_days=30)
+        buf = io.StringIO()
+        logs.compact("d", dirs=[tmp_path], older_than=timedelta(days=7), gzip_=True, as_json=True, out=buf)
+        payload = json.loads(buf.getvalue())
+        assert payload["compacted"] == 1
+        assert payload["archives"][0]["archive"].endswith(".log.gz")

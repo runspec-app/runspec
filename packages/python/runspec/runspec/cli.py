@@ -212,9 +212,9 @@ def cmd_logs(args: list[str]) -> None:
 
     from runspec import logs as _logs
 
-    # `runspec logs prune|compact [runnable]` vs `runspec logs <runnable>`.
+    # `runspec logs status|prune|compact [runnable]` vs `runspec logs <runnable>`.
     target: str | None = parsed.target.value
-    if target in ("prune", "compact"):
+    if target in ("status", "prune", "compact"):
         verb = target
         runnable: str | None = parsed.runnable.value
     else:
@@ -235,6 +235,8 @@ def cmd_logs(args: list[str]) -> None:
                 as_json=bool(parsed.json),
                 follow=bool(parsed.follow),
             )
+        elif verb == "status":
+            _logs.status(runnable, as_json=bool(parsed.json))
         elif verb == "prune":
             _logs.prune(
                 runnable,
@@ -242,6 +244,7 @@ def cmd_logs(args: list[str]) -> None:
                 max_files=parsed.max_files.value,
                 max_total_size=_logs.parse_size(parsed.max_total_size.value) if parsed.max_total_size.value else None,
                 dry_run=bool(parsed.dry_run),
+                as_json=bool(parsed.json),
             )
         elif verb == "compact":
             if not parsed.older_than.value:
@@ -252,6 +255,7 @@ def cmd_logs(args: list[str]) -> None:
                 older_than=_logs.parse_duration(parsed.older_than.value),
                 gzip_=bool(parsed.gzip),
                 dry_run=bool(parsed.dry_run),
+                as_json=bool(parsed.json),
             )
     except ValueError as exc:
         print(f"✗  {exc}")

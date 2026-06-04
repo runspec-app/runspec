@@ -69,6 +69,13 @@ def _parse_ts(ts: str) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
+def _iso(mtime: float | None) -> str | None:
+    """A file mtime (epoch seconds) → UTC ISO-8601 'Z' string, or None."""
+    if mtime is None:
+        return None
+    return datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 # ── discovery ────────────────────────────────────────────────────────────────
 
 
@@ -245,6 +252,101 @@ def view(
             out.flush()
 
 
+# ── status ───────────────────────────────────────────────────────────────────
+
+
+def inventory(dirs: Iterable[Path], runnable: str | None = None) -> dict[str, dict[str, Any]]:
+    """Per-runnable inventory of managed files. Pure — only stats files.
+
+    Returns ``{runnable: {per_run_files, archives, total_bytes, oldest, newest}}``
+    where ``oldest``/``newest`` are file mtimes (epoch seconds). Only per-run
+    files and archives are counted — never a single-mode ``{runnable}.log``.
+    """
+    per: dict[str, dict[str, Any]] = {}
+    for f in _discover(dirs, runnable):
+        if not _is_managed(f):
+            continue
+        name = _runnable_of(f)
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        row = per.setdefault(
+            name,
+            {"runnable": name, "per_run_files": 0, "archives": 0, "total_bytes": 0, "oldest": None, "newest": None},
+        )
+        if _is_archive(f):
+            row["archives"] += 1
+        else:
+            row["per_run_files"] += 1
+        row["total_bytes"] += st.st_size
+        if row["oldest"] is None or st.st_mtime < row["oldest"]:
+            row["oldest"] = st.st_mtime
+        if row["newest"] is None or st.st_mtime > row["newest"]:
+            row["newest"] = st.st_mtime
+    return per
+
+
+def status(
+    runnable: str | None = None,
+    *,
+    dirs: Iterable[Path] | None = None,
+    as_json: bool = False,
+    out: TextIO | None = None,
+) -> None:
+    """Report the per-runnable file inventory to ``out`` (default stdout).
+
+    This is the read-only "what's on disk" view the console's Logs tab reads to
+    populate per-venv usage before offering compact/prune. ``--json`` emits a
+    single machine-readable object; text prints an aligned table.
+    """
+    dirs = list(dirs) if dirs is not None else log_dirs()
+    out = out or sys.stdout
+    per = inventory(dirs, runnable)
+    rows = sorted(per.values(), key=lambda r: r["runnable"])
+    total_bytes = sum(r["total_bytes"] for r in rows)
+    total_files = sum(r["per_run_files"] + r["archives"] for r in rows)
+
+    if as_json:
+        payload = {
+            "dirs": [str(d) for d in dirs],
+            "runnables": [
+                {
+                    "runnable": r["runnable"],
+                    "per_run_files": r["per_run_files"],
+                    "archives": r["archives"],
+                    "total_bytes": r["total_bytes"],
+                    "oldest": _iso(r["oldest"]),
+                    "newest": _iso(r["newest"]),
+                }
+                for r in rows
+            ],
+            "total_bytes": total_bytes,
+            "total_files": total_files,
+        }
+        out.write(json.dumps(payload) + "\n")
+        return
+
+    if not rows:
+        out.write("No per-invocation logs found.\n")
+        return
+
+    name_w = max(len("RUNNABLE"), max(len(r["runnable"]) for r in rows))
+    out.write(f"{'RUNNABLE':<{name_w}}  {'RUNS':>6}  {'ARCHIVES':>8}  {'SIZE':>10}  NEWEST\n")
+    for r in rows:
+        out.write(f"{r['runnable']:<{name_w}}  {r['per_run_files']:>6}  {r['archives']:>8}  {_human_size(r['total_bytes']):>10}  {_iso(r['newest']) or '-'}\n")
+    out.write(f"\n{total_files} file(s), {_human_size(total_bytes)} total across {len(rows)} runnable(s).\n")
+
+
+def _human_size(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 # ── prune ────────────────────────────────────────────────────────────────────
 
 
@@ -302,22 +404,33 @@ def prune(
     max_files: int | None = None,
     max_total_size: int | None = None,
     dry_run: bool = False,
+    as_json: bool = False,
     out: TextIO | None = None,
 ) -> tuple[int, int]:
-    """Delete (or, with dry_run, report) prunable files. Returns (count, bytes)."""
+    """Delete (or, with dry_run, report) prunable files. Returns (count, bytes).
+
+    With ``as_json`` a single JSON object is written instead of the per-file
+    text lines — the shape the console parses out of ``runspec logs prune --json``.
+    """
     dirs = list(dirs) if dirs is not None else log_dirs()
     out = out or sys.stdout
     targets = plan_prune(dirs, runnable, older_than=older_than, max_files=max_files, max_total_size=max_total_size)
     freed = 0
+    deleted: list[dict[str, Any]] = []
     for f in targets:
         size = f.stat().st_size
-        verb = "would delete" if dry_run else "deleted"
-        out.write(f"{verb}  {f}  ({size} bytes)\n")
         if not dry_run:
             f.unlink(missing_ok=True)
         freed += size
-    label = "Would free" if dry_run else "Freed"
-    out.write(f"{label} {freed} bytes across {len(targets)} file(s).\n")
+        deleted.append({"path": str(f), "bytes": size})
+        if not as_json:
+            verb = "would delete" if dry_run else "deleted"
+            out.write(f"{verb}  {f}  ({size} bytes)\n")
+    if as_json:
+        out.write(json.dumps({"dry_run": dry_run, "count": len(targets), "freed_bytes": freed, "deleted": deleted}) + "\n")
+    else:
+        label = "Would free" if dry_run else "Freed"
+        out.write(f"{label} {freed} bytes across {len(targets)} file(s).\n")
     return len(targets), freed
 
 
@@ -358,6 +471,7 @@ def compact(
     dirs: Iterable[Path] | None = None,
     gzip_: bool = False,
     dry_run: bool = False,
+    as_json: bool = False,
     out: TextIO | None = None,
 ) -> int:
     """Roll eligible per-run files into dated archives. Returns files compacted.
@@ -365,17 +479,21 @@ def compact(
     Lines are concatenated raw (no reformatting — every field, including
     ``exc_structured``, survives) and re-sorted by timestamp. Append-merges into
     an existing same-day archive idempotently. Originals are deleted after the
-    archive is written.
+    archive is written. With ``as_json`` a single JSON object is written instead
+    of the per-archive text lines.
     """
     dirs = list(dirs) if dirs is not None else log_dirs()
     out = out or sys.stdout
     plan = plan_compact(dirs, runnable, older_than=older_than)
     compacted = 0
+    archives: list[dict[str, Any]] = []
     for archive, sources in plan.items():
         target = archive.with_suffix(archive.suffix + ".gz") if gzip_ else archive
         if dry_run:
-            out.write(f"would compact {len(sources)} file(s) → {target}\n")
+            archives.append({"archive": str(target), "count": len(sources), "sources": [str(s) for s in sources]})
             compacted += len(sources)
+            if not as_json:
+                out.write(f"would compact {len(sources)} file(s) → {target}\n")
             continue
 
         lines: list[str] = []
@@ -398,10 +516,14 @@ def compact(
 
         for s in sources:
             s.unlink(missing_ok=True)
-        out.write(f"compacted {len(sources)} file(s) → {target}\n")
+        archives.append({"archive": str(target), "count": len(sources), "sources": [str(s) for s in sources]})
         compacted += len(sources)
+        if not as_json:
+            out.write(f"compacted {len(sources)} file(s) → {target}\n")
 
-    if not plan:
+    if as_json:
+        out.write(json.dumps({"dry_run": dry_run, "compacted": compacted, "archives": archives}) + "\n")
+    elif not plan:
         out.write("nothing to compact.\n")
     return compacted
 

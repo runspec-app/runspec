@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.11.0] — 2026-06-04
+
+### Added
+- **Logs tab — per-venv log management.** A dedicated tab to view, compact, and
+  prune per-invocation audit logs (`store = "per-run"`) on every venv the
+  console manages. It drives `runspec logs <verb> --json` per venv — local via
+  subprocess, remote via SSH — the same uniform interface discovery uses, so it
+  works identically against local and remote hosts:
+  - **Status** — per-runnable file count, archive count, disk size, and newest
+    record, grouped by venv (read-only `runspec logs status --json`).
+  - **Compact** / **Prune** — modal with a dry-run **Preview** and a confirmed
+    **Apply**, scoped to a whole venv or a single runnable. Prune requires at
+    least one policy (older-than / max-files / max-total-size); compact requires
+    an age threshold.
+  - **View** — a merged, timestamp-sorted stream for one runnable (archives
+    included), rendered in a drawer.
+- Bridge methods `logs_status` / `logs_view` / `logs_prune` / `logs_compact`.
+
+### Changed
+- Bumped the `runspec` floor to `>=0.29.0` for the new `runspec logs status`
+  verb and the `--json` output the Logs tab parses.
+
+
 ## [0.10.0] — 2026-06-03
 
 ### Removed

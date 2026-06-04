@@ -177,6 +177,53 @@ export interface AnalyticsData {
   errors: { host: string; message: string }[]
 }
 
+// ── logs management (Logs tab) ──────────────────────────────────────────────
+// One uniform shape per `runspec logs <verb> --json`, driven per venv.
+
+export interface LogStatusRunnable {
+  runnable: string
+  per_run_files: number
+  archives: number
+  total_bytes: number
+  oldest: string | null
+  newest: string | null
+}
+
+export interface LogStatusVenv {
+  group: string                    // venv directory name
+  ok: boolean
+  error?: string                   // set when ok === false
+  dirs?: string[]
+  runnables?: LogStatusRunnable[]
+  total_bytes?: number
+  total_files?: number
+}
+
+export interface LogPruneResult {
+  group: string
+  ok: boolean
+  error?: string
+  dry_run?: boolean
+  count?: number
+  freed_bytes?: number
+  deleted?: { path: string; bytes: number }[]
+}
+
+export interface LogCompactResult {
+  group: string
+  ok: boolean
+  error?: string
+  dry_run?: boolean
+  compacted?: number
+  archives?: { archive: string; count: number; sources: string[] }[]
+}
+
+export interface LogViewResult {
+  ok: boolean
+  error?: string
+  records: Record<string, unknown>[]   // parsed JSON log lines, timestamp-sorted
+}
+
 export interface RotateHostResult {
   host: string
   pushed: boolean
@@ -217,6 +264,11 @@ export interface BridgeApi {
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>
+  // ── logs management ──────────────────────────────────────────────────────
+  logs_status: (host: string, runnable?: string) => Promise<LogStatusVenv[]>
+  logs_view: (host: string, group: string, runnable: string, since?: string, user?: string, run?: string) => Promise<LogViewResult>
+  logs_prune: (host: string, group: string, runnable?: string, olderThan?: string, maxFiles?: number, maxTotalSize?: string, dryRun?: boolean) => Promise<LogPruneResult>
+  logs_compact: (host: string, group: string, runnable?: string, olderThan?: string, gzip?: boolean, dryRun?: boolean) => Promise<LogCompactResult>
   generate_ssh_key: () => Promise<{ ok: boolean; public_key: string; key_path: string; committed: boolean; per_host: RotateHostResult[]; message: string }>
   rotate_ssh_key: () => Promise<{ ok: boolean; committed: boolean; public_key: string; key_path: string; per_host: RotateHostResult[]; message: string }>
   get_public_key: () => Promise<{ ok: boolean; public_key: string; message: string }>

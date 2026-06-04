@@ -714,6 +714,48 @@ export const mockApi: BridgeApi = {
     return _aggregateMock(runs, sinceDays)
   },
 
+  // ── logs management ─────────────────────────────────────────────────────
+  logs_status: async (_host, _runnable) => {
+    const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86400000).toISOString().replace(/\.\d+Z$/, 'Z')
+    return [
+      {
+        group: 'ops-tools', ok: true, dirs: ['/opt/venvs/ops-tools/logs'],
+        total_bytes: 5_242_880, total_files: 142,
+        runnables: [
+          { runnable: 'backup', per_run_files: 118, archives: 2, total_bytes: 4_194_304, oldest: iso(96), newest: iso(0) },
+          { runnable: 'get-alerts', per_run_files: 22, archives: 0, total_bytes: 1_048_576, oldest: iso(14), newest: iso(1) },
+        ],
+      },
+      {
+        group: 'platform-core', ok: true, dirs: ['/opt/venvs/platform-core/logs'],
+        total_bytes: 786_432, total_files: 9,
+        runnables: [
+          { runnable: 'deploy', per_run_files: 9, archives: 0, total_bytes: 786_432, oldest: iso(20), newest: iso(2) },
+        ],
+      },
+    ]
+  },
+
+  logs_view: async (_host, _group, runnable, _since, _user, _run) => ({
+    ok: true,
+    records: Array.from({ length: 6 }, (_v, i) => ({
+      ts: new Date(Date.now() - (6 - i) * 600000).toISOString(),
+      level: i === 4 ? 'ERROR' : 'INFO',
+      message: i === 4 ? `${runnable}: upstream timeout` : `${runnable}: step ${i + 1} ok`,
+      extra: { run_id: `r${Math.floor(i / 3)}`, user: 'alice' },
+    })),
+  }),
+
+  logs_prune: async (_host, group, _runnable, _olderThan, _maxFiles, _maxTotalSize, dryRun = true) => ({
+    group, ok: true, dry_run: dryRun, count: 12, freed_bytes: 1_572_864,
+    deleted: Array.from({ length: 12 }, (_v, i) => ({ path: `/opt/venvs/${group}/logs/backup.2026010${i}T100000Z.${i}abcd.log`, bytes: 131_072 })),
+  }),
+
+  logs_compact: async (_host, group, _runnable, _olderThan, _gzip = true, dryRun = true) => ({
+    group, ok: true, dry_run: dryRun, compacted: 30,
+    archives: [{ archive: `/opt/venvs/${group}/logs/backup.archive.20260604.log.gz`, count: 30, sources: [] }],
+  }),
+
   get_public_key: async () => ({
     ok: true,
     public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPublicKeyForDevModeonlyrunspec-console',

@@ -397,6 +397,21 @@ runspec logs deploy | grep ERROR | less
 awk '$2=="WARNING"' <(runspec logs deploy --since 1h)
 ```
 
+### Status — what's on disk
+
+```bash
+runspec logs status                       # per-runnable file count + disk usage
+runspec logs status deploy                # just one runnable
+runspec logs status --json                # machine-readable inventory
+```
+
+`status` is the read-only inventory the runspec-console **Logs tab** reads to
+show per-venv usage before offering compact/prune. The `--json` shape is
+`{dirs, runnables:[{runnable, per_run_files, archives, total_bytes, oldest,
+newest}], total_bytes, total_files}`. Like every `runspec logs` verb it runs
+locally or over SSH, so the console drives one uniform interface against every
+venv it manages.
+
 ### Prune / compact — retention you schedule
 
 There is no automatic rotation in per-run mode, so an operator schedules
@@ -410,6 +425,10 @@ runspec logs prune   --older-than 90d         # delete files older than 90 days
 runspec logs prune deploy --max-files 50 --dry-run     # preview keeping newest 50
 runspec logs prune --max-total-size 5GB                # cap total size (oldest deleted first)
 ```
+
+Add `--json` to either verb (with or without `--dry-run`) to get a structured
+result object instead of text — what the console parses to render a preview and
+then the applied outcome.
 
 A typical nightly cron line:
 

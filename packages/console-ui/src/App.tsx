@@ -13,10 +13,12 @@ import {
   CodeOutlined,
   LoadingOutlined,
   BugOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
 import { HistoryView } from './views/HistoryView'
+import { LogsView } from './views/LogsView'
 import { SchedulesView } from './views/SchedulesView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
@@ -29,7 +31,7 @@ import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'forms' | 'schedules' | 'analytics' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'analytics' | 'dev'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -167,6 +169,7 @@ export default function App() {
         : <ThunderboltOutlined />,
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
+    { key: 'logs'      as ViewKey, label: 'Logs',      icon: <FileTextOutlined /> },
     { key: 'analytics' as ViewKey, label: 'Analytics', icon: <BarChartOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
@@ -329,6 +332,7 @@ export default function App() {
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
+                    {view === 'logs'      && <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'analytics' && <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}><AnalyticsView selectedHost={selectedHost} activeScope={activeScope} /></Suspense>}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
