@@ -690,6 +690,27 @@ function installStdoutCapture(): void {
   });
 }
 
+/**
+ * Install the uncaught-exception handler ahead of full logging configuration.
+ *
+ * `parse()` calls this as soon as it sees `[config.logging]`, before running
+ * the rest of its pipeline, so a failure inside runspec's *own* parse code
+ * (inference, argv parsing, validation, coercion) is routed through the same
+ * one-liner / `--debug` handler as a runtime exception instead of dumping a raw
+ * stack trace. `configureLogging` calls `installExitHooks` again later
+ * (idempotent) and sets the final `--debug` value, summary state, and file
+ * handler; the structured audit record is written only once handlers exist
+ * (`emitExceptionRecord` no-ops while `_handlers` is empty).
+ *
+ * `debug` brings the compact-trace rendering forward so re-running a crashing
+ * invocation as `<cmd> --debug` shows the trace even when the failure happens
+ * inside the parse pipeline.
+ */
+export function installExceptionHook(debug = false): void {
+  if (!_exitHooksInstalled && debug) _debug = true;
+  installExitHooks();
+}
+
 function installExitHooks(): void {
   if (_exitHooksInstalled) return;
   _exitHooksInstalled = true;

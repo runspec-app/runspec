@@ -17,7 +17,7 @@ from runspec.env import apply_env_file
 from runspec.finder import find_config
 from runspec.inference import effective_autonomy, infer_script
 from runspec.loader import load_raw
-from runspec.logging_setup import configure_logging
+from runspec.logging_setup import configure_logging, install_excepthook
 from runspec.models import Arg, Group, RunSpec
 from runspec.types import coerce
 from runspec.validator import raise_if_errors, validate_args, validate_groups
@@ -67,6 +67,19 @@ def _parse_impl(
     # 2. Load and normalise TOML
     raw = load_raw(config_path)
     config = raw["config"]
+
+    # 2.5. Install the uncaught-exception hook now — before the rest of the
+    # pipeline runs — so a failure inside runspec's own parse code (inference,
+    # argv parsing, validation, coercion, RunSpec build) is routed through the
+    # same one-liner / --debug handler as a runtime exception rather than
+    # dumping a raw traceback. Without this the hook only goes up at the end of
+    # parse() (step 16), leaving exceptions raised *within* runspec uncovered.
+    # Gated on [config.logging] to match the feature's contract; full set-up
+    # (file handler, summary, final --debug value) still happens in
+    # configure_logging once parsing succeeds.
+    if config.get("logging"):
+        early_argv = sys.argv[1:] if argv is None else argv
+        install_excepthook(debug="--debug" in early_argv)
 
     # 3. Resolve runnable name
     name = script_name or _infer_from_argv()

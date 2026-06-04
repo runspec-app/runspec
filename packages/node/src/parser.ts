@@ -5,7 +5,7 @@ import { inferScript, effectiveAutonomy } from './inference';
 import { coerce } from './types';
 import { validateArgs, validateGroups, raiseIfErrors } from './validator';
 import { RunSpecError, formatMissingCommand } from './errors';
-import { configureLogging } from './logging_setup';
+import { configureLogging, installExceptionHook } from './logging_setup';
 import type { ParsedArgs, ScriptSpec, ArgSpec } from './models';
 
 export interface ParseOptions {
@@ -23,6 +23,20 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
   const { configPath } = configPathOverride ? { configPath: configPathOverride } : findConfig(cwd);
   const raw = loadRaw(configPath);
   const config = raw.config;
+
+  // Install the uncaught-exception handler now — before the rest of the
+  // pipeline runs — so a failure inside runspec's own parse code (inference,
+  // argv parsing, validation, coercion) is routed through the same one-liner /
+  // --debug handler as a runtime exception rather than dumping a raw stack
+  // trace. Without this the handler only goes up at the end of parse (via
+  // configureLogging), leaving exceptions raised *within* runspec uncovered.
+  // Gated on [config.logging] to match the feature's contract; full set-up
+  // (file handler, summary, final --debug value) still happens once parsing
+  // succeeds. Mirrors Python's early install in parser.py.
+  if (config.logging) {
+    const earlyArgv = argvOverride ?? process.argv.slice(2);
+    installExceptionHook(earlyArgv.includes('--debug'));
+  }
 
   const name = scriptName ?? inferFromArgv();
   if (!name) throw new RunSpecError('✗  Could not determine runnable name. Pass scriptName option.');

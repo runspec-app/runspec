@@ -17,6 +17,7 @@ from runspec.logging_setup import (
     _RunSummaryCounter,
     _SensitiveFilter,
     configure_logging,
+    install_excepthook,
 )
 
 
@@ -218,6 +219,76 @@ class TestExceptionCapture:
         captured = capsys.readouterr()
         assert "uncaught exception" not in captured.err  # the logger message text
         assert "uncaught exception" not in captured.out
+
+
+class TestEarlyExcepthookCoverage:
+    """Coverage for failures raised inside runspec's own parse pipeline.
+
+    The hook used to go up only at the end of parse(); an exception raised
+    *within* runspec (inference, validation, coercion, attribute access) before
+    that point escaped uncaught and dumped a raw traceback. parse() now installs
+    the hook early — these guard that the early window behaves correctly.
+    """
+
+    def test_early_hook_skips_audit_and_lastresort_when_unconfigured(self, tmp_path, capsys):
+        # Before configure_logging runs there are no handlers on the root logger.
+        # The hook must still print the console one-liner, but must NOT route the
+        # CRITICAL record through logging.lastResort (which would dump the very
+        # traceback we suppress) and must not attempt to write an audit file.
+        ls._configured = False
+        install_excepthook()
+        try:
+            raise ValueError("parse-time boom")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+        err = capsys.readouterr().err
+        assert "ERROR: ValueError: parse-time boom" in err
+        assert "run with --debug" in err
+        assert "uncaught exception" not in err  # no lastResort emission
+        assert "Traceback (most recent call last)" not in err
+
+    def test_early_hook_debug_brings_trace_forward(self, capsys):
+        # install_excepthook(debug=True) sets the debug flag so a parse-pipeline
+        # failure re-run as `<cmd> --debug` shows the compact trace, even though
+        # configure_logging (which normally sets it) has not run yet.
+        ls._configured = False
+        ls._debug = False
+        ls._excepthook_installed = False  # force a fresh install so debug takes
+        install_excepthook(debug=True)
+        assert ls._debug is True
+        try:
+            raise ValueError("parse-time boom")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+        err = capsys.readouterr().err
+        assert "ValueError: parse-time boom" in err
+        assert "run with --debug" not in err  # debug mode → trace, not the hint
+
+    def test_parse_installs_hook_before_running_pipeline(self, tmp_path, monkeypatch):
+        # Prove the hook is up by the time the pipeline runs (here: infer_script,
+        # step 4) — not only at the end of parse().
+        import runspec.parser as parser
+
+        cfg = tmp_path / "runspec.toml"
+        cfg.write_text('[config]\n\n[config.logging]\nrotate = "midnight"\nkeep = 7\n\n[demo]\n')
+
+        # Reset to a pristine state so the assertion reflects *this* parse().
+        monkeypatch.setattr(ls, "_excepthook_installed", False)
+        monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+
+        seen: dict[str, object] = {}
+        real_infer = parser.infer_script
+
+        def spy(*args, **kwargs):
+            seen["installed"] = ls._excepthook_installed
+            seen["hook"] = sys.excepthook
+            return real_infer(*args, **kwargs)
+
+        monkeypatch.setattr(parser, "infer_script", spy)
+        parser.parse(script_name="demo", argv=[], config_path=cfg)
+
+        assert seen["installed"] is True
+        assert seen["hook"] is not sys.__excepthook__
 
 
 class TestExcStructuredHelpers:

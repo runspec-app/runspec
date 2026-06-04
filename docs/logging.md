@@ -298,6 +298,16 @@ is present, runspec installs a process-level handler so **every** uncaught
 exception is treated the same way — automatically. Just let exceptions
 propagate.
 
+The handler goes up at the *start* of `parse()`, so failures inside runspec's
+own work are covered too — a bad type coercion, a validation slip, or reaching
+for an argument that doesn't exist:
+
+```python
+args = parse()
+action = args.no_such_arg   # AttributeError — caught and shown as a one-liner,
+                            # not a raw traceback exposing runspec internals
+```
+
 On a crash, runspec always writes a structured record to the audit file (even
 without `--debug`, even with `summary = false`), and gates the console output on
 `--debug`:
@@ -341,7 +351,10 @@ only with `--debug`, while the audit file always has the complete record.
     Before this, an uncaught exception always dumped a full traceback to the
     console. It now prints the one-liner above unless `--debug` is set — the full
     traceback is always in the audit file. Landed in **runspec 0.26.0** and
-    **node-0.21.0**.
+    **node-0.21.0**. As of **runspec 0.29.1** the handler also covers exceptions
+    raised inside runspec's own parse pipeline (it is installed at the start of
+    `parse()`, not only at the end), so an undeclared-argument access or a
+    coercion failure gets the same one-liner instead of a raw traceback.
 
 ---
 

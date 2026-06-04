@@ -5,6 +5,8 @@ import {
   configureLogging,
   getLogger,
   Logger,
+  installExceptionHook,
+  _handleUncaught,
   _resetForTest,
   _periodForDate,
 } from '../src/logging_setup';
@@ -530,4 +532,30 @@ test('default store is single ({runnable}.log)', () => {
   getLogger('test').info('hi');
   expect(fs.existsSync(path.join(dir, 'logs', 'myscript.log'))).toBe(true);
   expect(perRunFile(dir)).toBeUndefined();
+});
+
+// ── early exception-hook install (parse-pipeline coverage) ─────────────────────
+
+test('installExceptionHook is safe to call early and is idempotent', () => {
+  _resetForTest();
+  expect(() => {
+    installExceptionHook(false);
+    installExceptionHook(true);
+  }).not.toThrow();
+});
+
+test('uncaught handler before configure: one-liner to stderr, no audit, no throw', () => {
+  // Simulates the parse-pipeline window — the handler is up but configureLogging
+  // has not run, so there are no handlers. It must still surface the one-liner on
+  // stderr (no raw stack, no thrown error, no audit emission).
+  _resetForTest(); // _handlers empty, _debug false, _summaryState null
+  const cap = captureStreams();
+  try {
+    expect(() => _handleUncaught(new Error('parse-time boom'))).not.toThrow();
+  } finally {
+    cap.restore();
+  }
+  const out = cap.stderrLines.join('');
+  expect(out).toContain('ERROR: Error: parse-time boom');
+  expect(out).toContain('run with --debug');
 });

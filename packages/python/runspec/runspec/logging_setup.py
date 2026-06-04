@@ -489,6 +489,29 @@ def _format_compact_traceback(exc_type: type[BaseException], exc_value: BaseExce
     return "\n".join(lines)
 
 
+def install_excepthook(*, debug: bool = False) -> None:
+    """Install the uncaught-exception hook ahead of full logging configuration.
+
+    `parse()` calls this as soon as it sees `[config.logging]`, before running
+    the rest of its pipeline, so a failure inside runspec's *own* parse code
+    (inference, argv parsing, validation, coercion, RunSpec build) is routed
+    through the same one-liner / `--debug` handler as a runtime exception instead
+    of dumping a raw traceback. `configure_logging` calls `_install_excepthook`
+    again at the end of a successful parse (idempotent) and sets the final
+    `--debug` value, summary state, and file handler; the structured audit record
+    is written only once logging is configured — see the `_configured` guard in
+    the hook.
+
+    `debug` brings the compact-trace rendering forward so re-running a crashing
+    invocation as `<cmd> --debug` shows the trace even when the failure happens
+    inside the parse pipeline (before configure_logging would set it).
+    """
+    global _debug
+    if not _excepthook_installed and debug:
+        _debug = True
+    _install_excepthook()
+
+
 def _install_excepthook() -> None:
     """Wrap sys.excepthook so uncaught exceptions are recorded uniformly.
 
@@ -505,13 +528,20 @@ def _install_excepthook() -> None:
     def hook(exc_type: type[BaseException], exc_value: BaseException, tb: Any) -> None:
         structured = _build_exc_structured(exc_type, exc_value, tb)
 
-        # Always to the audit file (independent of --debug and of the summary toggle).
-        with contextlib.suppress(Exception):
-            logging.getLogger(_EXCEPTION_LOGGER).critical(
-                "uncaught exception",
-                exc_info=(exc_type, exc_value, tb),
-                extra={"exc_structured": structured},
-            )
+        # Audit file — once logging is configured (independent of --debug and of
+        # the summary toggle). When the hook fires before configure_logging has
+        # run (a failure inside runspec's own parse pipeline, where the hook is
+        # installed early) the root logger has no handlers, so emitting here
+        # would fall through to logging.lastResort and dump the very traceback
+        # we are deliberately suppressing. Skip the record in that window — the
+        # console one-liner below still fires.
+        if _configured:
+            with contextlib.suppress(Exception):
+                logging.getLogger(_EXCEPTION_LOGGER).critical(
+                    "uncaught exception",
+                    exc_info=(exc_type, exc_value, tb),
+                    extra={"exc_structured": structured},
+                )
 
         # Feed the run-summary line (when summary is on) — unchanged shape.
         if _summary_state is not None:

@@ -297,6 +297,15 @@ so **every** uncaught exception is handled the same way — automatically, with 
 per-runnable `try`/`except` and no code template. A runnable just lets the
 exception propagate.
 
+The handler is installed at the *start* of `parse()`, as soon as `[config.logging]`
+is seen — not only once parsing finishes. This means a failure inside runspec's
+own parse pipeline (argument inference, validation, type coercion, or a later
+access to an undeclared argument) is routed through the same path as a runtime
+exception, rather than dumping a raw traceback. The structured audit record (1.
+below) is only written once logging is fully configured; a failure during the
+parse pipeline itself — before handlers exist — still gets the console treatment
+(2.) but no audit record, since there is no log file to write to yet.
+
 On an uncaught exception:
 
 1. **Audit log (always):** one structured record on the `runspec.exception`

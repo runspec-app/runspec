@@ -7,6 +7,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.26.1] — 2026-06-04
+
+### Fixed
+
+- **Uncaught-exception handler now covers runspec's own parse pipeline** (parity
+  with `runspec` 0.29.1). The `uncaughtException` / `unhandledRejection` handler
+  installed by `[config.logging]` previously went up only at the *end* of
+  `parse()` (via `configureLogging`), so a failure *inside* runspec — a failing
+  type coercion or a validation slip during parsing — escaped uncaught and
+  dumped a raw stack trace instead of the uniform one-liner / `--debug` trace.
+  The handler is now installed at the start of `parse()`, as soon as
+  `[config.logging]` is seen. The structured audit record is written only once
+  handlers exist, so a failure during the parse pipeline itself still gets the
+  console one-liner but no audit record (there is no log file yet).
+
+---
+
 ## [node-0.26.0] — 2026-06-04
 
 ### Added
@@ -106,6 +123,24 @@ needs to be fully self-sufficient.
   the Node pack omitted `run_id` entirely. This is what lets the per-run
   filename token match the records, and lets runspec-console attribute Node
   logs by run, not filename.
+
+---
+
+## [0.29.1] — 2026-06-04
+
+### Fixed
+
+- **Uncaught-exception handler now covers runspec's own parse pipeline.** The
+  `sys.excepthook` installed by `[config.logging]` previously went up only at
+  the *end* of `parse()`, so an exception raised *inside* runspec — a failing
+  type coercion, a validation slip, or reaching for an argument that doesn't
+  exist (`args.no_such_arg`) — escaped uncaught and dumped a raw traceback
+  exposing internal frames, instead of the uniform one-liner / `--debug` trace.
+  The hook is now installed at the start of `parse()`, as soon as
+  `[config.logging]` is seen. The structured audit record is written only once
+  logging is fully configured; a failure during the parse pipeline itself still
+  gets the console treatment but no audit record (there is no log file yet),
+  and never falls through to `logging.lastResort`.
 
 ---
 
