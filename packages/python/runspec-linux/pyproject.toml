@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-linux"
-version = "0.1.2"
+version = "0.1.3"
 requires-python = ">=3.10"
 description = "Linux system admin runnables for runspec"
 dependencies = [
-    "runspec>=0.23.0",
+    "runspec>=0.27.0",
 ]
 
 [project.scripts]

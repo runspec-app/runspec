@@ -1,5 +1,16 @@
 # runspec-linux Changelog
 
+## [0.1.3] — 2026-06-04
+
+Switch `[config.logging]` to `store = "per-run"` so every runnable writes one
+log file per invocation (`{runnable}.{utc-ts}.{run_id}.log`) instead of a single
+shared rotating `{runnable}.log`. These runnables are meant to be installed into
+shared venvs and run by multiple users (and in parallel); per-invocation files
+are multi-writer safe — no in-process rotation and no contention over one file.
+Use `runspec logs` to view, compact, and prune. The `rotate`/`keep` keys (inert
+under per-run) are dropped. Bumps the `runspec` dependency floor to `>=0.27.0`,
+where `store = "per-run"` was introduced.
+
 ## [0.1.2] — 2026-06-02
 
 Lower the Python floor to 3.10 to match the core `runspec` library (no

@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-windows"
-version = "0.1.1"
+version = "0.1.2"
 requires-python = ">=3.10"
 description = "Windows system admin + Microsoft 365 (Outlook, Teams) runnables for runspec"
 dependencies = [
-    "runspec>=0.23.0",
+    "runspec>=0.27.0",
 ]
 
 [project.optional-dependencies]
