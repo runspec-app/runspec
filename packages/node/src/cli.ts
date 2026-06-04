@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import { findConfig } from './finder';
+import * as logs from './logs';
 import { loadRaw } from './loader';
 import { inferScript } from './inference';
 import { parse } from './parser';
@@ -33,6 +34,7 @@ export function main(): void {
     init: cmdInit,
     local: cmdLocal,
     bin: cmdBin,
+    logs: cmdLogs,
     jump: cmdJump,
     serve: cmdServe,
   };
@@ -228,6 +230,69 @@ function writeShim(shimPath: string, relPath: string): void {
 
 function toPosix(p: string): string {
   return p.split(path.sep).join('/');
+}
+
+function cmdLogs(args: string[]): void {
+  const has = (name: string): boolean => args.includes(name);
+  const valueFlags = new Set(['--since', '--user', '--run', '--older-than', '--max-files', '--max-total-size']);
+  const val = (name: string): string | undefined => {
+    const i = args.indexOf(name);
+    return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
+  };
+  // Positionals are tokens that aren't flags or flag-values.
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('-')) {
+      if (valueFlags.has(a)) i++; // skip its value
+      continue;
+    }
+    positionals.push(a);
+  }
+
+  // `runspec logs status|prune|compact [runnable]` vs `runspec logs <runnable>`.
+  const target = positionals[0];
+  const verb = target === 'status' || target === 'prune' || target === 'compact' ? target : 'view';
+  const runnable = verb === 'view' ? target : positionals[1] ?? null;
+
+  try {
+    if (verb === 'view') {
+      if (!runnable) {
+        console.log('✗  A runnable is required: runspec logs <runnable>');
+        process.exit(1);
+      }
+      logs.view(runnable, {
+        since: val('--since') ? logs.parseDuration(val('--since')!) : null,
+        run: val('--run') ?? null,
+        user: val('--user') ?? null,
+        asJson: has('--json'),
+        follow: has('--follow'),
+      });
+    } else if (verb === 'status') {
+      logs.status(runnable, { asJson: has('--json') });
+    } else if (verb === 'prune') {
+      logs.prune(runnable, {
+        olderThan: val('--older-than') ? logs.parseDuration(val('--older-than')!) : null,
+        maxFiles: val('--max-files') ? parseInt(val('--max-files')!, 10) : null,
+        maxTotalSize: val('--max-total-size') ? logs.parseSize(val('--max-total-size')!) : null,
+        dryRun: has('--dry-run'),
+        asJson: has('--json'),
+      });
+    } else if (verb === 'compact') {
+      if (!val('--older-than')) {
+        console.log('✗  compact requires --older-than (e.g. --older-than 7d)');
+        process.exit(1);
+      }
+      logs.compact(runnable, logs.parseDuration(val('--older-than')!), {
+        gzip: has('--gzip'),
+        dryRun: has('--dry-run'),
+        asJson: has('--json'),
+      });
+    }
+  } catch (err) {
+    console.log(`✗  ${(err as Error).message}`);
+    process.exit(1);
+  }
 }
 
 async function cmdJump(args: string[]): Promise<void> {
@@ -751,6 +816,7 @@ Commands:
   init        Create runspec.toml and a code stub
   local       List runnables and emit tool schemas
   bin         Generate a venv-shaped bin/ so a controller can run this folder
+  logs        View, status, prune, or compact per-invocation audit logs
   jump        Execute a runnable on a remote host via SSH
   serve       Start the MCP stdio server for local runnables
 
@@ -762,6 +828,7 @@ Examples:
   runspec local
   runspec local --format mcp
   runspec bin
+  runspec logs deploy
   runspec serve`);
 }
 
@@ -805,6 +872,25 @@ Examples:
   Examples:
     npm install runspec-node
     runspec bin`,
+
+    logs: `runspec logs — View, status, prune, or compact per-invocation audit logs
+
+  For runnables using [config.logging] store = "per-run" (one file per
+  invocation, no in-process rotation). Reads/maintains the project's logs/.
+
+  View (default):
+    runspec logs <runnable>                 merged, timestamp-sorted stream
+    runspec logs <runnable> --follow         live tail across invocations
+    runspec logs <runnable> --since 1h --user alice --run <id>
+    runspec logs <runnable> --json           raw JSON lines
+
+  Status / retention (default to all runnables):
+    runspec logs status [runnable] [--json]  per-runnable file + disk inventory
+    runspec logs compact [runnable] --older-than 7d [--gzip] [--dry-run]
+    runspec logs prune [runnable] --older-than 90d | --max-files N | --max-total-size 5GB [--dry-run]
+
+  prune/compact never touch a single-mode {runnable}.log — only per-run files
+  and archives. Add --json to any verb for machine-readable output.`,
 
     jump: `runspec jump — Execute a runnable on a remote host via SSH
 

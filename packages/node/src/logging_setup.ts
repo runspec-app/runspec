@@ -22,6 +22,16 @@ const _handlers: Handler[] = [];
 let _runId: string | null = null;
 
 const RUN_SUMMARY_LOGGER = 'runspec.runsummary';
+// Captured-stdout records are logged under this name (mirrors Python's
+// `runspec.print`). Used only for clarity in the audit file.
+const PRINT_LOGGER = 'runspec.print';
+
+// The real `process.stdout.write`, captured before we tee it. The stdout
+// handler writes through this so its own output isn't re-captured (mirrors
+// Python capturing the real sys.stdout reference before the tee swap).
+let _rawStdoutWrite: typeof process.stdout.write | null = null;
+let _stdoutBuf = '';
+let _captureInstalled = false;
 // Uncaught exceptions are emitted on this dedicated logger so the file handler
 // records them while the console handlers drop them by name — console display is
 // handled explicitly in _handleUncaught (debug-gated).
@@ -114,6 +124,10 @@ interface LogRecord {
   error?: Error;
   extra?: Record<string, unknown>;
   excStructured?: Record<string, unknown>;
+  // Set on records synthesised from captured stdout (print-capture). Console +
+  // counter handlers skip these (the real stdout write already happened, and
+  // printed lines aren't log "events"); only file handlers persist them.
+  fromPrint?: boolean;
 }
 
 interface Handler {
@@ -220,8 +234,11 @@ class StdoutHandler implements Handler {
   emit(record: LogRecord): void {
     if (record.levelNum >= 30) return; // WARNING+ belongs on stderr
     if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER) return;
+    if (record.fromPrint) return; // the real stdout write already emitted this
     try {
-      process.stdout.write(formatConsole(record, this.showTracebacks) + '\n');
+      // Write through the *raw* stream so this output isn't re-captured by the
+      // print-capture tee (would double it in the audit file).
+      (_rawStdoutWrite ?? process.stdout.write.bind(process.stdout))(formatConsole(record, this.showTracebacks) + '\n');
     } catch {
       // never disrupt
     }
@@ -262,8 +279,9 @@ class RunSummaryCounter implements Handler {
   };
 
   emit(record: LogRecord): void {
-    // Don't count runspec's own bookkeeping records (summary + uncaught-exception).
-    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER) return;
+    // Don't count runspec's own bookkeeping records (summary + uncaught-exception)
+    // or captured stdout lines — only genuine logger events.
+    if (record.loggerName === RUN_SUMMARY_LOGGER || record.loggerName === EXCEPTION_LOGGER || record.fromPrint) return;
     const label = LEVEL_LABEL[record.levelNum];
     if (label && label in this.counts) {
       this.counts[label]++;
@@ -617,6 +635,61 @@ export function _handleUncaught(err: Error): void {
   }
 }
 
+// ── stdout capture (print → audit log) ─────────────────────────────────────────
+
+/** Emit one captured stdout line as a file-only record (skipped by console + counter). */
+function emitPrintLine(line: string): void {
+  if (_handlers.length === 0) return;
+  const record: LogRecord = { ts: new Date(), levelNum: 20, loggerName: PRINT_LOGGER, message: redact(line), fromPrint: true };
+  for (const h of _handlers) {
+    try {
+      if (record.levelNum >= h.level) h.emit(record);
+    } catch {
+      // never disrupt
+    }
+  }
+}
+
+/**
+ * Tee `process.stdout.write`: output still reaches the real stream unchanged
+ * (so pipes / `runspec serve` capture are untouched), and each complete line is
+ * also written to the audit file as a `fromPrint` record. Mirrors Python's
+ * `_StdoutTee`, so a runnable's `console.log` output is preserved in the
+ * per-invocation log — not just the run summary.
+ */
+function installStdoutCapture(): void {
+  if (_captureInstalled) return;
+  _captureInstalled = true;
+  _rawStdoutWrite = process.stdout.write.bind(process.stdout);
+  const patched = function (chunk: unknown, encoding?: unknown, cb?: unknown): boolean {
+    const result = (_rawStdoutWrite as (...a: unknown[]) => boolean)(chunk, encoding, cb);
+    try {
+      const s = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString(typeof encoding === 'string' ? (encoding as BufferEncoding) : 'utf8') : '';
+      if (s) {
+        _stdoutBuf += s;
+        let idx: number;
+        while ((idx = _stdoutBuf.indexOf('\n')) !== -1) {
+          const line = _stdoutBuf.slice(0, idx);
+          _stdoutBuf = _stdoutBuf.slice(idx + 1);
+          if (line) emitPrintLine(line);
+        }
+      }
+    } catch {
+      // never disrupt
+    }
+    return result;
+  };
+  process.stdout.write = patched as typeof process.stdout.write;
+  // Flush a trailing partial line at exit. Registered before installExitHooks so
+  // it runs before the run-summary record (FIFO exit handlers).
+  process.on('exit', () => {
+    if (_stdoutBuf) {
+      emitPrintLine(_stdoutBuf);
+      _stdoutBuf = '';
+    }
+  });
+}
+
 function installExitHooks(): void {
   if (_exitHooksInstalled) return;
   _exitHooksInstalled = true;
@@ -740,6 +813,10 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
     };
   }
 
+  // Tee stdout into the audit log so printed output (not just the run summary)
+  // is preserved. Installed before the exit hooks so its flush runs first.
+  installStdoutCapture();
+
   // Uncaught-exception handling is always installed (independent of the summary
   // toggle) so the structured exception record reaches the audit file even when
   // summary is off. The exit hook only flushes a summary when _summaryState is set.
@@ -757,8 +834,15 @@ export function _resetForTest(): void {
   _loggers.clear();
   _handlers.length = 0;
   _summaryState = null;
+  // Un-tee stdout so the patch doesn't leak across tests.
+  if (_rawStdoutWrite) {
+    process.stdout.write = _rawStdoutWrite;
+    _rawStdoutWrite = null;
+  }
+  _stdoutBuf = '';
+  _captureInstalled = false;
   // Note: process event listeners installed by installExitHooks() stay —
   // they no-op when _summaryState is null, which is the test-time state.
 }
 
-export { _periodForDate, RUN_SUMMARY_LOGGER, EXCEPTION_LOGGER, buildExcStructured, formatCompactTrace };
+export { _periodForDate, RUN_SUMMARY_LOGGER, EXCEPTION_LOGGER, buildExcStructured, formatCompactTrace, findProjectRoot };

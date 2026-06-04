@@ -7,6 +7,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.25.0] — 2026-06-04
+
+Node logging parity with Python — the two pieces a node-only deployment folder
+needs to be fully self-sufficient.
+
+### Added
+
+- **`runspec logs` — view / status / prune / compact.** The read + maintenance
+  side of `store = "per-run"`, ported from Python (`runspec` 0.28.0/0.29.0) at
+  parity:
+  - `runspec logs <runnable>` merges a runnable's per-invocation files into one
+    timestamp-sorted stream (`--since` / `--user` / `--run` / `--json`;
+    `--follow` polls for live tail).
+  - `runspec logs status [runnable]` — per-runnable file count, archives, disk
+    size, newest record; `--json` emits the same shape Python does.
+  - `runspec logs prune [runnable]` — `--older-than` / `--max-files` /
+    `--max-total-size` (at least one required), `--dry-run`, `--json`.
+  - `runspec logs compact [runnable] --older-than <dur> [--gzip]` — rolls old
+    per-run files into a dated archive, `--dry-run`, `--json`.
+  - Resolves the project's `logs/` the same way the write side does (nearest
+    `package.json` skipping `node_modules`, then `~/logs`), and **never touches
+    a single-mode `{runnable}.log`** — only per-run files and archives. This is
+    what lets a Python-less node-only host manage its own logs on the box.
+
+- **Stdout capture into the audit log (print-capture).** `console.log` output
+  is now tee'd into the per-invocation file as `runspec.print` records (mirrors
+  Python's `_StdoutTee`), so a runnable's actual output — not just the run
+  summary — is preserved in the log and shown by `runspec logs <runnable>`.
+  Output still reaches the real stdout unchanged (clean for pipes / `--json`),
+  and captured lines are file-only: not echoed twice and not counted as log
+  events in the run summary.
+
+---
+
 ## [node-0.24.0] — 2026-06-04
 
 ### Added
