@@ -7,6 +7,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.23.0] — 2026-06-04
+
+### Changed
+
+- **Caller-relative `runspec.toml` resolution.** `findConfig` now resolves the
+  config relative to the **entry script** (`process.argv[1]`) before falling
+  back to `process.cwd()` — mirroring Python's `parse()`, "what makes installed
+  entry points work from any working directory." This lets an installed Node
+  runnable (and `runspec local`) find its own config when launched from an
+  unrelated working directory — e.g. a controller invoking `bin/greet` over SSH
+  with `cwd` = the login home rather than the package. Resolution order is now
+  `RUNSPEC_CONFIG` env → explicit start → entry-script dir → cwd, and a
+  `runspec.toml` found *inside* `node_modules` is skipped (a dependency's spec,
+  not the project's). `process.argv[1]` is preferred over
+  `require.main.filename` because the latter realpath-resolves symlinks, which
+  under `npm link` / workspaces / local installs jumps the entry out of the
+  project.
+
+---
+
 ## [node-0.22.0] — 2026-06-03
 
 ### Added
