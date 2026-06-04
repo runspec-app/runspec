@@ -11,6 +11,7 @@ pywebview window is created, so they run on any platform.
 from __future__ import annotations
 
 import logging
+import threading
 
 from runspec_console.bridge import Bridge, _ParamikoDevHandler
 
@@ -79,11 +80,26 @@ class _Stub:
     _emit_ssh_log = Bridge._emit_ssh_log
     _dispatch = Bridge._dispatch
 
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._pre_window_ssh_logs: list[dict] = []
 
-def test_emit_ssh_log_noop_without_window() -> None:
+
+def test_emit_ssh_log_buffers_without_window() -> None:
+    """Before the window attaches, records are buffered (not dropped) so the
+    first refresh cycle's connect logs survive to be flushed later."""
     s = _Stub()
     s._window = None
     s._emit_ssh_log({"level": "ERROR", "message": "x"})  # must not raise/dispatch
+    assert s._pre_window_ssh_logs == [{"level": "ERROR", "message": "x"}]
+
+
+def test_emit_ssh_log_buffer_is_bounded() -> None:
+    s = _Stub()
+    s._window = None
+    for i in range(250):
+        s._emit_ssh_log({"i": i})
+    assert len(s._pre_window_ssh_logs) == 200  # capped, no unbounded growth
 
 
 def test_emit_ssh_log_dispatches_with_window() -> None:

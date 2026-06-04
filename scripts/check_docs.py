@@ -45,8 +45,9 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 
 # Doc pages whose ```toml blocks are NOT runspec.toml configs and must not be
 # validated against the schema. runspec-chat documents its own
-# `jump_hosts.toml` connection file, a different format.
-SKIP_FILES = {"runspec-chat.md"}
+# `jump_hosts.toml` connection file; console documents its `config.toml`
+# ([ssh]/[refresh] tuning) — both a different format.
+SKIP_FILES = {"runspec-chat.md", "console.md"}
 
 
 def _manifest_version(path: Path) -> str:

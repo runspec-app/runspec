@@ -83,12 +83,19 @@ def discover_remote(
     global_ssh_config: dict[str, Any] | None = None,
     # Legacy kwarg kept so existing call sites don't break immediately
     ssh_binary: str = "",
+    runner: Any = None,
 ) -> list[dict[str, Any]]:
-    """Discover runnables on a remote host via paramiko SSH."""
-    from .executor import ssh_run
+    """Discover runnables on a remote host via paramiko SSH.
+
+    ``runner`` is the SSH command executor — defaults to ``executor.ssh_run``
+    (connect-per-call). The bridge passes its pooled runner so discovery reuses
+    the per-host transport instead of opening a fresh handshake every cycle.
+    """
+    if runner is None:
+        from .executor import ssh_run as runner
 
     group = venv_name(runspec_path)
-    code, out, _err = ssh_run(
+    code, out, _err = runner(
         ssh_target,
         f"{runspec_path} local --format json",
         identity_file=identity_file,

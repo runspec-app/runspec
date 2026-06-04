@@ -19,6 +19,7 @@ import gzip
 import hashlib
 import json
 import logging
+import random
 import sys
 import threading
 import time
@@ -107,12 +108,103 @@ class Bridge:
             str, tuple[str, threading.Event, dict[str, bool]]
         ] = {}
         self._ssh_log_handler: _ParamikoDevHandler | None = None
+        # SSH log records captured before the window attaches are buffered here
+        # (not dropped), then flushed to the Dev tab once it's ready — so the
+        # very first refresh cycle's connect logs aren't lost.
+        self._pre_window_ssh_logs: list[dict[str, Any]] = []
+        self._refresh_started = False
+        # Centralized SSH connection pool — one reused transport per host,
+        # shared by every SSH path (refresh, discovery, history, logs,
+        # invocation). None when [ssh] pool = false (legacy connect-per-call).
+        self._ssh_pool: Any = self._build_ssh_pool()
         self._install_ssh_log_forwarder()
         self._reload_hosts()
-        self._start_refresh_watcher()
+        import atexit
+
+        atexit.register(self._close_ssh_pool)
 
     def set_window(self, window: Any) -> None:
         self._window = window
+        # Flush any SSH logs captured during pre-window startup, then start the
+        # background refresh. Starting it here (not in __init__) means the first
+        # cycle never dispatches into a missing window — which is what leaked the
+        # "dispatch dropped: no window attached" warnings to the terminal.
+        with self._lock:
+            buffered = self._pre_window_ssh_logs
+            self._pre_window_ssh_logs = []
+        for detail in buffered:
+            self._dispatch("runspec:ssh", detail)
+        if not self._refresh_started:
+            self._refresh_started = True
+            self._start_refresh_watcher()
+
+    def _build_ssh_pool(self) -> Any:
+        """Construct the SSH connection pool from current ``[ssh]`` config.
+
+        Returns None when pooling is disabled — callers then fall back to the
+        connect-per-call ``executor.ssh_run`` path.
+        """
+        from .ssh_pool import SSHConnectionPool, pool_settings
+        from .executor import _make_ssh_client
+
+        settings = pool_settings(self.get_config().get("ssh"))
+        if not settings["enabled"]:
+            return None
+        return SSHConnectionPool(
+            settings=settings,
+            make_client=_make_ssh_client,
+            on_event=self._on_pool_event,
+        )
+
+    def _on_pool_event(self, detail: dict[str, Any]) -> None:
+        """Surface a pool-lifecycle event in the Dev tab's ``ssh`` category.
+
+        DEBUG rows (per-cycle reuse / new handshake / reap) are chatty, so they
+        appear only when started with ``--dev`` — the same gate the paramiko
+        capture uses. INFO/WARNING (reconnect, connect-backoff) always show.
+        """
+        if detail.get("level") == "DEBUG" and not self._debug:
+            return
+        self._emit_ssh_log(detail)
+
+    def _close_ssh_pool(self) -> None:
+        pool = self._ssh_pool
+        if pool is not None:
+            pool.close_all()
+
+    def _ssh_run(
+        self,
+        ssh_target: str,
+        command: str,
+        *,
+        identity_file: str | None = None,
+        timeout: int = 15,
+    ) -> tuple[int, str, str]:
+        """Run one SSH command, reusing a pooled transport when pooling is on.
+
+        Single chokepoint for the bridge's one-shot SSH commands (discovery,
+        history, logs, analytics) so they all share the per-host connection.
+        Falls back to ``executor.ssh_run`` when the pool is disabled.
+        """
+        cfg = self.get_config().get("ssh")
+        pool = self._ssh_pool
+        if pool is not None:
+            return pool.run(
+                ssh_target,
+                command,
+                identity_file=identity_file,
+                global_ssh_config=cfg,
+                timeout=timeout,
+            )
+        from .executor import ssh_run
+
+        return ssh_run(
+            ssh_target,
+            command,
+            identity_file=identity_file,
+            global_ssh_config=cfg,
+            timeout=timeout,
+        )
 
     def set_debug(self, debug: bool) -> None:
         """Record whether the Chromium inspector was enabled at startup.
@@ -149,10 +241,15 @@ class Bridge:
     def _emit_ssh_log(self, detail: dict[str, Any]) -> None:
         """Dispatch a captured paramiko record as a ``runspec:ssh`` event.
 
-        Silently no-ops before the window is attached (the first refresh cycle
-        fires from __init__) so early connect logs don't spam dispatch warnings.
+        Before the window attaches, buffer the record rather than dropping it —
+        set_window() flushes the buffer so early connect logs still reach the
+        Dev tab. The buffer is bounded so a connect storm before the UI is up
+        can't grow it without limit.
         """
         if self._window is None:
+            with self._lock:
+                if len(self._pre_window_ssh_logs) < 200:
+                    self._pre_window_ssh_logs.append(detail)
             return
         self._dispatch("runspec:ssh", detail)
 
@@ -271,7 +368,6 @@ class Bridge:
         self, entry: dict[str, Any], runnable: str | None
     ) -> list[dict[str, Any]]:
         from pathlib import PurePosixPath
-        from .executor import ssh_run
 
         ssh = entry["ssh"]
         idf = entry.get("identityFile")
@@ -279,13 +375,7 @@ class Bridge:
         rp = paths[0] if paths else ""
         log_dir = str(PurePosixPath(rp).parent.parent / "logs")
         script = _remote_log_script(log_dir, runnable)
-        _, stdout, _ = ssh_run(
-            ssh,
-            script,
-            identity_file=idf,
-            global_ssh_config=self.get_config().get("ssh"),
-            timeout=20,
-        )
+        _, stdout, _ = self._ssh_run(ssh, script, identity_file=idf, timeout=20)
         records: list[dict[str, Any]] = []
         current_name: str | None = None
         current_lines: list[str] = []
@@ -328,8 +418,6 @@ class Bridge:
         globs = _log_globs(runnable)
 
         if entry.get("ssh"):
-            from .executor import ssh_run
-
             ssh = entry["ssh"]
             idf = entry.get("identityFile")
             for rp in paths:
@@ -338,12 +426,8 @@ class Bridge:
                 group = PurePosixPath(rp).parent.parent.name
                 log_dir = str(PurePosixPath(rp).parent.parent / "logs")
                 script = _remote_log_script(log_dir, runnable)
-                code, stdout, stderr = ssh_run(
-                    ssh,
-                    script,
-                    identity_file=idf,
-                    global_ssh_config=self.get_config().get("ssh"),
-                    timeout=45,
+                code, stdout, stderr = self._ssh_run(
+                    ssh, script, identity_file=idf, timeout=45
                 )
                 if code != 0 and not stdout:
                     raise RuntimeError(stderr.strip() or f"ssh exit {code}")
@@ -651,14 +735,11 @@ class Bridge:
             return -1, "", f"unknown host {host}"
 
         if entry.get("ssh"):
-            from .executor import ssh_run
-
             command = " ".join(shlex.quote(p) for p in [rp, *argv])
-            return ssh_run(
+            return self._ssh_run(
                 entry["ssh"],
                 command,
                 identity_file=entry.get("identityFile"),
-                global_ssh_config=self.get_config().get("ssh"),
                 timeout=timeout,
             )
 
@@ -737,6 +818,13 @@ class Bridge:
             data = {**data, "ssh": _normalize_ssh_section(ssh)}
         write_config(data)
         self._adapter = None
+        # SSH tunables (pool, keepalive, max_sessions, max_concurrent, proxy,
+        # identity…) may have changed — rebuild the pool against the new config
+        # and drop the old transports so the next cycle reflects it.
+        old_pool = self._ssh_pool
+        self._ssh_pool = self._build_ssh_pool()
+        if old_pool is not None:
+            old_pool.close_all()
 
     def _generate_keypair_to_path(self, dest: Path) -> dict[str, Any]:
         """Write a new ed25519 key pair to dest (OpenSSH PEM + PPK v2). Does not touch config."""
@@ -1192,13 +1280,8 @@ class Bridge:
         idf = entry.get("identityFile")
 
         if ssh:
-            from .executor import ssh_run
-
-            code, out, err = ssh_run(
-                ssh,
-                f"{rp} local --format json",
-                identity_file=idf,
-                global_ssh_config=self.get_config().get("ssh"),
+            code, out, err = self._ssh_run(
+                ssh, f"{rp} local --format json", identity_file=idf
             )
             connected = code != -1  # -1 means connection itself failed
             ok = code == 0
@@ -1406,6 +1489,20 @@ class Bridge:
 
             ssh = entry.get("ssh")
             if ssh:
+                # Stream over a pooled transport when pooling is on — the
+                # invocation reuses the host's warm connection (one more channel,
+                # no new handshake) instead of opening a fresh client.
+                pool = self._ssh_pool
+                session_factory = None
+                if pool is not None:
+                    cfg = self.get_config().get("ssh")
+                    idf = entry.get("identityFile")
+
+                    def session_factory() -> tuple[Any, Any]:
+                        return pool.open_session(
+                            ssh, identity_file=idf, global_ssh_config=cfg
+                        )
+
                 run_remote(
                     ssh,
                     rp,
@@ -1420,6 +1517,7 @@ class Bridge:
                     run_as=run_as,
                     become_method=become_method,
                     become_flags=become_flags,
+                    session_factory=session_factory,
                 )
             else:
                 run_local(
@@ -2094,26 +2192,43 @@ class Bridge:
         return next((h for h in self._hosts if h.get("name") == host), None)
 
     def _start_refresh_watcher(self) -> None:
-        """Run a full refresh cycle immediately, then repeat every 30 s."""
+        """Run a full refresh cycle, then repeat every ``[refresh] interval`` s."""
+        from .ssh_pool import refresh_settings
 
         def _loop() -> None:
             while True:
                 self._refresh_cycle()
-                time.sleep(30)
+                interval = refresh_settings(self.get_config().get("refresh"))[
+                    "interval"
+                ]
+                time.sleep(interval)
 
         threading.Thread(target=_loop, daemon=True).start()
 
     def _refresh_cycle(self) -> None:
-        """Concurrently probe connectivity, then concurrently discover runnables."""
+        """Probe connectivity, then discover runnables — reusing pooled connections.
+
+        With the pool on, Phase 1 *warms* the per-host transport that Phase 2's
+        discovery then reuses, so a host costs one handshake per cycle (often
+        zero once warm) instead of the old ``probe + per-path`` handshake storm.
+        Per-host jitter spreads the cycle's connects so they don't all fire on
+        the same instant; the pool's global semaphore bounds how many connect at
+        once; ``reap()`` closes transports gone idle.
+        """
+        from .ssh_pool import refresh_settings
+
         self._reload_hosts()
         local = self._local_host_entry()
         all_hosts = [local] + [h for h in self._hosts if h.get("name") != "local"]
+        jitter = refresh_settings(self.get_config().get("refresh"))["jitter"]
 
-        # ── Phase 1: connectivity probes (fast: ssh host true) ─────────────────
+        # ── Phase 1: connectivity (warms the pooled transport) ─────────────────
         with self._lock:
             self._connected_cache["local"] = True
 
         def probe(h: dict[str, Any]) -> None:
+            if jitter:
+                time.sleep(random.uniform(0, jitter))  # spread the connects
             result = self._check_connected(h)
             with self._lock:
                 self._connected_cache[h["name"]] = result
@@ -2129,9 +2244,10 @@ class Bridge:
             t.join()
         self._dispatch("runspec:hosts_updated", {})
 
-        # ── Phase 2: runnables discovery (heavier: runspec local --format json) ─
+        # ── Phase 2: runnables discovery (reuses the warm transport) ───────────
         discovered: list[dict[str, Any]] = []
         lock2 = threading.Lock()
+        runner = self._ssh_pool.run if self._ssh_pool is not None else None
 
         def discover(h: dict[str, Any]) -> None:
             paths = _paths(h)
@@ -2150,6 +2266,7 @@ class Bridge:
                         name,
                         idf,
                         global_ssh_config=self.get_config().get("ssh"),
+                        runner=runner,
                     )
                     if ssh
                     else discover_local(rp, name)
@@ -2182,10 +2299,25 @@ class Bridge:
             self._runnables_cache = deduped
         self._dispatch("runspec:runnables_updated", {})
 
+        # Close transports that have gone idle beyond their TTL (cheap, per-cycle
+        # — no separate timer thread).
+        if self._ssh_pool is not None:
+            self._ssh_pool.reap()
+
     def _check_connected(self, host: dict[str, Any]) -> bool:
         ssh = host.get("ssh")
         if not ssh:
             return True
+        pool = self._ssh_pool
+        if pool is not None:
+            # Probe-free: obtaining a live pooled transport IS the connectivity
+            # check, and it warms the connection discovery reuses this cycle —
+            # no separate ``ssh host true`` handshake.
+            return pool.connectable(
+                ssh,
+                identity_file=host.get("identityFile"),
+                global_ssh_config=self.get_config().get("ssh"),
+            )
         from .executor import ssh_run
 
         code, _, _ = ssh_run(
@@ -2241,7 +2373,11 @@ class Bridge:
 
     def _dispatch(self, event: str, detail: dict[str, Any]) -> None:
         if self._window is None:
-            logger.warning("dispatch %s dropped: no window attached", event)
+            # Debug, not warning: the bridge logger propagates to runspec-core's
+            # root stderr handler, so a warning here leaks to the launching
+            # terminal. Background work can still race a not-yet-attached window;
+            # that's expected, not worth shouting about.
+            logger.debug("dispatch %s skipped: no window attached", event)
             return
         payload = json.dumps(detail)
         js = f"window.dispatchEvent(new CustomEvent({json.dumps(event)},{{detail:{payload}}}))"

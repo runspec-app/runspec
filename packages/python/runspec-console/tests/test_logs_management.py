@@ -21,7 +21,11 @@ def _make_bridge():
         patch("runspec_console.bridge.load_hosts", return_value=[]),
         patch.object(Bridge, "_start_refresh_watcher"),
     ):
-        return Bridge()
+        b = Bridge()
+    # Exercise the legacy connect-per-call path these tests mock via
+    # executor.ssh_run; the pooled path is covered by test_ssh_pool.py.
+    b._ssh_pool = None
+    return b
 
 
 def _local_entry():

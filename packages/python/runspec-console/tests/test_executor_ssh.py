@@ -16,7 +16,30 @@ import paramiko
 import pytest
 
 from runspec_console import executor
-from runspec_console.executor import _http_connect_sock, _make_ssh_client
+from runspec_console.executor import (
+    _http_connect_sock,
+    _make_ssh_client,
+    friendly_ssh_error,
+)
+
+
+# ── friendly_ssh_error ────────────────────────────────────────────────────────
+
+
+def test_friendly_error_flags_non_ssh_banner_as_proxy():
+    msg = friendly_ssh_error(
+        "Error reading SSH protocol banner'utf-8' codec can't decode byte 0x8b"
+    )
+    assert "non-SSH data" in msg and "proxy" in msg
+
+
+def test_friendly_error_explains_banner_timeout():
+    msg = friendly_ssh_error("Error reading SSH protocol banner")
+    assert "MaxStartups" in msg and "banner_timeout" in msg
+
+
+def test_friendly_error_passes_through_unknown():
+    assert friendly_ssh_error("Connection refused") == "Connection refused"
 
 
 # ── fake HTTP CONNECT proxy ───────────────────────────────────────────────────

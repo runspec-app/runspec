@@ -116,6 +116,33 @@ def _apply_host_key_policy(client: Any, cfg: dict[str, Any]) -> None:
         client.set_missing_host_key_policy(_accept_new_policy(known_hosts))
 
 
+def friendly_ssh_error(exc: BaseException | str) -> str:
+    """Map a low-level SSH connect failure to a clear, actionable one-liner.
+
+    The corporate failure mode (issue #104) is a proxy / TLS middlebox / load
+    balancer answering the SSH port with non-SSH bytes — paramiko surfaces that
+    as a ``UnicodeDecodeError`` wrapped in "Error reading SSH protocol banner",
+    an opaque message for an operator. Translate the common cases.
+    """
+    msg = str(exc).strip()
+    low = msg.lower()
+    if "banner" in low and (
+        "codec can't decode" in low or "invalid start byte" in low or "utf-8" in low
+    ):
+        return (
+            f"{msg}\n   ↳ the remote sent non-SSH data on connect — a proxy, TLS "
+            "middlebox, or load balancer may be intercepting the connection, or "
+            "the port is not an SSH server."
+        )
+    if "banner" in low:
+        return (
+            f"{msg}\n   ↳ no SSH banner before the timeout — the server may be "
+            "slow, behind a proxy, or throttling new connections (sshd "
+            "MaxStartups). Raising [ssh] banner_timeout can help."
+        )
+    return msg
+
+
 def args_to_argv(args: dict[str, Any]) -> list[str]:
     """Convert a {name: value} args dict to a CLI argv list."""
     argv: list[str] = []
@@ -332,8 +359,15 @@ def run_remote(
     run_as: str = "",
     become_method: str = "sudo",
     become_flags: str | None = None,
+    session_factory: Callable[[], tuple[Any, Callable[[], None]]] | None = None,
 ) -> None:
-    """Execute a remote runnable via paramiko SSH, streaming output via callbacks."""
+    """Execute a remote runnable via paramiko SSH, streaming output via callbacks.
+
+    ``session_factory``, when supplied, returns ``(channel, release)`` from a
+    pooled transport — the connection is reused, only the channel is opened here,
+    and ``release()`` (not a transport close) frees the channel slot afterward.
+    Without it, a fresh client is connected and closed per invocation (legacy).
+    """
     from runspec.become import build_become_argv
 
     bin_dir = Path(runspec_path).parent.as_posix()
@@ -352,16 +386,24 @@ def run_remote(
     remote_cmd = " ".join(parts)
 
     start = time.monotonic()
+    client = None  # set only on the legacy (non-pooled) path; closed in finally
+    release: Callable[[], None] | None = None
     try:
-        client = _make_ssh_client(ssh_target, identity_file, global_ssh_config)
+        if session_factory is not None:
+            channel, release = session_factory()
+        else:
+            client = _make_ssh_client(ssh_target, identity_file, global_ssh_config)
+            channel = client.get_transport().open_session()  # type: ignore[union-attr]
     except Exception as exc:
-        on_line(f"✗  SSH connection failed: {exc}", "stderr")
+        on_line(f"✗  SSH connection failed: {friendly_ssh_error(exc)}", "stderr")
         on_done(-1, 0)
+        if release is not None:
+            release()
+        if client is not None:
+            client.close()
         return
 
     try:
-        transport = client.get_transport()
-        channel = transport.open_session()  # type: ignore[union-attr]
         channel.set_combine_stderr(False)
         channel.exec_command(remote_cmd)
 
@@ -430,7 +472,17 @@ def run_remote(
         else:
             on_done(channel.recv_exit_status(), int((time.monotonic() - start) * 1000))
     finally:
-        client.close()
+        # Always close the channel (frees the server-side session). On the pooled
+        # path, release() returns the channel slot but keeps the transport warm;
+        # on the legacy path, close the whole client.
+        try:
+            channel.close()
+        except Exception:
+            pass
+        if release is not None:
+            release()
+        if client is not None:
+            client.close()
 
 
 def ssh_run(

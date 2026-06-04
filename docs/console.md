@@ -38,6 +38,50 @@ becomes visible.
 
 ---
 
+## SSH connections & tuning
+
+The console refreshes every host's connectivity and runnable inventory on a
+background timer. To avoid hammering bastions/jump hosts with a burst of fresh
+SSH handshakes (which trips `sshd MaxStartups` and surfaces as *"Error reading
+SSH protocol banner"*), it keeps **one reused, keepalive'd SSH connection per
+host** — shared by the connectivity probe, discovery, history, logs, and
+invocations. A warm connection serves new commands over fresh channels with no
+new handshake; a host going offline is detected on the next cycle and retried
+with exponential backoff.
+
+All knobs live in `%APPDATA%\runspec-console\config.toml` and have safe
+defaults — you only need them for unusual topologies (very strict bastions,
+large fleets, high-latency proxies):
+
+```toml
+[ssh]
+# Connection reuse (issue #104). Set false for legacy connect-per-call.
+pool         = true
+keepalive    = 30     # seconds; transport keepalive (0 disables)
+max_sessions = 8      # max concurrent channels per connection (< sshd MaxSessions)
+idle_ttl     = 300    # seconds before an unused connection is closed
+
+# Connect-phase timeouts (raise these behind slow proxies / VPNs).
+connect_timeout = 10
+banner_timeout  = 30
+auth_timeout    = 30
+
+[refresh]
+interval       = 30   # seconds between refresh cycles
+max_concurrent = 5    # max simultaneous NEW handshakes across the whole fleet
+jitter         = 3    # +/- seconds of per-host start jitter
+backoff_base   = 5    # seconds; per-host exponential backoff after a failure
+backoff_max    = 300  # seconds cap
+```
+
+!!! tip "Behind a corporate proxy / middlebox"
+    If a connection error mentions *"the remote sent non-SSH data on connect"*,
+    a proxy or TLS middlebox is intercepting the SSH port. Point the console at
+    an HTTP CONNECT proxy with `[ssh] proxy = "http://proxy.corp:8080"`, or set
+    `use_ssh_config = true` to honour a `ProxyCommand` from `~/.ssh/config`.
+
+---
+
 ## Microsoft 365 runnables (Outlook · Teams · Calendar · OneDrive)
 
 These ship in `runspec-windows` and authenticate as the signed-in user via the

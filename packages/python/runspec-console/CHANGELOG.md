@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.13.0] — 2026-06-04
+
+### Added
+- **Centralized SSH connection pool (#104).** The console now keeps one reused,
+  keepalive'd SSH connection per host, shared by the connectivity probe,
+  discovery, history, logs, and invocations. A warm connection serves new
+  commands over fresh channels with no new handshake, so the 30s background
+  refresh no longer produces a burst of brand-new handshakes per host per cycle
+  — the root cause of *"Error reading SSH protocol banner"* against bastions
+  with conservative `sshd MaxStartups` / rate limits. New `[ssh]` knobs:
+  `pool` (default on; `false` restores legacy connect-per-call), `keepalive`,
+  `max_sessions`, `idle_ttl`. New `[refresh]` section: `interval`,
+  `max_concurrent` (caps concurrent *new* handshakes across the fleet),
+  `jitter`, `backoff_base`, `backoff_max` (per-host exponential backoff so a
+  dead host isn't re-hammered every cycle). See
+  `docs/design/ssh-connection-pool.md`.
+- **Clearer SSH failure messages.** A non-SSH banner (proxy / TLS middlebox /
+  load balancer answering the port — paramiko's opaque `UnicodeDecodeError`
+  inside "Error reading SSH protocol banner") and plain banner timeouts now
+  render an actionable one-line cause instead of a raw traceback.
+- **Pool activity in the Dev tab.** The pool surfaces its lifecycle in the Dev
+  tab's `ssh` category: reconnects and connect-backoff always show
+  (INFO/WARNING); per-cycle connection reuse, new handshakes, and idle reaps
+  show under `--dev` (DEBUG) — so you can see at a glance that steady-state
+  refresh reuses connections instead of re-handshaking.
+
+### Fixed
+- **Startup terminal noise.** The first refresh cycle previously ran from the
+  Bridge constructor, before the window was attached — its background work
+  leaked `dispatch … dropped: no window attached` warnings to the launching
+  terminal, and any SSH error captured during that window was dropped instead
+  of shown. The refresh watcher now starts when the window attaches, and SSH
+  log records captured during pre-window startup are buffered and flushed to the
+  Dev tab once it's ready.
+
+
 ## [0.12.0] — 2026-06-04
 
 ### Added
