@@ -21,6 +21,7 @@ jobs:
       linux: ${{ steps.filter.outputs.linux }}
       windows: ${{ steps.filter.outputs.windows }}
       console: ${{ steps.filter.outputs.console }}
+      webops: ${{ steps.filter.outputs.webops }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v6
@@ -47,6 +48,9 @@ jobs:
             console:
               - 'packages/python/runspec-console/**'
               - 'packages/console-ui/**'
+              - '.github/workflows/ci.yml'
+            webops:
+              - 'packages/node-webops/**'
               - '.github/workflows/ci.yml'
             docs:
               - 'docs/**'
@@ -509,6 +513,37 @@ jobs:
       - name: Test
         run: npm test
 
+  # ── runspec-webops (Node runnable package) ───────────────────────────────────
+
+  webops:
+    name: runspec-webops
+    needs: changes
+    if: needs.changes.outputs.webops == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/node-webops
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # No committed lock (depends on the published runspec-node), so `npm install`.
+      - name: Install dependencies
+        run: npm install
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
   # ── Aggregator ───────────────────────────────────────────────────────────────
 
   docs-check:
@@ -531,7 +566,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, docs-check]
+    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, webops, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -561,6 +596,7 @@ jobs:
           check "console-quality" "${{ needs.console-quality.result }}"
           check "console-test"    "${{ needs.console-test.result }}"
           check "console-ui"      "${{ needs.console-ui.result }}"
+          check "webops"          "${{ needs.webops.result }}"
           check "docs-check"      "${{ needs.docs-check.result }}"
           if [[ $fail -eq 1 ]]; then
             echo "One or more checks failed."

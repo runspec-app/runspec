@@ -21,6 +21,7 @@ on:
       - "packages/python/runspec-chat/pyproject.toml"
       - "packages/registry/pyproject.toml"
       - "packages/node/package.json"
+      - "packages/node-webops/package.json"
 
 permissions:
   contents: write
@@ -53,6 +54,7 @@ jobs:
             "packages/python/runspec-chat/pyproject.toml|chat-v"
             "packages/registry/pyproject.toml|registry-v"
             "packages/node/package.json|node-v"
+            "packages/node-webops/package.json|webops-v"
           )
 
           # Print the version field of $file as it exists at git ref $ref, or nothing.

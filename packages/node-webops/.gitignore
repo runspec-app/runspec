@@ -1,0 +1,6 @@
+node_modules/
+dist/
+bin/
+logs/
+*.tgz
+package-lock.json

@@ -1,0 +1,92 @@
+name: Webops Release
+
+on:
+  push:
+    tags:
+      - "webops-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. webops-v0.1.0)"
+        required: true
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/runspec-webops
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor ${{ github.sha }} origin/main \
+            || { echo "::error::Tag must point to a commit on main — merge your PR first, then push the tag."; exit 1; }
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        working-directory: packages/node-webops
+        run: npm install
+
+      - name: Type check
+        working-directory: packages/node-webops
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: packages/node-webops
+        run: npm run build
+
+      - name: Test
+        working-directory: packages/node-webops
+        run: npm test
+
+      - name: Publish
+        working-directory: packages/node-webops
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Extract changelog notes
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${RELEASE_TAG#webops-v}"
+          ESCAPED="${VERSION//./\\.}"
+          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
+            packages/node-webops/CHANGELOG.md > release-notes.md
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          TAG="$RELEASE_TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md
+          fi

@@ -1,0 +1,67 @@
+#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json
+
+# runspec-webops — HTTPS/TLS certificate + web-endpoint checks.
+# All read-only network probes, so autonomy defaults to "autonomous".
+
+[config]
+autonomy-default = "autonomous"
+
+[config.logging]
+store = "per-run"
+
+[cert-check]
+description = "Inspect a host's TLS certificate — expiry, issuer, SANs, fingerprint"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "cert-check example.com",                       description = "Check the leaf cert on :443"},
+  {cmd = "cert-check example.com --warn-days 14 --json", description = "Warn under 14 days; emit JSON"},
+  {cmd = "cert-check db.internal --port 5432",           description = "Check a cert on a non-443 port"},
+]
+
+[cert-check.args]
+host      = {type = "str",  description = "Hostname to connect to",                       position = 1, required = true}
+port      = {type = "int",  description = "TLS port",                                      default = 443}
+warn-days = {type = "int",  description = "Report 'expiring' when fewer than N days remain", default = 30}
+timeout   = {type = "int",  description = "Connection timeout in seconds",                 default = 10}
+json      = {type = "flag", description = "Emit a JSON object instead of text",            default = false}
+
+[cert-chain]
+description = "Show the full TLS certificate chain (leaf → intermediates → root)"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "cert-chain example.com",        description = "Print each cert in the chain with its expiry"},
+  {cmd = "cert-chain example.com --json", description = "Chain as a JSON array"},
+]
+
+[cert-chain.args]
+host    = {type = "str",  description = "Hostname to connect to", position = 1, required = true}
+port    = {type = "int",  description = "TLS port",               default = 443}
+timeout = {type = "int",  description = "Connection timeout in seconds", default = 10}
+json    = {type = "flag", description = "Emit JSON instead of text",     default = false}
+
+[http-check]
+description = "Probe an HTTP(S) URL — status code, response time, redirect target"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "http-check https://example.com",                      description = "GET the URL, report status + timing"},
+  {cmd = "http-check https://example.com --expect-status 200",  description = "Exit non-zero unless the status is 200"},
+]
+
+[http-check.args]
+url           = {type = "str",  description = "URL to request",                         position = 1, required = true}
+timeout       = {type = "int",  description = "Request timeout in seconds",              default = 10}
+expect-status = {type = "int",  description = "Exit non-zero unless the status matches", required = false}
+json          = {type = "flag", description = "Emit JSON instead of text",              default = false}
+
+[tls-info]
+description = "Report the negotiated TLS protocol, cipher, and trust result for a host"
+autonomy    = "autonomous"
+
+[tls-info.args]
+host    = {type = "str",  description = "Hostname to connect to", position = 1, required = true}
+port    = {type = "int",  description = "TLS port",               default = 443}
+timeout = {type = "int",  description = "Connection timeout in seconds", default = 10}
+json    = {type = "flag", description = "Emit JSON instead of text",     default = false}

@@ -1,0 +1,49 @@
+{
+  "name": "runspec-webops",
+  "version": "0.1.0",
+  "description": "HTTPS/TLS certificate and web-endpoint runnables for runspec (Node)",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "bin": {
+    "cert-check": "./dist/cert-check.js",
+    "cert-chain": "./dist/cert-chain.js",
+    "http-check": "./dist/http-check.js",
+    "tls-info": "./dist/tls-info.js"
+  },
+  "files": [
+    "dist",
+    "runspec.toml",
+    "README.md"
+  ],
+  "keywords": [
+    "runspec",
+    "tls",
+    "https",
+    "certificate",
+    "monitoring",
+    "agents"
+  ],
+  "author": "Jason Finestone",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JasonFinestone/runspec"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "runspec-node": "^0.24.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.9.1",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.0.0",
+    "typescript": "^6.0.3"
+  }
+}
