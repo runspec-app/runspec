@@ -592,6 +592,12 @@ export const mockApi: BridgeApi = {
   get_schedules: async () => MOCK_SCHEDULES,
 
   config_dir: async () => 'C:/Users/jason/AppData/Roaming/runspec-console',
+  list_providers: async () => [
+    { value: 'anthropic', label: 'Anthropic' },
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'bedrock', label: 'AWS Bedrock' },
+    { value: 'langserve', label: 'LangServe gateway' },
+  ],
   get_config: async () => ({
     ssh: { user: 'jason', identityFile: 'C:/Users/jason/AppData/Roaming/runspec-console/runspec_ed25519', key_created_at: MOCK_KEY_CREATED_AT },
     llm: { apiBaseUrl: '', model: 'claude-opus-4-7' },

@@ -126,11 +126,47 @@ flushes any remaining `currentText` and sets `done: true`. Tool call blocks in t
 the runnable name (host prefix stripped), args inline, and a collapsible output section.
 
 **Provider config** lives in `%APPDATA%\runspec-console\runspec_config.toml` under `[llm]`:
-  - `provider` — `"anthropic"` | `"openai"` | `"bedrock"`
-  - `api_key` — for Anthropic/OpenAI; or Bedrock proxy token
-  - `model` — defaults: `claude-sonnet-4-6`, `gpt-4o`, `anthropic.claude-sonnet-4-6`
-  - `base_url` — optional; for OpenAI-compatible endpoints or Bedrock corporate proxy
+  - `provider` — `"anthropic"` | `"openai"` | `"bedrock"` | `"langserve"`
+  - `api_key` — for Anthropic/OpenAI; Bedrock proxy token; or LangServe bearer token
+  - `model` — defaults: `claude-sonnet-4-6`, `gpt-4o`, `anthropic.claude-sonnet-4-6` (langserve has none — the published chain usually pins it)
+  - `base_url` — optional; for OpenAI-compatible endpoints or Bedrock corporate proxy. **Required** for langserve (the `/invoke` endpoint; `/invoke` is appended if absent)
   - `aws_region` — Bedrock only
+  - `api_key_command` / `api_key_ttl_ms` — rotating-token vending (Anthropic + LangServe): shell command stdout is the token, cached for the TTL
+  - **langserve-only** — `auth_header` (default `Authorization`), `auth_scheme`
+    (default `Bearer`; `""` sends the raw token), `input_messages_key`
+    (default `messages`), `input_tools_key` (default `tools`), `tools_in_config`
+    (default `false` — when true tools go to `config.configurable.<key>`). These
+    describe the gateway's `/invoke` input shape; thread through `_get_adapter`
+    only when set. The adapter (`adapters/langserve.py`) maps runspec's
+    Anthropic-format tools → OpenAI-function dicts and the conversation →
+    LangChain-ingestable role dicts (so `make_tool_turn` uses the OpenAI shape),
+    parses the returned `AIMessage` (incl. the LangServe `dumpd` 'constructor'
+    envelope) for `tool_calls`. `httpx` is imported lazily so the pure mapping
+    helpers stay testable without the `[langserve]` extra. `chat()` routes
+    through `_build_payload` / `_parse_output` so a plugin can subclass it and
+    override just the request/response shaping.
+
+**Adapter plugins** (`adapters/base.py`). `load_adapter` is a registry, not a
+hardcoded dispatch. Resolution order: (1) a `module:attr` **dotted path**;
+(2) the `_REGISTRY` populated by `register_adapter()` — built-ins register
+themselves at import, plugins may register from a module imported via
+`[plugins] modules`; (3) **entry points** in the `runspec_console.adapters`
+group (`available_providers()` unions the registry + entry-point names).
+`ModelAdapter` / `ChatResponse` / `ToolCall` / `register_adapter` /
+`available_providers` are re-exported from the top-level `runspec_console`
+package as the plugin contract. `Bridge.list_providers()` (built-ins + discovered
+plugins, with friendly labels) drives the dynamic provider dropdown;
+`Bridge._ensure_plugins_imported` imports `[plugins] modules` once before
+resolving. Example template: `examples/console-adapter-plugin/` (not built or
+tested with the package). The `[llm]` config can also point `provider` at a
+plugin name or dotted path; the Settings UI renders the common
+api_key/base_url/model/system fields for any non-built-in provider.
+`adapters/testing.py` ships public conformance helpers
+(`assert_adapter_contract` / `assert_chat_response` / `assert_tool_turn`) so
+plugin authors validate the contract (incl. the `stop_reason="tool_use"`
+invariant) without a live gateway. The example template carries an `AGENTS.md`
+brief + a Copilot prompt file for AI-agent authoring and a fake-client
+conformance test.
   - `system` — optional standing instructions (system prompt). `_get_adapter`
     passes it to the adapter only when non-blank, so adapters keep their
     `DEFAULT_SYSTEM` otherwise. Editable in Settings → LLM; `save_config` clears

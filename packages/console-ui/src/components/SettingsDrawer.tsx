@@ -18,7 +18,23 @@ const PROVIDER_MODELS: Record<string, string> = {
   anthropic: 'claude-sonnet-4-6',
   openai: 'gpt-4o',
   bedrock: 'anthropic.claude-sonnet-4-6',
+  langserve: '',  // the published LangServe chain usually pins its own model
 }
+
+const BUILTIN_PROVIDERS = new Set(['anthropic', 'openai', 'bedrock', 'langserve'])
+
+const BUILTIN_PROVIDER_OPTIONS = [
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'bedrock', label: 'AWS Bedrock' },
+  { value: 'langserve', label: 'LangServe gateway' },
+]
+
+// Keys the LLM form manages directly. Anything else under [llm] (e.g. the
+// rotating-token api_key_command, or langserve's input_messages_key / *_key /
+// tools_in_config knobs) is hand-edited in the TOML and must survive a Save —
+// so handleSave preserves unmanaged keys instead of rebuilding the section.
+const MANAGED_LLM_KEYS = ['provider', 'api_key', 'model', 'base_url', 'aws_region', 'system'] as const
 
 // ── LLM tab ───────────────────────────────────────────────────────────────────
 
@@ -28,8 +44,15 @@ function LlmTab() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [configDir, setConfigDir] = useState<string>('')
+  const [providerOptions, setProviderOptions] = useState(BUILTIN_PROVIDER_OPTIONS)
 
   useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
+  // Built-ins plus any discovered plugins (entry points / [plugins] modules).
+  useEffect(() => {
+    bridge.list_providers?.()
+      .then(p => { if (p?.length) setProviderOptions(p) })
+      .catch(() => { /* keep built-in fallback */ })
+  }, [])
 
   useEffect(() => {
     bridge.get_config().then(cfg => {
@@ -59,17 +82,23 @@ function LlmTab() {
     setSaving(true)
     try {
       const cfg = await bridge.get_config()
-      await bridge.save_config({
-        ...cfg,
-        llm: {
-          ...(v.provider   ? { provider: v.provider }     : {}),
-          ...(v.api_key    ? { api_key: v.api_key }       : {}),
-          ...(v.model      ? { model: v.model }           : {}),
-          ...(v.base_url   ? { base_url: v.base_url }     : {}),
-          ...(v.aws_region ? { aws_region: v.aws_region } : {}),
-          ...(v.system?.trim() ? { system: v.system.trim() } : {}),
-        },
-      })
+      // Start from the existing [llm] section so hand-edited advanced keys
+      // (api_key_command, langserve input/output knobs) aren't wiped on Save;
+      // set-or-delete only the keys the form owns.
+      const llm: Record<string, unknown> = { ...((cfg.llm as Record<string, unknown>) ?? {}) }
+      const next: Record<string, string> = {
+        provider: v.provider ?? '',
+        api_key: v.api_key ?? '',
+        model: v.model ?? '',
+        base_url: v.base_url ?? '',
+        aws_region: v.aws_region ?? '',
+        system: v.system?.trim() ?? '',
+      }
+      for (const k of MANAGED_LLM_KEYS) {
+        if (next[k]) llm[k] = next[k]
+        else delete llm[k]
+      }
+      await bridge.save_config({ ...cfg, llm })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -81,21 +110,27 @@ function LlmTab() {
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
       <Form.Item name="provider" label="Provider">
         <Select placeholder="None — chat disabled" allowClear onChange={handleProviderChange}>
-          <Select.Option value="anthropic">Anthropic</Select.Option>
-          <Select.Option value="openai">OpenAI</Select.Option>
-          <Select.Option value="bedrock">AWS Bedrock</Select.Option>
+          {providerOptions.map(o => (
+            <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>
+          ))}
         </Select>
       </Form.Item>
-      {(provider === 'anthropic' || provider === 'openai' || provider === 'bedrock') && (
+      {!!provider && (
         <>
           {provider !== 'bedrock' && (
-            <Form.Item name="api_key" label="API key">
-              <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'} />
+            <Form.Item
+              name="api_key"
+              label={provider === 'langserve' ? 'API token' : 'API key'}
+              help={provider === 'langserve' ? 'Bearer token. For rotating corporate tokens, set api_key_command in the config file instead.' : undefined}
+            >
+              <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : provider === 'openai' ? 'sk-...' : 'token'} />
             </Form.Item>
           )}
-          <Form.Item name="model" label="Model">
-            <Input placeholder={PROVIDER_MODELS[provider] ?? ''} style={{ fontFamily: 'monospace' }} />
-          </Form.Item>
+          {provider !== 'langserve' && (
+            <Form.Item name="model" label="Model">
+              <Input placeholder={PROVIDER_MODELS[provider] ?? ''} style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+          )}
           <Form.Item
             name="system"
             label="System prompt"
@@ -106,9 +141,18 @@ function LlmTab() {
               placeholder={'You are a helpful assistant with access to runspec tools on local and remote hosts.\nUse tools when they help; briefly explain each call before running it.'}
             />
           </Form.Item>
-          {(provider === 'openai' || provider === 'bedrock') && (
-            <Form.Item name="base_url" label="Base URL" help={provider === 'bedrock' ? 'Corporate proxy URL (optional)' : 'Optional — for OpenAI-compatible endpoints'}>
-              <Input placeholder="https://..." style={{ fontFamily: 'monospace' }} />
+          {(provider === 'openai' || provider === 'bedrock' || provider === 'langserve' || !BUILTIN_PROVIDERS.has(provider)) && (
+            <Form.Item
+              name="base_url"
+              label={provider === 'langserve' ? 'Endpoint URL' : 'Base URL'}
+              help={
+                provider === 'bedrock' ? 'Corporate proxy URL (optional)'
+                : provider === 'langserve' ? 'Required — the LangServe route (/invoke is appended automatically)'
+                : !BUILTIN_PROVIDERS.has(provider) ? 'Endpoint URL for this provider plugin (if it needs one)'
+                : 'Optional — for OpenAI-compatible endpoints'
+              }
+            >
+              <Input placeholder={provider === 'langserve' ? 'https://gateway.corp/my-chain' : 'https://...'} style={{ fontFamily: 'monospace' }} />
             </Form.Item>
           )}
           {provider === 'bedrock' && (

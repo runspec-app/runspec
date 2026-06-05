@@ -1,0 +1,31 @@
+# Example: an out-of-tree LLM provider plugin for runspec-console.
+#
+# Copy this directory into your own (private) repo, rename the package, fill in
+# adapter.py, then build a wheel and publish it to your internal index. Installing
+# the wheel into the same venv as runspec-console makes the provider selectable —
+# no change to runspec-console itself.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "console-adapter-plugin"
+version = "0.1.0"
+description = "Example custom LLM provider for runspec-console"
+requires-python = ">=3.11"
+dependencies = [
+    # Only the SDK-free base classes are needed from the host package.
+    "runspec-console>=0.15.0",
+    # Your proprietary client's deps go here, e.g. "httpx>=0.27".
+    "httpx>=0.27",
+]
+
+# ── This is the whole integration: advertise the provider name. ───────────────
+# After `pip install`, `provider = "mycorp"` in the [llm] config resolves to the
+# class below — runspec-console discovers it via this entry-point group.
+[project.entry-points."runspec_console.adapters"]
+mycorp = "console_adapter_plugin.adapter:MyCorpAdapter"
+
+[tool.hatch.build.targets.wheel]
+packages = ["console_adapter_plugin"]

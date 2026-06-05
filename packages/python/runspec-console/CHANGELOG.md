@@ -8,7 +8,56 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.13.0] — 2026-06-04
+## [0.15.0] — 2026-06-05
+
+### Added
+- **Custom LLM provider plugins.** `load_adapter` is now an open registry
+  instead of a hardcoded dispatch, so an out-of-tree (e.g. proprietary,
+  in-house) adapter can supply a provider without forking runspec-console.
+  Three resolution paths: a `module:Class` **dotted-path** provider; the public
+  **`register_adapter(name, factory)`** API (plus `[plugins] modules = [...]`
+  to import self-registering modules at startup); and **entry-point discovery**
+  via the `runspec_console.adapters` group (install a wheel and the provider
+  appears — the recommended path). The SDK-free `ModelAdapter` / `ChatResponse`
+  / `ToolCall` trio and `register_adapter` / `available_providers` are exported
+  from the top-level `runspec_console` package as the stable plugin contract.
+- **Provider dropdown is now dynamic** — `bridge.list_providers()` surfaces
+  built-ins plus discovered plugins, so installed plugin providers are
+  selectable in Settings → LLM (unknown providers get the common api_key /
+  base_url / model / system fields).
+- **`LangServeAdapter` is subclassable** — `chat()` routes through
+  `_build_payload` / `_parse_output`, so a plugin for a non-vanilla
+  LangServe-style gateway overrides just those two and inherits auth, token
+  rotation, and the agent-loop plumbing.
+- **Example plugin template** under
+  `examples/console-adapter-plugin/` (pyproject with the entry point, an adapter
+  subclassing `LangServeAdapter`, and a README) — a copy-paste start for an
+  internal adapter package. Not built/tested as part of runspec-console. Ships
+  with an `AGENTS.md` brief and a `.github/prompts/` Copilot prompt file for
+  building the adapter with an AI agent, plus a fake-client conformance test.
+- **Adapter conformance helpers** (`runspec_console.adapters.testing`):
+  `assert_adapter_contract`, `assert_chat_response`, `assert_tool_turn` — a
+  public, pytest-free way for plugin authors to validate an adapter against the
+  contract (return types, the `stop_reason="tool_use"` invariant, `make_tool_turn`
+  shape) before wiring it in.
+
+
+## [0.14.0] — 2026-06-05
+
+### Added
+- **LangServe provider (`pip install runspec-console[langserve]`).** A fourth
+  LLM adapter that drives a LangServe `/invoke` endpoint — a LangChain Runnable
+  published over HTTP, the common shape of a corporate LLM gateway (often
+  Bedrock/Claude underneath) when no native Anthropic/OpenAI API is available.
+  Set `[llm] provider = "langserve"` and `base_url` to the endpoint. Tool
+  calling is structured: runspec tools are sent as OpenAI-function dicts and the
+  returned `AIMessage.tool_calls` map straight onto tool runs. Auth is a bearer
+  token from a static `api_key` or a rotating `api_key_command` (same vending +
+  TTL pattern as the Anthropic adapter). The gateway-specific input/output shape
+  is configurable without code changes: `input_messages_key`, `input_tools_key`,
+  `tools_in_config`, `auth_header`, `auth_scheme`. Selectable in
+  Settings → LLM. The adapter's pure mapping helpers are unit-tested without
+  `httpx` installed (mirrors `test_prompt_caching`).
 
 ### Added
 - **Centralized SSH connection pool (#104).** The console now keeps one reused,

@@ -23,6 +23,8 @@ class _StubBridge:
         return self._cfg
 
     _get_adapter = Bridge._get_adapter
+    _ensure_plugins_imported = Bridge._ensure_plugins_imported
+    list_providers = Bridge.list_providers
 
 
 def test_static_key_adapter_is_cached():
@@ -65,6 +67,30 @@ def test_api_key_command_threaded_and_not_cached():
     assert kwargs["api_key_command"] == "token-helper"
     assert kwargs["api_key_ttl_ms"] == 3_600_000
     assert kwargs["base_url"] == "https://proxy.example.com"
+
+
+def test_langserve_knobs_threaded():
+    cfg = {
+        "llm": {
+            "provider": "langserve",
+            "base_url": "https://gateway.corp/my-chain",
+            "api_key_command": "vend-token",
+            "api_key_ttl_ms": 300_000,
+            "tools_in_config": True,
+            "input_messages_key": "chat_history",
+            "auth_header": "X-Api-Key",
+        }
+    }
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert kwargs["base_url"] == "https://gateway.corp/my-chain"
+    assert kwargs["tools_in_config"] is True
+    assert kwargs["input_messages_key"] == "chat_history"
+    assert kwargs["auth_header"] == "X-Api-Key"
+    # api_key_command path bypasses the bridge-level adapter cache.
+    assert bridge._adapter is None
 
 
 def test_no_provider_returns_none():

@@ -248,6 +248,7 @@ export interface BridgeApi {
   get_schedules: () => Promise<Schedule[]>
   get_config: () => Promise<Record<string, unknown>>
   config_dir: () => Promise<string>
+  list_providers: () => Promise<{ value: string; label: string }[]>
   save_config: (data: Record<string, unknown>) => Promise<void>
   create_schedule: (data: Record<string, unknown>) => Promise<void>
   delete_schedule: (id: string) => Promise<void>

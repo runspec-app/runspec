@@ -2329,6 +2329,33 @@ class Bridge:
         )
         return code == 0
 
+    def _ensure_plugins_imported(self, cfg: dict[str, Any]) -> None:
+        """Import any `[plugins] modules` once so their register_adapter() runs."""
+        if getattr(self, "_plugins_imported", False):
+            return
+        modules = cfg.get("plugins", {}).get("modules") or []
+        if modules:
+            from .adapters.base import import_plugin_modules
+
+            import_plugin_modules(list(modules))
+        self._plugins_imported = True
+
+    def list_providers(self) -> list[dict[str, str]]:
+        """Resolvable LLM providers as {value, label} — built-ins plus any
+        discovered plugins (entry points + `[plugins] modules`). Drives the
+        Settings provider dropdown so installed plugin providers show up."""
+        cfg = self.get_config()
+        self._ensure_plugins_imported(cfg)
+        from .adapters.base import available_providers
+
+        labels = {
+            "anthropic": "Anthropic",
+            "openai": "OpenAI",
+            "bedrock": "AWS Bedrock",
+            "langserve": "LangServe gateway",
+        }
+        return [{"value": p, "label": labels.get(p, p)} for p in available_providers()]
+
     def _get_adapter(self) -> Any:
         if self._adapter is not None:
             return self._adapter
@@ -2336,6 +2363,7 @@ class Bridge:
         provider = cfg.get("llm", {}).get("provider")
         if not provider:
             return None
+        self._ensure_plugins_imported(cfg)
         kwargs: dict[str, Any] = {}
         llm_cfg = cfg.get("llm", {})
         if llm_cfg.get("api_key"):
@@ -2354,6 +2382,19 @@ class Bridge:
             kwargs["api_key_command"] = llm_cfg["api_key_command"]
         if llm_cfg.get("api_key_ttl_ms") is not None:
             kwargs["api_key_ttl_ms"] = int(llm_cfg["api_key_ttl_ms"])
+        # LangServe-only knobs — describe the gateway's input/output shape. Only
+        # forwarded when set (and only meaningful to the langserve adapter), so
+        # other providers never see them.
+        for key in (
+            "auth_header",
+            "auth_scheme",
+            "input_messages_key",
+            "input_tools_key",
+        ):
+            if llm_cfg.get(key):
+                kwargs[key] = llm_cfg[key]
+        if llm_cfg.get("tools_in_config") is not None:
+            kwargs["tools_in_config"] = bool(llm_cfg["tools_in_config"])
         try:
             from .adapters.base import load_adapter
 
