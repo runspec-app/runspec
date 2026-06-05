@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from runspec_console.bridge import Bridge
 
 LOAD = "runspec_console.adapters.base.load_adapter"
@@ -91,6 +93,26 @@ def test_langserve_knobs_threaded():
     assert kwargs["auth_header"] == "X-Api-Key"
     # api_key_command path bypasses the bridge-level adapter cache.
     assert bridge._adapter is None
+
+
+def test_plugin_import_error_surfaces_cause_not_fake_extra():
+    # A plugin provider whose dependency (e.g. httpx) is missing must not be told
+    # to `pip install runspec-console[<provider>]` — there is no such extra.
+    bridge = _StubBridge({"llm": {"provider": "acme-llm"}})
+    with patch(LOAD, side_effect=ImportError("No module named 'httpx'")):
+        with pytest.raises(ImportError) as exc:
+            bridge._get_adapter()
+    msg = str(exc.value)
+    assert "runspec-console[acme-llm]" not in msg
+    assert "httpx" in msg  # the real cause is preserved
+
+
+def test_builtin_import_error_still_suggests_the_extra():
+    bridge = _StubBridge({"llm": {"provider": "anthropic"}})
+    with patch(LOAD, side_effect=ImportError("anthropic")):
+        with pytest.raises(ImportError) as exc:
+            bridge._get_adapter()
+    assert "pip install runspec-console[anthropic]" in str(exc.value)
 
 
 def test_no_provider_returns_none():

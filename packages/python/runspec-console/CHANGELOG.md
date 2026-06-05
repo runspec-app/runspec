@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.16.1] — 2026-06-05
+
+### Fixed
+- **Saving settings no longer needlessly drops SSH connections.** `save_config`
+  rebuilt the SSH connection pool (closing every live connection) on *every*
+  save — so changing the LLM system prompt or model name in Settings tore down
+  all host connections. The pool now reacts only to `[ssh]` changes (it never
+  consumed `[refresh]`), and even then it does the least disruptive thing: it
+  rebuilds (the only case that drops connections) **only** when pooling is
+  toggled on/off or `max_concurrent` changes; behavioural tunables
+  (`keepalive`/`idle_ttl`/`max_sessions`/`backoff`) apply to the live pool in
+  place via the new `SSHConnectionPool.update_settings`, and connection-shaping
+  changes (`user`/`proxy`/`identityFile`) migrate lazily via the connection key.
+  Unrelated saves leave warm connections untouched; the cached adapter is still
+  invalidated on every save so LLM changes take effect immediately.
+- **Misleading install hint for plugin providers.** When a plugin LLM provider
+  (entry point / dotted path) failed to load because one of *its* dependencies
+  was missing, the console swallowed the real `ImportError` and told the user to
+  `pip install runspec-console[<provider>]` — an extra that doesn't exist. It now
+  preserves the real cause (e.g. "No module named 'httpx'") and points at the
+  plugin package. The built-in providers still get their `runspec-console[...]`
+  extra hint.
+
+
 ## [0.16.0] — 2026-06-05
 
 ### Security

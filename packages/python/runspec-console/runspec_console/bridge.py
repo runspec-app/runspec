@@ -813,18 +813,45 @@ class Bridge:
         return _normalize_path(str(config_path().parent))
 
     def save_config(self, data: dict[str, Any]) -> None:
+        old = self.get_config()
         ssh = data.get("ssh")
         if isinstance(ssh, dict):
             data = {**data, "ssh": _normalize_ssh_section(ssh)}
         write_config(data)
         self._adapter = None
-        # SSH tunables (pool, keepalive, max_sessions, max_concurrent, proxy,
-        # identity…) may have changed — rebuild the pool against the new config
-        # and drop the old transports so the next cycle reflects it.
-        old_pool = self._ssh_pool
-        self._ssh_pool = self._build_ssh_pool()
-        if old_pool is not None:
-            old_pool.close_all()
+        self._apply_ssh_config(old.get("ssh"), data.get("ssh"))
+
+    def _apply_ssh_config(
+        self, old_ssh: dict[str, Any] | None, new_ssh: dict[str, Any] | None
+    ) -> None:
+        """React to an ``[ssh]`` change with the least disruption to live
+        connections. The pool consumes only ``[ssh]`` (never ``[refresh]``), so
+        an unrelated save (LLM, refresh tuning…) reaches here with no change and
+        does nothing.
+
+        A full rebuild — which drops every connection — happens only when
+        pooling is toggled on/off or ``max_concurrent`` changes (the handshake
+        semaphore can't be resized in place). Every other change is applied
+        without a drop: behavioural tunables update in place, and
+        connection-shaping fields (user / proxy / identity) migrate lazily via
+        the connection key on next use.
+        """
+        if old_ssh == new_ssh:
+            return
+        from .ssh_pool import pool_settings
+
+        old_s = pool_settings(old_ssh)
+        new_s = pool_settings(new_ssh)
+        if (old_s["enabled"], old_s["max_concurrent"]) != (
+            new_s["enabled"],
+            new_s["max_concurrent"],
+        ):
+            old_pool = self._ssh_pool
+            self._ssh_pool = self._build_ssh_pool()
+            if old_pool is not None:
+                old_pool.close_all()
+        elif self._ssh_pool is not None:
+            self._ssh_pool.update_settings(new_s)
 
     def _generate_keypair_to_path(self, dest: Path) -> dict[str, Any]:
         """Write a new ed25519 key pair to dest (OpenSSH PEM + PPK v2). Does not touch config."""
@@ -2422,11 +2449,21 @@ class Bridge:
             from .adapters.base import load_adapter
 
             adapter = load_adapter(provider, **kwargs)
-        except ImportError:
+        except ImportError as exc:
+            builtins = {"anthropic", "openai", "bedrock", "langserve"}
+            if provider in builtins:
+                raise ImportError(
+                    f"LLM provider '{provider}' requires its optional dependency. "
+                    f"Install it with: pip install runspec-console[{provider}]"
+                ) from exc
+            # A plugin provider (entry point / dotted path) resolved, but a
+            # dependency is missing. Surface the real cause and point at the
+            # plugin package — there is no `runspec-console[{provider}]` extra.
             raise ImportError(
-                f"LLM provider '{provider}' requires an optional dependency. "
-                f"Install it with: pip install runspec-console[{provider}]"
-            )
+                f"LLM provider '{provider}' could not be loaded: {exc}. "
+                f"Install the package that provides '{provider}' (and its "
+                f"dependencies) into the same environment as runspec-console."
+            ) from exc
         except ValueError as exc:
             raise ValueError(f"LLM configuration error: {exc}") from exc
         # When a key-vending command is configured, don't cache the adapter — the

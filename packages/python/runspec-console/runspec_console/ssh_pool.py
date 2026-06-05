@@ -436,3 +436,17 @@ class SSHConnectionPool:
             self._backoff.clear()
         for c in conns:
             c.close()
+
+    def update_settings(self, settings: dict[str, Any]) -> None:
+        """Apply new behavioural tunables to the live pool without dropping any
+        connections (keepalive / idle_ttl / max_sessions / backoff).
+
+        The caller must guarantee ``enabled`` and ``max_concurrent`` are
+        unchanged — those can't be applied to a running pool (one decides whether
+        the pool exists at all, the other sizes the handshake semaphore), so they
+        require a rebuild. Connection-*shaping* changes (user / proxy / identity)
+        need nothing here either: they alter the connection key, so the next use
+        opens a fresh transport and the stale one is reaped.
+        """
+        with self._map_lock:
+            self._settings = settings

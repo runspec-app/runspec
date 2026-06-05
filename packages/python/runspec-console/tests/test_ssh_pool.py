@@ -430,3 +430,18 @@ def test_pool_settings_defaults_and_overrides():
 def test_pool_settings_ignores_garbage_values():
     d = pool_settings({"keepalive": "nope", "max_sessions": None})
     assert d["keepalive"] == 30 and d["max_sessions"] == 8
+
+
+def test_update_settings_applies_tunables_without_dropping_connections():
+    pool = make_pool(make_client=lambda *a: FakeClient())
+    pool.run("u@h", "true")
+    assert len(pool._conns) == 1
+    conn_before = next(iter(pool._conns.values()))
+
+    pool.update_settings(pool_settings({"keepalive": 99, "idle_ttl": 123}))
+
+    assert pool._settings["keepalive"] == 99
+    assert pool._settings["idle_ttl"] == 123
+    # the live connection is untouched — update_settings never drops transports
+    assert len(pool._conns) == 1
+    assert next(iter(pool._conns.values())) is conn_before
