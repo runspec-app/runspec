@@ -15,6 +15,7 @@ export interface ArgDef {
   autonomy?: string       // per-arg autonomy override
   position?: number       // 1-based positional index
   ui?: string             // form control hint
+  inherited?: boolean     // arg inherited from an ancestor (global / parent-command) — set by discovery
 }
 
 export interface Runnable {

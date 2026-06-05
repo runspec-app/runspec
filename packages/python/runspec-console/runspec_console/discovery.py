@@ -149,13 +149,23 @@ def _spec_to_runnables(
     host: str,
     group: str,
     config_autonomy: str | None = None,
+    inherited_args: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    inherited_args = inherited_args or []
+    own_args = _build_args(spec.get("args", {}))
+    # Effective arg set = ancestor (inherited) args merged with this node's own,
+    # child overriding parent on a name clash. Mirrors core
+    # parser._resolve_subcommand so the form collects the same args core parses.
+    own_names = {a["name"] for a in own_args}
+    effective_args = [
+        a for a in inherited_args if a["name"] not in own_names
+    ] + own_args
     runnable: dict[str, Any] = {
         "name": name,
         "group": group,
         "host": host,
         "description": spec.get("description") or "",
-        "args": _build_args(spec.get("args", {})),
+        "args": effective_args,
         "autonomy": spec.get("autonomy") or config_autonomy or "confirm",
         # Full raw spec minus processed keys — SpecPanel uses this for the holistic view.
         "rawSpec": {k: v for k, v in spec.items() if k not in _RAW_SPEC_EXCLUDE},
@@ -169,8 +179,14 @@ def _spec_to_runnables(
 
     commands = spec.get("commands")
     if commands:
+        # Children inherit this node's effective args, each tagged so the form can
+        # group inherited fields apart from the command's own. Re-tagging an
+        # already-inherited arg is idempotent.
+        child_inherited = [{**a, "inherited": True} for a in effective_args]
         runnable["commands"] = {
-            sub_name: _spec_to_runnables(sub_name, sub_spec, host, group)[0]
+            sub_name: _spec_to_runnables(
+                sub_name, sub_spec, host, group, None, child_inherited
+            )[0]
             for sub_name, sub_spec in commands.items()
             if isinstance(sub_spec, dict)
         }

@@ -1421,6 +1421,25 @@ class Bridge:
         run_as = resolve_run_as(raw.get("run_as"), hostname)
         return run_as, str(raw.get("become_method") or "sudo"), raw.get("become_flags")
 
+    @staticmethod
+    def _positionals_for(
+        cached: dict[str, Any] | None, command_path: list[str]
+    ) -> dict[str, int]:
+        """{arg_name: position} for the node at ``command_path``.
+
+        Positional args (those with a ``position`` in the spec) must be sent as
+        bare values, not ``--name`` flags — the executor uses this to place them
+        correctly. Resolves the leaf node so a subcommand's positionals are found
+        too. Empty when the runnable isn't cached (falls back to all-flags)."""
+        node = cached or {}
+        for seg in command_path:
+            node = (node.get("commands") or {}).get(seg) or {}
+        return {
+            a["name"]: a["position"]
+            for a in node.get("args", [])
+            if isinstance(a, dict) and a.get("position") is not None
+        }
+
     def invoke_runnable(
         self,
         host: str,
@@ -1518,6 +1537,7 @@ class Bridge:
                     become_method=become_method,
                     become_flags=become_flags,
                     session_factory=session_factory,
+                    positionals=self._positionals_for(cached, cp),
                 )
             else:
                 run_local(
@@ -1531,6 +1551,7 @@ class Bridge:
                     run_as=run_as,
                     become_method=become_method,
                     become_flags=become_flags,
+                    positionals=self._positionals_for(cached, cp),
                 )
 
         t = threading.Thread(target=run, daemon=True)
@@ -2071,6 +2092,7 @@ class Bridge:
                 run_as=run_as,
                 become_method=become_method,
                 become_flags=become_flags,
+                positionals=self._positionals_for(cached_r, []),
             )
         else:
             run_local(
@@ -2085,6 +2107,7 @@ class Bridge:
                 run_as=run_as,
                 become_method=become_method,
                 become_flags=become_flags,
+                positionals=self._positionals_for(cached_r, []),
             )
 
         output = "\n".join(output_lines)

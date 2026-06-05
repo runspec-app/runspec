@@ -12,6 +12,7 @@ The caller supplies two callbacks:
 from __future__ import annotations
 
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -143,21 +144,55 @@ def friendly_ssh_error(exc: BaseException | str) -> str:
     return msg
 
 
-def args_to_argv(args: dict[str, Any]) -> list[str]:
-    """Convert a {name: value} args dict to a CLI argv list."""
-    argv: list[str] = []
+def shell_join(parts: list[str]) -> str:
+    """Join an argv token list into a single shell command line, quoting each
+    token so a user-supplied arg value cannot inject shell syntax.
+
+    ``run_remote`` runs the command through the remote login shell
+    (``exec_command`` → ``/bin/sh -c``), so an unquoted value containing ``;``,
+    ``|``, ``$(...)``, backticks, ``&&`` or whitespace would be interpreted by
+    the shell — a command-injection hole, especially under ``sudo -u``. Quoting
+    every token makes each one a single literal argument. (Local execution never
+    hits a shell — it execs the argv list directly — so this is the only path
+    that needs it.)
+    """
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def args_to_argv(
+    args: dict[str, Any], positionals: dict[str, int] | None = None
+) -> list[str]:
+    """Convert a {name: value} args dict to a CLI argv list.
+
+    Args named in ``positionals`` ({name: position}) are emitted as bare values
+    in position order, *after* the flags — core's parser only accepts a
+    positional by position, never as ``--name`` (it would reject the flag as an
+    unknown argument). Everything else is a flag: ``--name value`` (``--name``
+    for a true flag; repeated per item for a list).
+    """
+    positionals = positionals or {}
+    flags: list[str] = []
+    positional_vals: list[tuple[int, str]] = []
     for k, v in args.items():
         if v is None:
             continue
-        if isinstance(v, bool):
+        # Skip blank strings (e.g. an optional inherited field left empty in the
+        # form) so we don't emit `--flag ""`, which would fail a pattern check.
+        if isinstance(v, str) and v == "":
+            continue
+        if k in positionals:
+            items = v if isinstance(v, list) else [v]
+            positional_vals.extend((positionals[k], str(item)) for item in items)
+        elif isinstance(v, bool):
             if v:
-                argv.append(f"--{k}")
+                flags.append(f"--{k}")
         elif isinstance(v, list):
             for item in v:
-                argv.extend([f"--{k}", str(item)])
+                flags.extend([f"--{k}", str(item)])
         else:
-            argv.extend([f"--{k}", str(v)])
-    return argv
+            flags.extend([f"--{k}", str(v)])
+    positional_vals.sort(key=lambda p: p[0])
+    return flags + [val for _, val in positional_vals]
 
 
 def run_local(
@@ -173,6 +208,7 @@ def run_local(
     run_as: str = "",
     become_method: str = "sudo",
     become_flags: str | None = None,
+    positionals: dict[str, int] | None = None,
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
@@ -186,7 +222,7 @@ def run_local(
     binary = next(
         (bin_dir / c for c in candidates if (bin_dir / c).exists()), bin_dir / runnable
     )
-    argv = args_to_argv(args)
+    argv = args_to_argv(args, positionals)
     cmd = [str(binary), *command_path, *argv]
     # A .cmd/.bat shim isn't directly executable by CreateProcess — run it
     # through the command interpreter so the Node-folder shims work on Windows.
@@ -360,6 +396,7 @@ def run_remote(
     become_method: str = "sudo",
     become_flags: str | None = None,
     session_factory: Callable[[], tuple[Any, Callable[[], None]]] | None = None,
+    positionals: dict[str, int] | None = None,
 ) -> None:
     """Execute a remote runnable via paramiko SSH, streaming output via callbacks.
 
@@ -372,7 +409,7 @@ def run_remote(
 
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
-    argv = args_to_argv(args)
+    argv = args_to_argv(args, positionals)
     # build_become_argv handles both the plain (RUNSPEC_AGENT=1 cmd) and the
     # escalated (sudo -u user env RUNSPEC_AGENT=1 cmd) forms.
     env = {"RUNSPEC_AGENT": "1"} if agent else {}
@@ -383,7 +420,9 @@ def run_remote(
         become_flags,
         env=env,
     )
-    remote_cmd = " ".join(parts)
+    # Quote every token — this string is run through the remote shell, so an
+    # unquoted arg value would be a command-injection vector (worse under sudo).
+    remote_cmd = shell_join(parts)
 
     start = time.monotonic()
     client = None  # set only on the legacy (non-pooled) path; closed in finally

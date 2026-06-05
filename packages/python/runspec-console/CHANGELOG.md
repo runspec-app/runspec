@@ -8,6 +8,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.16.0] — 2026-06-05
+
+### Security
+- **Remote invocations are now shell-quoted (command-injection fix).**
+  `run_remote` executes through the remote login shell (`exec_command`), and the
+  argv was space-joined without quoting — so an arg value containing `;`, `|`,
+  `$(...)`, backticks, `&&`, or whitespace was interpreted by the shell, i.e.
+  command injection (and worse under `sudo -u`). Every token is now quoted via
+  `shell_join` before execution; a value is parsed back as a single literal
+  argument. Local execution was never affected (it execs the argv list, no
+  shell), and `build_become_argv`'s `su` path already quoted its inner command.
+  Regression tests fire real payloads and assert single-token survival.
+
+### Fixed
+- **Forms view dropped global args for runnables with subcommands.** A runnable
+  whose top-level `args` are global (inherited by every subcommand, per runspec
+  0.20.0) showed only the subcommand picker, so its globals were never collected;
+  leaf forms showed only their own args, never the inherited effective set. Now
+  discovery merges each ancestor's args down the command path (child overrides
+  parent on a name clash, mirroring core `_resolve_subcommand`) and tags the
+  inherited ones. The leaf form renders them in an **Inherited** section above
+  the command's own args, validated together in one pass. Intermediate
+  `require-command` nodes stay picker-only. No change to the executor — the
+  existing `binary <command path> <flags>` ordering already parses correctly
+  (command tokens are resolved first, then all flags against the merged set).
+  Blank optional fields are no longer emitted as `--flag ""`.
+- **Positional args are sent positionally, not as `--name`.** A runnable arg
+  with a `position` was emitted as `--name value`, which core rejects as an
+  unknown argument — a hard failure on run for any runnable using positionals.
+  The executor now emits positionals as bare values in position order (after the
+  flags); the bridge resolves which args are positional from the spec (the leaf
+  node for a subcommand). Covers both the forms and the agent paths.
+
+### Added
+- `SECURITY.md` — security posture and threat model for the console
+  (execution/escalation model, SSH host-key verification, AI autonomy gate,
+  input validation, secret handling, audit log, and known limitations).
+
+
 ## [0.15.0] — 2026-06-05
 
 ### Added

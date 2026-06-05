@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable } from '../bridge'
@@ -89,6 +89,46 @@ function ArgInput({ arg, value, error, onChange }: ArgInputProps) {
   )
 }
 
+function SectionLabel({ children }: { children: ReactNode }) {
+  const isDark = useIsDark()
+  return (
+    <div style={{
+      fontSize: 10, color: isDark ? '#aaa' : '#999',
+      textTransform: 'uppercase', letterSpacing: '0.08em',
+      paddingBottom: 5, borderBottom: `1px solid ${isDark ? '#222' : '#e8e8e8'}`,
+    }}>
+      {children}
+    </div>
+  )
+}
+
+function ArgRow({ arg, value, error, onChange }: ArgInputProps) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+        <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
+        <Tag color="default" style={{ fontSize: 10, margin: 0 }}>{arg.type}</Tag>
+        {arg.inherited && (
+          <Tooltip title="Inherited from a global arg or a parent command — applies to this run">
+            <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>inherited</Tag>
+          </Tooltip>
+        )}
+        {arg.required
+          ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
+          : isVarRef(arg.default)
+            ? <Text style={{ fontSize: 10, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default as string}</Text>
+            : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
+        }
+        {arg.description && (
+          <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
+        )}
+      </div>
+      <ArgInput arg={arg} value={value} error={error} onChange={onChange} />
+      {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
+    </div>
+  )
+}
+
 function ArgForm({ node, values, errors, onChange }: {
   node: Runnable
   values: Record<string, unknown>
@@ -105,34 +145,42 @@ function ArgForm({ node, values, errors, onChange }: {
     )
   }
 
+  // Globals/parent-command args (merged in by discovery) render in their own
+  // section above the command's own args, so ambient values are clearly scoped.
+  const inherited = args.filter(a => a.inherited)
+  const own = args.filter(a => !a.inherited)
+
+  const row = (arg: ArgDef) => (
+    <ArgRow
+      key={arg.name}
+      arg={arg}
+      value={values[arg.name]}
+      error={errors[arg.name]}
+      onChange={v => onChange(arg.name, v)}
+    />
+  )
+
+  // Flat runnable (no inheritance) — render exactly as before, no section chrome.
+  if (inherited.length === 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {own.map(row)}
+      </div>
+    )
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {args.map(arg => (
-        <div key={arg.name}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-            <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
-            <Tag color="default" style={{ fontSize: 10, margin: 0 }}>{arg.type}</Tag>
-            {arg.required
-              ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
-              : isVarRef(arg.default)
-                ? <Text style={{ fontSize: 10, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default as string}</Text>
-                : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
-            }
-            {arg.description && (
-              <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
-            )}
-          </div>
-          <ArgInput
-            arg={arg}
-            value={values[arg.name]}
-            error={errors[arg.name]}
-            onChange={v => onChange(arg.name, v)}
-          />
-          {errors[arg.name] && (
-            <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{errors[arg.name]}</Text>
-          )}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <SectionLabel>Inherited</SectionLabel>
+        {inherited.map(row)}
+      </div>
+      {own.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <SectionLabel>This command</SectionLabel>
+          {own.map(row)}
         </div>
-      ))}
+      )}
     </div>
   )
 }
@@ -168,9 +216,9 @@ function SubcommandPicker({ node, onSelect }: {
           {cmd.description && (
             <Text type="secondary" style={{ fontSize: 12 }}>{cmd.description}</Text>
           )}
-          {(cmd.args ?? []).length > 0 && (
+          {(cmd.args ?? []).filter(a => !a.inherited).length > 0 && (
             <div style={{ marginTop: 8 }}>
-              <Tag style={{ fontSize: 10 }}>{(cmd.args ?? []).length} args</Tag>
+              <Tag style={{ fontSize: 10 }}>{(cmd.args ?? []).filter(a => !a.inherited).length} args</Tag>
             </div>
           )}
           {Object.keys(cmd.commands ?? {}).length > 0 && (
