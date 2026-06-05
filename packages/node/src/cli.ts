@@ -366,6 +366,10 @@ export function buildSchema(name: string, script: ScriptSpec, fmt: string): Reco
   const requiredArgs: string[] = [];
 
   for (const [argName, arg] of Object.entries(script.args ?? {})) {
+    // Secret args are deliberately omitted from agent-facing schemas: a password
+    // can't be passed on the command line and must come from the environment /
+    // operator, never from an agent's tool call.
+    if (arg.type === 'password') continue;
     properties[argName] = argToJsonSchema(arg);
     if (arg.required) requiredArgs.push(argName);
   }
@@ -387,6 +391,7 @@ export function buildSchema(name: string, script: ScriptSpec, fmt: string): Reco
 function argToJsonSchema(arg: ArgSpec): Record<string, unknown> {
   const typeMap: Record<string, string> = {
     str: 'string',
+    password: 'string',
     int: 'integer',
     float: 'number',
     bool: 'boolean',

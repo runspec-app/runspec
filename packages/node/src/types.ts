@@ -63,6 +63,13 @@ function coerceStr(value: unknown, spec: ArgSpec): string {
   return coerced;
 }
 
+// `password` coerces exactly like `str` (it is a string and honours
+// pattern/min-length/max-length); the type exists to mark the value as secret so
+// it is masked in UIs, refused on the command line, and kept out of logs.
+function coercePassword(value: unknown, spec: ArgSpec): string {
+  return coerceStr(value, spec);
+}
+
 function coerceInt(value: unknown, spec: ArgSpec): number {
   const n = Number(value);
   if (!Number.isFinite(n) || !Number.isInteger(n)) {
@@ -136,6 +143,7 @@ function checkPattern(value: string, spec: ArgSpec): void {
 }
 
 registerType('str', coerceStr);
+registerType('password', coercePassword);
 registerType('int', coerceInt);
 registerType('float', coerceFloat);
 registerType('bool', coerceBool);

@@ -273,7 +273,7 @@ remote hosts) — never as a command-line argument. No persistent secret store i
 involved; the value is per-invocation and transient.
 
 !!! note "Availability"
-    The `password` type was added in **runspec 0.30.0**.
+    The `password` type was added in **runspec 0.30.0** and **node-0.27.0**.
 
 ### Form hints (`hint`)
 
@@ -292,7 +292,7 @@ db-password = {type = "password", hint = "from the vault"}
 runspec-console renders `hint` as the input's placeholder.
 
 !!! note "Availability"
-    The `hint` field was added in **runspec 0.30.0**.
+    The `hint` field was added in **runspec 0.30.0** and **node-0.27.0**.
 
 ### Multiple values (`multiple`, `delimiter`)
 

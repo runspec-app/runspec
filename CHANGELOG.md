@@ -7,6 +7,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.27.0] — 2026-06-05
+
+### Added
+
+- **Node parity for the `password` type and `hint` field** (matches `runspec`
+  0.30.0):
+  - `password` coerces/validates like `str` but is refused on the command line
+    (`--secret value` / `--secret=value` / short-flag all error), resolved from
+    the environment (`RUNSPEC_<RUNNABLE>_ARG_<NAME>` or an `env` alias), and
+    prompted for without echo when run interactively (POSIX TTY; skipped for
+    agent / non-interactive runs and `loadSpec`).
+  - `password` args are omitted from emitted agent schemas (`local --format mcp`
+    etc., and the MCP `serve` tool list).
+  - `hint` is parsed and carried through (advisory UI placeholder text; never
+    affects parsing).
+
+---
+
 ## [0.30.0] — 2026-06-05
 
 ### Added

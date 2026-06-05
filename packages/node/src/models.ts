@@ -33,6 +33,7 @@ export interface ArgSpec {
   deprecated?: string;
   autonomy?: string;
   ui?: string;
+  hint?: string; // UI placeholder/hint text (str/path/password types)
   meta?: Record<string, unknown>;
 }
 

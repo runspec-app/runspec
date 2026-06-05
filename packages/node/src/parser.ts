@@ -1,4 +1,6 @@
 import * as path from 'path';
+import * as fs from 'fs';
+import { execSync } from 'child_process';
 import { findConfig } from './finder';
 import { loadRaw } from './loader';
 import { inferScript, effectiveAutonomy } from './inference';
@@ -15,10 +17,12 @@ export interface ParseOptions {
   configPath?: string;
   /** Internal: enforce `require-command` (real CLI parsing). loadSpec sets false. */
   _enforceRequiredCommand?: boolean;
+  /** Internal: prompt for missing required password args. loadSpec sets false. */
+  _promptSecrets?: boolean;
 }
 
 export function parse(opts: ParseOptions = {}): ParsedArgs {
-  const { scriptName, argv: argvOverride, cwd, configPath: configPathOverride, _enforceRequiredCommand = true } = opts;
+  const { scriptName, argv: argvOverride, cwd, configPath: configPathOverride, _enforceRequiredCommand = true, _promptSecrets = true } = opts;
 
   const { configPath } = configPathOverride ? { configPath: configPathOverride } : findConfig(cwd);
   const raw = loadRaw(configPath);
@@ -125,6 +129,15 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
   parsedValues = applyEnv(parsedValues, activeScript.args ?? {}, name);
   parsedValues = applyDefaults(parsedValues, activeScript.args ?? {});
 
+  // Prompt (no echo) for any still-unresolved required password arg when running
+  // interactively. Passwords are refused on the command line, so a terminal user
+  // supplies them here; agent / non-interactive runs (and loadSpec) fall through
+  // to the env-var value or the required-arg error.
+  const agentEarly = ['1', 'true', 'yes'].includes((process.env['RUNSPEC_AGENT'] ?? '').toLowerCase());
+  if (_promptSecrets) {
+    parsedValues = promptPasswords(parsedValues, activeScript.args ?? {}, agentEarly);
+  }
+
   raiseIfErrors(validateArgs(parsedValues, activeScript.args ?? {}));
   raiseIfErrors(validateGroups(parsedValues, activeScript.groups ?? {}));
 
@@ -175,7 +188,8 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
 }
 
 export function loadSpec(opts: ParseOptions = {}): ParsedArgs {
-  return parse({ ...opts, argv: [], _enforceRequiredCommand: false });
+  // Secret prompting is disabled — introspection must never block on a prompt.
+  return parse({ ...opts, argv: [], _enforceRequiredCommand: false, _promptSecrets: false });
 }
 
 function inferFromArgv(): string {
@@ -225,6 +239,7 @@ function parseArgv(argv: string[], argSpecs: Record<string, ArgSpec>): Record<st
       if (norm) {
         const hyphenName = norm.replace(/_/g, '-');
         const spec = argSpecs[hyphenName] ?? argSpecs[norm] ?? {};
+        if ((spec as ArgSpec).type === 'password') refusePasswordOnCli(norm);
         result[norm] = appendOrSet(result[norm], value, spec);
       }
       i++;
@@ -236,6 +251,8 @@ function parseArgv(argv: string[], argSpecs: Record<string, ArgSpec>): Record<st
       const hyphenName = norm.replace(/_/g, '-');
       const spec = argSpecs[hyphenName] ?? argSpecs[norm] ?? {};
       const argType = spec.type ?? 'str';
+
+      if (argType === 'password') refusePasswordOnCli(norm);
 
       if (argType === 'flag') {
         result[norm] = true;
@@ -271,6 +288,83 @@ function appendOrSet(current: unknown, value: unknown, spec: ArgSpec): unknown {
     return [...((current as unknown[]) ?? []), value];
   }
   return value;
+}
+
+// A `password` arg must never take its value from argv (it would leak into shell
+// history and `ps`). Resolve it from the environment instead — the automatic
+// RUNSPEC_<RUNNABLE>_ARG_<NAME> variable, a declared `env` alias — or let runspec
+// prompt for it when run interactively in a terminal.
+function refusePasswordOnCli(norm: string): never {
+  const flag = norm.replace(/_/g, '-');
+  const envHint = `RUNSPEC_<RUNNABLE>_ARG_${norm.toUpperCase()}`;
+  throw new RunSpecError(
+    `✗  --${flag} is a password and cannot be passed on the command line.\n` +
+      `   Set it via the environment (${envHint} or an 'env' alias),\n` +
+      `   or run the command interactively to be prompted.`,
+  );
+}
+
+// Interactively prompt (no echo) for any required password arg still unresolved
+// after env/defaults. Only when attached to a real terminal and not invoked by
+// an agent. POSIX only (uses `stty`); Windows / non-TTY runs fall through to the
+// normal required-arg error.
+function promptPasswords(
+  parsed: Record<string, unknown>,
+  argSpecs: Record<string, ArgSpec>,
+  agent: boolean,
+): Record<string, unknown> {
+  if (agent || process.platform === 'win32' || !(process.stdin.isTTY && process.stderr.isTTY)) {
+    return parsed;
+  }
+  const result = { ...parsed };
+  for (const [name, spec] of Object.entries(argSpecs)) {
+    if (spec.type !== 'password') continue;
+    const norm = name.replace(/-/g, '_');
+    if (result[norm] !== undefined && result[norm] !== null) continue;
+    if (!spec.required) continue;
+    const value = readLineNoEcho(`${name}: `);
+    if (value) result[norm] = value;
+  }
+  return result;
+}
+
+// Read one line from stdin with echo suppressed (getpass equivalent). Reads
+// bytes so multibyte UTF-8 secrets decode correctly; restores echo on exit.
+function readLineNoEcho(prompt: string): string {
+  process.stderr.write(prompt);
+  try {
+    try {
+      execSync('stty -echo', { stdio: 'inherit' });
+    } catch {
+      /* no stty available — proceed (input may echo) */
+    }
+    const bytes: number[] = [];
+    const buf = Buffer.alloc(1);
+    for (;;) {
+      let n: number;
+      try {
+        n = fs.readSync(0, buf, 0, 1, null);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EAGAIN') continue;
+        break;
+      }
+      if (n === 0) break;
+      const b = buf[0];
+      if (b === 0x0a) break; // \n
+      if (b === 0x0d) continue; // \r
+      bytes.push(b);
+    }
+    return Buffer.from(bytes).toString('utf8');
+  } catch {
+    return '';
+  } finally {
+    try {
+      execSync('stty echo', { stdio: 'inherit' });
+    } catch {
+      /* ignore */
+    }
+    process.stderr.write('\n');
+  }
 }
 
 function applyEnv(parsed: Record<string, unknown>, argSpecs: Record<string, ArgSpec>, runnableName: string): Record<string, unknown> {

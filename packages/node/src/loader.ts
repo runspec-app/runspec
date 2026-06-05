@@ -101,6 +101,7 @@ function normaliseArg(name: string, raw: Record<string, unknown>): ArgSpec {
     deprecated: raw['deprecated'] as string | undefined,
     autonomy: raw['autonomy'] as string | undefined,
     ui: raw['ui'] as string | undefined,
+    hint: raw['hint'] as string | undefined,
     meta: raw['meta'] as Record<string, unknown> | undefined,
   };
 }
