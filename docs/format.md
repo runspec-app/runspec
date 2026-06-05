@@ -185,6 +185,7 @@ description = "Output quality. Values below 60 are rarely useful."
 | `deprecated` | string | Deprecation message shown on use. |
 | `autonomy` | string | Per-arg autonomy override. Most restrictive level wins. |
 | `ui` | string | Form control hint. Inferred from type if omitted. |
+| `hint` | string | Placeholder text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined pass-through metadata. runspec never reads it. |
 | `position` | int | 1-based positional index. Makes the arg positional rather than a `--flag`. |
 
@@ -231,6 +232,67 @@ survey forms enforce them too.
     String validation was added in **runspec 0.22.0** and **node-0.18.0**. The
     Node pack anchors `pattern` as `^(?:…)$` to match Python's `re.fullmatch`
     exactly, including patterns with a top-level alternation.
+
+### Secret arguments (`password`)
+
+The `password` type marks an argument whose value is a secret — a password,
+token, or API key. It coerces and validates exactly like `str` (so `pattern` /
+`min-length` / `max-length` still apply), but it is handled differently
+everywhere a value could leak:
+
+```toml
+[deploy.args]
+db-password = {type = "password", description = "Database password"}
+api-token   = {type = "password", env = "DEPLOY_API_TOKEN", required = false}
+```
+
+- **Refused on the command line.** `deploy --db-password hunter2` is a hard
+  error — a secret on the CLI lands in shell history and the process table
+  (`ps`). The value must come from the environment instead.
+- **Resolved from the environment.** The automatic
+  `RUNSPEC_<RUNNABLE>_ARG_<NAME>` variable, a declared `env` alias, or
+  `.runspec_env` — the normal resolution chain minus the CLI tier.
+- **Prompted interactively.** When a required `password` is still missing and
+  the command is run in a terminal, runspec prompts for it without echoing
+  input. Non-interactive and agent runs don't prompt.
+- **Omitted from agent schemas.** `runspec local --format mcp` (and the other
+  agent formats) leave `password` args out of `inputSchema`, so an agent is
+  never asked to supply a secret.
+- **Kept out of logs.** The value is redacted from the run-summary audit record.
+
+```bash
+deploy --db-password hunter2              # ✗  refused
+RUNSPEC_DEPLOY_ARG_DB_PASSWORD=… deploy   # ok — from the environment
+deploy                                    # prompts "db-password:" (no echo)
+```
+
+In **runspec-console**, a `password` arg renders as a masked form field; the
+value you type is sent to the runnable as the `RUNSPEC_<RUNNABLE>_ARG_<NAME>`
+environment variable (local subprocess env, or the SSH command's env prefix for
+remote hosts) — never as a command-line argument. No persistent secret store is
+involved; the value is per-invocation and transient.
+
+!!! note "Availability"
+    The `password` type was added in **runspec 0.30.0**.
+
+### Form hints (`hint`)
+
+The `hint` field supplies placeholder text for a UI form field — an example
+value or format reminder shown in the empty control. It is advisory: runspec
+never reads it during parsing or validation, and it has no effect on the command
+line. It pairs naturally with `str`, `path`, and `password` args:
+
+```toml
+[deploy.args]
+host        = {type = "str",      hint = "web-01.prod.example.com"}
+config      = {type = "path",     hint = "./deploy.yaml"}
+db-password = {type = "password", hint = "from the vault"}
+```
+
+runspec-console renders `hint` as the input's placeholder.
+
+!!! note "Availability"
+    The `hint` field was added in **runspec 0.30.0**.
 
 ### Multiple values (`multiple`, `delimiter`)
 
@@ -315,6 +377,7 @@ every language pack is tested against it, and the table above mirrors it.
 | Type | Description |
 |---|---|
 | `str` | Unicode string |
+| `password` | Secret string — masked in UIs, refused on the command line, omitted from agent schemas, redacted from logs. See [Secret arguments](#secret-arguments-password). |
 | `int` | Integer |
 | `float` | Floating point number |
 | `bool` | Boolean (`true` / `false`) |

@@ -195,6 +195,27 @@ def args_to_argv(
     return flags + [val for _, val in positional_vals]
 
 
+def secret_env(runnable: str, secrets: dict[str, Any] | None) -> dict[str, str]:
+    """Map ``password``-typed form values to their ``RUNSPEC_*_ARG_*`` env vars.
+
+    Secrets never go into argv (that would leak into shell history / ``ps``).
+    Instead they ride the same environment channel core uses to resolve them:
+    ``RUNSPEC_<RUNNABLE>_ARG_<NAME>`` — the runnable name is the top-level name
+    even for subcommand args, matching core's parser._apply_env. Blank values are
+    dropped so an empty optional field doesn't shadow a real env value.
+    """
+    if not secrets:
+        return {}
+    prefix = runnable.upper().replace("-", "_")
+    out: dict[str, str] = {}
+    for name, value in secrets.items():
+        if value is None or value == "":
+            continue
+        key = f"RUNSPEC_{prefix}_ARG_{name.upper().replace('-', '_')}"
+        out[key] = str(value)
+    return out
+
+
 def run_local(
     runspec_path: str,
     runnable: str,
@@ -209,6 +230,7 @@ def run_local(
     become_method: str = "sudo",
     become_flags: str | None = None,
     positionals: dict[str, int] | None = None,
+    secrets: dict[str, Any] | None = None,
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
@@ -228,14 +250,28 @@ def run_local(
     # through the command interpreter so the Node-folder shims work on Windows.
     if sys.platform == "win32" and binary.suffix.lower() in (".cmd", ".bat"):
         cmd = ["cmd", "/c", *cmd]
+    secrets_env = secret_env(runnable, secrets)
+    extra_env: dict[str, str] = {}
     if run_as:
-        # sudo/su strip the environment — carry RUNSPEC_AGENT through env(1).
+        # sudo/su strip the environment — carry RUNSPEC_AGENT and any secret env
+        # vars through env(1) so they reach the target user's process. (These are
+        # argv tokens for the subprocess, not a shell, so no quoting is needed.)
         from runspec.become import build_become_argv
 
         env = {"RUNSPEC_AGENT": "1"} if agent else {}
+        env.update(secrets_env)
         cmd = build_become_argv(cmd, run_as, become_method, become_flags, env=env)
+    else:
+        # No escalation — secrets go straight into the child process environment.
+        extra_env = secrets_env
     _stream(
-        cmd, on_line, on_done, timeout=timeout, cancel_event=cancel_event, agent=agent
+        cmd,
+        on_line,
+        on_done,
+        timeout=timeout,
+        cancel_event=cancel_event,
+        agent=agent,
+        extra_env=extra_env,
     )
 
 
@@ -397,6 +433,7 @@ def run_remote(
     become_flags: str | None = None,
     session_factory: Callable[[], tuple[Any, Callable[[], None]]] | None = None,
     positionals: dict[str, int] | None = None,
+    secrets: dict[str, Any] | None = None,
 ) -> None:
     """Execute a remote runnable via paramiko SSH, streaming output via callbacks.
 
@@ -410,19 +447,29 @@ def run_remote(
     bin_dir = Path(runspec_path).parent.as_posix()
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args, positionals)
-    # build_become_argv handles both the plain (RUNSPEC_AGENT=1 cmd) and the
-    # escalated (sudo -u user env RUNSPEC_AGENT=1 cmd) forms.
-    env = {"RUNSPEC_AGENT": "1"} if agent else {}
-    parts = build_become_argv(
-        [remote_bin, *command_path, *argv],
-        run_as,
-        become_method,
-        become_flags,
-        env=env,
-    )
-    # Quote every token — this string is run through the remote shell, so an
-    # unquoted arg value would be a command-injection vector (worse under sudo).
-    remote_cmd = shell_join(parts)
+    base_env = {"RUNSPEC_AGENT": "1"} if agent else {}
+    # password-typed args ride the environment, never argv — see secret_env().
+    secrets_env = secret_env(runnable, secrets)
+    all_env = {**base_env, **secrets_env}
+    cmd_argv = [remote_bin, *command_path, *argv]
+    if run_as:
+        # Escalated: env(1) after the become carries every var into the target
+        # user's context. shell_join quotes each `KEY=val` token as a unit, which
+        # `env` accepts verbatim — so secret values with shell metacharacters are
+        # safe (worse, an unquoted value would be a command-injection vector).
+        parts = build_become_argv(
+            cmd_argv, run_as, become_method, become_flags, env=all_env
+        )
+        remote_cmd = shell_join(parts)
+    else:
+        # No escalation: the runnable runs directly, so env vars become a shell
+        # assignment prefix (`KEY=val cmd`). Quote each *value* — not the whole
+        # `KEY=val` token — so an assignment stays an assignment even when the
+        # secret contains spaces or metacharacters.
+        parts = build_become_argv(cmd_argv, "", become_method, become_flags, env={})
+        cmd_str = shell_join(parts)
+        assigns = " ".join(f"{k}={shlex.quote(v)}" for k, v in all_env.items())
+        remote_cmd = f"{assigns} {cmd_str}" if assigns else cmd_str
 
     start = time.monotonic()
     client = None  # set only on the legacy (non-pooled) path; closed in finally
@@ -559,8 +606,13 @@ def _stream(
     timeout: int | None = None,
     cancel_event: threading.Event | None = None,
     agent: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
-    env = {**_UTF8_ENV, "RUNSPEC_AGENT": "1"} if agent else _UTF8_ENV
+    env = dict(_UTF8_ENV)
+    if agent:
+        env["RUNSPEC_AGENT"] = "1"
+    if extra_env:
+        env.update(extra_env)
     start = time.monotonic()
     try:
         proc = subprocess.Popen(

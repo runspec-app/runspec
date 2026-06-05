@@ -105,6 +105,14 @@ def _coerce_str(value: Any, arg: dict[str, Any]) -> str:
     return coerced
 
 
+def _coerce_password(value: Any, arg: dict[str, Any]) -> str:
+    """Coerce a secret value. Identical handling to ``str`` (it is a string and
+    honours ``pattern`` / ``min-length`` / ``max-length``); the ``password`` type
+    exists to mark the value as secret so it is masked in UIs, refused on the
+    command line, and kept out of logs. See spec/SPEC.md → "Secret arguments"."""
+    return _coerce_str(value, arg)
+
+
 def _coerce_int(value: Any, arg: dict[str, Any]) -> int:
     coerced = int(value)
     _check_range(coerced, arg)
@@ -191,6 +199,7 @@ def _check_pattern(value: str, arg: dict[str, Any]) -> None:
 
 # Register all built-in coercers
 register_type("str", _coerce_str)
+register_type("password", _coerce_password)
 register_type("int", _coerce_int)
 register_type("float", _coerce_float)
 register_type("bool", _coerce_bool)

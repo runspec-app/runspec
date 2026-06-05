@@ -1467,6 +1467,24 @@ class Bridge:
             if isinstance(a, dict) and a.get("position") is not None
         }
 
+    @staticmethod
+    def _secret_arg_names(
+        cached: dict[str, Any] | None, command_path: list[str]
+    ) -> set[str]:
+        """Names of ``password``-typed args for the node at ``command_path``.
+
+        Secrets must never become CLI flags — the bridge pulls them out of the
+        argv args and hands them to the executor as env vars instead. Resolves
+        the leaf node so a subcommand's secret args are found too."""
+        node = cached or {}
+        for seg in command_path:
+            node = (node.get("commands") or {}).get(seg) or {}
+        return {
+            a["name"]
+            for a in node.get("args", [])
+            if isinstance(a, dict) and a.get("type") == "password"
+        }
+
     def invoke_runnable(
         self,
         host: str,
@@ -1501,6 +1519,16 @@ class Bridge:
 
         run_as, become_method, become_flags = self._become_params(cached, host)
 
+        # Split secret (password-typed) values out of the argv args: they are
+        # injected as RUNSPEC_*_ARG_* env vars by the executor, never passed on
+        # the command line. The stored/surfaced args record keeps only the
+        # non-secret values so a secret never reaches the UI, history, or logs.
+        secret_names = self._secret_arg_names(cached, cp)
+        secrets = {
+            k: v for k, v in args.items() if k in secret_names and v not in (None, "")
+        }
+        exec_args = {k: v for k, v in args.items() if k not in secret_names}
+
         with self._lock:
             self._in_flight[inv_id] = {
                 "id": inv_id,
@@ -1510,7 +1538,7 @@ class Bridge:
                 "operator": self._current_user(),
                 "runAs": run_as,
                 "startedAt": _iso_now(),
-                "args": args,
+                "args": exec_args,
                 _CANCEL_KEY: cancel_event,
             }
 
@@ -1553,7 +1581,7 @@ class Bridge:
                     ssh,
                     rp,
                     runnable,
-                    args,
+                    exec_args,
                     cp,
                     on_line,
                     on_done,
@@ -1565,12 +1593,13 @@ class Bridge:
                     become_flags=become_flags,
                     session_factory=session_factory,
                     positionals=self._positionals_for(cached, cp),
+                    secrets=secrets,
                 )
             else:
                 run_local(
                     rp,
                     runnable,
-                    args,
+                    exec_args,
                     cp,
                     on_line,
                     on_done,
@@ -1579,6 +1608,7 @@ class Bridge:
                     become_method=become_method,
                     become_flags=become_flags,
                     positionals=self._positionals_for(cached, cp),
+                    secrets=secrets,
                 )
 
         t = threading.Thread(target=run, daemon=True)

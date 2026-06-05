@@ -15,6 +15,7 @@ export interface ArgDef {
   autonomy?: string       // per-arg autonomy override
   position?: number       // 1-based positional index
   ui?: string             // form control hint
+  hint?: string           // placeholder / hint text for the form field
   inherited?: boolean     // arg inherited from an ancestor (global / parent-command) — set by discovery
 }
 

@@ -23,7 +23,7 @@ from runspec.types import coerce
 from runspec.validator import raise_if_errors, validate_args, validate_groups
 
 
-def parse(script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None, *, _enforce_required_command: bool = True) -> RunSpec:
+def parse(script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None, *, _enforce_required_command: bool = True, _prompt_secrets: bool = True) -> RunSpec:
     """
     Parse arguments for the calling runnable.
 
@@ -40,7 +40,7 @@ def parse(script_name: str | None = None, argv: list[str] | None = None, config_
         RunSpec — the fully parsed, validated, coerced argument namespace.
     """
     try:
-        return _parse_impl(script_name, argv, config_path, enforce_required_command=_enforce_required_command)
+        return _parse_impl(script_name, argv, config_path, enforce_required_command=_enforce_required_command, prompt_secrets=_prompt_secrets)
     except errors.RunSpecError as e:
         print(str(e))
         sys.exit(1)
@@ -54,6 +54,7 @@ def _parse_impl(
     argv: list[str] | None = None,
     config_path: Path | None = None,
     enforce_required_command: bool = True,
+    prompt_secrets: bool = True,
 ) -> RunSpec:
     """Internal: full parse pipeline. Raises on error — call parse() for CLI use."""
     # 1. Find config — explicit arg > RUNSPEC_CONFIG > caller's package > cwd.
@@ -186,6 +187,14 @@ def _parse_impl(
     # 9. Apply defaults
     parsed_values, sources = _apply_defaults(parsed_values, sources, raw_script["args"])
 
+    # 9.5. Prompt (no echo) for any still-unresolved required password arg when
+    # running interactively. Passwords are refused on the command line, so a
+    # terminal user supplies them here; agent / non-interactive runs fall through
+    # to the env-var value (or the required-arg error if it is missing).
+    agent = os.environ.get("RUNSPEC_AGENT", "").lower() in ("1", "true", "yes")
+    if prompt_secrets:
+        parsed_values, sources = _prompt_passwords(parsed_values, sources, raw_script["args"], agent)
+
     # 10. Pass 1 — validate individual args
     arg_errors = validate_args(parsed_values, raw_script["args"])
     raise_if_errors(arg_errors)
@@ -204,8 +213,7 @@ def _parse_impl(
         raw_script["args"],
     )
 
-    # 14. Detect agent context
-    agent = os.environ.get("RUNSPEC_AGENT", "").lower() in ("1", "true", "yes")
+    # 14. Agent context already detected at step 9.5 (RUNSPEC_AGENT).
 
     # 15. Build RunSpec
     runspec_obj = _build_runspec(
@@ -233,9 +241,10 @@ def _parse_impl(
             no_summary = bool(ns_pair[0])
 
     # Serialize invocation args for the run_summary audit record.
-    # Excludes auto-injected flags (debug, no_summary) from the logged args.
+    # Excludes auto-injected flags (debug, no_summary) and password args — a
+    # secret must never be written to the audit log.
     _auto_args = {"debug", "no_summary"}
-    invocation_args = {k: {"value": str(arg.value), "source": arg.source} for k, arg in runspec_obj._args.items() if arg.value is not None and k not in _auto_args}
+    invocation_args = {k: {"value": str(arg.value), "source": arg.source} for k, arg in runspec_obj._args.items() if arg.value is not None and k not in _auto_args and arg.type != "password"}
 
     try:
         configure_logging(
@@ -262,9 +271,10 @@ def load_spec(script_name: str | None = None, config_path: Path | None = None) -
     Returns a RunSpec with default values only — no CLI args applied.
 
     require-command is not enforced here: introspection/emit must succeed even
-    for a runnable that mandates a subcommand on the CLI.
+    for a runnable that mandates a subcommand on the CLI. Secret prompting is
+    also disabled — introspection must never block on an interactive prompt.
     """
-    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False)
+    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False, _prompt_secrets=False)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -657,7 +667,10 @@ def _parse_argv(
             key, value = token.split("=", 1)
             norm = name_map.get(key)
             if norm:
-                result[norm] = _append_or_set(result.get(norm), value, arg_specs.get(norm.replace("_", "-"), arg_specs.get(norm, {})))
+                spec = arg_specs.get(norm.replace("_", "-"), arg_specs.get(norm, {}))
+                if spec.get("type") == "password":
+                    _refuse_password_on_cli(norm)
+                result[norm] = _append_or_set(result.get(norm), value, spec)
             else:
                 unknown.append(key)
             i += 1
@@ -668,6 +681,9 @@ def _parse_argv(
         if norm:
             spec = arg_specs.get(norm.replace("_", "-"), arg_specs.get(norm, {}))
             arg_type = spec.get("type", "str")
+
+            if arg_type == "password":
+                _refuse_password_on_cli(norm)
 
             if arg_type == "flag":
                 result[norm] = True
@@ -712,6 +728,55 @@ def _parse_argv(
         sys.exit(1)
 
     return result
+
+
+def _refuse_password_on_cli(norm: str) -> None:
+    """A ``password`` arg must never take its value from argv (it would leak into
+    shell history and `ps`). Resolve it from the environment instead — the
+    automatic ``RUNSPEC_<RUNNABLE>_ARG_<NAME>`` variable, a declared ``env``
+    alias, or the ``.runspec_env`` file — or let runspec prompt for it when run
+    interactively in a terminal."""
+    flag = norm.replace("_", "-")
+    env_hint = f"RUNSPEC_<RUNNABLE>_ARG_{norm.upper()}"
+    print(
+        f"✗  --{flag} is a password and cannot be passed on the command line.\n"
+        f"   Set it via the environment ({env_hint}, an 'env' alias, or .runspec_env),\n"
+        "   or run the command interactively to be prompted."
+    )
+    sys.exit(1)
+
+
+def _prompt_passwords(
+    parsed: dict[str, Any],
+    sources: dict[str, str],
+    arg_specs: dict[str, Any],
+    agent: bool,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Interactively prompt (no echo) for any required ``password`` arg still
+    unresolved after env/defaults. Only prompts when attached to a real terminal
+    and not invoked by an agent — so non-interactive and ``runspec serve`` runs
+    fall through to the normal required-arg error if the env value is missing."""
+    if agent or not (sys.stdin.isatty() and sys.stderr.isatty()):
+        return parsed, sources
+    import getpass
+
+    result = dict(parsed)
+    new_sources = dict(sources)
+    for name, spec in arg_specs.items():
+        if spec.get("type") != "password":
+            continue
+        norm = name.replace("-", "_")
+        if result.get(norm) is not None or not spec.get("required"):
+            continue
+        try:
+            value = getpass.getpass(f"{name}: ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            continue
+        if value:
+            result[norm] = value
+            new_sources[norm] = "cli"
+    return result, new_sources
 
 
 def _append_or_set(current: Any, value: Any, spec: dict[str, Any]) -> Any:
@@ -858,6 +923,7 @@ def _build_runspec(
             deprecated=spec.get("deprecated"),
             autonomy=spec.get("autonomy"),
             ui=spec.get("ui"),
+            hint=spec.get("hint"),
             meta=spec.get("meta"),
             position=spec.get("position"),
             source=source,

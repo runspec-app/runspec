@@ -20,6 +20,7 @@ from typing import Any, cast
 # item type, wrapped in `list[...]` when the arg is `multiple`.
 _PYTHON_TYPE_NAMES = {
     "str": "str",
+    "password": "str",
     "int": "int",
     "float": "float",
     "bool": "bool",
@@ -62,6 +63,7 @@ class Arg:
     deprecated: str | None = None
     autonomy: str | None = None
     ui: str | None = None
+    hint: str | None = None  # UI placeholder/hint text (str/path/password types)
     meta: dict[str, Any] | None = None
     position: int | None = None  # positional index (1-based); None = --flag arg
 

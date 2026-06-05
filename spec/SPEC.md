@@ -652,6 +652,7 @@ description = "Controls output quality. Values below 60 rarely useful."
 | `deprecated` | string | Deprecation message shown on use. |
 | `autonomy` | string | Per-arg autonomy override. Escalates if more restrictive. |
 | `ui` | string | Form control hint. Inferred from type if omitted. |
+| `hint` | string | Placeholder / hint text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined metadata. Pass-through — runspec never interprets the contents. |
 | `position` | int | 1-based positional index. Makes the arg positional rather than a `--flag`. |
 
@@ -680,6 +681,7 @@ fields that *are* present.
 | `deprecated` | `None` | Set to a string message; shown on use. |
 | `autonomy` | inherits `[config] autonomy-default` (which itself defaults to `"confirm"`) | Per-arg overrides escalate the runnable's effective autonomy if more restrictive. |
 | `ui` | derived from `type` at render time (text/number/checkbox/dropdown/etc.) | See "Form Control Inference". |
+| `hint` | `None` | Optional UI placeholder text; no effect on parsing or validation. |
 | `meta` | `None` | Pass-through — runspec never reads it. |
 | `position` | `None` (i.e. the arg is a `--flag`, not a positional) | 1-based when set. |
 
@@ -760,6 +762,7 @@ Implementations must apply these rules in order:
 | runspec type | Description |
 |---|---|
 | `str` | Unicode string |
+| `password` | Secret string. Coerces like `str` (honours `pattern`/`min-length`/`max-length`), but is masked in UIs, **refused on the command line**, omitted from emitted agent schemas, and redacted from logs. See *Secret arguments*. |
 | `int` | Integer |
 | `float` | Floating point number |
 | `bool` | Boolean (true/false) |
@@ -769,6 +772,51 @@ Implementations must apply these rules in order:
 | `rest` | List of strings captured after a literal `--` separator. At most one per runnable. |
 
 Language packs may register additional types via the type registry.
+
+---
+
+## Secret Arguments
+
+The `password` type marks an argument whose value is a secret (a password,
+token, or API key). It behaves like `str` for coercion and validation but is
+handled differently everywhere a value could leak:
+
+- **Refused on the command line.** Passing a `password` arg as `--name value`
+  (or `--name=value`, or via its `short` flag) is a hard error. A secret on the
+  command line lands in shell history and the process table (`ps`), so runspec
+  refuses it outright. This is the meaning of "can't be done on the command
+  line".
+- **Resolved from the environment.** A `password` value comes from the normal
+  resolution chain *minus* the CLI tier: the automatic
+  `RUNSPEC_<RUNNABLE>_ARG_<NAME>` variable, a declared `env` alias, or the
+  `.runspec_env` file (see *Value Resolution Order*).
+- **Interactive prompt (fallback).** When a required `password` arg is still
+  unresolved and the process is attached to a terminal (and not an agent
+  invocation), implementations should prompt for it without echoing input.
+  Non-interactive and agent runs do not prompt — they rely on the environment.
+- **Omitted from agent schemas.** `password` args are excluded from emitted
+  MCP / agent tool schemas (`inputSchema`), so an agent is never asked to
+  supply a secret. The operator provides it through the environment.
+- **Kept out of logs.** A `password` value must not appear in the run-summary
+  audit record (`invocation_args`) or other structured log output.
+
+```toml
+[deploy.args]
+db-password = {type = "password", description = "Database password"}
+api-token   = {type = "password", env = "DEPLOY_API_TOKEN", required = false}
+```
+
+```bash
+deploy --db-password hunter2          # ✗  refused — passwords can't go on the CLI
+RUNSPEC_DEPLOY_ARG_DB_PASSWORD=… deploy   # ok — supplied via the environment
+deploy                                 # interactive: prompts "db-password:" (no echo)
+```
+
+A UI that builds a form for a runnable (e.g. runspec-console) renders a
+`password` arg as a masked field and supplies the entered value to the
+execution as the `RUNSPEC_<RUNNABLE>_ARG_<NAME>` environment variable — never as
+a command-line argument — so the same no-CLI guarantee holds for form-driven
+runs.
 
 ---
 
@@ -1117,6 +1165,7 @@ When `ui` is not declared, implementations should infer the form control:
 | Type / Property | Default control |
 |---|---|
 | `str` | Text input |
+| `password` | Masked text input (characters hidden) |
 | `int` or `float` | Number input |
 | `path` | File/directory picker |
 | `bool` or `flag` | Checkbox |
@@ -1124,6 +1173,10 @@ When `ui` is not declared, implementations should infer the form control:
 | `options` > 4 items | Dropdown |
 | `range` present | Slider |
 | `multiple = true` | Multi-select |
+
+When `hint` is declared, implementations should surface it as the field's
+placeholder text (an example or format hint shown in the empty control). It is
+advisory only — it never changes parsing or validation.
 
 ---
 

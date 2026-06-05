@@ -297,8 +297,8 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["str", "int", "float", "bool", "flag", "path", "choice", "rest"],
-          "description": "Argument type. Inferred from default or options if omitted."
+          "enum": ["str", "password", "int", "float", "bool", "flag", "path", "choice", "rest"],
+          "description": "Argument type. Inferred from default or options if omitted. 'password' marks a secret: masked in UIs, refused on the command line, omitted from agent schemas, and kept out of logs."
         },
         "default": {
           "description": "Default value. Absence implies required = true (unless required is explicitly set)."
@@ -372,8 +372,12 @@
         },
         "ui": {
           "type": "string",
-          "enum": ["text", "number", "file", "directory", "checkbox", "radio", "select", "multiselect", "slider"],
+          "enum": ["text", "password", "number", "file", "directory", "checkbox", "radio", "select", "multiselect", "slider"],
           "description": "Form control hint. Inferred from type and properties if omitted."
+        },
+        "hint": {
+          "type": "string",
+          "description": "Placeholder / hint text shown in a UI form field (e.g. an example value). Advisory for str/path/password types; never affects parsing or validation."
         },
         "meta": {
           "type": "object",

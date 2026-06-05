@@ -689,6 +689,11 @@ def _build_schema(name: str, script: dict[str, Any], fmt: str) -> dict[str, Any]
         # on inference (default 0.85 → float, default false → flag, no default →
         # required). Without this the schema would type everything as "string".
         arg = infer_arg(arg)
+        # Secret args are deliberately omitted from agent-facing schemas: a
+        # password can't be passed on the command line and must come from the
+        # environment / operator, never from an agent's tool call.
+        if arg.get("type") == "password":
+            continue
         prop = _arg_to_json_schema(arg)
         properties[arg_name] = prop
         if arg.get("required"):
@@ -718,6 +723,7 @@ def _arg_to_json_schema(arg: dict[str, Any]) -> dict[str, Any]:
     """Convert a runspec arg spec to a JSON Schema property."""
     type_map = {
         "str": "string",
+        "password": "string",
         "int": "integer",
         "float": "number",
         "bool": "boolean",

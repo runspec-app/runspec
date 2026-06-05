@@ -186,6 +186,7 @@ def _normalise_arg(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "deprecated": raw.get("deprecated"),
         "autonomy": raw.get("autonomy"),
         "ui": raw.get("ui"),
+        "hint": raw.get("hint"),
         "meta": raw.get("meta"),
         "position": raw.get("position"),
     }

@@ -7,6 +7,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.30.0] — 2026-06-05
+
+### Added
+
+- **`password` argument type** for secrets (passwords, tokens, API keys). It
+  coerces and validates like `str` (`pattern` / `min-length` / `max-length`
+  still apply) but is handled so the value never leaks:
+  - **Refused on the command line** — `--secret value` / `--secret=value` /
+    short-flag forms all error, since a secret on the CLI lands in shell history
+    and `ps`. The value resolves from the environment instead
+    (`RUNSPEC_<RUNNABLE>_ARG_<NAME>`, an `env` alias, or `.runspec_env`).
+  - **Interactive prompt** — a required `password` still unresolved in a
+    terminal is prompted for without echo (skipped for agent / non-interactive
+    runs).
+  - **Omitted from emitted agent schemas** (`runspec local --format mcp` etc.)
+    so an agent is never asked to supply a secret.
+  - **Redacted from the run-summary audit record** (`invocation_args`).
+- **`hint` argument field** — optional placeholder/hint text for UI form fields.
+  Advisory only; runspec never reads it during parsing or validation.
+- Both are reflected in `schema/runspec.schema.json` (the `type`/`ui` enums and
+  a new `hint` property) and documented in `spec/SPEC.md` and `docs/format.md`.
+
+### runspec-console (0.17.0)
+
+- Forms render a `password` arg as a masked field and a `hint` as the input's
+  placeholder. A password's value is injected into the run as the
+  `RUNSPEC_<RUNNABLE>_ARG_<NAME>` environment variable (local subprocess env, or
+  the SSH command's env prefix for remote hosts) — never as a command-line
+  argument — and is kept out of the in-flight/args record. No persistent secret
+  store is involved; the value is per-invocation and transient.
+
+---
+
 ## [node-0.26.1] — 2026-06-04
 
 ### Fixed

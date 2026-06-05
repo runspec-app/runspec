@@ -214,7 +214,15 @@ def _build_args(args_spec: dict[str, Any]) -> list[dict[str, Any]]:
             "required": required,
         }
         # Optional fields — only include if present in spec
-        for key in ("description", "options", "short", "deprecated", "ui", "env"):
+        for key in (
+            "description",
+            "options",
+            "short",
+            "deprecated",
+            "ui",
+            "hint",
+            "env",
+        ):
             if arg.get(key) is not None:
                 entry[key] = arg[key]
         if arg.get("default") is not None:

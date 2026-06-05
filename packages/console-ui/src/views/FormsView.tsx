@@ -29,7 +29,9 @@ interface ArgInputProps {
 
 function ArgInput({ arg, value, error, onChange }: ArgInputProps) {
   const isDark = useIsDark()
-  const placeholder = isVarRef(arg.default) ? arg.default as string : undefined
+  // `hint` (if declared) is the form placeholder; otherwise fall back to a
+  // visible $VAR_REF default so the operator sees where the value comes from.
+  const placeholder = arg.hint ?? (isVarRef(arg.default) ? arg.default as string : undefined)
 
   const inputStyle = {
     fontFamily: 'monospace',
@@ -57,6 +59,23 @@ function ArgInput({ arg, value, error, onChange }: ArgInputProps) {
         style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}
         status={error ? 'error' : undefined}
         options={arg.options.map(o => ({ label: o, value: o }))}
+      />
+    )
+  }
+
+  if (arg.type === 'password') {
+    // Masked entry. The typed value is sent to the run as the
+    // RUNSPEC_<RUNNABLE>_ARG_<NAME> env var by the bridge — never as a CLI arg —
+    // so it stays out of argv, shell history, and the run/args record.
+    return (
+      <Input.Password
+        size="small"
+        value={value as string ?? ''}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder ?? 'secret — sent as an env var, not on the command line'}
+        autoComplete="new-password"
+        style={inputStyle}
+        status={error ? 'error' : undefined}
       />
     )
   }
