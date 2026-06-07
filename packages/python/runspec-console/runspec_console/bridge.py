@@ -19,12 +19,14 @@ import gzip
 import hashlib
 import json
 import logging
+import os
 import random
 import sys
 import threading
 import time
 import uuid
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -410,6 +412,164 @@ class Bridge:
             return list_local(path, dirs_only=dirs_only)
         except (OSError, ValueError) as e:
             return {"error": str(e)}
+
+    # ── file transfer (SFTP) ────────────────────────────────────────────────────
+
+    def _open_sftp(
+        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any] | None
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open an SFTP channel on ``ssh_target`` — pooled when pooling is on."""
+        pool = self._ssh_pool
+        if pool is not None:
+            return pool.open_sftp(
+                ssh_target, identity_file=identity_file, global_ssh_config=cfg
+            )
+        from .executor import _make_ssh_client
+
+        client = _make_ssh_client(ssh_target, identity_file, cfg)
+        sftp = client.open_sftp()
+
+        def release() -> None:
+            for closer in (sftp, client):
+                try:
+                    closer.close()
+                except Exception:
+                    pass
+
+        return sftp, release
+
+    def start_transfer(
+        self,
+        source_host: str,
+        source_paths: list[str],
+        dest_host: str,
+        dest_dir: str,
+    ) -> dict[str, Any]:
+        """Copy files between the local machine and a remote host over SFTP.
+
+        v1 supports **local↔remote only** (exactly one side is ``"local"``).
+        Returns ``{"id": ...}`` and then streams ``runspec:transfer_progress`` /
+        ``runspec:transfer_end`` events, or ``{"error": ...}`` on a bad request.
+        """
+        from .fs_transfer import plan_transfer
+
+        try:
+            plan = plan_transfer(source_host, source_paths, dest_host, dest_dir)
+        except ValueError as e:
+            return {"error": str(e)}
+
+        entry = self._host_entry(plan.remote_host)
+        if entry is None or not entry.get("ssh"):
+            return {"error": f"{plan.remote_host} is not a reachable remote host"}
+
+        tid = uuid.uuid4().hex[:12]
+        cancel_event = threading.Event()
+        with self._lock:
+            self._in_flight[tid] = {
+                "id": tid,
+                "runnable": f"transfer · {plan.direction}",
+                "group": "",
+                "host": plan.remote_host,
+                "operator": self._current_user(),
+                "runAs": "",
+                "startedAt": _iso_now(),
+                "args": {"direction": plan.direction, "files": len(plan.items)},
+                _CANCEL_KEY: cancel_event,
+            }
+
+        def run() -> None:
+            cfg = self.get_config().get("ssh")
+            ok, error, done = True, None, 0
+            release: Callable[[], None] | None = None
+            count = len(plan.items)
+            try:
+                sftp, release = self._open_sftp(
+                    entry["ssh"], entry.get("identityFile"), cfg
+                )
+                for idx, item in enumerate(plan.items):
+                    if cancel_event.is_set():
+                        ok, error = False, "cancelled"
+                        break
+                    try:
+                        self._transfer_one(sftp, plan.direction, item, tid, idx, count)
+                        done += 1
+                    except Exception as e:
+                        # One file failing is reported but doesn't abort the rest.
+                        ok, error = False, str(e)
+                        self._dispatch(
+                            "runspec:transfer_progress",
+                            {
+                                "id": tid,
+                                "file": item.name,
+                                "index": idx,
+                                "count": count,
+                                "transferred": 0,
+                                "total": 0,
+                                "error": str(e),
+                            },
+                        )
+            except Exception as e:
+                ok, error = False, str(e)
+            finally:
+                if release:
+                    release()
+                with self._lock:
+                    self._in_flight.pop(tid, None)
+            logger.info(
+                "transfer %s %s: %d/%d ok=%s", tid, plan.direction, done, count, ok
+            )
+            self._dispatch(
+                "runspec:transfer_end",
+                {"id": tid, "ok": ok, "files": done, "total": count, "error": error},
+            )
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"id": tid}
+
+    def _transfer_one(
+        self,
+        sftp: Any,
+        direction: str,
+        item: Any,
+        tid: str,
+        idx: int,
+        count: int,
+    ) -> None:
+        """SFTP put/get a single file, emitting throttled progress events."""
+        last = [0.0]
+
+        def cb(transferred: int, total: int) -> None:
+            now = time.monotonic()
+            if now - last[0] >= 0.15 or transferred >= total:
+                last[0] = now
+                self._dispatch(
+                    "runspec:transfer_progress",
+                    {
+                        "id": tid,
+                        "file": item.name,
+                        "index": idx,
+                        "count": count,
+                        "transferred": transferred,
+                        "total": total,
+                    },
+                )
+
+        if direction == "push":
+            if os.path.isdir(item.src):
+                raise IsADirectoryError(
+                    f"{item.name} is a directory — directory transfer isn't supported yet"
+                )
+            sftp.put(item.src, item.dst, callback=cb)
+        else:
+            sftp.get(item.src, item.dst, callback=cb)
+
+    def cancel_transfer(self, transfer_id: str) -> None:
+        """Request cancellation of an in-flight transfer (stops before the next file)."""
+        with self._lock:
+            inv = self._in_flight.get(transfer_id)
+        ev = inv.get(_CANCEL_KEY) if inv else None
+        if ev is not None:
+            ev.set()
 
     # ── history ───────────────────────────────────────────────────────────────
 

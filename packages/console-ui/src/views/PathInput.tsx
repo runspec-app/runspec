@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { AutoComplete, Button, Modal, List, Tag, Typography, Tooltip, Spin, Segmented } from 'antd'
+import { AutoComplete, Button, Modal, List, Tag, Typography, Tooltip, Spin, Segmented, Checkbox } from 'antd'
 import { FolderOpenOutlined, FolderFilled, FileOutlined, ArrowUpOutlined, HomeOutlined } from '@ant-design/icons'
 import { bridge, type DirEntry, type DirListing } from '../bridge'
 
@@ -124,20 +124,23 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
 
 // ── browse modal ──────────────────────────────────────────────────────────────
 
-function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group, onPick, onClose }: {
+export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group, multiSelect, onPick, onPickMany, onClose }: {
   host: string
   startPath?: string
   dirsOnly?: boolean
   runnable?: string
   runAs?: string
   group?: string
-  onPick: (path: string) => void
+  multiSelect?: boolean
+  onPick?: (path: string) => void
+  onPickMany?: (paths: string[]) => void
   onClose: () => void
 }) {
   const [listing, setListing] = useState<DirListing | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [asSvc, setAsSvc] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
 
   // The service-account view only applies to a remote host with a run_as set.
   const canSvc = !!runAs && host !== 'local'
@@ -187,8 +190,17 @@ function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group, onPick
 
   const onEntry = (e: DirEntry) => {
     const full = joinPath(cwd, e.name, sep)
-    if (e.type === 'directory') load(full, asSvc)
-    else if (!dirsOnly) onPick(full)
+    if (e.type === 'directory') { load(full, asSvc); return }
+    if (multiSelect) {
+      setSelected(prev => {
+        const next = new Set(prev)
+        if (next.has(full)) next.delete(full)
+        else next.add(full)
+        return next
+      })
+      return
+    }
+    if (!dirsOnly) onPick?.(full)
   }
 
   return (
@@ -196,17 +208,23 @@ function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group, onPick
       open
       onCancel={onClose}
       width={560}
-      title={<Text style={{ fontFamily: 'monospace', fontSize: 13 }}>Browse {host}</Text>}
+      title={<Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{multiSelect ? `Select files · ${host}` : `Browse ${host}`}</Text>}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>{cwd}</Text>
+          <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+            {multiSelect ? `${selected.size} selected` : cwd}
+          </Text>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button onClick={onClose}>Cancel</Button>
-            {dirsOnly && (
-              <Button type="primary" disabled={!cwd} onClick={() => onPick(cwd)}>
+            {multiSelect ? (
+              <Button type="primary" disabled={selected.size === 0} onClick={() => { onPickMany?.([...selected]); onClose() }}>
+                Add {selected.size} file{selected.size === 1 ? '' : 's'}
+              </Button>
+            ) : dirsOnly ? (
+              <Button type="primary" disabled={!cwd} onClick={() => onPick?.(cwd)}>
                 Use this folder
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
       }
@@ -263,19 +281,31 @@ function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group, onPick
             size="small"
             dataSource={listing?.entries ?? []}
             locale={{ emptyText: 'Empty directory' }}
-            renderItem={(e) => (
-              <List.Item
-                style={{ cursor: e.type === 'directory' || !dirsOnly ? 'pointer' : 'default', padding: '4px 8px' }}
-                onClick={() => onEntry(e)}
-              >
-                <span style={{ fontFamily: 'monospace', fontSize: 12, opacity: dirsOnly && e.type === 'file' ? 0.45 : 1 }}>
-                  {e.type === 'directory'
-                    ? <FolderFilled style={{ color: '#e8b339', marginRight: 8 }} />
-                    : <FileOutlined style={{ color: '#888', marginRight: 8 }} />}
-                  {e.name}
-                </span>
-              </List.Item>
-            )}
+            renderItem={(e) => {
+              const full = joinPath(cwd, e.name, sep)
+              const checkable = multiSelect && e.type === 'file'
+              return (
+                <List.Item
+                  style={{ cursor: e.type === 'directory' || multiSelect || !dirsOnly ? 'pointer' : 'default', padding: '4px 8px' }}
+                  onClick={() => onEntry(e)}
+                >
+                  <span style={{ fontFamily: 'monospace', fontSize: 12, display: 'inline-flex', alignItems: 'center', opacity: dirsOnly && e.type === 'file' ? 0.45 : 1 }}>
+                    {checkable && (
+                      <Checkbox
+                        checked={selected.has(full)}
+                        style={{ marginRight: 8 }}
+                        onClick={ev => ev.stopPropagation()}
+                        onChange={() => onEntry(e)}
+                      />
+                    )}
+                    {e.type === 'directory'
+                      ? <FolderFilled style={{ color: '#e8b339', marginRight: 8 }} />
+                      : <FileOutlined style={{ color: '#888', marginRight: 8 }} />}
+                    {e.name}
+                  </span>
+                </List.Item>
+              )
+            }}
           />
           {listing?.truncated && (
             <Tag color="orange" style={{ fontSize: 10, marginTop: 6 }}>listing truncated</Tag>

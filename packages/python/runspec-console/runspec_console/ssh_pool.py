@@ -170,6 +170,35 @@ class PooledConnection:
 
         return channel, release
 
+    def open_sftp(self) -> tuple[Any, Callable[[], None]]:
+        """Open an SFTP channel on this transport for a file transfer.
+
+        Returns ``(sftp, release)``; mirrors :meth:`open_session`. The session
+        slot is held for the lifetime of the transfer; ``release()`` closes the
+        SFTP channel and frees the slot, leaving the transport warm for reuse.
+        """
+        self._sessions.acquire()
+        try:
+            self.last_used = self._clock()
+            sftp = self._client.open_sftp()
+        except BaseException:
+            self._sessions.release()
+            raise
+
+        released = threading.Event()
+
+        def release() -> None:
+            if not released.is_set():
+                released.set()
+                try:
+                    sftp.close()
+                except Exception:
+                    pass
+                self.last_used = self._clock()
+                self._sessions.release()
+
+        return sftp, release
+
     def close(self) -> None:
         try:
             self._client.close()
@@ -383,6 +412,22 @@ class SSHConnectionPool:
         cfg = global_ssh_config or {}
         conn = self._acquire_conn(ssh_target, identity_file, cfg)
         return conn.open_session()
+
+    def open_sftp(
+        self,
+        ssh_target: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open an SFTP channel on a pooled transport (for file transfer).
+
+        Returns ``(sftp, release)``. Raises on connect failure / backoff so the
+        caller can report it.
+        """
+        cfg = global_ssh_config or {}
+        conn = self._acquire_conn(ssh_target, identity_file, cfg)
+        return conn.open_sftp()
 
     def connectable(
         self,

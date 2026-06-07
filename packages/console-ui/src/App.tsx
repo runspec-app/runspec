@@ -10,6 +10,7 @@ import {
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
+  SwapOutlined,
   CodeOutlined,
   LoadingOutlined,
   BugOutlined,
@@ -23,6 +24,7 @@ import { LogsView } from './views/LogsView'
 import { SchedulesView } from './views/SchedulesView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
+import { TransferModal } from './views/TransferModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
 // so it stays out of the initial bundle.
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
@@ -39,6 +41,7 @@ export default function App() {
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [runnablesLoading, setRunnablesLoading] = useState(true)
@@ -356,6 +359,9 @@ export default function App() {
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
                 </Tooltip>
+                <Tooltip title="Transfer files (SFTP)">
+                  <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setTransferOpen(true)} style={{ color: iconCol }} />
+                </Tooltip>
                 <Tooltip title={sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : 'Settings'}>
                   <Badge dot={sshKeyAgeDays !== null && sshKeyAgeDays >= 75} color="orange" offset={[-4, 4]}>
                     <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ color: iconCol }} />
@@ -437,6 +443,13 @@ export default function App() {
           </div>
         </div>
         </div>
+
+        <TransferModal
+          open={transferOpen}
+          onClose={() => setTransferOpen(false)}
+          hosts={hosts}
+          defaultRemoteHost={selectedHost}
+        />
 
         <SettingsDrawer
           open={settingsOpen}

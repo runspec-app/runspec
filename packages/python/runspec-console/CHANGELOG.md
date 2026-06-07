@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.22.0] — 2026-06-07
+
+### Added
+- **File transfer (SFTP) — a Transfer dialog for copying files between your
+  machine and a remote host.** A new toolbar action opens a dialog: pick a
+  **direction** (download remote → local, or upload local → remote) and a remote
+  host, then choose the **source file(s)** and **destination folder** using the same
+  in-app file browser as the Forms path fields (so you browse the right host on
+  each side). Multiple source files can be checked off at once. Progress streams
+  live with a cancel button. v1 is **local↔remote only** (remote↔remote relay and
+  fan-out to many hosts are planned follow-ups); directories aren't supported yet.
+  - Transfers run over the host's **existing pooled SSH transport** via a new
+    `open_sftp` on the connection pool (no new connection/auth) — `bridge`
+    methods `start_transfer` / `cancel_transfer`, streaming
+    `runspec:transfer_progress` / `runspec:transfer_end` events, mirroring how
+    runnable output is streamed. New pure, unit-tested `fs_transfer` planning
+    module and a `TransferModal` UI component.
+
+---
+
+
 ## [0.21.0] — 2026-06-07
 
 ### Added

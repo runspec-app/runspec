@@ -700,6 +700,30 @@ export const mockApi: BridgeApi = {
     console.log('[mock] cancel_invocation', invId)
   },
 
+  start_transfer: async (sourceHost, sourcePaths, destHost, destDir) => {
+    console.log('[mock] start_transfer', { sourceHost, sourcePaths, destHost, destDir })
+    if (!sourcePaths.length) return { error: 'no source files selected' }
+    const id = `xfer-${++invocationCounter}`
+    const file = sourcePaths[0].split(/[\\/]/).pop() || 'file'
+    const total = 1_048_576
+    let sent = 0
+    const tick = () => {
+      sent = Math.min(total, sent + 262_144)
+      window.dispatchEvent(new CustomEvent('runspec:transfer_progress', {
+        detail: { id, file, index: 0, count: sourcePaths.length, transferred: sent, total },
+      }))
+      if (sent < total) setTimeout(tick, 250)
+      else window.dispatchEvent(new CustomEvent('runspec:transfer_end', {
+        detail: { id, ok: true, files: sourcePaths.length, total: sourcePaths.length, error: null },
+      }))
+    }
+    setTimeout(tick, 250)
+    return { id }
+  },
+  cancel_transfer: async (id) => {
+    console.log('[mock] cancel_transfer', id)
+  },
+
   minimize_window: async () => { console.log('[mock] minimize_window') },
   toggle_maximize_window: async () => { console.log('[mock] toggle_maximize_window') },
   close_window: async () => { console.log('[mock] close_window') },

@@ -47,6 +47,27 @@ export interface DirListing {
   error?: string
 }
 
+// runspec:transfer_progress event detail — one per throttled progress tick (or a
+// per-file error when `error` is set).
+export interface TransferProgress {
+  id: string
+  file: string
+  index: number
+  count: number
+  transferred: number
+  total: number
+  error?: string
+}
+
+// runspec:transfer_end event detail — fired once when a transfer finishes.
+export interface TransferEnd {
+  id: string
+  ok: boolean
+  files: number   // files completed
+  total: number
+  error?: string | null
+}
+
 export interface Host {
   name: string
   connected: boolean
@@ -284,6 +305,10 @@ export interface BridgeApi {
   // a runnable, the remote listing runs as that runnable's run_as (sudo/become).
   list_dir: (host: string, path?: string, group?: string, dirsOnly?: boolean, runnable?: string, asServiceAccount?: boolean) => Promise<DirListing>
   cancel_invocation: (invId: string) => Promise<void>
+  // Copy files between the local machine and a remote host over SFTP (local↔remote
+  // only). Returns an id, then streams runspec:transfer_progress / transfer_end.
+  start_transfer: (sourceHost: string, sourcePaths: string[], destHost: string, destDir: string) => Promise<{ id?: string; error?: string }>
+  cancel_transfer: (id: string) => Promise<void>
   send_chat: (message: string, invocationId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>
   clear_chat: () => Promise<void>
