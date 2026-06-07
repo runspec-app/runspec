@@ -19,7 +19,7 @@ SPEC: dict[str, Any] = {
     "args": {
         "region": {"type": "choice", "options": ["us", "eu"]},
         "env": {"type": "choice", "options": ["dev", "prod"]},
-        "source": {"default": "examplecorp_symbol"},
+        "source": {"default": "primary_symbol"},
     },
     "commands": {
         "show": {

@@ -6,6 +6,9 @@ Public API:
     parse()         → RunSpec   Parse arguments for the calling script
     load_spec()     → RunSpec   Load spec without parsing argv
     register_type() → None      Register a custom type coercer
+
+Test helpers live in ``runspec.testing`` (imported explicitly from tests):
+    from runspec.testing import ParseHarness
 """
 
 from importlib.metadata import version as _version

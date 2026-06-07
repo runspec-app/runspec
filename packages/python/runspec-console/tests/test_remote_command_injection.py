@@ -17,10 +17,10 @@ import shlex
 
 from runspec_console.executor import args_to_argv, shell_join
 
-BIN = "/home/svc_app/.venv/bin/example-app"
-# What build_become_argv(..., run_as="svc_app", "sudo", env={"RUNSPEC_AGENT": "1"})
+BIN = "/home/svc/.venv/bin/static-data"
+# What build_become_argv(..., run_as="svc", "sudo", env={"RUNSPEC_AGENT": "1"})
 # prepends to the bare command.
-SUDO_PREFIX = ["sudo", "-u", "svc_app", "env", "RUNSPEC_AGENT=1"]
+SUDO_PREFIX = ["sudo", "-u", "svc", "env", "RUNSPEC_AGENT=1"]
 
 # Classic shell-injection payloads a reviewer would try in a text field.
 PAYLOADS = [

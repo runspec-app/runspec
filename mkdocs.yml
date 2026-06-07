@@ -22,6 +22,7 @@ nav:
   - Format Reference: format.md
   - Logging: logging.md
   - Python Library: python.md
+  - Testing runnables: testing.md
   - Node Library: node.md
   - Deploying Node folders: node-deploy.md
   - CLI Reference: cli.md

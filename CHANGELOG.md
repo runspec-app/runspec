@@ -7,6 +7,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.31.0] — 2026-06-07
+
+### Added
+
+- **`runspec.testing` — test helpers for runnables.** A stdlib-only module
+  (no pytest dependency) that removes the boilerplate from testing a runnable.
+  `ParseHarness(script_name=..., config_path=...)` (or `toml=` for an inline
+  spec) drives `runspec.parse()` with an argv list — no `sys.argv`
+  monkeypatching or parser mocking:
+  - `expect_ok(argv)` asserts a clean parse and returns the `RunSpec`;
+    `expect_exit(argv, code=1, contains=...)` asserts a clean error exit and
+    returns the captured output (no pytest `capsys` needed).
+  - `smoke(values=...)` auto-walks the whole subcommand tree: `--help` works for
+    every command, `require-command` is enforced, missing required args exit 1,
+    and (given shared `values`) every leaf accepts a full valid invocation —
+    meaningful coverage for a big migrated runnable in a few lines.
+  - Spec introspection: `command_paths()`, `required_args(path)`,
+    `requires_command(path)`, `args_for(path)`.
+  - See `docs/testing.md` for the two-layer pattern (parse-wiring vs. mocking
+    only the I/O boundary).
+
+---
+
 ## [node-0.27.0] — 2026-06-05
 
 ### Added
