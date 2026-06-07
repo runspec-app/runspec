@@ -1,6 +1,6 @@
 import pytest
 
-from runspec_console.fs_transfer import plan_transfer
+from runspec_console.fs_transfer import plan_transfer, relay_items
 
 
 def test_push_plan_local_to_remote():
@@ -62,3 +62,18 @@ def test_local_to_local_rejected():
 def test_remote_to_remote_rejected():
     with pytest.raises(ValueError, match="one local side and one remote side"):
         plan_transfer("prod-1", ["/a/x"], "prod-2", "/b")
+
+
+def test_relay_items():
+    items = relay_items(["/var/log/app/fix.log", "/var/log/app/err.log"], "/incoming")
+    assert [(i.src, i.dst, i.name) for i in items] == [
+        ("/var/log/app/fix.log", "/incoming/fix.log", "fix.log"),
+        ("/var/log/app/err.log", "/incoming/err.log", "err.log"),
+    ]
+
+
+def test_relay_items_validation():
+    with pytest.raises(ValueError, match="no source files"):
+        relay_items([], "/incoming")
+    with pytest.raises(ValueError, match="no destination folder"):
+        relay_items(["/a/x"], "")

@@ -69,3 +69,21 @@ def plan_transfer(
         for p in paths
     ]
     return TransferPlan(direction=direction, remote_host=remote_host, items=items)
+
+
+def relay_items(source_paths: list[str], dest_dir: str) -> list[TransferItem]:
+    """Per-file ``(src, dst)`` items for a remote→remote relay (host → host).
+
+    The console streams each ``src`` (read from the source host) to ``dst``
+    (written on the destination host, ``dest_dir`` + the source basename). Raises
+    :class:`ValueError` on an empty selection or missing destination.
+    """
+    paths = [p for p in (source_paths or []) if p and p.strip()]
+    if not paths:
+        raise ValueError("no source files selected")
+    if not dest_dir or not dest_dir.strip():
+        raise ValueError("no destination folder selected")
+    return [
+        TransferItem(src=p, dst=_join(dest_dir, _basename(p)), name=_basename(p))
+        for p in paths
+    ]

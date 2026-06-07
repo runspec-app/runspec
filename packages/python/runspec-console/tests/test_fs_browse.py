@@ -122,6 +122,59 @@ def test_local_parent_root():
     assert _local_parent("/") is None
 
 
+class _FakeAttr:
+    def __init__(self, name, mode, size, mtime):
+        self.filename = name
+        self.st_mode = mode
+        self.st_size = size
+        self.st_mtime = mtime
+
+
+class _FakeSftp:
+    def __init__(self, entries, cwd="/var/log/app"):
+        self._entries = entries
+        self._cwd = cwd
+
+    def normalize(self, p):
+        return self._cwd if p in (".", "") else p.rstrip("/") or "/"
+
+    def listdir_attr(self, path):
+        return self._entries
+
+
+def test_list_sftp():
+    import stat as st
+
+    from runspec_console.fs_browse import list_sftp
+
+    entries = [
+        _FakeAttr("sub", st.S_IFDIR | 0o755, 4096, 1717000000),
+        _FakeAttr("zeta.log", st.S_IFREG | 0o644, 2048, 1717000500),
+        _FakeAttr("alpha.log", st.S_IFREG | 0o644, 100, 1717000400),
+    ]
+    res = list_sftp(_FakeSftp(entries), "")
+    assert res["cwd"] == "/var/log/app"
+    assert res["parent"] == "/var/log"
+    assert [e["name"] for e in res["entries"]] == ["sub", "alpha.log", "zeta.log"]
+    by = {e["name"]: e for e in res["entries"]}
+    assert by["sub"]["type"] == "directory"
+    assert by["zeta.log"]["type"] == "file"
+    assert by["zeta.log"]["size"] == 2048
+
+
+def test_list_sftp_dirs_only():
+    import stat as st
+
+    from runspec_console.fs_browse import list_sftp
+
+    entries = [
+        _FakeAttr("sub", st.S_IFDIR | 0o755, 4096, 1),
+        _FakeAttr("file.log", st.S_IFREG | 0o644, 1, 1),
+    ]
+    res = list_sftp(_FakeSftp(entries), "", dirs_only=True)
+    assert [e["name"] for e in res["entries"]] == ["sub"]
+
+
 def test_remote_list_command_service_account_wraps_in_become():
     # Needs core runspec for build_become_argv; CI's console-test env omits it.
     pytest.importorskip("runspec")

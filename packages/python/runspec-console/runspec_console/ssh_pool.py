@@ -199,6 +199,42 @@ class PooledConnection:
 
         return sftp, release
 
+    def open_direct_tcpip(
+        self, dest_host: str, dest_port: int
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open a ``direct-tcpip`` channel through this transport (jump → dest).
+
+        Used to tunnel an ad-hoc SSH connection to ``dest_host:dest_port`` via a
+        pooled jump host. Returns ``(channel, release)``; the session slot is held
+        until ``release()`` (caller drives the channel as a ``sock=``).
+        """
+        self._sessions.acquire()
+        try:
+            self.last_used = self._clock()
+            transport = self._client.get_transport()
+            if transport is None:
+                raise OSError("transport closed")
+            chan = transport.open_channel(
+                "direct-tcpip", (dest_host, dest_port), ("127.0.0.1", 0)
+            )
+        except BaseException:
+            self._sessions.release()
+            raise
+
+        released = threading.Event()
+
+        def release() -> None:
+            if not released.is_set():
+                released.set()
+                try:
+                    chan.close()
+                except Exception:
+                    pass
+                self.last_used = self._clock()
+                self._sessions.release()
+
+        return chan, release
+
     def close(self) -> None:
         try:
             self._client.close()
@@ -428,6 +464,20 @@ class SSHConnectionPool:
         cfg = global_ssh_config or {}
         conn = self._acquire_conn(ssh_target, identity_file, cfg)
         return conn.open_sftp()
+
+    def open_direct_tcpip(
+        self,
+        ssh_target: str,
+        dest_host: str,
+        dest_port: int,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open a ``direct-tcpip`` channel through a pooled jump transport."""
+        cfg = global_ssh_config or {}
+        conn = self._acquire_conn(ssh_target, identity_file, cfg)
+        return conn.open_direct_tcpip(dest_host, dest_port)
 
     def connectable(
         self,

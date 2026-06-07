@@ -8,6 +8,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.24.0] — 2026-06-07
+
+### Added
+- **Relay files between hosts (host → host, through the console).** A new toolbar
+  action streams file(s) from a **source** host to a **destination** host without
+  the two ever connecting to each other — the console pulls from one and pushes
+  to the other in chunks. The win for jump-host fleets: the source can be an
+  **ad-hoc target** (a hostname you type, not in config) reached **via a chosen
+  jump host**, so you can pull a log off a box you don't keep configured straight
+  onto the jump's filesystem for a local runnable to consume — using **your** SSH
+  access, not a runnable's service-account password.
+  - Auth tries your **key/agent first** (tunnelled through the jump via a
+    `direct-tcpip` channel) and falls back to an **optional password** that is
+    used for that one connection and **never stored, logged, or pooled**.
+  - The source can also be a **configured host**. Bytes pass through your machine
+    (fine for logs); reads happen as your login user (no sudo). Backend:
+    `start_relay(source, source_paths, dest_host, dest_dir)` + a pure
+    `fs_transfer.relay_items`; streams the usual `runspec:transfer_*` events.
+  - **Browse the source** to pick file(s) — including an **ad-hoc target over the
+    jump** — instead of typing paths: a `list_dir_adhoc` over an SFTP listing
+    (the jump tunnel is reused warm from the pool), surfaced through the existing
+    file browser via an injectable lister. Typing paths still works too. The
+    target connection is **cached for the browse session** (and torn down when the
+    dialog closes via `close_adhoc`), so navigating directories on a slow link
+    handshakes the target only once instead of per click.
+
+---
+
+
 ## [0.23.0] — 2026-06-07
 
 ### Added

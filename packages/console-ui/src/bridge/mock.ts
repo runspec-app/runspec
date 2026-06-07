@@ -745,6 +745,37 @@ export const mockApi: BridgeApi = {
     setTimeout(tick, 250)
     return { id }
   },
+  start_relay: async (source, sourcePaths, destHost, destDir) => {
+    console.log('[mock] start_relay', { source: { ...source, password: source.password ? '***' : undefined }, sourcePaths, destHost, destDir })
+    if (!sourcePaths.length) return { error: 'no source files selected' }
+    const id = `relay-${++invocationCounter}`
+    const file = sourcePaths[0].split(/[\\/]/).pop() || 'file'
+    const total = 4_194_304
+    let sent = 0
+    const tick = () => {
+      sent = Math.min(total, sent + 524_288)
+      window.dispatchEvent(new CustomEvent('runspec:transfer_progress', {
+        detail: { id, file, index: 0, count: sourcePaths.length, transferred: sent, total },
+      }))
+      if (sent < total) setTimeout(tick, 200)
+      else window.dispatchEvent(new CustomEvent('runspec:transfer_end', {
+        detail: { id, ok: true, files: sourcePaths.length, total: sourcePaths.length, error: null },
+      }))
+    }
+    setTimeout(tick, 200)
+    return { id }
+  },
+  list_dir_adhoc: async (jump, host, path = '', _user, _password, _port, dirsOnly = false) => {
+    console.log('[mock] list_dir_adhoc', { jump, host, path, dirsOnly })
+    const cwd = path && path !== '/' ? path.replace(/\/$/, '') : '/var/log/app'
+    const entries = [
+      { name: 'archive', type: 'directory' as const, size: 4096, mtime: 1717000000 },
+      { name: 'today.log', type: 'file' as const, size: 51200, mtime: 1717000500 },
+      { name: 'errors.log', type: 'file' as const, size: 8192, mtime: 1717000400 },
+    ].filter(e => !dirsOnly || e.type === 'directory')
+    return { cwd, parent: cwd === '/' ? null : cwd.split('/').slice(0, -1).join('/') || '/', entries, truncated: false }
+  },
+  close_adhoc: async () => { console.log('[mock] close_adhoc') },
   check_dir_exists: async (hosts, path) => {
     console.log('[mock] check_dir_exists', { hosts, path })
     // Demo: pretend the folder is missing on any host whose name ends in '-2'.

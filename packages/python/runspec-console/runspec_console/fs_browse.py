@@ -103,6 +103,30 @@ def list_local(path: str, dirs_only: bool = False) -> dict[str, Any]:
     return _finish(base, entries, _local_parent(base))
 
 
+def list_sftp(sftp: Any, path: str, dirs_only: bool = False) -> dict[str, Any]:
+    """List a directory over an open SFTP client (ad-hoc / relay source browse).
+
+    POSIX targets only (the source is reached via a jump). ``path`` empty means
+    the connection's default directory (home). Symlinks are reported by their own
+    type — not dereferenced — in this first cut.
+    """
+    import stat as statmod
+
+    cwd = sftp.normalize(path if path and path.strip() else ".")
+    cwd = cwd.rstrip("/") or "/"
+    entries: list[dict[str, Any]] = []
+    for attr in sftp.listdir_attr(cwd):
+        is_dir = statmod.S_ISDIR(attr.st_mode)
+        if dirs_only and not is_dir:
+            continue
+        entries.append(
+            _entry(
+                attr.filename, is_dir, int(attr.st_size or 0), int(attr.st_mtime or 0)
+            )
+        )
+    return _finish(cwd, entries, _posix_parent(cwd))
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 

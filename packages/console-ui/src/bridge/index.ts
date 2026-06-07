@@ -66,6 +66,17 @@ export interface TransferHostResult {
   error?: string | null
 }
 
+// A relay source: a configured host, or an ad-hoc host reached via a jump. The
+// password (ad-hoc only) is used for the single connection and never stored.
+export interface RelaySource {
+  kind: 'host' | 'adhoc'
+  host: string
+  user?: string
+  port?: number
+  jump?: string       // configured host to tunnel through (ad-hoc)
+  password?: string   // optional, used only if key/agent auth fails
+}
+
 // runspec:transfer_end event detail — fired once when a transfer finishes.
 export interface TransferEnd {
   id: string
@@ -318,6 +329,15 @@ export interface BridgeApi {
   start_transfer: (sourceHost: string, sourcePaths: string[], destHost: string, destDir: string) => Promise<{ id?: string; error?: string }>
   // Fan-out: upload the same local source file(s) to dest_dir on many remote hosts.
   start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string) => Promise<{ id?: string; error?: string }>
+  // Relay: stream file(s) from one host to another through the console. Source is a
+  // configured host, or an ad-hoc host reached via a configured jump (key first,
+  // then an optional password — used once, never stored/logged).
+  start_relay: (source: RelaySource, sourcePaths: string[], destHost: string, destDir: string) => Promise<{ id?: string; error?: string }>
+  // Browse a directory on an ad-hoc relay source (reached via a jump). Password
+  // is used only for this listing connection, never stored.
+  list_dir_adhoc: (jump: string, host: string, path?: string, user?: string, password?: string, port?: number, dirsOnly?: boolean) => Promise<DirListing>
+  // Close cached ad-hoc browse connections (call when the relay dialog closes).
+  close_adhoc: () => Promise<void>
   // Pre-flight: does `path` exist as a directory on each host? (fan-out dest check)
   check_dir_exists: (hosts: string[], path: string) => Promise<Record<string, { exists: boolean; error?: string | null }>>
   cancel_transfer: (id: string) => Promise<void>

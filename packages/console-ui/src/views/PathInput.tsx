@@ -124,7 +124,7 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
 
 // ── browse modal ──────────────────────────────────────────────────────────────
 
-export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group, multiSelect, onPick, onPickMany, onClose }: {
+export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group, multiSelect, lister, onPick, onPickMany, onClose }: {
   host: string
   startPath?: string
   dirsOnly?: boolean
@@ -132,6 +132,9 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
   runAs?: string
   group?: string
   multiSelect?: boolean
+  // Optional custom directory lister (e.g. an ad-hoc relay source over a jump).
+  // When given, it replaces the default bridge.list_dir(host, …) call.
+  lister?: (path: string, dirsOnly: boolean) => Promise<DirListing>
   onPick?: (path: string) => void
   onPickMany?: (paths: string[]) => void
   onClose: () => void
@@ -149,7 +152,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
     setLoading(true)
     setErr(null)
     try {
-      const res = await bridge.list_dir(host, path, group, dirsOnly, runnable, svc)
+      const res = lister ? await lister(path, !!dirsOnly) : await bridge.list_dir(host, path, group, dirsOnly, runnable, svc)
       if (res.error) { setErr(res.error); setListing(null) }
       else setListing(res)
     } catch (e) {
@@ -157,7 +160,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
     } finally {
       setLoading(false)
     }
-  }, [host, dirsOnly, group, runnable])
+  }, [host, dirsOnly, group, runnable, lister])
 
   useEffect(() => {
     // Start at the directory of the current value, else the user's home.

@@ -11,6 +11,7 @@ import {
   MoonOutlined,
   SettingOutlined,
   SwapOutlined,
+  NodeIndexOutlined,
   CodeOutlined,
   LoadingOutlined,
   BugOutlined,
@@ -25,6 +26,7 @@ import { SchedulesView } from './views/SchedulesView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
+import { RelayModal } from './views/RelayModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
 // so it stays out of the initial bundle.
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
@@ -42,6 +44,7 @@ export default function App() {
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
+  const [relayOpen, setRelayOpen] = useState(false)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [runnablesLoading, setRunnablesLoading] = useState(true)
@@ -362,6 +365,9 @@ export default function App() {
                 <Tooltip title="Transfer files (SFTP)">
                   <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setTransferOpen(true)} style={{ color: iconCol }} />
                 </Tooltip>
+                <Tooltip title="Relay files between hosts">
+                  <Button type="text" size="small" icon={<NodeIndexOutlined />} onClick={() => setRelayOpen(true)} style={{ color: iconCol }} />
+                </Tooltip>
                 <Tooltip title={sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : 'Settings'}>
                   <Badge dot={sshKeyAgeDays !== null && sshKeyAgeDays >= 75} color="orange" offset={[-4, 4]}>
                     <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ color: iconCol }} />
@@ -449,6 +455,12 @@ export default function App() {
           onClose={() => setTransferOpen(false)}
           hosts={hosts}
           defaultRemoteHost={selectedHost}
+        />
+
+        <RelayModal
+          open={relayOpen}
+          onClose={() => setRelayOpen(false)}
+          hosts={hosts}
         />
 
         <SettingsDrawer

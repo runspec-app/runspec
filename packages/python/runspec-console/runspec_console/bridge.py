@@ -91,6 +91,11 @@ class Bridge:
         self._debug: bool = False
         self._lock = threading.Lock()
         self._in_flight: dict[str, dict[str, Any]] = {}
+        # Cached ad-hoc SFTP connections for the relay source browser, keyed by
+        # (jump, host, user, port) — so navigating directories on a slow link
+        # handshakes the target once, then reuses the warm connection. Torn down
+        # by close_adhoc() (relay dialog close) and on shutdown.
+        self._adhoc_conns: dict[tuple[Any, ...], dict[str, Any]] = {}
         self._adapter: Any = None  # ModelAdapter, loaded on demand
         self._hosts: list[dict[str, Any]] = []
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
@@ -170,6 +175,7 @@ class Bridge:
         self._emit_ssh_log(detail)
 
     def _close_ssh_pool(self) -> None:
+        self.close_adhoc()
         pool = self._ssh_pool
         if pool is not None:
             pool.close_all()
@@ -734,6 +740,362 @@ class Bridge:
                     "error": err.strip() or f"check failed (exit {code})",
                 }
         return result
+
+    def _open_source_sftp(
+        self, source: dict[str, Any], password: str | None, cfg: dict[str, Any] | None
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open an SFTP to a relay source — a configured host, or an ad-hoc host
+        reached via a configured jump (key/agent first, then ``password``)."""
+        if source.get("kind") == "host":
+            entry = self._host_entry(source["host"])
+            if entry is None or not entry.get("ssh"):
+                raise OSError(f"{source.get('host')} is not a reachable remote host")
+            return self._open_sftp(entry["ssh"], entry.get("identityFile"), cfg)
+
+        # ad-hoc: tunnel a direct-tcpip channel through the configured jump (warm
+        # pooled transport), then SSH to the target over it (keys/agent, then password).
+        import paramiko
+
+        from .executor import _apply_host_key_policy
+
+        jump_entry = self._host_entry(source["jump"])
+        if jump_entry is None or not jump_entry.get("ssh"):
+            raise OSError(f"jump host {source.get('jump')} is not reachable")
+        target = str(source["host"])
+        port = int(source.get("port") or 22)
+
+        chan, chan_release, jump_client = self._jump_channel(
+            jump_entry, target, port, cfg
+        )
+
+        tclient = paramiko.SSHClient()
+        _apply_host_key_policy(tclient, cfg or {})
+        try:
+            tclient.connect(
+                hostname=target,
+                port=port,
+                username=source.get("user") or None,
+                password=password or None,
+                sock=chan,
+                allow_agent=True,
+                look_for_keys=True,
+                timeout=float((cfg or {}).get("connect_timeout", 10)),
+            )
+        except Exception:
+            chan_release()
+            if jump_client is not None:
+                jump_client.close()
+            raise
+        sftp = tclient.open_sftp()
+
+        def release() -> None:
+            for c in (sftp, tclient):
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            chan_release()
+            if jump_client is not None:
+                try:
+                    jump_client.close()
+                except Exception:
+                    pass
+
+        return sftp, release
+
+    def _jump_channel(
+        self,
+        jump_entry: dict[str, Any],
+        target: str,
+        port: int,
+        cfg: dict[str, Any] | None,
+    ) -> tuple[Any, Callable[[], None], Any]:
+        """Open a direct-tcpip channel to ``target:port`` through the jump.
+
+        Uses the pooled (warm) jump transport when pooling is on — returns
+        ``(channel, release, None)``; otherwise opens a fresh jump client and
+        returns it as the third element for the caller to close.
+        """
+        pool = self._ssh_pool
+        if pool is not None:
+            chan, release = pool.open_direct_tcpip(
+                jump_entry["ssh"],
+                target,
+                port,
+                identity_file=jump_entry.get("identityFile"),
+                global_ssh_config=cfg,
+            )
+            return chan, release, None
+
+        from .executor import _make_ssh_client
+
+        jump_client = _make_ssh_client(
+            jump_entry["ssh"], jump_entry.get("identityFile"), cfg
+        )
+        transport = jump_client.get_transport()
+        if transport is None:
+            jump_client.close()
+            raise OSError("jump transport unavailable")
+        chan = transport.open_channel("direct-tcpip", (target, port), ("127.0.0.1", 0))
+        return chan, (lambda: None), jump_client
+
+    def _relay_one(
+        self,
+        src_sftp: Any,
+        dest_sftp: Any,
+        item: Any,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Stream one file source→dest through the console, in chunks."""
+        size = int(src_sftp.stat(item.src).st_size)
+        transferred = 0
+        last = 0.0
+        with (
+            src_sftp.open(item.src, "rb") as fsrc,
+            dest_sftp.open(item.dst, "wb") as fdst,
+        ):
+            try:
+                fsrc.prefetch(size)
+            except Exception:
+                pass
+            while True:
+                if cancel_event.is_set():
+                    raise RuntimeError("cancelled")
+                chunk = fsrc.read(32768)
+                if not chunk:
+                    break
+                fdst.write(chunk)
+                transferred += len(chunk)
+                now = time.monotonic()
+                if now - last >= 0.15 or transferred >= size:
+                    last = now
+                    self._dispatch(
+                        "runspec:transfer_progress",
+                        {
+                            "id": tid,
+                            "file": item.name,
+                            "index": idx,
+                            "count": count,
+                            "transferred": transferred,
+                            "total": size,
+                        },
+                    )
+
+    def start_relay(
+        self,
+        source: dict[str, Any],
+        source_paths: list[str],
+        dest_host: str,
+        dest_dir: str,
+    ) -> dict[str, Any]:
+        """Relay file(s) from one host to another, streaming through the console.
+
+        ``source`` is ``{"kind": "host", "host": "<configured>"}`` or
+        ``{"kind": "adhoc", "host", "port"?, "user"?, "jump": "<configured>",
+        "password"?}``. A password (when given) connects to the ad-hoc target only
+        and is **never** stored, logged, or pooled. Returns ``{"id": ...}`` and
+        streams the usual transfer events, or ``{"error": ...}``.
+        """
+        from .fs_transfer import relay_items
+
+        try:
+            items = relay_items(source_paths, dest_dir)
+        except ValueError as e:
+            return {"error": str(e)}
+
+        dest_entry = self._host_entry(dest_host)
+        if dest_entry is None or not dest_entry.get("ssh"):
+            return {"error": f"{dest_host} is not a reachable remote host"}
+
+        kind = source.get("kind")
+        if kind not in ("host", "adhoc") or not source.get("host"):
+            return {"error": "no source host specified"}
+        if kind == "adhoc" and not source.get("jump"):
+            return {"error": "no jump host selected"}
+
+        # Pull the password out so it never lands in _in_flight / logs.
+        password = source.pop("password", None)
+        cfg = self.get_config().get("ssh")
+
+        tid = uuid.uuid4().hex[:12]
+        cancel_event = threading.Event()
+        with self._lock:
+            self._in_flight[tid] = {
+                "id": tid,
+                "runnable": "relay",
+                "group": "",
+                "host": f"{source.get('host')} → {dest_host}",
+                "operator": self._current_user(),
+                "runAs": "",
+                "startedAt": _iso_now(),
+                "args": {
+                    "source": source.get("host"),
+                    "via": source.get("jump"),
+                    "dest": dest_host,
+                    "files": len(items),
+                },
+                _CANCEL_KEY: cancel_event,
+            }
+
+        def run() -> None:
+            ok, error, done = True, None, 0
+            src_release: Callable[[], None] | None = None
+            dest_release: Callable[[], None] | None = None
+            count = len(items)
+            try:
+                src_sftp, src_release = self._open_source_sftp(source, password, cfg)
+                dest_sftp, dest_release = self._open_sftp(
+                    dest_entry["ssh"], dest_entry.get("identityFile"), cfg
+                )
+                for idx, item in enumerate(items):
+                    if cancel_event.is_set():
+                        ok, error = False, "cancelled"
+                        break
+                    try:
+                        self._relay_one(
+                            src_sftp, dest_sftp, item, tid, idx, count, cancel_event
+                        )
+                        done += 1
+                    except Exception as e:
+                        ok, error = False, str(e)
+                        self._dispatch(
+                            "runspec:transfer_progress",
+                            {
+                                "id": tid,
+                                "file": item.name,
+                                "index": idx,
+                                "count": count,
+                                "transferred": 0,
+                                "total": 0,
+                                "error": str(e),
+                            },
+                        )
+            except Exception as e:
+                ok, error = False, str(e)
+            finally:
+                for r in (src_release, dest_release):
+                    if r:
+                        r()
+                with self._lock:
+                    self._in_flight.pop(tid, None)
+            logger.info("relay %s: %d/%d ok=%s", tid, done, count, ok)
+            self._dispatch(
+                "runspec:transfer_end",
+                {"id": tid, "ok": ok, "files": done, "total": count, "error": error},
+            )
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"id": tid}
+
+    def list_dir_adhoc(
+        self,
+        jump: str,
+        host: str,
+        path: str = "",
+        user: str | None = None,
+        password: str | None = None,
+        port: int | None = None,
+        dirs_only: bool = False,
+    ) -> dict[str, Any]:
+        """List a directory on an ad-hoc host (reached via ``jump``) for the relay
+        source browser. Same return shape as :meth:`list_dir`.
+
+        The target connection is cached for the browse session (keyed by jump /
+        host / user / port) so navigation on a slow link only handshakes the
+        target once. The password is used only when (re)establishing and is never
+        stored or logged."""
+        if not host:
+            return {"error": "no source host specified"}
+        if not jump:
+            return {"error": "no jump host selected"}
+        key = (jump, host, user or "", int(port or 22))
+        cfg = self.get_config().get("ssh")
+        for attempt in (1, 2):
+            try:
+                sftp = self._get_adhoc_sftp(key, jump, host, user, password, port, cfg)
+            except Exception as e:
+                return {"error": str(e)}
+            try:
+                from .fs_browse import list_sftp
+
+                return list_sftp(sftp, path, dirs_only=dirs_only)
+            except Exception as e:
+                # A reused connection may have dropped — drop it and retry once.
+                self._close_adhoc_key(key)
+                if attempt == 2:
+                    return {"error": str(e)}
+        return {"error": "unreachable"}
+
+    def _get_adhoc_sftp(
+        self,
+        key: tuple[Any, ...],
+        jump: str,
+        host: str,
+        user: str | None,
+        password: str | None,
+        port: int | None,
+        cfg: dict[str, Any] | None,
+    ) -> Any:
+        """Return a live cached ad-hoc SFTP for ``key``, establishing one if needed."""
+        with self._lock:
+            entry = self._adhoc_conns.get(key)
+        if entry is not None and self._adhoc_alive(entry["sftp"]):
+            entry["last_used"] = time.monotonic()
+            return entry["sftp"]
+
+        source = {
+            "kind": "adhoc",
+            "host": host,
+            "jump": jump,
+            "user": user,
+            "port": port,
+        }
+        sftp, release = self._open_source_sftp(source, password, cfg)
+        with self._lock:
+            old = self._adhoc_conns.get(key)
+            self._adhoc_conns[key] = {
+                "sftp": sftp,
+                "release": release,
+                "last_used": time.monotonic(),
+            }
+        if old is not None:
+            try:
+                old["release"]()
+            except Exception:
+                pass
+        return sftp
+
+    @staticmethod
+    def _adhoc_alive(sftp: Any) -> bool:
+        try:
+            chan = sftp.get_channel()
+            transport = chan.get_transport() if chan is not None else None
+            return bool(transport is not None and transport.is_active())
+        except Exception:
+            return False
+
+    def _close_adhoc_key(self, key: tuple[Any, ...]) -> None:
+        with self._lock:
+            entry = self._adhoc_conns.pop(key, None)
+        if entry is not None:
+            try:
+                entry["release"]()
+            except Exception:
+                pass
+
+    def close_adhoc(self) -> None:
+        """Tear down all cached ad-hoc browse connections (relay dialog close / shutdown)."""
+        with self._lock:
+            entries = list(self._adhoc_conns.values())
+            self._adhoc_conns.clear()
+        for e in entries:
+            try:
+                e["release"]()
+            except Exception:
+                pass
 
     # ── history ───────────────────────────────────────────────────────────────
 
