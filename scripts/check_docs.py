@@ -43,11 +43,24 @@ KNOWN_CUSTOM_TYPES = {"json-file", "port"}
 
 TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 
-# Doc pages whose ```toml blocks are NOT runspec.toml configs and must not be
-# validated against the schema. runspec-chat documents its own
-# `jump_hosts.toml` connection file; console documents its `config.toml`
-# ([ssh]/[refresh] tuning) — both a different format.
-SKIP_FILES = {"runspec-chat.md", "console.md"}
+# A ```toml block is exempt from runspec.toml schema validation when it is a
+# *different* TOML format, identified by content (a top-level table only these
+# formats use) rather than by filename — so a real runspec.toml example in any
+# doc page is always validated, even on pages that also show a config file.
+#   project/tool/build-system  → pyproject / foreign manifest snippet
+#   hosts                      → runspec-chat `jump_hosts.toml` connection file
+#   ssh/refresh                → console `config.toml` ([ssh]/[refresh] tuning)
+# Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts` would be
+# skipped — none exist in the docs (guarded by check below), and runnable names
+# are author-chosen, so this is acceptable.
+NON_RUNSPEC_SECTIONS = {
+    "project",
+    "tool",
+    "build-system",
+    "hosts",
+    "ssh",
+    "refresh",
+}
 
 
 def _manifest_version(path: Path) -> str:
@@ -99,8 +112,6 @@ def _normalize_custom_types(node: object) -> object:
 def _toml_blocks():
     """Yield (path, line_number, block_text) for every ```toml block in docs/."""
     for md in sorted(DOCS.glob("*.md")):
-        if md.name in SKIP_FILES:
-            continue
         text = md.read_text(encoding="utf-8")
         for m in TOML_FENCE.finditer(text):
             line = text[: m.start()].count("\n") + 1
@@ -111,9 +122,11 @@ def check_toml_examples() -> list[str]:
     """Validate every runspec ```toml block against the canonical JSON Schema.
 
     Skips blocks that (a) aren't valid TOML — placeholder fragments like
-    `[<name>]`; or (b) are foreign manifests (`[project]`/`[tool]`/
-    `[build-system]`). `type` enum violations for documented custom types are
-    tolerated; every other violation (including type typos) is reported.
+    `[<name>]`; or (b) are a non-runspec config format, detected by a top-level
+    table in ``NON_RUNSPEC_SECTIONS`` (foreign manifests, the chat
+    `jump_hosts.toml`, the console `config.toml`). `type` enum violations for
+    documented custom types are tolerated; every other violation (including
+    type typos) is reported.
     """
     try:
         import jsonschema
@@ -132,8 +145,8 @@ def check_toml_examples() -> list[str]:
             continue  # placeholder / illustrative fragment — not a real config
         if not data:
             continue
-        if data.keys() & {"project", "tool", "build-system"}:
-            continue  # pyproject / foreign manifest snippet
+        if data.keys() & NON_RUNSPEC_SECTIONS:
+            continue  # non-runspec config format (manifest / chat / console)
         data = _normalize_custom_types(data)
         block_errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
         for err in block_errors:

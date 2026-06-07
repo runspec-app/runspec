@@ -28,6 +28,7 @@ nav:
   - Agent Integration: agents.md
   - Jump Hosts: jump-hosts.md
   - Desktop Console: console.md
+  - Console SSH Capacity: console-ssh-capacity.md
   - runspec-chat (deprecated): runspec-chat.md
   - Releasing: releasing.md
   - Changelog: changelog.md
