@@ -75,7 +75,10 @@ def test_llm_only_save_keeps_pool_untouched():
     pool_before = stub._ssh_pool
     with patch(NORM, side_effect=lambda s: s), patch(WRITE):
         stub.save_config(
-            {"ssh": {"user": "j"}, "llm": {"provider": "acme-llm", "system": "be terse"}}
+            {
+                "ssh": {"user": "j"},
+                "llm": {"provider": "acme-llm", "system": "be terse"},
+            }
         )
     assert stub._ssh_pool is pool_before
     assert pool_before.closed is False

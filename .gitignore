@@ -56,3 +56,6 @@ chainlit-docs/
 
 # Claude Code local config (machine-specific)
 .claude/launch.json
+
+# Stray committed test venv (removed from tracking)
+.venv-test/
