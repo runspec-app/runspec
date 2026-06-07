@@ -35,6 +35,7 @@ publishes. Publishing is always an explicit step.
 | `runspec-linux` | `packages/python/runspec-linux/pyproject.toml` | `linux-v` | `linux-release.yml` | PyPI + GitHub Release |
 | `runspec-windows` | `packages/python/runspec-windows/pyproject.toml` | `windows-v` | `windows-release.yml` | PyPI + GitHub Release |
 | `runspec-jsm` | `packages/python/runspec-jsm/pyproject.toml` | `jsm-v` | `jsm-release.yml` | PyPI + GitHub Release |
+| `runspec-snow` | `packages/python/runspec-snow/pyproject.toml` | `snow-v` | `snow-release.yml` | PyPI + GitHub Release |
 | `runspec-console` | `packages/python/runspec-console/pyproject.toml` | `console-v` | `console-release.yml` | PyPI + GitHub Release |
 | `runspec-node` | `packages/node/package.json` | `node-v` | `node-release.yml` | npm + GitHub Release |
 | `runspec-chat` | `packages/python/runspec-chat/pyproject.toml` | `chat-v` | `chat-release.yml` | PyPI (see caveat) |

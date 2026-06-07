@@ -1,0 +1,251 @@
+#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json
+
+# runspec-snow — ServiceNow ITSM runnables (Table API + Service Catalog).
+# Auth is environment-variable driven (see the package README/CHANGELOG):
+#   SNOW_BASE_URL (or SNOW_INSTANCE) + (SNOW_TOKEN  |  SNOW_USER + SNOW_PASSWORD)
+# Per-environment overrides use a SNOW_<ENV>_ prefix (e.g. SNOW_UAT_BASE_URL),
+# selected with the optional --env (dev/uat/prod) arg on every runnable.
+# SNOW_TABLE provides a default table for record operations.
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+# One log file per invocation — multi-writer safe for shared venvs.
+store = "per-run"
+
+# ── Create / read records (Table API) ─────────────────────────────────────────
+
+[snow-create-record]
+serve       = ["local"]
+description = "Insert a record into a table (e.g. incident, sc_task, sc_req_item)"
+autonomy    = "confirm"
+output      = "json"
+
+[snow-create-record.args.table]
+type        = "str"
+short       = "-t"
+description = "Table to insert into; falls back to SNOW_TABLE"
+required    = false
+
+[snow-create-record.args.short-description]
+type        = "str"
+short       = "-s"
+description = "Short description (maps to the standard short_description column)"
+required    = false
+
+[snow-create-record.args.field]
+type        = "str"
+short       = "-f"
+description = "Field as name=value (repeatable)"
+required    = false
+multiple    = true
+
+[snow-create-record.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects SNOW_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+[snow-get-record]
+serve       = ["local"]
+description = "Fetch a record by sys_id or number (e.g. INC0010001)"
+autonomy    = "autonomous"
+output      = "json"
+
+[snow-get-record.args.record]
+type        = "str"
+description = "sys_id or record number"
+
+[snow-get-record.args.table]
+type        = "str"
+short       = "-t"
+description = "Table to read from; falls back to SNOW_TABLE"
+required    = false
+
+[snow-get-record.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects SNOW_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+# ── Comment / work note (Table API) ───────────────────────────────────────────
+
+[snow-add-comment]
+serve       = ["local"]
+description = "Add a customer comment or an internal work note to a record"
+autonomy    = "confirm"
+output      = "json"
+
+[snow-add-comment.args.record]
+type        = "str"
+description = "sys_id or record number"
+
+[snow-add-comment.args.body]
+type        = "str"
+short       = "-b"
+description = "Comment text"
+
+[snow-add-comment.args.table]
+type        = "str"
+short       = "-t"
+description = "Table the record lives in; falls back to SNOW_TABLE"
+required    = false
+
+[snow-add-comment.args.internal]
+type        = "flag"
+short       = "-i"
+description = "Write to work_notes (agent-only); default is a customer-visible comment"
+default     = false
+
+[snow-add-comment.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects SNOW_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+# ── State (choice field; Table API) ───────────────────────────────────────────
+
+[snow-list-states]
+serve       = ["local"]
+description = "List the valid state choices (label + value) for a table"
+autonomy    = "autonomous"
+output      = "json"
+
+[snow-list-states.args.table]
+type        = "str"
+short       = "-t"
+description = "Table whose choices to list; falls back to SNOW_TABLE"
+required    = false
+
+[snow-list-states.args.field]
+type        = "str"
+short       = "-f"
+description = "Choice field name"
+default     = "state"
+
+[snow-list-states.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects SNOW_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+[snow-update-state]
+serve       = ["local"]
+description = "Set a record's state by label or value, optionally adding a work note"
+autonomy    = "confirm"
+output      = "json"
+
+[snow-update-state.args.record]
+type        = "str"
+description = "sys_id or record number"
+
+[snow-update-state.args.state]
+type        = "str"
+short       = "-s"
+description = "State label or value (see snow-list-states)"
+
+[snow-update-state.args.table]
+type        = "str"
+short       = "-t"
+description = "Table the record lives in; falls back to SNOW_TABLE"
+required    = false
+
+[snow-update-state.args.field]
+type        = "str"
+short       = "-f"
+description = "Choice field to set"
+default     = "state"
+
+[snow-update-state.args.comment]
+type        = "str"
+short       = "-c"
+description = "Work note to add as part of the state change"
+required    = false
+
+[snow-update-state.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects SNOW_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+# ── Set fields (Table API) ────────────────────────────────────────────────────
+
+[snow-set-field]
+serve       = ["local"]
+description = "Set one or more fields on a record"
+autonomy    = "confirm"
+output      = "json"
+
+[snow-set-field.args.record]
+type        = "str"
+description = "sys_id or record number"
+
+[snow-set-field.args.field]
+type        = "str"
+short       = "-f"
+description = "Field as name=value (repeatable)"
+multiple    = true
+
+[snow-set-field.args.table]
+type        = "str"
+short       = "-t"
+description = "Table the record lives in; falls back to SNOW_TABLE"
+required    = false
+
+[snow-set-field.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects SNOW_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+# ── Service Catalog discovery (Service Catalog API) ───────────────────────────
+
+[snow-list-catalog-items]
+serve       = ["local"]
+description = "List orderable Service Catalog items"
+autonomy    = "autonomous"
+output      = "json"
+
+[snow-list-catalog-items.args.query]
+type        = "str"
+short       = "-q"
+description = "Text search across catalog items"
+required    = false
+
+[snow-list-catalog-items.args.limit]
+type        = "int"
+short       = "-n"
+description = "Maximum number of items to return"
+default     = 50
+
+[snow-list-catalog-items.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects SNOW_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+[snow-list-variables]
+serve       = ["local"]
+description = "List the variables (form fields) for a Service Catalog item"
+autonomy    = "autonomous"
+output      = "json"
+
+[snow-list-variables.args.item]
+type        = "str"
+short       = "-i"
+description = "Catalog item sys_id (see snow-list-catalog-items)"
+
+[snow-list-variables.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects SNOW_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
