@@ -216,6 +216,7 @@ Both Python and Node packages are active and published.
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console, unreleased) |
 | `runspec-linux` | 0.1.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
 | `runspec-windows` | 0.1.0 | PyPI (unreleased) | 35 Windows system admin + Microsoft 365 (Outlook/Teams/Calendar/OneDrive) runnables |
+| `runspec-jsm` | 0.1.0 | PyPI (unreleased) | 8 Jira Service Management (Data Center) service-desk runnables — raise/comment/transition/set-property + portal-field discovery |
 | `runspec-registry` | 0.1.1 | PyPI | Archived — registry removed in favour of SSH+MCP jump-host model |
 
 **Integration packages** live under `packages/python/` alongside the core library. Each is a
@@ -245,6 +246,26 @@ package exports `graph_get()` / `get_token()` as a public API (parallel to
 the runnables surface in the console UI automatically. CI mirrors the linux jobs
 (`windows-quality`/`windows-unit`/`windows-smoke`); release tag prefix is
 `windows-v`.
+
+`runspec-jsm` targets **Jira Service Management Data Center** for service-desk
+agents and customers (not Jira product admins): 8 runnables for raise / comment
+(public or internal) / transition (by name or id) / set-property, plus
+request-type + portal-field discovery (`jsm-list-request-types`,
+`jsm-list-fields`). Pure HTTP via `httpx` over a **mixed** REST surface
+(`/rest/servicedeskapi` for raise/comment/discovery, `/rest/api/2` for
+transitions/properties), so it runs unchanged on Windows and Linux. Auth is
+**env-var only** — `JSM_BASE_URL` + (`JSM_PAT` Bearer *or* `JSM_USER`/`JSM_PASSWORD`
+Basic; PAT wins), with optional `JSM_<ENV>_*` prefixes selected by the
+`--env dev|uat|prod` arg on every runnable. **Identity is deploy-determined — no
+sudo flag:** run it as yourself locally or as the service account on a server
+(`sudo -u <svc> -E` / systemd / login shell); it makes no OS calls. It exports a
+public Python API where every operation takes a `JsmConfig` first arg
+(`config_from_env`, `create_request`, `add_comment`, `transition_issue`,
+`set_issue_property`, `list_request_types`, `get_request_type_fields`,
+`resolve_request_fields`, …) so a private (e.g. Nexus-hosted) package can import
+them, inject credentials in code, and bake in a default `service_desk_id` /
+`project_key` / `env` to build "one runnable per project" on top. CI mirrors the
+linux jobs (`jsm-quality`/`jsm-test`); release tag prefix is `jsm-v`.
 
 **Docs drift checks.** `scripts/check_docs.py` guards the MkDocs site against
 drift and runs in CI (`docs-check` job, gated by a `docs` paths filter) and

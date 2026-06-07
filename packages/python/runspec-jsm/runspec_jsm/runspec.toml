@@ -1,0 +1,232 @@
+#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json
+
+# runspec-jsm — Jira Service Management (Data Center) service-desk runnables.
+# Auth is environment-variable driven (see the package README/CHANGELOG):
+#   JSM_BASE_URL + (JSM_PAT  |  JSM_USER + JSM_PASSWORD)
+# Per-environment overrides use a JSM_<ENV>_ prefix (e.g. JSM_UAT_BASE_URL),
+# selected with the optional --env (dev/uat/prod) arg on every runnable.
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+# One log file per invocation — multi-writer safe for shared venvs.
+store = "per-run"
+
+# ── Raise / read requests (servicedeskapi) ────────────────────────────────────
+
+[jsm-raise-request]
+serve       = ["local"]
+description = "Raise a JSM customer request (service desk + request type + fields)"
+autonomy    = "confirm"
+output      = "json"
+
+[jsm-raise-request.args.request-type-id]
+type        = "str"
+short       = "-t"
+description = "Request type id (see jsm-list-request-types)"
+
+[jsm-raise-request.args.service-desk-id]
+type        = "str"
+short       = "-d"
+description = "Service desk id; falls back to JSM_SERVICE_DESK_ID"
+required    = false
+
+[jsm-raise-request.args.summary]
+type        = "str"
+short       = "-s"
+description = "Request summary (maps to the standard 'summary' field)"
+required    = false
+
+[jsm-raise-request.args.description]
+type        = "str"
+description = "Request description (maps to the standard 'description' field)"
+required    = false
+
+[jsm-raise-request.args.raise-on-behalf-of]
+type        = "str"
+short       = "-o"
+description = "Customer account/email to raise the request on behalf of"
+required    = false
+
+[jsm-raise-request.args.field]
+type        = "str"
+short       = "-f"
+description = "Extra request field as fieldId=value (repeatable)"
+required    = false
+multiple    = true
+
+[jsm-raise-request.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects JSM_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+[jsm-get-request]
+serve       = ["local"]
+description = "Fetch a JSM customer request by issue key or id"
+autonomy    = "autonomous"
+output      = "json"
+
+[jsm-get-request.args.issue]
+type        = "str"
+description = "Issue key or id (e.g. ITSUP-123)"
+
+[jsm-get-request.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects JSM_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+# ── Comment (servicedeskapi) ──────────────────────────────────────────────────
+
+[jsm-add-comment]
+serve       = ["local"]
+description = "Add a public or internal comment to a request"
+autonomy    = "confirm"
+output      = "json"
+
+[jsm-add-comment.args.issue]
+type        = "str"
+description = "Issue key or id (e.g. ITSUP-123)"
+
+[jsm-add-comment.args.body]
+type        = "str"
+short       = "-b"
+description = "Comment text"
+
+[jsm-add-comment.args.internal]
+type        = "flag"
+short       = "-i"
+description = "Make the comment internal (agents only); default is public"
+default     = false
+
+[jsm-add-comment.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects JSM_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+# ── Transition (core API) ─────────────────────────────────────────────────────
+
+[jsm-list-transitions]
+serve       = ["local"]
+description = "List the workflow transitions available on an issue"
+autonomy    = "autonomous"
+output      = "json"
+
+[jsm-list-transitions.args.issue]
+type        = "str"
+description = "Issue key or id (e.g. ITSUP-123)"
+
+[jsm-list-transitions.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects JSM_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+[jsm-transition-issue]
+serve       = ["local"]
+description = "Transition an issue by transition name or id, optionally commenting"
+autonomy    = "confirm"
+output      = "json"
+
+[jsm-transition-issue.args.issue]
+type        = "str"
+description = "Issue key or id (e.g. ITSUP-123)"
+
+[jsm-transition-issue.args.transition]
+type        = "str"
+short       = "-t"
+description = "Transition name or id (see jsm-list-transitions)"
+
+[jsm-transition-issue.args.comment]
+type        = "str"
+short       = "-c"
+description = "Comment to add as part of the transition"
+required    = false
+
+[jsm-transition-issue.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects JSM_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+# ── Issue properties (core API) ───────────────────────────────────────────────
+
+[jsm-set-property]
+serve       = ["local"]
+description = "Set an entity property on an issue (value parsed as JSON if possible)"
+autonomy    = "confirm"
+output      = "json"
+
+[jsm-set-property.args.issue]
+type        = "str"
+description = "Issue key or id (e.g. ITSUP-123)"
+
+[jsm-set-property.args.property-key]
+type        = "str"
+short       = "-k"
+description = "Property key"
+
+[jsm-set-property.args.value]
+type        = "str"
+short       = "-V"
+description = "Property value (parsed as JSON when valid, else stored as a string)"
+
+[jsm-set-property.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects JSM_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+# ── Request-type / field discovery (servicedeskapi) ───────────────────────────
+
+[jsm-list-request-types]
+serve       = ["local"]
+description = "List the request types available on a service desk"
+autonomy    = "autonomous"
+output      = "json"
+
+[jsm-list-request-types.args.service-desk-id]
+type        = "str"
+short       = "-d"
+description = "Service desk id; falls back to JSM_SERVICE_DESK_ID"
+required    = false
+
+[jsm-list-request-types.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects JSM_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false
+
+[jsm-list-fields]
+serve       = ["local"]
+description = "List the portal form fields (fieldId, name, required) for a request type"
+autonomy    = "autonomous"
+output      = "json"
+
+[jsm-list-fields.args.request-type-id]
+type        = "str"
+short       = "-t"
+description = "Request type id (see jsm-list-request-types)"
+
+[jsm-list-fields.args.service-desk-id]
+type        = "str"
+short       = "-d"
+description = "Service desk id; falls back to JSM_SERVICE_DESK_ID"
+required    = false
+
+[jsm-list-fields.args.env]
+type        = "choice"
+short       = "-e"
+description = "Target environment (selects JSM_<ENV>_* vars)"
+options     = ["dev", "uat", "prod"]
+required    = false

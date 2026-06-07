@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-jsm"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Jira Service Management (Data Center) service-desk runnables for runspec"
+dependencies = [
+    "runspec>=0.27.0",
+    "httpx",
+]
+
+[project.scripts]
+jsm-raise-request      = "runspec_jsm.tickets:main_raise_request"
+jsm-get-request        = "runspec_jsm.tickets:main_get_request"
+jsm-add-comment        = "runspec_jsm.comments:main_add_comment"
+jsm-list-transitions   = "runspec_jsm.transitions:main_list_transitions"
+jsm-transition-issue   = "runspec_jsm.transitions:main_transition_issue"
+jsm-set-property       = "runspec_jsm.properties:main_set_property"
+jsm-list-request-types = "runspec_jsm.forms:main_list_request_types"
+jsm-list-fields        = "runspec_jsm.forms:main_list_fields"
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
