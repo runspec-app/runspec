@@ -251,6 +251,11 @@ export interface BridgeApi {
   get_schedules: () => Promise<Schedule[]>
   get_config: () => Promise<Record<string, unknown>>
   config_dir: () => Promise<string>
+  // ── version / docs ─────────────────────────────────────────────────────────
+  app_version: () => Promise<string>
+  check_for_update: () => Promise<{ ok: boolean; current: string; latest: string | null; update_available: boolean }>
+  docs_url: () => Promise<string>
+  open_docs: () => Promise<void>
   list_providers: () => Promise<{ value: string; label: string }[]>
   save_config: (data: Record<string, unknown>) => Promise<void>
   create_schedule: (data: Record<string, unknown>) => Promise<void>

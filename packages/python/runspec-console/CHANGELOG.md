@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.19.0] — 2026-06-07
+
+### Added
+- **Version display, update check, and a documentation link.** The installed
+  version now shows at the bottom of the host sidebar. On launch the console
+  does a best-effort check for a newer release and, when one exists, shows an
+  `↑ <version>` chip beside it (offline / blocked networks just show the
+  version — no indicator, no error). A docs icon in the toolbar opens the
+  documentation site.
+  - The update check shells out to `pip` from the interpreter runspec-console
+    is installed in (`sys.executable`), so it honours that venv's index
+    configuration — an **internal PyPI proxy / mirror** is queried instead of
+    public PyPI when the venv is pointed at one.
+  - New `[console]` config section with a `docs_url` key (default
+    `https://jasonfinestone.github.io/runspec/`) so a fork or internal mirror
+    can retarget the docs link.
+  - New bridge methods `app_version`, `check_for_update`, `docs_url`, and
+    `open_docs`, backed by a dependency-free `version` helper (no `packaging`).
+  - Fixed the stale in-tree `__version__` so the source-run fallback matches the
+    packaged version.
+
+
 ## [0.18.0] — 2026-06-07
 
 ### Added

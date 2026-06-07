@@ -136,5 +136,25 @@ runspec-console --dev        # point pywebview at a running Vite dev server
 runspec-console --devtools   # enable the Chromium inspector in a prod build
 ```
 
+## Version & documentation
+
+The installed version is shown at the bottom of the host sidebar. On launch the
+console checks for a newer release by asking `pip` — running from the very venv
+runspec-console is installed in — what the newest available version is. Going
+through that venv's `pip` means the check honours its index configuration: an
+**internal PyPI proxy / mirror** is queried instead of public PyPI when the venv
+is pointed at one. It's best-effort — a blocked or offline network (or missing
+pip) simply shows the version with no update indicator; when a newer release
+exists, an `↑ <version>` chip appears next to it. The toolbar's docs icon (top
+right) opens the documentation site in your browser.
+
+The docs target defaults to <https://jasonfinestone.github.io/runspec/> and is
+overridable per-install in `%APPDATA%\runspec-console\config.toml`:
+
+```toml
+[console]
+docs_url = "https://docs.internal.corp/runspec/"
+```
+
 See the main [runspec docs](https://github.com/JasonFinestone/runspec) for the
 runspec format, the SSH jump-host model, and logging.

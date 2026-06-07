@@ -593,6 +593,14 @@ export const mockApi: BridgeApi = {
   get_schedules: async () => MOCK_SCHEDULES,
 
   config_dir: async () => 'C:/Users/jason/AppData/Roaming/runspec-console',
+  app_version: async () => '0.19.0',
+  check_for_update: async () => {
+    await new Promise(r => setTimeout(r, 400))
+    // Dev mode pretends a newer release exists so the update indicator is visible.
+    return { ok: true, current: '0.19.0', latest: '0.20.0', update_available: true }
+  },
+  docs_url: async () => 'https://jasonfinestone.github.io/runspec/',
+  open_docs: async () => { console.log('[mock] open_docs') },
   list_providers: async () => [
     { value: 'anthropic', label: 'Anthropic' },
     { value: 'openai', label: 'OpenAI' },

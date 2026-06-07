@@ -812,6 +812,56 @@ class Bridge:
 
         return _normalize_path(str(config_path().parent))
 
+    # ── version / docs ─────────────────────────────────────────────────────────
+
+    def app_version(self) -> str:
+        """The installed runspec-console version, for display in the UI."""
+        from .version import installed_version
+
+        return installed_version()
+
+    def check_for_update(self) -> dict[str, Any]:
+        """Compare the installed version against the newest one the venv's
+        configured package index offers (PyPI, or an internal proxy/mirror if
+        this venv's pip points at one). Best-effort.
+
+        ``ok`` is False when the latest version couldn't be reached (offline /
+        blocked network policy) — the UI then shows just the version with no
+        update indicator. The check lives behind its own bridge method (it shells
+        out to pip) so the version renders instantly while this resolves in the
+        background.
+        """
+        from .version import installed_version, is_newer, latest_version
+
+        current = installed_version()
+        latest = latest_version()
+        if latest is None:
+            return {
+                "ok": False,
+                "current": current,
+                "latest": None,
+                "update_available": False,
+            }
+        return {
+            "ok": True,
+            "current": current,
+            "latest": latest,
+            "update_available": is_newer(latest, current),
+        }
+
+    def docs_url(self) -> str:
+        """The documentation URL the docs icon opens (config-overridable)."""
+        from .config import docs_url
+
+        return docs_url()
+
+    def open_docs(self) -> None:
+        """Open the documentation site in the user's default browser."""
+        try:
+            webbrowser.open(self.docs_url())
+        except Exception:
+            logger.debug("open_docs failed", exc_info=True)
+
     def save_config(self, data: dict[str, Any]) -> None:
         old = self.get_config()
         ssh = data.get("ssh")

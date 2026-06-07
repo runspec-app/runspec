@@ -16,6 +16,10 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
+# Where the in-app "Documentation" icon points. Overridable per-install via
+# `[console] docs_url` in config.toml so a fork / internal mirror can retarget it.
+DEFAULT_DOCS_URL = "https://jasonfinestone.github.io/runspec/"
+
 
 def app_dir() -> Path:
     base = os.environ.get("APPDATA")
@@ -47,6 +51,16 @@ def read_config() -> dict[str, Any]:
 
 def write_config(data: dict[str, Any]) -> None:
     config_path().write_text(_dict_to_toml(data), encoding="utf-8")
+
+
+def docs_url() -> str:
+    """Documentation URL: `[console] docs_url` from config, else the default."""
+    console = read_config().get("console")
+    if isinstance(console, dict):
+        url = console.get("docs_url")
+        if isinstance(url, str) and url.strip():
+            return url.strip()
+    return DEFAULT_DOCS_URL
 
 
 def _toml_str(v: str) -> str:

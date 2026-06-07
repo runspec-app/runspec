@@ -14,6 +14,7 @@ import {
   LoadingOutlined,
   BugOutlined,
   FileTextOutlined,
+  ReadOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -49,6 +50,9 @@ export default function App() {
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
+  const [version, setVersion] = useState<string>('')
+  const [updateInfo, setUpdateInfo] = useState<{ latest: string | null; updateAvailable: boolean } | null>(null)
+  const [docsUrl, setDocsUrl] = useState<string>('')
   const inFlight = useInFlight()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
@@ -82,6 +86,16 @@ export default function App() {
   }
 
   useEffect(() => { loadSshKeyAge() }, [])
+
+  useEffect(() => {
+    // Version renders instantly; the PyPI update check resolves in the
+    // background and quietly stays hidden when the network is unreachable.
+    bridge.app_version().then(setVersion).catch(() => {})
+    bridge.docs_url().then(setDocsUrl).catch(() => {})
+    bridge.check_for_update()
+      .then(r => { if (r.ok) setUpdateInfo({ latest: r.latest, updateAvailable: r.update_available }) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     bridge.get_runnables('all').then(r => { setRunnables(r); setRunnablesLoading(false) })
@@ -279,6 +293,31 @@ export default function App() {
                 )
               })()}
             </div>
+            {/* Version + update indicator */}
+            <div style={{
+              flexShrink: 0,
+              borderTop: `1px solid ${borderCol}`,
+              padding: '7px 14px',
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 11, color: iconCol,
+            }}>
+              <span style={{ fontFamily: 'monospace' }}>{version ? `v${version}` : ''}</span>
+              {updateInfo?.updateAvailable ? (
+                <Tooltip title={`Update available: v${updateInfo.latest} — open documentation`}>
+                  <Tag
+                    color="blue"
+                    onClick={() => bridge.open_docs().catch(console.error)}
+                    style={{ cursor: 'pointer', margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 5px' }}
+                  >
+                    ↑ {updateInfo.latest}
+                  </Tag>
+                </Tooltip>
+              ) : updateInfo ? (
+                <Tooltip title="You're on the latest version">
+                  <span style={{ color: '#52c41a' }}>up to date</span>
+                </Tooltip>
+              ) : null}
+            </div>
           </div>
 
           {/* Content column */}
@@ -311,6 +350,9 @@ export default function App() {
               <div style={{ flex: 1 }} />
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 8 }}>
+                <Tooltip title={docsUrl ? `Documentation — ${docsUrl}` : 'Documentation'}>
+                  <Button type="text" size="small" icon={<ReadOutlined />} onClick={() => bridge.open_docs().catch(console.error)} style={{ color: iconCol }} />
+                </Tooltip>
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
                 </Tooltip>
