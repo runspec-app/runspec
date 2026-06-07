@@ -3,6 +3,7 @@ import { Button, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typogr
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable } from '../bridge'
 import { useIsDark } from '../ThemeContext'
+import { PathInput } from './PathInput'
 
 const { Text } = Typography
 
@@ -22,12 +23,13 @@ function resolveNode(root: Runnable, path: string[]): Runnable {
 
 interface ArgInputProps {
   arg: ArgDef
+  host: string
   value: unknown
   error?: string
   onChange: (v: unknown) => void
 }
 
-function ArgInput({ arg, value, error, onChange }: ArgInputProps) {
+function ArgInput({ arg, host, value, error, onChange }: ArgInputProps) {
   const isDark = useIsDark()
   // `hint` (if declared) is the form placeholder; otherwise fall back to a
   // visible $VAR_REF default so the operator sees where the value comes from.
@@ -96,12 +98,27 @@ function ArgInput({ arg, value, error, onChange }: ArgInputProps) {
     )
   }
 
+  if (arg.type === 'path') {
+    // Browsable / autocompleting path field. Lists the host the runnable will
+    // run on; `ui = "directory"` restricts picking to folders.
+    return (
+      <PathInput
+        host={host}
+        value={value as string ?? ''}
+        placeholder={placeholder}
+        dirsOnly={arg.ui === 'directory'}
+        error={!!error}
+        onChange={onChange}
+      />
+    )
+  }
+
   return (
     <Input
       size="small"
       value={value as string ?? ''}
       onChange={e => onChange(e.target.value)}
-      placeholder={placeholder ?? (arg.type === 'path' ? '/path/to/…' : undefined)}
+      placeholder={placeholder}
       style={inputStyle}
       status={error ? 'error' : undefined}
     />
@@ -121,7 +138,7 @@ function SectionLabel({ children }: { children: ReactNode }) {
   )
 }
 
-function ArgRow({ arg, value, error, onChange }: ArgInputProps) {
+function ArgRow({ arg, host, value, error, onChange }: ArgInputProps) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
@@ -142,14 +159,15 @@ function ArgRow({ arg, value, error, onChange }: ArgInputProps) {
           <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
         )}
       </div>
-      <ArgInput arg={arg} value={value} error={error} onChange={onChange} />
+      <ArgInput arg={arg} host={host} value={value} error={error} onChange={onChange} />
       {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
     </div>
   )
 }
 
-function ArgForm({ node, values, errors, onChange }: {
+function ArgForm({ node, host, values, errors, onChange }: {
   node: Runnable
+  host: string
   values: Record<string, unknown>
   errors: Record<string, string>
   onChange: (name: string, v: unknown) => void
@@ -173,6 +191,7 @@ function ArgForm({ node, values, errors, onChange }: {
     <ArgRow
       key={arg.name}
       arg={arg}
+      host={host}
       value={values[arg.name]}
       error={errors[arg.name]}
       onChange={v => onChange(arg.name, v)}
@@ -399,7 +418,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
               {currentNode.description}
             </Text>
           )}
-          <ArgForm node={currentNode} values={values} errors={errors} onChange={handleChange} />
+          <ArgForm node={currentNode} host={rootRunnable.host} values={values} errors={errors} onChange={handleChange} />
         </div>
       )}
     </Modal>

@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.20.0] — 2026-06-07
+
+### Added
+- **Browsable path fields in Forms.** `path` arguments now render as a picker
+  instead of a plain text box: type-ahead autocomplete (debounced) as you enter
+  a path, plus a folder button that opens an in-app file browser. Crucially, it
+  browses **the host the runnable will run on** — local or the selected remote
+  host — so you populate the field against the right filesystem instead of
+  guessing or dropping out to a terminal. `ui = "directory"` restricts picking to
+  folders (and adds a "Use this folder" action); otherwise files are selectable.
+  - New bridge method `list_dir(host, path, group, dirs_only)` returning
+    `{cwd, parent, entries, truncated}`. Local hosts list via `os.scandir`;
+    remote hosts list with a single `find` command over the host's existing
+    **pooled SSH transport** (no new connection or auth). Login-user identity for
+    now; a service-account view (the same listing wrapped in the host's
+    `run_as`/become) is a planned fast-follow, as is SFTP-backed file transfer.
+  - New `fs_browse` module (pure, unit-tested) and a `PathInput` UI component.
+
+---
+
+
 ## [0.19.0] — 2026-06-07
 
 ### Added

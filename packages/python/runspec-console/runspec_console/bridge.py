@@ -334,6 +334,47 @@ class Bridge:
             return cache
         return [r for r in cache if r.get("host") == host]
 
+    def list_dir(
+        self,
+        host: str,
+        path: str = "",
+        group: str | None = None,
+        dirs_only: bool = False,
+    ) -> dict[str, Any]:
+        """List a directory on ``host`` for the Forms path-picker.
+
+        ``path`` empty means the connecting user's home directory. Returns
+        ``{cwd, parent, entries, truncated}`` (see ``fs_browse``) or
+        ``{"error": ...}``. Login-user identity only for now; lists as the SSH
+        login user on remote hosts and as the console user locally. ``group`` is
+        accepted for API symmetry but unused — the filesystem is host-wide.
+        """
+        entry = self._host_entry(host)
+        if entry is None:
+            return {"error": f"unknown host {host}"}
+        try:
+            if entry.get("ssh"):
+                from .fs_browse import parse_remote_listing, remote_list_command
+
+                code, out, err = self._ssh_run(
+                    entry["ssh"],
+                    remote_list_command(path),
+                    identity_file=entry.get("identityFile"),
+                    timeout=15,
+                )
+                if code != 0:
+                    return {
+                        "error": err.strip()
+                        or f"could not list {path or '~'} (exit {code})"
+                    }
+                return parse_remote_listing(out, dirs_only=dirs_only)
+
+            from .fs_browse import list_local
+
+            return list_local(path, dirs_only=dirs_only)
+        except (OSError, ValueError) as e:
+            return {"error": str(e)}
+
     # ── history ───────────────────────────────────────────────────────────────
 
     def get_history(

@@ -587,6 +587,16 @@ export const mockApi: BridgeApi = {
   get_hosts: async () => MOCK_HOSTS,
 
   get_runnables: async (_host) => MOCK_RUNNABLES,
+  list_dir: async (_host, path = '', _group, dirsOnly = false) => {
+    const cwd = path && path !== '/' ? path.replace(/\/$/, '') : '/var/log/app'
+    const entries = [
+      { name: 'archive', type: 'directory' as const, size: 4096, mtime: 1717000000 },
+      { name: 'sessions', type: 'directory' as const, size: 4096, mtime: 1717000100 },
+      { name: 'fix.log', type: 'file' as const, size: 204800, mtime: 1717000500 },
+      { name: 'exceptions.log', type: 'file' as const, size: 10240, mtime: 1717000400 },
+    ].filter(e => !dirsOnly || e.type === 'directory')
+    return { cwd, parent: cwd === '/' ? null : cwd.split('/').slice(0, -1).join('/') || '/', entries, truncated: false }
+  },
 
   get_history: async (_host, _runnable) => MOCK_HISTORY,
 
