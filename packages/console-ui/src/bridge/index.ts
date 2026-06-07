@@ -26,6 +26,7 @@ export interface Runnable {
   description?: string
   args: ArgDef[]
   commands?: Record<string, Runnable>  // subcommands, max two levels deep
+  requireCommand?: boolean  // true when a command must be chosen at this level (core enforces require-command)
   autonomy?: string   // effective autonomy — 'confirm' | 'autonomous' | 'supervised' | 'manual'
   runAs?: string      // OS user the runnable executes as on the host
   rawSpec?: Record<string, unknown>  // full raw spec dict for the holistic Specs view

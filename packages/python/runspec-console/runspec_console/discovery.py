@@ -167,6 +167,12 @@ def _spec_to_runnables(
         "description": spec.get("description") or "",
         "args": effective_args,
         "autonomy": spec.get("autonomy") or config_autonomy or "confirm",
+        # When true, this node must be invoked with one of its commands (core
+        # enforces require-command). The CLI emits the normalised underscore key;
+        # raw-TOML callers (_parse_toml/tests) carry the hyphen form — accept both.
+        "requireCommand": bool(
+            spec.get("require_command") or spec.get("require-command")
+        ),
         # Full raw spec minus processed keys — SpecPanel uses this for the holistic view.
         "rawSpec": {k: v for k, v in spec.items() if k not in _RAW_SPEC_EXCLUDE},
     }

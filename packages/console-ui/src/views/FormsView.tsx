@@ -368,9 +368,23 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     >
       {hasSubcommands ? (
         <div>
-          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
-            {currentNode.description ?? 'Choose a subcommand:'}
-          </Text>
+          {currentNode.description && (
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: currentNode.requireCommand ? 8 : 14 }}>
+              {currentNode.description}
+            </Text>
+          )}
+          {currentNode.requireCommand ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>command required</Tag>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                This runnable can't run on its own — pick a command to continue.
+              </Text>
+            </div>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
+              Choose a subcommand:
+            </Text>
+          )}
           <SubcommandPicker node={currentNode} onSelect={name => {
             const newPath = [...commandPath, name]
             window.dispatchEvent(new CustomEvent('forms:navigate', {
@@ -432,7 +446,15 @@ function RunnableCard({ runnable, hosts, onClick }: {
         <span style={{ fontSize: 9, color: connected ? '#52c41a' : '#595959', flexShrink: 0 }}>●</span>
         <Text style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600 }}>{runnable.name}</Text>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          {subCount > 0 && <Tag style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands</Tag>}
+          {subCount > 0 && (
+            runnable.requireCommand ? (
+              <Tooltip title="A command is required — this runnable can't run without choosing one of its subcommands">
+                <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands · required</Tag>
+              </Tooltip>
+            ) : (
+              <Tag style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands</Tag>
+            )
+          )}
           {isInstant && (
             <Tooltip title="No arguments — runs immediately on click">
               <Tag color="gold" style={{ fontSize: 10, margin: 0 }}>⚡ instant</Tag>

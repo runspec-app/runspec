@@ -130,6 +130,9 @@ function SpecPanel({ runnable }: { runnable: Runnable }) {
     'description', 'autonomy', 'output', 'serve',
     'run_as', 'become_method', 'become_flags',
     'autonomy-reason', 'runspec_env', 'examples',
+    // require-command is surfaced by the Subcommands "one required" tag, not as a
+    // raw custom field — exclude both the hyphen and normalised underscore forms.
+    'require-command', 'require_command',
   ])
   const customFields = Object.entries(raw).filter(([k]) => !KNOWN.has(k))
 
@@ -289,9 +292,14 @@ function SpecPanel({ runnable }: { runnable: Runnable }) {
       {/* Subcommands */}
       {subcommands.length > 0 && (
         <div>
-          <Text style={{ fontSize: 11, color: labelCol, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-            Subcommands
-          </Text>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 11, color: labelCol, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+              Subcommands
+            </Text>
+            {runnable.requireCommand && (
+              <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>one required</Tag>
+            )}
+          </div>
           <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
             {subcommands.map(sub => (
               <div key={sub.name}>
@@ -306,6 +314,10 @@ function SpecPanel({ runnable }: { runnable: Runnable }) {
                   >
                     {sub.autonomy || 'confirm'}
                   </Tag>
+                  {/* A nested command that itself requires one of its own commands */}
+                  {sub.requireCommand && Object.keys(sub.commands ?? {}).length > 0 && (
+                    <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>command required</Tag>
+                  )}
                 </div>
                 {(sub.args ?? []).length > 0 && (
                   <div style={{ marginTop: 4, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>

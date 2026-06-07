@@ -231,6 +231,7 @@ const MOCK_RUNNABLES: Runnable[] = [
     description: 'Deploy the application to production',
     autonomy: 'confirm',
     runAs: 'svc-deploy',
+    requireCommand: true,
     args: [],
     rawSpec: {
       description: 'Deploy the application to production',

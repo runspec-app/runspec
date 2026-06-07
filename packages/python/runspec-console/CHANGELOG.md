@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.18.0] — 2026-06-07
+
+### Added
+- **`require-command` is now visible everywhere a runnable is shown.** When a
+  runnable (or a nested command) sets `require-command = true`, choosing one of
+  its commands is mandatory — but the console gave no sign of that, so the run
+  modal looked optional and the agent didn't know a command was needed.
+  - **Discovery** tags every node with `requireCommand` (read from the CLI's
+    normalised `require_command`, or the raw `require-command` for direct callers).
+  - **Forms view** marks such runnables with a `required` chip on the card and a
+    "command required — this runnable can't run on its own" banner above the
+    subcommand picker.
+  - **Spec view** shows a `one required` tag on the Subcommands heading (and a
+    `command required` tag on any nested command that requires its own), and no
+    longer leaks `require_command` into the raw "Custom" field list.
+  - **Agent (LLM) tools** now expose a `command` parameter — an enum of the
+    runnable's commands, summarised with their descriptions — and mark it
+    **required** in the tool schema when the spec requires a command. Each
+    command's own args are offered as optional, tagged inputs. The chosen
+    `command` is threaded through execution as the command path, so the agent can
+    finally run subcommands at all (previously it always ran at the top level and
+    require-command runnables were unrunnable).
+
+
 ## [0.16.1] — 2026-06-05
 
 ### Fixed

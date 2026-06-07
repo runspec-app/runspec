@@ -1894,10 +1894,14 @@ class Bridge:
             args = r.get("args") or []
             properties: dict[str, Any] = {}
             required: list[str] = []
-            for arg in args:
+
+            def add_arg(arg: dict[str, Any], note: str = "") -> None:
+                """Add one spec arg as a JSON-schema property. ``note`` prefixes the
+                description (used to tag a subcommand's own args) and marks the arg
+                as conditional — never added to the tool's top-level ``required``."""
                 arg_name = arg.get("name", "")
-                if not arg_name:
-                    continue
+                if not arg_name or arg_name in properties:
+                    return
                 arg_type = arg.get("type", "str")
                 json_type = {
                     "int": "integer",
@@ -1907,9 +1911,11 @@ class Bridge:
                     "path": "string",
                 }.get(arg_type, "string")
                 prop: dict[str, Any] = {"type": json_type}
-                # Build description: user-facing text + default hint so the LLM
-                # knows what value will be used when the arg is omitted.
+                # Build description: optional note + user-facing text + default hint
+                # so the LLM knows what value will be used when the arg is omitted.
                 desc_parts: list[str] = []
+                if note:
+                    desc_parts.append(note)
                 if arg.get("description") or arg.get("help"):
                     desc_parts.append(str(arg.get("description") or arg.get("help")))
                 default = arg.get("default")
@@ -1923,8 +1929,51 @@ class Bridge:
                 if arg.get("options"):
                     prop["enum"] = arg["options"]
                 properties[arg_name] = prop
-                if arg.get("required"):
+                if arg.get("required") and not note:
                     required.append(arg_name)
+
+            for arg in args:
+                add_arg(arg)
+
+            # Surface subcommands so the agent can pick one — and knows when it
+            # MUST. Without this the agent only saw the global args and had no way
+            # to name a command, so require-command runnables were unrunnable.
+            commands = r.get("commands") or {}
+            if commands:
+                cmd_names = list(commands.keys())
+                require_command = bool(r.get("requireCommand"))
+                summary = "; ".join(
+                    f"'{cn}'"
+                    + (
+                        f" — {commands[cn].get('description')}"
+                        if commands[cn].get("description")
+                        else ""
+                    )
+                    for cn in cmd_names
+                )
+                properties["command"] = {
+                    "type": "string",
+                    "enum": cmd_names,
+                    "description": (
+                        f"Subcommand to run ({summary}). "
+                        + (
+                            "Required: this runnable cannot run without choosing "
+                            "one of these commands."
+                            if require_command
+                            else "Optional — omit to run the runnable at its top level."
+                        )
+                    ),
+                }
+                if require_command:
+                    required.append("command")
+                # Each command's own (non-inherited) args become optional inputs,
+                # tagged with the command they belong to. Globals already added above.
+                for cn in cmd_names:
+                    for arg in commands[cn].get("args") or []:
+                        if arg.get("inherited"):
+                            continue
+                        add_arg(arg, note=f"(for the '{cn}' command)")
+
             schema: dict[str, Any] = {"type": "object", "properties": properties}
             if required:
                 schema["required"] = required
@@ -2107,6 +2156,17 @@ class Bridge:
         entry = self._host_entry(host)
         if entry is None:
             return f"Error: host '{host}' not found"
+        # `command` (when present) names the subcommand to descend into — pull it
+        # out of the args and pass it as the command path. Core validates it and
+        # enforces require-command, so an unknown/missing command surfaces a clear
+        # "Available commands: …" error the agent can read and retry from.
+        tool_input = dict(tool_input or {})
+        chosen_command = tool_input.pop("command", None)
+        command_path = (
+            [chosen_command]
+            if isinstance(chosen_command, str) and chosen_command
+            else []
+        )
         output_lines: list[str] = []
         exit_code_holder = [0]
 
@@ -2139,7 +2199,7 @@ class Bridge:
                 rp,
                 runnable,
                 tool_input,
-                [],
+                command_path,
                 on_line,
                 on_done,
                 entry.get("identityFile"),
@@ -2149,14 +2209,14 @@ class Bridge:
                 run_as=run_as,
                 become_method=become_method,
                 become_flags=become_flags,
-                positionals=self._positionals_for(cached_r, []),
+                positionals=self._positionals_for(cached_r, command_path),
             )
         else:
             run_local(
                 rp,
                 runnable,
                 tool_input,
-                [],
+                command_path,
                 on_line,
                 on_done,
                 timeout=120,
@@ -2164,7 +2224,7 @@ class Bridge:
                 run_as=run_as,
                 become_method=become_method,
                 become_flags=become_flags,
-                positionals=self._positionals_for(cached_r, []),
+                positionals=self._positionals_for(cached_r, command_path),
             )
 
         output = "\n".join(output_lines)
