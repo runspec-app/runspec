@@ -9,6 +9,7 @@ const { Text } = Typography
 const LOCAL = 'local'
 
 type Direction = 'upload' | 'download'
+type HostProg = { transferred: number; total: number; done?: boolean; ok?: boolean; error?: string | null }
 
 export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   open: boolean
@@ -18,48 +19,95 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
 }) {
   const remoteHosts = hosts.filter(h => h.name !== LOCAL)
   const [direction, setDirection] = useState<Direction>('download')
-  const [remoteHost, setRemoteHost] = useState<string>('')
+  const [selectedHosts, setSelectedHosts] = useState<string[]>([])
   const [sourcePaths, setSourcePaths] = useState<string[]>([])
   const [browseSourceOpen, setBrowseSourceOpen] = useState(false)
   const [destDir, setDestDir] = useState('')
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<TransferProgress | null>(null)
+  const [hostProgress, setHostProgress] = useState<Record<string, HostProg>>({})
   const [result, setResult] = useState<{ ok: boolean; error?: string | null } | null>(null)
+  const [destChecks, setDestChecks] = useState<Record<string, { exists: boolean; error?: string | null }> | null>(null)
+  const [checking, setChecking] = useState(false)
   const idRef = useRef<string | null>(null)
+  const checkRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // upload = local → remote;  download = remote → local
-  const sourceHost = direction === 'upload' ? LOCAL : remoteHost
-  const destHost = direction === 'upload' ? remoteHost : LOCAL
+  const primaryHost = selectedHosts[0] ?? ''
+  const isFanout = direction === 'upload' && selectedHosts.length > 1
+  // Hosts the destination folder is missing on (flagged by the pre-flight check),
+  // and the hosts a fan-out will actually push to (the rest).
+  const missingHosts = isFanout && destChecks ? selectedHosts.filter(h => destChecks[h]?.exists === false) : []
+  const validHosts = isFanout ? selectedHosts.filter(h => !destChecks || destChecks[h]?.exists !== false) : selectedHosts
+  // upload = local → remote(s);  download = remote → local
+  const sourceHost = direction === 'upload' ? LOCAL : primaryHost
+  const destBrowseHost = direction === 'upload' ? primaryHost : LOCAL
 
-  // Pick a default remote host once the modal opens and hosts have loaded — the
-  // host list is empty on first mount (async get_hosts), so a plain useState
-  // initializer would leave the dropdown unselected.
+  // Default the target host(s) once the modal opens and hosts have loaded — the
+  // list is empty on first mount (async get_hosts), so a plain useState
+  // initializer would leave the selector unset.
   useEffect(() => {
     if (!open) return
-    setRemoteHost(prev => {
-      if (remoteHosts.some(h => h.name === prev)) return prev
-      if (defaultRemoteHost && defaultRemoteHost !== LOCAL && remoteHosts.some(h => h.name === defaultRemoteHost)) return defaultRemoteHost
-      return remoteHosts.find(h => h.connected)?.name ?? remoteHosts[0]?.name ?? ''
+    setSelectedHosts(prev => {
+      const valid = prev.filter(h => remoteHosts.some(r => r.name === h))
+      if (valid.length) return valid
+      const def = (defaultRemoteHost && defaultRemoteHost !== LOCAL && remoteHosts.some(r => r.name === defaultRemoteHost))
+        ? defaultRemoteHost
+        : (remoteHosts.find(r => r.connected)?.name ?? remoteHosts[0]?.name)
+      return def ? [def] : []
     })
   }, [open, hosts])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A change of direction or host invalidates the picked paths.
-  useEffect(() => { setSourcePaths([]); setDestDir(''); setProgress(null); setResult(null) }, [direction, remoteHost])
+  // Flipping direction swaps which side is local — clear the picked paths/progress.
+  useEffect(() => { setSourcePaths([]); setDestDir(''); setProgress(null); setHostProgress({}); setResult(null) }, [direction])
+
+  // Fan-out pre-flight: does the destination folder exist on every target host?
+  // (It's only browsed on the first host, so the others are unverified.)
+  useEffect(() => {
+    setDestChecks(null)
+    if (!isFanout || !destDir) { setChecking(false); return }
+    setChecking(true)
+    const hostsSnapshot = [...selectedHosts]
+    const dir = destDir
+    if (checkRef.current) clearTimeout(checkRef.current)
+    checkRef.current = setTimeout(async () => {
+      try { setDestChecks(await bridge.check_dir_exists(hostsSnapshot, dir)) }
+      catch { setDestChecks(null) }
+      finally { setChecking(false) }
+    }, 400)
+    return () => { if (checkRef.current) clearTimeout(checkRef.current) }
+  }, [isFanout, destDir, selectedHosts.join(',')])  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onProgress = (e: Event) => {
       const d = (e as CustomEvent).detail as TransferProgress
       if (d.id !== idRef.current) return
-      if (d.error) message.error(`${d.file}: ${d.error}`)
-      else setProgress(d)
+      if (d.host) {
+        if (d.error) message.error(`${d.host} · ${d.file}: ${d.error}`)
+        else setHostProgress(prev => ({ ...prev, [d.host!]: { transferred: d.transferred, total: d.total } }))
+      } else if (d.error) {
+        message.error(`${d.file}: ${d.error}`)
+      } else {
+        setProgress(d)
+      }
     }
     const onEnd = (e: Event) => {
       const d = (e as CustomEvent).detail as TransferEnd
       if (d.id !== idRef.current) return
       setRunning(false)
       setResult({ ok: d.ok, error: d.error })
-      if (d.ok) message.success(`Transferred ${d.files} file${d.files === 1 ? '' : 's'}`)
-      else message.error(d.error || 'Transfer failed')
+      if (d.hosts) {
+        setHostProgress(prev => {
+          const next = { ...prev }
+          for (const r of d.hosts!) next[r.host] = { ...(next[r.host] ?? { transferred: 0, total: 0 }), done: true, ok: r.ok, error: r.error }
+          return next
+        })
+        if (d.ok) message.success(`Pushed to ${d.hosts.length} host${d.hosts.length === 1 ? '' : 's'}`)
+        else message.error('One or more hosts failed')
+      } else if (d.ok) {
+        message.success(`Transferred ${d.files} file${d.files === 1 ? '' : 's'}`)
+      } else {
+        message.error(d.error || 'Transfer failed')
+      }
     }
     window.addEventListener('runspec:transfer_progress', onProgress)
     window.addEventListener('runspec:transfer_end', onEnd)
@@ -72,9 +120,15 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   const start = async () => {
     setProgress(null)
     setResult(null)
-    const res = await bridge.start_transfer(sourceHost, sourcePaths, destHost, destDir)
+    setHostProgress(isFanout ? Object.fromEntries(validHosts.map(h => [h, { transferred: 0, total: 0 }])) : {})
+    const res = isFanout
+      ? await bridge.start_fanout(sourcePaths, validHosts, destDir)
+      : direction === 'upload'
+        ? await bridge.start_transfer(LOCAL, sourcePaths, primaryHost, destDir)
+        : await bridge.start_transfer(primaryHost, sourcePaths, LOCAL, destDir)
     if (res.error || !res.id) {
       message.error(res.error || 'Could not start transfer')
+      setHostProgress({})
       return
     }
     idRef.current = res.id
@@ -83,8 +137,9 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
 
   const cancel = () => { if (idRef.current) bridge.cancel_transfer(idRef.current) }
 
-  const canRun = !!remoteHost && sourcePaths.length > 0 && !!destDir && !running
+  const canRun = (isFanout ? validHosts.length > 0 : selectedHosts.length > 0) && sourcePaths.length > 0 && !!destDir && !running
   const pct = progress && progress.total > 0 ? Math.round((progress.transferred / progress.total) * 100) : 0
+  const fanRows = Object.keys(hostProgress)
 
   const label = (t: string, host: string) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -104,7 +159,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
           <Button onClick={onClose}>Close</Button>
           {running
             ? <Button danger onClick={cancel}>Cancel transfer</Button>
-            : <Button type="primary" disabled={!canRun} onClick={start}>Transfer</Button>}
+            : <Button type="primary" disabled={!canRun} onClick={start}>{isFanout ? `Push to ${validHosts.length} host${validHosts.length === 1 ? '' : 's'}` : 'Transfer'}</Button>}
         </div>
       }
     >
@@ -112,7 +167,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
         <Text type="secondary">No remote hosts configured — add one to transfer files.</Text>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <Segmented
               value={direction}
               onChange={v => setDirection(v as Direction)}
@@ -121,14 +176,27 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
                 { label: 'Upload (local → remote)', value: 'upload', icon: <CloudUploadOutlined /> },
               ]}
             />
-            <Select
-              size="small"
-              value={remoteHost || undefined}
-              onChange={setRemoteHost}
-              placeholder="Remote host"
-              style={{ minWidth: 140 }}
-              options={remoteHosts.map(h => ({ label: h.name, value: h.name, disabled: !h.connected }))}
-            />
+            {direction === 'download' ? (
+              <Select
+                size="small"
+                value={primaryHost || undefined}
+                onChange={v => setSelectedHosts([v])}
+                placeholder="Remote host"
+                style={{ minWidth: 160 }}
+                options={remoteHosts.map(h => ({ label: h.name, value: h.name, disabled: !h.connected }))}
+              />
+            ) : (
+              <Select
+                size="small"
+                mode="multiple"
+                value={selectedHosts}
+                onChange={setSelectedHosts}
+                placeholder="Target host(s) — pick several to fan out"
+                style={{ minWidth: 240 }}
+                maxTagCount="responsive"
+                options={remoteHosts.map(h => ({ label: h.name, value: h.name, disabled: !h.connected }))}
+              />
+            )}
           </div>
 
           <div>
@@ -145,7 +213,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
                   {p.split(/[\\/]/).pop()}
                 </Tag>
               ))}
-              <Button size="small" icon={<FolderOpenOutlined />} onClick={() => setBrowseSourceOpen(true)}>
+              <Button size="small" icon={<FolderOpenOutlined />} disabled={!sourceHost} onClick={() => setBrowseSourceOpen(true)}>
                 {sourcePaths.length ? 'Add files' : 'Choose files'}
               </Button>
             </div>
@@ -160,11 +228,41 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
           )}
 
           <div>
-            {label('Destination folder', destHost)}
-            <PathInput host={destHost} value={destDir} onChange={setDestDir} dirsOnly placeholder="destination folder" />
+            {label('Destination folder', isFanout ? `${selectedHosts.length} hosts` : destBrowseHost)}
+            <PathInput host={destBrowseHost} value={destDir} onChange={setDestDir} dirsOnly placeholder="destination folder" />
+            {isFanout && (
+              <Text type="secondary" style={{ fontSize: 10 }}>
+                Browsing {primaryHost} — the same path is written to all {selectedHosts.length} hosts.
+              </Text>
+            )}
+            {isFanout && destDir && (
+              checking ? (
+                <div><Text type="secondary" style={{ fontSize: 11 }}>Checking destination on hosts…</Text></div>
+              ) : destChecks ? (
+                missingHosts.length > 0 ? (
+                  <div><Text type="warning" style={{ fontSize: 11 }}>⚠ Folder not found on {missingHosts.join(', ')} — these hosts will be skipped.</Text></div>
+                ) : (
+                  <div><Text type="success" style={{ fontSize: 11 }}>✓ Folder exists on all {selectedHosts.length} hosts.</Text></div>
+                )
+              ) : null
+            )}
           </div>
 
-          {(running || progress) && (
+          {fanRows.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {fanRows.map(h => {
+                const hp = hostProgress[h]
+                const p = hp.total > 0 ? Math.round((hp.transferred / hp.total) * 100) : (hp.done ? 100 : 0)
+                const status = hp.done ? (hp.ok ? 'success' : 'exception') : 'active'
+                return (
+                  <div key={h} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag style={{ fontSize: 10, margin: 0, minWidth: 90, textAlign: 'center' }}>{h}</Tag>
+                    <Progress percent={p} status={status} size="small" style={{ flex: 1, margin: 0 }} />
+                  </div>
+                )
+              })}
+            </div>
+          ) : (running || progress) ? (
             <div>
               <Progress percent={pct} status={running ? 'active' : (result?.ok ? 'success' : 'exception')} size="small" />
               {progress && (
@@ -173,8 +271,8 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
                 </Text>
               )}
             </div>
-          )}
-          {result && !running && (
+          ) : null}
+          {result && !running && !isFanout && (
             <Text type={result.ok ? 'success' : 'danger'} style={{ fontSize: 12 }}>
               {result.ok ? 'Done.' : `Failed: ${result.error}`}
             </Text>

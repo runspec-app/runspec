@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.23.0] — 2026-06-07
+
+### Added
+- **Fan-out transfer — push the same file(s) to many hosts at once.** In the
+  Transfer dialog's **Upload** direction the target-host selector is now
+  multi-select: pick several hosts and the chosen source file(s) are uploaded to
+  the same destination folder on **all of them in parallel** (one SFTP transfer
+  per host over its own pooled transport). The dialog shows a **per-host progress
+  bar** and a ✓/✗ per host at the end. The cluster move: push an updated config or reference-data file to every server in one action.
+  A **pre-flight check** verifies the destination folder exists on each selected
+  host (the dialog only browses it on the first host) and skips — with a clear
+  warning — any host whose layout differs, so a mismatch is caught before sending.
+  Backend: `start_fanout(source_paths, dest_hosts, dest_dir)` and
+  `check_dir_exists(hosts, path)`; progress events
+  carry a `host` field and `transfer_end` carries per-host results. Download and
+  single-host upload are unchanged.
+
+---
+
+
 ## [0.22.0] — 2026-06-07
 
 ### Added

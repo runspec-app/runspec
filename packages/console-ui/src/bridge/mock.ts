@@ -720,6 +720,36 @@ export const mockApi: BridgeApi = {
     setTimeout(tick, 250)
     return { id }
   },
+  start_fanout: async (sourcePaths, destHosts, destDir) => {
+    console.log('[mock] start_fanout', { sourcePaths, destHosts, destDir })
+    if (!sourcePaths.length) return { error: 'no source files selected' }
+    if (!destHosts.length) return { error: 'no target hosts selected' }
+    const id = `fan-${++invocationCounter}`
+    const file = sourcePaths[0].split(/[\\/]/).pop() || 'file'
+    const total = 1_048_576
+    const sent: Record<string, number> = Object.fromEntries(destHosts.map(h => [h, 0]))
+    const tick = () => {
+      let allDone = true
+      for (const h of destHosts) {
+        sent[h] = Math.min(total, sent[h] + 262_144 * (0.5 + Math.random()))
+        if (sent[h] < total) allDone = false
+        window.dispatchEvent(new CustomEvent('runspec:transfer_progress', {
+          detail: { id, host: h, file, index: 0, count: sourcePaths.length, transferred: Math.round(sent[h]), total },
+        }))
+      }
+      if (!allDone) setTimeout(tick, 250)
+      else window.dispatchEvent(new CustomEvent('runspec:transfer_end', {
+        detail: { id, ok: true, files: sourcePaths.length, total: sourcePaths.length, error: null, hosts: destHosts.map(h => ({ host: h, ok: true, error: null })) },
+      }))
+    }
+    setTimeout(tick, 250)
+    return { id }
+  },
+  check_dir_exists: async (hosts, path) => {
+    console.log('[mock] check_dir_exists', { hosts, path })
+    // Demo: pretend the folder is missing on any host whose name ends in '-2'.
+    return Object.fromEntries(hosts.map(h => [h, { exists: !h.endsWith('-2'), error: null }]))
+  },
   cancel_transfer: async (id) => {
     console.log('[mock] cancel_transfer', id)
   },

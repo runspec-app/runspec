@@ -57,6 +57,13 @@ export interface TransferProgress {
   transferred: number
   total: number
   error?: string
+  host?: string   // set for fan-out (which target host this tick is for)
+}
+
+export interface TransferHostResult {
+  host: string
+  ok: boolean
+  error?: string | null
 }
 
 // runspec:transfer_end event detail — fired once when a transfer finishes.
@@ -66,6 +73,7 @@ export interface TransferEnd {
   files: number   // files completed
   total: number
   error?: string | null
+  hosts?: TransferHostResult[]   // per-host results for a fan-out
 }
 
 export interface Host {
@@ -308,6 +316,10 @@ export interface BridgeApi {
   // Copy files between the local machine and a remote host over SFTP (local↔remote
   // only). Returns an id, then streams runspec:transfer_progress / transfer_end.
   start_transfer: (sourceHost: string, sourcePaths: string[], destHost: string, destDir: string) => Promise<{ id?: string; error?: string }>
+  // Fan-out: upload the same local source file(s) to dest_dir on many remote hosts.
+  start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string) => Promise<{ id?: string; error?: string }>
+  // Pre-flight: does `path` exist as a directory on each host? (fan-out dest check)
+  check_dir_exists: (hosts: string[], path: string) => Promise<Record<string, { exists: boolean; error?: string | null }>>
   cancel_transfer: (id: string) => Promise<void>
   send_chat: (message: string, invocationId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>

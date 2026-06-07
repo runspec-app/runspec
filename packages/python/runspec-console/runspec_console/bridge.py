@@ -534,25 +534,30 @@ class Bridge:
         tid: str,
         idx: int,
         count: int,
+        host: str | None = None,
     ) -> None:
-        """SFTP put/get a single file, emitting throttled progress events."""
+        """SFTP put/get a single file, emitting throttled progress events.
+
+        ``host`` is set for fan-out (one upload per target host) so the UI can
+        show per-host progress; it is omitted for a single transfer.
+        """
         last = [0.0]
 
         def cb(transferred: int, total: int) -> None:
             now = time.monotonic()
             if now - last[0] >= 0.15 or transferred >= total:
                 last[0] = now
-                self._dispatch(
-                    "runspec:transfer_progress",
-                    {
-                        "id": tid,
-                        "file": item.name,
-                        "index": idx,
-                        "count": count,
-                        "transferred": transferred,
-                        "total": total,
-                    },
-                )
+                detail: dict[str, Any] = {
+                    "id": tid,
+                    "file": item.name,
+                    "index": idx,
+                    "count": count,
+                    "transferred": transferred,
+                    "total": total,
+                }
+                if host is not None:
+                    detail["host"] = host
+                self._dispatch("runspec:transfer_progress", detail)
 
         if direction == "push":
             if os.path.isdir(item.src):
@@ -570,6 +575,165 @@ class Bridge:
         ev = inv.get(_CANCEL_KEY) if inv else None
         if ev is not None:
             ev.set()
+
+    def start_fanout(
+        self,
+        source_paths: list[str],
+        dest_hosts: list[str],
+        dest_dir: str,
+    ) -> dict[str, Any]:
+        """Upload the same local source file(s) to ``dest_dir`` on **many** remote hosts.
+
+        Push-only (local → N remotes), one SFTP transfer per host in parallel over
+        each host's pooled transport. Returns ``{"id": ...}`` and streams
+        ``runspec:transfer_progress`` events carrying a ``host`` field, then a
+        single ``runspec:transfer_end`` whose ``hosts`` lists each host's result —
+        or ``{"error": ...}`` on a bad request.
+        """
+        from .fs_transfer import plan_transfer
+
+        paths = [p for p in (source_paths or []) if p and p.strip()]
+        targets = [h for h in (dest_hosts or []) if h and h != "local"]
+        if not paths:
+            return {"error": "no source files selected"}
+        if not targets:
+            return {"error": "no target hosts selected"}
+        if not dest_dir or not dest_dir.strip():
+            return {"error": "no destination folder selected"}
+
+        entries: dict[str, dict[str, Any]] = {}
+        for h in targets:
+            entry = self._host_entry(h)
+            if entry is None or not entry.get("ssh"):
+                return {"error": f"{h} is not a reachable remote host"}
+            entries[h] = entry
+
+        tid = uuid.uuid4().hex[:12]
+        cancel_event = threading.Event()
+        with self._lock:
+            self._in_flight[tid] = {
+                "id": tid,
+                "runnable": f"fan-out · {len(targets)} hosts",
+                "group": "",
+                "host": ", ".join(targets),
+                "operator": self._current_user(),
+                "runAs": "",
+                "startedAt": _iso_now(),
+                "args": {"hosts": len(targets), "files": len(paths)},
+                _CANCEL_KEY: cancel_event,
+            }
+
+        cfg = self.get_config().get("ssh")
+
+        def per_host(h: str) -> dict[str, Any]:
+            entry = entries[h]
+            ok, error = True, None
+            release: Callable[[], None] | None = None
+            try:
+                sftp, release = self._open_sftp(
+                    entry["ssh"], entry.get("identityFile"), cfg
+                )
+                plan = plan_transfer("local", paths, h, dest_dir)
+                count = len(plan.items)
+                for idx, item in enumerate(plan.items):
+                    if cancel_event.is_set():
+                        ok, error = False, "cancelled"
+                        break
+                    try:
+                        self._transfer_one(sftp, "push", item, tid, idx, count, host=h)
+                    except Exception as e:
+                        ok, error = False, str(e)
+                        self._dispatch(
+                            "runspec:transfer_progress",
+                            {
+                                "id": tid,
+                                "host": h,
+                                "file": item.name,
+                                "index": idx,
+                                "count": count,
+                                "transferred": 0,
+                                "total": 0,
+                                "error": str(e),
+                            },
+                        )
+            except Exception as e:
+                ok, error = False, str(e)
+            finally:
+                if release:
+                    release()
+            return {"host": h, "ok": ok, "error": error}
+
+        def run() -> None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            results: list[dict[str, Any]] = []
+            try:
+                with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as ex:
+                    results = list(ex.map(per_host, targets))
+            finally:
+                with self._lock:
+                    self._in_flight.pop(tid, None)
+            overall = all(r["ok"] for r in results)
+            logger.info("fan-out %s: %d hosts ok=%s", tid, len(targets), overall)
+            self._dispatch(
+                "runspec:transfer_end",
+                {
+                    "id": tid,
+                    "ok": overall,
+                    "files": len(paths),
+                    "total": len(paths),
+                    "error": None if overall else "one or more hosts failed",
+                    "hosts": results,
+                },
+            )
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"id": tid}
+
+    def check_dir_exists(
+        self, hosts: list[str], path: str
+    ) -> dict[str, dict[str, Any]]:
+        """Pre-flight: does directory ``path`` exist on each of ``hosts``?
+
+        Used by the fan-out dialog to flag hosts whose layout differs *before* a
+        push (the destination is only browsed on the first host). Returns
+        ``{host: {"exists": bool, "error": str | None}}``; a connection failure
+        is reported as ``exists=False`` with an ``error``.
+        """
+        import shlex
+
+        result: dict[str, dict[str, Any]] = {}
+        if not path or not path.strip():
+            return result
+        for h in hosts:
+            if not h:
+                continue
+            if h == "local":
+                result[h] = {
+                    "exists": os.path.isdir(os.path.expanduser(path)),
+                    "error": None,
+                }
+                continue
+            entry = self._host_entry(h)
+            if entry is None or not entry.get("ssh"):
+                result[h] = {"exists": False, "error": "not a reachable remote host"}
+                continue
+            code, _out, err = self._ssh_run(
+                entry["ssh"],
+                f"test -d {shlex.quote(path)}",
+                identity_file=entry.get("identityFile"),
+                timeout=10,
+            )
+            if code == 0:
+                result[h] = {"exists": True, "error": None}
+            elif code == 1:
+                result[h] = {"exists": False, "error": None}  # test -d: not a directory
+            else:
+                result[h] = {
+                    "exists": False,
+                    "error": err.strip() or f"check failed (exit {code})",
+                }
+        return result
 
     # ── history ───────────────────────────────────────────────────────────────
 
