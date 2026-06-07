@@ -280,8 +280,9 @@ export interface BridgeApi {
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
   test_host: (name: string) => Promise<TestResult>
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string) => Promise<string>
-  // List a directory on a host for the Forms path-picker (login-user identity).
-  list_dir: (host: string, path?: string, group?: string, dirsOnly?: boolean) => Promise<DirListing>
+  // List a directory on a host for the Forms path-picker. With asServiceAccount +
+  // a runnable, the remote listing runs as that runnable's run_as (sudo/become).
+  list_dir: (host: string, path?: string, group?: string, dirsOnly?: boolean, runnable?: string, asServiceAccount?: boolean) => Promise<DirListing>
   cancel_invocation: (invId: string) => Promise<void>
   send_chat: (message: string, invocationId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>

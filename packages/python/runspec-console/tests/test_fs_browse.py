@@ -1,3 +1,5 @@
+import pytest
+
 from runspec_console.fs_browse import (
     _local_parent,
     _posix_parent,
@@ -118,3 +120,24 @@ def test_list_local_not_a_directory(tmp_path):
 
 def test_local_parent_root():
     assert _local_parent("/") is None
+
+
+def test_remote_list_command_service_account_wraps_in_become():
+    # Needs core runspec for build_become_argv; CI's console-test env omits it.
+    pytest.importorskip("runspec")
+    cmd = remote_list_command(
+        "/var/log/app", run_as="svc_app", become_method="sudo"
+    )
+    assert cmd.startswith("sudo ")
+    assert "-u svc_app" in cmd
+    assert "sh -c" in cmd
+    # The listing itself is preserved inside the quoted `sh -c` argument.
+    assert "find -L ." in cmd
+    assert "pwd" in cmd
+
+
+def test_remote_list_command_no_run_as_is_plain():
+    # Login-user path must NOT import runspec / wrap in become.
+    cmd = remote_list_command("/var/log/app")
+    assert cmd.startswith("cd /var/log/app")
+    assert "sudo" not in cmd

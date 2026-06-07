@@ -33,14 +33,30 @@ MAX_ENTRIES = 1000
 _FIND = "find -L . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%T@\\t%f\\n' 2>/dev/null"
 
 
-def remote_list_command(path: str) -> str:
+def remote_list_command(
+    path: str,
+    run_as: str = "",
+    become_method: str = "sudo",
+    become_flags: str | None = None,
+) -> str:
     """Shell command that prints the resolved absolute dir, then one line per child.
 
     ``cd``-ing first resolves ``~``/relative paths to an absolute ``pwd`` and makes
     a missing/unreadable directory a non-zero exit the caller surfaces as an error.
+
+    With ``run_as`` set, the whole listing runs as that user via the host's become
+    method (``sh -c`` wrapped in ``sudo -u`` / ``su`` / …) — so ``$HOME`` and the
+    visible files are the service account's, matching what the runnable will see.
+    Reuses the core ``build_become_argv`` so escalation is identical to invocation.
     """
     dir_expr = shlex.quote(path) if path else '"$HOME"'
-    return f"cd {dir_expr} 2>/dev/null && pwd && {_FIND}"
+    inner = f"cd {dir_expr} 2>/dev/null && pwd && {_FIND}"
+    if not run_as:
+        return inner
+    from runspec.become import build_become_argv
+
+    argv = build_become_argv(["sh", "-c", inner], run_as, become_method, become_flags)
+    return " ".join(shlex.quote(tok) for tok in argv)
 
 
 def parse_remote_listing(stdout: str, dirs_only: bool = False) -> dict[str, Any]:

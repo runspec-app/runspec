@@ -340,14 +340,18 @@ class Bridge:
         path: str = "",
         group: str | None = None,
         dirs_only: bool = False,
+        runnable: str | None = None,
+        as_service_account: bool = False,
     ) -> dict[str, Any]:
         """List a directory on ``host`` for the Forms path-picker.
 
         ``path`` empty means the connecting user's home directory. Returns
         ``{cwd, parent, entries, truncated}`` (see ``fs_browse``) or
-        ``{"error": ...}``. Login-user identity only for now; lists as the SSH
-        login user on remote hosts and as the console user locally. ``group`` is
-        accepted for API symmetry but unused — the filesystem is host-wide.
+        ``{"error": ...}``. By default lists as the SSH login user (or the console
+        user locally). With ``as_service_account`` and a ``runnable``, the remote
+        listing is wrapped in that runnable's ``run_as``/become — so the picker
+        shows what the job itself would see. ``group`` disambiguates a runnable
+        that exists in more than one venv on the host.
         """
         entry = self._host_entry(host)
         if entry is None:
@@ -356,16 +360,48 @@ class Bridge:
             if entry.get("ssh"):
                 from .fs_browse import parse_remote_listing, remote_list_command
 
+                run_as, become_method, become_flags = "", "sudo", None
+                if as_service_account:
+                    if not runnable:
+                        return {
+                            "error": "service-account view needs a runnable context"
+                        }
+                    with self._lock:
+                        cached = next(
+                            (
+                                r
+                                for r in self._runnables_cache
+                                if r.get("host") == host
+                                and r.get("name") == runnable
+                                and (group is None or r.get("group") == group)
+                            ),
+                            None,
+                        )
+                    run_as, become_method, become_flags = self._become_params(
+                        cached, host
+                    )
+                    if not run_as:
+                        return {
+                            "error": f"no service account (run_as) configured for {runnable} on {host}"
+                        }
+
+                cmd = remote_list_command(
+                    path,
+                    run_as=run_as,
+                    become_method=become_method,
+                    become_flags=become_flags,
+                )
                 code, out, err = self._ssh_run(
                     entry["ssh"],
-                    remote_list_command(path),
+                    cmd,
                     identity_file=entry.get("identityFile"),
                     timeout=15,
                 )
                 if code != 0:
+                    who = f" as {run_as}" if run_as else ""
                     return {
                         "error": err.strip()
-                        or f"could not list {path or '~'} (exit {code})"
+                        or f"could not list {path or '~'}{who} (exit {code})"
                     }
                 return parse_remote_listing(out, dirs_only=dirs_only)
 

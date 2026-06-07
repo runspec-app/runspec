@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.21.0] — 2026-06-07
+
+### Added
+- **Service-account view in the path browser.** The file browser now has an
+  identity toggle on remote hosts that have a `run_as` configured for the
+  runnable: switch from **You** (your SSH login) to the runnable's service
+  account and the listing re-runs as that user, so you see exactly the files the
+  job itself will see. The escalation reuses the core `build_become_argv`
+  (`sudo -u <svc> sh -c …` / `su` / etc.), identical to how the runnable is
+  invoked — `list_dir(host, path, group, dirs_only, runnable, as_service_account)`.
+  Inline autocomplete stays login-user (no sudo-per-keystroke); the toggle lives
+  in the Browse modal. Local hosts and runnables without a `run_as` show no
+  toggle (login-user only, unchanged).
+
+---
+
+
 ## [0.20.0] — 2026-06-07
 
 ### Added

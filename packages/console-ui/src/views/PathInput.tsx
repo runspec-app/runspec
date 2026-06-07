@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { AutoComplete, Button, Modal, List, Tag, Typography, Tooltip, Spin } from 'antd'
+import { AutoComplete, Button, Modal, List, Tag, Typography, Tooltip, Spin, Segmented } from 'antd'
 import { FolderOpenOutlined, FolderFilled, FileOutlined, ArrowUpOutlined, HomeOutlined } from '@ant-design/icons'
 import { bridge, type DirEntry, type DirListing } from '../bridge'
 
@@ -32,9 +32,12 @@ interface PathInputProps {
   dirsOnly?: boolean
   error?: boolean
   onChange: (v: string) => void
+  runnable?: string   // runnable name — needed to resolve run_as for the service-account view
+  runAs?: string      // the runnable's service account on this host, when configured
+  group?: string      // venv, to disambiguate a same-named runnable across venvs
 }
 
-export function PathInput({ host, value, placeholder, dirsOnly, error, onChange }: PathInputProps) {
+export function PathInput({ host, value, placeholder, dirsOnly, error, onChange, runnable, runAs, group }: PathInputProps) {
   const [options, setOptions] = useState<{ value: string; label: React.ReactNode }[]>([])
   const [browseOpen, setBrowseOpen] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -108,6 +111,9 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange 
           host={host}
           startPath={value}
           dirsOnly={dirsOnly}
+          runnable={runnable}
+          runAs={runAs}
+          group={group}
           onPick={p => { onChange(p); setBrowseOpen(false) }}
           onClose={() => setBrowseOpen(false)}
         />
@@ -118,22 +124,29 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange 
 
 // ── browse modal ──────────────────────────────────────────────────────────────
 
-function BrowseModal({ host, startPath, dirsOnly, onPick, onClose }: {
+function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group, onPick, onClose }: {
   host: string
   startPath?: string
   dirsOnly?: boolean
+  runnable?: string
+  runAs?: string
+  group?: string
   onPick: (path: string) => void
   onClose: () => void
 }) {
   const [listing, setListing] = useState<DirListing | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [asSvc, setAsSvc] = useState(false)
 
-  const load = useCallback(async (path: string) => {
+  // The service-account view only applies to a remote host with a run_as set.
+  const canSvc = !!runAs && host !== 'local'
+
+  const load = useCallback(async (path: string, svc: boolean) => {
     setLoading(true)
     setErr(null)
     try {
-      const res = await bridge.list_dir(host, path, undefined, dirsOnly)
+      const res = await bridge.list_dir(host, path, group, dirsOnly, runnable, svc)
       if (res.error) { setErr(res.error); setListing(null) }
       else setListing(res)
     } catch (e) {
@@ -141,14 +154,19 @@ function BrowseModal({ host, startPath, dirsOnly, onPick, onClose }: {
     } finally {
       setLoading(false)
     }
-  }, [host, dirsOnly])
+  }, [host, dirsOnly, group, runnable])
 
   useEffect(() => {
     // Start at the directory of the current value, else the user's home.
     const sep = startPath && startPath.includes('\\') && !startPath.includes('/') ? '\\' : '/'
     const start = startPath ? startPath.slice(0, startPath.lastIndexOf(sep) + 1) : ''
-    load(start)
+    load(start, false)
   }, [])
+
+  const switchIdentity = (svc: boolean) => {
+    setAsSvc(svc)
+    load(listing?.cwd ?? '', svc)   // reload the current directory under the new identity
+  }
 
   const cwd = listing?.cwd ?? ''
   const sep = sepOf(cwd || '/')
@@ -169,7 +187,7 @@ function BrowseModal({ host, startPath, dirsOnly, onPick, onClose }: {
 
   const onEntry = (e: DirEntry) => {
     const full = joinPath(cwd, e.name, sep)
-    if (e.type === 'directory') load(full)
+    if (e.type === 'directory') load(full, asSvc)
     else if (!dirsOnly) onPick(full)
   }
 
@@ -195,14 +213,14 @@ function BrowseModal({ host, startPath, dirsOnly, onPick, onClose }: {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
         <Tooltip title="Home">
-          <Button size="small" icon={<HomeOutlined />} onClick={() => load('')} />
+          <Button size="small" icon={<HomeOutlined />} onClick={() => load('', asSvc)} />
         </Tooltip>
         <Tooltip title="Up">
           <Button
             size="small"
             icon={<ArrowUpOutlined />}
             disabled={!listing?.parent}
-            onClick={() => listing?.parent != null && load(listing.parent)}
+            onClick={() => listing?.parent != null && load(listing.parent, asSvc)}
           />
         </Tooltip>
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
@@ -211,13 +229,28 @@ function BrowseModal({ host, startPath, dirsOnly, onPick, onClose }: {
               {i > 0 && <span style={{ color: '#888', margin: '0 2px' }}>{sep}</span>}
               <Text
                 style={{ fontFamily: 'monospace', fontSize: 12, cursor: 'pointer', color: '#4fc1ff' }}
-                onClick={() => load(c.path)}
+                onClick={() => load(c.path, asSvc)}
               >
                 {c.label}
               </Text>
             </span>
           ))}
         </div>
+        {canSvc && (
+          <div style={{ marginLeft: 'auto' }}>
+            <Tooltip title="Browse as the runnable's service account (sudo)">
+              <Segmented
+                size="small"
+                value={asSvc ? 'svc' : 'you'}
+                onChange={v => switchIdentity(v === 'svc')}
+                options={[
+                  { label: 'You', value: 'you' },
+                  { label: runAs as string, value: 'svc' },
+                ]}
+              />
+            </Tooltip>
+          </div>
+        )}
       </div>
 
       {err ? (
