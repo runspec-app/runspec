@@ -12,6 +12,7 @@ description = "Interface specification for anything runnable"
 examples = [
   {cmd = "runspec init",                   description = "Scaffold a new runnable in this directory"},
   {cmd = "runspec local",                  description = "Discover and validate runnables"},
+  {cmd = "runspec test",                   description = "Smoke-test every installed runnable (CI gate)"},
   {cmd = "runspec serve",                  description = "Start the MCP stdio server"},
   {cmd = "runspec jump user@host",          description = "List tools available on a remote host"},
   {cmd = "runspec env",                    description = "Show the resolved .runspec_env file"},
@@ -54,6 +55,21 @@ examples = [
 [runspec.commands.local.args]
 format   = {type = "choice", description = "Output format", options = ["text", "json", "mcp", "openai", "anthropic"], short = "-f", default = "text"}
 runnable = {type = "str",    description = "Filter output to a single runnable by name", short = "-r", required = false}
+
+[runspec.commands.test]
+description = "Smoke-test installed runnables: spec smoke + entry-point --help"
+autonomy    = "autonomous"
+output      = "json"
+
+examples = [
+  {cmd = "runspec test",                   description = "Test all installed runnables (CI gate)"},
+  {cmd = "runspec test --format json",     description = "Machine-readable results for CI"},
+  {cmd = "runspec test --runnable deploy", description = "Test a single runnable"},
+]
+
+[runspec.commands.test.args]
+format   = {type = "choice", description = "Output format", options = ["text", "json"], short = "-f", default = "text"}
+runnable = {type = "str",    description = "Filter to a single runnable by name", short = "-r", required = false}
 
 [runspec.commands.serve]
 description = "Start an MCP stdio server exposing all installed runnables as tools"

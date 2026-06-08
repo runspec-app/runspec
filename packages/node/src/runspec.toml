@@ -53,6 +53,21 @@ examples = [
 format   = {type = "choice", description = "Output format", options = ["text", "json", "mcp", "openai", "anthropic"], short = "-f", default = "text"}
 runnable = {type = "str",    description = "Filter output to a single runnable by name", short = "-r", required = false}
 
+[runspec.commands.test]
+description = "Smoke-test runnables: spec smoke + entry-point --help"
+autonomy    = "autonomous"
+output      = "json"
+
+examples = [
+  {cmd = "runspec test",                   description = "Test every runnable in this folder (CI gate)"},
+  {cmd = "runspec test --format json",     description = "Machine-readable results for CI"},
+  {cmd = "runspec test --runnable deploy", description = "Test a single runnable"},
+]
+
+[runspec.commands.test.args]
+format   = {type = "choice", description = "Output format", options = ["text", "json"], short = "-f", default = "text"}
+runnable = {type = "str",    description = "Filter to a single runnable by name", short = "-r", required = false}
+
 [runspec.commands.serve]
 description = "Start an MCP stdio server exposing all installed runnables as tools"
 

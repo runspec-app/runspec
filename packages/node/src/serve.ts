@@ -258,7 +258,7 @@ function argsToRunspecEnv(args: Record<string, unknown>, argSpecs: Record<string
   return env;
 }
 
-function findScript(name: string, binDir: string): string | null {
+export function findScript(name: string, binDir: string): string | null {
   // 1. node_modules/.bin (Node entry points; also .exe on Windows)
   for (const ext of [...SHELL_EXTS, '.exe']) {
     const candidate = path.join(binDir, name + ext);

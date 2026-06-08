@@ -1,8 +1,8 @@
 # CLI Reference
 
 The `runspec` binary ships with both `runspec` (Python) and `runspec-node`.
-It scaffolds new projects, validates configs, emits agent schemas, runs a
-live MCP server, and executes tools on remote hosts.
+It scaffolds new projects, validates configs, smoke-tests runnables for CI,
+emits agent schemas, runs a live MCP server, and executes tools on remote hosts.
 
 ```
 runspec <command> [options]
@@ -181,6 +181,88 @@ Every emitted tool carries:
 | `x-autonomy-reason` | `autonomy-reason` if declared |
 | `x-output` | `output` field (`"text"` if not declared) |
 | `inputSchema` | JSON Schema for all args |
+
+---
+
+## `runspec test`
+
+A CI smoke gate. Where `runspec local` validates *metadata* (descriptions,
+autonomy, entry-point registration), `runspec test` proves each runnable
+actually **works** — it's built for deployment packages that bundle runnables
+from different authors, some of whom may not write tests.
+
+```bash
+runspec test [--format <text|json>] [--runnable <name>]
+```
+
+For every discovered runnable it runs two checks:
+
+1. **Spec smoke** (in-process) — drives [`ParseHarness.smoke()`](testing.md):
+   `--help` works for the runnable and every subcommand, `require-command` is
+   enforced where declared, and omitting a required arg exits non-zero. This
+   proves the `runspec.toml` is coherent and the parse wiring is sound.
+2. **Entry-point `--help`** (subprocess) — executes the installed binary with
+   `--help` and expects exit 0. This imports and runs the runnable's *own* code,
+   catching import errors, syntax errors, and a wrong runnable name passed to
+   `parse()` — failures the spec smoke can't see because it never loads that
+   code. A missing binary or a 30s timeout counts as a failure.
+
+It exits 1 if any runnable fails either check — drop it straight into CI:
+
+```yaml
+# .github/workflows/ci.yml
+- name: Smoke-test all runnables
+  run: runspec test
+```
+
+### Output
+
+Text (default) prints a `✓`/`✗` line per runnable and a final tally; failures
+show the entry-point error and the most informative stderr line:
+
+```text
+Tested 3 runnable(s):
+
+  ✓  deploy                   spec ok, --help exit 0
+  ✗  backup                   spec ok, --help failed
+         entry point: exit 1
+         stderr: ModuleNotFoundError: No module named 'boto3'
+  ✗  scan                     spec failed
+         spec: KeyError: runnable 'scan' not in ...
+
+Summary: 1 passed, 2 failed (3 total)
+```
+
+`--format json` prints a machine-readable object (`results[]` + `summary`) to
+stdout regardless of pass/fail, then sets the exit code — so CI can both gate
+and parse:
+
+```bash
+runspec test --format json | jq '.summary'
+```
+
+```json
+{
+  "results": [
+    {"runnable": "deploy", "source": "/abs/runspec.toml", "ok": true,
+     "checks": {"spec_smoke": {"ok": true, "checks": ["--help", "..."]},
+                "entry_point": {"ok": true}}}
+  ],
+  "summary": {"total": 1, "passed": 1, "failed": 0}
+}
+```
+
+### Discovery scope
+
+The set of runnables tested matches what `runspec local` discovers:
+
+- **Python** tests every installed `runspec`-dependent package in the venv
+  (`importlib.metadata`) — `pip install` (or `pip install -e .`) the packages you
+  want covered.
+- **Node** tests every runnable in the venv-shaped folder's single
+  `runspec.toml`. A Node deployment folder *is* the unit (see
+  [Deploying a Node runnable folder](node-deploy.md)); dependency specs under
+  `node_modules` are not runnables and are not tested.
 
 ---
 

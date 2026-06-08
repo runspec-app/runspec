@@ -1,9 +1,19 @@
 {
   "name": "runspec-node",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "description": "Node/TypeScript language pack for runspec",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    }
+  },
   "bin": {
     "runspec": "./bin/runspec.js"
   },

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
+import { spawnSync } from 'child_process';
 import { findConfig } from './finder';
 import * as logs from './logs';
 import { loadRaw } from './loader';
@@ -33,6 +34,7 @@ export function main(): void {
   const commands: Record<string, (args: string[]) => void | Promise<void>> = {
     init: cmdInit,
     local: cmdLocal,
+    test: cmdTest,
     bin: cmdBin,
     logs: cmdLogs,
     jump: cmdJump,
@@ -357,6 +359,145 @@ function cmdServe(_args: string[]): void {
   }
   const { serve } = require('./serve') as { serve: () => void };
   serve();
+}
+
+// Hard cap on the entry-point `--help` subprocess so a runnable that hangs on
+// import can't wedge a CI run. A timeout is treated as a failure.
+const TEST_SUBPROCESS_TIMEOUT_MS = 30000;
+
+interface TestCheck {
+  ok: boolean;
+  checks?: string[];
+  error?: string;
+  stderr?: string;
+}
+
+interface TestResult {
+  runnable: string;
+  source: string;
+  ok: boolean;
+  checks: { spec_smoke: TestCheck; entry_point: TestCheck };
+}
+
+export function cmdTest(args: string[]): void {
+  const fmt = getFlag(args, '--format') ?? 'text';
+  const runnableFilter = getFlag(args, '--runnable');
+
+  let discovered = discoverLocal();
+  if (runnableFilter) discovered = discovered.filter((d) => d.runnable === runnableFilter);
+
+  if (!discovered.length) {
+    console.log('No runspec-aware runnables found in this environment.');
+    console.log("Run from a folder with a runspec.toml, or 'runspec init' to create one.");
+    return;
+  }
+
+  const results = discovered.map((d) => testOne(d));
+  const failed = results.filter((r) => !r.ok).length;
+
+  if (fmt === 'json') {
+    const summary = { total: results.length, passed: results.length - failed, failed };
+    console.log(JSON.stringify({ results, summary }, null, 2));
+  } else {
+    printTestText(results);
+  }
+
+  if (failed) process.exit(1);
+}
+
+// Run both checks against one discovered runnable; never throws. Each phase is
+// isolated so a single broken runnable cannot abort the run.
+export function testOne(item: { source: string; runnable: string; spec: ScriptSpec }): TestResult {
+  const { runnable: name, source } = item;
+
+  // ── phase 1: spec smoke (in-process) ──────────────────────────────────────
+  let specSmoke: TestCheck;
+  try {
+    const { ParseHarness } = require('./testing') as typeof import('./testing');
+    const h = new ParseHarness({ scriptName: name, configPath: source, suppressSummary: true });
+    try {
+      specSmoke = { ok: true, checks: h.smoke({ checkHelp: true }) };
+    } finally {
+      h.close();
+    }
+  } catch (e) {
+    specSmoke = { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+
+  // ── phase 2: entry-point --help (subprocess) ──────────────────────────────
+  const { findScript } = require('./serve') as typeof import('./serve');
+  const binDir = path.join(path.dirname(source), 'node_modules', '.bin');
+  const cmd = findScript(name, binDir);
+
+  let entryPoint: TestCheck;
+  if (cmd === null) {
+    entryPoint = { ok: false, error: 'entry point not found — run `runspec bin` or check package.json "bin"' };
+  } else {
+    const res = spawnSync(cmd, ['--help'], {
+      encoding: 'utf-8',
+      timeout: TEST_SUBPROCESS_TIMEOUT_MS,
+      env: { ...process.env, RUNSPEC_AGENT: '1' },
+    });
+    if (res.error) {
+      const code = (res.error as NodeJS.ErrnoException).code;
+      const msg = code === 'ETIMEDOUT' ? `timed out after ${TEST_SUBPROCESS_TIMEOUT_MS / 1000}s` : res.error.message;
+      entryPoint = { ok: false, error: msg };
+    } else if (res.status !== 0) {
+      entryPoint = {
+        ok: false,
+        error: `exit ${res.status}`,
+        stderr: (res.stderr || res.stdout || '').trim().slice(0, 2000),
+      };
+    } else {
+      entryPoint = { ok: true };
+    }
+  }
+
+  return {
+    runnable: name,
+    source,
+    ok: specSmoke.ok && entryPoint.ok,
+    checks: { spec_smoke: specSmoke, entry_point: entryPoint },
+  };
+}
+
+// Pick the most informative single line from captured stderr: the last line
+// mentioning an error/exception (the "Error: ..." line for a Node crash, the
+// exception for a Python traceback), falling back to the last non-empty line.
+function summariseStderr(stderr: string): string {
+  const lines = stderr
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l);
+  if (!lines.length) return '';
+  const errLines = lines.filter((l) => /error|exception/i.test(l));
+  return (errLines.length ? errLines : lines)[(errLines.length ? errLines : lines).length - 1];
+}
+
+function printTestText(results: TestResult[]): void {
+  const total = results.length;
+  const passed = results.filter((r) => r.ok).length;
+  const failed = total - passed;
+
+  console.log(`Tested ${total} runnable(s):\n`);
+  for (const r of results) {
+    const spec = r.checks.spec_smoke;
+    const ep = r.checks.entry_point;
+    const mark = r.ok ? '✓' : '✗';
+    const specNote = spec.ok ? 'spec ok' : 'spec failed';
+    const epNote = ep.ok ? '--help exit 0' : '--help failed';
+    console.log(`  ${mark}  ${r.runnable.padEnd(24)} ${specNote}, ${epNote}`);
+    if (!spec.ok) console.log(`         spec: ${spec.error}`);
+    if (!ep.ok) {
+      console.log(`         entry point: ${ep.error}`);
+      if (ep.stderr) {
+        const summary = summariseStderr(ep.stderr);
+        if (summary) console.log(`         stderr: ${summary}`);
+      }
+    }
+  }
+  console.log();
+  console.log(`Summary: ${passed} passed, ${failed} failed (${total} total)`);
 }
 
 // ── Schema builder ────────────────────────────────────────────────────────────
@@ -830,6 +971,7 @@ Usage:
 Commands:
   init        Create runspec.toml and a code stub
   local       List runnables and emit tool schemas
+  test        Smoke-test every runnable: spec smoke + entry-point --help (CI gate)
   bin         Generate a venv-shaped bin/ so a controller can run this folder
   logs        View, status, prune, or compact per-invocation audit logs
   jump        Execute a runnable on a remote host via SSH
@@ -842,6 +984,7 @@ Examples:
   runspec init --example
   runspec local
   runspec local --format mcp
+  runspec test
   runspec bin
   runspec logs deploy
   runspec serve`);
@@ -873,6 +1016,23 @@ Examples:
   runspec local --format mcp
   runspec local --format mcp --script deploy
   runspec local --format json`,
+
+    test: `runspec test — Smoke-test every runnable in this folder (CI gate)
+
+  For each runnable in runspec.toml runs two checks: an in-process spec smoke
+  (--help works for every command, require-command is enforced, required args
+  are validated) and a subprocess that executes the entry point with --help
+  (proves the runnable's own code imports and is wired to the right spec).
+  Exits 1 if any runnable fails either check.
+
+Options:
+  --format    Output format: text (default) or json
+  --runnable  Filter to a single runnable by name
+
+Examples:
+  runspec test
+  runspec test --format json
+  runspec test --runnable deploy`,
 
     bin: `runspec bin — Generate a venv-shaped bin/ for this folder's runnables
 

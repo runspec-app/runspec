@@ -7,6 +7,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.32.0] / [node-0.28.0] — 2026-06-08
+
+### Added
+
+- **`runspec test` — a CI smoke gate across every runnable.** Iterates the
+  runnables discovered in the environment and, per runnable, runs two checks:
+  an in-process **spec smoke** (the `runspec.testing.ParseHarness.smoke()` walk —
+  `--help` works for every command, `require-command` is enforced, required args
+  are validated) and a **subprocess that executes the installed entry point with
+  `--help`** (proves the runnable's own code imports and is wired to the right
+  spec — something the spec smoke can't catch). Exits 1 if any runnable fails
+  either check; `--format json` prints machine-readable results for CI;
+  `--runnable <name>` filters to one. Built for deployment packages that combine
+  third-party runnables into one environment and want to catch broken ones
+  before they ship.
+  - **Python** discovers every installed `runspec`-dependent package in the venv
+    (importlib.metadata). Each phase is isolated so one broken runnable can't
+    abort the run.
+  - **Node** (`node-0.28.0`) discovers every runnable in the venv-shaped folder's
+    `runspec.toml` and resolves each entry point via the same `bin/<runnable>` /
+    `node_modules/.bin` lookup `serve` uses.
+
+- **`runspec-node/testing` — `ParseHarness` ported to Node** (`node-0.28.0`).
+  The Node counterpart to Python's `runspec.testing`, exposed as a subpath
+  export: `import { ParseHarness } from 'runspec-node/testing'`. `parse()` already
+  takes `argv`/`configPath`, so testing a runnable needs no `process.argv`
+  monkeypatching — `expectOk(argv)` / `expectExit(argv, { code, contains })`
+  assert parse/exit behaviour (intercepting `process.exit` so `--help` doesn't
+  kill the test runner, and mapping a thrown `RunSpecError` to a non-zero exit),
+  and `smoke({ values })` auto-walks the whole subcommand tree. Spec
+  introspection mirrors Python: `commandPaths()`, `requiredArgs(path)`,
+  `requiresCommand(path)`, `argsFor(path)`.
+
 ## [0.31.0] — 2026-06-07
 
 ### Added

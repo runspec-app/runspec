@@ -5,6 +5,7 @@ Commands:
     runspec init   [--name <name>] [--lang python|typescript|javascript]
                    [--example] [--write-project] [--project-dir <path>]
     runspec local  [--format text|json|mcp|openai|anthropic] [--runnable <name>]
+    runspec test   [--format text|json] [--runnable <name>]
     runspec serve
     runspec jump   [--list-jump-hosts] [<jump_host> [<tool>] [-- tool-args...]]
 
@@ -18,12 +19,18 @@ CLI parses --help through parse() against its own bundled spec.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 _CLI_CONFIG = Path(__file__).parent / "runspec.toml"
+
+# Hard cap on the entry-point `--help` subprocess so a runnable that hangs on
+# import can't wedge a CI run. Timeout is treated as a failure.
+_TEST_SUBPROCESS_TIMEOUT = 30
 
 
 def main() -> None:
@@ -54,6 +61,7 @@ def main() -> None:
     commands = {
         "init": cmd_init,
         "local": cmd_local,
+        "test": cmd_test,
         "serve": cmd_serve,
         "jump": cmd_jump,
         "env": cmd_env,
@@ -108,6 +116,204 @@ def cmd_local(args: list[str]) -> None:
             print(f"✗  Unknown format: {fmt}")
             print("   Available formats: text, json, mcp, openai, anthropic")
             sys.exit(1)
+
+
+def cmd_test(args: list[str]) -> None:
+    """Smoke-test every installed runnable — a CI gate for broken runnables.
+
+    For each discovered runnable this runs two checks: an in-process spec smoke
+    (ParseHarness.smoke — --help, require-command, required-arg validation across
+    the whole command tree) and a subprocess that executes the installed entry
+    point with --help (proves the runnable's own code imports and is wired to the
+    right spec). Exits 1 if any runnable fails either check.
+    """
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["test"] + args, config_path=_CLI_CONFIG)
+
+    fmt = str(parsed.format)
+    runnable_filter: str | None = parsed.runnable.value
+
+    discovered = _deduplicate(_discover_installed())
+
+    if runnable_filter:
+        discovered = [d for d in discovered if d["runnable"] == runnable_filter]
+
+    if not discovered:
+        print("No runspec-aware runnables found in this environment.")
+        print("Install a package that declares 'runspec' as a dependency,")
+        print("or run 'pip install -e .' from your project directory.")
+        return
+
+    results = [_test_one(item) for item in discovered]
+    failed = sum(1 for r in results if not r["ok"])
+
+    if fmt == "json":
+        summary = {
+            "total": len(results),
+            "passed": len(results) - failed,
+            "failed": failed,
+        }
+        print(json.dumps({"results": results, "summary": summary}, indent=2, default=str))
+    else:
+        _print_test_text(results)
+
+    if failed:
+        sys.exit(1)
+
+
+@contextlib.contextmanager
+def _isolated_process_state() -> Iterator[None]:
+    """Snapshot/restore os.environ and sys.excepthook around an in-process parse.
+
+    runspec.parse() (driven by ParseHarness.smoke) may mutate os.environ via a
+    runnable's .runspec_env and install a sys.excepthook when [config.logging] is
+    declared. Testing many runnables in one process would otherwise let one
+    runnable's environment bleed into the next. (ParseHarness already pins
+    RUNSPEC_ARG_NO_SUMMARY itself.)
+    """
+    import os
+
+    env_snapshot = dict(os.environ)
+    excepthook = sys.excepthook
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(env_snapshot)
+        sys.excepthook = excepthook
+
+
+def _entry_point_dirs() -> list[Path]:
+    """Directories that may hold console-script entry points, most-likely first.
+
+    In a normal venv ``Path(sys.executable).parent`` is the ``bin/`` dir holding
+    every console script. We also probe the directory of the running ``runspec``
+    launcher (``sys.argv[0]``) because an installer can place scripts there with
+    a shebang pointing at a *different* interpreter — then ``sys.executable``'s
+    parent is the wrong directory (and may even hold same-named system binaries).
+    Both are kept venv-local; PATH is deliberately not searched, so a system
+    binary that shares a runnable's name can't mask a missing entry point.
+    """
+    dirs: list[Path] = [Path(sys.executable).parent]
+    if sys.argv and sys.argv[0]:
+        launcher_dir = Path(sys.argv[0]).resolve().parent
+        if launcher_dir not in dirs:
+            dirs.append(launcher_dir)
+    return dirs
+
+
+def _find_entry_point(name: str) -> Path | None:
+    """Locate an installed console script for ``name``, or None if absent."""
+    for bin_dir in _entry_point_dirs():
+        for candidate in (bin_dir / name, bin_dir / f"{name}.exe"):
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _test_one(item: dict[str, Any]) -> dict[str, Any]:
+    """Run both checks against one discovered runnable; never raise.
+
+    Each phase is isolated so a single broken runnable cannot abort the run —
+    its failure is recorded and reported, and the next runnable is still tested.
+    """
+    import os
+    import subprocess
+
+    from runspec.testing import ParseHarness
+
+    name: str = item["runnable"]
+    source: str = item["source"]
+
+    # ── phase 1: spec smoke (in-process) ─────────────────────────────────────
+    try:
+        with _isolated_process_state():
+            harness = ParseHarness(script_name=name, config_path=source, suppress_summary=True)
+            try:
+                labels = harness.smoke(check_help=True)
+            finally:
+                harness.close()
+        spec_smoke: dict[str, Any] = {"ok": True, "checks": labels}
+    except Exception as exc:  # noqa: BLE001 - one bad runnable must not abort the run
+        spec_smoke = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    # ── phase 2: entry-point --help (subprocess) ─────────────────────────────
+    bin_path = _find_entry_point(name)
+
+    if bin_path is None:
+        entry_point: dict[str, Any] = {
+            "ok": False,
+            "error": "entry point not installed — add to [project.scripts] and re-run pip install",
+        }
+    else:
+        try:
+            proc = subprocess.run(
+                [str(bin_path), "--help"],
+                capture_output=True,
+                text=True,
+                timeout=_TEST_SUBPROCESS_TIMEOUT,
+                env={**os.environ, "RUNSPEC_AGENT": "1"},
+            )
+            entry_point = {"ok": True}
+            if proc.returncode != 0:
+                entry_point = {
+                    "ok": False,
+                    "error": f"exit {proc.returncode}",
+                    "stderr": (proc.stderr or proc.stdout).strip()[:2000],
+                }
+        except subprocess.TimeoutExpired:
+            entry_point = {"ok": False, "error": f"timed out after {_TEST_SUBPROCESS_TIMEOUT}s"}
+        except OSError as exc:
+            entry_point = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    return {
+        "runnable": name,
+        "source": source,
+        "ok": bool(spec_smoke["ok"] and entry_point["ok"]),
+        "checks": {"spec_smoke": spec_smoke, "entry_point": entry_point},
+    }
+
+
+def _summarise_stderr(stderr: str) -> str:
+    """Pick the most informative single line from captured stderr.
+
+    Prefer the last line mentioning an error/exception — for a Python traceback
+    that's the exception itself (not the "Traceback ..." banner), and for a Node
+    crash it's the "Error: ..." line (not the trailing "Node.js vX" banner).
+    Falls back to the last non-empty line.
+    """
+    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    err_lines = [ln for ln in lines if "error" in ln.lower() or "exception" in ln.lower()]
+    return (err_lines or lines)[-1]
+
+
+def _print_test_text(results: list[dict[str, Any]]) -> None:
+    """Print a ✓/✗ per-runnable summary of the test run."""
+    total = len(results)
+    passed = sum(1 for r in results if r["ok"])
+    failed = total - passed
+
+    print(f"Tested {total} runnable(s):\n")
+    for r in results:
+        name = r["runnable"]
+        spec = r["checks"]["spec_smoke"]
+        ep = r["checks"]["entry_point"]
+        mark = "✓" if r["ok"] else "✗"
+        spec_note = "spec ok" if spec["ok"] else "spec failed"
+        ep_note = "--help exit 0" if ep["ok"] else "--help failed"
+        print(f"  {mark}  {name:<24} {spec_note}, {ep_note}")
+        if not spec["ok"]:
+            print(f"         spec: {spec['error']}")
+        if not ep["ok"]:
+            print(f"         entry point: {ep['error']}")
+            stderr = ep.get("stderr")
+            if stderr:
+                print(f"         stderr: {_summarise_stderr(stderr)}")
+    print()
+    print(f"Summary: {passed} passed, {failed} failed ({total} total)")
 
 
 def cmd_serve(args: list[str]) -> None:

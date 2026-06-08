@@ -307,3 +307,47 @@ These five tests cover every decision `main()` makes without touching the
 network, credentials, or the static-data store — the boundaries are the only
 mocks.
 
+## Validating a whole environment with `runspec test`
+
+`ParseHarness.smoke()` tests one runnable from your own test suite. When you
+bundle runnables from *many* packages into one environment — and some authors
+may not have written tests at all — the [`runspec test`](cli.md#runspec-test)
+CLI applies the same smoke check to **every discovered runnable**, then goes one
+step further: it executes each installed entry point with `--help` in a
+subprocess, so a runnable whose code fails to import is caught even though its
+spec is fine. It exits 1 on any failure, so it drops straight into CI:
+
+```yaml
+- name: Smoke-test all runnables
+  run: runspec test          # or: runspec test --format json
+```
+
+Think of it as `smoke()` generalised across the environment plus a real
+import/exec check — no per-runnable test code required.
+
+## Node: `ParseHarness` from `runspec-node/testing`
+
+The Node pack ships the same helper, kept out of the main entry point (mirroring
+Python's separate `runspec.testing` import) via a subpath export:
+
+```ts
+import { ParseHarness } from 'runspec-node/testing';
+
+test('greet wiring', () => {
+  const h = new ParseHarness({ scriptName: 'greet', toml: SPEC }); // or configPath:
+  const parsed = h.expectOk(['--name', 'Ada']);
+  expect(String(parsed.name)).toBe('Ada');
+
+  h.expectExit(['create'], { code: 1, contains: 'name' }); // missing required arg
+  h.smoke({ values: { name: 'Ada' } });                    // walk the whole tree
+  h.close();
+});
+```
+
+The API mirrors Python — `expectOk` / `expectExit({ code, contains })`,
+`smoke({ values, checkHelp })`, and the `commandPaths()` / `requiredArgs(path)` /
+`requiresCommand(path)` / `argsFor(path)` introspection. Node `parse()` calls
+`process.exit(0)` on `--help` and *throws* on validation errors; the harness
+intercepts both so a `--help` check never kills your test runner. `runspec test`
+works the same in the Node pack, scoped to the venv-shaped folder's runnables.
+
