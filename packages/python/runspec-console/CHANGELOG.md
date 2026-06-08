@@ -8,7 +8,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [Unreleased]
+## [0.26.0] — 2026-06-08
 
 ### Added
 - **Browse for the runspec path when adding a jump host.** The **Settings → Jump
