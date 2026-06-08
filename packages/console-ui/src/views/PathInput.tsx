@@ -27,17 +27,26 @@ function splitTyped(text: string, sep: string): { dir: string; prefix: string } 
 
 interface PathInputProps {
   host: string
-  value: string
+  // value/onChange are optional so PathInput can drop straight into an antd
+  // Form.Item, which injects them; standalone callers pass them explicitly.
+  value?: string
   placeholder?: string
   dirsOnly?: boolean
   error?: boolean
-  onChange: (v: string) => void
+  onChange?: (v: string) => void
   runnable?: string   // runnable name — needed to resolve run_as for the service-account view
   runAs?: string      // the runnable's service account on this host, when configured
   group?: string      // venv, to disambiguate a same-named runnable across venvs
+  // Optional custom directory lister (e.g. an unsaved host being added in
+  // Settings). When given it replaces the default bridge.list_dir(host, …) call
+  // for both inline autocomplete and the browse modal.
+  lister?: (path: string, dirsOnly: boolean) => Promise<DirListing>
+  // Disable the browse button (e.g. no hostname entered yet for an unsaved host).
+  // The text field stays editable so a path can still be typed by hand.
+  browseDisabled?: boolean
 }
 
-export function PathInput({ host, value, placeholder, dirsOnly, error, onChange, runnable, runAs, group }: PathInputProps) {
+export function PathInput({ host, value, placeholder, dirsOnly, error, onChange, runnable, runAs, group, lister, browseDisabled }: PathInputProps) {
   const [options, setOptions] = useState<{ value: string; label: React.ReactNode }[]>([])
   const [browseOpen, setBrowseOpen] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -47,10 +56,13 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
 
   // ── inline autocomplete ────────────────────────────────────────────────────
   const fetchCompletions = useCallback(async (text: string) => {
+    if (browseDisabled) { setOptions([]); return }
     const seq = ++reqRef.current
     const probe = splitTyped(text, '/').dir // best-effort; refine with real sep below
     try {
-      const listing = await bridge.list_dir(host, probe, undefined, dirsOnly)
+      const listing = lister
+        ? await lister(probe, !!dirsOnly)
+        : await bridge.list_dir(host, probe, undefined, dirsOnly)
       if (seq !== reqRef.current) return // a newer keystroke won
       if (listing.error) { setOptions([]); return }
       const sep = sepOf(listing.cwd || '/')
@@ -76,7 +88,7 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
     } catch {
       if (seq === reqRef.current) setOptions([])
     }
-  }, [host, dirsOnly])
+  }, [host, dirsOnly, lister, browseDisabled])
 
   const handleSearch = (text: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -93,7 +105,7 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
           value={value ?? ''}
           options={options}
           onSearch={handleSearch}
-          onChange={v => onChange(v)}
+          onChange={v => onChange?.(v)}
           style={{ width: '100%' }}
         >
           <input
@@ -102,8 +114,8 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
             style={{ ...inputStyle, width: '100%', borderColor: error ? '#ff4d4f' : undefined }}
           />
         </AutoComplete>
-        <Tooltip title={`Browse ${host}`}>
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={() => setBrowseOpen(true)} />
+        <Tooltip title={browseDisabled ? 'Enter a hostname to browse' : `Browse ${host}`}>
+          <Button size="small" icon={<FolderOpenOutlined />} disabled={browseDisabled} onClick={() => setBrowseOpen(true)} />
         </Tooltip>
       </div>
       {browseOpen && (
@@ -114,7 +126,8 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
           runnable={runnable}
           runAs={runAs}
           group={group}
-          onPick={p => { onChange(p); setBrowseOpen(false) }}
+          lister={lister}
+          onPick={p => { onChange?.(p); setBrowseOpen(false) }}
           onClose={() => setBrowseOpen(false)}
         />
       )}

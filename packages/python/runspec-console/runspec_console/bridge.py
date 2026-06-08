@@ -1097,6 +1097,92 @@ class Bridge:
             except Exception:
                 pass
 
+    def list_dir_unsaved(
+        self,
+        hostname: str,
+        path: str = "",
+        user: str | None = None,
+        port: int | None = None,
+        identity_file: str | None = None,
+        dirs_only: bool = False,
+    ) -> dict[str, Any]:
+        """List a directory on a host that isn't saved yet — the Settings → Jump
+        Hosts add/edit form — so the runspec-path picker can browse it directly.
+
+        Same return shape as :meth:`list_dir`. Connects **straight** to the host
+        (no jump) from the form's ``hostname``/``user``/``port``/``identity_file``,
+        reusing the shared client builder so the browse goes through the same
+        key/agent → ``[ssh] proxy`` → ``~/.ssh/config`` → host-key handling as
+        every saved host. The connection is cached for the browse session (keyed
+        by the target) and torn down by :meth:`close_adhoc` when the form closes.
+        """
+        if not hostname:
+            return {"error": "no hostname specified"}
+        target = f"{user}@{hostname}" if user else hostname
+        if port:
+            target = f"{target}:{int(port)}"
+        key = ("__unsaved__", target, identity_file or "")
+        cfg = self.get_config().get("ssh")
+        for attempt in (1, 2):
+            try:
+                sftp = self._get_unsaved_sftp(key, target, identity_file, cfg)
+            except Exception as e:
+                return {"error": str(e)}
+            try:
+                from .fs_browse import list_sftp
+
+                return list_sftp(sftp, path, dirs_only=dirs_only)
+            except Exception as e:
+                # A reused connection may have dropped — drop it and retry once.
+                self._close_adhoc_key(key)
+                if attempt == 2:
+                    return {"error": str(e)}
+        return {"error": "unreachable"}
+
+    def _get_unsaved_sftp(
+        self,
+        key: tuple[Any, ...],
+        target: str,
+        identity_file: str | None,
+        cfg: dict[str, Any] | None,
+    ) -> Any:
+        """Return a live cached direct SFTP for an unsaved host, opening one if needed.
+
+        Owns a dedicated (non-pooled) client — the unsaved host has no pool entry
+        yet — cached alongside the relay ad-hoc connections so ``close_adhoc``
+        cleans it up too."""
+        with self._lock:
+            entry = self._adhoc_conns.get(key)
+        if entry is not None and self._adhoc_alive(entry["sftp"]):
+            entry["last_used"] = time.monotonic()
+            return entry["sftp"]
+
+        from .executor import _make_ssh_client
+
+        client = _make_ssh_client(target, identity_file, cfg)
+        sftp = client.open_sftp()
+
+        def release() -> None:
+            for c in (sftp, client):
+                try:
+                    c.close()
+                except Exception:
+                    pass
+
+        with self._lock:
+            old = self._adhoc_conns.get(key)
+            self._adhoc_conns[key] = {
+                "sftp": sftp,
+                "release": release,
+                "last_used": time.monotonic(),
+            }
+        if old is not None:
+            try:
+                old["release"]()
+            except Exception:
+                pass
+        return sftp
+
     # ── history ───────────────────────────────────────────────────────────────
 
     def get_history(

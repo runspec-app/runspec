@@ -775,6 +775,19 @@ export const mockApi: BridgeApi = {
     ].filter(e => !dirsOnly || e.type === 'directory')
     return { cwd, parent: cwd === '/' ? null : cwd.split('/').slice(0, -1).join('/') || '/', entries, truncated: false }
   },
+  list_dir_unsaved: async (hostname, path = '', user, _port, _identityFile, dirsOnly = false) => {
+    console.log('[mock] list_dir_unsaved', { hostname, path, user, dirsOnly })
+    if (!hostname) return { cwd: '', parent: null, entries: [], truncated: false, error: 'no hostname specified' }
+    const home = user ? `/home/${user}` : '/home/deploy'
+    const cwd = path && path !== '/' ? path.replace(/\/$/, '') : home
+    const entries = [
+      { name: '.venv', type: 'directory' as const, size: 4096, mtime: 1717000000 },
+      { name: 'venvs', type: 'directory' as const, size: 4096, mtime: 1717000100 },
+      { name: 'bin', type: 'directory' as const, size: 4096, mtime: 1717000200 },
+      { name: 'runspec', type: 'file' as const, size: 1024, mtime: 1717000500 },
+    ].filter(e => !dirsOnly || e.type === 'directory')
+    return { cwd, parent: cwd === '/' ? null : cwd.split('/').slice(0, -1).join('/') || '/', entries, truncated: false }
+  },
   close_adhoc: async () => { console.log('[mock] close_adhoc') },
   check_dir_exists: async (hosts, path) => {
     console.log('[mock] check_dir_exists', { hosts, path })

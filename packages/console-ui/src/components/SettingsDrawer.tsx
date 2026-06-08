@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type TestResult, type RotateHostResult } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
+import { PathInput } from '../views/PathInput'
 
 const { Text, Link } = Typography
 
@@ -585,9 +586,33 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
 
+  // Live connection details of the host being added/edited — drive the runspec-
+  // path browser so it lists the host straight from the form (before it's saved).
+  const editHostname = Form.useWatch('hostname', form)
+  const editUser = Form.useWatch('user', form)
+  const editPort = Form.useWatch('port', form)
+  const editIdentity = Form.useWatch('identityFile', form)
+  const hostReady = !!(editHostname ?? '').trim()
+
+  const pathLister = useCallback(
+    (path: string, dirsOnly: boolean) =>
+      bridge.list_dir_unsaved(
+        (editHostname ?? '').trim(),
+        path,
+        (editUser ?? '').trim() || undefined,
+        editPort ? Number(editPort) : undefined,
+        (editIdentity ?? '').trim() || undefined,
+        dirsOnly,
+      ),
+    [editHostname, editUser, editPort, editIdentity],
+  )
+
   useEffect(() => {
     bridge.get_jump_hosts().then(setHosts)
   }, [])
+
+  // Tear down any browse connection opened from the add/edit form on unmount.
+  useEffect(() => () => { bridge.close_adhoc().catch(() => {}) }, [])
 
   const persist = async (next: JumpHost[]) => {
     setHosts(next)
@@ -602,7 +627,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     setEditingKey(h.name)
   }
 
-  const cancel = () => { setEditingKey(null); form.resetFields() }
+  const cancel = () => { setEditingKey(null); form.resetFields(); bridge.close_adhoc().catch(() => {}) }
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -626,6 +651,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     }
     setEditingKey(null)
     form.resetFields()
+    bridge.close_adhoc().catch(() => {})
   }
 
   const remove = async (name: string) => {
@@ -727,14 +753,22 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 <Input placeholder="22" type="number" />
               </Form.Item>
             </div>
-            <Form.Item label="runspec path(s) on host">
+            <Form.Item
+              label="runspec path(s) on host"
+              help={hostReady ? undefined : 'Enter a hostname above to browse the host for where runspec lives.'}
+            >
               <Form.List name="runspec_paths">
                 {(fields, { add, remove }) => (
                   <>
                     {fields.map(({ key, name, ...restField }) => (
                       <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 4 }}>
-                        <Form.Item {...restField} name={name} style={{ marginBottom: 0, flex: 1 }}>
-                          <Input placeholder="/home/user/.venv/bin/runspec" style={{ fontFamily: 'monospace', width: 312 }} />
+                        <Form.Item {...restField} name={name} style={{ marginBottom: 0, width: 312 }}>
+                          <PathInput
+                            host={(editHostname ?? '').trim() || 'host'}
+                            lister={pathLister}
+                            browseDisabled={!hostReady}
+                            placeholder="/home/user/.venv/bin/runspec"
+                          />
                         </Form.Item>
                         <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#666', cursor: 'pointer' }} />
                       </Space>

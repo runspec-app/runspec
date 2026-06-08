@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [Unreleased]
+
+### Added
+- **Browse for the runspec path when adding a jump host.** The **Settings → Jump
+  Hosts** add/edit form's *runspec path(s) on host* fields now have the same
+  autocomplete + file-browser as the Forms path pickers and the file-transfer
+  dialogs — so you can navigate the host and pick where runspec lives instead of
+  typing the path by hand.
+  - Browses the host **straight from the form's connection details**
+    (hostname / user / port / identity file) before it's saved — no jump, no
+    prior probe required — using the same key/agent → `[ssh] proxy` →
+    `~/.ssh/config` → host-key handling as every other SSH operation. The browse
+    button stays disabled (with a hint) until a hostname is entered; the field is
+    always editable by hand.
+  - The browse connection is opened lazily, cached for the editing session, and
+    torn down when the form is saved/cancelled or the drawer closes.
+  - Backend: `list_dir_unsaved(hostname, path, user, port, identity_file, dirs_only)`.
+
+
 ## [0.25.1] — 2026-06-08
 
 ### Fixed

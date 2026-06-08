@@ -336,6 +336,10 @@ export interface BridgeApi {
   // Browse a directory on an ad-hoc relay source (reached via a jump). Password
   // is used only for this listing connection, never stored.
   list_dir_adhoc: (jump: string, host: string, path?: string, user?: string, password?: string, port?: number, dirsOnly?: boolean) => Promise<DirListing>
+  // Browse a directory on a host that isn't saved yet (Settings → Jump Hosts add/
+  // edit form) so the runspec-path picker can pick where runspec lives. Connects
+  // straight to the host from the form's connection details (no jump).
+  list_dir_unsaved: (hostname: string, path?: string, user?: string, port?: number, identityFile?: string, dirsOnly?: boolean) => Promise<DirListing>
   // Close cached ad-hoc browse connections (call when the relay dialog closes).
   close_adhoc: () => Promise<void>
   // Pre-flight: does `path` exist as a directory on each host? (fan-out dest check)
