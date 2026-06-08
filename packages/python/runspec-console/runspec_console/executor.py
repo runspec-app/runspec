@@ -338,6 +338,7 @@ def _make_ssh_client(
     ssh_target: str,
     identity_file: str | None,
     global_ssh_config: dict[str, Any] | None = None,
+    password: str | None = None,
 ) -> Any:
     """Create and connect a paramiko SSHClient.
 
@@ -357,6 +358,11 @@ def _make_ssh_client(
 
     Precedence: per-host/global explicit fields > ~/.ssh/config. An explicit
     ``proxy`` takes precedence over a ProxyCommand from ~/.ssh/config.
+
+    ``password``, when given, switches to password auth (e.g. the ssh-copy-id
+    bootstrap): the password alone is used and agent/on-disk-key fallback is
+    disabled, so the password is what's actually tested — while still going
+    through the same proxy / host-key / ssh_config handling as key auth.
     """
     import paramiko
 
@@ -404,7 +410,14 @@ def _make_ssh_client(
     }
     if user:
         connect_kwargs["username"] = user
-    if key_path:
+    if password:
+        # Password auth: use the password alone, no agent/on-disk-key fallback,
+        # so a wrong password fails cleanly instead of silently succeeding via
+        # some unrelated key (and no key gets installed).
+        connect_kwargs["password"] = password
+        connect_kwargs["allow_agent"] = False
+        connect_kwargs["look_for_keys"] = False
+    elif key_path:
         connect_kwargs["key_filename"] = str(Path(key_path).expanduser())
     if sock is not None:
         connect_kwargs["sock"] = sock

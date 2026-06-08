@@ -169,6 +169,32 @@ def test_username_falls_back_to_global(tmp_path):
     assert FakeSSHClient.instances[-1].connect_kwargs["username"] == "ops"
 
 
+def test_http_proxy_is_tunnelled(tmp_path, monkeypatch):
+    # The whole fleet may sit behind an HTTP CONNECT proxy — copy-id must reach
+    # the host through the same [ssh] proxy as every other connection.
+    key = tmp_path / "id"
+    _write_key(key)
+    sentinel = object()
+    calls: dict = {}
+
+    def fake_sock(proxy, host, port, timeout=10.0):
+        calls["args"] = (proxy, host, port)
+        return sentinel
+
+    monkeypatch.setattr(executor, "_http_connect_sock", fake_sock)
+    bridge = _StubBridge(
+        {"ssh": {"identityFile": str(key), "proxy": "http://proxy.corp:8080"}},
+        [{"name": "h1", "ssh": "deploy@h1:2222"}],
+        probe_result=True,
+    )
+
+    res = bridge.copy_ssh_id("h1", "secret")
+
+    assert res["ok"] is True
+    assert calls["args"] == ("http://proxy.corp:8080", "h1", 2222)
+    assert FakeSSHClient.instances[-1].connect_kwargs["sock"] is sentinel
+
+
 def test_no_key_configured_errors_generate_first(tmp_path):
     bridge = _StubBridge(
         {"ssh": {"identityFile": ""}},

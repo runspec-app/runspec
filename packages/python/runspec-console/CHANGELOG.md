@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.25.1] — 2026-06-08
+
+### Fixed
+- **Copy SSH public key now goes through the `[ssh] proxy`.** 0.25.0's copy-id
+  opened a *direct* connection, so it couldn't reach hosts that are only
+  reachable via an HTTP CONNECT proxy — i.e. exactly the corporate fleets the
+  feature is for. It now connects through the shared client builder, using the
+  same `[ssh] proxy` / `host_key_checking` / `~/.ssh/config` handling as every
+  other SSH operation in the console. Password auth still uses the password
+  alone (no agent/on-disk-key fallback).
+
+
 ## [0.25.0] — 2026-06-08
 
 ### Added

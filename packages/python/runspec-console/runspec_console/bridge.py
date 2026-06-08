@@ -1866,42 +1866,14 @@ class Bridge:
 
         import paramiko
 
-        from .executor import (
-            DEFAULT_AUTH_TIMEOUT,
-            DEFAULT_BANNER_TIMEOUT,
-            DEFAULT_CONNECT_TIMEOUT,
-            _apply_host_key_policy,
-            _parse_ssh_target,
-            friendly_ssh_error,
-        )
+        from .executor import _make_ssh_client, friendly_ssh_error
 
-        user, hostname, port = _parse_ssh_target(entry["ssh"])
-        if not user:
-            user = global_ssh.get("user", "")
-
-        # Direct password connection: disable agent/key lookup so this genuinely
-        # tests the password path (the whole reason we're here is that key auth
-        # doesn't work yet) and the auth-failed message stays accurate.
-        client = paramiko.SSHClient()
-        _apply_host_key_policy(client, global_ssh)
+        # Connect with the password via the shared client builder so this goes
+        # through the same [ssh] proxy / host-key / ssh_config handling as every
+        # other connection — essential when the whole fleet sits behind an HTTP
+        # CONNECT proxy. Password auth disables agent/key fallback internally.
         try:
-            client.connect(
-                hostname=hostname,
-                port=port,
-                username=user or None,
-                password=password,
-                allow_agent=False,
-                look_for_keys=False,
-                timeout=float(
-                    global_ssh.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT)
-                ),
-                banner_timeout=float(
-                    global_ssh.get("banner_timeout", DEFAULT_BANNER_TIMEOUT)
-                ),
-                auth_timeout=float(
-                    global_ssh.get("auth_timeout", DEFAULT_AUTH_TIMEOUT)
-                ),
-            )
+            client = _make_ssh_client(entry["ssh"], None, global_ssh, password=password)
         except paramiko.AuthenticationException:
             return {
                 "ok": False,
