@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.25.0] — 2026-06-08
+
+### Added
+- **Copy SSH public key to a host (in-app `ssh-copy-id`).** Authorize this
+  machine on a freshly added host without leaving for PuTTY: enter the host's
+  SSH password once and the console appends its public key to the remote's
+  `~/.ssh/authorized_keys`, then re-probes so the sidebar dot flips green.
+  - Available from the **host right-click menu** (offered even while the host is
+    disconnected — that's the bootstrap case) and as a per-host **Copy key**
+    button in **Settings → Jump Hosts**.
+  - Connects **directly with the password only** (agent/key lookup disabled so
+    the password path is genuinely tested). The password is used for that one
+    connection and **never stored, logged, or pooled**.
+  - Pushes the host's **effective** key (a per-host `identityFile` override wins
+    over the global key) with the same idempotent append the key-rotation path
+    uses, so re-running never duplicates the key. If no key is configured it asks
+    you to **generate one first** rather than silently creating a key.
+  - Backend: `copy_ssh_id(host, password)`.
+  - *Known limitation:* the direct connection does not use the HTTP-CONNECT
+    `[ssh] proxy`, so copy-id may not reach hosts only reachable via the proxy.
+
+
 ## [0.24.0] — 2026-06-07
 
 ### Added
