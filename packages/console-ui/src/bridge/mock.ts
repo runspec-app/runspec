@@ -875,6 +875,11 @@ export const mockApi: BridgeApi = {
     message: '',
   }),
 
+  copy_ssh_id: async (host: string) => {
+    await new Promise(r => setTimeout(r, 600))
+    return { ok: true, connected: true, message: `Public key copied — ${host} is now connected.` }
+  },
+
   generate_ssh_key: async () => {
     await new Promise(r => setTimeout(r, 600))
     MOCK_KEY_CREATED_AT = new Date().toISOString()

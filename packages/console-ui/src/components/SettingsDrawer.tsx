@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type TestResult, type RotateHostResult } from '../bridge'
+import { CopyKeyModal } from '../views/CopyKeyModal'
 
 const { Text, Link } = Typography
 
@@ -582,6 +583,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [testingHost, setTestingHost] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
+  const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
 
   useEffect(() => {
     bridge.get_jump_hosts().then(setHosts)
@@ -796,6 +798,9 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                   <Tooltip title="Test connection">
                     <Button type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: '#666' }} />
                   </Tooltip>
+                  <Tooltip title="Copy SSH public key (authorize this machine)">
+                    <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+                  </Tooltip>
                   <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
                   <Popconfirm title={`Remove ${h.name}?`} onConfirm={() => remove(h.name)} okText="Remove" cancelText="Cancel" placement="left">
                     <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
@@ -806,6 +811,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
           </div>
         ))
       })()}
+
+      <CopyKeyModal
+        open={copyKeyHost !== null}
+        host={copyKeyHost ?? ''}
+        onClose={() => setCopyKeyHost(null)}
+        onDone={() => onHostsChanged?.()}
+      />
     </div>
   )
 }

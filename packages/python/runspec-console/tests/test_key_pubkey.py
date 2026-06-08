@@ -23,6 +23,7 @@ class _StubBridge:
         return self._cfg
 
     _generate_keypair_to_path = Bridge._generate_keypair_to_path
+    _public_key_for = Bridge._public_key_for
     get_public_key = Bridge.get_public_key
 
 

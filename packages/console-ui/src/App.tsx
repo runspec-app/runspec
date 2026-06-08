@@ -13,6 +13,7 @@ import {
   SwapOutlined,
   NodeIndexOutlined,
   CodeOutlined,
+  KeyOutlined,
   LoadingOutlined,
   BugOutlined,
   FileTextOutlined,
@@ -27,6 +28,7 @@ import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
 import { RelayModal } from './views/RelayModal'
+import { CopyKeyModal } from './views/CopyKeyModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
 // so it stays out of the initial bundle.
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
@@ -45,6 +47,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
   const [relayOpen, setRelayOpen] = useState(false)
+  const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [runnablesLoading, setRunnablesLoading] = useState(true)
@@ -225,23 +228,33 @@ export default function App() {
                     key={h.name}
                     trigger={['contextMenu']}
                     menu={{
-                      items: h.connected ? (
-                        h.name === 'local' ? [
-                          {
-                            key: 'open_terminal',
-                            icon: <CodeOutlined />,
-                            label: 'Open terminal',
-                            onClick: () => bridge.launch_local_terminal().catch(console.error),
-                          },
-                        ] : [
-                          {
-                            key: 'open_terminal',
-                            icon: <CodeOutlined />,
-                            label: 'Open SSH terminal',
-                            onClick: () => bridge.launch_terminal(h.name).catch(console.error),
-                          },
-                        ]
-                      ) : [],
+                      // Local: terminal only (when connected). Remote: "Copy SSH
+                      // public key" is always offered — it's the bootstrap action
+                      // for a host that's still disconnected because our key isn't
+                      // in its authorized_keys yet — plus the SSH terminal once up.
+                      items: h.name === 'local'
+                        ? (h.connected ? [
+                            {
+                              key: 'open_terminal',
+                              icon: <CodeOutlined />,
+                              label: 'Open terminal',
+                              onClick: () => bridge.launch_local_terminal().catch(console.error),
+                            },
+                          ] : [])
+                        : [
+                            {
+                              key: 'copy_ssh_id',
+                              icon: <KeyOutlined />,
+                              label: 'Copy SSH public key…',
+                              onClick: () => setCopyKeyHost(h.name),
+                            },
+                            ...(h.connected ? [{
+                              key: 'open_terminal',
+                              icon: <CodeOutlined />,
+                              label: 'Open SSH terminal',
+                              onClick: () => bridge.launch_terminal(h.name).catch(console.error),
+                            }] : []),
+                          ],
                     }}
                   >
                     <div
@@ -461,6 +474,16 @@ export default function App() {
           open={relayOpen}
           onClose={() => setRelayOpen(false)}
           hosts={hosts}
+        />
+
+        <CopyKeyModal
+          open={copyKeyHost !== null}
+          host={copyKeyHost ?? ''}
+          onClose={() => setCopyKeyHost(null)}
+          onDone={() => {
+            bridge.get_hosts().then(setHosts)
+            bridge.get_runnables('all').then(setRunnables)
+          }}
         />
 
         <SettingsDrawer

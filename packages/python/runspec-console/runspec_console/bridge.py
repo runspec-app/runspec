@@ -1760,19 +1760,19 @@ class Bridge:
             "message": f"Key generated at {_normalize_path(str(canonical))}",
         }
 
-    def get_public_key(self) -> dict[str, Any]:
-        """Return the current SSH public key, so it can be copied at any time.
+    def _public_key_for(self, identity_file: str) -> dict[str, Any]:
+        """Resolve the OpenSSH public key line for an identity file.
 
         Reads the persisted ``<identityFile>.pub`` if present; otherwise derives
-        it from the private key (and writes the ``.pub`` for next time). This is
-        what lets the UI show the public key long after generation, even for
-        keys created before ``.pub`` files were written.
+        it from the private key (and writes the ``.pub`` for next time). Returns
+        ``{ok, public_key, message}`` — ``ok=False`` when no key is configured
+        or the private file is missing. Shared by ``get_public_key`` (global key)
+        and ``copy_ssh_id`` (a host's effective key, which may be a per-host
+        override).
         """
-        cfg = self.get_config()
-        idf = (cfg.get("ssh") or {}).get("identityFile", "")
-        if not idf:
+        if not identity_file:
             return {"ok": False, "public_key": "", "message": "No SSH key configured."}
-        priv = Path(idf).expanduser()
+        priv = Path(identity_file).expanduser()
         pub_file = Path(str(priv) + ".pub")
         if pub_file.is_file():
             return {
@@ -1784,7 +1784,7 @@ class Bridge:
             return {
                 "ok": False,
                 "public_key": "",
-                "message": f"Key file not found: {idf}",
+                "message": f"Key file not found: {identity_file}",
             }
         try:
             pub = _public_key_from_private(priv)
@@ -1799,6 +1799,157 @@ class Bridge:
         except Exception:
             pass
         return {"ok": True, "public_key": pub, "message": ""}
+
+    def get_public_key(self) -> dict[str, Any]:
+        """Return the current SSH public key, so it can be copied at any time.
+
+        Reads the persisted ``<identityFile>.pub`` if present; otherwise derives
+        it from the private key (and writes the ``.pub`` for next time). This is
+        what lets the UI show the public key long after generation, even for
+        keys created before ``.pub`` files were written.
+        """
+        cfg = self.get_config()
+        idf = (cfg.get("ssh") or {}).get("identityFile", "")
+        return self._public_key_for(idf)
+
+    def copy_ssh_id(self, host_name: str, password: str) -> dict[str, Any]:
+        """Copy this machine's public key to a host's ``authorized_keys`` over a
+        one-off password connection — the in-app equivalent of ``ssh-copy-id``.
+
+        Bootstraps key-based SSH for a freshly added host: until our key is in
+        the remote's ``~/.ssh/authorized_keys`` key auth fails and the host shows
+        disconnected, forcing the user out to PuTTY/another client. This logs in
+        once with the supplied password, appends the key (idempotently), then
+        re-probes so the sidebar dot flips green. The password is used only for
+        this single connection — never stored, cached, or logged.
+        """
+        entry = self._host_entry(host_name)
+        if entry is None or not entry.get("ssh"):
+            return {
+                "ok": False,
+                "connected": False,
+                "message": f"{host_name} is not a reachable remote host",
+            }
+        if not (password or "").strip():
+            return {
+                "ok": False,
+                "connected": False,
+                "message": "Password required to copy the key.",
+            }
+
+        # Push the host's *effective* key — a per-host identityFile overrides the
+        # global one, matching how _check_connected / _make_ssh_client pick the
+        # key the host's own key-auth sessions will use. Pushing the wrong key
+        # would leave the host red even after a "successful" copy.
+        global_ssh = self.get_config().get("ssh") or {}
+        effective_idf = entry.get("identityFile") or global_ssh.get("identityFile", "")
+        key_res = self._public_key_for(effective_idf)
+        if not key_res["ok"]:
+            # No key at all → point the user at Generate key (we never auto-create
+            # one here; a surprise key could orphan keys other hosts authorize).
+            message = (
+                "No SSH key configured — generate one first, then copy it."
+                if not effective_idf
+                else key_res["message"]
+            )
+            return {"ok": False, "connected": False, "message": message}
+        public_key = key_res["public_key"]
+
+        # Same idempotent push the key-rotation path uses (grep -qF || append).
+        # public_key is single-quote-wrapped; an OpenSSH key contains no quotes.
+        push_cmd = (
+            f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+            f"touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
+            f"grep -qF '{public_key}' ~/.ssh/authorized_keys || "
+            f"printf '%s\\n' '{public_key}' >> ~/.ssh/authorized_keys"
+        )
+
+        import paramiko
+
+        from .executor import (
+            DEFAULT_AUTH_TIMEOUT,
+            DEFAULT_BANNER_TIMEOUT,
+            DEFAULT_CONNECT_TIMEOUT,
+            _apply_host_key_policy,
+            _parse_ssh_target,
+            friendly_ssh_error,
+        )
+
+        user, hostname, port = _parse_ssh_target(entry["ssh"])
+        if not user:
+            user = global_ssh.get("user", "")
+
+        # Direct password connection: disable agent/key lookup so this genuinely
+        # tests the password path (the whole reason we're here is that key auth
+        # doesn't work yet) and the auth-failed message stays accurate.
+        client = paramiko.SSHClient()
+        _apply_host_key_policy(client, global_ssh)
+        try:
+            client.connect(
+                hostname=hostname,
+                port=port,
+                username=user or None,
+                password=password,
+                allow_agent=False,
+                look_for_keys=False,
+                timeout=float(
+                    global_ssh.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT)
+                ),
+                banner_timeout=float(
+                    global_ssh.get("banner_timeout", DEFAULT_BANNER_TIMEOUT)
+                ),
+                auth_timeout=float(
+                    global_ssh.get("auth_timeout", DEFAULT_AUTH_TIMEOUT)
+                ),
+            )
+        except paramiko.AuthenticationException:
+            return {
+                "ok": False,
+                "connected": False,
+                "message": "Authentication failed — check the password.",
+            }
+        except paramiko.BadHostKeyException:
+            return {
+                "ok": False,
+                "connected": False,
+                "message": "Remote host key changed — refusing to connect.",
+            }
+        except Exception as exc:  # noqa: BLE001 — surface a friendly one-liner
+            return {"ok": False, "connected": False, "message": friendly_ssh_error(exc)}
+
+        try:
+            _stdin, stdout, stderr = client.exec_command(push_cmd)
+            exit_code = stdout.channel.recv_exit_status()
+            err = stderr.read().decode(errors="replace")
+        finally:
+            client.close()
+
+        if exit_code != 0:
+            return {
+                "ok": False,
+                "connected": False,
+                "message": (
+                    "Could not update authorized_keys: "
+                    f"{err.strip() or f'exit {exit_code}'}"
+                ),
+            }
+
+        # Re-probe just this host so we can report the result now and flip the
+        # dot immediately; a background full cycle refreshes its runnables too.
+        connected = self._check_connected(entry)
+        with self._lock:
+            self._connected_cache[host_name] = connected
+        self._dispatch("runspec:hosts_updated", {})
+        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        return {
+            "ok": True,
+            "connected": connected,
+            "message": (
+                f"Public key copied — {host_name} is now connected."
+                if connected
+                else "Public key copied — verifying connection…"
+            ),
+        }
 
     def rotate_ssh_key(self) -> dict[str, Any]:
         """Safely rotate the SSH key: generate new, push to all remote hosts using the
