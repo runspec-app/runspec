@@ -211,13 +211,15 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm | Notes |
 |---|---|---|---|
-| `runspec` | 0.23.0 | PyPI | Core library |
-| `runspec-node` | 0.18.0 | npm | Node port |
-| `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console, unreleased) |
-| `runspec-linux` | 0.1.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
-| `runspec-windows` | 0.1.0 | PyPI (unreleased) | 35 Windows system admin + Microsoft 365 (Outlook/Teams/Calendar/OneDrive) runnables |
+| `runspec` | 0.32.0 | PyPI | Core library (reference implementation) |
+| `runspec-node` | 0.28.0 | npm | Node port |
+| `runspec-console` | 0.26.0 | PyPI | pywebview desktop console — agentic chat + Forms + SSH jump-host fleet UI (frontend in `packages/console-ui`) |
+| `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console) |
+| `runspec-linux` | 0.1.3 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
+| `runspec-windows` | 0.1.2 | PyPI | 35 Windows system admin + Microsoft 365 (Outlook/Teams/Calendar/OneDrive) runnables |
 | `runspec-jsm` | 0.1.0 | PyPI | 8 Jira Service Management (Data Center) service-desk runnables — raise/comment/transition/set-property + portal-field discovery |
-| `runspec-snow` | 0.1.0 | PyPI (unreleased) | 8 ServiceNow ITSM runnables — create/get/comment/state/set-field over the Table API + Service Catalog discovery |
+| `runspec-snow` | 0.1.0 | PyPI | 8 ServiceNow ITSM runnables — create/get/comment/state/set-field over the Table API + Service Catalog discovery |
+| `runspec-webops` | 0.1.0 | npm | HTTPS/TLS certificate + web-endpoint runnables (Node; `packages/node-webops`) |
 | `runspec-registry` | 0.1.1 | PyPI | Archived — registry removed in favour of SSH+MCP jump-host model |
 
 **Integration packages** live under `packages/python/` alongside the core library. Each is a
