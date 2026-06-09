@@ -215,7 +215,8 @@ Both Python and Node packages are active and published.
 | `runspec-node` | 0.28.0 | npm | Node port |
 | `runspec-console` | 0.28.0 | PyPI | pywebview desktop console — agentic chat + Forms + SSH jump-host fleet UI (frontend in `packages/console-ui`) |
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console) |
-| `runspec-linux` | 0.1.3 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs |
+| `runspec-linux` | 0.2.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs (thin wrappers over `runspec-linux-core`) |
+| `runspec-linux-core` | 0.1.0 | PyPI | Pure-Python logic core behind `runspec-linux` — importable helpers, **no runspec dep / no runspec.toml / no entry points** (surfaces zero runnables) |
 | `runspec-windows` | 0.1.2 | PyPI | 35 Windows system admin + Microsoft 365 (Outlook/Teams/Calendar/OneDrive) runnables |
 | `runspec-jsm` | 0.1.0 | PyPI | 8 Jira Service Management (Data Center) service-desk runnables — raise/comment/transition/set-property + portal-field discovery |
 | `runspec-snow` | 0.1.0 | PyPI | 8 ServiceNow ITSM runnables — create/get/comment/state/set-field over the Table API + Service Catalog discovery |
@@ -234,9 +235,24 @@ that tag is pushed with `GITHUB_TOKEN` so it does **not** trigger the
 workflow (`workflow_dispatch`) on that tag. Agents: stop at the version bump +
 changelog on the branch; never push a `{prefix}v*` tag yourself.
 
-`runspec-linux` exports `nc_send(host, port, command, wait, read_timeout)` as a
-public Python API — wrapper runnables for TCP-interface apps do
-`from runspec_linux import nc_send`.
+`runspec-linux` is a thin runnable shell over **`runspec-linux-core`** (0.2.0+):
+each module parses args with `runspec`, calls the matching `runspec_linux_core`
+helper, and renders the JSON/exit. The core package holds all the pure logic and
+has **no `runspec` dependency, no `runspec.toml`, and no entry points**, so
+installing it exposes the helpers for import without surfacing any runnables
+(invisible to `runspec local` / `runspec serve` discovery, which only sees dists
+that require `runspec`). Core helpers return plain data and *raise* on failure
+(`ToolNotFoundError` for an absent system tool, `CommandError` for a non-zero
+subprocess); the wrappers catch these to reproduce the CLI/agent behaviour.
+
+Import the helpers two ways: `from runspec_linux_core import nc_send, system_info,
+…` (zero-surface — depend on `runspec-linux-core` alone), or
+`from runspec_linux import nc_send` (re-exported for back-compat; pulls in the
+full fleet). So a wrapper runnable for a TCP-interface app that only wants the
+helper should depend on `runspec-linux-core`, not `runspec-linux`. `nc_send(host,
+port, command, wait, read_timeout)` and the rest are the public Python API.
+Release ordering: publish `runspec-linux-core` before `runspec-linux` (see
+`docs/releasing.md`).
 
 `runspec-windows` is the Windows counterpart: 35 runnables across system admin
 (`subprocess`/`ctypes`/`winreg` — no pywin32) and Microsoft 365 via Graph

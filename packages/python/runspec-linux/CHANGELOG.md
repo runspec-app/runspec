@@ -1,5 +1,23 @@
 # runspec-linux Changelog
 
+## [0.2.0] — 2026-06-09
+
+Split the pure logic out into a new dependency-free package,
+**`runspec-linux-core`**, and make `runspec-linux` depend on it. Every runnable
+module is now a thin wrapper: it parses args via `runspec`, calls the matching
+`runspec_linux_core` function, and renders the JSON/exit behaviour. The helper
+functions are re-exported from `runspec_linux` for back-compat
+(`from runspec_linux import nc_send` and friends still work), and
+`runspec_linux.nc_command.nc_send` is preserved.
+
+Why: importing a helper (e.g. `nc_send`) previously required installing
+`runspec-linux`, which put all 21 console scripts on PATH and surfaced all 21
+runnables in `runspec local` / `runspec serve`. Code that only wants the
+importable helpers can now depend on `runspec-linux-core` instead — it has no
+`runspec` dependency, no `runspec.toml`, and no entry points, so it surfaces
+nothing. No behaviour change for the runnables themselves; JSON output and exit
+codes are unchanged.
+
 ## [0.1.3] — 2026-06-04
 
 Switch `[config.logging]` to `store = "per-run"` so every runnable writes one

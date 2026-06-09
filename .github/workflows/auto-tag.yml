@@ -16,6 +16,7 @@ on:
     paths:
       - "packages/python/runspec/pyproject.toml"
       - "packages/python/runspec-linux/pyproject.toml"
+      - "packages/python/runspec-linux-core/pyproject.toml"
       - "packages/python/runspec-windows/pyproject.toml"
       - "packages/python/runspec-jsm/pyproject.toml"
       - "packages/python/runspec-snow/pyproject.toml"
@@ -51,6 +52,7 @@ jobs:
           PKGS=(
             "packages/python/runspec/pyproject.toml|v"
             "packages/python/runspec-linux/pyproject.toml|linux-v"
+            "packages/python/runspec-linux-core/pyproject.toml|linux-core-v"
             "packages/python/runspec-windows/pyproject.toml|windows-v"
             "packages/python/runspec-jsm/pyproject.toml|jsm-v"
             "packages/python/runspec-snow/pyproject.toml|snow-v"
