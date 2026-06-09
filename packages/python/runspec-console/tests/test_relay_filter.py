@@ -11,12 +11,16 @@ effects never run; a scripted fake channel stands in for paramiko.
 
 from __future__ import annotations
 
+import os
+import shutil
 import threading
 import types
 
 import pytest
 
 from runspec_console.bridge import Bridge
+
+needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh on PATH")
 
 
 class FakeChannel:
@@ -77,6 +81,7 @@ class _Harness:
     """Binds just the methods under test; no Bridge.__init__."""
 
     _run_filter_stream = Bridge._run_filter_stream
+    _run_filter_stream_local = Bridge._run_filter_stream_local
     _relay_one_filtered = Bridge._relay_one_filtered
     _transfer_one_filtered = Bridge._transfer_one_filtered
 
@@ -224,6 +229,76 @@ def test_cancel_midstream_raises_and_removes():
     assert removed["called"]
 
 
+# --- local filter pump (upload path), real subprocess ---------------------
+
+
+@needs_sh
+def test_local_filter_stream_keeps_matching_lines(tmp_path):
+    h = _Harness()
+    src = tmp_path / "in.log"
+    src.write_text("alpha txn-1\nbeta\ngamma txn-1\n")
+    dst = tmp_path / "out.log"
+    h._run_filter_stream_local(
+        "grep -F -- txn-1",
+        str(src),
+        dst_open=lambda: open(dst, "wb"),
+        dst_remove=lambda: os.remove(dst),
+        in_size=src.stat().st_size,
+        item=types.SimpleNamespace(name="in.log", src=str(src), dst=str(dst)),
+        tid="t",
+        idx=0,
+        count=1,
+        cancel_event=threading.Event(),
+    )
+    assert dst.read_text() == "alpha txn-1\ngamma txn-1\n"
+
+
+@needs_sh
+def test_local_filter_no_match_is_empty_success(tmp_path):
+    h = _Harness()
+    src = tmp_path / "in.log"
+    src.write_text("alpha\nbeta\n")
+    dst = tmp_path / "out.log"
+    removed = {"called": False}
+    h._run_filter_stream_local(
+        "grep -F -- zzz-nomatch",
+        str(src),
+        dst_open=lambda: open(dst, "wb"),
+        dst_remove=lambda: removed.__setitem__("called", True),
+        in_size=src.stat().st_size,
+        item=types.SimpleNamespace(name="in.log", src=str(src), dst=str(dst)),
+        tid="t",
+        idx=0,
+        count=1,
+        cancel_event=threading.Event(),
+    )
+    assert dst.read_text() == ""  # empty result, kept (grep exit 1, no stderr)
+    assert not removed["called"]
+
+
+@needs_sh
+def test_local_filter_real_error_removes_partial(tmp_path):
+    h = _Harness()
+    src = tmp_path / "in.log"
+    src.write_text("x\n")
+    dst = tmp_path / "out.log"
+    removed = {"called": False}
+    with pytest.raises(RuntimeError):
+        h._run_filter_stream_local(
+            "grep --bogus-flag x",  # grep errors → exit 2 + stderr
+            str(src),
+            dst_open=lambda: open(dst, "wb"),
+            dst_remove=lambda: removed.__setitem__("called", True),
+            in_size=src.stat().st_size,
+            item=types.SimpleNamespace(name="in.log", src=str(src), dst=str(dst)),
+            tid="t",
+            idx=0,
+            count=1,
+            cancel_event=threading.Event(),
+        )
+    assert removed["called"]
+
+
 def test_relay_one_filtered_builds_command_and_delegates(monkeypatch):
     h = _Harness()
     captured = {}
@@ -258,9 +333,11 @@ def test_relay_one_filtered_builds_command_and_delegates(monkeypatch):
 class _ValidationBridge:
     start_relay = Bridge.start_relay
     start_transfer = Bridge.start_transfer
+    _emit_transfer_end = Bridge._emit_transfer_end
 
     def __init__(self, filters):
         self._filters = filters
+        self._recent_transfer_results: dict = {}
         self._filter_entry = types.MethodType(Bridge._filter_entry, self)
 
     def _host_entry(self, host):
@@ -292,23 +369,144 @@ def test_start_relay_missing_arg_errors():
     assert res == {"error": "this filter needs a value"}
 
 
-def test_start_transfer_filter_ignored_on_push():
-    # A filter selected for an upload (push, local source) is silently ignored —
-    # there's no remote source to exec on. The bad filter name must NOT error.
-    b = _ValidationBridge(filters=[])
-    # local→remote push; we only check it gets past filter resolution. _host_entry
-    # returns reachable, so it proceeds to spawn a thread — give it the pieces.
+def _push_bridge(filters):
+    # A _ValidationBridge wired enough to let start_transfer push spawn its worker
+    # thread (which immediately stops at the stubbed _open_sftp).
+    b = _ValidationBridge(filters=filters)
     b.get_config = lambda: {"ssh": {}}
     b._current_user = lambda: "tester"
     b._lock = threading.Lock()
     b._in_flight = {}
     b._open_sftp = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop"))
     b._dispatch = lambda *a, **k: None
+    return b
+
+
+def test_start_transfer_push_honors_filter():
+    # An upload (push) now filters locally, so a valid filter is accepted.
+    b = _push_bridge([{"name": "errs", "pipeline": "grep -i error"}])
+    res = b.start_transfer("local", ["/a.log"], "dst", "/incoming", filter_name="errs")
+    assert "id" in res
+
+
+def test_start_transfer_push_unknown_filter_errors():
+    b = _push_bridge([])
     res = b.start_transfer(
-        "local",
-        ["/a.log"],
-        "dst",
-        "/incoming",
-        filter_name="nonexistent",  # would error if push honoured filters
+        "local", ["/a.log"], "dst", "/incoming", filter_name="nonexistent"
     )
-    assert "id" in res  # accepted; filter ignored for push
+    assert res == {"error": "unknown filter: nonexistent"}
+
+
+# --- agent tools: download_file / relay_file ------------------------------
+
+
+class _ToolBridge:
+    _custom_agent_tools = Bridge._custom_agent_tools
+    _run_custom_tool = Bridge._run_custom_tool
+    _await_transfer = Bridge._await_transfer
+    _emit_transfer_end = Bridge._emit_transfer_end
+    _effective_tool_autonomy = Bridge._effective_tool_autonomy
+
+    def __init__(self, hosts, filters):
+        self._hosts = hosts
+        self._filters = filters
+        self._lock = threading.Lock()
+        self._recent_transfer_results: dict = {}
+        self.calls: list = []
+
+    def _dispatch(self, *a, **k):
+        pass
+
+    def start_transfer(self, *a, **k):
+        self.calls.append(("transfer", a, k))
+        self._emit_transfer_end("t", {"id": "t", "ok": True, "files": 1, "error": None})
+        return {"id": "t"}
+
+    def start_relay(self, *a, **k):
+        self.calls.append(("relay", a, k))
+        self._emit_transfer_end("r", {"id": "r", "ok": True, "files": 1, "error": None})
+        return {"id": "r"}
+
+
+def test_custom_tools_schema_lists_hosts_and_filters():
+    b = _ToolBridge(
+        hosts=[{"name": "prod", "ssh": "deploy@prod"}, {"name": "local"}],
+        filters=[
+            {"name": "byid", "pipeline": "grep -F -- {{arg}}", "param_label": "id"},
+        ],
+    )
+    tools = b._custom_agent_tools()
+    names = {t["name"] for t in tools}
+    assert names == {"download_file", "relay_file"}
+    dl = next(t for t in tools if t["name"] == "download_file")
+    props = dl["input_schema"]["properties"]
+    # Only the reachable remote host is offered (not "local").
+    assert props["host"]["enum"] == ["prod"]
+    assert props["filter"]["enum"] == ["byid"]
+    assert "filter_value" in props
+    # The filter's parameterization is surfaced to the model.
+    assert "filter_value" in props["filter"]["description"]
+
+
+def test_custom_tools_empty_without_remote_hosts():
+    b = _ToolBridge(hosts=[{"name": "local"}], filters=[])
+    assert b._custom_agent_tools() == []
+
+
+def test_custom_tools_are_gated():
+    b = _ToolBridge(hosts=[], filters=[])
+    assert b._effective_tool_autonomy("download_file", {}) == "confirm"
+    assert b._effective_tool_autonomy("relay_file", {}) == "confirm"
+
+
+def test_run_download_tool_success_and_args():
+    b = _ToolBridge(hosts=[{"name": "prod", "ssh": "x"}], filters=[])
+    out = b._run_custom_tool(
+        "download_file",
+        {
+            "host": "prod",
+            "path": "/var/log/app.log",
+            "dest_dir": "/tmp",
+            "filter": "errs",
+        },
+    )
+    assert out.startswith("✓ Completed download of app.log from prod")
+    assert "/tmp" in out
+    # start_transfer called local-bound with the filter threaded through.
+    kind, args, _ = b.calls[0]
+    assert kind == "transfer"
+    assert args == ("prod", ["/var/log/app.log"], "local", "/tmp", "errs", None)
+
+
+def test_run_relay_tool_success():
+    b = _ToolBridge(
+        hosts=[{"name": "a", "ssh": "x"}, {"name": "b", "ssh": "y"}], filters=[]
+    )
+    out = b._run_custom_tool(
+        "relay_file",
+        {"source_host": "a", "path": "/v/x.log", "dest_host": "b", "dest_dir": "/in"},
+    )
+    assert out.startswith("✓ Completed relay of x.log from a to b")
+    assert b.calls[0][0] == "relay"
+
+
+def test_run_download_tool_missing_args():
+    b = _ToolBridge(hosts=[{"name": "prod", "ssh": "x"}], filters=[])
+    out = b._run_custom_tool("download_file", {"host": "prod"})
+    assert out.startswith("Error:")
+    assert b.calls == []  # never started a transfer
+
+
+def test_run_tool_reports_failure():
+    b = _ToolBridge(hosts=[{"name": "prod", "ssh": "x"}], filters=[])
+
+    def failing(*a, **k):
+        b._emit_transfer_end("t", {"id": "t", "ok": False, "files": 0, "error": "boom"})
+        return {"id": "t"}
+
+    b.start_transfer = failing
+    out = b._run_custom_tool(
+        "download_file", {"host": "prod", "path": "/a.log", "dest_dir": "/tmp"}
+    )
+    assert out.startswith("✗")
+    assert "boom" in out

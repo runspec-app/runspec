@@ -870,12 +870,34 @@ interface FilterFormValues {
 export const FILTER_ARG_TOKEN = '{{arg}}'
 export const isParameterized = (pipeline: string) => pipeline.includes(FILTER_ARG_TOKEN)
 
+function filterToToml(filters: Filter[]): string {
+  const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  return filters.map(f => {
+    const lines = ['[[filter]]', `name = "${esc(f.name)}"`, `pipeline = "${esc(f.pipeline)}"`]
+    if (f.description) lines.push(`description = "${esc(f.description)}"`)
+    if (f.param_label) lines.push(`param_label = "${esc(f.param_label)}"`)
+    return lines.join('\n')
+  }).join('\n\n')
+}
+
 function FiltersTab() {
   const [filters, setFilters] = useState<Filter[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [form] = Form.useForm<FilterFormValues>()
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { bridge.get_filters().then(setFilters) }, [])
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!fileInputRef.current) return
+    fileInputRef.current.value = ''
+    if (!file) return
+    const imported = await bridge.import_filters(await file.text())
+    if (imported.length === 0) { message.warning('No new filters found in file'); return }
+    setFilters(await bridge.get_filters())
+    message.success(`Imported ${imported.length} filter${imported.length !== 1 ? 's' : ''}`)
+  }
 
   const persist = async (next: Filter[]) => { setFilters(next); await bridge.save_filters(next) }
   const startAdd = () => { form.resetFields(); setEditingKey('') }
@@ -909,11 +931,16 @@ function FiltersTab() {
 
   return (
     <div>
+      <input ref={fileInputRef} type="file" accept=".toml" style={{ display: 'none' }} onChange={handleImport} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          Saved to <code>runspec_filters.toml</code>. Pick one in the Relay or Download dialog to filter on the source host.
+          Saved to <code>runspec_filters.toml</code>. Pick one in the Relay or Transfer dialog to filter on the source host.
         </Text>
-        <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add filter</Button>
+        <Space size={6}>
+          <Button size="small" icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()} disabled={isEditing}>Import</Button>
+          <Button size="small" icon={<DownloadOutlined />} onClick={() => { downloadToml(filterToToml(filters), 'runspec_filters.toml'); message.success('Exported') }} disabled={isEditing || filters.length === 0}>Export</Button>
+          <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add filter</Button>
+        </Space>
       </div>
 
       {editingKey !== null && (

@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.28.0] — 2026-06-09
+
+### Added
+- **Upload filtering.** Filters now apply to **uploads** too, not just downloads
+  and relays. On an upload the pipeline runs **locally** over the local source
+  (needs a POSIX `sh` on PATH); for a **fan-out** the source is filtered once and
+  the small result is distributed to every host. The Transfer dialog shows the
+  filter picker in both directions.
+- **Filter import / export.** **Settings → Filters** gains **Import** / **Export**
+  buttons (mirroring Jump Hosts) to share a `runspec_filters.toml` across machines
+  or teammates. Backend: `import_filters(toml)` (skips names that already exist).
+- **Agent file-transfer tools.** The chat agent can now run transfers itself via
+  two built-in tools — `download_file` (remote → local) and `relay_file`
+  (host → host) — each accepting an optional saved filter (and its value). The
+  agent sees the configured hosts and every filter's name + description as the
+  tool schema, so it can choose the right one ("pull today's log for txn-9281
+  from prod"). Both are side-effecting, so they always go through the autonomy
+  **confirm** gate; the operator approves before anything runs, and watches live
+  progress in the transfer panel.
+
+
 ## [0.27.0] — 2026-06-09
 
 ### Added

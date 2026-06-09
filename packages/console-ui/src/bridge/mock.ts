@@ -638,6 +638,8 @@ export const mockApi: BridgeApi = {
 
   save_filters: async (filters) => { console.log('[mock] save_filters', filters) },
 
+  import_filters: async (toml) => { console.log('[mock] import_filters', toml); return [] },
+
   test_host: async (name): Promise<TestResult> => {
     await new Promise(r => setTimeout(r, 1200))
     if (name === 'prod-2') {

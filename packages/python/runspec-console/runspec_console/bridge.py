@@ -84,6 +84,11 @@ class _ParamikoDevHandler(logging.Handler):
 # Autonomy escalation order — higher = more restrictive (must check before run).
 _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 
+# Built-in (not runnable-backed) agent tools. Names are intentionally free of
+# "__" so they never collide with the host__runnable scheme; both are
+# side-effecting file moves, so the autonomy gate prompts before running.
+_CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file"})
+
 
 class Bridge:
     def __init__(self) -> None:
@@ -102,6 +107,9 @@ class Bridge:
         # startup and reloaded on save; resolved by name when a relay/download
         # selects one. See filters_store.py for the schema.
         self._filters: list[dict[str, Any]] = []
+        # tid → final transfer_end detail, so a synchronous caller (the agent tool)
+        # can await a transfer's outcome. Bounded; oldest entries are evicted.
+        self._recent_transfer_results: dict[str, dict[str, Any]] = {}
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
         self._runnables_cache: list[dict[str, Any]] = []
         # Persistent agent conversation so the model remembers prior turns. One
@@ -463,11 +471,14 @@ class Bridge:
         v1 supports **local↔remote only** (exactly one side is ``"local"``).
         ``filter_name`` selects a saved source-side filter (``filter_arg`` is the
         runtime value for its ``{{arg}}`` placeholder); it applies only to a
-        **pull** (download, remote→local) — the file is filtered on the remote
-        host and only the output is written locally. Returns ``{"id": ...}`` and
-        then streams ``runspec:transfer_progress`` / ``runspec:transfer_end``
+        host and only the output is written. For a **download** (pull) the filter
+        runs on the remote source; for an **upload** (push) it runs locally over
+        the local source (needs a POSIX ``sh`` on PATH). Returns ``{"id": ...}``
+        and then streams ``runspec:transfer_progress`` / ``runspec:transfer_end``
         events, or ``{"error": ...}`` on a bad request.
         """
+        import shutil
+
         from .fs_transfer import plan_transfer, render_pipeline
 
         try:
@@ -480,10 +491,12 @@ class Bridge:
             return {"error": f"{plan.remote_host} is not a reachable remote host"}
 
         rendered = None
-        if filter_name and plan.direction == "pull":
+        if filter_name:
             filt = self._filter_entry(filter_name)
             if filt is None:
                 return {"error": f"unknown filter: {filter_name}"}
+            if plan.direction == "push" and shutil.which("sh") is None:
+                return {"error": "filtering an upload needs a POSIX shell (sh) on PATH"}
             try:
                 rendered = render_pipeline(filt.get("pipeline", ""), filter_arg)
             except ValueError as e:
@@ -540,9 +553,19 @@ class Bridge:
                         ok, error = False, "cancelled"
                         break
                     try:
-                        if rendered is not None:
+                        if rendered is not None and plan.direction == "pull":
                             self._transfer_one_filtered(
                                 session_factory,
+                                sftp,
+                                item,
+                                rendered,
+                                tid,
+                                idx,
+                                count,
+                                cancel_event,
+                            )
+                        elif rendered is not None:  # push: filter locally
+                            self._transfer_one_filtered_local(
                                 sftp,
                                 item,
                                 rendered,
@@ -581,8 +604,8 @@ class Bridge:
             logger.info(
                 "transfer %s %s: %d/%d ok=%s", tid, plan.direction, done, count, ok
             )
-            self._dispatch(
-                "runspec:transfer_end",
+            self._emit_transfer_end(
+                tid,
                 {"id": tid, "ok": ok, "files": done, "total": count, "error": error},
             )
 
@@ -631,6 +654,32 @@ class Bridge:
         else:
             sftp.get(item.src, item.dst, callback=cb)
 
+    def _emit_transfer_end(self, tid: str, detail: dict[str, Any]) -> None:
+        """Dispatch the ``runspec:transfer_end`` UI event and record the result so
+        a synchronous waiter (``_await_transfer``) can read the outcome."""
+        self._dispatch("runspec:transfer_end", detail)
+        with self._lock:
+            self._recent_transfer_results[tid] = detail
+            # Keep the map bounded — drop the oldest insertions.
+            while len(self._recent_transfer_results) > 64:
+                oldest = next(iter(self._recent_transfer_results))
+                self._recent_transfer_results.pop(oldest, None)
+
+    def _await_transfer(
+        self, tid: str, timeout: float = 600.0
+    ) -> dict[str, Any] | None:
+        """Block until the transfer ``tid`` finishes (or ``timeout`` elapses),
+        returning its final ``transfer_end`` detail. Result is recorded by
+        ``_emit_transfer_end`` whether or not anyone waits, so there's no race."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                detail = self._recent_transfer_results.pop(tid, None)
+            if detail is not None:
+                return detail
+            time.sleep(0.05)
+        return None
+
     def cancel_transfer(self, transfer_id: str) -> None:
         """Request cancellation of an in-flight transfer (stops before the next file)."""
         with self._lock:
@@ -644,16 +693,22 @@ class Bridge:
         source_paths: list[str],
         dest_hosts: list[str],
         dest_dir: str,
+        filter_name: str = "",
+        filter_arg: str | None = None,
     ) -> dict[str, Any]:
         """Upload the same local source file(s) to ``dest_dir`` on **many** remote hosts.
 
         Push-only (local → N remotes), one SFTP transfer per host in parallel over
-        each host's pooled transport. Returns ``{"id": ...}`` and streams
+        each host's pooled transport. When ``filter_name`` is set, each source is
+        filtered **once** locally (needs a POSIX ``sh``) and the filtered output is
+        what gets fanned out. Returns ``{"id": ...}`` and streams
         ``runspec:transfer_progress`` events carrying a ``host`` field, then a
         single ``runspec:transfer_end`` whose ``hosts`` lists each host's result —
         or ``{"error": ...}`` on a bad request.
         """
-        from .fs_transfer import plan_transfer
+        import shutil
+
+        from .fs_transfer import plan_transfer, render_pipeline
 
         paths = [p for p in (source_paths or []) if p and p.strip()]
         targets = [h for h in (dest_hosts or []) if h and h != "local"]
@@ -663,6 +718,18 @@ class Bridge:
             return {"error": "no target hosts selected"}
         if not dest_dir or not dest_dir.strip():
             return {"error": "no destination folder selected"}
+
+        rendered = None
+        if filter_name:
+            filt = self._filter_entry(filter_name)
+            if filt is None:
+                return {"error": f"unknown filter: {filter_name}"}
+            if shutil.which("sh") is None:
+                return {"error": "filtering an upload needs a POSIX shell (sh) on PATH"}
+            try:
+                rendered = render_pipeline(filt.get("pipeline", ""), filter_arg)
+            except ValueError as e:
+                return {"error": str(e)}
 
         entries: dict[str, dict[str, Any]] = {}
         for h in targets:
@@ -687,6 +754,9 @@ class Bridge:
             }
 
         cfg = self.get_config().get("ssh")
+        # The list each host actually uploads — the raw sources, or (when a filter
+        # is set) the locally pre-filtered temp copies, swapped in by run().
+        send_paths = list(paths)
 
         def per_host(h: str) -> dict[str, Any]:
             entry = entries[h]
@@ -696,7 +766,7 @@ class Bridge:
                 sftp, release = self._open_sftp(
                     entry["ssh"], entry.get("identityFile"), cfg
                 )
-                plan = plan_transfer("local", paths, h, dest_dir)
+                plan = plan_transfer("local", send_paths, h, dest_dir)
                 count = len(plan.items)
                 for idx, item in enumerate(plan.items):
                     if cancel_event.is_set():
@@ -727,19 +797,54 @@ class Bridge:
             return {"host": h, "ok": ok, "error": error}
 
         def run() -> None:
+            import shutil as _shutil
+            import tempfile
+            import types
             from concurrent.futures import ThreadPoolExecutor
 
             results: list[dict[str, Any]] = []
+            tmpdir: str | None = None
             try:
+                if rendered is not None:
+                    # Filter each source once, locally, into a temp dir keyed by the
+                    # original basename (so the dest filename is unchanged), then fan
+                    # out the small filtered copies instead of the originals.
+                    tmpdir = tempfile.mkdtemp(prefix="runspec-filter-")
+                    temp_paths: list[str] = []
+                    for i, p in enumerate(paths):
+                        if cancel_event.is_set():
+                            raise RuntimeError("cancelled")
+                        base = os.path.basename(p)
+                        tmp = os.path.join(tmpdir, base)
+                        item = types.SimpleNamespace(name=base, src=p, dst=tmp)
+                        self._run_filter_stream_local(
+                            rendered,
+                            p,
+                            dst_open=lambda tmp=tmp: open(tmp, "wb"),
+                            dst_remove=lambda tmp=tmp: os.remove(tmp),
+                            in_size=os.path.getsize(p) if os.path.exists(p) else 0,
+                            item=item,
+                            tid=tid,
+                            idx=i,
+                            count=len(paths),
+                            cancel_event=cancel_event,
+                        )
+                        temp_paths.append(tmp)
+                    send_paths[:] = temp_paths
                 with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as ex:
                     results = list(ex.map(per_host, targets))
+            except Exception as e:
+                # A failed/cancelled pre-filter means nothing was fanned out.
+                results = [{"host": h, "ok": False, "error": str(e)} for h in targets]
             finally:
+                if tmpdir is not None:
+                    _shutil.rmtree(tmpdir, ignore_errors=True)
                 with self._lock:
                     self._in_flight.pop(tid, None)
-            overall = all(r["ok"] for r in results)
+            overall = bool(results) and all(r["ok"] for r in results)
             logger.info("fan-out %s: %d hosts ok=%s", tid, len(targets), overall)
-            self._dispatch(
-                "runspec:transfer_end",
+            self._emit_transfer_end(
+                tid,
                 {
                     "id": tid,
                     "ok": overall,
@@ -1086,6 +1191,118 @@ class Bridge:
                 pass
             chan_release()
 
+    def _run_filter_stream_local(
+        self,
+        rendered_pipeline: str,
+        src_path: str,
+        dst_open: Callable[[], Any],
+        dst_remove: Callable[[], None],
+        in_size: int,
+        item: Any,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Filter a *local* file through ``rendered_pipeline`` (run via ``sh -c``
+        with the file on stdin) and stream its stdout into the destination
+        ``dst_open()`` writes to. The local-source counterpart of
+        ``_run_filter_stream`` — used for an upload (push), where the source host
+        is this machine. Same exit-code / cleanup / indeterminate-progress
+        semantics. Requires a POSIX shell on PATH (raises otherwise)."""
+        import shutil
+        import subprocess
+
+        if shutil.which("sh") is None:
+            raise RuntimeError("filtering on upload needs a POSIX shell (sh) on PATH")
+
+        transferred = 0
+        last = 0.0
+
+        def tick() -> None:
+            self._dispatch(
+                "runspec:transfer_progress",
+                {
+                    "id": tid,
+                    "file": item.name,
+                    "index": idx,
+                    "count": count,
+                    "transferred": transferred,
+                    "total": in_size,
+                    "indeterminate": True,
+                },
+            )
+
+        src = open(src_path, "rb")
+        try:
+            proc = subprocess.Popen(
+                ["sh", "-c", rendered_pipeline],
+                stdin=src,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        finally:
+            src.close()  # the child holds its own copy of the fd
+
+        # Drain stderr on a side thread so a chatty pipeline can't deadlock by
+        # filling the stderr pipe while we're busy reading stdout.
+        stderr_chunks: list[bytes] = []
+
+        def drain_err() -> None:
+            assert proc.stderr is not None
+            for block in iter(lambda: proc.stderr.read(32768), b""):
+                if sum(len(c) for c in stderr_chunks) < 65536:
+                    stderr_chunks.append(block)
+
+        err_thread = threading.Thread(target=drain_err, daemon=True)
+        err_thread.start()
+
+        try:
+            assert proc.stdout is not None
+            f = dst_open()
+            try:
+                while True:
+                    if cancel_event.is_set():
+                        proc.kill()
+                        raise RuntimeError("cancelled")
+                    chunk = proc.stdout.read(32768)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    transferred += len(chunk)
+                    now = time.monotonic()
+                    if now - last >= 0.15:
+                        last = now
+                        tick()
+            finally:
+                f.close()
+
+            code = proc.wait()
+            err_thread.join(timeout=5)
+            stderr_text = (
+                b"".join(stderr_chunks).decode("utf-8", errors="replace").strip()
+            )
+            if code != 0 and not (code == 1 and not stderr_text):
+                raise RuntimeError(stderr_text or f"filter exited {code}")
+            tick()
+        except BaseException:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                dst_remove()
+            except Exception:
+                pass
+            raise
+        finally:
+            for pipe in (proc.stdout, proc.stderr):
+                try:
+                    if pipe is not None:
+                        pipe.close()
+                except Exception:
+                    pass
+
     def _relay_one_filtered(
         self,
         session_factory: Callable[[], tuple[Any, Callable[[], None]]],
@@ -1145,6 +1362,36 @@ class Bridge:
             cmd,
             dst_open=lambda: open(item.dst, "wb"),
             dst_remove=lambda: os.remove(item.dst),
+            in_size=in_size,
+            item=item,
+            tid=tid,
+            idx=idx,
+            count=count,
+            cancel_event=cancel_event,
+        )
+
+    def _transfer_one_filtered_local(
+        self,
+        dest_sftp: Any,
+        item: Any,
+        rendered_pipeline: str,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Upload one file through a local filter: run the pipeline on this
+        machine over the local source and write the filtered output to the remote
+        destination over SFTP."""
+        try:
+            in_size = os.path.getsize(item.src)
+        except OSError:
+            in_size = 0
+        self._run_filter_stream_local(
+            rendered_pipeline,
+            item.src,
+            dst_open=lambda: dest_sftp.open(item.dst, "wb"),
+            dst_remove=lambda: dest_sftp.remove(item.dst),
             in_size=in_size,
             item=item,
             tid=tid,
@@ -1285,8 +1532,8 @@ class Bridge:
                 with self._lock:
                     self._in_flight.pop(tid, None)
             logger.info("relay %s: %d/%d ok=%s", tid, done, count, ok)
-            self._dispatch(
-                "runspec:transfer_end",
+            self._emit_transfer_end(
+                tid,
                 {"id": tid, "ok": ok, "files": done, "total": count, "error": error},
             )
 
@@ -2779,6 +3026,27 @@ class Bridge:
         _save_filters(filters_path(), entries)
         self._reload_filters()
 
+    def import_filters(self, toml_content: str) -> list[dict[str, Any]]:
+        """Merge filters from an exported ``runspec_filters.toml`` blob, skipping
+        names that already exist. Returns the newly-added filters."""
+        from .filters_store import save_filters as _save_filters
+
+        try:
+            data = tomllib.loads(toml_content)
+        except Exception:
+            return []
+        imported = data.get("filter", [])
+        existing = {f.get("name") for f in self._filters}
+        new = [
+            f
+            for f in imported
+            if f.get("name") and f.get("pipeline") and f["name"] not in existing
+        ]
+        if new:
+            _save_filters(filters_path(), [*self._filters, *new])
+            self._reload_filters()
+        return new
+
     def import_jump_hosts(self, toml_content: str) -> list[dict[str, Any]]:
         try:
             data = tomllib.loads(toml_content)
@@ -3340,7 +3608,162 @@ class Bridge:
             tools.append(
                 {"name": tool_name, "description": description, "input_schema": schema}
             )
+        # Built-in file-transfer tools are additive — never let a problem building
+        # them strip the runnable tools the agent actually needs.
+        try:
+            tools.extend(self._custom_agent_tools())
+        except Exception:
+            logger.debug("custom agent tools unavailable", exc_info=True)
         return tools
+
+    def _custom_agent_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the built-in file-transfer tools — download a file from a
+        remote host, or relay one host→host, each with an optional saved filter.
+        Host and filter names are surfaced as enums (with the filter descriptions)
+        so the model picks valid values."""
+        remote = [h["name"] for h in self._hosts if h.get("ssh")]
+        if not remote:
+            return []  # nothing to transfer to/from
+        filters = self._filters
+        filter_names = [f["name"] for f in filters if f.get("name")]
+
+        def filter_props() -> dict[str, Any]:
+            if not filter_names:
+                return {}
+            lines = []
+            for f in filters:
+                line = f"'{f['name']}'"
+                if "{{arg}}" in (f.get("pipeline") or ""):
+                    line += f" (needs filter_value: {f.get('param_label') or 'value'})"
+                if f.get("description"):
+                    line += f" — {f['description']}"
+                lines.append(line)
+            return {
+                "filter": {
+                    "type": "string",
+                    "enum": filter_names,
+                    "description": (
+                        "Optional saved filter applied on the source host before "
+                        "transfer, so only matching output crosses the network "
+                        "(ideal for a few lines from a big log). Available: "
+                        + "; ".join(lines)
+                        + "."
+                    ),
+                },
+                "filter_value": {
+                    "type": "string",
+                    "description": "Value for a filter that needs one (its {{arg}} placeholder).",
+                },
+            }
+
+        download = {
+            "name": "download_file",
+            "description": (
+                "Download a file from a remote host to the local machine. Optionally "
+                "filter it on the remote host first — only the matching output is "
+                "transferred, so pulling a few relevant lines out of a multi-gigabyte "
+                "log is cheap."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string",
+                        "enum": remote,
+                        "description": "Remote host to download from.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path of the file on the remote host.",
+                    },
+                    "dest_dir": {
+                        "type": "string",
+                        "description": "Local destination directory.",
+                    },
+                    **filter_props(),
+                },
+                "required": ["host", "path", "dest_dir"],
+            },
+        }
+        relay = {
+            "name": "relay_file",
+            "description": (
+                "Relay a file from one remote host to another through the console, "
+                "optionally filtering it on the source host first."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "source_host": {
+                        "type": "string",
+                        "enum": remote,
+                        "description": "Host to read the file from.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path of the file on the source host.",
+                    },
+                    "dest_host": {
+                        "type": "string",
+                        "enum": remote,
+                        "description": "Host to write the file to.",
+                    },
+                    "dest_dir": {
+                        "type": "string",
+                        "description": "Destination directory on dest_host.",
+                    },
+                    **filter_props(),
+                },
+                "required": ["source_host", "path", "dest_host", "dest_dir"],
+            },
+        }
+        return [download, relay]
+
+    def _run_custom_tool(self, name: str, ti: dict[str, Any]) -> str:
+        """Execute a built-in file-transfer tool synchronously and report the
+        outcome (the autonomy gate has already approved it). Kicks off the normal
+        transfer — so the user sees live progress in the transfer panel — then
+        blocks on the result via ``_await_transfer``."""
+        filter_name = str(ti.get("filter") or "")
+        filter_value = ti.get("filter_value")
+        dest_dir = ti.get("dest_dir")
+        if name == "download_file":
+            host, path = ti.get("host"), ti.get("path")
+            if not host or not path or not dest_dir:
+                return "Error: host, path and dest_dir are required."
+            res = self.start_transfer(
+                host, [path], "local", dest_dir, filter_name, filter_value
+            )
+            label = f"download of {os.path.basename(path)} from {host}"
+        elif name == "relay_file":
+            sh, path, dh = ti.get("source_host"), ti.get("path"), ti.get("dest_host")
+            if not sh or not path or not dh or not dest_dir:
+                return "Error: source_host, path, dest_host and dest_dir are required."
+            res = self.start_relay(
+                {"kind": "host", "host": sh},
+                [path],
+                dh,
+                dest_dir,
+                filter_name,
+                filter_value,
+            )
+            label = f"relay of {os.path.basename(path)} from {sh} to {dh}"
+        else:
+            return f"Error: unknown tool '{name}'"
+
+        if res.get("error"):
+            return f"✗ Could not start {label}: {res['error']}"
+        tid = res.get("id")
+        detail = self._await_transfer(tid) if tid else None
+        if detail is None:
+            return f"Started {label} (id {tid}); still running — check the transfer panel for the result."
+        if detail.get("ok"):
+            via = f" through filter '{filter_name}'" if filter_name else ""
+            return (
+                f"✓ Completed {label}{via}. Wrote {detail.get('files', 0)} file(s) "
+                f"to {dest_dir}."
+            )
+        return f"✗ {label} failed: {detail.get('error') or 'unknown error'}"
 
     def _effective_tool_autonomy(
         self, tool_name: str, tool_input: dict[str, Any]
@@ -3348,6 +3771,8 @@ class Bridge:
         """Autonomy the agent must honour for this call: the runnable's level,
         escalated by any provided arg's per-arg autonomy (most restrictive wins).
         Unknown runnable → 'confirm' (gated by default — never silently run)."""
+        if tool_name in _CUSTOM_TOOL_NAMES:
+            return "confirm"  # side-effecting file move — always prompt
         host, runnable = (
             tool_name.split("__", 1) if "__" in tool_name else (None, tool_name)
         )
@@ -3510,6 +3935,8 @@ class Bridge:
 
     def _run_tool_sync(self, tool_name: str, tool_input: dict[str, Any]) -> str:
         """Blocking runnable execution — call via asyncio.to_thread from the agentic loop."""
+        if tool_name in _CUSTOM_TOOL_NAMES:
+            return self._run_custom_tool(tool_name, dict(tool_input or {}))
         if "__" not in tool_name:
             return f"Error: invalid tool name '{tool_name}'"
         host, runnable = tool_name.split("__", 1)

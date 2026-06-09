@@ -60,8 +60,8 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
     })
   }, [open, hosts])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flipping direction swaps which side is local — clear the picked paths/progress.
-  // The filter only applies to a download (remote source), so reset it too.
+  // Flipping direction swaps which side is local — clear the picked paths/progress
+  // and the chosen filter (the operator re-picks for the new direction).
   useEffect(() => { setSourcePaths([]); setDestDir(''); setProgress(null); setHostProgress({}); setResult(null); setFilterName(''); setFilterArg('') }, [direction])
 
   // Fan-out pre-flight: does the destination folder exist on every target host?
@@ -126,9 +126,9 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
     setResult(null)
     setHostProgress(isFanout ? Object.fromEntries(validHosts.map(h => [h, { transferred: 0, total: 0 }])) : {})
     const res = isFanout
-      ? await bridge.start_fanout(sourcePaths, validHosts, destDir)
+      ? await bridge.start_fanout(sourcePaths, validHosts, destDir, filterName || undefined, filterArg || undefined)
       : direction === 'upload'
-        ? await bridge.start_transfer(LOCAL, sourcePaths, primaryHost, destDir)
+        ? await bridge.start_transfer(LOCAL, sourcePaths, primaryHost, destDir, filterName || undefined, filterArg || undefined)
         : await bridge.start_transfer(primaryHost, sourcePaths, LOCAL, destDir, filterName || undefined, filterArg || undefined)
     if (res.error || !res.id) {
       message.error(res.error || 'Could not start transfer')
@@ -231,9 +231,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
             />
           )}
 
-          {direction === 'download' && (
-            <FilterPicker filterName={filterName} filterArg={filterArg} onFilterName={setFilterName} onFilterArg={setFilterArg} />
-          )}
+          <FilterPicker filterName={filterName} filterArg={filterArg} onFilterName={setFilterName} onFilterArg={setFilterArg} />
 
           <div>
             {label('Destination folder', isFanout ? `${selectedHosts.length} hosts` : destBrowseHost)}

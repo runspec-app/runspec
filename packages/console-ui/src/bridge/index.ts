@@ -336,6 +336,7 @@ export interface BridgeApi {
   // the Relay and Download dialogs.
   get_filters: () => Promise<Filter[]>
   save_filters: (filters: Filter[]) => Promise<void>
+  import_filters: (tomlContent: string) => Promise<Filter[]>
   test_host: (name: string) => Promise<TestResult>
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string) => Promise<string>
   // List a directory on a host for the Forms path-picker. With asServiceAccount +
@@ -348,7 +349,8 @@ export interface BridgeApi {
   // download (pull) — the remote file is filtered at the source, output written local.
   start_transfer: (sourceHost: string, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string) => Promise<{ id?: string; error?: string }>
   // Fan-out: upload the same local source file(s) to dest_dir on many remote hosts.
-  start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string) => Promise<{ id?: string; error?: string }>
+  // filterName/filterArg apply a saved filter locally (once) before fanning out.
+  start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string, filterName?: string, filterArg?: string) => Promise<{ id?: string; error?: string }>
   // Relay: stream file(s) from one host to another through the console. Source is a
   // configured host, or an ad-hoc host reached via a configured jump (key first,
   // then an optional password — used once, never stored/logged).
