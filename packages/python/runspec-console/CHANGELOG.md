@@ -8,6 +8,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.29.3] — 2026-06-09
+
+### Changed
+- **See what a trigger's agent is doing — on the card, live.** The Triggers tab
+  now streams the agent's text onto its card as it arrives (not only the final
+  summary at Done), so an agent-mode trigger's reasoning/reply is visible in the
+  app instead of only in the debug log.
+- **The approve prompt shows what you're approving.** A card parked at *Awaiting
+  human* now previews the tool's input — for `draft_reply`, the proposed reply
+  body; for a runnable, its arguments — so you can review the draft/command
+  before clicking Approve instead of approving blind.
+
+
 ## [0.29.2] — 2026-06-09
 
 ### Fixed

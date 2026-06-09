@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space } from 'antd'
 import { CheckOutlined, CloseOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type TriggerCard, type TriggerListResult } from '../bridge'
@@ -27,6 +27,16 @@ const COLUMN_COLOR: Record<string, string> = {
 interface PendingConfirm {
   request_id: string
   tool_name: string
+  tool_input: Record<string, unknown>
+}
+
+// Render a tool's input for the approve prompt — the draft body for draft_reply,
+// else compact key=value lines for a runnable's args.
+function describeToolInput(toolName: string, input: Record<string, unknown>): string {
+  if (toolName === 'draft_reply' && typeof input.body === 'string') return input.body
+  const entries = Object.entries(input ?? {})
+  if (entries.length === 0) return ''
+  return entries.map(([k, v]) => `${k} = ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n')
 }
 
 function fmtTime(epochSeconds: number): string {
@@ -40,12 +50,17 @@ export function TriggersView() {
   const [pending, setPending] = useState<Record<string, PendingConfirm>>({})
   const [config, setConfig] = useState<TriggerListResult | null>(null)
   const [notes, setNotes] = useState<string[]>([])
+  // Streamed agent text per card id (its reasoning/reply as it arrives).
+  const [streams, setStreams] = useState<Record<string, string>>({})
+  // Known card ids, so the global runspec:token listener ignores chat tokens.
+  const cardIds = useRef<Set<string>>(new Set())
 
   const loadConfig = () => bridge.list_triggers().then(setConfig).catch(console.error)
 
   useEffect(() => {
     loadConfig()
     bridge.get_trigger_board().then(board => {
+      board.forEach(c => cardIds.current.add(c.card_id))
       setCards(Object.fromEntries(board.map(c => [c.card_id, c])))
     }).catch(console.error)
   }, [])
@@ -54,15 +69,23 @@ export function TriggersView() {
   useEffect(() => {
     const onCard = (e: Event) => {
       const card = (e as CustomEvent).detail as TriggerCard
+      cardIds.current.add(card.card_id)
       setCards(prev => ({ ...prev, [card.card_id]: card }))
     }
+    const onToken = (e: Event) => {
+      const { id, token } = (e as CustomEvent).detail as { id: string; token: string }
+      if (!cardIds.current.has(id)) return  // ignore main-chat tokens
+      setStreams(s => ({ ...s, [id]: (s[id] ?? '') + token }))
+    }
     const onConfirm = (e: Event) => {
-      const { id, request_id, tool_name } = (e as CustomEvent).detail as {
-        id: string; request_id: string; tool_name: string
+      const { id, request_id, tool_name, tool_input } = (e as CustomEvent).detail as {
+        id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>
       }
       // Only trigger-card confirms (chat confirms use chat ids we don't track).
       setCards(prev => {
-        if (prev[id]) setPending(p => ({ ...p, [id]: { request_id, tool_name } }))
+        if (prev[id]) {
+          setPending(p => ({ ...p, [id]: { request_id, tool_name, tool_input: tool_input ?? {} } }))
+        }
         return prev
       })
     }
@@ -79,12 +102,14 @@ export function TriggersView() {
       if (text) setNotes(prev => [text, ...prev].slice(0, 20))
     }
     window.addEventListener('runspec:trigger_card', onCard)
+    window.addEventListener('runspec:token', onToken)
     window.addEventListener('runspec:tool_confirm', onConfirm)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:trigger_status', onStatus)
     window.addEventListener('runspec:trigger_note', onNote)
     return () => {
       window.removeEventListener('runspec:trigger_card', onCard)
+      window.removeEventListener('runspec:token', onToken)
       window.removeEventListener('runspec:tool_confirm', onConfirm)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:trigger_status', onStatus)
@@ -255,6 +280,9 @@ export function TriggersView() {
               const p = pending[card.card_id]
               const result = card.detail?.result as string | undefined
               const error = card.detail?.error as string | undefined
+              // Final result once Done; otherwise the live streamed agent text.
+              const body = result || streams[card.card_id]
+              const pendingPreview = p ? describeToolInput(p.tool_name, p.tool_input) : ''
               return (
                 <div
                   key={card.card_id}
@@ -268,9 +296,9 @@ export function TriggersView() {
                     {card.trigger} · {card.source}:{card.event_type}
                   </div>
                   {error && <div style={{ color: COLUMN_COLOR.failed }}>{error}</div>}
-                  {result && (
+                  {body && (
                     <div style={{ color: dim, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>
-                      {result}
+                      {body}
                     </div>
                   )}
                   {p && (
@@ -278,6 +306,15 @@ export function TriggersView() {
                       <div style={{ color: COLUMN_COLOR.awaiting_human, marginBottom: 4 }}>
                         Approve <code>{p.tool_name}</code>?
                       </div>
+                      {pendingPreview && (
+                        <div style={{
+                          whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto',
+                          background: colBg, border: `1px solid ${border}`, borderRadius: 4,
+                          padding: 6, marginBottom: 6,
+                        }}>
+                          {pendingPreview}
+                        </div>
+                      )}
                       <Space size={6}>
                         <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => answer(card.card_id, true)}>Approve</Button>
                         <Button size="small" danger icon={<CloseOutlined />} onClick={() => answer(card.card_id, false)}>Deny</Button>
