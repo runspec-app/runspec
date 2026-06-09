@@ -1,6 +1,11 @@
 import pytest
 
-from runspec_console.fs_transfer import plan_transfer, relay_items
+from runspec_console.fs_transfer import (
+    build_filter_command,
+    plan_transfer,
+    relay_items,
+    render_pipeline,
+)
 
 
 def test_push_plan_local_to_remote():
@@ -77,3 +82,78 @@ def test_relay_items_validation():
         relay_items([], "/incoming")
     with pytest.raises(ValueError, match="no destination folder"):
         relay_items(["/a/x"], "")
+
+
+# --- source-side filter helpers -------------------------------------------
+
+
+def test_render_pipeline_no_placeholder():
+    # A plain pipeline (no {{arg}}) passes through unchanged.
+    assert (
+        render_pipeline("grep ERROR | cut -d, -f1", None) == "grep ERROR | cut -d, -f1"
+    )
+
+
+def test_render_pipeline_substitutes_and_quotes():
+    out = render_pipeline("grep -F -- {{arg}}", "txn-9281")
+    assert out == "grep -F -- txn-9281"
+
+
+def test_render_pipeline_quotes_special_chars():
+    # A value with spaces / shell metacharacters is wrapped as a single inert token.
+    out = render_pipeline("grep -F -- {{arg}}", "a b; rm -rf /")
+    assert out == "grep -F -- 'a b; rm -rf /'"
+
+
+def test_render_pipeline_blocks_single_quote_injection():
+    # A single quote in the value can't break out of the quoting.
+    out = render_pipeline("grep -F -- {{arg}}", "x' ; touch pwned ; '")
+    # shlex.quote keeps the whole thing one argument — no bare command separator.
+    assert out.startswith("grep -F -- ")
+    assert "touch pwned" in out  # present, but inside quotes
+    assert out.count("grep") == 1
+
+
+def test_render_pipeline_multiple_placeholders():
+    out = render_pipeline("grep {{arg}} | grep {{arg}}", "id")
+    assert out == "grep id | grep id"
+
+
+def test_render_pipeline_missing_arg_raises():
+    with pytest.raises(ValueError, match="needs a value"):
+        render_pipeline("grep -F -- {{arg}}", None)
+    with pytest.raises(ValueError, match="needs a value"):
+        render_pipeline("grep -F -- {{arg}}", "   ")
+
+
+def test_render_pipeline_unexpected_arg_raises():
+    with pytest.raises(ValueError, match="takes no value"):
+        render_pipeline("grep ERROR", "oops")
+
+
+def test_render_pipeline_empty_raises():
+    with pytest.raises(ValueError, match="empty filter pipeline"):
+        render_pipeline("   ", None)
+
+
+def test_build_filter_command_basic():
+    cmd = build_filter_command("grep -F -- foo", "/var/log/app.log")
+    assert cmd == "sh -c 'grep -F -- foo' < /var/log/app.log"
+
+
+def test_build_filter_command_keeps_pipes_inside_sh_c():
+    cmd = build_filter_command("grep x | cut -d, -f1", "/var/log/app.log")
+    # The pipe belongs to the inner sh -c (single-quoted), not the outer shell.
+    assert cmd == "sh -c 'grep x | cut -d, -f1' < /var/log/app.log"
+
+
+def test_build_filter_command_quotes_path_with_spaces():
+    cmd = build_filter_command("grep x", "/var/log/my logs/a'b.log")
+    # The path is shlex-quoted, so it stays a single redirect target.
+    assert cmd.startswith("sh -c 'grep x' < ")
+    assert " < /var/log/my logs/" not in cmd  # not left unquoted/word-split
+
+
+def test_build_filter_command_empty_raises():
+    with pytest.raises(ValueError, match="empty filter pipeline"):
+        build_filter_command("  ", "/x")

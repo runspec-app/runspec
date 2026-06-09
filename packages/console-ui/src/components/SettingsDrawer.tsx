@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult } from '../bridge'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 
@@ -856,6 +856,120 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   )
 }
 
+// ── Filters tab ─────────────────────────────────────────────────────────────
+
+interface FilterFormValues {
+  name: string
+  pipeline: string
+  description?: string
+  param_label?: string
+}
+
+// A filter is "parameterized" when its pipeline carries the {{arg}} placeholder —
+// the Relay/Download dialogs then prompt for a value to substitute at run time.
+export const FILTER_ARG_TOKEN = '{{arg}}'
+export const isParameterized = (pipeline: string) => pipeline.includes(FILTER_ARG_TOKEN)
+
+function FiltersTab() {
+  const [filters, setFilters] = useState<Filter[]>([])
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [form] = Form.useForm<FilterFormValues>()
+
+  useEffect(() => { bridge.get_filters().then(setFilters) }, [])
+
+  const persist = async (next: Filter[]) => { setFilters(next); await bridge.save_filters(next) }
+  const startAdd = () => { form.resetFields(); setEditingKey('') }
+  const startEdit = (f: Filter) => { form.setFieldsValue({ ...f }); setEditingKey(f.name) }
+  const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  const save = async () => {
+    const values = await form.validateFields()
+    const next: Filter = {
+      name: values.name.trim(),
+      pipeline: values.pipeline.trim(),
+      ...(values.description?.trim() ? { description: values.description.trim() } : {}),
+      ...(values.param_label?.trim() ? { param_label: values.param_label.trim() } : {}),
+    }
+    if (editingKey === '') {
+      if (filters.some(f => f.name === next.name)) { message.error('A filter with that name already exists'); return }
+      await persist([...filters, next])
+    } else {
+      await persist(filters.map(f => f.name === editingKey ? next : f))
+    }
+    setEditingKey(null)
+    form.resetFields()
+  }
+
+  const remove = async (name: string) => {
+    await persist(filters.filter(f => f.name !== name))
+    if (editingKey === name) setEditingKey(null)
+  }
+
+  const isEditing = editingKey !== null
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Saved to <code>runspec_filters.toml</code>. Pick one in the Relay or Download dialog to filter on the source host.
+        </Text>
+        <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add filter</Button>
+      </div>
+
+      {editingKey !== null && (
+        <div style={{ border: '1px solid #333', borderRadius: 8, padding: '14px 14px 6px', marginBottom: 12, background: 'rgba(255,255,255,0.02)' }}>
+          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+            {editingKey === '' ? 'New filter' : `Edit — ${editingKey}`}
+          </Text>
+          <Form form={form} layout="vertical" size="small">
+            <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Required' }]}>
+              <Input placeholder="id-lines" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+            </Form.Item>
+            <Form.Item
+              name="pipeline"
+              label="Pipeline"
+              rules={[{ required: true, message: 'Required' }]}
+              help="Runs on the source host; the file arrives on stdin. Use {{arg}} for a value you'll enter at transfer time. e.g. grep -F -- {{arg}} | cut -d, -f1,4"
+            >
+              <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="grep -F -- {{arg}}" style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+            <Form.Item name="param_label" label="Value label" tooltip="Labels the input shown when this filter is selected (only used when the pipeline has {{arg}}).">
+              <Input placeholder="e.g. identifier (optional)" />
+            </Form.Item>
+            <Form.Item name="description" label="Description">
+              <Input placeholder="What this filter keeps (optional — shown in the picker / used by the agent)" />
+            </Form.Item>
+            <Space style={{ marginTop: 2, marginBottom: 8 }}>
+              <Button size="small" type="primary" icon={<CheckOutlined />} onClick={save}>Save</Button>
+              <Button size="small" icon={<CloseOutlined />} onClick={cancel}>Cancel</Button>
+            </Space>
+          </Form>
+        </div>
+      )}
+
+      {filters.length === 0 && editingKey === null && (
+        <Text type="secondary" style={{ fontSize: 12 }}>No filters yet. Add one to shrink large transfers at the source.</Text>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {filters.map(f => (
+          <div key={f.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingKey === f.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+            <Text style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 90, flexShrink: 0 }}>{f.name}</Text>
+            {isParameterized(f.pipeline) && <Tag style={{ margin: 0, fontSize: 10 }}>arg</Tag>}
+            <Text type="secondary" title={f.pipeline} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {f.pipeline}
+            </Text>
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(f)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+            <Popconfirm title={`Remove ${f.name}?`} onConfirm={() => remove(f.name)} okText="Remove" cancelText="Cancel" placement="left">
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
@@ -867,6 +981,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
           { key: 'llm',       label: 'LLM / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
+          { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
         ]}
       />
     </Drawer>

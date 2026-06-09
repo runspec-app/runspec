@@ -56,6 +56,9 @@ export interface TransferProgress {
   count: number
   transferred: number
   total: number
+  // Set when a source-side filter is running: output size is unknown up front, so
+  // `transferred` is bytes written (a counter) and `total` is only the input size.
+  indeterminate?: boolean
   error?: string
   host?: string   // set for fan-out (which target host this tick is for)
 }
@@ -75,6 +78,17 @@ export interface RelaySource {
   port?: number
   jump?: string       // configured host to tunnel through (ad-hoc)
   password?: string   // optional, used only if key/agent auth fails
+}
+
+// A named, reusable source-side stream filter (Settings → Filters). The pipeline
+// runs on the file's host (file fed on stdin), so only matching output crosses
+// the network. `{{arg}}` in the pipeline is a runtime value the dialog prompts
+// for (labelled by `param_label`); `description` is free-text metadata.
+export interface Filter {
+  name: string
+  pipeline: string
+  description?: string
+  param_label?: string
 }
 
 // runspec:transfer_end event detail — fired once when a transfer finishes.
@@ -318,6 +332,10 @@ export interface BridgeApi {
   get_jump_hosts: () => Promise<JumpHost[]>
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
+  // Named source-side stream filters (Settings → Filters), selectable by name in
+  // the Relay and Download dialogs.
+  get_filters: () => Promise<Filter[]>
+  save_filters: (filters: Filter[]) => Promise<void>
   test_host: (name: string) => Promise<TestResult>
   invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string) => Promise<string>
   // List a directory on a host for the Forms path-picker. With asServiceAccount +
@@ -326,13 +344,17 @@ export interface BridgeApi {
   cancel_invocation: (invId: string) => Promise<void>
   // Copy files between the local machine and a remote host over SFTP (local↔remote
   // only). Returns an id, then streams runspec:transfer_progress / transfer_end.
-  start_transfer: (sourceHost: string, sourcePaths: string[], destHost: string, destDir: string) => Promise<{ id?: string; error?: string }>
+  // filterName/filterArg select a saved source-side filter; they apply only to a
+  // download (pull) — the remote file is filtered at the source, output written local.
+  start_transfer: (sourceHost: string, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string) => Promise<{ id?: string; error?: string }>
   // Fan-out: upload the same local source file(s) to dest_dir on many remote hosts.
   start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string) => Promise<{ id?: string; error?: string }>
   // Relay: stream file(s) from one host to another through the console. Source is a
   // configured host, or an ad-hoc host reached via a configured jump (key first,
   // then an optional password — used once, never stored/logged).
-  start_relay: (source: RelaySource, sourcePaths: string[], destHost: string, destDir: string) => Promise<{ id?: string; error?: string }>
+  // filterName/filterArg select a saved source-side filter run on the source host,
+  // so only matching output is relayed (handy for pulling a few lines from a huge log).
+  start_relay: (source: RelaySource, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string) => Promise<{ id?: string; error?: string }>
   // Browse a directory on an ad-hoc relay source (reached via a jump). Password
   // is used only for this listing connection, never stored.
   list_dir_adhoc: (jump: string, host: string, path?: string, user?: string, password?: string, port?: number, dirsOnly?: boolean) => Promise<DirListing>

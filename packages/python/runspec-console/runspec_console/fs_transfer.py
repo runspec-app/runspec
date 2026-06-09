@@ -9,9 +9,15 @@ events) lives in the bridge.
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass
 
 LOCAL = "local"
+
+# Placeholder a filter pipeline uses to mark where the operator's runtime value
+# (e.g. an identifier to grep for) is substituted. Written literally in the
+# pipeline; replaced with a shell-quoted value at transfer time.
+FILTER_ARG_TOKEN = "{{arg}}"
 
 
 @dataclass
@@ -87,3 +93,44 @@ def relay_items(source_paths: list[str], dest_dir: str) -> list[TransferItem]:
         TransferItem(src=p, dst=_join(dest_dir, _basename(p)), name=_basename(p))
         for p in paths
     ]
+
+
+def render_pipeline(pipeline: str, arg: str | None) -> str:
+    """Substitute the operator-supplied ``arg`` into a filter ``pipeline``.
+
+    Every ``{{arg}}`` occurrence is replaced with ``shlex.quote(arg)`` so a
+    user-typed value (an identifier, a path fragment) is a single, inert shell
+    token and can never break out of the pipeline — only the pipeline *structure*
+    written by the filter author is trusted, interpreted shell.
+
+    Raises :class:`ValueError` if the pipeline expects an arg but none was given,
+    or an arg was given for a pipeline with no ``{{arg}}`` placeholder (so a
+    mismatched call surfaces loudly rather than silently dropping the value).
+    """
+    pl = (pipeline or "").strip()
+    if not pl:
+        raise ValueError("empty filter pipeline")
+    has_token = FILTER_ARG_TOKEN in pl
+    arg = (arg or "").strip() if arg is not None else ""
+    if has_token and not arg:
+        raise ValueError("this filter needs a value")
+    if arg and not has_token:
+        raise ValueError("this filter takes no value")
+    if has_token:
+        pl = pl.replace(FILTER_ARG_TOKEN, shlex.quote(arg))
+    return pl
+
+
+def build_filter_command(rendered_pipeline: str, src_path: str) -> str:
+    """Build the remote shell command that filters one source file.
+
+    Returns e.g. ``sh -c 'grep -F -- foo' < '/var/log/app.log'``. The source path
+    is shlex-quoted into an stdin redirect applied by the *outer* shell and is
+    never interpreted by the pipeline; the whole (already-rendered) pipeline is a
+    single quoted argument to the inner ``sh -c`` so its pipes/redirects belong to
+    that inner shell. Raises :class:`ValueError` on an empty pipeline.
+    """
+    pl = (rendered_pipeline or "").strip()
+    if not pl:
+        raise ValueError("empty filter pipeline")
+    return f"sh -c {shlex.quote(pl)} < {shlex.quote(src_path)}"

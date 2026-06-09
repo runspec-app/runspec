@@ -4,6 +4,7 @@ import { CloudUploadOutlined, CloudDownloadOutlined, SwapOutlined, FolderOpenOut
 import type { Host, TransferProgress, TransferEnd } from '../bridge'
 import { bridge } from '../bridge'
 import { PathInput, BrowseModal } from './PathInput'
+import { FilterPicker, humanBytes } from './FilterPicker'
 
 const { Text } = Typography
 const LOCAL = 'local'
@@ -21,6 +22,8 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   const [direction, setDirection] = useState<Direction>('download')
   const [selectedHosts, setSelectedHosts] = useState<string[]>([])
   const [sourcePaths, setSourcePaths] = useState<string[]>([])
+  const [filterName, setFilterName] = useState('')
+  const [filterArg, setFilterArg] = useState('')
   const [browseSourceOpen, setBrowseSourceOpen] = useState(false)
   const [destDir, setDestDir] = useState('')
   const [running, setRunning] = useState(false)
@@ -58,7 +61,8 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   }, [open, hosts])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Flipping direction swaps which side is local — clear the picked paths/progress.
-  useEffect(() => { setSourcePaths([]); setDestDir(''); setProgress(null); setHostProgress({}); setResult(null) }, [direction])
+  // The filter only applies to a download (remote source), so reset it too.
+  useEffect(() => { setSourcePaths([]); setDestDir(''); setProgress(null); setHostProgress({}); setResult(null); setFilterName(''); setFilterArg('') }, [direction])
 
   // Fan-out pre-flight: does the destination folder exist on every target host?
   // (It's only browsed on the first host, so the others are unverified.)
@@ -125,7 +129,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
       ? await bridge.start_fanout(sourcePaths, validHosts, destDir)
       : direction === 'upload'
         ? await bridge.start_transfer(LOCAL, sourcePaths, primaryHost, destDir)
-        : await bridge.start_transfer(primaryHost, sourcePaths, LOCAL, destDir)
+        : await bridge.start_transfer(primaryHost, sourcePaths, LOCAL, destDir, filterName || undefined, filterArg || undefined)
     if (res.error || !res.id) {
       message.error(res.error || 'Could not start transfer')
       setHostProgress({})
@@ -227,6 +231,10 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
             />
           )}
 
+          {direction === 'download' && (
+            <FilterPicker filterName={filterName} filterArg={filterArg} onFilterName={setFilterName} onFilterArg={setFilterArg} />
+          )}
+
           <div>
             {label('Destination folder', isFanout ? `${selectedHosts.length} hosts` : destBrowseHost)}
             <PathInput host={destBrowseHost} value={destDir} onChange={setDestDir} dirsOnly placeholder="destination folder" />
@@ -264,10 +272,16 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
             </div>
           ) : (running || progress) ? (
             <div>
-              <Progress percent={pct} status={running ? 'active' : (result?.ok ? 'success' : 'exception')} size="small" />
+              <Progress
+                percent={progress?.indeterminate ? 100 : pct}
+                status={running ? 'active' : (result?.ok ? 'success' : 'exception')}
+                showInfo={!progress?.indeterminate}
+                size="small"
+              />
               {progress && (
                 <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
                   {progress.file}{progress.count > 1 ? ` (${progress.index + 1}/${progress.count})` : ''}
+                  {progress.indeterminate ? ` · filtering… ${humanBytes(progress.transferred)} written` : ''}
                 </Text>
               )}
             </div>

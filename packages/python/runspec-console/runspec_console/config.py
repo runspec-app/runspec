@@ -34,6 +34,10 @@ def hosts_path() -> Path:
     return app_dir() / "runspec_hosts.toml"
 
 
+def filters_path() -> Path:
+    return app_dir() / "runspec_filters.toml"
+
+
 def config_path() -> Path:
     return app_dir() / "config.toml"
 

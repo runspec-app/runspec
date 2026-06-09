@@ -4,6 +4,7 @@ import { NodeIndexOutlined, PlusOutlined, FolderOpenOutlined } from '@ant-design
 import type { Host, TransferProgress, TransferEnd, RelaySource } from '../bridge'
 import { bridge } from '../bridge'
 import { PathInput, BrowseModal } from './PathInput'
+import { FilterPicker, humanBytes } from './FilterPicker'
 
 const { Text } = Typography
 const LOCAL = 'local'
@@ -22,6 +23,8 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
   const [destHost, setDestHost] = useState('')
   const [destDir, setDestDir] = useState('')
   const [sourcePaths, setSourcePaths] = useState<string[]>([])
+  const [filterName, setFilterName] = useState('')
+  const [filterArg, setFilterArg] = useState('')
   const [pathInput, setPathInput] = useState('')
   const [browseOpen, setBrowseOpen] = useState(false)
   const [running, setRunning] = useState(false)
@@ -77,7 +80,7 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
     const source: RelaySource = mode === 'adhoc'
       ? { kind: 'adhoc', host: target.trim(), user: user.trim() || undefined, jump, password: password || undefined }
       : { kind: 'host', host: configuredSource }
-    const res = await bridge.start_relay(source, sourcePaths, destHost, destDir)
+    const res = await bridge.start_relay(source, sourcePaths, destHost, destDir, filterName || undefined, filterArg || undefined)
     setPassword('')  // don't retain the password after handing it off
     if (res.error || !res.id) { message.error(res.error || 'Could not start relay'); return }
     idRef.current = res.id
@@ -166,6 +169,8 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
             />
           )}
 
+          <FilterPicker filterName={filterName} filterArg={filterArg} onFilterName={setFilterName} onFilterArg={setFilterArg} />
+
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <Text style={{ fontSize: 12 }}>Destination</Text>
@@ -176,10 +181,16 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
 
           {(running || progress) && (
             <div>
-              <Progress percent={pct} status={running ? 'active' : (result?.ok ? 'success' : 'exception')} size="small" />
+              <Progress
+                percent={progress?.indeterminate ? (running ? 100 : 100) : pct}
+                status={running ? 'active' : (result?.ok ? 'success' : 'exception')}
+                showInfo={!progress?.indeterminate}
+                size="small"
+              />
               {progress && (
                 <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
                   {progress.file}{progress.count > 1 ? ` (${progress.index + 1}/${progress.count})` : ''}
+                  {progress.indeterminate ? ` · filtering… ${humanBytes(progress.transferred)} written` : ''}
                 </Text>
               )}
             </div>

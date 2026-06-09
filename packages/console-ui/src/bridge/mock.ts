@@ -631,6 +631,13 @@ export const mockApi: BridgeApi = {
 
   save_jump_hosts: async (hosts) => { console.log('[mock] save_jump_hosts', hosts) },
 
+  get_filters: async () => [
+    { name: 'id-lines', pipeline: 'grep -F -- {{arg}} | cut -d, -f1,4', description: 'Lines containing the txn id, keep cols 1 & 4', param_label: 'transaction id' },
+    { name: 'errors', pipeline: 'grep -i error' },
+  ],
+
+  save_filters: async (filters) => { console.log('[mock] save_filters', filters) },
+
   test_host: async (name): Promise<TestResult> => {
     await new Promise(r => setTimeout(r, 1200))
     if (name === 'prod-2') {

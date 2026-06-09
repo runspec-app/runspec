@@ -35,7 +35,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-from .config import hosts_path, read_config, write_config
+from .config import filters_path, hosts_path, read_config, write_config
 from .discovery import discover_local, discover_remote
 from .executor import run_local, run_remote
 from .hosts import load_hosts, save_hosts, venv_name
@@ -98,6 +98,10 @@ class Bridge:
         self._adhoc_conns: dict[tuple[Any, ...], dict[str, Any]] = {}
         self._adapter: Any = None  # ModelAdapter, loaded on demand
         self._hosts: list[dict[str, Any]] = []
+        # Named source-side stream filters (runspec_filters.toml). Loaded once at
+        # startup and reloaded on save; resolved by name when a relay/download
+        # selects one. See filters_store.py for the schema.
+        self._filters: list[dict[str, Any]] = []
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
         self._runnables_cache: list[dict[str, Any]] = []
         # Persistent agent conversation so the model remembers prior turns. One
@@ -126,6 +130,7 @@ class Bridge:
         self._ssh_pool: Any = self._build_ssh_pool()
         self._install_ssh_log_forwarder()
         self._reload_hosts()
+        self._reload_filters()
         import atexit
 
         atexit.register(self._close_ssh_pool)
@@ -450,14 +455,20 @@ class Bridge:
         source_paths: list[str],
         dest_host: str,
         dest_dir: str,
+        filter_name: str = "",
+        filter_arg: str | None = None,
     ) -> dict[str, Any]:
         """Copy files between the local machine and a remote host over SFTP.
 
         v1 supports **local↔remote only** (exactly one side is ``"local"``).
-        Returns ``{"id": ...}`` and then streams ``runspec:transfer_progress`` /
-        ``runspec:transfer_end`` events, or ``{"error": ...}`` on a bad request.
+        ``filter_name`` selects a saved source-side filter (``filter_arg`` is the
+        runtime value for its ``{{arg}}`` placeholder); it applies only to a
+        **pull** (download, remote→local) — the file is filtered on the remote
+        host and only the output is written locally. Returns ``{"id": ...}`` and
+        then streams ``runspec:transfer_progress`` / ``runspec:transfer_end``
+        events, or ``{"error": ...}`` on a bad request.
         """
-        from .fs_transfer import plan_transfer
+        from .fs_transfer import plan_transfer, render_pipeline
 
         try:
             plan = plan_transfer(source_host, source_paths, dest_host, dest_dir)
@@ -467,6 +478,16 @@ class Bridge:
         entry = self._host_entry(plan.remote_host)
         if entry is None or not entry.get("ssh"):
             return {"error": f"{plan.remote_host} is not a reachable remote host"}
+
+        rendered = None
+        if filter_name and plan.direction == "pull":
+            filt = self._filter_entry(filter_name)
+            if filt is None:
+                return {"error": f"unknown filter: {filter_name}"}
+            try:
+                rendered = render_pipeline(filt.get("pipeline", ""), filter_arg)
+            except ValueError as e:
+                return {"error": str(e)}
 
         tid = uuid.uuid4().hex[:12]
         cancel_event = threading.Event()
@@ -479,7 +500,11 @@ class Bridge:
                 "operator": self._current_user(),
                 "runAs": "",
                 "startedAt": _iso_now(),
-                "args": {"direction": plan.direction, "files": len(plan.items)},
+                "args": {
+                    "direction": plan.direction,
+                    "files": len(plan.items),
+                    **({"filter": filter_name} if rendered is not None else {}),
+                },
                 _CANCEL_KEY: cancel_event,
             }
 
@@ -488,6 +513,24 @@ class Bridge:
             ok, error, done = True, None, 0
             release: Callable[[], None] | None = None
             count = len(plan.items)
+
+            def session_factory() -> tuple[Any, Callable[[], None]]:
+                pool = self._ssh_pool
+                if pool is not None:
+                    return pool.open_session(
+                        entry["ssh"],
+                        identity_file=entry.get("identityFile"),
+                        global_ssh_config=cfg,
+                    )
+                from .executor import _make_ssh_client
+
+                client = _make_ssh_client(entry["ssh"], entry.get("identityFile"), cfg)
+                transport = client.get_transport()
+                if transport is None:
+                    client.close()
+                    raise OSError("source transport unavailable")
+                return transport.open_session(), client.close
+
             try:
                 sftp, release = self._open_sftp(
                     entry["ssh"], entry.get("identityFile"), cfg
@@ -497,7 +540,21 @@ class Bridge:
                         ok, error = False, "cancelled"
                         break
                     try:
-                        self._transfer_one(sftp, plan.direction, item, tid, idx, count)
+                        if rendered is not None:
+                            self._transfer_one_filtered(
+                                session_factory,
+                                sftp,
+                                item,
+                                rendered,
+                                tid,
+                                idx,
+                                count,
+                                cancel_event,
+                            )
+                        else:
+                            self._transfer_one(
+                                sftp, plan.direction, item, tid, idx, count
+                            )
                         done += 1
                     except Exception as e:
                         # One file failing is reported but doesn't abort the rest.
@@ -741,16 +798,45 @@ class Bridge:
                 }
         return result
 
-    def _open_source_sftp(
+    def _open_source_conn(
         self, source: dict[str, Any], password: str | None, cfg: dict[str, Any] | None
-    ) -> tuple[Any, Callable[[], None]]:
-        """Open an SFTP to a relay source — a configured host, or an ad-hoc host
-        reached via a configured jump (key/agent first, then ``password``)."""
+    ) -> tuple[Any, Callable[[], tuple[Any, Callable[[], None]]], Callable[[], None]]:
+        """Open a relay source — a configured host, or an ad-hoc host reached via
+        a configured jump (key/agent first, then ``password``).
+
+        Returns ``(sftp, session_factory, release)``:
+
+        * ``sftp`` — for ``stat()`` and the unfiltered straight-through path.
+        * ``session_factory`` — ``() -> (channel, chan_release)``; opens an exec
+          channel on the *same* transport, for the source-side filter path. The
+          caller drives ``channel`` and must call ``chan_release()`` when done
+          (on the pooled path it frees a session slot; the transport stays warm).
+        * ``release`` — tears down ``sftp`` and the transport/tunnel.
+        """
         if source.get("kind") == "host":
             entry = self._host_entry(source["host"])
             if entry is None or not entry.get("ssh"):
                 raise OSError(f"{source.get('host')} is not a reachable remote host")
-            return self._open_sftp(entry["ssh"], entry.get("identityFile"), cfg)
+            ssh_target = entry["ssh"]
+            identity = entry.get("identityFile")
+            sftp, sftp_release = self._open_sftp(ssh_target, identity, cfg)
+
+            def session_factory() -> tuple[Any, Callable[[], None]]:
+                pool = self._ssh_pool
+                if pool is not None:
+                    return pool.open_session(
+                        ssh_target, identity_file=identity, global_ssh_config=cfg
+                    )
+                from .executor import _make_ssh_client
+
+                client = _make_ssh_client(ssh_target, identity, cfg)
+                transport = client.get_transport()
+                if transport is None:
+                    client.close()
+                    raise OSError("source transport unavailable")
+                return transport.open_session(), client.close
+
+            return sftp, session_factory, sftp_release
 
         # ad-hoc: tunnel a direct-tcpip channel through the configured jump (warm
         # pooled transport), then SSH to the target over it (keys/agent, then password).
@@ -788,6 +874,15 @@ class Bridge:
             raise
         sftp = tclient.open_sftp()
 
+        def adhoc_session_factory() -> tuple[Any, Callable[[], None]]:
+            transport = tclient.get_transport()
+            if transport is None:
+                raise OSError("source transport closed")
+            # The tunneled client has no per-channel slot to free (that's a pool
+            # concept), so the release is a no-op — the channel is closed by the
+            # filtered loop and the client by ``release`` below.
+            return transport.open_session(), (lambda: None)
+
         def release() -> None:
             for c in (sftp, tclient):
                 try:
@@ -801,7 +896,7 @@ class Bridge:
                 except Exception:
                     pass
 
-        return sftp, release
+        return sftp, adhoc_session_factory, release
 
     def _jump_channel(
         self,
@@ -884,22 +979,201 @@ class Bridge:
                         },
                     )
 
+    def _run_filter_stream(
+        self,
+        session_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        cmd: str,
+        dst_open: Callable[[], Any],
+        dst_remove: Callable[[], None],
+        in_size: int,
+        item: Any,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Run ``cmd`` on the source over an exec channel, streaming its stdout
+        into the destination ``dst_open()`` writes to. Shared by the relay and
+        download filter paths — only the destination sink differs.
+
+        Output size is unknown up front, so progress is reported as bytes written
+        with ``indeterminate: True`` (``total`` carries the input size, for
+        context only). A pipeline that exits non-zero raises — except exit code 1
+        with no stderr, which is grep's "no lines matched" and yields a legitimate
+        empty result. On any failure or cancel the partial destination is removed.
+        """
+        channel, chan_release = session_factory()
+        STDERR_CAP = 65536
+        try:
+            channel.set_combine_stderr(False)
+            channel.exec_command(cmd)
+            transferred = 0
+            last = 0.0
+            stderr_buf = b""
+
+            def tick() -> None:
+                self._dispatch(
+                    "runspec:transfer_progress",
+                    {
+                        "id": tid,
+                        "file": item.name,
+                        "index": idx,
+                        "count": count,
+                        "transferred": transferred,
+                        "total": in_size,
+                        "indeterminate": True,
+                    },
+                )
+
+            f = dst_open()
+            try:
+                while True:
+                    if cancel_event.is_set():
+                        raise RuntimeError("cancelled")
+                    got = False
+                    if channel.recv_ready():
+                        chunk = channel.recv(32768)
+                        if chunk:
+                            f.write(chunk)
+                            transferred += len(chunk)
+                            got = True
+                    if channel.recv_stderr_ready():
+                        err = channel.recv_stderr(32768)
+                        if err and len(stderr_buf) < STDERR_CAP:
+                            stderr_buf += err[: STDERR_CAP - len(stderr_buf)]
+                        got = got or bool(err)
+                    now = time.monotonic()
+                    if got and now - last >= 0.15:
+                        last = now
+                        tick()
+                    if channel.exit_status_ready():
+                        while True:  # drain any buffered output after exit
+                            chunk = channel.recv(32768)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            transferred += len(chunk)
+                        while True:
+                            err = channel.recv_stderr(32768)
+                            if not err:
+                                break
+                            if len(stderr_buf) < STDERR_CAP:
+                                stderr_buf += err[: STDERR_CAP - len(stderr_buf)]
+                        break
+                    if not got:
+                        time.sleep(0.01)
+            finally:
+                f.close()
+
+            code = channel.recv_exit_status()
+            stderr_text = stderr_buf.decode("utf-8", errors="replace").strip()
+            # grep returns 1 for "no lines matched" — a legitimately empty result,
+            # not a failure. Distinguish it from a real error by the absence of any
+            # diagnostic on stderr.
+            if code != 0 and not (code == 1 and not stderr_text):
+                raise RuntimeError(stderr_text or f"filter exited {code}")
+            tick()  # final count
+        except BaseException:
+            try:
+                dst_remove()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                channel.close()
+            except Exception:
+                pass
+            chan_release()
+
+    def _relay_one_filtered(
+        self,
+        session_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        dest_sftp: Any,
+        item: Any,
+        rendered_pipeline: str,
+        src_sftp: Any,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Relay one file through a source-side filter, writing the filtered
+        output to the destination host over SFTP."""
+        from .fs_transfer import build_filter_command
+
+        try:
+            in_size = int(src_sftp.stat(item.src).st_size)
+        except Exception:
+            in_size = 0
+        cmd = build_filter_command(rendered_pipeline, item.src)
+        self._run_filter_stream(
+            session_factory,
+            cmd,
+            dst_open=lambda: dest_sftp.open(item.dst, "wb"),
+            dst_remove=lambda: dest_sftp.remove(item.dst),
+            in_size=in_size,
+            item=item,
+            tid=tid,
+            idx=idx,
+            count=count,
+            cancel_event=cancel_event,
+        )
+
+    def _transfer_one_filtered(
+        self,
+        session_factory: Callable[[], tuple[Any, Callable[[], None]]],
+        src_sftp: Any,
+        item: Any,
+        rendered_pipeline: str,
+        tid: str,
+        idx: int,
+        count: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Download one file through a source-side filter, writing the filtered
+        output to the local destination file."""
+        from .fs_transfer import build_filter_command
+
+        try:
+            in_size = int(src_sftp.stat(item.src).st_size)
+        except Exception:
+            in_size = 0
+        cmd = build_filter_command(rendered_pipeline, item.src)
+        self._run_filter_stream(
+            session_factory,
+            cmd,
+            dst_open=lambda: open(item.dst, "wb"),
+            dst_remove=lambda: os.remove(item.dst),
+            in_size=in_size,
+            item=item,
+            tid=tid,
+            idx=idx,
+            count=count,
+            cancel_event=cancel_event,
+        )
+
     def start_relay(
         self,
         source: dict[str, Any],
         source_paths: list[str],
         dest_host: str,
         dest_dir: str,
+        filter_name: str = "",
+        filter_arg: str | None = None,
     ) -> dict[str, Any]:
         """Relay file(s) from one host to another, streaming through the console.
 
         ``source`` is ``{"kind": "host", "host": "<configured>"}`` or
         ``{"kind": "adhoc", "host", "port"?, "user"?, "jump": "<configured>",
         "password"?}``. A password (when given) connects to the ad-hoc target only
-        and is **never** stored, logged, or pooled. Returns ``{"id": ...}`` and
-        streams the usual transfer events, or ``{"error": ...}``.
+        and is **never** stored, logged, or pooled. ``filter_name`` selects a saved
+        source-side filter (``filter_arg`` is the runtime value for its ``{{arg}}``
+        placeholder); when set, the file is filtered on the source host and only
+        the output is relayed. Returns ``{"id": ...}`` and streams the usual
+        transfer events, or ``{"error": ...}``.
         """
-        from .fs_transfer import relay_items
+        from .fs_transfer import relay_items, render_pipeline
 
         try:
             items = relay_items(source_paths, dest_dir)
@@ -915,6 +1189,16 @@ class Bridge:
             return {"error": "no source host specified"}
         if kind == "adhoc" and not source.get("jump"):
             return {"error": "no jump host selected"}
+
+        rendered = None
+        if filter_name:
+            filt = self._filter_entry(filter_name)
+            if filt is None:
+                return {"error": f"unknown filter: {filter_name}"}
+            try:
+                rendered = render_pipeline(filt.get("pipeline", ""), filter_arg)
+            except ValueError as e:
+                return {"error": str(e)}
 
         # Pull the password out so it never lands in _in_flight / logs.
         password = source.pop("password", None)
@@ -936,6 +1220,10 @@ class Bridge:
                     "via": source.get("jump"),
                     "dest": dest_host,
                     "files": len(items),
+                    # The filter name is recorded for the activity panel; the
+                    # rendered pipeline / runtime value are not (avoids logging
+                    # operator identifiers).
+                    **({"filter": filter_name} if filter_name else {}),
                 },
                 _CANCEL_KEY: cancel_event,
             }
@@ -946,7 +1234,9 @@ class Bridge:
             dest_release: Callable[[], None] | None = None
             count = len(items)
             try:
-                src_sftp, src_release = self._open_source_sftp(source, password, cfg)
+                src_sftp, session_factory, src_release = self._open_source_conn(
+                    source, password, cfg
+                )
                 dest_sftp, dest_release = self._open_sftp(
                     dest_entry["ssh"], dest_entry.get("identityFile"), cfg
                 )
@@ -955,9 +1245,22 @@ class Bridge:
                         ok, error = False, "cancelled"
                         break
                     try:
-                        self._relay_one(
-                            src_sftp, dest_sftp, item, tid, idx, count, cancel_event
-                        )
+                        if rendered is not None:
+                            self._relay_one_filtered(
+                                session_factory,
+                                dest_sftp,
+                                item,
+                                rendered,
+                                src_sftp,
+                                tid,
+                                idx,
+                                count,
+                                cancel_event,
+                            )
+                        else:
+                            self._relay_one(
+                                src_sftp, dest_sftp, item, tid, idx, count, cancel_event
+                            )
                         done += 1
                     except Exception as e:
                         ok, error = False, str(e)
@@ -1053,7 +1356,8 @@ class Bridge:
             "user": user,
             "port": port,
         }
-        sftp, release = self._open_source_sftp(source, password, cfg)
+        # Browsing only needs the sftp; the exec session_factory is for filters.
+        sftp, _session_factory, release = self._open_source_conn(source, password, cfg)
         with self._lock:
             old = self._adhoc_conns.get(key)
             self._adhoc_conns[key] = {
@@ -2441,6 +2745,40 @@ class Bridge:
         self._reload_hosts()
         threading.Thread(target=self._refresh_cycle, daemon=True).start()
 
+    def get_filters(self) -> list[dict[str, Any]]:
+        """Named source-side stream filters, for the Settings tab and pickers."""
+        self._reload_filters()
+        result: list[dict[str, Any]] = []
+        for f in self._filters:
+            entry: dict[str, Any] = {
+                "name": f.get("name", ""),
+                "pipeline": f.get("pipeline", ""),
+            }
+            if f.get("description"):
+                entry["description"] = f["description"]
+            if f.get("param_label"):
+                entry["param_label"] = f["param_label"]
+            result.append(entry)
+        return result
+
+    def save_filters(self, filters: list[dict[str, Any]]) -> None:
+        from .filters_store import save_filters as _save_filters
+
+        entries: list[dict[str, Any]] = []
+        for f in filters:
+            name = str(f.get("name", "")).strip()
+            pipeline = str(f.get("pipeline", "")).strip()
+            if not name or not pipeline:
+                continue  # both are required; drop incomplete rows
+            entry: dict[str, Any] = {"name": name, "pipeline": pipeline}
+            if f.get("description"):
+                entry["description"] = str(f["description"]).strip()
+            if f.get("param_label"):
+                entry["param_label"] = str(f["param_label"]).strip()
+            entries.append(entry)
+        _save_filters(filters_path(), entries)
+        self._reload_filters()
+
     def import_jump_hosts(self, toml_content: str) -> list[dict[str, Any]]:
         try:
             data = tomllib.loads(toml_content)
@@ -3332,6 +3670,15 @@ class Bridge:
 
     def _reload_hosts(self) -> None:
         self._hosts = load_hosts(hosts_path())
+
+    def _reload_filters(self) -> None:
+        from .filters_store import load_filters
+
+        self._filters = load_filters(filters_path())
+
+    def _filter_entry(self, name: str) -> dict[str, Any] | None:
+        """The saved filter named ``name`` (case-sensitive), or None."""
+        return next((f for f in self._filters if f.get("name") == name), None)
 
     def _local_host_entry(self) -> dict[str, Any]:
         """Synthetic entry for the venv runspec-console itself runs in."""

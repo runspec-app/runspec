@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.27.0] — 2026-06-09
+
+### Added
+- **Source-side filters for Relay and Download.** Define named, reusable stream
+  filters in **Settings → Filters** (e.g. `grep -F -- {{arg}} | cut -d, -f1,4`),
+  then pick one by name in the **Relay** or **Download** dialog to filter a file
+  **on the source host** before it's transferred — only the matching output
+  crosses the network. Pulling a few relevant lines out of a multi-gigabyte log
+  no longer means copying the whole file.
+  - The pipeline runs on the source over SSH `exec` with the file fed on stdin
+    (works for relay's configured *and* ad-hoc/jump sources, and for a download's
+    remote source). The source path is shell-quoted into an stdin redirect; it is
+    never interpreted by the pipeline.
+  - **Parameterized:** a `{{arg}}` placeholder in the pipeline prompts for a value
+    at transfer time (labelled by the filter's *value label*), so one filter
+    serves every identifier. The supplied value is shell-quoted on substitution.
+  - Each filter carries a free-text **description** (shown in the picker) — also
+    intended to give the agent context to choose a filter in future.
+  - A pipeline that exits non-zero surfaces its stderr and removes the partial
+    destination file; `grep`'s exit 1 with no stderr ("no lines matched") is
+    treated as a legitimately empty result, not a failure. Progress shows bytes
+    written (output size isn't known up front).
+  - Filters apply to **Relay** and **Download** (pull) only — there's no remote
+    source to filter on for an Upload. Saved to `runspec_filters.toml`.
+  - Backend: `get_filters()` / `save_filters()`; `start_relay(...)` and
+    `start_transfer(...)` gain optional `filter_name` / `filter_arg`.
+
+
 ## [0.26.0] — 2026-06-08
 
 ### Added
