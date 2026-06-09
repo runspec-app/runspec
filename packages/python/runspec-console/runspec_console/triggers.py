@@ -37,6 +37,26 @@ logger = logging.getLogger("runspec.console.triggers")
 _VALID_MODES = frozenset({"agent", "rule"})
 _VALID_AUTONOMY = frozenset({"autonomous", "confirm", "supervised", "manual"})
 
+# Trigger-level keys — if one of these turns up inside [triggers.match] it's
+# almost certainly a scalar written after the sub-table header (a TOML ordering
+# slip), which would otherwise silently break matching.
+_TRIGGER_KEYS = frozenset(
+    {
+        "name",
+        "source",
+        "event",
+        "mode",
+        "enabled",
+        "autonomy",
+        "post_to_chat",
+        "rules",
+        "run",
+        "map",
+        "reply",
+        "match",
+    }
+)
+
 # {{ field }} / {{field}} — single payload-key substitution in a rule map value.
 _TEMPLATE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
 
@@ -130,6 +150,17 @@ class Trigger:
             )
 
         match = {str(k): str(v) for k, v in (data.get("match") or {}).items()}
+        # Catch the classic TOML ordering mistake: a scalar key (e.g. `rules`)
+        # written *after* [triggers.match] is parsed into the match table, which
+        # silently makes the trigger never fire (a phantom field no payload has).
+        misplaced = match.keys() & _TRIGGER_KEYS
+        if misplaced:
+            raise ValueError(
+                f"trigger '{name}': [triggers.match] contains {sorted(misplaced)}, "
+                "which look like misplaced trigger keys. Scalar keys (rules, run, "
+                "mode, …) must come BEFORE the [triggers.match] / [triggers.reply] "
+                "sub-tables in the TOML."
+            )
         try:
             for pat in match.values():
                 re.compile(pat)

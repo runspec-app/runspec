@@ -38,11 +38,12 @@ class BridgeOps(Protocol):
         *,
         draft: bool,
         reply_to: str | None = None,
-    ) -> None:
+    ) -> str:
         """Run an isolated, headless agent turn under ``chat_id`` (the card id),
         with ``system`` as its system prompt and ``message`` as the sole user
         turn. ``draft`` requests the draft_reply tool be offered; ``reply_to`` is
         the source message's id the draft should reply to (required for drafting).
+        Returns a short summary (the agent's reply + any tool actions) for the card.
         """
         ...
 
@@ -149,14 +150,14 @@ def make_handler(
         reply_to = (event.payload.get("entry_id") or None) if draft else None
         system = compose_system(trigger, base_system, draft_available=draft)
         card.move(Column.TRIAGE)
-        ops.run_agent_turn(
+        summary = ops.run_agent_turn(
             card.id, system, render_event(event), draft=draft, reply_to=reply_to
         )
-        card.move(Column.DONE)
+        # The agent's reply + any actions land on the card — a trigger turn has no
+        # chat transcript, so this is where its output is visible.
+        card.move(Column.DONE, result=summary) if summary else card.move(Column.DONE)
         if trigger.post_to_chat:
-            ops.note_in_chat(
-                f"Trigger '{trigger.name}' handled a {event.type} event "
-                f"(card {card.id})."
-            )
+            note = f"Trigger '{trigger.name}' handled a {event.type} event"
+            ops.note_in_chat(f"{note}:\n{summary[:500]}" if summary else note + ".")
 
     return handler

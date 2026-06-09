@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.29.2] — 2026-06-09
+
+### Fixed
+- **Reject a misplaced key in `[triggers.match]`.** A trigger scalar (e.g.
+  `rules`) written *after* the `[triggers.match]` header is parsed by TOML into
+  the match table, which silently made the trigger never fire (a phantom match
+  field no event payload has). `from_config` now raises a clear error for this,
+  so it surfaces in the Triggers tab instead of failing silently. The
+  `docs/console.md` example is corrected (scalars before sub-tables).
+- **No more spurious `dispatch runspec:trigger_status failed` at startup.** The
+  trigger engine starts during window setup, before the web view is ready, so
+  the one-shot status push raised (harmlessly) in `evaluate_js`. Removed it; the
+  Triggers tab already pulls this state on mount.
+
+### Changed
+- **Trigger cards now show the agent's output.** An agent-mode trigger turn has
+  no chat transcript, so its reply + any tool actions were invisible (only in
+  the debug log). The turn now returns a summary that lands on the card, and the
+  card surfaces *why* nothing ran (e.g. "No LLM provider configured") instead of
+  sliding silently to Done. The card's result area is scrollable for longer
+  replies.
+- **Source-unavailable warnings only show for sources you use.** The Triggers
+  tab no longer nags about a registered-but-unavailable source (e.g.
+  `notifications` on a locked-down machine) unless a configured trigger actually
+  references it. The warning is also dismissible.
+
+
 ## [0.29.1] — 2026-06-09
 
 ### Fixed

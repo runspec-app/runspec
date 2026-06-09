@@ -98,6 +98,17 @@ def test_from_config_full():
             "invalid match regex",
         ),
         ({"name": "t", "source": "s", "event": "e", "mode": "rule"}, "no 'run'"),
+        (
+            # `rules` written after [triggers.match] → parsed into match (the
+            # classic TOML ordering slip); must be rejected, not silently broken.
+            {
+                "name": "t",
+                "source": "s",
+                "event": "e",
+                "match": {"subject": "x", "rules": "do stuff"},
+            },
+            "misplaced trigger keys",
+        ),
     ],
 )
 def test_from_config_errors(data, msg):

@@ -172,6 +172,14 @@ The Triggers tab shows each source's availability and the reason any is off
 Triggers live in `runspec_triggers.toml` in the app config directory
 (`%APPDATA%\runspec-console\`). Each `[[triggers]]` table is one trigger:
 
+> **TOML ordering matters.** All of a trigger's scalar keys (`name`, `mode`,
+> `rules`, `run`, …) must come **before** any sub-table header
+> (`[triggers.match]`, `[triggers.map]`, `[triggers.reply]`). A key written
+> after a sub-table is silently parsed *into that sub-table* — e.g. `rules`
+> placed after `[triggers.match]` becomes `triggers.match.rules`, which both
+> empties your real `rules` and adds a phantom `rules` match field that no event
+> can satisfy (so the trigger never fires).
+
 ```toml
 [[triggers]]
 name   = "vip-outage-triage"
@@ -181,18 +189,19 @@ mode   = "agent"               # "agent" (LLM-in-the-loop) | "rule" (direct runn
 autonomy = "confirm"           # gate level (default: confirm)
 post_to_chat = false           # also mirror this run into the Console tab
 
-# Cheap regex pre-filter on the event payload — all patterns must match. Keeps
-# the LLM out of irrelevant events (and tames a chatty `reminder` source).
-[triggers.match]
-from    = ".*@bigcustomer\\.com"
-subject = "(?i)outage|down|urgent"
-
-# agent mode: the rules the model follows for this trigger.
+# agent mode: the rules the model follows for this trigger. (A scalar key, so it
+# must appear BEFORE the [triggers.*] sub-tables below.)
 rules = """
 If this reports an outage, identify the affected host, run the diagnostics
 runnable against it, and draft a short reply summarising findings. Never
 restart a service or send mail without confirmation.
 """
+
+# Cheap regex pre-filter on the event payload — all patterns must match. Keeps
+# the LLM out of irrelevant events (and tames a chatty `reminder` source).
+[triggers.match]
+from    = ".*@bigcustomer\\.com"
+subject = "(?i)outage|down|urgent"
 
 # Optional: let the agent save a suggested reply to Outlook Drafts (never sends).
 [triggers.reply]

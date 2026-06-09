@@ -18,11 +18,14 @@ from runspec_console.trigger_runner import (
 
 
 class FakeOps:
-    def __init__(self, tool_output: str = "ok") -> None:
+    def __init__(
+        self, tool_output: str = "ok", agent_summary: str = "agent reply"
+    ) -> None:
         self.agent_calls: list[dict[str, Any]] = []
         self.rule_calls: list[dict[str, Any]] = []
         self.chat_notes: list[str] = []
         self._tool_output = tool_output
+        self._agent_summary = agent_summary
 
     def run_agent_turn(self, chat_id, system, message, *, draft, reply_to=None):
         self.agent_calls.append(
@@ -34,6 +37,7 @@ class FakeOps:
                 "reply_to": reply_to,
             }
         )
+        return self._agent_summary
 
     def run_rule_tool(self, chat_id, tool_name, tool_input):
         self.rule_calls.append(
@@ -123,6 +127,7 @@ def test_handler_agent_mode():
     assert "BASE" in call["system"] and "Triage it." in call["system"]
     assert "Outage" in call["message"]
     assert [c for c, _ in moves] == [Column.TRIAGE, Column.DONE]
+    assert moves[-1][1]["result"] == "agent reply"  # summary lands on the card
     assert ops.chat_notes == []  # post_to_chat off by default
 
 

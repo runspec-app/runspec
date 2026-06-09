@@ -105,8 +105,8 @@ class _BridgeTriggerOps:
         *,
         draft: bool,
         reply_to: str | None = None,
-    ) -> None:
-        self._bridge._trigger_run_agent_turn(
+    ) -> str:
+        return self._bridge._trigger_run_agent_turn(
             chat_id, system, message, draft=draft, reply_to=reply_to
         )
 
@@ -4445,14 +4445,11 @@ class Bridge:
             self._trigger_engine = engine
         for problem in problems:
             logger.info("trigger source: %s", problem)
-        self._dispatch(
-            "runspec:trigger_status",
-            {
-                "errors": errors,
-                "problems": problems,
-                "active": [t.name for t in triggers if t.enabled],
-            },
-        )
+        # Note: no UI dispatch here. start_triggers() runs from set_window(),
+        # before the web view has finished starting, so an evaluate_js push would
+        # raise (harmlessly, but noisily). The Triggers tab pulls this state via
+        # list_triggers() on mount and after any enable/disable, so a push isn't
+        # needed — and restart_triggers() re-runs this once the window is up.
 
     def stop_triggers(self) -> None:
         with self._lock:
@@ -4539,32 +4536,28 @@ class Bridge:
         *,
         draft: bool,
         reply_to: str | None = None,
-    ) -> None:
+    ) -> str:
         """BridgeOps: run an isolated headless agent turn for a trigger card.
 
         Runs on the engine's worker thread, so it owns its own asyncio loop
         (mirroring send_chat). The card id doubles as the chat_id so the turn's
         token / tool / confirm events attribute to the card on the board.
         ``reply_to`` (when ``draft``) is the Outlook message id the draft_reply
-        tool replies to."""
+        tool replies to. Returns a summary for display on the card."""
         try:
             adapter = self._get_adapter(system_override=system)
         except Exception as exc:  # noqa: BLE001 — surface, don't crash the worker
-            self._dispatch(
-                "runspec:trigger_note", {"text": f"⚠ Trigger could not run: {exc}"}
-            )
-            return
+            return f"⚠ Trigger could not run: {exc}"
         if adapter is None:
-            self._dispatch(
-                "runspec:trigger_note",
-                {"text": "⚠ Trigger needs an LLM provider configured in Settings."},
+            return (
+                "⚠ No LLM provider configured — the trigger matched, but agent mode "
+                "needs a provider + API key in Settings to run."
             )
-            return
         cancel = threading.Event()
         with self._lock:
             self._chat_cancels[chat_id] = cancel
         try:
-            asyncio.run(
+            return asyncio.run(
                 self._run_isolated_agent_turn(
                     chat_id, message, adapter, reply_to=reply_to if draft else None
                 )
@@ -4575,12 +4568,16 @@ class Bridge:
 
     async def _run_isolated_agent_turn(
         self, chat_id: str, message: str, adapter: Any, reply_to: str | None = None
-    ) -> None:
+    ) -> str:
         """A headless agent loop for a trigger card. Like _agentic_chat_turn but
         against an isolated, throwaway history (never the shared chat) so a
         trigger never pollutes the user's conversation. Same toolset and the same
         autonomy gate (_gated_run_tool_async). When ``reply_to`` is set, the
-        built-in draft_reply tool is offered (and handled inline)."""
+        built-in draft_reply tool is offered (and handled inline).
+
+        Returns a short summary (the model's closing reply + any tool actions)
+        for display on the kanban card — trigger turns have no chat transcript,
+        so this is where the agent's output becomes visible."""
         from .trigger_runner import draft_reply_schema
 
         start = time.monotonic()
@@ -4591,18 +4588,22 @@ class Bridge:
         with self._lock:
             cancel = self._chat_cancels.get(chat_id) or threading.Event()
         stopped = False
+        final_text = ""  # the model's last assistant message (its conclusion)
+        actions: list[str] = []  # one line per tool the agent ran
 
         for _ in range(10):  # bound agentic iterations, same as the chat loop
             if cancel.is_set():
                 stopped = True
                 break
             response: Any = None
+            assistant_text = ""
             try:
                 async for event in adapter.stream_with_tools(history, tools):
                     if cancel.is_set():
                         stopped = True
                         break
                     if event[0] == "text":
+                        assistant_text += event[1]
                         self._dispatch(
                             "runspec:token", {"id": chat_id, "token": event[1]}
                         )
@@ -4612,6 +4613,7 @@ class Bridge:
                 self._dispatch(
                     "runspec:token", {"id": chat_id, "token": f"\n⚠ Error: {exc}"}
                 )
+                final_text = f"⚠ Error: {exc}"
                 break
             if stopped:
                 break
@@ -4620,6 +4622,7 @@ class Bridge:
                 or response.stop_reason != "tool_use"
                 or not response.tool_calls
             ):
+                final_text = assistant_text  # closing reply, no further tools
                 break
             if cancel.is_set():
                 stopped = True
@@ -4642,6 +4645,9 @@ class Bridge:
                     "runspec:tool_end",
                     {"id": chat_id, "tool_name": tc.name, "output": output[:2000]},
                 )
+                display = tc.name.split("__", 1)[-1]
+                first_line = next((ln for ln in output.splitlines() if ln.strip()), "")
+                actions.append(f"{display} → {first_line[:160]}")
                 tool_results.append((tc, output))
             history.extend(adapter.make_tool_turn(response, tool_results))
 
@@ -4652,6 +4658,15 @@ class Bridge:
             "runspec:run_end",
             {"id": chat_id, "exit_code": 0, "duration_ms": duration_ms},
         )
+
+        parts: list[str] = []
+        if actions:
+            parts.append("\n".join(f"• {a}" for a in actions))
+        if final_text.strip():
+            parts.append(final_text.strip())
+        if stopped:
+            parts.append("⏹ Stopped.")
+        return "\n\n".join(parts)[:4000]
 
     async def _gated_draft_reply(
         self, tool_input: dict[str, Any], chat_id: str, reply_to: str | None

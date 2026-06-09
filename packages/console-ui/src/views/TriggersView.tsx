@@ -127,6 +127,11 @@ export function TriggersView() {
   const triggers = config?.triggers ?? []
   const errors = config?.errors ?? []
 
+  // Only warn about an unavailable source that a configured trigger actually
+  // uses — no point nagging about, say, the notifications source on a machine
+  // that only runs Outlook triggers.
+  const usedSources = new Set(triggers.map(t => String(t.source)))
+
   const configColumns = [
     {
       title: 'Trigger',
@@ -173,13 +178,14 @@ export function TriggersView() {
 
   return (
     <div>
-      {/* Source availability + parse errors */}
+      {/* Source availability (only for sources a configured trigger uses) */}
       {sources.map(s => (
-        !s.available ? (
+        !s.available && usedSources.has(s.id) ? (
           <Alert
             key={s.id}
             type="warning"
             showIcon
+            closable
             style={{ marginBottom: 8 }}
             message={<span>Event source <code>{s.id}</code> is unavailable: {s.reason}</span>}
           />
@@ -262,7 +268,11 @@ export function TriggersView() {
                     {card.trigger} · {card.source}:{card.event_type}
                   </div>
                   {error && <div style={{ color: COLUMN_COLOR.failed }}>{error}</div>}
-                  {result && <div style={{ color: dim, whiteSpace: 'pre-wrap' }}>{result.slice(0, 240)}</div>}
+                  {result && (
+                    <div style={{ color: dim, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>
+                      {result}
+                    </div>
+                  )}
                   {p && (
                     <div style={{ marginTop: 6 }}>
                       <div style={{ color: COLUMN_COLOR.awaiting_human, marginBottom: 4 }}>
