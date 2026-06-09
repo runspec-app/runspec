@@ -313,6 +313,37 @@ export interface TestResult {
   exit_code: number
 }
 
+// ── event triggers (Triggers tab) ───────────────────────────────────────────
+
+// runspec:trigger_card event detail — one kanban card (an event instance flowing
+// across the board). Columns: triggered | triage | awaiting_human | running |
+// done | failed.
+export interface TriggerCard {
+  card_id: string
+  trigger: string
+  source: string
+  event_type: string
+  summary: string
+  column: string
+  detail: Record<string, unknown>
+  created_at: number
+}
+
+export interface TriggerSourceInfo {
+  id: string
+  available: boolean
+  reason: string
+  event_types: string[]
+}
+
+export interface TriggerListResult {
+  triggers: Record<string, unknown>[]   // raw [[triggers]] tables from config
+  errors: string[]                        // per-table parse errors (skipped)
+  sources: TriggerSourceInfo[]
+  running: boolean
+}
+
+
 export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
   get_runnables: (host: string) => Promise<Runnable[]>
@@ -373,6 +404,10 @@ export interface BridgeApi {
   cancel_chat: (chatId: string) => Promise<void>
   clear_chat: () => Promise<void>
   resolve_tool_confirmation: (requestId: string, approved: boolean) => Promise<void>
+  // ── event triggers ─────────────────────────────────────────────────────────
+  list_triggers: () => Promise<TriggerListResult>
+  set_trigger_enabled: (name: string, enabled: boolean) => Promise<{ ok: boolean }>
+  get_trigger_board: () => Promise<TriggerCard[]>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>

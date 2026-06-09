@@ -22,10 +22,9 @@ DEFAULT_DOCS_URL = "https://jasonfinestone.github.io/runspec/"
 
 
 def app_dir() -> Path:
-    base = os.environ.get("APPDATA")
-    if not base:
-        base = Path.home() / "AppData" / "Roaming"
-    d = Path(base) / "runspec-console"
+    env = os.environ.get("APPDATA")
+    base = Path(env) if env else Path.home() / "AppData" / "Roaming"
+    d = base / "runspec-console"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -40,6 +39,32 @@ def filters_path() -> Path:
 
 def config_path() -> Path:
     return app_dir() / "config.toml"
+
+
+def triggers_path() -> Path:
+    return app_dir() / "runspec_triggers.toml"
+
+
+def read_triggers() -> list[dict[str, Any]]:
+    """Parse ``runspec_triggers.toml`` into a list of ``[[triggers]]`` tables.
+
+    Returns ``[]`` on a missing or unreadable file — triggers are optional.
+    """
+    path = triggers_path()
+    if not path.exists():
+        return []
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    except Exception:
+        return []
+    raw = data.get("triggers")
+    return [dict(t) for t in raw] if isinstance(raw, list) else []
+
+
+def write_triggers(triggers: list[dict[str, Any]]) -> None:
+    """Serialise a list of trigger tables to ``runspec_triggers.toml``."""
+    triggers_path().write_text(_triggers_to_toml(triggers), encoding="utf-8")
 
 
 def read_config() -> dict[str, Any]:
@@ -73,12 +98,50 @@ def _toml_str(v: str) -> str:
     TOML basic strings (double-quoted) recognise backslash escapes — meaning
     a Windows path like ``C:\\Program Files\\PuTTY\\plink.exe`` written
     verbatim is invalid TOML (``\\P`` is not a recognised escape) and
-    ``tomllib`` will refuse to read the file back. Escape ``\\`` and ``"``
-    before wrapping in quotes so the round-trip preserves the original
-    string byte-for-byte.
+    ``tomllib`` will refuse to read the file back. Escape ``\\`` / ``"`` and the
+    common control chars (so a multiline ``rules`` string survives) before
+    wrapping in quotes, so the round-trip preserves the original string.
     """
-    escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = (
+        v.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
     return f'"{escaped}"'
+
+
+def _toml_scalar(v: Any) -> str:
+    """Render a scalar (or list of scalars) as a TOML value."""
+    if isinstance(v, str):
+        return _toml_str(v)
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_scalar(x) for x in v) + "]"
+    return str(v)
+
+
+def _triggers_to_toml(triggers: list[dict[str, Any]]) -> str:
+    """Serialise ``[[triggers]]`` array-of-tables, each with optional nested
+    ``match`` / ``map`` / ``reply`` sub-tables. Scalars are written before
+    sub-tables (TOML requires a table's own keys to precede its child tables)."""
+    blocks: list[str] = []
+    for t in triggers:
+        lines = ["[[triggers]]"]
+        subtables = [(k, v) for k, v in t.items() if isinstance(v, dict)]
+        for k, v in t.items():
+            if isinstance(v, dict) or v is None:
+                continue
+            lines.append(f"{k} = {_toml_scalar(v)}")
+        for name, sub in subtables:
+            lines.append(f"[triggers.{name}]")
+            for kk, vv in sub.items():
+                if vv is not None:
+                    lines.append(f"{kk} = {_toml_scalar(vv)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
 def _dict_to_toml(data: dict[str, Any]) -> str:

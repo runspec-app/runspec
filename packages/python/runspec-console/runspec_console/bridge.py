@@ -90,6 +90,35 @@ _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 _CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file"})
 
 
+class _BridgeTriggerOps:
+    """Adapts the Bridge to trigger_runner.BridgeOps without exposing these
+    methods on the JS api surface (only public Bridge methods are exposed)."""
+
+    def __init__(self, bridge: Bridge) -> None:
+        self._bridge = bridge
+
+    def run_agent_turn(
+        self,
+        chat_id: str,
+        system: str,
+        message: str,
+        *,
+        draft: bool,
+        reply_to: str | None = None,
+    ) -> None:
+        self._bridge._trigger_run_agent_turn(
+            chat_id, system, message, draft=draft, reply_to=reply_to
+        )
+
+    def run_rule_tool(
+        self, chat_id: str, tool_name: str, tool_input: dict[str, Any]
+    ) -> str:
+        return self._bridge._gated_run_tool(tool_name, tool_input, chat_id)
+
+    def note_in_chat(self, text: str) -> None:
+        self._bridge._dispatch("runspec:trigger_note", {"text": text})
+
+
 class Bridge:
     def __init__(self) -> None:
         self._window: Any = None
@@ -102,6 +131,11 @@ class Bridge:
         # by close_adhoc() (relay dialog close) and on shutdown.
         self._adhoc_conns: dict[tuple[Any, ...], dict[str, Any]] = {}
         self._adapter: Any = None  # ModelAdapter, loaded on demand
+        # Event-trigger engine (built lazily in start_triggers) and the in-memory
+        # kanban board: card_id → card.to_dict(). Cards are not persisted — a
+        # missed event while the console was closed is intentionally not replayed.
+        self._trigger_engine: Any = None
+        self._trigger_cards: dict[str, dict[str, Any]] = {}
         self._hosts: list[dict[str, Any]] = []
         # Named source-side stream filters (runspec_filters.toml). Loaded once at
         # startup and reloaded on save; resolved by name when a relay/download
@@ -142,6 +176,7 @@ class Bridge:
         import atexit
 
         atexit.register(self._close_ssh_pool)
+        atexit.register(self.stop_triggers)  # quit any source pump threads cleanly
 
     def set_window(self, window: Any) -> None:
         self._window = window
@@ -157,6 +192,8 @@ class Bridge:
         if not self._refresh_started:
             self._refresh_started = True
             self._start_refresh_watcher()
+        # Start configured event triggers now the window can receive dispatches.
+        self.start_triggers()
 
     def _build_ssh_pool(self) -> Any:
         """Construct the SSH connection pool from current ``[ssh]`` config.
@@ -4292,8 +4329,10 @@ class Bridge:
         }
         return [{"value": p, "label": labels.get(p, p)} for p in available_providers()]
 
-    def _get_adapter(self) -> Any:
-        if self._adapter is not None:
+    def _get_adapter(self, system_override: str | None = None) -> Any:
+        # A system_override (used by trigger turns) builds a one-off adapter with
+        # that system prompt — never served from / written to the shared cache.
+        if system_override is None and self._adapter is not None:
             return self._adapter
         cfg = self.get_config()
         provider = cfg.get("llm", {}).get("provider")
@@ -4310,6 +4349,8 @@ class Bridge:
         # context, tone). Only override when set so adapters keep their default.
         if str(llm_cfg.get("system", "")).strip():
             kwargs["system"] = llm_cfg["system"]
+        if system_override is not None:
+            kwargs["system"] = system_override  # trigger rules win for this turn
         if llm_cfg.get("aws_region"):
             kwargs["aws_region"] = llm_cfg["aws_region"]
         if llm_cfg.get("base_url"):
@@ -4354,9 +4395,299 @@ class Bridge:
             raise ValueError(f"LLM configuration error: {exc}") from exc
         # When a key-vending command is configured, don't cache the adapter — the
         # adapter's own TTL controls refresh. Static-key configs cache as before.
-        if not llm_cfg.get("api_key_command"):
+        # A system_override adapter is one-off and never cached.
+        if system_override is None and not llm_cfg.get("api_key_command"):
             self._adapter = adapter
         return adapter
+
+    # ── event triggers ────────────────────────────────────────────────────────
+
+    def _base_system(self) -> str:
+        """Base system prompt for trigger agent turns: the configured assistant
+        instructions if set, else a sensible default. compose_system() layers
+        the per-trigger rules on top of this."""
+        configured = str(self.get_config().get("llm", {}).get("system", "")).strip()
+        if configured:
+            return configured
+        return (
+            "You are an assistant embedded in runspec-console. You can run "
+            "runspec runnables on local and remote hosts via tools. Use tools "
+            "when they help, and confirm before anything destructive."
+        )
+
+    def start_triggers(self) -> None:
+        """Build the trigger engine from config and start its sources. Idempotent
+        — safe to call again; it no-ops once an engine is running."""
+        with self._lock:
+            if self._trigger_engine is not None:
+                return
+        from . import sources  # noqa: F401 — registers built-in event sources
+        from .config import read_triggers
+        from .trigger_runner import make_handler
+        from .triggers import TriggerEngine, load_triggers
+
+        triggers, errors = load_triggers(read_triggers())
+        for err in errors:
+            logger.warning("trigger config: %s", err)
+        if not triggers:
+            return
+        handler = make_handler(
+            _BridgeTriggerOps(self),
+            base_system=self._base_system(),
+            # draft_reply (save a reply to Outlook Drafts) is available; the tool
+            # is only offered when a trigger enables reply.draft AND the event
+            # carries a message to reply to.
+            draft_available=True,
+        )
+        engine = TriggerEngine(triggers, handler=handler, on_card=self._on_trigger_card)
+        problems = engine.start()
+        with self._lock:
+            self._trigger_engine = engine
+        for problem in problems:
+            logger.info("trigger source: %s", problem)
+        self._dispatch(
+            "runspec:trigger_status",
+            {
+                "errors": errors,
+                "problems": problems,
+                "active": [t.name for t in triggers if t.enabled],
+            },
+        )
+
+    def stop_triggers(self) -> None:
+        with self._lock:
+            engine = self._trigger_engine
+            self._trigger_engine = None
+        if engine is not None:
+            engine.stop()
+
+    def restart_triggers(self) -> None:
+        """Reload trigger config and restart the engine (after a config change)."""
+        self.stop_triggers()
+        self.start_triggers()
+
+    def list_triggers(self) -> dict[str, Any]:
+        """For the Triggers UI: raw trigger tables, parse errors, and the event
+        sources available on this machine (with the reason any are unavailable)."""
+        from .config import read_triggers
+        from .events import available_sources, create_source
+        from .triggers import load_triggers
+
+        raw = read_triggers()
+        _, errors = load_triggers(raw)
+        sources_info: list[dict[str, Any]] = []
+        for sid in available_sources():
+            src = create_source(sid)
+            ok, reason = src.available() if src is not None else (False, "unknown")
+            sources_info.append(
+                {
+                    "id": sid,
+                    "available": ok,
+                    "reason": reason,
+                    "event_types": src.event_types() if src is not None else [],
+                }
+            )
+        return {
+            "triggers": raw,
+            "errors": errors,
+            "sources": sources_info,
+            "running": self._trigger_engine is not None,
+        }
+
+    def set_trigger_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
+        """Toggle a trigger's enabled flag in config and restart the engine."""
+        from .config import read_triggers, write_triggers
+
+        raw = read_triggers()
+        found = False
+        for trig in raw:
+            if trig.get("name") == name:
+                trig["enabled"] = bool(enabled)
+                found = True
+        if found:
+            write_triggers(raw)
+            self.restart_triggers()
+        return {"ok": found}
+
+    def get_trigger_board(self) -> list[dict[str, Any]]:
+        """Snapshot of the kanban cards for this session (newest last)."""
+        with self._lock:
+            cards = list(self._trigger_cards.values())
+        return sorted(cards, key=lambda c: c.get("created_at", 0.0))
+
+    def _on_trigger_card(self, card: Any) -> None:
+        """Engine hook: record a card update and push it to the UI. May be called
+        from a source / worker thread."""
+        detail = card.to_dict()
+        with self._lock:
+            self._trigger_cards[detail["card_id"]] = detail
+            # Bound the board so a long session can't grow without limit.
+            if len(self._trigger_cards) > 200:
+                oldest = sorted(
+                    self._trigger_cards.values(),
+                    key=lambda c: c.get("created_at", 0.0),
+                )[:50]
+                for old in oldest:
+                    self._trigger_cards.pop(old["card_id"], None)
+        self._dispatch("runspec:trigger_card", detail)
+
+    def _trigger_run_agent_turn(
+        self,
+        chat_id: str,
+        system: str,
+        message: str,
+        *,
+        draft: bool,
+        reply_to: str | None = None,
+    ) -> None:
+        """BridgeOps: run an isolated headless agent turn for a trigger card.
+
+        Runs on the engine's worker thread, so it owns its own asyncio loop
+        (mirroring send_chat). The card id doubles as the chat_id so the turn's
+        token / tool / confirm events attribute to the card on the board.
+        ``reply_to`` (when ``draft``) is the Outlook message id the draft_reply
+        tool replies to."""
+        try:
+            adapter = self._get_adapter(system_override=system)
+        except Exception as exc:  # noqa: BLE001 — surface, don't crash the worker
+            self._dispatch(
+                "runspec:trigger_note", {"text": f"⚠ Trigger could not run: {exc}"}
+            )
+            return
+        if adapter is None:
+            self._dispatch(
+                "runspec:trigger_note",
+                {"text": "⚠ Trigger needs an LLM provider configured in Settings."},
+            )
+            return
+        cancel = threading.Event()
+        with self._lock:
+            self._chat_cancels[chat_id] = cancel
+        try:
+            asyncio.run(
+                self._run_isolated_agent_turn(
+                    chat_id, message, adapter, reply_to=reply_to if draft else None
+                )
+            )
+        finally:
+            with self._lock:
+                self._chat_cancels.pop(chat_id, None)
+
+    async def _run_isolated_agent_turn(
+        self, chat_id: str, message: str, adapter: Any, reply_to: str | None = None
+    ) -> None:
+        """A headless agent loop for a trigger card. Like _agentic_chat_turn but
+        against an isolated, throwaway history (never the shared chat) so a
+        trigger never pollutes the user's conversation. Same toolset and the same
+        autonomy gate (_gated_run_tool_async). When ``reply_to`` is set, the
+        built-in draft_reply tool is offered (and handled inline)."""
+        from .trigger_runner import draft_reply_schema
+
+        start = time.monotonic()
+        tools = self._runnables_to_tools()
+        if reply_to:
+            tools = [*tools, draft_reply_schema()]
+        history: list[dict[str, Any]] = [{"role": "user", "content": message}]
+        with self._lock:
+            cancel = self._chat_cancels.get(chat_id) or threading.Event()
+        stopped = False
+
+        for _ in range(10):  # bound agentic iterations, same as the chat loop
+            if cancel.is_set():
+                stopped = True
+                break
+            response: Any = None
+            try:
+                async for event in adapter.stream_with_tools(history, tools):
+                    if cancel.is_set():
+                        stopped = True
+                        break
+                    if event[0] == "text":
+                        self._dispatch(
+                            "runspec:token", {"id": chat_id, "token": event[1]}
+                        )
+                    elif event[0] == "done":
+                        response = event[1]
+            except Exception as exc:  # noqa: BLE001
+                self._dispatch(
+                    "runspec:token", {"id": chat_id, "token": f"\n⚠ Error: {exc}"}
+                )
+                break
+            if stopped:
+                break
+            if (
+                response is None
+                or response.stop_reason != "tool_use"
+                or not response.tool_calls
+            ):
+                break
+            if cancel.is_set():
+                stopped = True
+                break
+            tool_results: list[tuple[Any, str]] = []
+            for tc in response.tool_calls:
+                self._dispatch(
+                    "runspec:tool_start",
+                    {"id": chat_id, "tool_name": tc.name, "tool_input": tc.input},
+                )
+                if cancel.is_set():
+                    output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — stopped."
+                elif tc.name == "draft_reply":
+                    output = await self._gated_draft_reply(tc.input, chat_id, reply_to)
+                else:
+                    output = await self._gated_run_tool_async(
+                        tc.name, tc.input, chat_id
+                    )
+                self._dispatch(
+                    "runspec:tool_end",
+                    {"id": chat_id, "tool_name": tc.name, "output": output[:2000]},
+                )
+                tool_results.append((tc, output))
+            history.extend(adapter.make_tool_turn(response, tool_results))
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        if stopped:
+            self._dispatch("runspec:token", {"id": chat_id, "token": "\n⏹ Stopped."})
+        self._dispatch(
+            "runspec:run_end",
+            {"id": chat_id, "exit_code": 0, "duration_ms": duration_ms},
+        )
+
+    async def _gated_draft_reply(
+        self, tool_input: dict[str, Any], chat_id: str, reply_to: str | None
+    ) -> str:
+        """Confirm, then save an agent-written reply to Outlook Drafts.
+
+        Always gated (a mailbox write), reusing the same confirm prompt as every
+        other tool call so the card parks in 'awaiting human' until approved. The
+        draft is saved, never sent."""
+        body = str((tool_input or {}).get("body") or "").strip()
+        if not reply_to:
+            return "✗ draft_reply: no source message to reply to."
+        if not body:
+            return "✗ draft_reply: empty body — nothing to draft."
+        request_id, event, holder = self._register_confirm(
+            chat_id, "draft_reply", tool_input, "confirm"
+        )
+        timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
+        approved = self._finish_confirm(request_id, holder, timed_out)
+        if holder.get("cancelled"):
+            return "⏹ draft_reply was not run — you stopped the assistant."
+        if not approved:
+            return "✗ You declined to save the draft reply."
+        return await asyncio.to_thread(self._save_reply_draft, reply_to, body)
+
+    def _save_reply_draft(self, entry_id: str, body: str) -> str:
+        """Blocking Outlook-COM draft save; returns a human summary or an error."""
+        try:
+            from .sources.outlook import save_reply_draft
+
+            info = save_reply_draft(entry_id, body)
+        except Exception as exc:  # noqa: BLE001 — report on the card, don't crash
+            logger.exception("draft_reply: save failed")
+            return f"✗ Could not save draft: {exc}"
+        to = info.get("to") or "(recipients from original)"
+        return f"✓ Saved a draft reply to {to} in Outlook Drafts for you to review and send."
 
     def _dispatch(self, event: str, detail: dict[str, Any]) -> None:
         if self._window is None:

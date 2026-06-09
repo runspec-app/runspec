@@ -147,7 +147,16 @@ posts a quit to the pump. This isolates all COM apartment concerns from the
 bridge's existing threads. The console already spawns daemon threads liberally
 (SSH pool, refresh cycles), so this fits the existing model.
 
-### 4.2 Source #2 — Notification Listener (`sources/notifications.py`, next)
+**Forward-only — no backlog replay (A1).** `start()` subscribes to *future*
+occurrences only; it must never scan the inbox / reminders collection and emit
+existing items. This is the EventSource contract that makes "no persistence" the
+right call: the apps keep their own notifications across restarts (we don't clear
+them), so nothing is lost — the console simply doesn't re-react to messages that
+arrived while it was closed. `NewMailEx` and `Reminder` are naturally
+forward-only, so honouring this is mostly a matter of *not* adding a startup
+scan.
+
+### 4.2 Source #2 — Notification Listener (`sources/notifications.py`) ✅ *implemented*
 
 `Windows.UI.Notifications.Management.UserNotificationListener` reads **every**
 system toast — Teams, Slack, Outlook, anything — through one subscription. This
@@ -159,9 +168,13 @@ New surface this one needs (the *only* reason it's #2, not #1):
 - a one-time **user-consent grant** (`RequestAccessAsync`) — `available()`
   reports `(False, "notification access not granted")` until granted.
 
-Because of the registry, that's the entire delta: a new file, the dep, a consent
-method, and `register_source`. Everything downstream (engine, gate, kanban) is
-unchanged.
+Because of the registry, that was the entire delta: a new file
+(`sources/notifications.py`, registering `"notifications"`), the `winsdk`
+dependency (the `notifications` extra), and a synchronous `get_access_status()`
+check in `available()`. Everything downstream (engine, gate, kanban) was
+unchanged — the prediction held. The listener polls `get_notifications_async`
+on an interval and diffs ids (forward-only: the startup backlog is snapshotted,
+never replayed); the toast payload extractor is pure and unit-tested with fakes.
 
 ---
 
@@ -178,8 +191,11 @@ enabled = true
 source = "outlook"          # EventSource.id
 event  = "new_mail"         # one of source.event_types()
 autonomy = "confirm"        # gate level for runnables this trigger drives (default: confirm)
+post_to_chat = false        # (A2) also surface this trigger's run in the main chat tab
 
 # Cheap declarative pre-filter on the payload (regex). No LLM, fully auditable.
+# Works for any event type — especially useful for `reminder`, which fires for
+# every upcoming item (A4); a couple of regexes keep it to what matters.
 [triggers.match]
 from    = ".*@bigcustomer\\.com"
 subject = "(?i)outage|down|urgent"
@@ -194,6 +210,13 @@ diagnostics runnable against it, then draft (do not send) a reply summarising
 findings. Never send mail or restart a service without confirmation.
 """
 
+# (A5) Suggested reply — off by default. When on, an agent-mode trigger may use
+# the built-in `draft_reply` tool to save a short draft reply to Outlook Drafts
+# for the user to review and send. The console never sends mail itself.
+[triggers.reply]
+draft = true               # enable the draft_reply tool for this trigger
+style = "Concise, professional. Acknowledge, state next step, no commitments."
+
 # ── rule mode alternative (deterministic, no LLM) ──
 # mode = "rule"
 # run  = "prod-web-01__service-status"     # host__runnable
@@ -202,7 +225,8 @@ findings. Never send mail or restart a service without confirmation.
 ```
 
 - `match` is the cheap gate (regex per payload field, all must match). Keeps the
-  LLM out of the 99% of events that aren't relevant.
+  LLM out of the 99% of events that aren't relevant. Applies to every event type,
+  and is the recommended knob for taming a noisy `reminder` source (A4).
 - `mode = "rule"` maps payload → args via the **existing validator** (the
   `map` table), then runs one runnable through the gate. Fully deterministic.
 - `mode = "agent"` runs a headless agent turn seeded with `rules` + a rendered
@@ -211,6 +235,10 @@ findings. Never send mail or restart a service without confirmation.
   `confirm`** — safe by default, exactly like runspec everywhere else. The
   per-runnable / per-arg escalation in `_effective_tool_autonomy` still applies
   (most restrictive wins), so a `manual` runnable is still refused to the agent.
+- `post_to_chat` (default `false`) mirrors the trigger's run into the main chat
+  tab for visibility; otherwise the run lives only on its kanban card (§6, A2).
+- `[triggers.reply] draft` (default `false`) turns on the built-in `draft_reply`
+  tool. The draft is **saved, never sent** — the human reviews and sends (A5).
 
 ---
 
@@ -221,9 +249,11 @@ findings. Never send mail or restart a service without confirmation.
 1. **No human message** — the "user" turn is a rendered event summary plus the
    trigger's `rules`. The rules go in the system prompt; the event summary is the
    first user message.
-2. **Isolated context** — each card gets its own ephemeral history, *not* the
-   main chat's `_chat_history`. A trigger firing must not pollute (or be polluted
-   by) what the user is doing in the chat tab. (Open question 8.2.)
+2. **Isolated context (default)** — each card gets its own ephemeral history,
+   *not* the main chat's `_chat_history`, so a trigger firing can't pollute (or
+   be polluted by) what the user is doing in the chat tab. Per-trigger
+   `post_to_chat = true` (A2) opts a trigger into *also* mirroring its run into
+   the main chat for visibility; the working context stays isolated either way.
 3. **Card-scoped `chat_id`** — the turn runs under the card's id so its
    `runspec:tool_start` / `runspec:tool_confirm` / `runspec:run_end` events are
    attributable to the card on the board. The autonomy gate's `request_id`
@@ -285,25 +315,36 @@ I recommend keeping Outlook/notification-driven triggers at `confirm` (not
 
 ## 9. v1 implementation plan (bounded, in order)
 
-1. **`events.py`** — `Event`, `EventSource` protocol, registry
-   (`register_source`/`get_source`), and a `FakeSource` for tests.
-2. **`sources/outlook.py`** — `OutlookSource`: COM pump thread, `NewMailEx` +
-   `Reminder` → `emit(Event)`. `available()` guards non-Windows / Outlook-absent.
-3. **`triggers.py`** — `Trigger` model (load from config), `match` evaluation,
-   payload→arg mapping (via the existing validator), `TriggerEngine`
-   (start/stop shared sources, route events to cards), `TriggerCard` state.
-4. **Bridge wiring** — `Bridge` owns a `TriggerEngine`; extract the headless
-   turn helper from `send_chat`; add the `js_api` methods and `runspec:trigger_*`
-   dispatch; card-scoped `chat_id`.
-5. **Config** — `[[triggers]]` load/save in `config.py`.
-6. **Tests** — `match` logic, payload→arg mapping, engine routing with
-   `FakeSource`, headless-turn wiring. All platform-independent (COM source
-   mocked the way `webview` is mocked in `test_path_normalize.py`).
-7. **console-ui Kanban view** — separate step once the backend contract is green.
+1. **`events.py`** ✅ *done* — `Event`, `EventSource` protocol, registry
+   (`register_source`/`create_source`/`available_sources`), and a `FakeSource`
+   for tests. (Note the **forward-only** contract from §4.1 / A1.)
+2. **`sources/outlook.py`** ✅ *done* — `OutlookSource`: COM pump thread,
+   `NewMailEx` + `Reminder` → `emit(Event)`, **forward-only** (no startup backlog
+   scan, A1). `available()` guards non-Windows / Outlook-absent. Pure payload
+   extractors unit-tested with fakes. Also `save_reply_draft()` (the draft_reply
+   COM writer).
+3. **`triggers.py`** ✅ *done* — `Trigger` model (load from config, incl.
+   `post_to_chat` and `[triggers.reply]`), `match` evaluation, payload→arg
+   mapping, `TriggerEngine` (start/stop shared sources, route events to cards,
+   **serialised per-trigger** via an injectable executor — A3), `TriggerCard`.
+4. **Bridge wiring** ✅ *done* — `Bridge` owns a `TriggerEngine`; a **separate**
+   isolated headless turn (`_run_isolated_agent_turn`, *not* a refactor of the
+   shared `_agentic_chat_turn`); `js_api` methods + `runspec:trigger_*` dispatch;
+   card-scoped `chat_id`; `post_to_chat` (A2); the built-in **`draft_reply`**
+   tool (A5) handled inline in the isolated turn, confirm-gated, **save-only**
+   (the human sends). Brains live in the tested `trigger_runner.py`.
+5. **Config** ✅ *done* — `[[triggers]]` load/save in `config.py` (array-of-tables
+   serialiser, tomllib round-trip tested), in `runspec_triggers.toml`.
+6. **Tests** ✅ *done* — `match`, payload→arg mapping, engine routing +
+   per-trigger serialisation with `FakeSource`, `post_to_chat`, `draft_reply`
+   schema/gating, config round-trip. All platform-independent (COM mocked).
+7. **console-ui Kanban view** — *next*. The board, the per-event behaviour
+   tickboxes (`post_to_chat`, reply-draft), and an easy `match` editor for taming
+   `reminder` (A2/A4). Backend contract is green and ready.
 
-**Source #2 (Notification Listener) is then:** `sources/notifications.py` +
-`winrt`/`winsdk` dep + consent method + `register_source`. No engine/gate/kanban
-changes.
+**Source #2 (Notification Listener)** ✅ *done* — `sources/notifications.py` +
+the `winsdk` dep (`notifications` extra) + consent check + `register_source`. No
+engine/gate/kanban changes were needed, exactly as predicted.
 
 ---
 
@@ -322,11 +363,34 @@ changes.
    tool (via Outlook COM) for the canonical scenario, or is reading + running
    fleet runnables enough for v1?
 
+---
+
+## 11. Resolved decisions (from the answers below)
+
+1. **Persistence — no, and the design leans on that.** No durable queue in v1
+   (or likely later). The apps keep their own notifications across restarts, so
+   nothing is lost; the console just won't re-react to messages that arrived
+   while it was closed. This makes **forward-only sources** a hard contract
+   (§4.1): `start()` subscribes to future occurrences and never replays backlog.
+2. **`post_to_chat` is configurable per trigger** (default `false`). Working
+   context stays isolated; opting in mirrors the run into the main chat. The
+   kanban UI will expose this (and reply-draft) as per-event tickboxes.
+3. **Concurrency — small worker pool, serialised per trigger** (my recommended
+   default), made configurable once there's usage experience.
+4. **`reminder` noise — handled by `match`, not a forced default.** `match`
+   applies to reminders like any event; the UI gets an easy `match` editor so
+   narrowing a chatty reminder source is a couple of regexes.
+5. **`draft_reply` is in for v1 — and it's a headline feature.** ✅ *implemented.*
+   Off by default, enabled per trigger via `[triggers.reply] draft = true`. The
+   agent writes a short reply and **saves it to Drafts; the console never sends.**
+   The human reviews the suggested response and sends it — exactly the "check and
+   send" loop from the answer. The tool is offered only when the trigger enables
+   it *and* the event carries a message to reply to (an Outlook `entry_id`), and
+   every draft save is confirm-gated.
+
 ## Answers
 1. No not in version 1 and maybe not in later versions either, the notifications from the apps should remain visible betwee restarts, we don't clear them right? So they are not lost, we just won't react to old messages which seems like a good ide to me right now, usage may change my mind.
 2. I would like to explore the ability to specify that in the toml settings. Default is no but the ability to configure a certain event to post will be great, maybe the ui also allows tick boxes to change event behaviour too.
 3. Go with your recommendation here. Option to change it after some usage experience.
 4. If the reminders are too much then the user could reduce his reminders maybe but open to a first version match, just needs to be easily configured maybe in a ui area so it's easy to match properly
 5. Being able to draft a response to an event sounds exceptional, that really becomes a very powerful selling point, suggested responses could be a setting in the toml to turn on, give a short summary response I can check and send seems awesome!
-
-

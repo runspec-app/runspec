@@ -8,6 +8,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.29.0] — 2026-06-09
+
+### Added
+- **Event triggers — react to local Windows events and run runnables.** A new
+  **Triggers** tab and a backend engine that lets the connected LLM (or a
+  deterministic rule) react to things that happen on the machine. A *trigger*
+  binds an event source + type (optionally narrowed by a regex `match`) to an
+  action; matches flow across a kanban board (`Triggered → Triage → Awaiting
+  human → Running → Done / Failed`). Triggers live in `runspec_triggers.toml`
+  in the app config directory. See `docs/design/console-triggers.md`.
+  - **Outlook source** (`source = "outlook"`): `new_mail` and `reminder` events
+    via the signed-in desktop Outlook client over COM — no extra dependency,
+    and it rides the existing SSO session. **Forward-only**: only mail/reminders
+    that arrive while the console is running fire events; the backlog is never
+    replayed.
+  - **Notification-listener source** (`source = "notifications"`): every system
+    toast — Teams, Slack, anything — through one subscription
+    (`UserNotificationListener`). Needs the `notifications` extra (`pip install
+    runspec-console[notifications]`) and a one-time Windows consent grant.
+  - **Two routing modes:** `mode = "rule"` maps event-payload fields to a
+    runnable's args (`{{ field }}`) and runs it; `mode = "agent"` runs a headless
+    agent turn seeded with the trigger's `rules`, with the full runnable toolset.
+  - **draft_reply:** an agent-mode trigger with `[triggers.reply] draft = true`
+    can save a suggested reply to **Outlook Drafts** for you to review and send.
+    It is **never sent** by the console, and every draft is confirm-gated.
+  - **Safe by default:** every runnable a trigger drives goes through the same
+    autonomy gate as chat (confirm-by-default); a parked confirm shows on the
+    card as **Awaiting human** with inline Approve / Deny. Per-trigger `enabled`
+    toggle and `post_to_chat` (mirror a run into the main chat) from the UI.
+
+
 ## [0.28.0] — 2026-06-09
 
 ### Added

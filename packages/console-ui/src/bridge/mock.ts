@@ -1032,4 +1032,51 @@ export const mockApi: BridgeApi = {
     console.log('mock: open_devtools')
   },
 
+  // ── event triggers ─────────────────────────────────────────────────────────
+  list_triggers: async () => ({
+    triggers: [
+      {
+        name: 'vip-outage-triage',
+        source: 'outlook',
+        event: 'new_mail',
+        mode: 'agent',
+        enabled: true,
+        autonomy: 'confirm',
+        rules: 'If this reports an outage, run diagnostics and draft a reply.',
+        match: { from: '.*@bigcustomer\\.com' },
+        reply: { draft: true, style: 'Concise, professional.' },
+      },
+      {
+        name: 'invoice-reminder',
+        source: 'outlook',
+        event: 'reminder',
+        mode: 'rule',
+        enabled: false,
+        run: 'local__notify',
+        map: { message: '{{ subject }}' },
+      },
+    ],
+    errors: [],
+    sources: [
+      { id: 'outlook', available: false, reason: 'Outlook source requires Windows', event_types: ['new_mail', 'reminder'] },
+    ],
+    running: true,
+  }),
+  set_trigger_enabled: async (name: string, enabled: boolean) => {
+    console.log('mock: set_trigger_enabled', name, enabled)
+    return { ok: true }
+  },
+  get_trigger_board: async () => [
+    {
+      card_id: 'demo1', trigger: 'vip-outage-triage', source: 'outlook',
+      event_type: 'new_mail', summary: 'Outage on web01 — site returning 503',
+      column: 'done', detail: { result: '✓ Saved a draft reply in Outlook Drafts.' },
+      created_at: Date.now() / 1000 - 300,
+    },
+    {
+      card_id: 'demo2', trigger: 'vip-outage-triage', source: 'outlook',
+      event_type: 'new_mail', summary: 'Re: scheduled maintenance window',
+      column: 'triage', detail: {}, created_at: Date.now() / 1000 - 30,
+    },
+  ],
 }

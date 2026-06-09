@@ -13,6 +13,7 @@ import {
   SwapOutlined,
   NodeIndexOutlined,
   CodeOutlined,
+  BellOutlined,
   KeyOutlined,
   LoadingOutlined,
   BugOutlined,
@@ -24,6 +25,7 @@ import { SpecsView } from './views/SpecsView'
 import { HistoryView } from './views/HistoryView'
 import { LogsView } from './views/LogsView'
 import { SchedulesView } from './views/SchedulesView'
+import { TriggersView } from './views/TriggersView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
@@ -38,7 +40,7 @@ import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'analytics' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'analytics' | 'dev'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -197,6 +199,7 @@ export default function App() {
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
     { key: 'schedules' as ViewKey, label: 'Schedules', icon: <CalendarOutlined /> },
+    { key: 'triggers'  as ViewKey, label: 'Triggers',  icon: <BellOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ]
 
@@ -403,6 +406,7 @@ export default function App() {
                     {view === 'analytics' && <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}><AnalyticsView selectedHost={selectedHost} activeScope={activeScope} /></Suspense>}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
+                    {view === 'triggers'  && <TriggersView />}
                     {view === 'dev'       && <DevView />}
                   </div>
                 )}
