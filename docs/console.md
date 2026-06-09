@@ -134,6 +134,115 @@ pip install "runspec-console[bedrock]"     # Claude via AWS Bedrock
 
 ---
 
+## Event triggers (Windows)
+
+Triggers let the console **react to things that happen on the machine** and run
+runspec runnables — a new email, a meeting reminder, a Teams/Slack notification.
+The **Triggers** tab shows your configured triggers and a kanban board where each
+matched event flows across columns: **Triggered → Triage → Awaiting human →
+Running → Done / Failed**.
+
+A trigger binds an **event source** + **event type** (optionally narrowed by a
+regex `match`) to an **action**. The action is either a deterministic runnable
+call (`mode = "rule"`) or a headless agent turn (`mode = "agent"`) that follows
+the trigger's `rules` with the full runnable toolset. Either way, every runnable a
+trigger drives goes through the **same autonomy gate as chat** — confirm-by-default,
+so a card parks in *Awaiting human* with inline Approve / Deny.
+
+> Triggers are a **Windows** feature today and only fire while the console is
+> running (they never replay a backlog — see *forward-only* below). An LLM
+> provider must be configured (above) for `mode = "agent"` triggers.
+
+### Event sources
+
+| Source (`source =`) | Events (`event =`) | Notes |
+|---|---|---|
+| `outlook`       | `new_mail`, `reminder` | Uses the **signed-in desktop Outlook** client over COM — no extra dependency, and it rides your existing SSO session. |
+| `notifications` | `toast`                | Every system toast (Teams, Slack, anything) via one listener. Needs the `notifications` extra **and** a one-time Windows consent grant. |
+
+```bash
+pip install "runspec-console[notifications]"   # enables the toast source
+```
+
+The Triggers tab shows each source's availability and the reason any is off
+(not on Windows, `winsdk` not installed, consent not granted, …).
+
+### Configuring triggers
+
+Triggers live in `runspec_triggers.toml` in the app config directory
+(`%APPDATA%\runspec-console\`). Each `[[triggers]]` table is one trigger:
+
+```toml
+[[triggers]]
+name   = "vip-outage-triage"
+source = "outlook"
+event  = "new_mail"
+mode   = "agent"               # "agent" (LLM-in-the-loop) | "rule" (direct runnable)
+autonomy = "confirm"           # gate level (default: confirm)
+post_to_chat = false           # also mirror this run into the Console tab
+
+# Cheap regex pre-filter on the event payload — all patterns must match. Keeps
+# the LLM out of irrelevant events (and tames a chatty `reminder` source).
+[triggers.match]
+from    = ".*@bigcustomer\\.com"
+subject = "(?i)outage|down|urgent"
+
+# agent mode: the rules the model follows for this trigger.
+rules = """
+If this reports an outage, identify the affected host, run the diagnostics
+runnable against it, and draft a short reply summarising findings. Never
+restart a service or send mail without confirmation.
+"""
+
+# Optional: let the agent save a suggested reply to Outlook Drafts (never sends).
+[triggers.reply]
+draft = true
+style = "Concise, professional. Acknowledge and state the next step."
+```
+
+For a deterministic, no-LLM trigger, use `mode = "rule"` and map event-payload
+fields onto the runnable's args with `{{ field }}`:
+
+```toml
+[[triggers]]
+name   = "log-incoming-ticket"
+source = "outlook"
+event  = "new_mail"
+mode   = "rule"
+run    = "local__record-ticket"     # host__runnable
+[triggers.map]
+summary = "{{ subject }}"
+sender  = "{{ from }}"
+```
+
+Event payload fields you can `match` on / map from:
+
+- `outlook` `new_mail`: `from`, `to`, `subject`, `body`, `received`, `categories`, `entry_id`
+- `outlook` `reminder`: `subject`, `start`, `location`, `is_meeting`, `organizer`
+- `notifications` `toast`: `app`, `title`, `body`, `text`
+
+### draft_reply — suggested replies
+
+With `[triggers.reply] draft = true` on an `agent`-mode `new_mail` trigger, the
+model can call a built-in `draft_reply` tool that **saves a reply to your Outlook
+Drafts folder** (the agent's text above the quoted original). The console
+**never sends mail** — you review the draft in Outlook and send it yourself, and
+each draft save is confirm-gated. The tool is only offered when both the trigger
+enables it and the event is a mail with something to reply to.
+
+### Safe by default
+
+- **Confirm-by-default.** Trigger-driven runnables use the same autonomy gate as
+  chat; a `manual` runnable is still never run by the agent. Approve / Deny is
+  surfaced on the card (the *Awaiting human* column).
+- **Forward-only.** Sources only react to events that arrive **while the console
+  is running** — your inbox / existing toasts are snapshotted at startup and
+  never replayed, so reopening the console doesn't re-handle old messages.
+- **Kill switch.** Toggle any trigger off in the Triggers tab (it stops
+  immediately); delete it from `runspec_triggers.toml` to remove it.
+
+---
+
 ## Output rendering
 
 When a runnable prints JSON, the console renders it instead of dumping raw text:

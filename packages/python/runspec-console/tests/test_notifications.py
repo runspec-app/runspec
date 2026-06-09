@@ -77,10 +77,14 @@ def test_available_off_windows():
 
 
 def test_available_reports_missing_winsdk(monkeypatch):
+    # Force the Windows branch, then make the winsdk import fail deterministically
+    # (it may genuinely be installed on a Windows runner) so we exercise the
+    # missing-dependency path on any platform.
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "winsdk", None)
     ok, reason = NotificationSource().available()
-    if not ok:
-        assert "winsdk" in reason
+    assert ok is False
+    assert "winsdk" in reason
 
 
 def test_event_types():

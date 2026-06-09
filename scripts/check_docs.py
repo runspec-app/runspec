@@ -50,9 +50,10 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   project/tool/build-system  → pyproject / foreign manifest snippet
 #   hosts                      → runspec-chat `jump_hosts.toml` connection file
 #   ssh/refresh                → console `config.toml` ([ssh]/[refresh] tuning)
-# Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts` would be
-# skipped — none exist in the docs (guarded by check below), and runnable names
-# are author-chosen, so this is acceptable.
+#   triggers                   → console `runspec_triggers.toml` ([[triggers]])
+# Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
+# would be skipped — none exist in the docs (guarded by check below), and runnable
+# names are author-chosen, so this is acceptable.
 NON_RUNSPEC_SECTIONS = {
     "project",
     "tool",
@@ -60,6 +61,7 @@ NON_RUNSPEC_SECTIONS = {
     "hosts",
     "ssh",
     "refresh",
+    "triggers",
 }
 
 

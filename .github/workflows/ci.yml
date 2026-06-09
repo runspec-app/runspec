@@ -757,6 +757,42 @@ jobs:
       - name: Test
         run: npm test
 
+  # The Linux jobs above mock all Windows COM/WinRT, so the trigger event sources'
+  # lazy win32com / winsdk import paths are never exercised there. This job runs
+  # the platform-independent trigger tests on Windows (so their win32 branches
+  # run) and asserts the OS-specific imports actually resolve.
+  console-smoke:
+    name: runspec-console smoke (windows-latest)
+    needs: changes
+    if: needs.changes.outputs.console == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-console
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test + Windows deps
+        run: pip install pytest anthropic paramiko cryptography pywin32 "winsdk>=1.0.0b10"
+
+      - name: Run trigger tests (Windows branches)
+        env:
+          PYTHONPATH: .
+        run: pytest tests/test_events.py tests/test_triggers.py tests/test_outlook.py tests/test_notifications.py tests/test_trigger_config.py tests/test_trigger_runner.py
+
+      - name: Smoke — Windows-only source imports resolve
+        shell: pwsh
+        env:
+          PYTHONPATH: .
+        run: |
+          python -c "import pythoncom, win32com.client; from winsdk.windows.ui.notifications.management import UserNotificationListener; print('lazy COM / WinRT imports OK')"
+          python -c "from runspec_console.sources.outlook import OutlookSource, save_reply_draft; ok, reason = OutlookSource().available(); assert ok, reason; print('outlook source available OK')"
+          python -c "from runspec_console.sources.notifications import NotificationSource; r = NotificationSource().available(); assert isinstance(r, tuple) and len(r) == 2, r; print('notifications source available ->', r)"
+
   # ── runspec-webops (Node runnable package) ───────────────────────────────────
 
   webops:
@@ -810,7 +846,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, webops, docs-check]
+    needs: [python-quality, python-test, node, chat-quality, chat-test, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, console-smoke, webops, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -846,6 +882,7 @@ jobs:
           check "console-quality" "${{ needs.console-quality.result }}"
           check "console-test"    "${{ needs.console-test.result }}"
           check "console-ui"      "${{ needs.console-ui.result }}"
+          check "console-smoke"   "${{ needs.console-smoke.result }}"
           check "webops"          "${{ needs.webops.result }}"
           check "docs-check"      "${{ needs.docs-check.result }}"
           if [[ $fail -eq 1 ]]; then
