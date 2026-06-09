@@ -321,3 +321,12 @@ changes.
 5. **Built-in tools:** do agent-mode triggers need a "draft email reply" custom
    tool (via Outlook COM) for the canonical scenario, or is reading + running
    fleet runnables enough for v1?
+
+## Answers
+1. No not in version 1 and maybe not in later versions either, the notifications from the apps should remain visible betwee restarts, we don't clear them right? So they are not lost, we just won't react to old messages which seems like a good ide to me right now, usage may change my mind.
+2. I would like to explore the ability to specify that in the toml settings. Default is no but the ability to configure a certain event to post will be great, maybe the ui also allows tick boxes to change event behaviour too.
+3. Go with your recommendation here. Option to change it after some usage experience.
+4. If the reminders are too much then the user could reduce his reminders maybe but open to a first version match, just needs to be easily configured maybe in a ui area so it's easy to match properly
+5. Being able to draft a response to an event sounds exceptional, that really becomes a very powerful selling point, suggested responses could be a setting in the toml to turn on, give a short summary response I can check and send seems awesome!
+
+
