@@ -6,16 +6,18 @@ Slack, …): instead of integrating each app, listen to the toast it already
 raises. ``Windows.UI.Notifications.Management.UserNotificationListener`` exposes
 every toast system-wide through one subscription.
 
-Why it's source #2, not #1: it needs a new dependency (the WinRT projection,
-``winsdk`` — the ``notifications`` extra) and a one-time **user-consent grant**.
-``available()`` reports both so the UI explains a disabled source.
+Why it's source #2, not #1: it needs new dependencies (the PyWinRT projection,
+the ``winrt-*`` packages — the ``notifications`` extra) and a one-time
+**user-consent grant**. ``available()`` reports both so the UI explains a
+disabled source. PyWinRT ships wheels through current Python versions (3.13+),
+so the extra installs with no C toolchain.
 
 Forward-only (A1): on start we snapshot the toasts already present and never
 replay them — only notifications that arrive while we're running fire events.
 We poll ``get_notifications_async`` on an interval (the changed-event has
 restrictions for unpackaged desktop apps); the diff of ids is the new set.
 
-The payload extraction is pure and unit-tested with fakes; the winsdk imports
+The payload extraction is pure and unit-tested with fakes; the winrt imports
 stay inside the listener thread. See docs/design/console-triggers.md (§4.2).
 """
 
@@ -106,13 +108,13 @@ class NotificationSource:
         if sys.platform != "win32":
             return (False, "Notification listener requires Windows")
         try:
-            from winsdk.windows.ui.notifications.management import (
+            from winrt.windows.ui.notifications.management import (
                 UserNotificationListener,
             )
         except Exception:
             return (
                 False,
-                "winsdk not installed — pip install runspec-console[notifications]",
+                "winrt not installed — pip install runspec-console[notifications]",
             )
         try:
             status = int(UserNotificationListener.current.get_access_status())
@@ -154,8 +156,8 @@ class NotificationSource:
     async def _listen(self) -> None:
         import asyncio
 
-        from winsdk.windows.ui.notifications import NotificationKinds
-        from winsdk.windows.ui.notifications.management import UserNotificationListener
+        from winrt.windows.ui.notifications import NotificationKinds
+        from winrt.windows.ui.notifications.management import UserNotificationListener
 
         listener = UserNotificationListener.current
         access = int(await listener.request_access_async())

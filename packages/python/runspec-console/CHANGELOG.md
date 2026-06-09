@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.29.1] — 2026-06-09
+
+### Fixed
+- **Notification-listener source installs on Python 3.13+.** The `notifications`
+  extra now uses the maintained PyWinRT packages (`winrt-*`) instead of the
+  archived `winsdk` (whose wheels stop at 3.12, forcing a from-source build that
+  needs a C toolchain / Visual Studio). PyWinRT ships wheels through current
+  Python versions, so `pip install runspec-console[notifications]` works with no
+  build step. The Outlook source is unaffected (it never needed this extra).
+
+
 ## [0.29.0] — 2026-06-09
 
 ### Added

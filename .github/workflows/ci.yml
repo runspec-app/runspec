@@ -777,7 +777,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test + Windows deps
-        run: pip install pytest anthropic paramiko cryptography pywin32 "winsdk>=1.0.0b10"
+        run: pip install pytest anthropic paramiko cryptography pywin32 "winrt-runtime>=2.0" "winrt-Windows.Foundation>=2.0" "winrt-Windows.Foundation.Collections>=2.0" "winrt-Windows.UI.Notifications>=2.0" "winrt-Windows.UI.Notifications.Management>=2.0" "winrt-Windows.ApplicationModel>=2.0"
 
       - name: Run trigger tests (Windows branches)
         env:
@@ -789,7 +789,7 @@ jobs:
         env:
           PYTHONPATH: .
         run: |
-          python -c "import pythoncom, win32com.client; from winsdk.windows.ui.notifications.management import UserNotificationListener; print('lazy COM / WinRT imports OK')"
+          python -c "import pythoncom, win32com.client; from winrt.windows.ui.notifications.management import UserNotificationListener; print('lazy COM / WinRT imports OK')"
           python -c "from runspec_console.sources.outlook import OutlookSource, save_reply_draft; ok, reason = OutlookSource().available(); assert ok, reason; print('outlook source available OK')"
           python -c "from runspec_console.sources.notifications import NotificationSource; r = NotificationSource().available(); assert isinstance(r, tuple) and len(r) == 2, r; print('notifications source available ->', r)"
 

@@ -165,7 +165,7 @@ pip install "runspec-console[notifications]"   # enables the toast source
 ```
 
 The Triggers tab shows each source's availability and the reason any is off
-(not on Windows, `winsdk` not installed, consent not granted, …).
+(not on Windows, `winrt` not installed, consent not granted, …).
 
 ### Configuring triggers
 
