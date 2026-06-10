@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.38.0] — 2026-06-10
+
+### Fixed
+- **Trigger confirmations and cards now appear reliably.** All UI dispatches go
+  through a single FIFO queue drained by one thread, so `evaluate_js` is never
+  called concurrently from background threads (trigger workers, the Outlook COM
+  pump, the agent loop). Concurrent background dispatch was racy on pywebview —
+  under a burst of incoming events the autonomy-confirm prompt could be lost (a
+  rule-mode run "stuck in running" with no buttons; the Approve/Deny panel
+  vanishing during a flood of unrelated mail). Serialising delivery fixes the
+  flakiness and keeps events in order.
+- **History shows remote runs regardless of how runspec was installed there.**
+  Remote History guessed the log dir from the binary path (`{rp}/../../logs`),
+  which is wrong for pipx / `~/.local` / system installs — so a run the Logs tab
+  found (it uses the runnable's real `sys.prefix`) was missing from History.
+  History and Analytics now ask the remote runspec for its actual log dirs
+  (`logs status --json` → `log_dirs()`), cached per venv, with the path-derived
+  dir and `$HOME/logs` as fallbacks.
+
+
 ## [0.37.0] — 2026-06-10
 
 ### Added

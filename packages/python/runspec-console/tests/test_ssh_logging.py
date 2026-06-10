@@ -11,6 +11,7 @@ pywebview window is created, so they run on any platform.
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 
 from runspec_console.bridge import Bridge, _ParamikoDevHandler
@@ -79,10 +80,12 @@ def test_handler_never_raises_when_emit_fails() -> None:
 class _Stub:
     _emit_ssh_log = Bridge._emit_ssh_log
     _dispatch = Bridge._dispatch
+    _ui_dispatch_loop = Bridge._ui_dispatch_loop
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pre_window_ssh_logs: list[dict] = []
+        self._dispatch_q: queue.Queue = queue.Queue()
 
 
 def test_emit_ssh_log_buffers_without_window() -> None:
@@ -111,6 +114,11 @@ def test_emit_ssh_log_dispatches_with_window() -> None:
 
     s = _Stub()
     s._window = _Win()
+    # Dispatch is async now (serialised through the ui-dispatch loop); drive it.
+    t = threading.Thread(target=s._ui_dispatch_loop, daemon=True)
+    t.start()
     s._emit_ssh_log({"level": "ERROR", "message": "boom"})
+    s._dispatch_q.put(None)
+    t.join(timeout=2)
     assert len(sent) == 1
     assert "runspec:ssh" in sent[0][1]["js"]

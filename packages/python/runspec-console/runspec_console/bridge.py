@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import random
 import sys
 import threading
@@ -145,6 +146,17 @@ class Bridge:
         self._window: Any = None
         self._debug: bool = False
         self._lock = threading.Lock()
+        # All UI dispatches go through one FIFO queue drained by a single daemon
+        # thread, so evaluate_js is never called concurrently from many threads
+        # (trigger workers, the COM event pump, the agent loop). Concurrent
+        # evaluate_js from background threads was racy on pywebview — under a
+        # burst of events the autonomy-confirm prompt could be lost or the
+        # buttons never render. Serialising fixes that and keeps delivery in order.
+        self._dispatch_q: queue.Queue[tuple[str, dict[str, Any]] | None] = queue.Queue()
+        self._dispatch_thread = threading.Thread(
+            target=self._ui_dispatch_loop, name="ui-dispatch", daemon=True
+        )
+        self._dispatch_thread.start()
         self._in_flight: dict[str, dict[str, Any]] = {}
         # Cached ad-hoc SFTP connections for the relay source browser, keyed by
         # (jump, host, user, port) — so navigating directories on a slow link
@@ -168,6 +180,10 @@ class Bridge:
         # can await a transfer's outcome. Bounded; oldest entries are evicted.
         self._recent_transfer_results: dict[str, dict[str, Any]] = {}
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
+        # Real remote log dirs per venv runspec path (asked of the remote, cached
+        # for the session — they don't move). Avoids guessing the dir from the
+        # binary path, which is wrong for pipx / ~/.local / system installs.
+        self._remote_logdir_cache: dict[str, list[str]] = {}
         self._runnables_cache: list[dict[str, Any]] = []
         # Persistent agent conversation so the model remembers prior turns. One
         # rolling conversation per app session; reset via clear_chat(). The lock
@@ -1858,26 +1874,70 @@ class Bridge:
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return records[:300]
 
+    def _remote_log_dirs(
+        self, entry: dict[str, Any], rp: str, timeout: int = 30
+    ) -> list[str]:
+        """Real log directories for one remote venv, asked of the remote runspec.
+
+        ``logs status --json`` reports ``log_dirs()`` — the actual dirs the Logs
+        tab reads — so History/Analytics don't guess the dir from the binary
+        path (which is wrong for pipx / ~/.local / system installs, where the
+        runnable's ``sys.prefix`` isn't ``{rp}/../..``). Falls back to the
+        path-derived dir plus ``$HOME/logs``. Cached per venv path for the
+        session (only when the query actually resolved, so a transient failure
+        doesn't pin the fallback)."""
+        from pathlib import PurePosixPath
+        import shlex
+
+        cached = self._remote_logdir_cache.get(rp)
+        if cached is not None:
+            return cached
+
+        dirs: list[str] = []
+
+        def _add(d: str) -> None:
+            if d and d not in dirs:
+                dirs.append(d)
+
+        resolved = False
+        cmd = " ".join(shlex.quote(p) for p in [rp, "logs", "status", "--json"])
+        try:
+            code, out, _ = self._ssh_run(
+                entry["ssh"],
+                cmd,
+                identity_file=entry.get("identityFile"),
+                timeout=timeout,
+            )
+            if code == 0 and out.strip():
+                for d in json.loads(out).get("dirs", []):
+                    _add(str(d))
+                resolved = True
+        except Exception:
+            logger.debug("remote log-dir query failed for %s", rp, exc_info=True)
+        _add(str(PurePosixPath(rp).parent.parent / "logs"))  # path-derived fallback
+        _add("$HOME/logs")
+        if resolved:
+            self._remote_logdir_cache[rp] = dirs
+        return dirs
+
     def _get_remote_history(
         self, entry: dict[str, Any], runnable: str | None
     ) -> list[dict[str, Any]]:
-        from pathlib import PurePosixPath
-
         ssh = entry["ssh"]
         idf = entry.get("identityFile")
         paths = _paths(entry)
-        # Scan every venv's logs dir AND ~/logs (the writable fallback) — a
-        # runnable whose venv logs dir isn't writable logs to ~/logs, and the
-        # Logs tab sees it via the CLI's log_dirs(); this hand-rolled scan must
-        # match or remote runs that landed in ~/logs go missing from History.
+        # Ask the remote runspec where its logs actually are (per venv), so a
+        # non-standard install (pipx / ~/.local) whose logs the Logs tab finds
+        # isn't missed by History. Union across venvs.
         log_dirs: list[str] = []
         for rp in paths:
-            if rp:
-                d = str(PurePosixPath(rp).parent.parent / "logs")
+            if not rp:
+                continue
+            for d in self._remote_log_dirs(entry, rp):
                 if d not in log_dirs:
                     log_dirs.append(d)
-        if "~/logs" not in log_dirs:
-            log_dirs.append("~/logs")
+        if not log_dirs:
+            log_dirs = ["$HOME/logs"]
         script = _remote_log_script(log_dirs, runnable)
         _, stdout, _ = self._ssh_run(ssh, script, identity_file=idf, timeout=20)
         records: list[dict[str, Any]] = []
@@ -1924,23 +1984,16 @@ class Bridge:
         if entry.get("ssh"):
             ssh = entry["ssh"]
             idf = entry.get("identityFile")
-            # Each venv's logs dir (tagged with its group) plus ~/logs (the
-            # writable fallback), so remote runs that landed in ~/logs aren't
-            # missed — same defect as get_history. ~/logs is tagged with the
-            # primary venv's group (correct in the common single-venv case).
+            # Ask the remote runspec for each venv's real log dirs (same as
+            # History) so non-standard installs aren't missed, tagging each dir
+            # with that venv's group.
             remote_dir_groups: list[tuple[str, str]] = []
             for rp in paths:
-                if rp:
-                    remote_dir_groups.append(
-                        (
-                            str(PurePosixPath(rp).parent.parent / "logs"),
-                            PurePosixPath(rp).parent.parent.name,
-                        )
-                    )
-            primary_group = (
-                PurePosixPath(paths[0]).parent.parent.name if paths and paths[0] else ""
-            )
-            remote_dir_groups.append(("~/logs", primary_group))
+                if not rp:
+                    continue
+                group = PurePosixPath(rp).parent.parent.name
+                for d in self._remote_log_dirs(entry, rp):
+                    remote_dir_groups.append((d, group))
             seen_remote: set[str] = set()
             for log_dir, group in remote_dir_groups:
                 if log_dir in seen_remote:
@@ -4983,21 +5036,35 @@ class Bridge:
         }
 
     def _dispatch(self, event: str, detail: dict[str, Any]) -> None:
-        if self._window is None:
-            # Debug, not warning: the bridge logger propagates to runspec-core's
-            # root stderr handler, so a warning here leaks to the launching
-            # terminal. Background work can still race a not-yet-attached window;
-            # that's expected, not worth shouting about.
-            logger.debug("dispatch %s skipped: no window attached", event)
-            return
-        payload = json.dumps(detail)
-        js = f"window.dispatchEvent(new CustomEvent({json.dumps(event)},{{detail:{payload}}}))"
-        try:
-            self._window.evaluate_js(js)
-        except Exception:
-            # Previously swallowed — that hid event-delivery failures (e.g. the
-            # autonomy confirm prompt) and left nothing to diagnose. Log it.
-            logger.exception("dispatch %s failed (evaluate_js raised)", event)
+        # Enqueue; the single ui-dispatch thread delivers it (see __init__).
+        # Non-blocking, so a caller on the COM pump / a trigger worker never
+        # stalls on evaluate_js and concurrent callers can't race the webview.
+        self._dispatch_q.put((event, detail))
+
+    def _ui_dispatch_loop(self) -> None:
+        """Drain the dispatch queue, delivering each event to the web view via a
+        single thread (serialised, in order). Started in __init__; skips while no
+        window is attached (matching the old drop-pre-window behaviour)."""
+        while True:
+            item = self._dispatch_q.get()
+            if item is None:
+                return  # shutdown sentinel
+            event, detail = item
+            window = self._window
+            if window is None:
+                logger.debug("dispatch %s skipped: no window attached", event)
+                continue
+            try:
+                payload = json.dumps(detail)
+                js = (
+                    "window.dispatchEvent(new CustomEvent("
+                    f"{json.dumps(event)},{{detail:{payload}}}))"
+                )
+                window.evaluate_js(js)
+            except Exception:
+                # Previously swallowed — that hid event-delivery failures (e.g.
+                # the autonomy confirm prompt) and left nothing to diagnose.
+                logger.exception("dispatch %s failed (evaluate_js raised)", event)
 
     @staticmethod
     def _current_user() -> str:

@@ -315,12 +315,12 @@ class TestGetAnalyticsRemote(unittest.TestCase):
         )
 
         def fake_ssh_run(ssh, *a, **kw):
-            # The record lives in the venv logs dir; ~/logs is empty. (History
-            # and analytics now scan both, so the fake must distinguish them or
-            # it would double-count the same record.)
+            # The record lives only in the venv logs dir; the `logs status` query
+            # and the $HOME/logs scan return nothing (so the same record isn't
+            # double-counted now that the scan covers several dirs).
             script = a[0] if a else ""
             if ssh == "u@h1":
-                return (0, framed, "") if "~/logs" not in script else (0, "", "")
+                return (0, framed, "") if "/opt/v/logs/*.log" in script else (0, "", "")
             return (255, "", "connection refused")
 
         with (
@@ -594,18 +594,41 @@ class TestPerInvocationDiscovery(unittest.TestCase):
         self.assertEqual(recs[0]["runnable"], "backup")
 
 
-class TestRemoteHistoryHomeLogs(unittest.TestCase):
-    """Remote History had the same ~/logs gap as local: it scanned only the
-    first venv's logs dir. The Logs tab sees ~/logs via the CLI, so a remote
-    triggered run that landed there was missing from History only."""
+class TestRemoteHistoryDirs(unittest.TestCase):
+    """Remote History asks the remote runspec for its real log dirs (via `logs
+    status --json`) instead of guessing {rp}/../../logs — that guess is wrong for
+    pipx / ~/.local / system installs, where the Logs tab still finds the run
+    (it uses the runnable's real sys.prefix) but History missed it."""
 
-    def test_remote_history_scans_all_venvs_and_home_logs(self) -> None:
+    def test_remote_history_uses_dirs_from_logs_status(self) -> None:
         b = _make_bridge()
-        entry = {
-            "name": "prod",
-            "ssh": "u@h",
-            "runspec_paths": ["/opt/v/bin/runspec", "/opt/w/bin/runspec"],
-        }
+        entry = {"name": "prod", "ssh": "u@h", "runspec_paths": ["/opt/v/bin/runspec"]}
+        b._hosts = [entry]
+        captured: dict[str, str] = {}
+        framed = "\x00RUNSPEC_LOG:backup\n" + _summary_line(
+            run_id="r1", runnable="backup"
+        )
+        # A non-standard install whose real dirs are nowhere near {rp}/../../logs.
+        status = json.dumps({"dirs": ["/weird/pipx/logs", "/home/u/logs"]})
+
+        def fake_ssh_run(ssh, command, **kw):
+            if "logs status --json" in command:
+                return (0, status, "")
+            captured["script"] = command  # the cat scan
+            return (0, framed, "")
+
+        with patch.object(b, "_ssh_run", side_effect=fake_ssh_run):
+            recs = b.get_history("prod", "backup")
+        # The scan targets the dirs the remote reported, not the path guess.
+        self.assertIn("/weird/pipx/logs", captured["script"])
+        self.assertIn("/home/u/logs", captured["script"])
+        self.assertEqual(len(recs), 1)
+
+    def test_remote_history_falls_back_when_status_unavailable(self) -> None:
+        # Old runspec without `logs status --json` → fall back to the path guess
+        # plus $HOME/logs so History still works.
+        b = _make_bridge()
+        entry = {"name": "prod", "ssh": "u@h", "runspec_paths": ["/opt/v/bin/runspec"]}
         b._hosts = [entry]
         captured: dict[str, str] = {}
         framed = "\x00RUNSPEC_LOG:backup\n" + _summary_line(
@@ -613,15 +636,15 @@ class TestRemoteHistoryHomeLogs(unittest.TestCase):
         )
 
         def fake_ssh_run(ssh, command, **kw):
-            captured["script"] = command  # one multi-dir scan script
+            if "logs status --json" in command:
+                return (2, "", "no such command")  # unsupported
+            captured["script"] = command
             return (0, framed, "")
 
         with patch.object(b, "_ssh_run", side_effect=fake_ssh_run):
             recs = b.get_history("prod", "backup")
-        # Every venv logs dir and ~/logs are scanned in the one script.
         self.assertIn("/opt/v/logs", captured["script"])
-        self.assertIn("/opt/w/logs", captured["script"])
-        self.assertIn("~/logs", captured["script"])
+        self.assertIn("$HOME/logs", captured["script"])
         self.assertEqual(len(recs), 1)
 
 
