@@ -192,6 +192,48 @@ def test_async_confirm_deny_does_not_run():
     assert out != "RAN"
 
 
+def _run_async_gate_with_stage(b, decision):
+    """Drive the async gate with a stage callback, returning (output, stages)."""
+    stages: list[str] = []
+
+    def answer():
+        for _ in range(400):
+            if b._dispatched:
+                break
+            time.sleep(0.005)
+        assert b._dispatched, "expected a tool_confirm dispatch"
+        _, detail = b._dispatched[0]
+        b.resolve_tool_confirmation(detail["request_id"], decision)
+
+    async def main():
+        watcher = threading.Thread(target=answer)
+        watcher.start()
+        out = await b._gated_run_tool_async(
+            "local__flush-dns", {}, "chat1", stages.append
+        )
+        watcher.join(timeout=5)
+        return out
+
+    return asyncio.run(main()), stages
+
+
+def test_async_stage_running_on_approve():
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+    out, stages = _run_async_gate_with_stage(b, True)
+    assert out == "RAN"
+    assert stages == ["awaiting_human", "running"]
+
+
+def test_async_stage_running_on_deny():
+    # A denied tool must still leave 'awaiting_human' for 'running' — the turn
+    # continues (the agent reasons about the denial), so the card mustn't look
+    # stuck waiting on a human who already answered.
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+    out, stages = _run_async_gate_with_stage(b, False)
+    assert "declined" in out
+    assert stages == ["awaiting_human", "running"]
+
+
 def test_async_cancel_during_pending_confirm_unblocks_and_refuses():
     """Stop pressed while the Approve/Deny dialog is up must wake the gate
     promptly (not wait out the 5-min timeout) and refuse the tool."""

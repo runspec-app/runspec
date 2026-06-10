@@ -315,8 +315,12 @@ class TestGetAnalyticsRemote(unittest.TestCase):
         )
 
         def fake_ssh_run(ssh, *a, **kw):
+            # The record lives in the venv logs dir; ~/logs is empty. (History
+            # and analytics now scan both, so the fake must distinguish them or
+            # it would double-count the same record.)
+            script = a[0] if a else ""
             if ssh == "u@h1":
-                return (0, framed, "")
+                return (0, framed, "") if "~/logs" not in script else (0, "", "")
             return (255, "", "connection refused")
 
         with (
@@ -588,6 +592,37 @@ class TestPerInvocationDiscovery(unittest.TestCase):
             recs = b.get_history("h", "backup")
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0]["runnable"], "backup")
+
+
+class TestRemoteHistoryHomeLogs(unittest.TestCase):
+    """Remote History had the same ~/logs gap as local: it scanned only the
+    first venv's logs dir. The Logs tab sees ~/logs via the CLI, so a remote
+    triggered run that landed there was missing from History only."""
+
+    def test_remote_history_scans_all_venvs_and_home_logs(self) -> None:
+        b = _make_bridge()
+        entry = {
+            "name": "prod",
+            "ssh": "u@h",
+            "runspec_paths": ["/opt/v/bin/runspec", "/opt/w/bin/runspec"],
+        }
+        b._hosts = [entry]
+        captured: dict[str, str] = {}
+        framed = "\x00RUNSPEC_LOG:backup\n" + _summary_line(
+            run_id="r1", runnable="backup"
+        )
+
+        def fake_ssh_run(ssh, command, **kw):
+            captured["script"] = command  # one multi-dir scan script
+            return (0, framed, "")
+
+        with patch.object(b, "_ssh_run", side_effect=fake_ssh_run):
+            recs = b.get_history("prod", "backup")
+        # Every venv logs dir and ~/logs are scanned in the one script.
+        self.assertIn("/opt/v/logs", captured["script"])
+        self.assertIn("/opt/w/logs", captured["script"])
+        self.assertIn("~/logs", captured["script"])
+        self.assertEqual(len(recs), 1)
 
 
 class TestHomeLogsFallback(unittest.TestCase):

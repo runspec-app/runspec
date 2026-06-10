@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.36.2] — 2026-06-10
+
+### Fixed
+- **A denied trigger confirm no longer leaves the card stuck on "awaiting
+  human".** On Deny (and a declined `draft_reply`), the gate returned without
+  advancing the card stage, so it sat in `awaiting_human` while the agent turn
+  actually continued — reasoning about the denial, often producing an analysis.
+  A declined tool now moves the card to `running`, so the ongoing work is
+  visible and the awaiting-confirm tab badge clears promptly.
+- **History now shows runs on remote hosts that landed in `~/logs`.** The
+  0.36.0 fix covered the local History/Analytics scan but not the SSH path:
+  `_get_remote_history` read only the *first* venv's `logs/` dir, so a remote
+  runnable whose venv dir isn't writable (it logs to `~/logs`) — or one in a
+  second venv — was missing from History even though the Logs tab showed it
+  (the CLI reads `log_dirs()`). The remote History and Analytics scans now
+  cover every venv `logs/` dir plus `~/logs`, matching local.
+
+
 ## [0.36.0] — 2026-06-10
 
 ### Added

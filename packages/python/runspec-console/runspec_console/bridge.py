@@ -1858,9 +1858,19 @@ class Bridge:
         ssh = entry["ssh"]
         idf = entry.get("identityFile")
         paths = _paths(entry)
-        rp = paths[0] if paths else ""
-        log_dir = str(PurePosixPath(rp).parent.parent / "logs")
-        script = _remote_log_script(log_dir, runnable)
+        # Scan every venv's logs dir AND ~/logs (the writable fallback) — a
+        # runnable whose venv logs dir isn't writable logs to ~/logs, and the
+        # Logs tab sees it via the CLI's log_dirs(); this hand-rolled scan must
+        # match or remote runs that landed in ~/logs go missing from History.
+        log_dirs: list[str] = []
+        for rp in paths:
+            if rp:
+                d = str(PurePosixPath(rp).parent.parent / "logs")
+                if d not in log_dirs:
+                    log_dirs.append(d)
+        if "~/logs" not in log_dirs:
+            log_dirs.append("~/logs")
+        script = _remote_log_script(log_dirs, runnable)
         _, stdout, _ = self._ssh_run(ssh, script, identity_file=idf, timeout=20)
         records: list[dict[str, Any]] = []
         current_name: str | None = None
@@ -1906,11 +1916,28 @@ class Bridge:
         if entry.get("ssh"):
             ssh = entry["ssh"]
             idf = entry.get("identityFile")
+            # Each venv's logs dir (tagged with its group) plus ~/logs (the
+            # writable fallback), so remote runs that landed in ~/logs aren't
+            # missed — same defect as get_history. ~/logs is tagged with the
+            # primary venv's group (correct in the common single-venv case).
+            remote_dir_groups: list[tuple[str, str]] = []
             for rp in paths:
-                if not rp:
+                if rp:
+                    remote_dir_groups.append(
+                        (
+                            str(PurePosixPath(rp).parent.parent / "logs"),
+                            PurePosixPath(rp).parent.parent.name,
+                        )
+                    )
+            primary_group = (
+                PurePosixPath(paths[0]).parent.parent.name if paths and paths[0] else ""
+            )
+            remote_dir_groups.append(("~/logs", primary_group))
+            seen_remote: set[str] = set()
+            for log_dir, group in remote_dir_groups:
+                if log_dir in seen_remote:
                     continue
-                group = PurePosixPath(rp).parent.parent.name
-                log_dir = str(PurePosixPath(rp).parent.parent / "logs")
+                seen_remote.add(log_dir)
                 script = _remote_log_script(log_dir, runnable)
                 code, stdout, stderr = self._ssh_run(
                     ssh, script, identity_file=idf, timeout=45
@@ -1920,7 +1947,7 @@ class Bridge:
                 current_name: str | None = None
                 current_lines: list[str] = []
 
-                def _flush() -> None:
+                def _flush(group: str = group) -> None:
                     if current_name is not None:
                         for rec in _parse_log_text(
                             current_name,
@@ -3982,6 +4009,11 @@ class Bridge:
             if holder.get("cancelled"):
                 return f"⏹ '{display}' was not run — you stopped the assistant before approving it."
             if not approved:
+                # The tool didn't run, but the turn continues — the agent reasons
+                # about the denial (often an analysis). Leave 'awaiting_human' and
+                # the card looks stuck; move to 'running' so the work is visible.
+                if stage is not None:
+                    stage("running")
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
@@ -4876,6 +4908,10 @@ class Bridge:
         if holder.get("cancelled"):
             return "⏹ draft_reply was not run — you stopped the assistant."
         if not approved:
+            # Declined, but the turn continues — surface that as 'running' rather
+            # than leaving the card stuck in 'awaiting_human'.
+            if stage is not None:
+                stage("running")
             return "✗ You declined to save the draft reply."
         if stage is not None:
             stage("running")
@@ -5051,16 +5087,19 @@ def _log_globs(runnable: str | None) -> list[str]:
     return ["*.log", "*.log.gz"]
 
 
-def _remote_log_script(log_dir: str, runnable: str | None) -> str:
+def _remote_log_script(log_dir: str | list[str], runnable: str | None) -> str:
     """Shell snippet that frames and streams every matching log file over SSH.
 
-    Each file is preceded by a ``\\x00RUNSPEC_LOG:<basename>`` frame (the name is
-    only a fallback — attribution comes from the record body). Compacted
-    ``.gz`` archives are decompressed with ``gzip -dc``; plain files are
-    ``cat``-ed. Non-matching globs expand to themselves and are skipped by the
-    ``[ -f ]`` guard, so no ``nullglob`` is required.
+    ``log_dir`` may be a single directory or several (e.g. each venv's ``logs``
+    plus ``~/logs``); all are scanned. Each file is preceded by a
+    ``\\x00RUNSPEC_LOG:<basename>`` frame (the name is only a fallback —
+    attribution comes from the record body). Compacted ``.gz`` archives are
+    decompressed with ``gzip -dc``; plain files are ``cat``-ed. Non-matching
+    globs expand to themselves and are skipped by the ``[ -f ]`` guard, so no
+    ``nullglob`` is required.
     """
-    patterns = " ".join(f"{log_dir}/{g}" for g in _log_globs(runnable))
+    dirs = [log_dir] if isinstance(log_dir, str) else list(log_dir)
+    patterns = " ".join(f"{d}/{g}" for d in dirs for g in _log_globs(runnable))
     return (
         f"for f in {patterns}; do "
         f'[ -f "$f" ] || continue; '
