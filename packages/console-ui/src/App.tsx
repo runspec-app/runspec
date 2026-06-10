@@ -447,7 +447,13 @@ export default function App() {
                 <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                   <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
                 </div>
-                {view !== 'console' && (
+                {/* Triggers stays mounted (display toggle) so a pending approval's
+                    Approve/Deny buttons survive tab switches — unmounting it drops
+                    the live tool_confirm and the buttons can't return until timeout. */}
+                <div style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                  <TriggersView />
+                </div>
+                {view !== 'console' && view !== 'triggers' && (
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
@@ -455,7 +461,6 @@ export default function App() {
                     {view === 'analytics' && <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}><AnalyticsView selectedHost={selectedHost} activeScope={activeScope} /></Suspense>}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
-                    {view === 'triggers'  && <TriggersView />}
                     {view === 'dev'       && <DevView />}
                   </div>
                 )}

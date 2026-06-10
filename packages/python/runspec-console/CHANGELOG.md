@@ -8,6 +8,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.38.1] — 2026-06-10
+
+### Fixed
+- **A pending trigger approval survives switching tabs.** The Triggers view is
+  now kept mounted (display-toggled, like the Console view) instead of being
+  unmounted when you navigate away. Previously, leaving and returning while an
+  approval was waiting dropped the live `tool_confirm`, so the Approve/Deny
+  buttons never came back and the run sat stuck until it timed out.
+
+
 ## [0.38.0] — 2026-06-10
 
 ### Fixed

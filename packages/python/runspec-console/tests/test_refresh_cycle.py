@@ -201,5 +201,13 @@ def test_set_window_flushes_buffered_ssh_logs():
             dispatched.append(js)
 
     b.set_window(_Win())
-    assert b._pre_window_ssh_logs == []  # drained
+    assert b._pre_window_ssh_logs == []  # drained (cleared synchronously)
+    # Dispatch is async now — delivered by the single ui-dispatch thread — so
+    # poll briefly for the flushed buffer to reach the (fake) window.
+    import time
+
+    for _ in range(200):
+        if any("runspec:ssh" in js for js in dispatched):
+            break
+        time.sleep(0.01)
     assert any("runspec:ssh" in js for js in dispatched)
