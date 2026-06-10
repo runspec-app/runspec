@@ -9,9 +9,10 @@ guards and that start()/stop() are safe no-ops here.
 from __future__ import annotations
 
 import sys
+import threading
 from types import SimpleNamespace
 
-from runspec_console.events import EventSource, available_sources, create_source
+from runspec_console.events import Event, EventSource, available_sources, create_source
 import pytest
 
 from runspec_console.sources.outlook import (
@@ -129,6 +130,33 @@ def test_start_is_noop_when_unavailable(monkeypatch):
     src.stop()  # must not raise
     assert emitted == []
     assert src._thread is None
+
+
+def test_dispatch_loop_marshals_events_and_stops():
+    """Events enqueued (as the COM pump thread does) are delivered to the real
+    emit by the dispatcher thread — never inline — and the None sentinel that
+    stop() enqueues makes the loop exit. This is the off-pump marshalling that
+    keeps the rota's calendar COM read from running re-entrantly in a callback."""
+    src = OutlookSource()
+    received: list[Event] = []
+    got = threading.Event()
+
+    def emit(ev: Event) -> None:
+        received.append(ev)
+        got.set()
+
+    src._emit = emit
+    t = threading.Thread(target=src._dispatch_loop, daemon=True)
+    t.start()
+    try:
+        ev = Event.new("outlook", "reminder", {"subject": "standup"})
+        src._enqueue(ev)  # what app.emit does on the pump thread
+        assert got.wait(2), "dispatcher did not deliver the event"
+        assert received == [ev]
+    finally:
+        src._queue.put(None)  # sentinel, as stop() enqueues
+        t.join(timeout=2)
+    assert not t.is_alive()
 
 
 # ── protocol + registration ──────────────────────────────────────────────────

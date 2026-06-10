@@ -64,6 +64,9 @@ export default function App() {
   const [version, setVersion] = useState<string>('')
   const [updateInfo, setUpdateInfo] = useState<{ latest: string | null; updateAvailable: boolean } | null>(null)
   const [docsUrl, setDocsUrl] = useState<string>('')
+  // Count of trigger runs waiting on a human confirm — drives the Triggers tab
+  // badge so a pending approval is visible from any tab.
+  const [triggerAwaiting, setTriggerAwaiting] = useState(0)
   const inFlight = useInFlight()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
@@ -177,6 +180,46 @@ export default function App() {
     return () => window.removeEventListener('runspec:chat_active', onActive)
   }, [])
 
+  // Track how many trigger runs are waiting on a human confirm, for the Triggers
+  // tab badge. A run is "awaiting" when its card sits in the awaiting_human
+  // column or has a live tool_confirm. tool_confirm is filtered to trigger cards
+  // (ids we've seen on a trigger_card event) so chat confirms don't count.
+  useEffect(() => {
+    const cardCols = new Map<string, string>()  // card_id -> column
+    const pending = new Set<string>()           // trigger card_ids awaiting confirm
+    const recompute = () => {
+      let n = 0
+      for (const [id, col] of cardCols) if (pending.has(id) || col === 'awaiting_human') n++
+      setTriggerAwaiting(n)
+    }
+    const onCard = (e: Event) => {
+      const c = (e as CustomEvent).detail as { card_id: string; column: string }
+      cardCols.set(c.card_id, c.column)
+      if (c.column !== 'awaiting_human') pending.delete(c.card_id)  // moved on
+      recompute()
+    }
+    const onConfirm = (e: Event) => {
+      const { id } = (e as CustomEvent).detail as { id: string }
+      if (cardCols.has(id)) { pending.add(id); recompute() }  // trigger cards only
+    }
+    const onEnd = (e: Event) => {
+      const { id } = (e as CustomEvent).detail as { id: string }
+      if (pending.delete(id)) recompute()
+    }
+    bridge.get_trigger_board().then(board => {
+      board.forEach(c => cardCols.set(c.card_id, c.column))
+      recompute()
+    }).catch(() => {})
+    window.addEventListener('runspec:trigger_card', onCard)
+    window.addEventListener('runspec:tool_confirm', onConfirm)
+    window.addEventListener('runspec:run_end', onEnd)
+    return () => {
+      window.removeEventListener('runspec:trigger_card', onCard)
+      window.removeEventListener('runspec:tool_confirm', onConfirm)
+      window.removeEventListener('runspec:run_end', onEnd)
+    }
+  }, [])
+
   const headerBg  = isDark ? '#0d0d0d' : '#fafafa'
   const siderBg   = isDark ? '#111'    : '#fafafa'
   const borderCol = isDark ? '#222'    : '#e0e0e0'
@@ -199,7 +242,13 @@ export default function App() {
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
     { key: 'schedules' as ViewKey, label: 'Schedules', icon: <CalendarOutlined /> },
-    { key: 'triggers'  as ViewKey, label: 'Triggers',  icon: <BellOutlined /> },
+    {
+      key: 'triggers' as ViewKey,
+      label: 'Triggers',
+      icon: triggerAwaiting > 0
+        ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]}><BellOutlined /></Badge>
+        : <BellOutlined />,
+    },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ]
 

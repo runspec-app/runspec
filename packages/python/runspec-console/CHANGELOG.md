@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.36.0] — 2026-06-10
+
+### Added
+- **Collapsible Triggers table.** The configured-triggers list is now a
+  collapsible panel (like Working hours), with the trigger count / engine status
+  in the header and the reload control in the panel.
+- **Awaiting-confirmation badge on the Triggers tab.** A count badge appears on
+  the Triggers nav tab (like the Console in-flight badge) whenever a trigger run
+  is waiting on a human confirm, so a pending approval is visible from any tab.
+
+### Fixed
+- **Outlook-calendar working-hours rota now works.** Outlook source events were
+  emitted synchronously on the COM message-pump thread, so the rota's calendar
+  read ran *re-entrantly inside the COM callback* and failed — silently falling
+  back to the grid / always-on. Events are now marshalled onto a queue and routed
+  by a separate dispatcher thread, off the pump thread. (The manual console-grid
+  rota was unaffected and already worked.)
+- **`post_to_chat = true` now actually posts to the Console tab.** The trigger
+  note was dispatched on an event only the Triggers tab listened for, so it never
+  reached the chat transcript. The Console tab now renders it as a finished chat
+  block.
+- **History shows triggered (and other ~/logs) runs.** When a runnable's venv
+  `logs/` dir isn't writable (common on managed machines) it logs to `~/logs` —
+  but the venv dir is still created empty, so History read the empty venv dir and
+  never looked in `~/logs`. History and Analytics now scan both, matching what
+  the Logs tab already saw via the CLI.
+
+
 ## [0.35.0] — 2026-06-10
 
 ### Changed

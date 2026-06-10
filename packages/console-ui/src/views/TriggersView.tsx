@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input, Drawer } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
@@ -366,37 +366,50 @@ export function TriggersView() {
         />
       )}
 
-      {/* Configured triggers */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <span style={{ color: dim, fontSize: 12 }}>
-          {triggers.length} trigger{triggers.length === 1 ? '' : 's'} configured
-          {config?.running ? ' · engine running' : ''}
-        </span>
-        <Tooltip title="Reload trigger config">
-          <Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadConfig} style={{ color: dim }} />
-        </Tooltip>
-      </div>
-
-      {triggers.length === 0 ? (
-        <Empty
-          description={
-            <span style={{ color: dim }}>
-              No triggers configured. Add <code>[triggers.&lt;name&gt;]</code>{' '}
-              tables to <code>runspec_triggers.toml</code> in the app config
-              directory.
+      {/* Configured triggers — collapsible, like Working hours below */}
+      <Collapse
+        size="small"
+        defaultActiveKey={['triggers']}
+        style={{ marginBottom: 20 }}
+        items={[{
+          key: 'triggers',
+          label: (
+            <span>
+              <BellOutlined /> Triggers
+              <span style={{ color: dim, fontSize: 12 }}>
+                {' · '}{triggers.length} configured{config?.running ? ' · engine running' : ''}
+              </span>
             </span>
-          }
-        />
-      ) : (
-        <Table
-          dataSource={triggers}
-          columns={configColumns}
-          rowKey={(t: Record<string, unknown>) => String(t.name)}
-          size="small"
-          pagination={false}
-          style={{ marginBottom: 20 }}
-        />
-      )}
+          ),
+          extra: (
+            <Tooltip title="Reload trigger config">
+              <ReloadOutlined
+                onClick={e => { e.stopPropagation(); loadConfig() }}
+                style={{ color: dim }}
+              />
+            </Tooltip>
+          ),
+          children: triggers.length === 0 ? (
+            <Empty
+              description={
+                <span style={{ color: dim }}>
+                  No triggers configured. Add <code>[triggers.&lt;name&gt;]</code>{' '}
+                  tables to <code>runspec_triggers.toml</code> in the app config
+                  directory.
+                </span>
+              }
+            />
+          ) : (
+            <Table
+              dataSource={triggers}
+              columns={configColumns}
+              rowKey={(t: Record<string, unknown>) => String(t.name)}
+              size="small"
+              pagination={false}
+            />
+          ),
+        }]}
+      />
 
       {/* Working-hours rota */}
       <Collapse

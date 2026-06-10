@@ -590,5 +590,59 @@ class TestPerInvocationDiscovery(unittest.TestCase):
         self.assertEqual(recs[0]["runnable"], "backup")
 
 
+class TestHomeLogsFallback(unittest.TestCase):
+    """A runnable whose venv logs dir isn't writable logs to ~/logs instead — but
+    the venv dir is still *created* (empty) on the way to that fallback. History
+    and analytics must scan ~/logs too, or those runs (e.g. triggered runs on a
+    managed machine) are invisible even though the Logs tab shows them."""
+
+    def _entry(self, td: str, name: str = "local") -> dict:
+        venv = Path(td) / "ops-tools"
+        (venv / "bin").mkdir(parents=True)
+        (venv / "logs").mkdir()  # exists but empty — writes went to ~/logs
+        return {
+            "name": name,
+            "runspec_paths": [str(venv / "bin" / "runspec")],
+            "ssh": None,
+        }
+
+    def test_collect_local_reads_home_logs(self) -> None:
+        b = _make_bridge()
+        with TemporaryDirectory() as td, TemporaryDirectory() as home:
+            entry = self._entry(td)
+            home_logs = Path(home) / "logs"
+            home_logs.mkdir()
+            (home_logs / "backup.log").write_text(
+                _summary_line(run_id="r1", runnable="backup"), encoding="utf-8"
+            )
+            with patch("runspec_console.bridge.Path.home", return_value=Path(home)):
+                recs = b._collect_host_records(entry, None)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["runnable"], "backup")
+        # ~/logs records tagged with the primary venv's group (single-venv case).
+        self.assertEqual(recs[0]["group"], "ops-tools")
+
+    def test_get_history_reads_home_logs(self) -> None:
+        b = _make_bridge()
+        with TemporaryDirectory() as td, TemporaryDirectory() as home:
+            entry = self._entry(td, name="h")
+            b._hosts = [entry]
+            home_logs = Path(home) / "logs"
+            home_logs.mkdir()
+            (home_logs / "backup.log").write_text(
+                "\n".join(
+                    [
+                        _info_line("r1", "hi"),
+                        _summary_line(run_id="r1", runnable="backup"),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with patch("runspec_console.bridge.Path.home", return_value=Path(home)):
+                recs = b.get_history("h", "backup")
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["runnable"], "backup")
+
+
 if __name__ == "__main__":
     unittest.main()

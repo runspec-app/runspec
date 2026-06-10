@@ -116,6 +116,28 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     return () => window.removeEventListener('runspec:send_chat', onChat)
   }, [])
 
+  // post_to_chat triggers mirror their run into the Console transcript as a
+  // finished chat block, so trigger activity is visible here, not just on the
+  // Triggers tab. (The bridge dispatches runspec:trigger_note with an id.)
+  useEffect(() => {
+    const onTriggerNote = (e: Event) => {
+      const { text, id } = (e as CustomEvent).detail as { text: string; id?: string }
+      if (!text) return
+      addBlockRef.current({
+        id: id || `trigger-${Date.now()}`,
+        type: 'chat',
+        label: text.split('\n')[0].slice(0, 80),
+        startedAt: new Date().toISOString(),
+        lines: [],
+        segments: [{ kind: 'text', text }],
+        currentText: '',
+        done: true,
+      })
+    }
+    window.addEventListener('runspec:trigger_note', onTriggerNote)
+    return () => window.removeEventListener('runspec:trigger_note', onTriggerNote)
+  }, [])
+
   // Rerun dispatched by History → App → here
   useEffect(() => {
     const onRerun = async (e: Event) => {

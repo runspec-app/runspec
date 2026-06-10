@@ -124,7 +124,12 @@ class _BridgeTriggerOps:
         return self._bridge._gated_run_tool(tool_name, tool_input, chat_id)
 
     def note_in_chat(self, text: str) -> None:
-        self._bridge._dispatch("runspec:trigger_note", {"text": text})
+        # An id lets the Console tab render this as a distinct finished chat
+        # block (post_to_chat mirrors a trigger run into the main chat); the
+        # Triggers tab's activity list also listens for this event.
+        self._bridge._dispatch(
+            "runspec:trigger_note", {"text": text, "id": uuid.uuid4().hex[:12]}
+        )
 
 
 class Bridge:
@@ -1805,20 +1810,22 @@ class Bridge:
         paths = _paths(entry)
         records: list[dict[str, Any]] = []
         globs = _log_globs(runnable)
-        for rp in paths:
-            if not rp:
+        # Scan every venv's logs dir AND ~/logs. A runnable writes to ~/logs when
+        # its venv dir isn't writable (managed machines) — but the venv dir is
+        # still *created* on the way to that fallback, so a "venv dir, else
+        # ~/logs" check reads an empty venv dir and misses the real records in
+        # ~/logs. The Logs tab works because the CLI's log_dirs() reads both.
+        log_dirs = [Path(rp).parent.parent / "logs" for rp in paths if rp]
+        log_dirs.append(Path.home() / "logs")
+        matches: set[Path] = set()
+        seen_dirs: set[Path] = set()
+        for log_dir in log_dirs:
+            if log_dir in seen_dirs or not log_dir.exists():
                 continue
-            log_dir = Path(rp).parent.parent / "logs"
-            if not log_dir.exists():
-                # Binary path (e.g. Scripts/runspec.exe) — fall back to ~/logs
-                log_dir = Path.home() / "logs"
-            if not log_dir.exists():
-                continue
-            matches = {f for pat in globs for f in log_dir.glob(pat)}
-            for log_file in sorted(
-                matches, key=lambda p: p.stat().st_mtime, reverse=True
-            ):
-                records.extend(_parse_log(log_file, host))
+            seen_dirs.add(log_dir)
+            matches |= {f for pat in globs for f in log_dir.glob(pat)}
+        for log_file in sorted(matches, key=lambda p: p.stat().st_mtime, reverse=True):
+            records.extend(_parse_log(log_file, host))
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return records[:200]
 
@@ -1935,16 +1942,21 @@ class Bridge:
             return records
 
         # Local host (distinct Path var — `log_dir` above is a str for the
-        # remote branch, so reusing the name would muddle its type).
-        for rp in paths:
-            if not rp:
+        # remote branch, so reusing the name would muddle its type). Scan each
+        # venv's logs dir (tagged with its venv group) AND ~/logs (the writable
+        # fallback when a venv dir isn't writable) so runs that landed there
+        # aren't missed — same defect as get_history. ~/logs records are tagged
+        # with the primary venv's group (correct in the common single-venv case).
+        dir_groups: list[tuple[Path, str]] = [
+            (Path(rp).parent.parent / "logs", venv_name(rp)) for rp in paths if rp
+        ]
+        fallback_group = venv_name(paths[0]) if paths and paths[0] else ""
+        dir_groups.append((Path.home() / "logs", fallback_group))
+        seen_dirs: set[Path] = set()
+        for local_dir, group in dir_groups:
+            if local_dir in seen_dirs or not local_dir.exists():
                 continue
-            group = venv_name(rp)
-            local_dir = Path(rp).parent.parent / "logs"
-            if not local_dir.exists():
-                local_dir = Path.home() / "logs"
-            if not local_dir.exists():
-                continue
+            seen_dirs.add(local_dir)
             matches = {f for pat in globs for f in local_dir.glob(pat)}
             for log_file in matches:
                 for rec in _parse_log(log_file, entry["name"], include_extra=True):

@@ -16,6 +16,12 @@ COM event sinks need a thread that ``CoInitialize``s, binds the sink with
 ``DispatchWithEvents``, and runs a message pump (``PumpMessages``). That all
 lives on this source's own daemon thread; ``stop()`` posts ``WM_QUIT`` to it.
 
+The sink does **not** call the engine's ``emit`` directly — that would route the
+event (and run the working-hours rota's *calendar* COM read) re-entrantly inside
+the COM callback on the STA pump thread, which breaks the calendar read. Instead
+each event is marshalled onto a queue and a separate dispatcher thread calls
+``emit`` (and thus any downstream COM read) off the pump thread.
+
 The pure payload-extraction helpers (``_mail_payload`` / ``_reminder_payload``)
 take any duck-typed Outlook item, so they're unit-tested on any platform with
 plain fakes — the win32 imports stay inside the pump thread.
@@ -26,6 +32,7 @@ See docs/design/console-triggers.md (§4.1).
 from __future__ import annotations
 
 import logging
+import queue
 import sys
 import threading
 from datetime import datetime
@@ -157,6 +164,11 @@ class OutlookSource:
         self._thread: threading.Thread | None = None
         self._thread_id: int | None = None
         self._app: Any = None  # keep the dispatched sink alive while pumping
+        # Events captured on the COM pump thread are handed to a dispatcher
+        # thread through this queue, so routing/emit never runs re-entrantly
+        # inside a COM callback (see module docstring). A None is the stop sentinel.
+        self._queue: queue.Queue[Event | None] = queue.Queue()
+        self._dispatch_thread: threading.Thread | None = None
 
     def available(self) -> tuple[bool, str]:
         if sys.platform != "win32":
@@ -179,6 +191,12 @@ class OutlookSource:
         if self._thread is not None:
             return  # already started
         self._emit = emit
+        # Fresh queue per start so a previous run's stop sentinel can't linger.
+        self._queue = queue.Queue()
+        self._dispatch_thread = threading.Thread(
+            target=self._dispatch_loop, name="outlook-dispatch", daemon=True
+        )
+        self._dispatch_thread.start()
         self._thread = threading.Thread(
             target=self._pump, name="outlook-com", daemon=True
         )
@@ -197,6 +215,27 @@ class OutlookSource:
         self._thread_id = None
         self._thread = None
         self._app = None
+        if self._dispatch_thread is not None:
+            self._queue.put(None)  # wake the dispatcher so it exits
+            self._dispatch_thread = None
+
+    def _enqueue(self, event: Event) -> None:
+        """Hand an event from the COM pump thread to the dispatcher thread.
+
+        Bound onto the sink as ``app.emit``; the COM handlers call this instead
+        of the engine's emit, so routing happens off the pump thread.
+        """
+        self._queue.put(event)
+
+    def _dispatch_loop(self) -> None:
+        """Drain queued events and route them via the real emit, off the pump
+        thread, until ``stop()`` enqueues the None sentinel."""
+        while True:
+            event = self._queue.get()
+            if event is None:
+                return
+            if self._emit is not None:
+                _safe_emit(self._emit, event)
 
     def _pump(self) -> None:
         """Own a COM apartment, bind the Outlook event sink, and pump messages
@@ -217,7 +256,9 @@ class OutlookSource:
                     "outlook: could not attach to Outlook (is it installed/running?)"
                 )
                 return
-            app.emit = self._emit
+            # Marshal events off this STA pump thread via the queue, never call
+            # the engine emit (and its calendar COM read) directly from here.
+            app.emit = self._enqueue
             self._app = app  # hold a ref so the sink isn't GC'd mid-pump
             logger.info("outlook source: listening for new mail and reminders")
             pythoncom.PumpMessages()
