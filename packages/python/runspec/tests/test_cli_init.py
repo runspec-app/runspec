@@ -153,7 +153,7 @@ def test_lang_typescript_generates_ts(tmp_path, monkeypatch):
     stub = tmp_path / "greet.ts"
     assert stub.exists()
     content = stub.read_text()
-    assert "import { parse } from 'runspec'" in content
+    assert "import { parse } from 'runspec-node'" in content
     assert "function main()" in content
     assert "main();" in content
 
@@ -165,7 +165,7 @@ def test_lang_javascript_generates_js(tmp_path, monkeypatch):
     stub = tmp_path / "greet.js"
     assert stub.exists()
     content = stub.read_text()
-    assert "require('runspec')" in content
+    assert "require('runspec-node')" in content
     assert "main();" in content
 
 

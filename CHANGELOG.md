@@ -7,6 +7,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.32.1] — 2026-06-10
+
+### Fixed
+
+- **`runspec init --lang typescript|javascript` now imports from `runspec-node`.**
+  The Python CLI's Node stub templates imported from `'runspec'`, but the npm
+  package is published as `runspec-node` (the Node CLI's own `init` already used
+  the correct name). Scaffolded TS/JS stubs were therefore broken on install.
+
 ## [0.32.0] / [node-0.28.0] — 2026-06-08
 
 ### Added

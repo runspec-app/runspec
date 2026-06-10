@@ -679,11 +679,11 @@ _CODE_STUB_TEMPLATES: dict[str, tuple[str, str]] = {
     ),
     "typescript": (
         ".ts",
-        "import { parse } from 'runspec';\n\nfunction main(): void {\n  const args = parse();\n  // your logic here\n}\n\nmain();\n",
+        "import { parse } from 'runspec-node';\n\nfunction main(): void {\n  const args = parse();\n  // your logic here\n}\n\nmain();\n",
     ),
     "javascript": (
         ".js",
-        "const { parse } = require('runspec');\n\nfunction main() {\n  const args = parse();\n  // your logic here\n}\n\nmain();\n",
+        "const { parse } = require('runspec-node');\n\nfunction main() {\n  const args = parse();\n  // your logic here\n}\n\nmain();\n",
     ),
 }
 
