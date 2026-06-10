@@ -579,9 +579,10 @@ def _format_summary_line(state: dict[str, Any], duration_ms: int, exit_code: int
     user = state.get("user", "unknown")
     user_target = state.get("user_target")
     user_part = f" | user: {user} → {user_target} (sudo)" if user_target else f" | user: {user}"
-    ws = "s" if warnings != 1 else ""
-    es = "s" if errors != 1 else ""
-    events = f"{total} events ({warnings} warning{ws}, {errors} error{es})"
+    # Abbreviated level words ("warn"/"err", never "warning"/"error") so the line
+    # doesn't trip Rundeck's case-insensitive `error` log-highlight/level filters,
+    # which would otherwise paint a clean run red over the literal "0 errors".
+    events = f"{total} events ({warnings} warn, {errors} err)"
     if state["exception"] or exit_code != 0:
         exc = state["exception"]
         exc_part = f", {exc['type']}" if exc else ""

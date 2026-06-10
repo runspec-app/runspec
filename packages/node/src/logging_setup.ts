@@ -490,16 +490,18 @@ function formatSummaryLine(state: SummaryState, durationMs: number, exitCode: nu
   const errors = (counts.ERROR ?? 0) + (counts.CRITICAL ?? 0);
   const secs = (durationMs / 1000).toFixed(2);
   const runnable = state.runnable;
-  const wSuffix = warnings === 1 ? '' : 's';
-  const eSuffix = errors === 1 ? '' : 's';
+  // Abbreviated level words ("warn"/"err", never "warning"/"error") so the line
+  // doesn't trip Rundeck's case-insensitive `error` log-highlight/level filters,
+  // which would otherwise paint a clean run red over the literal "0 errors".
+  const events = `${total} events (${warnings} warn, ${errors} err)`;
   const userPart = state.userTarget
     ? ` | user: ${state.user} → ${state.userTarget} (sudo)`
     : ` | user: ${state.user}`;
   if (state.exception || exitCode !== 0) {
     const excPart = state.exception ? `, ${state.exception.type}` : '';
-    return `runspec: ${runnable} failed in ${secs}s — exit ${exitCode}${excPart} — ${total} events (${warnings} warning${wSuffix}, ${errors} error${eSuffix})${userPart}`;
+    return `runspec: ${runnable} failed in ${secs}s — exit ${exitCode}${excPart} — ${events}${userPart}`;
   }
-  return `runspec: ${runnable} completed in ${secs}s — ${total} events (${warnings} warning${wSuffix}, ${errors} error${eSuffix})${userPart}`;
+  return `runspec: ${runnable} completed in ${secs}s — ${events}${userPart}`;
 }
 
 /**

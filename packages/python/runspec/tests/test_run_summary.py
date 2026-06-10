@@ -342,21 +342,24 @@ class TestDisable:
 
 
 class TestStderrLine:
-    def test_success_line_singular_grammar(self, capsys):
+    def test_summary_uses_abbreviated_levels(self, capsys):
+        # Abbreviated "warn"/"err" (no "warning"/"error") keeps the line from
+        # tripping Rundeck's case-insensitive `error` log-highlight filter.
         configure_logging(_cfg(), runnable_name="r")
         logging.getLogger("t").warning("one")
         _emit_run_summary()
         err = capsys.readouterr().err
-        assert "1 warning," in err  # singular
-        assert "0 errors)" in err  # plural for zero
+        assert "(1 warn, 0 err)" in err
+        assert "warning" not in err
+        assert "error" not in err
 
-    def test_success_line_plural_grammar(self, capsys):
+    def test_summary_counts_render_without_pluralising(self, capsys):
         configure_logging(_cfg(), runnable_name="r")
         logging.getLogger("t").warning("a")
         logging.getLogger("t").warning("b")
         _emit_run_summary()
         err = capsys.readouterr().err
-        assert "2 warnings," in err
+        assert "2 warn," in err
 
 
 # ── Invoker capture ──────────────────────────────────────────────────────────

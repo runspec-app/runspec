@@ -7,6 +7,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.32.2] / [node-0.28.1] — 2026-06-10
+
+### Changed
+
+- **Run-summary stderr line abbreviates the level words** — `2 warnings, 0 errors`
+  is now `2 warn, 0 err`. The literal word `error`/`errors` tripped log
+  processors that flag any case-insensitive `error` match (notably Rundeck's
+  output highlighter), which coloured a clean run red and tagged the line at
+  ERROR level for downstream consumers. The abbreviated form keeps `warn` in the
+  warning bucket and never emits `error` on a successful run. Counts no longer
+  pluralise (`1 warn`, `2 warn`). The JSON audit record is unchanged (it keys
+  counts by the canonical `WARNING`/`ERROR` level names). Same change in both
+  the Python (`0.32.2`) and Node (`node-0.28.1`) packs.
+
 ## [0.32.1] — 2026-06-10
 
 ### Fixed

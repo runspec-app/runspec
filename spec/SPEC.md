@@ -266,9 +266,14 @@ The audit record is fixed-schema:
 The stderr line reads like a database client's closing message:
 
 ```
-runspec: compress completed in 1.48s — 12 events (2 warnings, 0 errors)
-runspec: compress failed in 0.91s — exit 1, ValueError — 5 events (1 warning, 1 error)
+runspec: compress completed in 1.48s — 12 events (2 warn, 0 err)
+runspec: compress failed in 0.91s — exit 1, ValueError — 5 events (1 warn, 1 err)
 ```
+
+The level words are abbreviated (`warn`/`err`, never `warning`/`error`) so the
+line doesn't trip log processors that flag any case-insensitive `error` match —
+e.g. Rundeck's output highlighter, which would otherwise colour a clean run red
+and tag it at ERROR level for downstream consumers.
 
 A `--no-summary` flag is auto-added alongside `--debug` and suppresses
 both the record and the stderr line for the invocation. The

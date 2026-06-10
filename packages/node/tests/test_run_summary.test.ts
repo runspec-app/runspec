@@ -184,7 +184,9 @@ test('RUNSPEC_MYSCRIPT_ARG_NO_SUMMARY=1 disables summary', () => {
 
 // ── stderr line shape ────────────────────────────────────────────────────────
 
-test('success line uses singular "warning" for 1 and plural "errors" for 0', () => {
+test('success line uses abbreviated "warn"/"err" (no "warning"/"error")', () => {
+  // Abbreviated levels keep the line from tripping Rundeck's case-insensitive
+  // `error` log-highlight filter, which would paint a clean run red.
   const dir = tmpDir();
   configureLogging(makeCfg(dir));
   getLogger('t').warning('one');
@@ -192,11 +194,12 @@ test('success line uses singular "warning" for 1 and plural "errors" for 0', () 
   emitRunSummary();
   cap.restore();
   const joined = cap.lines.join('');
-  expect(joined).toContain('1 warning,');
-  expect(joined).toContain('0 errors)');
+  expect(joined).toContain('(1 warn, 0 err)');
+  expect(joined).not.toContain('warning');
+  expect(joined).not.toContain('error');
 });
 
-test('success line uses plural for 2 warnings', () => {
+test('counts render without pluralising the level words', () => {
   const dir = tmpDir();
   configureLogging(makeCfg(dir));
   getLogger('t').warning('a');
@@ -204,7 +207,7 @@ test('success line uses plural for 2 warnings', () => {
   const cap = captureStderr();
   emitRunSummary();
   cap.restore();
-  expect(cap.lines.join('')).toContain('2 warnings,');
+  expect(cap.lines.join('')).toContain('2 warn,');
 });
 
 // ── invoker capture ──────────────────────────────────────────────────────────

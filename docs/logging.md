@@ -273,8 +273,13 @@ exit — one structured record to the audit log plus one human-readable line to
 stderr:
 
 ```
-runspec: deploy completed in 1.84s — 12 events (2 warnings, 0 errors)
+runspec: deploy completed in 1.84s — 12 events (2 warn, 0 err)
 ```
+
+The level words are abbreviated (`warn`/`err`, never `warning`/`error`) so the
+line survives log processors that flag any case-insensitive `error` match — e.g.
+Rundeck's output highlighter, which would otherwise paint a clean run red and tag
+it at ERROR level for anything consuming Rundeck's output.
 
 The record captures the run's duration, exit code, log-event counts by level,
 the effective autonomy, whether it ran under an agent (`runspec serve`), the
