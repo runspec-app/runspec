@@ -111,5 +111,16 @@ jobs:
         run: |
           VERSION="${RELEASE_TAG#console-v}"
           ESCAPED="${VERSION//./\\.}"
-          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^---/{exit} found{print}" \
-            packages
+          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^## \\[/{exit} found{print}" \
+            packages/python/runspec-console/CHANGELOG.md > release-notes.md
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --notes-file release-notes.md
+          fi
