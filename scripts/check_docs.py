@@ -62,6 +62,7 @@ NON_RUNSPEC_SECTIONS = {
     "ssh",
     "refresh",
     "triggers",
+    "rota",
 }
 
 

@@ -18,6 +18,32 @@ def _use_tmp(monkeypatch, tmp_path):
 def test_read_missing_returns_empty(monkeypatch, tmp_path):
     _use_tmp(monkeypatch, tmp_path)
     assert config.read_triggers() == []
+    assert config.read_rota() == {}
+
+
+def test_rota_round_trip(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    rota = {
+        "enabled": True,
+        "mon": {"on": True, "start": "09:00", "end": "17:30"},
+        "sat": {"on": False, "start": "00:00", "end": "00:00"},
+    }
+    config.write_rota(rota)
+    assert config.read_rota() == rota
+
+
+def test_write_rota_preserves_triggers_and_vice_versa(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    triggers = [{"name": "t", "source": "outlook", "event": "new_mail"}]
+    rota = {"enabled": True, "mon": {"on": True, "start": "09:00", "end": "17:00"}}
+    # Write triggers first, then rota — each must preserve the other.
+    config.write_triggers(triggers)
+    config.write_rota(rota)
+    assert config.read_triggers() == triggers
+    assert config.read_rota() == rota
+    # Re-saving triggers keeps the rota intact.
+    config.write_triggers(triggers)
+    assert config.read_rota() == rota
 
 
 def test_round_trip_full_trigger(monkeypatch, tmp_path):

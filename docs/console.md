@@ -239,6 +239,61 @@ Drafts folder** (the agent's text above the quoted original). The console
 each draft save is confirm-gated. The tool is only offered when both the trigger
 enables it and the event is a mail with something to reply to.
 
+### Working hours (rota)
+
+So automation only runs while you're around to handle confirms, you can restrict
+triggers to a **weekly working-hours rota**. In the Triggers tab → **Working
+hours**: a master switch, then per-day on/off with a start and end time (local
+machine time). Outside those windows, matching events are **ignored** (dropped,
+not queued — you won't get a backlog dump when the window opens). It's **off by
+default** (triggers run anytime until you set it up), and stored as `[rota]` in
+`runspec_triggers.toml`:
+
+```toml
+[rota]
+enabled = true
+[rota.mon]
+on = true
+start = "09:00"
+end = "17:30"
+[rota.sat]
+on = false
+start = "09:00"
+end = "17:00"
+```
+
+A single trigger can opt out of the rota (e.g. an off-hours maintenance watcher)
+with `ignore_rota = true` in its `[[triggers]]` table.
+
+**Driving the rota from your Outlook calendar.** Set `source = "outlook"` and the
+window comes from your calendar instead of the grid — you're *on shift* whenever
+an event whose subject contains `shift_marker` (default `"shift"`) covers the
+moment. Great for rotating shifts: put them in your calendar and the triggers
+follow. `hold_during_meetings` (default off) also pauses while you're in a
+meeting / OOO. If Outlook can't be read (closed, or non-Windows) it falls back to
+the console grid below, so set one as a safety net. (Note: Outlook's *Work Hours*
+setting isn't used — it isn't exposed in free/busy and is only readable via Graph,
+which managed tenants block; hence the marker-event approach.)
+
+```toml
+[rota]
+enabled = true
+source = "outlook"            # "console" (grid below) | "outlook" (your calendar)
+shift_marker = "shift"        # on shift when an event's subject contains this
+hold_during_meetings = false  # also pause during meetings / OOO
+[rota.mon]                    # fallback grid, used if Outlook can't be read
+on = true
+start = "09:00"
+end = "17:30"
+```
+
+### Audit timeline
+
+Every kanban card keeps a timestamped **timeline** of what happened to it —
+stage changes (triggered → triage → … → done) and each tool the agent ran.
+Expand a card's *timeline* to read the full trace; it's recorded on the backend,
+so even a card that flew through the early lanes leaves a complete record.
+
 ### Safe by default
 
 - **Confirm-by-default.** Trigger-driven runnables use the same autonomy gate as

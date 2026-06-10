@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type TriggerCard, type TriggerListResult } from '../bridge'
+import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input } from 'antd'
+import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerListResult } from '../bridge'
 import { useIsDark } from '../ThemeContext'
+
+const DAYS: [string, string][] = [
+  ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
+  ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday'],
+]
 
 // Board columns, left → right. The engine drives triggered→…→done/failed; the
 // awaiting_human column is overlaid client-side from a card-scoped tool_confirm.
@@ -44,6 +49,115 @@ function fmtTime(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toLocaleTimeString()
 }
 
+// Working-hours rota editor: a master switch + a row per weekday (off / start /
+// end). Triggers only fire inside these windows, so a human is around for
+// confirms. Off by default — when disabled, triggers run anytime.
+function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void }) {
+  const isDark = useIsDark()
+  const dim = isDark ? '#888' : '#999'
+
+  const dayOf = (k: string): RotaDay => {
+    const d = rota[k]
+    return (d && typeof d === 'object' ? d : {}) as RotaDay
+  }
+  const [enabled, setEnabled] = useState<boolean>(!!rota.enabled)
+  const [source, setSource] = useState<string>(rota.source === 'outlook' ? 'outlook' : 'console')
+  const [marker, setMarker] = useState<string>(rota.shift_marker || 'shift')
+  const [hold, setHold] = useState<boolean>(!!rota.hold_during_meetings)
+  const [days, setDays] = useState<Record<string, RotaDay>>(() =>
+    Object.fromEntries(DAYS.map(([k]) => {
+      const d = dayOf(k)
+      return [k, { on: d.on ?? false, start: d.start ?? '09:00', end: d.end ?? '17:00' }]
+    })),
+  )
+  const [saving, setSaving] = useState(false)
+
+  const setDay = (k: string, patch: Partial<RotaDay>) =>
+    setDays(prev => ({ ...prev, [k]: { ...prev[k], ...patch } }))
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await bridge.save_rota({
+        enabled, source, shift_marker: marker, hold_during_meetings: hold, ...days,
+      })
+      onSaved()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const outlook = source === 'outlook'
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <Switch size="small" checked={enabled} onChange={setEnabled} />
+        <span>Only fire triggers during working hours</span>
+        <span style={{ color: dim, fontSize: 12 }}>
+          {enabled ? '(outside these, events are ignored)' : '(off — triggers run anytime)'}
+        </span>
+      </div>
+
+      <div style={{ opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <span style={{ width: 90 }}>Source</span>
+          <Segmented
+            size="small"
+            value={source}
+            onChange={v => setSource(String(v))}
+            options={[
+              { label: 'Console grid', value: 'console' },
+              { label: 'Outlook calendar', value: 'outlook' },
+            ]}
+          />
+        </div>
+
+        {outlook && (
+          <div style={{ marginBottom: 10, paddingLeft: 100 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span>On shift when a calendar event's subject contains</span>
+              <Input
+                size="small" value={marker} onChange={e => setMarker(e.target.value)}
+                style={{ width: 120, fontFamily: 'monospace' }} placeholder="shift"
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Switch size="small" checked={hold} onChange={setHold} />
+              <span>Hold while I'm in a meeting / OOO</span>
+            </div>
+            <div style={{ color: dim, fontSize: 12 }}>
+              The grid below is the fallback if Outlook can't be read.
+            </div>
+          </div>
+        )}
+
+        {DAYS.map(([k, label]) => (
+          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <span style={{ width: 90 }}>{label}</span>
+            <Switch size="small" checked={!!days[k].on} onChange={v => setDay(k, { on: v })} />
+            <input
+              type="time" value={days[k].start} disabled={!days[k].on}
+              onChange={e => setDay(k, { start: e.target.value })}
+              style={{ fontFamily: 'monospace' }}
+            />
+            <span style={{ color: dim }}>to</span>
+            <input
+              type="time" value={days[k].end} disabled={!days[k].on}
+              onChange={e => setDay(k, { end: e.target.value })}
+              style={{ fontFamily: 'monospace' }}
+            />
+            {!days[k].on && <span style={{ color: dim, fontSize: 12 }}>not working</span>}
+          </div>
+        ))}
+      </div>
+      <Button type="primary" size="small" onClick={save} loading={saving} style={{ marginTop: 8 }}>
+        Save working hours
+      </Button>
+    </div>
+  )
+}
+
 export function TriggersView() {
   const isDark = useIsDark()
   const [cards, setCards] = useState<Record<string, TriggerCard>>({})
@@ -52,6 +166,8 @@ export function TriggersView() {
   const [notes, setNotes] = useState<string[]>([])
   // Streamed agent text per card id (its reasoning/reply as it arrives).
   const [streams, setStreams] = useState<Record<string, string>>({})
+  // Card ids whose timeline (audit trail) is expanded.
+  const [openTimelines, setOpenTimelines] = useState<Set<string>>(new Set())
   // Known card ids, so the global runspec:token listener ignores chat tokens.
   const cardIds = useRef<Set<string>>(new Set())
 
@@ -151,6 +267,7 @@ export function TriggersView() {
   const sources = config?.sources ?? []
   const triggers = config?.triggers ?? []
   const errors = config?.errors ?? []
+  const rota = config?.rota ?? {}
 
   // Only warn about an unavailable source that a configured trigger actually
   // uses — no point nagging about, say, the notifications source on a machine
@@ -257,6 +374,19 @@ export function TriggersView() {
         />
       )}
 
+      {/* Working-hours rota */}
+      <Collapse
+        size="small"
+        style={{ marginBottom: 20 }}
+        items={[{
+          key: 'rota',
+          label: (
+            <span><ClockCircleOutlined /> Working hours{rota.enabled ? '' : ' (off)'}</span>
+          ),
+          children: <WorkingHoursEditor rota={rota} onSaved={loadConfig} />,
+        }]}
+      />
+
       {/* Kanban board */}
       <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8 }}>
         {COLUMNS.map(col => (
@@ -319,6 +449,30 @@ export function TriggersView() {
                         <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => answer(card.card_id, true)}>Approve</Button>
                         <Button size="small" danger icon={<CloseOutlined />} onClick={() => answer(card.card_id, false)}>Deny</Button>
                       </Space>
+                    </div>
+                  )}
+                  {card.timeline && card.timeline.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      <span
+                        onClick={() => setOpenTimelines(prev => {
+                          const next = new Set(prev)
+                          next.has(card.card_id) ? next.delete(card.card_id) : next.add(card.card_id)
+                          return next
+                        })}
+                        style={{ color: dim, fontSize: 11, cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        {openTimelines.has(card.card_id) ? '▾' : '▸'} timeline ({card.timeline.length})
+                      </span>
+                      {openTimelines.has(card.card_id) && (
+                        <div style={{ marginTop: 4, borderLeft: `2px solid ${border}`, paddingLeft: 8 }}>
+                          {card.timeline.map((entry, i) => (
+                            <div key={i} style={{ fontSize: 11, color: dim }}>
+                              <span style={{ fontFamily: 'monospace' }}>{fmtTime(entry.ts)}</span>
+                              {' — '}{entry.text}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                   <div style={{ color: dim, marginTop: 4, fontSize: 11 }}>{fmtTime(card.created_at)}</div>

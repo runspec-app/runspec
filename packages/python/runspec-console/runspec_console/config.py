@@ -45,26 +45,47 @@ def triggers_path() -> Path:
     return app_dir() / "runspec_triggers.toml"
 
 
-def read_triggers() -> list[dict[str, Any]]:
-    """Parse ``runspec_triggers.toml`` into a list of ``[[triggers]]`` tables.
-
-    Returns ``[]`` on a missing or unreadable file — triggers are optional.
-    """
+def _read_trigger_file() -> dict[str, Any]:
+    """Full parse of ``runspec_triggers.toml`` ({} on missing/unreadable)."""
     path = triggers_path()
     if not path.exists():
-        return []
+        return {}
     try:
         with open(path, "rb") as f:
-            data = tomllib.load(f)
+            return dict(tomllib.load(f))
     except Exception:
-        return []
-    raw = data.get("triggers")
+        return {}
+
+
+def read_triggers() -> list[dict[str, Any]]:
+    """The ``[[triggers]]`` tables ([] on missing/unreadable — triggers optional)."""
+    raw = _read_trigger_file().get("triggers")
     return [dict(t) for t in raw] if isinstance(raw, list) else []
 
 
+def read_rota() -> dict[str, Any]:
+    """The ``[rota]`` working-hours table ({} when unset)."""
+    rota = _read_trigger_file().get("rota")
+    return dict(rota) if isinstance(rota, dict) else {}
+
+
+def _write_trigger_file(rota: dict[str, Any], triggers: list[dict[str, Any]]) -> None:
+    parts = []
+    if rota:
+        parts.append(_rota_to_toml(rota))
+    if triggers:
+        parts.append(_triggers_to_toml(triggers))
+    triggers_path().write_text("\n".join(parts), encoding="utf-8")
+
+
 def write_triggers(triggers: list[dict[str, Any]]) -> None:
-    """Serialise a list of trigger tables to ``runspec_triggers.toml``."""
-    triggers_path().write_text(_triggers_to_toml(triggers), encoding="utf-8")
+    """Save the ``[[triggers]]`` tables, preserving the existing ``[rota]``."""
+    _write_trigger_file(read_rota(), triggers)
+
+
+def write_rota(rota: dict[str, Any]) -> None:
+    """Save the ``[rota]`` working-hours table, preserving the existing triggers."""
+    _write_trigger_file(rota, read_triggers())
 
 
 def read_config() -> dict[str, Any]:
@@ -142,6 +163,23 @@ def _triggers_to_toml(triggers: list[dict[str, Any]]) -> str:
                     lines.append(f"{kk} = {_toml_scalar(vv)}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def _rota_to_toml(rota: dict[str, Any]) -> str:
+    """Serialise the ``[rota]`` table — scalar keys (e.g. ``enabled``) first, then
+    a ``[rota.<day>]`` sub-table per weekday ({on, start, end})."""
+    lines = ["[rota]"]
+    subtables = [(k, v) for k, v in rota.items() if isinstance(v, dict)]
+    for k, v in rota.items():
+        if isinstance(v, dict) or v is None:
+            continue
+        lines.append(f"{k} = {_toml_scalar(v)}")
+    for name, sub in subtables:
+        lines.append(f"[rota.{name}]")
+        for kk, vv in sub.items():
+            if vv is not None:
+                lines.append(f"{kk} = {_toml_scalar(vv)}")
+    return "\n".join(lines) + "\n"
 
 
 def _dict_to_toml(data: dict[str, Any]) -> str:

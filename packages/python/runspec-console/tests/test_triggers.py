@@ -15,6 +15,8 @@ from typing import Any, Callable
 
 import pytest
 
+from datetime import datetime
+
 from runspec_console.events import Event, FakeSource
 from runspec_console.triggers import (
     Column,
@@ -22,7 +24,17 @@ from runspec_console.triggers import (
     TriggerCard,
     TriggerEngine,
     load_triggers,
+    within_rota,
 )
+
+
+_ALL_ON = {
+    "enabled": True,
+    **{
+        d: {"on": True, "start": "09:00", "end": "17:00"}
+        for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+    },
+}
 
 
 class InlineExecutor(Executor):
@@ -213,6 +225,86 @@ def test_card_to_dict():
 
 
 # ── engine routing ────────────────────────────────────────────────────────────
+
+
+# ── working-hours rota ────────────────────────────────────────────────────────
+
+
+def test_within_rota_no_or_disabled_is_always_on():
+    assert within_rota(None, datetime(2026, 6, 10, 3, 0)) is True
+    assert within_rota({}, datetime(2026, 6, 10, 3, 0)) is True
+    assert (
+        within_rota({**_ALL_ON, "enabled": False}, datetime(2026, 6, 10, 3, 0)) is True
+    )
+
+
+def test_within_rota_in_and_out_of_window():
+    assert within_rota(_ALL_ON, datetime(2026, 6, 10, 10, 0)) is True  # 10:00
+    assert within_rota(_ALL_ON, datetime(2026, 6, 10, 8, 59)) is False  # before
+    assert within_rota(_ALL_ON, datetime(2026, 6, 10, 17, 1)) is False  # after
+
+
+def test_within_rota_day_off():
+    # Every day off → never within, whatever the time.
+    rota = {
+        "enabled": True,
+        **{d: {"on": False} for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")},
+    }
+    assert within_rota(rota, datetime(2026, 6, 10, 12, 0)) is False
+
+
+def test_within_rota_overnight_window():
+    rota = {
+        "enabled": True,
+        **{
+            d: {"on": True, "start": "22:00", "end": "06:00"}
+            for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+        },
+    }
+    assert within_rota(rota, datetime(2026, 6, 10, 23, 0)) is True
+    assert within_rota(rota, datetime(2026, 6, 10, 5, 0)) is True
+    assert within_rota(rota, datetime(2026, 6, 10, 12, 0)) is False
+
+
+def test_engine_clock_gate_skips_outside_hours():
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    gated = Trigger.from_config({"name": "g", "source": "outlook", "event": "new_mail"})
+    always = Trigger.from_config(
+        {"name": "a", "source": "outlook", "event": "new_mail", "ignore_rota": True}
+    )
+    engine, fake, cards = _engine(
+        [gated, always], handler, cards=[], clock_ok=lambda: False
+    )
+    engine.start()
+    fake.fire("new_mail", {"subject": "x"})
+    # Only the ignore_rota trigger fires while outside working hours.
+    assert fired == ["a"]
+
+
+# ── card timeline ─────────────────────────────────────────────────────────────
+
+
+def test_card_timeline_records_stages_and_logs():
+    card = TriggerCard(
+        id="c1", trigger="t", source="outlook", event_type="new_mail", summary="hi"
+    )
+    assert [e["text"] for e in card.timeline] == ["triggered"]  # seeded
+    card.move(Column.TRIAGE)
+    card.log("check-memory → ok")
+    card.move(Column.DONE)
+    assert [e["text"] for e in card.timeline] == [
+        "triggered",
+        "triage",
+        "check-memory → ok",
+        "done",
+    ]
+    assert all("ts" in e for e in card.timeline)
+    assert card.to_dict()["timeline"] == card.timeline
 
 
 def _engine(triggers, handler, **kw):

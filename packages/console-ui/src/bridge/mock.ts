@@ -1060,23 +1060,52 @@ export const mockApi: BridgeApi = {
     sources: [
       { id: 'outlook', available: false, reason: 'Outlook source requires Windows', event_types: ['new_mail', 'reminder'] },
     ],
+    rota: {
+      enabled: true,
+      source: 'console',
+      shift_marker: 'shift',
+      hold_during_meetings: false,
+      mon: { on: true, start: '09:00', end: '17:30' },
+      tue: { on: true, start: '09:00', end: '17:30' },
+      wed: { on: true, start: '09:00', end: '17:30' },
+      thu: { on: true, start: '09:00', end: '17:30' },
+      fri: { on: true, start: '09:00', end: '16:00' },
+      sat: { on: false, start: '09:00', end: '17:00' },
+      sun: { on: false, start: '09:00', end: '17:00' },
+    },
     running: true,
   }),
   set_trigger_enabled: async (name: string, enabled: boolean) => {
     console.log('mock: set_trigger_enabled', name, enabled)
     return { ok: true }
   },
+  save_rota: async (rota) => {
+    console.log('mock: save_rota', rota)
+    return { ok: true }
+  },
   get_trigger_board: async () => [
     {
       card_id: 'demo1', trigger: 'vip-outage-triage', source: 'outlook',
       event_type: 'new_mail', summary: 'Outage on web01 — site returning 503',
-      column: 'done', detail: { result: '✓ Saved a draft reply in Outlook Drafts.' },
+      column: 'done', detail: { result: '• check-memory → 87% used\n• disk-usage → /var 92%\n\nDrafted a reply summarising the findings.' },
       created_at: Date.now() / 1000 - 300,
+      timeline: [
+        { ts: Date.now() / 1000 - 300, text: 'triggered' },
+        { ts: Date.now() / 1000 - 299, text: 'triage' },
+        { ts: Date.now() / 1000 - 297, text: 'check-memory → 87% used' },
+        { ts: Date.now() / 1000 - 295, text: 'disk-usage → /var 92%' },
+        { ts: Date.now() / 1000 - 250, text: 'draft_reply → ✓ saved to Drafts' },
+        { ts: Date.now() / 1000 - 250, text: 'done' },
+      ],
     },
     {
       card_id: 'demo2', trigger: 'vip-outage-triage', source: 'outlook',
       event_type: 'new_mail', summary: 'Re: scheduled maintenance window',
       column: 'triage', detail: {}, created_at: Date.now() / 1000 - 30,
+      timeline: [
+        { ts: Date.now() / 1000 - 30, text: 'triggered' },
+        { ts: Date.now() / 1000 - 29, text: 'triage' },
+      ],
     },
   ],
 }

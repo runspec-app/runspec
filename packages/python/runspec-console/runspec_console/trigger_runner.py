@@ -18,7 +18,7 @@ See docs/design/console-triggers.md (§5–§7, §11).
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .events import Event
 from .triggers import Column, Handler, Trigger, TriggerCard
@@ -38,12 +38,14 @@ class BridgeOps(Protocol):
         *,
         draft: bool,
         reply_to: str | None = None,
+        record: Callable[[str], None] | None = None,
     ) -> str:
         """Run an isolated, headless agent turn under ``chat_id`` (the card id),
         with ``system`` as its system prompt and ``message`` as the sole user
         turn. ``draft`` requests the draft_reply tool be offered; ``reply_to`` is
         the source message's id the draft should reply to (required for drafting).
-        Returns a short summary (the agent's reply + any tool actions) for the card.
+        ``record`` (if given) is called with a short note per tool/gate step, for
+        the card timeline. Returns a short summary for the card.
         """
         ...
 
@@ -151,7 +153,12 @@ def make_handler(
         system = compose_system(trigger, base_system, draft_available=draft)
         card.move(Column.TRIAGE)
         summary = ops.run_agent_turn(
-            card.id, system, render_event(event), draft=draft, reply_to=reply_to
+            card.id,
+            system,
+            render_event(event),
+            draft=draft,
+            reply_to=reply_to,
+            record=card.log,  # per-tool/gate steps onto the card timeline
         )
         # The agent's reply + any actions land on the card — a trigger turn has no
         # chat transcript, so this is where its output is visible.

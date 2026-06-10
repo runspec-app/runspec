@@ -28,6 +28,7 @@ import time
 import uuid
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable
 
 from .events import Event, EventSource, create_source as _default_create_source
@@ -59,6 +60,40 @@ _TRIGGER_KEYS = frozenset(
 
 # {{ field }} / {{field}} — single payload-key substitution in a rule map value.
 _TEMPLATE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+
+# ── working-hours rota ────────────────────────────────────────────────────────
+# A global weekly schedule (in local time) that gates when triggers may fire, so
+# automation only runs while someone's around to handle confirms. Off by default.
+
+_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _parse_hhmm(value: str) -> int:
+    """Minutes-since-midnight for an 'HH:MM' string (0 on a bad value)."""
+    try:
+        hh, mm = str(value).split(":")
+        return int(hh) * 60 + int(mm)
+    except Exception:
+        return 0
+
+
+def within_rota(rota: dict[str, Any] | None, now: datetime) -> bool:
+    """Whether ``now`` (local) falls inside the working-hours rota.
+
+    No rota, or ``enabled = false`` → always True (no gating — the default, so
+    nothing changes until a rota is set up). For an enabled rota, the weekday
+    must be ``on`` and the time within ``[start, end]`` (an overnight window where
+    ``end < start`` is supported).
+    """
+    if not rota or not rota.get("enabled"):
+        return True
+    day = rota.get(_DAYS[now.weekday()])
+    if not isinstance(day, dict) or not day.get("on", False):
+        return False
+    start = _parse_hhmm(day.get("start", "00:00"))
+    end = _parse_hhmm(day.get("end", "23:59"))
+    cur = now.hour * 60 + now.minute
+    return start <= cur <= end if start <= end else (cur >= start or cur <= end)
 
 
 # ── kanban columns ──────────────────────────────────────────────────────────
@@ -103,6 +138,7 @@ class Trigger:
     enabled: bool = True
     autonomy: str = "confirm"
     post_to_chat: bool = False
+    ignore_rota: bool = False  # fire even outside working hours (escape hatch)
     match: dict[str, str] = field(default_factory=dict)
     rules: str = ""  # agent mode: the LLM's per-trigger system prompt
     run: str = ""  # rule mode: "host__runnable"
@@ -188,6 +224,7 @@ class Trigger:
             enabled=bool(data.get("enabled", True)),
             autonomy=autonomy,
             post_to_chat=bool(data.get("post_to_chat", False)),
+            ignore_rota=bool(data.get("ignore_rota", False)),
             match=match,
             rules=str(data.get("rules") or ""),
             run=run,
@@ -242,13 +279,28 @@ class TriggerCard:
     column: str = Column.TRIGGERED
     detail: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
+    # Timestamped audit trail of stage changes + notable steps (the "what
+    # happened in each lane" record). Each entry: {"ts": float, "text": str}.
+    timeline: list[dict[str, Any]] = field(default_factory=list)
     _on_change: Callable[[TriggerCard], None] | None = field(default=None, repr=False)
 
+    def __post_init__(self) -> None:
+        if not self.timeline:
+            self.timeline.append({"ts": self.created_at, "text": self.column})
+
     def move(self, column: str, **detail: Any) -> None:
-        """Move the card to ``column``, merge ``detail``, and fire the hook."""
+        """Move the card to ``column``, merge ``detail``, record it, fire the hook."""
         self.column = column
         if detail:
             self.detail.update(detail)
+        self.timeline.append({"ts": time.time(), "text": column})
+        if self._on_change is not None:
+            self._on_change(self)
+
+    def log(self, text: str) -> None:
+        """Append a free-text step to the timeline (e.g. a tool run / gate) and
+        fire the hook. Used to record what happened between stage changes."""
+        self.timeline.append({"ts": time.time(), "text": text})
         if self._on_change is not None:
             self._on_change(self)
 
@@ -267,6 +319,7 @@ class TriggerCard:
             "column": self.column,
             "detail": self.detail,
             "created_at": self.created_at,
+            "timeline": self.timeline,
         }
 
 
@@ -300,11 +353,15 @@ class TriggerEngine:
         create_source: Callable[[str], EventSource | None] = _default_create_source,
         executor: Executor | None = None,
         max_workers: int = 2,
+        clock_ok: Callable[[], bool] = lambda: True,
     ) -> None:
         self._triggers = list(triggers)
         self._handler = handler
         self._on_card = on_card
         self._create_source = create_source
+        # Returns True when triggers may fire now (the working-hours rota gate).
+        # Default always-True = no gating.
+        self._clock_ok = clock_ok
         self._executor = executor or ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="trigger"
         )
@@ -369,12 +426,19 @@ class TriggerEngine:
         """Route an event to every matching trigger.
 
         Returns the Future of the last submitted run (handy for tests with a
-        synchronous executor); ``None`` if nothing matched.
+        synchronous executor); ``None`` if nothing matched. Outside the
+        working-hours rota, matching triggers are skipped (dropped, not queued)
+        unless they set ``ignore_rota``.
         """
         last: Future[None] | None = None
+        clock_ok = self._clock_ok()
         for trigger in self._triggers:
-            if trigger.matches(event):
-                last = self._dispatch(trigger, event)
+            if not trigger.matches(event):
+                continue
+            if not clock_ok and not trigger.ignore_rota:
+                logger.info("trigger '%s' skipped: outside working hours", trigger.name)
+                continue
+            last = self._dispatch(trigger, event)
         return last
 
     def _dispatch(self, trigger: Trigger, event: Event) -> Future[None]:

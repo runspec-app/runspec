@@ -8,6 +8,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.31.0] — 2026-06-10
+
+### Added
+- **Outlook-calendar rota source.** The working-hours rota gains a `source`:
+  `"console"` (the manual weekly grid) or `"outlook"` (your calendar). With
+  `source = "outlook"`, "on shift now?" is read from the **desktop Outlook
+  client** (COM) — you're on shift when a calendar event whose subject contains
+  `shift_marker` (default `"shift"`) covers the moment. Ideal for rotating
+  shifts: put them in your calendar and the triggers follow. Optional
+  `hold_during_meetings` (default off) also pauses while you're in a meeting/OOO.
+  If the calendar can't be read (Outlook closed, non-Windows), it **falls back
+  to the console grid**. The two never run at once — `source` picks one
+  authority. (Outlook's Work-Hours *setting* isn't used: it isn't exposed in
+  free/busy and is only readable via Graph, which managed tenants block — hence
+  the marker-event approach.)
+
+
+## [0.30.0] — 2026-06-10
+
+### Added
+- **Working-hours rota.** A global weekly schedule (Triggers tab → *Working
+  hours*) gates when triggers may fire: per-day on/off with a start and end
+  time, in local machine time. Outside the windows, matching events are
+  **dropped, not queued** — so automation only runs while someone's around to
+  handle confirms, and you don't get a flood when the window opens. Off by
+  default (triggers run anytime until you set it up). A per-trigger
+  `ignore_rota = true` escape hatch lets a specific trigger run regardless.
+  Stored as `[rota]` in `runspec_triggers.toml`.
+- **Per-card audit timeline.** Each kanban card now keeps a timestamped trail of
+  what happened — stage changes (triggered → triage → … → done) plus each tool
+  the agent ran — recorded on the backend so it survives even fast-moving cards
+  and tab switches. Expand a card's *timeline* to read the full trace.
+
+
 ## [0.29.3] — 2026-06-09
 
 ### Changed

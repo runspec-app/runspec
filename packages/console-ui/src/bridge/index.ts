@@ -318,6 +318,11 @@ export interface TestResult {
 // runspec:trigger_card event detail — one kanban card (an event instance flowing
 // across the board). Columns: triggered | triage | awaiting_human | running |
 // done | failed.
+export interface TimelineEntry {
+  ts: number      // epoch seconds
+  text: string
+}
+
 export interface TriggerCard {
   card_id: string
   trigger: string
@@ -327,6 +332,24 @@ export interface TriggerCard {
   column: string
   detail: Record<string, unknown>
   created_at: number
+  timeline?: TimelineEntry[]   // timestamped audit trail of stage changes + steps
+}
+
+// One weekday of the working-hours rota.
+export interface RotaDay {
+  on?: boolean
+  start?: string   // "HH:MM"
+  end?: string     // "HH:MM"
+}
+
+// The working-hours rota. `source` picks the authority: "console" (the manual
+// grid of RotaDay per mon..sun) or "outlook" (calendar shift-marker events).
+export interface Rota {
+  enabled?: boolean
+  source?: string                 // "console" | "outlook"
+  shift_marker?: string           // outlook: subject keyword marking a shift
+  hold_during_meetings?: boolean  // outlook: also pause while in a meeting/OOO
+  [day: string]: boolean | string | RotaDay | undefined
 }
 
 export interface TriggerSourceInfo {
@@ -340,6 +363,7 @@ export interface TriggerListResult {
   triggers: Record<string, unknown>[]   // raw [[triggers]] tables from config
   errors: string[]                        // per-table parse errors (skipped)
   sources: TriggerSourceInfo[]
+  rota: Rota                              // working-hours schedule ({} when unset)
   running: boolean
 }
 
@@ -407,6 +431,7 @@ export interface BridgeApi {
   // ── event triggers ─────────────────────────────────────────────────────────
   list_triggers: () => Promise<TriggerListResult>
   set_trigger_enabled: (name: string, enabled: boolean) => Promise<{ ok: boolean }>
+  save_rota: (rota: Rota) => Promise<{ ok: boolean }>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>

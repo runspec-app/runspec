@@ -27,7 +27,9 @@ class FakeOps:
         self._tool_output = tool_output
         self._agent_summary = agent_summary
 
-    def run_agent_turn(self, chat_id, system, message, *, draft, reply_to=None):
+    def run_agent_turn(
+        self, chat_id, system, message, *, draft, reply_to=None, record=None
+    ):
         self.agent_calls.append(
             {
                 "chat_id": chat_id,
@@ -35,6 +37,7 @@ class FakeOps:
                 "message": message,
                 "draft": draft,
                 "reply_to": reply_to,
+                "record_callable": callable(record),
             }
         )
         return self._agent_summary
@@ -128,6 +131,7 @@ def test_handler_agent_mode():
     assert "Outage" in call["message"]
     assert [c for c, _ in moves] == [Column.TRIAGE, Column.DONE]
     assert moves[-1][1]["result"] == "agent reply"  # summary lands on the card
+    assert call["record_callable"] is True  # timeline recorder passed through
     assert ops.chat_notes == []  # post_to_chat off by default
 
 

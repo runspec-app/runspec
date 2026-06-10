@@ -105,9 +105,10 @@ class _BridgeTriggerOps:
         *,
         draft: bool,
         reply_to: str | None = None,
+        record: Any = None,
     ) -> str:
         return self._bridge._trigger_run_agent_turn(
-            chat_id, system, message, draft=draft, reply_to=reply_to
+            chat_id, system, message, draft=draft, reply_to=reply_to, record=record
         )
 
     def run_rule_tool(
@@ -4421,10 +4422,12 @@ class Bridge:
         with self._lock:
             if self._trigger_engine is not None:
                 return
+        from datetime import datetime
+
         from . import sources  # noqa: F401 — registers built-in event sources
-        from .config import read_triggers
+        from .config import read_rota, read_triggers
         from .trigger_runner import make_handler
-        from .triggers import TriggerEngine, load_triggers
+        from .triggers import _DAYS, TriggerEngine, load_triggers, within_rota
 
         triggers, errors = load_triggers(read_triggers())
         for err in errors:
@@ -4439,7 +4442,37 @@ class Bridge:
             # carries a message to reply to.
             draft_available=True,
         )
-        engine = TriggerEngine(triggers, handler=handler, on_card=self._on_trigger_card)
+        # Working-hours rota gate (read fresh each event so a window boundary is
+        # respected without restarting). No/disabled rota → always-on. With
+        # source="outlook", availability comes from the calendar (falling back to
+        # the console grid if it can't be read); otherwise the manual grid.
+        rota = read_rota()
+        grid_configured = any(isinstance(rota.get(d), dict) for d in _DAYS)
+
+        def clock_ok() -> bool:
+            now = datetime.now()
+            if not rota.get("enabled"):
+                return True
+            if rota.get("source") == "outlook":
+                from .sources.outlook import calendar_clock_ok
+
+                res = calendar_clock_ok(
+                    now,
+                    str(rota.get("shift_marker") or "shift"),
+                    bool(rota.get("hold_during_meetings", False)),
+                )
+                if res is not None:
+                    return res
+                # Calendar unreadable → fall back to the console grid if set.
+                return within_rota(rota, now) if grid_configured else True
+            return within_rota(rota, now)
+
+        engine = TriggerEngine(
+            triggers,
+            handler=handler,
+            on_card=self._on_trigger_card,
+            clock_ok=clock_ok,
+        )
         problems = engine.start()
         with self._lock:
             self._trigger_engine = engine
@@ -4466,7 +4499,7 @@ class Bridge:
     def list_triggers(self) -> dict[str, Any]:
         """For the Triggers UI: raw trigger tables, parse errors, and the event
         sources available on this machine (with the reason any are unavailable)."""
-        from .config import read_triggers
+        from .config import read_rota, read_triggers
         from .events import available_sources, create_source
         from .triggers import load_triggers
 
@@ -4488,6 +4521,7 @@ class Bridge:
             "triggers": raw,
             "errors": errors,
             "sources": sources_info,
+            "rota": read_rota(),
             "running": self._trigger_engine is not None,
         }
 
@@ -4505,6 +4539,14 @@ class Bridge:
             write_triggers(raw)
             self.restart_triggers()
         return {"ok": found}
+
+    def save_rota(self, rota: dict[str, Any]) -> dict[str, Any]:
+        """Save the working-hours rota and restart the engine so it takes effect."""
+        from .config import write_rota
+
+        write_rota(dict(rota or {}))
+        self.restart_triggers()
+        return {"ok": True}
 
     def get_trigger_board(self) -> list[dict[str, Any]]:
         """Snapshot of the kanban cards for this session (newest last)."""
@@ -4536,6 +4578,7 @@ class Bridge:
         *,
         draft: bool,
         reply_to: str | None = None,
+        record: Callable[[str], None] | None = None,
     ) -> str:
         """BridgeOps: run an isolated headless agent turn for a trigger card.
 
@@ -4543,7 +4586,8 @@ class Bridge:
         (mirroring send_chat). The card id doubles as the chat_id so the turn's
         token / tool / confirm events attribute to the card on the board.
         ``reply_to`` (when ``draft``) is the Outlook message id the draft_reply
-        tool replies to. Returns a summary for display on the card."""
+        tool replies to. ``record`` logs per-tool steps to the card timeline.
+        Returns a summary for display on the card."""
         try:
             adapter = self._get_adapter(system_override=system)
         except Exception as exc:  # noqa: BLE001 — surface, don't crash the worker
@@ -4559,7 +4603,11 @@ class Bridge:
         try:
             return asyncio.run(
                 self._run_isolated_agent_turn(
-                    chat_id, message, adapter, reply_to=reply_to if draft else None
+                    chat_id,
+                    message,
+                    adapter,
+                    reply_to=reply_to if draft else None,
+                    record=record,
                 )
             )
         finally:
@@ -4567,7 +4615,12 @@ class Bridge:
                 self._chat_cancels.pop(chat_id, None)
 
     async def _run_isolated_agent_turn(
-        self, chat_id: str, message: str, adapter: Any, reply_to: str | None = None
+        self,
+        chat_id: str,
+        message: str,
+        adapter: Any,
+        reply_to: str | None = None,
+        record: Callable[[str], None] | None = None,
     ) -> str:
         """A headless agent loop for a trigger card. Like _agentic_chat_turn but
         against an isolated, throwaway history (never the shared chat) so a
@@ -4648,6 +4701,8 @@ class Bridge:
                 display = tc.name.split("__", 1)[-1]
                 first_line = next((ln for ln in output.splitlines() if ln.strip()), "")
                 actions.append(f"{display} → {first_line[:160]}")
+                if record is not None:
+                    record(f"{display} → {first_line[:160]}")
                 tool_results.append((tc, output))
             history.extend(adapter.make_tool_turn(response, tool_results))
 

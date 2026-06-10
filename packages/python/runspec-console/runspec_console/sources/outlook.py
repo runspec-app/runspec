@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+from datetime import datetime
 from typing import Any
 
 from ..events import EmitFn, Event, register_source
@@ -255,6 +256,117 @@ def save_reply_draft(entry_id: str, body: str) -> dict[str, str]:
         }
     finally:
         pythoncom.CoUninitialize()
+
+
+# ── calendar-driven working-hours rota ────────────────────────────────────────
+#
+# When the rota's source = "outlook", "are we on shift right now?" is derived
+# from the user's calendar: a marker event (subject contains e.g. "shift")
+# covering now means on-shift. Optionally also hold while a meeting/OOO is on.
+# The decision is a pure function (tested with fakes); the COM read is Windows-
+# only and returns None when it can't read, so the caller falls back to the grid.
+
+# Outlook OlBusyStatus: olFree=0, olTentative=1, olBusy=2, olOutOfOffice=3,
+# olWorkingElsewhere=4. "Busy" for hold purposes = Busy or OutOfOffice.
+_BUSY_STATUSES = frozenset({2, 3})
+
+
+def _covers(event: dict[str, Any], now: datetime) -> bool:
+    start, end = event.get("start"), event.get("end")
+    return bool(start and end and start <= now <= end)
+
+
+def decide_calendar(
+    events: list[dict[str, Any]],
+    now: datetime,
+    marker: str,
+    hold_during_meetings: bool,
+) -> bool:
+    """Pure rota decision from calendar events covering ``now``.
+
+    On-shift = a marker event (subject contains ``marker``, case-insensitive)
+    covers ``now``. If ``hold_during_meetings``, a *non-marker* busy/OOO event
+    covering now suppresses firing too. Each event: {subject, start, end, busy}.
+    """
+    marker_l = marker.lower()
+
+    def is_marker(e: dict[str, Any]) -> bool:
+        return marker_l in str(e.get("subject", "")).lower()
+
+    if not any(is_marker(e) and _covers(e, now) for e in events):
+        return False
+    if hold_during_meetings:
+        for e in events:
+            if not is_marker(e) and e.get("busy") and _covers(e, now):
+                return False
+    return True
+
+
+def _to_dt(value: Any) -> datetime | None:
+    """Best-effort naive datetime from a COM/pywintypes time (None on failure)."""
+    try:
+        return datetime(
+            value.year,
+            value.month,
+            value.day,
+            value.hour,
+            value.minute,
+            getattr(value, "second", 0),
+        )
+    except Exception:
+        return None
+
+
+def read_calendar_now() -> list[dict[str, Any]] | None:
+    """Calendar events overlapping *now*, via the desktop Outlook client (COM).
+
+    Returns a list of {subject, start, end, busy} dicts, or ``None`` if the
+    calendar can't be read (non-Windows, Outlook closed, COM error) — the caller
+    then falls back to the console grid. Windows-only; win32 imports stay here.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        try:
+            app = win32com.client.Dispatch("Outlook.Application")
+            cal = app.GetNamespace("MAPI").GetDefaultFolder(9)  # olFolderCalendar
+            items = cal.Items
+            items.IncludeRecurrences = True
+            items.Sort("[Start]")
+            now = datetime.now()
+            stamp = now.strftime("%m/%d/%Y %I:%M %p")
+            restricted = items.Restrict(f"[Start] <= '{stamp}' AND [End] >= '{stamp}'")
+            out: list[dict[str, Any]] = []
+            for it in restricted:
+                out.append(
+                    {
+                        "subject": _str(_attr(it, "Subject")),
+                        "start": _to_dt(_attr(it, "Start", None)),
+                        "end": _to_dt(_attr(it, "End", None)),
+                        "busy": int(_attr(it, "BusyStatus", 0) or 0) in _BUSY_STATUSES,
+                    }
+                )
+            return out
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception:
+        logger.exception("outlook: calendar read failed")
+        return None
+
+
+def calendar_clock_ok(
+    now: datetime, marker: str, hold_during_meetings: bool
+) -> bool | None:
+    """Whether triggers may fire now per the Outlook calendar, or ``None`` if the
+    calendar couldn't be read (caller falls back to the console grid)."""
+    events = read_calendar_now()
+    if events is None:
+        return None
+    return decide_calendar(events, now, marker, hold_during_meetings)
 
 
 register_source("outlook", OutlookSource)

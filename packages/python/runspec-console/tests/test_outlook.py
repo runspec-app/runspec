@@ -157,3 +157,57 @@ def test_save_reply_draft_off_windows():
         return
     with pytest.raises(RuntimeError, match="Windows"):
         save_reply_draft("ENT1", "hello")
+
+
+# ── calendar rota decision ────────────────────────────────────────────────────
+
+
+def _ev(subject, start, end, busy=False):
+    from datetime import datetime
+
+    return {
+        "subject": subject,
+        "start": datetime(2026, 6, 10, *start),
+        "end": datetime(2026, 6, 10, *end),
+        "busy": busy,
+    }
+
+
+def test_decide_calendar_on_and_off_shift():
+    from datetime import datetime
+
+    from runspec_console.sources.outlook import decide_calendar
+
+    now = datetime(2026, 6, 10, 10, 0)
+    shift = [_ev("Shift", (9, 0), (17, 0))]
+    assert decide_calendar(shift, now, "shift", False) is True  # case-insensitive
+    # No marker event covering now → off shift.
+    assert decide_calendar([], now, "shift", False) is False
+    assert (
+        decide_calendar([_ev("Shift", (12, 0), (17, 0))], now, "shift", False) is False
+    )  # marker but not covering 10:00
+
+
+def test_decide_calendar_hold_during_meetings():
+    from datetime import datetime
+
+    from runspec_console.sources.outlook import decide_calendar
+
+    now = datetime(2026, 6, 10, 10, 0)
+    events = [
+        _ev("Shift", (9, 0), (17, 0)),
+        _ev("Standup", (9, 30), (10, 30), busy=True),
+    ]
+    # hold off → fires despite the meeting; hold on → suppressed.
+    assert decide_calendar(events, now, "shift", False) is True
+    assert decide_calendar(events, now, "shift", True) is False
+
+
+def test_calendar_clock_ok_none_off_windows():
+    if sys.platform == "win32":
+        return
+    from datetime import datetime
+
+    from runspec_console.sources.outlook import calendar_clock_ok
+
+    assert calendar_clock_ok(datetime.now(), "shift", False) is None
