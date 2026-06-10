@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.38.2] — 2026-06-10
+
+### Fixed
+- **Per-host spinners no longer get stuck on after a restart.** The loading
+  spinner shown next to every host in the sidebar is driven by a single
+  `runnablesLoading` flag that was only ever cleared inside the initial
+  `get_runnables('all')` call — with no error path. If that bridge call rejected
+  or never settled (e.g. right after a restart, before the webview API is
+  injected), the flag stayed `true` and every host spun forever with no
+  recovery. The flag is now also cleared on failure (`.catch`) and whenever
+  discovery completion (`runnables_updated`) arrives — which is delivered
+  Python→JS through the dispatch queue, so it lands even if the initial
+  JS→Python call stalled.
+- **In-tree `__version__` re-synced to the packaged version.** The source-run
+  fallback in `__init__.py` had drifted to `0.34.2` while the package was at
+  `0.38.x`, so running from a non-installed checkout showed a misleading version
+  in the sidebar. Bumped to match.
+
+
 ## [0.38.1] — 2026-06-10
 
 ### Fixed

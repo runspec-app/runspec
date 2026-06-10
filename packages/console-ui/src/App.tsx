@@ -112,13 +112,21 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    bridge.get_runnables('all').then(r => { setRunnables(r); setRunnablesLoading(false) })
+    // Clear the loading flag whether the call resolves or rejects — otherwise a
+    // failed/never-ready bridge call (e.g. right after a restart, before the
+    // webview API is injected) would pin the per-host spinner on forever.
+    bridge.get_runnables('all')
+      .then(r => { setRunnables(r); setRunnablesLoading(false) })
+      .catch(() => setRunnablesLoading(false))
     bridge.get_hosts().then(hs => {
       setHosts(hs)
       setSelectedHost(hs[0]?.name ?? '')
     })
     const onHostsUpdated = () => bridge.get_hosts().then(setHosts)
-    const onRunnablesUpdated = () => bridge.get_runnables('all').then(setRunnables)
+    // Discovery completion arrives Python→JS via the dispatch queue, so it lands
+    // even if the initial JS→Python call stalled — also clear loading here.
+    const onRunnablesUpdated = () =>
+      bridge.get_runnables('all').then(r => { setRunnables(r); setRunnablesLoading(false) })
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
     return () => {
