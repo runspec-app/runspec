@@ -450,6 +450,8 @@ export interface BridgeApi {
   save_rota: (rota: Rota) => Promise<{ ok: boolean }>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>
+  // Send a draft an agent-mode trigger saved (the card's Send button).
+  send_trigger_draft: (entryId: string) => Promise<{ ok: boolean; to?: string; subject?: string; error?: string }>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>

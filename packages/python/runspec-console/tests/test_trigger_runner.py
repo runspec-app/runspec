@@ -23,7 +23,7 @@ class FakeOps:
     ) -> None:
         self.agent_calls: list[dict[str, Any]] = []
         self.rule_calls: list[dict[str, Any]] = []
-        self.chat_notes: list[str] = []
+        self.chat_mirrors: list[dict[str, str]] = []
         self._tool_output = tool_output
         self._agent_summary = agent_summary
 
@@ -48,8 +48,8 @@ class FakeOps:
         )
         return self._tool_output
 
-    def note_in_chat(self, text):
-        self.chat_notes.append(text)
+    def mirror_to_chat(self, kind, label, text):
+        self.chat_mirrors.append({"kind": kind, "label": label, "text": text})
 
 
 def _card(trigger_name="t"):
@@ -132,7 +132,7 @@ def test_handler_agent_mode():
     assert [c for c, _ in moves] == [Column.TRIAGE, Column.DONE]
     assert moves[-1][1]["result"] == "agent reply"  # summary lands on the card
     assert call["record_callable"] is True  # timeline recorder passed through
-    assert ops.chat_notes == []  # post_to_chat off by default
+    assert ops.chat_mirrors == []  # post_to_chat off by default
 
 
 def test_handler_agent_post_to_chat():
@@ -148,7 +148,10 @@ def test_handler_agent_post_to_chat():
     handler = make_handler(ops)
     card, _ = _card()
     handler(card, t, Event.new("outlook", "new_mail", {"subject": "x"}))
-    assert len(ops.chat_notes) == 1 and "Trigger 't'" in ops.chat_notes[0]
+    assert len(ops.chat_mirrors) == 1
+    mirror = ops.chat_mirrors[0]
+    assert mirror["kind"] == "chat"  # agent mode → chat card
+    assert "t" in mirror["label"] and mirror["text"] == "agent reply"
 
 
 def test_handler_agent_draft_only_when_both_enabled():
@@ -225,4 +228,9 @@ def test_handler_rule_mode():
     assert [c for c, _ in moves] == [Column.RUNNING, Column.DONE]
     assert moves[-1][1]["result"] == "exit 0\nall good"
     assert ops.agent_calls == []
-    assert len(ops.chat_notes) == 1 and "host__check" in ops.chat_notes[0]
+    assert len(ops.chat_mirrors) == 1
+    mirror = ops.chat_mirrors[0]
+    assert mirror["kind"] == "run"  # rule mode → slash-command run card
+    # label mirrors "/runnable on host" from run="host__check"
+    assert mirror["label"].startswith("/check on host")
+    assert mirror["text"] == "exit 0\nall good"

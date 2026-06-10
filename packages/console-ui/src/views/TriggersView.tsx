@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input, Drawer } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined } from '@ant-design/icons'
+import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined, SendOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
@@ -189,6 +189,11 @@ export function TriggersView() {
   const [selected, setSelected] = useState<string | null>(null)
   // Event-audit feed: every event seen + its disposition (newest first).
   const [events, setEvents] = useState<TriggerEvent[]>([])
+  // Draft replies an agent-mode trigger saved, keyed by card id — drives the
+  // card's Send button (review the draft, then send it from here).
+  const [drafts, setDrafts] = useState<
+    Record<string, { entry_id: string; to: string; subject: string; sent?: boolean; sending?: boolean }>
+  >({})
   // Known card ids, so the global runspec:token listener ignores chat tokens.
   const cardIds = useRef<Set<string>>(new Set())
 
@@ -236,12 +241,19 @@ export function TriggersView() {
     }
     const onStatus = () => loadConfig()
     const onNote = (e: Event) => {
-      const { text } = (e as CustomEvent).detail as { text: string }
-      if (text) setNotes(prev => [text, ...prev].slice(0, 20))
+      const { label, text } = (e as CustomEvent).detail as { label?: string; text?: string }
+      const line = label || text
+      if (line) setNotes(prev => [line, ...prev].slice(0, 20))
     }
     const onEvent = (e: Event) => {
       const rec = (e as CustomEvent).detail as TriggerEvent
       setEvents(prev => [rec, ...prev].slice(0, 300))
+    }
+    const onDraft = (e: Event) => {
+      const { id, entry_id, to, subject } = (e as CustomEvent).detail as {
+        id: string; entry_id: string; to: string; subject: string
+      }
+      if (entry_id) setDrafts(prev => ({ ...prev, [id]: { entry_id, to, subject } }))
     }
     window.addEventListener('runspec:trigger_card', onCard)
     window.addEventListener('runspec:token', onToken)
@@ -250,6 +262,7 @@ export function TriggersView() {
     window.addEventListener('runspec:trigger_status', onStatus)
     window.addEventListener('runspec:trigger_note', onNote)
     window.addEventListener('runspec:trigger_event', onEvent)
+    window.addEventListener('runspec:trigger_draft', onDraft)
     return () => {
       window.removeEventListener('runspec:trigger_card', onCard)
       window.removeEventListener('runspec:token', onToken)
@@ -258,8 +271,25 @@ export function TriggersView() {
       window.removeEventListener('runspec:trigger_status', onStatus)
       window.removeEventListener('runspec:trigger_note', onNote)
       window.removeEventListener('runspec:trigger_event', onEvent)
+      window.removeEventListener('runspec:trigger_draft', onDraft)
     }
   }, [])
+
+  const sendDraft = async (cardId: string) => {
+    const d = drafts[cardId]
+    if (!d || d.sending || d.sent) return
+    setDrafts(prev => ({ ...prev, [cardId]: { ...prev[cardId], sending: true } }))
+    try {
+      const res = await bridge.send_trigger_draft(d.entry_id)
+      setDrafts(prev => ({
+        ...prev,
+        [cardId]: { ...prev[cardId], sending: false, sent: !!res.ok },
+      }))
+    } catch (err) {
+      console.error(err)
+      setDrafts(prev => ({ ...prev, [cardId]: { ...prev[cardId], sending: false } }))
+    }
+  }
 
   const answer = (cardId: string, approved: boolean) => {
     const p = pending[cardId]
@@ -473,6 +503,7 @@ export function TriggersView() {
           const error = card.detail?.error as string | undefined
           const body = result || streams[card.card_id]
           const preview = p ? describeToolInput(p.tool_name, p.tool_input) : ''
+          const draft = drafts[card.card_id]
           return (
             <div style={{ fontSize: 13, color: textColor(isDark) }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
@@ -502,6 +533,35 @@ export function TriggersView() {
                     <Button type="primary" icon={<CheckOutlined />} onClick={() => answer(card.card_id, true)}>Approve</Button>
                     <Button danger icon={<CloseOutlined />} onClick={() => answer(card.card_id, false)}>Deny</Button>
                   </Space>
+                </div>
+              )}
+
+              {draft && (
+                <div style={{
+                  border: `1px solid ${COLUMN_COLOR.done}`, borderRadius: 6,
+                  padding: 12, marginBottom: 16,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: COLUMN_COLOR.done, fontWeight: 600 }}>
+                      Draft reply saved to Outlook{draft.to ? ` · to ${draft.to}` : ''}
+                    </div>
+                    <div style={{ color: dim, fontSize: 12 }}>
+                      {draft.sent
+                        ? 'Sent.'
+                        : 'Review it in Outlook, then send — or send it from here.'}
+                    </div>
+                  </div>
+                  {draft.sent ? (
+                    <Tag color="green">Sent</Tag>
+                  ) : (
+                    <Button
+                      type="primary" icon={<SendOutlined />} loading={draft.sending}
+                      onClick={() => sendDraft(card.card_id)}
+                    >
+                      Send reply
+                    </Button>
+                  )}
                 </div>
               )}
 

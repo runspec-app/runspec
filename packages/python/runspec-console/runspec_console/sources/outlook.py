@@ -270,9 +270,11 @@ def save_reply_draft(entry_id: str, body: str) -> dict[str, str]:
     """Create a reply to the message ``entry_id`` and save it to Drafts.
 
     The agent's ``body`` is placed above Outlook's quoted original. The draft is
-    **saved, never sent** — the user reviews and sends it from Outlook. Returns a
-    small summary (to / subject). Raises on any failure so the caller can report
-    it on the card. Windows-only; the win32 imports stay inside this function.
+    **saved, never sent** — the user reviews it and sends from Outlook *or* via
+    the card's Send button (see :func:`send_draft`). Returns a small summary
+    (to / subject / ``entry_id`` of the saved draft, which the Send button uses).
+    Raises on any failure so the caller can report it on the card. Windows-only;
+    the win32 imports stay inside this function.
     """
     if sys.platform != "win32":
         raise RuntimeError("draft_reply requires Windows (Outlook COM)")
@@ -294,7 +296,41 @@ def save_reply_draft(entry_id: str, body: str) -> dict[str, str]:
         return {
             "to": _str(_attr(reply, "To")),
             "subject": _str(_attr(reply, "Subject")),
+            # EntryID is assigned once the draft is saved; the card's Send button
+            # reopens the draft by this id and sends it (human-initiated).
+            "entry_id": _str(_attr(reply, "EntryID")),
         }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def send_draft(entry_id: str) -> dict[str, str]:
+    """Send a previously-saved draft by its ``entry_id`` (the card's Send button).
+
+    Reopens the draft saved by :func:`save_reply_draft` and sends it. This is the
+    one place that actually sends mail, and it is only ever reached from an
+    explicit human click — the agent never calls it. Returns a small summary
+    (to / subject); raises on failure. Windows-only.
+    """
+    if sys.platform != "win32":
+        raise RuntimeError("send requires Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("send has no draft to send")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        namespace = app.GetNamespace("MAPI")
+        draft = namespace.GetItemFromID(entry_id)
+        summary = {
+            "to": _str(_attr(draft, "To")),
+            "subject": _str(_attr(draft, "Subject")),
+        }
+        draft.Send()
+        return summary
     finally:
         pythoncom.CoUninitialize()
 

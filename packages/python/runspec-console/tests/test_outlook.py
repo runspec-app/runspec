@@ -21,6 +21,7 @@ from runspec_console.sources.outlook import (
     _reminder_payload,
     _split_categories,
     save_reply_draft,
+    send_draft,
 )
 
 
@@ -185,6 +186,19 @@ def test_save_reply_draft_off_windows():
         return
     with pytest.raises(RuntimeError, match="Windows"):
         save_reply_draft("ENT1", "hello")
+
+
+def test_send_draft_requires_entry_id(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")  # past the platform guard
+    with pytest.raises(RuntimeError, match="no draft"):
+        send_draft("")
+
+
+def test_send_draft_off_windows():
+    if sys.platform == "win32":
+        return
+    with pytest.raises(RuntimeError, match="Windows"):
+        send_draft("ENT1")
 
 
 # ── calendar rota decision ────────────────────────────────────────────────────

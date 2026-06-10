@@ -117,22 +117,41 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   }, [])
 
   // post_to_chat triggers mirror their run into the Console transcript as a
-  // finished chat block, so trigger activity is visible here, not just on the
-  // Triggers tab. (The bridge dispatches runspec:trigger_note with an id.)
+  // finished block matching the trigger mode, so a triggered run looks just
+  // like the same command run by hand — only the source differs:
+  //   kind="run"  → a standard slash-command run card (mode=rule)
+  //   kind="chat" → an agent/chat card (mode=agent)
+  // (The bridge dispatches runspec:trigger_note with id/kind/label/text.)
   useEffect(() => {
     const onTriggerNote = (e: Event) => {
-      const { text, id } = (e as CustomEvent).detail as { text: string; id?: string }
-      if (!text) return
-      addBlockRef.current({
-        id: id || `trigger-${Date.now()}`,
-        type: 'chat',
-        label: text.split('\n')[0].slice(0, 80),
-        startedAt: new Date().toISOString(),
-        lines: [],
-        segments: [{ kind: 'text', text }],
-        currentText: '',
-        done: true,
-      })
+      const { id, kind, label, text } = (e as CustomEvent).detail as {
+        id?: string; kind?: string; label?: string; text?: string
+      }
+      if (!text && !label) return
+      const blockId = id || `trigger-${Date.now()}`
+      const startedAt = new Date().toISOString()
+      if (kind === 'run') {
+        // Render the runnable output as run-block lines; surface a non-zero exit
+        // from the "[exit N]" prefix the gate adds so it reads like a real run.
+        let body = text || ''
+        let exitCode = 0
+        const m = /^\[exit (\d+)\]\n?/.exec(body)
+        if (m) { exitCode = Number(m[1]); body = body.slice(m[0].length) }
+        const lines = body
+          ? body.split('\n').map(line => ({ id: blockId, line, stream: 'stdout' as const }))
+          : []
+        addBlockRef.current({
+          id: blockId, type: 'run', label: label || 'trigger run',
+          startedAt, lines, segments: [], currentText: '',
+          done: true, exitCode,
+        })
+      } else {
+        addBlockRef.current({
+          id: blockId, type: 'chat', label: label || 'trigger',
+          startedAt, lines: [], segments: [{ kind: 'text', text: text || '' }],
+          currentText: '', done: true,
+        })
+      }
     }
     window.addEventListener('runspec:trigger_note', onTriggerNote)
     return () => window.removeEventListener('runspec:trigger_note', onTriggerNote)

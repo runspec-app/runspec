@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.37.0] — 2026-06-10
+
+### Added
+- **Send button for agent-drafted replies.** `draft_reply` still only ever
+  *drafts* (the agent never sends), but once a draft is saved its trigger card
+  now shows a **Send** button: you review the draft and send it with one click
+  from the console, instead of switching to Outlook. The send is always
+  human-initiated — `save_reply_draft` returns the draft's `EntryID`, the card
+  surfaces it, and the new `send_trigger_draft` / `outlook.send_draft` send it.
+
+### Changed
+- **`post_to_chat` now mirrors a trigger run into the Console as the same card a
+  manual invocation makes**, instead of a plain text note — so a triggered run
+  looks just like the same command run by hand, only the source differs:
+  - **`mode = "rule"`** → a standard **slash-command run card** (`/runnable on
+    host` heading, the runnable's output as run lines, and a non-zero exit code
+    surfaced from the gate's `[exit N]` prefix).
+  - **`mode = "agent"`** → an **agent/chat card** showing the model's reply (the
+    same shape as a Console LLM turn).
+
+  The Triggers tab's "Recent activity" list now shows the card's label rather
+  than the raw output.
+
+
 ## [0.36.2] — 2026-06-10
 
 ### Fixed

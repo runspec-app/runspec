@@ -58,8 +58,12 @@ class BridgeOps(Protocol):
         (or a gate-decline message). ``chat_id`` is the card id."""
         ...
 
-    def note_in_chat(self, text: str) -> None:
-        """Surface a line in the main chat tab (for ``post_to_chat`` triggers)."""
+    def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
+        """Mirror a finished ``post_to_chat`` trigger run into the Console as the
+        same kind of block a manual invocation makes: ``kind="run"`` (a
+        slash-command run card, for mode=rule) or ``kind="chat"`` (an agent/chat
+        card, for mode=agent). ``label`` is the card heading; ``text`` is the
+        runnable output (run) or the agent's reply (chat)."""
         ...
 
 
@@ -142,10 +146,10 @@ def make_handler(
             output = ops.run_rule_tool(card.id, trigger.run, tool_input)
             card.move(Column.DONE, result=output[:_RESULT_CAP])
             if trigger.post_to_chat:
-                ops.note_in_chat(
-                    f"Trigger '{trigger.name}' ran {trigger.run}:\n"
-                    f"{output[:_RESULT_CAP]}"
-                )
+                # Mirror as a standard slash-command run card: "/runnable on host".
+                host, _, name = trigger.run.partition("__")
+                label = f"/{name} on {host}" if name else f"/{trigger.run}"
+                ops.mirror_to_chat("run", f"{label}  (trigger: {trigger.name})", output)
             return
 
         draft = draft_available and trigger.reply.draft
@@ -167,7 +171,8 @@ def make_handler(
         # chat transcript, so this is where its output is visible.
         card.move(Column.DONE, result=summary) if summary else card.move(Column.DONE)
         if trigger.post_to_chat:
-            note = f"Trigger '{trigger.name}' handled a {event.type} event"
-            ops.note_in_chat(f"{note}:\n{summary[:500]}" if summary else note + ".")
+            # Mirror as an agent/chat card — the same shape as an LLM turn.
+            label = f"Trigger '{trigger.name}' · {event.type}"
+            ops.mirror_to_chat("chat", label, summary or "(handled — no textual reply)")
 
     return handler

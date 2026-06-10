@@ -123,12 +123,20 @@ class _BridgeTriggerOps:
     ) -> str:
         return self._bridge._gated_run_tool(tool_name, tool_input, chat_id)
 
-    def note_in_chat(self, text: str) -> None:
-        # An id lets the Console tab render this as a distinct finished chat
-        # block (post_to_chat mirrors a trigger run into the main chat); the
-        # Triggers tab's activity list also listens for this event.
+    def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
+        # The Console tab renders this as a finished block matching the trigger
+        # mode: kind="run" → a slash-command run card, kind="chat" → an agent
+        # card — the same blocks a manual invocation makes, so a triggered run
+        # looks like the same command run by hand. The Triggers tab's activity
+        # list listens for this event too. The id keys the Console block.
         self._bridge._dispatch(
-            "runspec:trigger_note", {"text": text, "id": uuid.uuid4().hex[:12]}
+            "runspec:trigger_note",
+            {
+                "id": uuid.uuid4().hex[:12],
+                "kind": kind,
+                "label": label,
+                "text": text,
+            },
         )
 
 
@@ -4915,19 +4923,64 @@ class Bridge:
             return "✗ You declined to save the draft reply."
         if stage is not None:
             stage("running")
-        return await asyncio.to_thread(self._save_reply_draft, reply_to, body)
+        result = await asyncio.to_thread(self._save_reply_draft, reply_to, body)
+        # Hand the saved draft to the card so it can offer a Send button — the
+        # human reviews the draft and sends it from the card (never the agent).
+        if result.get("ok") and result.get("entry_id"):
+            self._dispatch(
+                "runspec:trigger_draft",
+                {
+                    "id": chat_id,
+                    "entry_id": result["entry_id"],
+                    "to": result.get("to", ""),
+                    "subject": result.get("subject", ""),
+                },
+            )
+        return str(result.get("message", ""))
 
-    def _save_reply_draft(self, entry_id: str, body: str) -> str:
-        """Blocking Outlook-COM draft save; returns a human summary or an error."""
+    def _save_reply_draft(self, entry_id: str, body: str) -> dict[str, Any]:
+        """Blocking Outlook-COM draft save. Returns ``{ok, message, entry_id, to,
+        subject}`` — the ``message`` goes back to the agent; the rest lets the
+        card offer a Send button for the saved draft."""
         try:
             from .sources.outlook import save_reply_draft
 
             info = save_reply_draft(entry_id, body)
         except Exception as exc:  # noqa: BLE001 — report on the card, don't crash
             logger.exception("draft_reply: save failed")
-            return f"✗ Could not save draft: {exc}"
+            return {"ok": False, "message": f"✗ Could not save draft: {exc}"}
         to = info.get("to") or "(recipients from original)"
-        return f"✓ Saved a draft reply to {to} in Outlook Drafts for you to review and send."
+        return {
+            "ok": True,
+            "message": (
+                f"✓ Saved a draft reply to {to} in Outlook Drafts. Review it on "
+                "the card and click Send, or send it from Outlook."
+            ),
+            "entry_id": info.get("entry_id", ""),
+            "to": info.get("to", ""),
+            "subject": info.get("subject", ""),
+        }
+
+    def send_trigger_draft(self, entry_id: str) -> dict[str, Any]:
+        """Send a saved draft reply — the card's Send button (human-initiated).
+
+        The agent never sends mail; this is reached only from an explicit click,
+        so it isn't gated through the autonomy prompt. Returns ``{ok, to,
+        subject}`` or ``{ok: False, error}``."""
+        if not entry_id:
+            return {"ok": False, "error": "no draft to send"}
+        try:
+            from .sources.outlook import send_draft
+
+            info = send_draft(entry_id)
+        except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
+            logger.exception("send_trigger_draft failed")
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "to": info.get("to", ""),
+            "subject": info.get("subject", ""),
+        }
 
     def _dispatch(self, event: str, detail: dict[str, Any]) -> None:
         if self._window is None:
