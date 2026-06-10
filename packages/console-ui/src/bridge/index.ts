@@ -335,6 +335,19 @@ export interface TriggerCard {
   timeline?: TimelineEntry[]   // timestamped audit trail of stage changes + steps
 }
 
+// runspec:trigger_event detail — every event the engine saw, with its
+// disposition: which triggers fired (matched), which matched but were gated by
+// the rota (skipped), or neither (no match).
+export interface TriggerEvent {
+  id: string
+  source: string
+  type: string
+  summary: string
+  matched: string[]
+  skipped: string[]
+  ts: number
+}
+
 // One weekday of the working-hours rota.
 export interface RotaDay {
   on?: boolean
@@ -433,6 +446,7 @@ export interface BridgeApi {
   set_trigger_enabled: (name: string, enabled: boolean) => Promise<{ ok: boolean }>
   save_rota: (rota: Rota) => Promise<{ ok: boolean }>
   get_trigger_board: () => Promise<TriggerCard[]>
+  get_trigger_events: () => Promise<TriggerEvent[]>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>

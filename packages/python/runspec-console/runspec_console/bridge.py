@@ -106,9 +106,16 @@ class _BridgeTriggerOps:
         draft: bool,
         reply_to: str | None = None,
         record: Any = None,
+        stage: Any = None,
     ) -> str:
         return self._bridge._trigger_run_agent_turn(
-            chat_id, system, message, draft=draft, reply_to=reply_to, record=record
+            chat_id,
+            system,
+            message,
+            draft=draft,
+            reply_to=reply_to,
+            record=record,
+            stage=stage,
         )
 
     def run_rule_tool(
@@ -137,6 +144,8 @@ class Bridge:
         # missed event while the console was closed is intentionally not replayed.
         self._trigger_engine: Any = None
         self._trigger_cards: dict[str, dict[str, Any]] = {}
+        # Audit feed: every event the engine sees + its disposition (bounded ring).
+        self._trigger_events: list[dict[str, Any]] = []
         self._hosts: list[dict[str, Any]] = []
         # Named source-side stream filters (runspec_filters.toml). Loaded once at
         # startup and reloaded on save; resolved by name when a relay/download
@@ -3896,20 +3905,29 @@ class Bridge:
         return holder["approved"]
 
     async def _gated_run_tool_async(
-        self, tool_name: str, tool_input: dict[str, Any], chat_id: str
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        chat_id: str,
+        stage: Callable[[str], None] | None = None,
     ) -> str:
         """Async autonomy gate used by the agentic loop.
 
         The UI prompt is dispatched from the event-loop thread (the same thread
         that streams tokens, which is known to reach the frontend) — only the
         blocking wait is offloaded to a worker thread. Dispatching the prompt
-        from a worker thread was unreliable and produced silent timeouts."""
+        from a worker thread was unreliable and produced silent timeouts.
+
+        ``stage`` (trigger turns only) reports the card stage: "awaiting_human"
+        while a confirm is pending, then "running" once it actually executes."""
         decision = self._confirm_decision(tool_name, tool_input)
         display = tool_name.split("__", 1)[-1]
         logger.info("autonomy gate: tool=%s decision=%s", tool_name, decision)
         if decision == "manual":
             return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
         if decision != "run":
+            if stage is not None:
+                stage("awaiting_human")
             request_id, event, holder = self._register_confirm(
                 chat_id, tool_name, tool_input, decision
             )
@@ -3923,6 +3941,8 @@ class Bridge:
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
+        if stage is not None:
+            stage("running")
         return await asyncio.to_thread(self._run_tool_sync, tool_name, tool_input)
 
     def _gated_run_tool(
@@ -4471,6 +4491,7 @@ class Bridge:
             triggers,
             handler=handler,
             on_card=self._on_trigger_card,
+            on_event=self._on_trigger_event,
             clock_ok=clock_ok,
         )
         problems = engine.start()
@@ -4554,6 +4575,22 @@ class Bridge:
             cards = list(self._trigger_cards.values())
         return sorted(cards, key=lambda c: c.get("created_at", 0.0))
 
+    def get_trigger_events(self) -> list[dict[str, Any]]:
+        """The recent event-audit feed (every event seen + its disposition)."""
+        with self._lock:
+            return list(self._trigger_events)
+
+    def _on_trigger_event(self, record: dict[str, Any]) -> None:
+        """Engine hook: record an event's disposition (matched / skipped / no
+        match) and push it to the UI audit feed. May be called from a source
+        thread."""
+        with self._lock:
+            self._trigger_events.append(record)
+            # Bounded ring — keep the most recent.
+            if len(self._trigger_events) > 300:
+                del self._trigger_events[: len(self._trigger_events) - 300]
+        self._dispatch("runspec:trigger_event", record)
+
     def _on_trigger_card(self, card: Any) -> None:
         """Engine hook: record a card update and push it to the UI. May be called
         from a source / worker thread."""
@@ -4579,6 +4616,7 @@ class Bridge:
         draft: bool,
         reply_to: str | None = None,
         record: Callable[[str], None] | None = None,
+        stage: Callable[[str], None] | None = None,
     ) -> str:
         """BridgeOps: run an isolated headless agent turn for a trigger card.
 
@@ -4608,6 +4646,7 @@ class Bridge:
                     adapter,
                     reply_to=reply_to if draft else None,
                     record=record,
+                    stage=stage,
                 )
             )
         finally:
@@ -4621,6 +4660,7 @@ class Bridge:
         adapter: Any,
         reply_to: str | None = None,
         record: Callable[[str], None] | None = None,
+        stage: Callable[[str], None] | None = None,
     ) -> str:
         """A headless agent loop for a trigger card. Like _agentic_chat_turn but
         against an isolated, throwaway history (never the shared chat) so a
@@ -4689,10 +4729,12 @@ class Bridge:
                 if cancel.is_set():
                     output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — stopped."
                 elif tc.name == "draft_reply":
-                    output = await self._gated_draft_reply(tc.input, chat_id, reply_to)
+                    output = await self._gated_draft_reply(
+                        tc.input, chat_id, reply_to, stage=stage
+                    )
                 else:
                     output = await self._gated_run_tool_async(
-                        tc.name, tc.input, chat_id
+                        tc.name, tc.input, chat_id, stage=stage
                     )
                 self._dispatch(
                     "runspec:tool_end",
@@ -4724,7 +4766,11 @@ class Bridge:
         return "\n\n".join(parts)[:4000]
 
     async def _gated_draft_reply(
-        self, tool_input: dict[str, Any], chat_id: str, reply_to: str | None
+        self,
+        tool_input: dict[str, Any],
+        chat_id: str,
+        reply_to: str | None,
+        stage: Callable[[str], None] | None = None,
     ) -> str:
         """Confirm, then save an agent-written reply to Outlook Drafts.
 
@@ -4736,6 +4782,8 @@ class Bridge:
             return "✗ draft_reply: no source message to reply to."
         if not body:
             return "✗ draft_reply: empty body — nothing to draft."
+        if stage is not None:
+            stage("awaiting_human")
         request_id, event, holder = self._register_confirm(
             chat_id, "draft_reply", tool_input, "confirm"
         )
@@ -4745,6 +4793,8 @@ class Bridge:
             return "⏹ draft_reply was not run — you stopped the assistant."
         if not approved:
             return "✗ You declined to save the draft reply."
+        if stage is not None:
+            stage("running")
         return await asyncio.to_thread(self._save_reply_draft, reply_to, body)
 
     def _save_reply_draft(self, entry_id: str, body: str) -> str:

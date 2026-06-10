@@ -350,6 +350,7 @@ class TriggerEngine:
         *,
         handler: Handler,
         on_card: Callable[[TriggerCard], None] | None = None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
         create_source: Callable[[str], EventSource | None] = _default_create_source,
         executor: Executor | None = None,
         max_workers: int = 2,
@@ -358,6 +359,9 @@ class TriggerEngine:
         self._triggers = list(triggers)
         self._handler = handler
         self._on_card = on_card
+        # Called once per incoming event with its disposition (matched / skipped
+        # by rota / no match) — the audit feed of everything the engine sees.
+        self._on_event = on_event
         self._create_source = create_source
         # Returns True when triggers may fire now (the working-hours rota gate).
         # Default always-True = no gating.
@@ -432,14 +436,42 @@ class TriggerEngine:
         """
         last: Future[None] | None = None
         clock_ok = self._clock_ok()
+        matched: list[str] = []
+        skipped: list[str] = []
         for trigger in self._triggers:
             if not trigger.matches(event):
                 continue
             if not clock_ok and not trigger.ignore_rota:
+                skipped.append(trigger.name)
                 logger.info("trigger '%s' skipped: outside working hours", trigger.name)
                 continue
+            matched.append(trigger.name)
             last = self._dispatch(trigger, event)
+        if not matched and not skipped:
+            logger.info("event %s:%s matched no triggers", event.source, event.type)
+        self._record_event(event, matched, skipped)
         return last
+
+    def _record_event(
+        self, event: Event, matched: list[str], skipped: list[str]
+    ) -> None:
+        """Emit the per-event audit record (every event, with its disposition)."""
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(
+                {
+                    "id": event.id,
+                    "source": event.source,
+                    "type": event.type,
+                    "summary": _summarize(event),
+                    "matched": matched,
+                    "skipped": skipped,  # matched but gated by the rota
+                    "ts": event.received_at or time.time(),
+                }
+            )
+        except Exception:
+            logger.exception("trigger event-audit hook failed")
 
     def _dispatch(self, trigger: Trigger, event: Event) -> Future[None]:
         card = TriggerCard(

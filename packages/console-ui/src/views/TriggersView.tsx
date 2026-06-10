@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input } from 'antd'
+import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input, Drawer } from 'antd'
 import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined } from '@ant-design/icons'
-import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerListResult } from '../bridge'
+import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
 const DAYS: [string, string][] = [
@@ -27,6 +27,18 @@ const COLUMN_COLOR: Record<string, string> = {
   running: '#13c2c2',
   done: '#52c41a',
   failed: '#ff4d4f',
+}
+
+const STATUS_LABEL: Record<string, string> = Object.fromEntries(COLUMNS.map(c => [c.key, c.label]))
+
+function StatusBadge({ status }: { status: string }) {
+  const color = COLUMN_COLOR[status] ?? '#8c8c8c'
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color, flexShrink: 0, width: 110 }}>
+      <span style={{ width: 8, height: 8, borderRadius: 8, background: color }} />
+      {STATUS_LABEL[status] ?? status}
+    </span>
+  )
 }
 
 interface PendingConfirm {
@@ -151,9 +163,12 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
           </div>
         ))}
       </div>
-      <Button type="primary" size="small" onClick={save} loading={saving} style={{ marginTop: 8 }}>
-        Save working hours
-      </Button>
+      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <Button type="primary" size="small" onClick={save} loading={saving}>
+          Save working hours
+        </Button>
+        <span style={{ color: dim, fontSize: 12 }}>Changes take effect when you click Save.</span>
+      </div>
     </div>
   )
 }
@@ -166,8 +181,10 @@ export function TriggersView() {
   const [notes, setNotes] = useState<string[]>([])
   // Streamed agent text per card id (its reasoning/reply as it arrives).
   const [streams, setStreams] = useState<Record<string, string>>({})
-  // Card ids whose timeline (audit trail) is expanded.
-  const [openTimelines, setOpenTimelines] = useState<Set<string>>(new Set())
+  // The run whose detail drawer is open (card_id), or null.
+  const [selected, setSelected] = useState<string | null>(null)
+  // Event-audit feed: every event seen + its disposition (newest first).
+  const [events, setEvents] = useState<TriggerEvent[]>([])
   // Known card ids, so the global runspec:token listener ignores chat tokens.
   const cardIds = useRef<Set<string>>(new Set())
 
@@ -179,6 +196,7 @@ export function TriggersView() {
       board.forEach(c => cardIds.current.add(c.card_id))
       setCards(Object.fromEntries(board.map(c => [c.card_id, c])))
     }).catch(console.error)
+    bridge.get_trigger_events().then(evs => setEvents([...evs].reverse())).catch(console.error)
   }, [])
 
   // Live updates from the bridge.
@@ -217,12 +235,17 @@ export function TriggersView() {
       const { text } = (e as CustomEvent).detail as { text: string }
       if (text) setNotes(prev => [text, ...prev].slice(0, 20))
     }
+    const onEvent = (e: Event) => {
+      const rec = (e as CustomEvent).detail as TriggerEvent
+      setEvents(prev => [rec, ...prev].slice(0, 300))
+    }
     window.addEventListener('runspec:trigger_card', onCard)
     window.addEventListener('runspec:token', onToken)
     window.addEventListener('runspec:tool_confirm', onConfirm)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:trigger_status', onStatus)
     window.addEventListener('runspec:trigger_note', onNote)
+    window.addEventListener('runspec:trigger_event', onEvent)
     return () => {
       window.removeEventListener('runspec:trigger_card', onCard)
       window.removeEventListener('runspec:token', onToken)
@@ -230,6 +253,7 @@ export function TriggersView() {
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:trigger_status', onStatus)
       window.removeEventListener('runspec:trigger_note', onNote)
+      window.removeEventListener('runspec:trigger_event', onEvent)
     }
   }, [])
 
@@ -245,19 +269,14 @@ export function TriggersView() {
     loadConfig()
   }
 
-  // Bucket cards into columns; a pending confirm overrides to awaiting_human.
-  const byColumn = useMemo(() => {
-    const buckets: Record<string, TriggerCard[]> = {}
-    for (const col of COLUMNS) buckets[col.key] = []
-    for (const card of Object.values(cards)) {
-      const col = pending[card.card_id] ? 'awaiting_human' : card.column
-      ;(buckets[col] ?? buckets.triggered).push(card)
-    }
-    for (const col of COLUMNS) {
-      buckets[col.key].sort((a, b) => b.created_at - a.created_at)
-    }
-    return buckets
-  }, [cards, pending])
+  // Runs as an inbox list, newest first. Click a row → the detail drawer.
+  const runs = useMemo(
+    () => Object.values(cards).sort((a, b) => b.created_at - a.created_at),
+    [cards],
+  )
+  const statusOf = (card: TriggerCard) =>
+    pending[card.card_id] ? 'awaiting_human' : card.column
+  const selectedCard = selected ? cards[selected] : undefined
 
   const dim = isDark ? '#888' : '#999'
   const cardBg = isDark ? '#1f1f1f' : '#fafafa'
@@ -387,101 +406,115 @@ export function TriggersView() {
         }]}
       />
 
-      {/* Kanban board */}
-      <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8 }}>
-        {COLUMNS.map(col => (
-          <div
-            key={col.key}
-            style={{
-              flex: '1 0 200px', minWidth: 200, background: colBg,
-              border: `1px solid ${border}`, borderRadius: 6, padding: 8,
-            }}
-          >
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
-              fontSize: 12, fontWeight: 600, color: COLUMN_COLOR[col.key],
-            }}>
-              <span style={{ width: 8, height: 8, borderRadius: 8, background: COLUMN_COLOR[col.key] }} />
-              {col.label}
-              <span style={{ color: dim, fontWeight: 400 }}>{byColumn[col.key].length}</span>
-            </div>
-
-            {byColumn[col.key].map(card => {
-              const p = pending[card.card_id]
-              const result = card.detail?.result as string | undefined
-              const error = card.detail?.error as string | undefined
-              // Final result once Done; otherwise the live streamed agent text.
-              const body = result || streams[card.card_id]
-              const pendingPreview = p ? describeToolInput(p.tool_name, p.tool_input) : ''
-              return (
-                <div
-                  key={card.card_id}
-                  style={{
-                    background: cardBg, border: `1px solid ${border}`, borderRadius: 6,
-                    padding: 8, marginBottom: 8, fontSize: 12,
-                  }}
+      {/* Runs — inbox list; click a row for the full detail drawer */}
+      {runs.length === 0 ? (
+        <Empty description={<span style={{ color: dim }}>No trigger runs yet.</span>} />
+      ) : (
+        <div style={{ border: `1px solid ${border}`, borderRadius: 6 }}>
+          {runs.map((card, i) => (
+            <div
+              key={card.card_id}
+              onClick={() => setSelected(card.card_id)}
+              style={{
+                display: 'flex', gap: 8, alignItems: 'baseline', padding: '8px 10px',
+                borderBottom: i < runs.length - 1 ? `1px solid ${border}` : undefined,
+                cursor: 'pointer', fontSize: 12,
+                background: selected === card.card_id ? colBg : undefined,
+              }}
+            >
+              <StatusBadge status={statusOf(card)} />
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                {card.summary}
+              </span>
+              <span style={{ color: dim, flexShrink: 0 }}>{card.trigger}</span>
+              {pending[card.card_id] && (
+                <Button
+                  size="small" type="primary"
+                  onClick={e => { e.stopPropagation(); setSelected(card.card_id) }}
                 >
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{card.summary}</div>
-                  <div style={{ color: dim, marginBottom: 4 }}>
-                    {card.trigger} · {card.source}:{card.event_type}
+                  Review
+                </Button>
+              )}
+              <span style={{ color: dim, fontFamily: 'monospace', flexShrink: 0 }}>{fmtTime(card.created_at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Run detail — the large view: full event, agent output, timeline, gate */}
+      <Drawer
+        open={!!selectedCard}
+        onClose={() => setSelected(null)}
+        width={560}
+        title={selectedCard?.summary}
+      >
+        {selectedCard && (() => {
+          const card = selectedCard
+          const p = pending[card.card_id]
+          const result = card.detail?.result as string | undefined
+          const error = card.detail?.error as string | undefined
+          const body = result || streams[card.card_id]
+          const preview = p ? describeToolInput(p.tool_name, p.tool_input) : ''
+          return (
+            <div style={{ fontSize: 13 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <StatusBadge status={statusOf(card)} />
+                <span style={{ color: dim }}>{card.trigger} · {card.source}:{card.event_type}</span>
+                <span style={{ color: dim, fontFamily: 'monospace', marginLeft: 'auto' }}>{fmtTime(card.created_at)}</span>
+              </div>
+
+              {p && (
+                <div style={{
+                  border: `1px solid ${COLUMN_COLOR.awaiting_human}`, borderRadius: 6,
+                  padding: 12, marginBottom: 16,
+                }}>
+                  <div style={{ color: COLUMN_COLOR.awaiting_human, fontWeight: 600, marginBottom: 8 }}>
+                    Approve <code>{p.tool_name}</code>?
                   </div>
-                  {error && <div style={{ color: COLUMN_COLOR.failed }}>{error}</div>}
-                  {body && (
-                    <div style={{ color: dim, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>
-                      {body}
+                  {preview && (
+                    <div style={{
+                      whiteSpace: 'pre-wrap', maxHeight: 240, overflowY: 'auto',
+                      background: colBg, border: `1px solid ${border}`, borderRadius: 4,
+                      padding: 8, marginBottom: 10,
+                    }}>
+                      {preview}
                     </div>
                   )}
-                  {p && (
-                    <div style={{ marginTop: 6 }}>
-                      <div style={{ color: COLUMN_COLOR.awaiting_human, marginBottom: 4 }}>
-                        Approve <code>{p.tool_name}</code>?
-                      </div>
-                      {pendingPreview && (
-                        <div style={{
-                          whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto',
-                          background: colBg, border: `1px solid ${border}`, borderRadius: 4,
-                          padding: 6, marginBottom: 6,
-                        }}>
-                          {pendingPreview}
-                        </div>
-                      )}
-                      <Space size={6}>
-                        <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => answer(card.card_id, true)}>Approve</Button>
-                        <Button size="small" danger icon={<CloseOutlined />} onClick={() => answer(card.card_id, false)}>Deny</Button>
-                      </Space>
-                    </div>
-                  )}
-                  {card.timeline && card.timeline.length > 0 && (
-                    <div style={{ marginTop: 6 }}>
-                      <span
-                        onClick={() => setOpenTimelines(prev => {
-                          const next = new Set(prev)
-                          next.has(card.card_id) ? next.delete(card.card_id) : next.add(card.card_id)
-                          return next
-                        })}
-                        style={{ color: dim, fontSize: 11, cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        {openTimelines.has(card.card_id) ? '▾' : '▸'} timeline ({card.timeline.length})
-                      </span>
-                      {openTimelines.has(card.card_id) && (
-                        <div style={{ marginTop: 4, borderLeft: `2px solid ${border}`, paddingLeft: 8 }}>
-                          {card.timeline.map((entry, i) => (
-                            <div key={i} style={{ fontSize: 11, color: dim }}>
-                              <span style={{ fontFamily: 'monospace' }}>{fmtTime(entry.ts)}</span>
-                              {' — '}{entry.text}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div style={{ color: dim, marginTop: 4, fontSize: 11 }}>{fmtTime(card.created_at)}</div>
+                  <Space>
+                    <Button type="primary" icon={<CheckOutlined />} onClick={() => answer(card.card_id, true)}>Approve</Button>
+                    <Button danger icon={<CloseOutlined />} onClick={() => answer(card.card_id, false)}>Deny</Button>
+                  </Space>
                 </div>
-              )
-            })}
-          </div>
-        ))}
-      </div>
+              )}
+
+              {error && (
+                <div style={{ color: COLUMN_COLOR.failed, marginBottom: 16, whiteSpace: 'pre-wrap' }}>{error}</div>
+              )}
+
+              {body && (
+                <>
+                  <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>Agent output</div>
+                  <div style={{ whiteSpace: 'pre-wrap', marginBottom: 16 }}>{body}</div>
+                </>
+              )}
+
+              {card.timeline && card.timeline.length > 0 && (
+                <>
+                  <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>Timeline</div>
+                  <div style={{ borderLeft: `2px solid ${border}`, paddingLeft: 10 }}>
+                    {card.timeline.map((entry, i) => (
+                      <div key={i} style={{ marginBottom: 3 }}>
+                        <span style={{ color: dim, fontFamily: 'monospace', marginRight: 8 }}>{fmtTime(entry.ts)}</span>
+                        {entry.text}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        })()}
+      </Drawer>
 
       {notes.length > 0 && (
         <div style={{ marginTop: 16 }}>
@@ -491,6 +524,42 @@ export function TriggersView() {
           ))}
         </div>
       )}
+
+      {/* Event audit feed — every event seen and what happened to it */}
+      <div style={{ marginTop: 20 }}>
+        <div style={{ color: dim, fontSize: 12, marginBottom: 6 }}>
+          Event log <span style={{ color: dim }}>· every event seen, matched or not</span>
+        </div>
+        {events.length === 0 ? (
+          <div style={{ color: dim, fontSize: 12 }}>No events yet.</div>
+        ) : (
+          <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 6 }}>
+            {events.map((ev, i) => {
+              const disposition =
+                ev.matched.length > 0
+                  ? { color: COLUMN_COLOR.done, text: `fired: ${ev.matched.join(', ')}` }
+                  : ev.skipped.length > 0
+                    ? { color: COLUMN_COLOR.awaiting_human, text: `skipped (working hours): ${ev.skipped.join(', ')}` }
+                    : { color: dim, text: 'no match' }
+              return (
+                <div
+                  key={ev.id || i}
+                  style={{
+                    display: 'flex', gap: 8, alignItems: 'baseline', padding: '4px 8px',
+                    borderBottom: i < events.length - 1 ? `1px solid ${border}` : undefined,
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ color: dim, fontFamily: 'monospace', flexShrink: 0 }}>{fmtTime(ev.ts)}</span>
+                  <span style={{ color: dim, flexShrink: 0 }}>{ev.source}:{ev.type}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.summary}</span>
+                  <span style={{ color: disposition.color, flexShrink: 0 }}>{disposition.text}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

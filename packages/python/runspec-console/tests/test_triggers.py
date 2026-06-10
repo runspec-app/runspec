@@ -266,6 +266,46 @@ def test_within_rota_overnight_window():
     assert within_rota(rota, datetime(2026, 6, 10, 12, 0)) is False
 
 
+def test_engine_emits_event_records():
+    recs: list[dict] = []
+
+    def handler(card, trigger, event):
+        card.move(Column.DONE)
+
+    t = Trigger.from_config(
+        {
+            "name": "vip",
+            "source": "outlook",
+            "event": "new_mail",
+            "match": {"subject": "(?i)urgent"},
+        }
+    )
+    engine, fake, _ = _engine([t], handler, on_event=recs.append)
+    engine.start()
+    fake.fire("new_mail", {"subject": "URGENT: down"})  # matches
+    fake.fire("new_mail", {"subject": "lunch?"})  # no match
+
+    assert len(recs) == 2  # every event is audited, matched or not
+    assert recs[0]["matched"] == ["vip"] and recs[0]["skipped"] == []
+    assert recs[0]["summary"] == "URGENT: down"
+    assert recs[1]["matched"] == [] and recs[1]["skipped"] == []
+
+
+def test_engine_event_record_marks_rota_skip():
+    recs: list[dict] = []
+
+    def handler(card, trigger, event):
+        card.move(Column.DONE)
+
+    t = Trigger.from_config({"name": "vip", "source": "outlook", "event": "new_mail"})
+    engine, fake, _ = _engine(
+        [t], handler, on_event=recs.append, clock_ok=lambda: False
+    )
+    engine.start()
+    fake.fire("new_mail", {"subject": "x"})
+    assert recs[0]["matched"] == [] and recs[0]["skipped"] == ["vip"]
+
+
 def test_engine_clock_gate_skips_outside_hours():
     fired: list[str] = []
 

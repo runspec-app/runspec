@@ -39,13 +39,15 @@ class BridgeOps(Protocol):
         draft: bool,
         reply_to: str | None = None,
         record: Callable[[str], None] | None = None,
+        stage: Callable[[str], None] | None = None,
     ) -> str:
         """Run an isolated, headless agent turn under ``chat_id`` (the card id),
         with ``system`` as its system prompt and ``message`` as the sole user
         turn. ``draft`` requests the draft_reply tool be offered; ``reply_to`` is
         the source message's id the draft should reply to (required for drafting).
         ``record`` (if given) is called with a short note per tool/gate step, for
-        the card timeline. Returns a short summary for the card.
+        the card timeline. ``stage`` reports the card stage ("awaiting_human" /
+        "running") as the turn progresses. Returns a short summary for the card.
         """
         ...
 
@@ -159,6 +161,7 @@ def make_handler(
             draft=draft,
             reply_to=reply_to,
             record=card.log,  # per-tool/gate steps onto the card timeline
+            stage=lambda col: card.move(col),  # awaiting_human → running stages
         )
         # The agent's reply + any actions land on the card — a trigger turn has no
         # chat transcript, so this is where its output is visible.

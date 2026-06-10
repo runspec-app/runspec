@@ -28,7 +28,7 @@ class FakeOps:
         self._agent_summary = agent_summary
 
     def run_agent_turn(
-        self, chat_id, system, message, *, draft, reply_to=None, record=None
+        self, chat_id, system, message, *, draft, reply_to=None, record=None, stage=None
     ):
         self.agent_calls.append(
             {

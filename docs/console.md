@@ -209,8 +209,16 @@ draft = true
 style = "Concise, professional. Acknowledge and state the next step."
 ```
 
-For a deterministic, no-LLM trigger, use `mode = "rule"` and map event-payload
-fields onto the runnable's args with `{{ field }}`:
+For a deterministic, no-LLM trigger, use `mode = "rule"`. Two pieces:
+
+1. **`run = "host__runnable"`** — *which* runnable to run. `host` is a host name
+   from your sidebar (use **`local`** for the local machine); `runnable` is the
+   runnable's name. So a runnable `record-ticket` on the local machine is
+   `run = "local__record-ticket"`.
+2. **`[triggers.map]`** — *how to fill its arguments*. **The keys are the
+   runnable's own argument names**, and the values are templates pulling from the
+   event payload with `{{ field }}`. (A literal value with no `{{ }}` is passed
+   as-is.)
 
 ```toml
 [[triggers]]
@@ -218,11 +226,23 @@ name   = "log-incoming-ticket"
 source = "outlook"
 event  = "new_mail"
 mode   = "rule"
-run    = "local__record-ticket"     # host__runnable
+run    = "local__record-ticket"   # host__runnable
+
 [triggers.map]
+# left = the runnable's arg name; right = a template from the event payload
 summary = "{{ subject }}"
 sender  = "{{ from }}"
+queue   = "support"               # a literal (no template) is passed verbatim
 ```
+
+So if `record-ticket` takes `--summary`, `--sender` and `--queue`, the keys must
+be exactly `summary`, `sender`, `queue`. If a `map` key isn't a real arg of that
+runnable, the run fails validation (you'll see it in the Event log / `--debug`).
+Check the runnable's args in the **Forms** tab or `runspec local`.
+
+The values you can template come from the **event payload** (below); the run is
+gated by the autonomy gate just like agent mode, and (unless `ignore_rota`) the
+working-hours rota applies to rule triggers too.
 
 Event payload fields you can `match` on / map from:
 
@@ -293,6 +313,22 @@ Every kanban card keeps a timestamped **timeline** of what happened to it —
 stage changes (triggered → triage → … → done) and each tool the agent ran.
 Expand a card's *timeline* to read the full trace; it's recorded on the backend,
 so even a card that flew through the early lanes leaves a complete record.
+
+### Event log
+
+Below the board, the **Event log** shows *every* event the engine saw and what
+happened to it: **fired** (which triggers ran), **skipped (working hours)** (it
+matched but the rota gated it), or **no match**. It's the first place to look
+when a trigger doesn't fire:
+
+- the email shows **no match** → your `match` regex (or the `from`/subject) didn't
+  match — check the trigger's `[triggers.match]`;
+- **skipped (working hours)** → the rota gated it — you're outside the window /
+  off-shift, or the rota's master switch is on when you didn't intend it;
+- the email **isn't in the log at all** → the source never delivered it (e.g.
+  Outlook's `NewMailEx` didn't fire, or it landed outside the Inbox).
+
+Rota times are **local machine time**, not UTC.
 
 ### Safe by default
 

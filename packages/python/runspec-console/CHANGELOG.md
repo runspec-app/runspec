@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.33.0] — 2026-06-10
+
+### Changed
+- **Triggers view → inbox list + detail drawer.** The kanban board is replaced
+  by a compact list of runs (status · summary · trigger · time); clicking a run
+  opens a large slide-out **drawer** with the full event, the agent's output, the
+  complete timeline, and the Approve/Deny gate — so the rich detail isn't crammed
+  into tiny cards. The event log and configured-triggers table are unchanged.
+- **Real awaiting-human → running → done staging.** Agent-mode runs now report
+  proper stages on the backend: a card sits in **awaiting_human** while a confirm
+  is pending and **running** while a tool executes (previously it only used
+  triage/done and bounced back to triage after a confirm). Each stage is recorded
+  in the timeline, so a run parked on a *second* confirm is now visible.
+
+### Fixed
+- The Working-hours editor notes that **changes apply on Save** (the switches are
+  pending until then — toggling alone didn't take effect).
+
+### Docs
+- Clearer `mode = "rule"` guide: `run = "host__runnable"` and that
+  `[triggers.map]` keys are the runnable's own argument names.
+
+
+## [0.32.0] — 2026-06-10
+
+### Added
+- **Event log — audit every event, matched or not.** The Triggers tab now shows
+  a feed of *every* event the engine sees with its disposition: which triggers
+  **fired**, which **matched but were skipped by the working-hours rota**, or
+  **no match**. This answers "why didn't my trigger fire?" at a glance — an email
+  that's present but shows "no match" or "skipped (working hours)" tells you it's
+  a `match` or rota issue, while an email that never appears means the source
+  didn't see it. Backed by `get_trigger_events()` + a `runspec:trigger_event`
+  stream (bounded ring buffer). Note: the rota uses **local machine time**.
+
+
 ## [0.31.0] — 2026-06-10
 
 ### Added
