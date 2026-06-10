@@ -187,6 +187,10 @@ class Bridge:
 
         atexit.register(self._close_ssh_pool)
         atexit.register(self.stop_triggers)  # quit any source pump threads cleanly
+        # Unblock any in-flight turn parked at the autonomy gate so closing the
+        # app can't hang waiting to join a worker stuck in event.wait(). Registered
+        # last so it runs first (LIFO) — before concurrent.futures joins workers.
+        atexit.register(self._abort_all_turns)
 
     def set_window(self, window: Any) -> None:
         self._window = window
@@ -204,6 +208,13 @@ class Bridge:
             self._start_refresh_watcher()
         # Start configured event triggers now the window can receive dispatches.
         self.start_triggers()
+        # Abort in-flight turns the moment the window closes, so a turn parked at
+        # the autonomy gate can't stall shutdown. Best-effort across pywebview
+        # versions (the event may be absent).
+        try:
+            window.events.closed += self._abort_all_turns
+        except Exception:
+            logger.debug("could not hook window 'closed' event", exc_info=True)
 
     def _build_ssh_pool(self) -> Any:
         """Construct the SSH connection pool from current ``[ssh]`` config.
@@ -1810,6 +1821,27 @@ class Bridge:
                 records.extend(_parse_log(log_file, host))
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return records[:200]
+
+    def get_history_all(self) -> list[dict[str, Any]]:
+        """History across every host — local plus *connected* remotes — newest
+        first. Disconnected remotes are skipped so a slow/offline host can't hang
+        the read (the History tab uses this so a run shows up regardless of which
+        host it ran on; per-host scoping stays for Forms/Logs/etc.)."""
+        with self._lock:
+            remotes = list(self._hosts)
+            connected = dict(self._connected_cache)
+        names = ["local"]
+        names += [
+            h["name"] for h in remotes if h.get("name") and connected.get(h["name"])
+        ]
+        records: list[dict[str, Any]] = []
+        for name in names:
+            try:
+                records.extend(self.get_history(name))
+            except Exception:
+                logger.exception("history: read failed for host %s", name)
+        records.sort(key=lambda r: r.get("ts", ""), reverse=True)
+        return records[:300]
 
     def _get_remote_history(
         self, entry: dict[str, Any], runnable: str | None
@@ -4445,10 +4477,15 @@ class Bridge:
         from datetime import datetime
 
         from . import sources  # noqa: F401 — registers built-in event sources
-        from .config import read_rota, read_triggers
+        from .config import read_rota, read_triggers, trigger_file_error
         from .trigger_runner import make_handler
         from .triggers import _DAYS, TriggerEngine, load_triggers, within_rota
 
+        file_error = trigger_file_error()
+        if file_error:
+            # A TOML syntax error rejects the whole file → no triggers load.
+            # Log loudly (the UI surfaces it via list_triggers' errors).
+            logger.warning("trigger config: %s", file_error)
         triggers, errors = load_triggers(read_triggers())
         for err in errors:
             logger.warning("trigger config: %s", err)
@@ -4506,11 +4543,42 @@ class Bridge:
         # needed — and restart_triggers() re-runs this once the window is up.
 
     def stop_triggers(self) -> None:
+        # Wake only *trigger* turns parked at the gate (ids that are trigger
+        # cards) so the engine's workers aren't stuck in event.wait() when we tear
+        # the executor down — without disturbing an in-flight chat turn (restart
+        # is also used by the enable/disable toggle).
         with self._lock:
             engine = self._trigger_engine
             self._trigger_engine = None
+            card_ids = set(self._trigger_cards)
+        self._abort_turns(card_ids)
         if engine is not None:
             engine.stop()
+
+    def _abort_turns(self, ids: set[str] | None) -> None:
+        """Unblock in-flight turns: signal each cancel flag and wake each pending
+        autonomy-gate confirm (as cancelled). ``ids=None`` aborts everything
+        (shutdown); otherwise only turns whose chat_id is in ``ids``. Thread-safe
+        and idempotent."""
+        with self._lock:
+            cancels = [
+                ev
+                for cid, ev in self._chat_cancels.items()
+                if ids is None or cid in ids
+            ]
+            pending = [
+                t for t in self._pending_confirms.values() if ids is None or t[0] in ids
+            ]
+        for ev in cancels:
+            ev.set()
+        for _chat_id, event, holder in pending:
+            holder["cancelled"] = True
+            event.set()
+
+    def _abort_all_turns(self, *_args: Any) -> None:
+        """Abort *every* in-flight turn — the window-close / atexit handler, so a
+        turn parked at the gate can't hang shutdown."""
+        self._abort_turns(None)
 
     def restart_triggers(self) -> None:
         """Reload trigger config and restart the engine (after a config change)."""
@@ -4520,12 +4588,16 @@ class Bridge:
     def list_triggers(self) -> dict[str, Any]:
         """For the Triggers UI: raw trigger tables, parse errors, and the event
         sources available on this machine (with the reason any are unavailable)."""
-        from .config import read_rota, read_triggers
+        from .config import read_rota, read_triggers, trigger_file_error
         from .events import available_sources, create_source
         from .triggers import load_triggers
 
         raw = read_triggers()
         _, errors = load_triggers(raw)
+        # A whole-file TOML error rejects every trigger silently — surface it.
+        file_error = trigger_file_error()
+        if file_error:
+            errors = [file_error, *errors]
         sources_info: list[dict[str, Any]] = []
         for sid in available_sources():
             src = create_source(sid)

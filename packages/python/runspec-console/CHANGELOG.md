@@ -8,6 +8,69 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.35.0] — 2026-06-10
+
+### Changed
+- **Triggers are now written as named tables, one canonical form** — matching
+  `runspec.toml`'s named runnable sections. Each trigger is a `[triggers.<name>]`
+  table with its sub-tables namespaced under the same name
+  (`[triggers.<name>.match]` / `.map` / `.reply`). The table name *is* the
+  trigger's name, so the separate `name` key is gone (one less keyword). Grouping
+  each trigger under one unambiguous prefix means a second trigger can no longer
+  absorb the keys of the one above it — the failure mode behind "if I comment out
+  one trigger the other starts working".
+
+### Removed
+- **The old `[[triggers]]` array-of-tables form is no longer supported.** It was
+  error-prone: a bare `[triggers.match]` sub-table attached to whichever
+  `[[triggers]]` preceded it, so file-wide ordering mattered. If a config still
+  uses it, the Triggers tab now shows a clear message telling you to switch to
+  `[triggers.<name>]` (rather than silently loading nothing).
+
+
+## [0.34.2] — 2026-06-10
+
+### Fixed
+- **A TOML error in one trigger no longer silently disables them all.**
+  `runspec_triggers.toml` is parsed as a whole, so a single trigger's syntax
+  error (e.g. a duplicate key) made `tomllib` reject the entire file and *every*
+  trigger vanished with no explanation. The Triggers tab now surfaces the
+  file-level parse error (and it's logged), instead of just showing zero
+  triggers. (Reminder: within a `[[triggers]]`, scalar keys must precede the
+  `[triggers.match]` / `[triggers.map]` / `[triggers.reply]` sub-tables.)
+
+
+## [0.34.1] — 2026-06-10
+
+### Fixed
+- **Closing the app no longer hangs when a turn is parked at the autonomy gate.**
+  If a trigger (or chat) turn was awaiting a confirm, its worker thread sat in
+  `event.wait()`, so the process couldn't exit (Ctrl-C didn't help; it only
+  freed after the 5-minute confirm timeout). On window close / interpreter exit
+  the console now wakes every pending confirm and signals every cancel flag, so
+  in-flight turns abort immediately and shutdown is clean. (Restarting the engine
+  — e.g. an enable/disable toggle — only aborts *trigger* turns, never your chat.)
+
+
+## [0.34.0] — 2026-06-10
+
+### Changed
+- **History spans all hosts.** The History tab now aggregates runs across every
+  host (local + connected remotes) instead of only the sidebar-selected host, so
+  a trigger run shows up regardless of which host it ran on. The **Host** column
+  filter narrows it on demand. Disconnected remotes are skipped (no SSH hang).
+  Per-host scoping is unchanged for Forms, Logs, Analytics, etc.
+
+
+## [0.33.1] — 2026-06-10
+
+### Fixed
+- **Dark-mode text in the Triggers tab.** The event log, run detail drawer, and
+  working-hours editor used raw elements with no explicit colour, so their text
+  rendered black (invisible) in dark mode. They now use a theme-aware text
+  colour.
+
+
 ## [0.33.0] — 2026-06-10
 
 ### Changed

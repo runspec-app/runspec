@@ -64,6 +64,10 @@ function fmtTime(epochSeconds: number): string {
 // Working-hours rota editor: a master switch + a row per weekday (off / start /
 // end). Triggers only fire inside these windows, so a human is around for
 // confirms. Off by default — when disabled, triggers run anytime.
+// Primary text colour for raw (non-antd) elements, so they're readable in both
+// themes (a bare <div> otherwise defaults to black, invisible in dark mode).
+const textColor = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.88)')
+
 function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void }) {
   const isDark = useIsDark()
   const dim = isDark ? '#888' : '#999'
@@ -102,7 +106,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
   const outlook = source === 'outlook'
 
   return (
-    <div>
+    <div style={{ color: textColor(isDark) }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <Switch size="small" checked={enabled} onChange={setEnabled} />
         <span>Only fire triggers during working hours</span>
@@ -338,7 +342,7 @@ export function TriggersView() {
   ]
 
   return (
-    <div>
+    <div style={{ color: textColor(isDark) }}>
       {/* Source availability (only for sources a configured trigger uses) */}
       {sources.map(s => (
         !s.available && usedSources.has(s.id) ? (
@@ -377,8 +381,9 @@ export function TriggersView() {
         <Empty
           description={
             <span style={{ color: dim }}>
-              No triggers configured. Add <code>[[triggers]]</code> tables to{' '}
-              <code>runspec_triggers.toml</code> in the app config directory.
+              No triggers configured. Add <code>[triggers.&lt;name&gt;]</code>{' '}
+              tables to <code>runspec_triggers.toml</code> in the app config
+              directory.
             </span>
           }
         />
@@ -456,7 +461,7 @@ export function TriggersView() {
           const body = result || streams[card.card_id]
           const preview = p ? describeToolInput(p.tool_name, p.tool_input) : ''
           return (
-            <div style={{ fontSize: 13 }}>
+            <div style={{ fontSize: 13, color: textColor(isDark) }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
                 <StatusBadge status={statusOf(card)} />
                 <span style={{ color: dim }}>{card.trigger} · {card.source}:{card.event_type}</span>

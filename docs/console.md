@@ -170,19 +170,14 @@ The Triggers tab shows each source's availability and the reason any is off
 ### Configuring triggers
 
 Triggers live in `runspec_triggers.toml` in the app config directory
-(`%APPDATA%\runspec-console\`). Each `[[triggers]]` table is one trigger:
-
-> **TOML ordering matters.** All of a trigger's scalar keys (`name`, `mode`,
-> `rules`, `run`, …) must come **before** any sub-table header
-> (`[triggers.match]`, `[triggers.map]`, `[triggers.reply]`). A key written
-> after a sub-table is silently parsed *into that sub-table* — e.g. `rules`
-> placed after `[triggers.match]` becomes `triggers.match.rules`, which both
-> empties your real `rules` and adds a phantom `rules` match field that no event
-> can satisfy (so the trigger never fires).
+(`%APPDATA%\runspec-console\`). Give each trigger its own **named table**,
+`[triggers.<name>]`, with its sub-tables namespaced under the same name
+(`[triggers.<name>.match]`, `[triggers.<name>.map]`, `[triggers.<name>.reply]`) —
+the same shape as `runspec.toml`'s named runnable sections. The table name *is*
+the trigger's name, so there's no separate `name` key:
 
 ```toml
-[[triggers]]
-name   = "vip-outage-triage"
+[triggers.vip-outage-triage]
 source = "outlook"
 event  = "new_mail"
 mode   = "agent"               # "agent" (LLM-in-the-loop) | "rule" (direct runnable)
@@ -190,7 +185,7 @@ autonomy = "confirm"           # gate level (default: confirm)
 post_to_chat = false           # also mirror this run into the Console tab
 
 # agent mode: the rules the model follows for this trigger. (A scalar key, so it
-# must appear BEFORE the [triggers.*] sub-tables below.)
+# must appear BEFORE the [triggers.<name>.*] sub-tables below.)
 rules = """
 If this reports an outage, identify the affected host, run the diagnostics
 runnable against it, and draft a short reply summarising findings. Never
@@ -199,15 +194,29 @@ restart a service or send mail without confirmation.
 
 # Cheap regex pre-filter on the event payload — all patterns must match. Keeps
 # the LLM out of irrelevant events (and tames a chatty `reminder` source).
-[triggers.match]
+[triggers.vip-outage-triage.match]
 from    = ".*@bigcustomer\\.com"
 subject = "(?i)outage|down|urgent"
 
 # Optional: let the agent save a suggested reply to Outlook Drafts (never sends).
-[triggers.reply]
+[triggers.vip-outage-triage.reply]
 draft = true
 style = "Concise, professional. Acknowledge and state the next step."
 ```
+
+> **Why named tables?** Each trigger and its sub-tables are grouped under one
+> unambiguous prefix, so a second trigger can't accidentally absorb the keys of
+> the one above it. Within a single trigger's table, scalar keys (`mode`,
+> `rules`, `run`, …) must still come **before** that trigger's sub-table headers
+> — a key written after `[triggers.<name>.match]` is parsed *into* the match
+> table (e.g. `rules` becomes `triggers.<name>.match.rules`, emptying your real
+> `rules` and adding a phantom match field no event can satisfy, so the trigger
+> never fires). The Triggers tab surfaces a clear error if it spots this.
+>
+> The old `[[triggers]]` array-of-tables form is no longer supported (it was
+> error-prone — a bare `[triggers.match]` sub-table attached to whichever
+> `[[triggers]]` preceded it). If the app finds one, the Triggers tab shows a
+> message telling you to switch to the named form.
 
 For a deterministic, no-LLM trigger, use `mode = "rule"`. Two pieces:
 
@@ -221,14 +230,13 @@ For a deterministic, no-LLM trigger, use `mode = "rule"`. Two pieces:
    as-is.)
 
 ```toml
-[[triggers]]
-name   = "log-incoming-ticket"
+[triggers.log-incoming-ticket]
 source = "outlook"
 event  = "new_mail"
 mode   = "rule"
 run    = "local__record-ticket"   # host__runnable
 
-[triggers.map]
+[triggers.log-incoming-ticket.map]
 # left = the runnable's arg name; right = a template from the event payload
 summary = "{{ subject }}"
 sender  = "{{ from }}"
@@ -283,7 +291,7 @@ end = "17:00"
 ```
 
 A single trigger can opt out of the rota (e.g. an off-hours maintenance watcher)
-with `ignore_rota = true` in its `[[triggers]]` table.
+with `ignore_rota = true` in its `[triggers.<name>]` table.
 
 **Driving the rota from your Outlook calendar.** Set `source = "outlook"` and the
 window comes from your calendar instead of the grid — you're *on shift* whenever

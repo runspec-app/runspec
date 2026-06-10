@@ -195,22 +195,19 @@ interface HistoryViewProps {
   selectedHost: string
 }
 
-export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, selectedHost }: HistoryViewProps) {
+export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
-  const [hostColumnFilter, setHostColumnFilter] = useState<string[]>(selectedHost ? [selectedHost] : [])
+  // History spans all hosts (local + connected remotes) so a run shows up no
+  // matter which host it ran on; the Host column filter narrows it on demand.
+  const [hostColumnFilter, setHostColumnFilter] = useState<string[]>([])
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
 
   useEffect(() => {
-    const host = selectedHost || 'local'
-    const fetch = () => bridge.get_history(host).then(setRecords)
+    const fetch = () => bridge.get_history_all().then(setRecords)
     fetch()
     const id = setInterval(fetch, 8000)
     return () => clearInterval(id)
-  }, [selectedHost])
-
-  useEffect(() => {
-    setHostColumnFilter(selectedHost ? [selectedHost] : [])
-  }, [selectedHost])
+  }, [])
 
   const filtered = search
     ? records.filter(r =>

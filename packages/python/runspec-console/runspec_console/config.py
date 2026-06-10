@@ -58,9 +58,52 @@ def _read_trigger_file() -> dict[str, Any]:
 
 
 def read_triggers() -> list[dict[str, Any]]:
-    """The ``[[triggers]]`` tables ([] on missing/unreadable — triggers optional)."""
+    """The ``[triggers.<name>]`` tables ([] on missing/unreadable — optional).
+
+    One canonical shape, mirroring ``runspec.toml``'s named runnable sections:
+    a named table per trigger, ``[triggers.<name>]``, with its sub-tables
+    namespaced under the same name (``[triggers.<name>.match]`` / ``.map`` /
+    ``.reply``). The table key *is* the trigger's name, so no ``name`` keyword is
+    needed (and any in-table ``name`` is ignored — the key wins). Grouping each
+    trigger under one prefix means a misplaced key can't bleed into the trigger
+    above it.
+    """
     raw = _read_trigger_file().get("triggers")
-    return [dict(t) for t in raw] if isinstance(raw, list) else []
+    if not isinstance(raw, dict):
+        return []  # missing, or the unsupported [[triggers]] array form
+    out: list[dict[str, Any]] = []
+    for key, val in raw.items():
+        if isinstance(val, dict):
+            trig = dict(val)
+            trig["name"] = key  # the table key is authoritative
+            out.append(trig)
+    return out
+
+
+def trigger_file_error() -> str | None:
+    """A human message if ``runspec_triggers.toml`` exists but isn't valid TOML.
+
+    A single trigger's syntax error makes ``tomllib`` reject the *whole* file, so
+    every trigger silently disappears. Surfacing this lets the UI say *why*
+    instead of just showing zero triggers.
+    """
+    path = triggers_path()
+    if not path.exists():
+        return None
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    except tomllib.TOMLDecodeError as exc:
+        return f"runspec_triggers.toml is not valid TOML — all triggers disabled until fixed: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return f"runspec_triggers.toml could not be read: {exc}"
+    if isinstance(data.get("triggers"), list):
+        return (
+            "runspec_triggers.toml uses the old [[triggers]] array form, which is "
+            "no longer supported. Use a named table per trigger instead: "
+            "[triggers.<name>] with [triggers.<name>.match] / .map / .reply."
+        )
+    return None
 
 
 def read_rota() -> dict[str, Any]:
@@ -79,7 +122,7 @@ def _write_trigger_file(rota: dict[str, Any], triggers: list[dict[str, Any]]) ->
 
 
 def write_triggers(triggers: list[dict[str, Any]]) -> None:
-    """Save the ``[[triggers]]`` tables, preserving the existing ``[rota]``."""
+    """Save the named ``[triggers.<name>]`` tables, preserving the ``[rota]``."""
     _write_trigger_file(read_rota(), triggers)
 
 
@@ -145,19 +188,33 @@ def _toml_scalar(v: Any) -> str:
 
 
 def _triggers_to_toml(triggers: list[dict[str, Any]]) -> str:
-    """Serialise ``[[triggers]]`` array-of-tables, each with optional nested
-    ``match`` / ``map`` / ``reply`` sub-tables. Scalars are written before
-    sub-tables (TOML requires a table's own keys to precede its child tables)."""
+    """Serialise named ``[triggers.<name>]`` tables (the recommended shape), each
+    with optional nested ``match`` / ``map`` / ``reply`` sub-tables.
+
+    The trigger's ``name`` becomes the table key, so it is *not* re-emitted as a
+    scalar — ``read_triggers`` reconstructs it from the key. Scalars are written
+    before sub-tables (TOML requires a table's own keys to precede its child
+    tables). Keys are quoted, so a name with dots/spaces stays one table; a
+    fallback name is synthesised (and duplicates de-duped) so output is always
+    valid TOML."""
     blocks: list[str] = []
-    for t in triggers:
-        lines = ["[[triggers]]"]
+    seen: set[str] = set()
+    for i, t in enumerate(triggers):
+        name = str(t.get("name") or f"trigger{i + 1}")
+        key = name
+        n = 2
+        while key in seen:  # keep table keys unique even if names collide
+            key = f"{name}-{n}"
+            n += 1
+        seen.add(key)
+        lines = [f"[triggers.{_toml_str(key)}]"]
         subtables = [(k, v) for k, v in t.items() if isinstance(v, dict)]
         for k, v in t.items():
-            if isinstance(v, dict) or v is None:
+            if isinstance(v, dict) or v is None or k == "name":
                 continue
             lines.append(f"{k} = {_toml_scalar(v)}")
-        for name, sub in subtables:
-            lines.append(f"[triggers.{name}]")
+        for sub_name, sub in subtables:
+            lines.append(f"[triggers.{_toml_str(key)}.{sub_name}]")
             for kk, vv in sub.items():
                 if vv is not None:
                     lines.append(f"{kk} = {_toml_scalar(vv)}")

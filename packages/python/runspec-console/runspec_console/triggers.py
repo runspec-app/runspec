@@ -129,7 +129,7 @@ class ReplySettings:
 
 @dataclass
 class Trigger:
-    """One configured event→action binding (a ``[[triggers]]`` table)."""
+    """One configured event→action binding (a ``[triggers.<name>]`` table)."""
 
     name: str
     source: str
@@ -153,10 +153,12 @@ class Trigger:
 
     @classmethod
     def from_config(cls, data: dict[str, Any]) -> Trigger:
-        """Build (and validate) a Trigger from a parsed ``[[triggers]]`` table.
+        """Build (and validate) a Trigger from a parsed ``[triggers.<name>]`` table.
 
-        Raises ``ValueError`` with a human-first message on bad config — the
-        same spirit as runspec's own errors.
+        The trigger's ``name`` is the table key (injected by
+        :func:`config.read_triggers`), so a config-sourced trigger always has
+        one. Raises ``ValueError`` with a human-first message on bad config —
+        the same spirit as runspec's own errors.
         """
         name = str(data.get("name") or "").strip()
         if not name:
@@ -508,7 +510,7 @@ class TriggerEngine:
 
 
 def load_triggers(configs: list[dict[str, Any]]) -> tuple[list[Trigger], list[str]]:
-    """Parse a list of ``[[triggers]]`` tables.
+    """Parse a list of ``[triggers.<name>]`` tables.
 
     Returns ``(triggers, errors)``: a bad table is skipped with a message rather
     than sinking the whole set, so one typo doesn't disable every trigger.

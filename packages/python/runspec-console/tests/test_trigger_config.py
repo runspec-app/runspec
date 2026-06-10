@@ -1,6 +1,8 @@
 """
 Tests for trigger persistence (config.read_triggers / write_triggers) and the
-[[triggers]] serialiser — verified by round-tripping through tomllib.
+named ``[triggers.<name>]`` serialiser — verified by round-tripping through
+tomllib. The named-table form is the only supported shape; the old
+``[[triggers]]`` array-of-tables form is rejected (and flagged) on read.
 """
 
 from __future__ import annotations
@@ -108,3 +110,97 @@ def test_categories_list_round_trip(monkeypatch, tmp_path):
         [{"name": "t", "source": "s", "event": "e", "tags": ["a", "b", "c"]}]
     )
     assert config.read_triggers()[0]["tags"] == ["a", "b", "c"]
+
+
+def test_read_named_tables(monkeypatch, tmp_path):
+    """A hand-written ``[triggers.<name>]`` file reads, with name from the key."""
+    _use_tmp(monkeypatch, tmp_path)
+    config.triggers_path().write_text(
+        "[triggers.one]\n"
+        'source = "outlook"\n'
+        'event = "new_mail"\n'
+        'mode = "rule"\n'
+        'run = "host__do"\n'
+        "[triggers.one.match]\n"
+        'subject = "(?i)urgent"\n'
+        "[triggers.one.map]\n"
+        'svc = "{{ subject }}"\n'
+        "\n"
+        "[triggers.two]\n"
+        'source = "outlook"\n'
+        'event = "reminder"\n',
+        encoding="utf-8",
+    )
+    trigs = config.read_triggers()
+    assert [t["name"] for t in trigs] == ["one", "two"]
+    one = trigs[0]
+    assert one["source"] == "outlook" and one["run"] == "host__do"
+    assert one["match"] == {"subject": "(?i)urgent"}
+    assert one["map"] == {"svc": "{{ subject }}"}
+    # Reloads into valid Trigger objects — proves named-table grouping survives.
+    parsed = [Trigger.from_config(t) for t in trigs]
+    assert parsed[0].mode == "rule" and parsed[1].mode == "agent"
+
+
+def test_table_key_is_authoritative_name(monkeypatch, tmp_path):
+    """The table key is the trigger name; an in-table ``name`` is ignored."""
+    _use_tmp(monkeypatch, tmp_path)
+    config.triggers_path().write_text(
+        '[triggers.alias]\nname = "ignored"\nsource = "s"\nevent = "e"\n',
+        encoding="utf-8",
+    )
+    assert config.read_triggers()[0]["name"] == "alias"
+
+
+def test_legacy_array_of_tables_rejected(monkeypatch, tmp_path):
+    """The old ``[[triggers]]`` array form is no longer read, and is flagged."""
+    _use_tmp(monkeypatch, tmp_path)
+    config.triggers_path().write_text(
+        '[[triggers]]\nname = "old"\nsource = "outlook"\nevent = "new_mail"\n',
+        encoding="utf-8",
+    )
+    assert config.read_triggers() == []
+    err = config.trigger_file_error()
+    assert err is not None and "[[triggers]]" in err and "[triggers.<name>]" in err
+
+
+def test_write_emits_named_tables(monkeypatch, tmp_path):
+    """The serialiser writes the named form, not the legacy array-of-tables."""
+    _use_tmp(monkeypatch, tmp_path)
+    config.write_triggers([{"name": "vip", "source": "outlook", "event": "new_mail"}])
+    text = config.triggers_path().read_text(encoding="utf-8")
+    assert '[triggers."vip"]' in text
+    assert "[[triggers]]" not in text
+
+
+def test_duplicate_names_dedupe_on_write(monkeypatch, tmp_path):
+    """Two triggers sharing a name still serialise to distinct, valid tables."""
+    _use_tmp(monkeypatch, tmp_path)
+    config.write_triggers(
+        [
+            {"name": "dup", "source": "s", "event": "e"},
+            {"name": "dup", "source": "s", "event": "f"},
+        ]
+    )
+    back = config.read_triggers()
+    assert len(back) == 2
+    assert {t["name"] for t in back} == {"dup", "dup-2"}
+
+
+def test_trigger_file_error_none_when_valid(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    assert config.trigger_file_error() is None  # missing file → no error
+    config.write_triggers([{"name": "t", "source": "outlook", "event": "new_mail"}])
+    assert config.trigger_file_error() is None  # valid TOML → no error
+
+
+def test_trigger_file_error_reports_bad_toml(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
+    # Duplicate key — exactly the kind of breakage one bad trigger causes; it
+    # rejects the whole file, so this must be surfaced rather than silently empty.
+    config.triggers_path().write_text(
+        "[[triggers]]\nname = 'a'\nname = 'b'\n", encoding="utf-8"
+    )
+    err = config.trigger_file_error()
+    assert err is not None and "not valid TOML" in err
+    assert config.read_triggers() == []  # whole file unreadable → no triggers

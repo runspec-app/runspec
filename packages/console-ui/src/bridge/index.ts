@@ -373,7 +373,7 @@ export interface TriggerSourceInfo {
 }
 
 export interface TriggerListResult {
-  triggers: Record<string, unknown>[]   // raw [[triggers]] tables from config
+  triggers: Record<string, unknown>[]   // raw [triggers.<name>] tables from config
   errors: string[]                        // per-table parse errors (skipped)
   sources: TriggerSourceInfo[]
   rota: Rota                              // working-hours schedule ({} when unset)
@@ -385,6 +385,9 @@ export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
   get_runnables: (host: string) => Promise<Runnable[]>
   get_history: (host: string, runnable?: string) => Promise<HistoryRecord[]>
+  // History across every host (local + connected remotes) — the History tab uses
+  // this so a run shows up regardless of which host it ran on.
+  get_history_all: () => Promise<HistoryRecord[]>
   get_schedules: () => Promise<Schedule[]>
   get_config: () => Promise<Record<string, unknown>>
   config_dir: () => Promise<string>

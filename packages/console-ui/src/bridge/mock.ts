@@ -602,6 +602,7 @@ export const mockApi: BridgeApi = {
   },
 
   get_history: async (_host, _runnable) => MOCK_HISTORY,
+  get_history_all: async () => MOCK_HISTORY,
 
   get_schedules: async () => MOCK_SCHEDULES,
 
