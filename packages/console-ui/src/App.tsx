@@ -44,6 +44,9 @@ type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' 
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
+  // Analytics is lazy-loaded; mount it on first visit, then keep it mounted so
+  // its scanned data survives tab switches (without eager-loading the chunk).
+  const [analyticsVisited, setAnalyticsVisited] = useState(false)
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -100,6 +103,7 @@ export default function App() {
   }
 
   useEffect(() => { loadSshKeyAge() }, [])
+  useEffect(() => { if (view === 'analytics') setAnalyticsVisited(true) }, [view])
 
   useEffect(() => {
     // Version renders instantly; the PyPI update check resolves in the
@@ -461,12 +465,34 @@ export default function App() {
                 <div style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                   <TriggersView />
                 </div>
-                {view !== 'console' && view !== 'triggers' && (
+                {/* History stays mounted (display toggle) so its fetched records
+                    survive tab switches — returning shows the last data instantly
+                    instead of unmounting and reloading from empty over SSH. Its
+                    poll is gated on `active` so it only runs while visible. */}
+                <div style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                  <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} active={view === 'history'} />
+                </div>
+                {/* Logs stays mounted (display toggle) so its logs_status SSH
+                    inventory survives tab switches; its fetch is gated on `active`
+                    so it only runs while visible and on host change. */}
+                <div style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                  <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} />
+                </div>
+                {/* Analytics is lazy-loaded (heavy plots chunk). Mount it on first
+                    visit, then keep it mounted (display toggle) so its scanned data
+                    survives tab switches and it doesn't re-run the fleet scan on
+                    every return; its poll is gated on `active` so it only runs
+                    while visible. */}
+                {analyticsVisited && (
+                  <div style={{ display: view === 'analytics' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <AnalyticsView selectedHost={selectedHost} activeScope={activeScope} active={view === 'analytics'} />
+                    </Suspense>
+                  </div>
+                )}
+                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && (
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'history'   && <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} />}
-                    {view === 'logs'      && <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'analytics' && <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}><AnalyticsView selectedHost={selectedHost} activeScope={activeScope} /></Suspense>}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
                     {view === 'dev'       && <DevView />}

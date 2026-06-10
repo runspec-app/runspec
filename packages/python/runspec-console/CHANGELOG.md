@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.38.4] — 2026-06-10
+
+### Fixed
+- **History no longer reloads from empty every time you open the tab.** The
+  History view was conditionally rendered, so navigating away unmounted it and
+  coming back remounted it — resetting its rows and re-running the SSH history
+  read from scratch on every visit, with no spinner, so it looked frozen even
+  though the log volume is small (the cost is the round-trip latency, paid each
+  time). History now stays mounted (display-toggled, like Console and Triggers),
+  so its rows persist and returning shows them instantly; its 8 s poll is gated
+  to only run while the tab is visible, so a hidden History tab isn't doing an
+  SSH round-trip in the background. A spinner now shows on the genuine loads
+  (first open and host switch) instead of a blank table.
+- **Analytics no longer re-scans from scratch every time you open the tab.**
+  Same root cause as History — it was conditionally rendered, so each visit
+  unmounted it, dropped its `data`, re-ran the per-host scan, and re-flashed the
+  full-screen spinner. Because Analytics is lazy-loaded (the heavy plots chunk),
+  it's now mounted on first visit and kept mounted thereafter (display-toggled),
+  so its data survives tab switches and returning shows the dashboard instantly;
+  its 45 s poll is gated to run only while the tab is visible.
+- **Logs inventory no longer re-runs its SSH scan every time you open the tab.**
+  The Logs view's `logs status` round-trip ran on every remount; it now stays
+  mounted (display-toggled) so the inventory persists, with the scan gated to
+  run only while the tab is visible and on host change (not eagerly at startup
+  or in a hidden tab). (Forms, Specs and Schedules were checked and left as-is —
+  they render from already-loaded data, with no per-open SSH round-trip.)
+
+
 ## [0.38.3] — 2026-06-10
 
 ### Changed

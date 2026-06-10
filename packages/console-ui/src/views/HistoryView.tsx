@@ -193,10 +193,12 @@ interface HistoryViewProps {
   activeScope: string[]
   onScopeToggle: (group: string) => void
   selectedHost: string
+  active: boolean
 }
 
-export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, selectedHost }: HistoryViewProps) {
+export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, selectedHost, active }: HistoryViewProps) {
   const [records, setRecords] = useState<HistoryRecord[]>([])
+  const [loading, setLoading] = useState(false)
   // History is scoped to the host selected in the sidebar — clicking a host
   // drives History (and Analytics) for it. One host per read keeps each fetch a
   // single SSH round-trip instead of a fleet-wide fan-out that hangs on a slow
@@ -204,14 +206,29 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   const [hostColumnFilter, setHostColumnFilter] = useState<string[]>([])
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
 
+  // Switching host drops the old host's rows, so we never briefly show another
+  // host's runs and the reload below shows the spinner instead of stale data.
+  // Returning to the same host keeps its rows, so the tab re-shows instantly.
+  useEffect(() => { setRecords([]) }, [selectedHost])
+
+  // The view stays mounted across tab switches (App toggles display), so records
+  // persist — returning shows the last data instantly. Poll only while visible
+  // so a hidden History tab isn't doing an SSH round-trip every 8 s in the
+  // background. The spinner shows on the visible (re)load, not on silent polls.
   useEffect(() => {
-    if (!selectedHost) return
+    if (!selectedHost || !active) return
     let cancelled = false
-    const fetch = () => bridge.get_history(selectedHost).then(r => { if (!cancelled) setRecords(r) })
-    fetch()
-    const id = setInterval(fetch, 8000)
+    const fetch = (showSpinner: boolean) => {
+      if (showSpinner) setLoading(true)
+      return bridge.get_history(selectedHost)
+        .then(r => { if (!cancelled) setRecords(r) })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoading(false) })
+    }
+    fetch(true)
+    const id = setInterval(() => fetch(false), 8000)
     return () => { cancelled = true; clearInterval(id) }
-  }, [selectedHost])
+  }, [selectedHost, active])
 
   const filtered = search
     ? records.filter(r =>
@@ -337,6 +354,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         columns={columns}
         rowKey="id"
         size="small"
+        loading={loading && records.length === 0}
         pagination={{ pageSize: 50, showSizeChanger: true }}
         onChange={(_, filters) => setHostColumnFilter((filters['host'] as string[]) || [])}
         expandable={{

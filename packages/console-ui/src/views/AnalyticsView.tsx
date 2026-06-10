@@ -28,9 +28,10 @@ const RANGE_OPTIONS = [
 interface AnalyticsViewProps {
   selectedHost: string
   activeScope: string[]
+  active: boolean
 }
 
-export function AnalyticsView({ selectedHost, activeScope }: AnalyticsViewProps) {
+export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsViewProps) {
   const isDark = useContext(ThemeContext)
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -55,7 +56,11 @@ export function AnalyticsView({ selectedHost, activeScope }: AnalyticsViewProps)
     // load is one host's scan, not a fleet-wide fan-out. The Host filter still
     // lets you opt into comparing specific hosts on demand.
     const hostsArg = hostFilter.length > 0 ? hostFilter : selectedHost ? [selectedHost] : []
-    if (hostsArg.length === 0) { setLoading(false); return }
+    // The view stays mounted across tab switches (App keeps it alive once first
+    // opened), so `data` persists — returning shows the dashboard instantly.
+    // Poll only while visible so a hidden tab isn't running the 45 s fleet scan
+    // in the background.
+    if (hostsArg.length === 0 || !active) { setLoading(false); return }
     const load = () => {
       // Skip a scheduled refresh while one is still running, and always clear
       // loading (even on failure) so a rejected scan shows the empty state
@@ -71,7 +76,7 @@ export function AnalyticsView({ selectedHost, activeScope }: AnalyticsViewProps)
     load()
     const id = setInterval(load, 45000)
     return () => { cancelled = true; clearInterval(id) }
-  }, [sinceDays, hostFilter, runnableFilter, selectedHost])
+  }, [sinceDays, hostFilter, runnableFilter, selectedHost, active])
 
   // activeScope (sidebar group tags) acts as an implicit group filter when the
   // view's own group filter is empty.

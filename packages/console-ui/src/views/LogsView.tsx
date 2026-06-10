@@ -238,11 +238,12 @@ interface LogsViewProps {
   selectedHost: string
   activeScope: string[]
   onScopeToggle: (group: string) => void
+  active: boolean
 }
 
-export function LogsView({ selectedHost, activeScope }: LogsViewProps) {
+export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
   const [venvs, setVenvs] = useState<LogStatusVenv[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [maintTarget, setMaintTarget] = useState<MaintTarget | null>(null)
   const [viewTarget, setViewTarget] = useState<ViewTarget | null>(null)
 
@@ -256,7 +257,15 @@ export function LogsView({ selectedHost, activeScope }: LogsViewProps) {
       .finally(() => setLoading(false))
   }, [host])
 
-  useEffect(() => { refresh() }, [refresh])
+  // Switching host drops the old host's venvs so a switch never briefly shows
+  // another host's inventory (and the spinner shows while the new one loads).
+  useEffect(() => { setVenvs([]) }, [host])
+
+  // The view stays mounted across tab switches (App toggles display), so venvs
+  // persist — returning shows the inventory instantly. The logs_status SSH call
+  // only runs while visible (and on host change), not eagerly at startup or in
+  // a hidden tab. The spinner already shows only when venvs is empty.
+  useEffect(() => { if (active) refresh() }, [refresh, active])
 
   const shown = activeScope.length > 0
     ? venvs.filter(v => activeScope.includes(v.group))
