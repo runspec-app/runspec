@@ -50,18 +50,28 @@ export function AnalyticsView({ selectedHost, activeScope }: AnalyticsViewProps)
 
   useEffect(() => {
     let cancelled = false
-    const hostsArg = hostFilter.length > 0 ? hostFilter : ['all']
+    let inFlight = false
+    // Scoped to the host selected in the sidebar (same model as History) so a
+    // load is one host's scan, not a fleet-wide fan-out. The Host filter still
+    // lets you opt into comparing specific hosts on demand.
+    const hostsArg = hostFilter.length > 0 ? hostFilter : selectedHost ? [selectedHost] : []
+    if (hostsArg.length === 0) { setLoading(false); return }
     const load = () => {
-      bridge.get_analytics(hostsArg, sinceDays, runnableFilter).then(d => {
-        if (!cancelled) { setData(d); setLoading(false) }
-      })
+      // Skip a scheduled refresh while one is still running, and always clear
+      // loading (even on failure) so a rejected scan shows the empty state
+      // instead of spinning forever.
+      if (inFlight) return
+      inFlight = true
+      bridge.get_analytics(hostsArg, sinceDays, runnableFilter)
+        .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
+        .catch(() => { if (!cancelled) setLoading(false) })
+        .finally(() => { inFlight = false })
     }
     setLoading(true)
     load()
-    // The fleet scan is heavier than History's poll — refresh less often.
     const id = setInterval(load, 45000)
     return () => { cancelled = true; clearInterval(id) }
-  }, [sinceDays, hostFilter, runnableFilter])
+  }, [sinceDays, hostFilter, runnableFilter, selectedHost])
 
   // activeScope (sidebar group tags) acts as an implicit group filter when the
   // view's own group filter is empty.

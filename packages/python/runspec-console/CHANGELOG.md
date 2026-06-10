@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.38.3] — 2026-06-10
+
+### Changed
+- **History and Analytics are scoped to the selected host again.** Both views
+  fetch for the host clicked in the sidebar instead of fanning out across the
+  whole fleet (`get_history_all` / `get_analytics(['all'])`). The all-hosts
+  model made every read an N-host scan: on a fleet with a slow or offline
+  remote, an Analytics load outran its 45 s refresh, loads piled up, the SSH
+  pool saturated, and the view spun forever. One host per read is a single SSH
+  round-trip — clicking a host drives both views. The Analytics Host filter
+  still lets you opt into comparing specific hosts on demand.
+
+### Fixed
+- **Analytics can't get stuck on its loading spinner.** The fetch now always
+  clears the loading flag — on success *or* failure (`.catch`) — and skips a
+  scheduled refresh while one is still in flight, so a slow or rejected scan
+  shows the empty state instead of spinning indefinitely.
+
+
 ## [0.38.2] — 2026-06-10
 
 ### Fixed
