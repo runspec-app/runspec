@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.42.0] — 2026-06-11
+
+### Changed
+- **Chat rooms are now a property of a fleet host, not a standalone `[chat]`
+  table.** Add `room` + `room_port` to a host entry in `runspec_hosts.toml` (or via
+  the Hosts editor) and the console joins that room over **that host's own SSH
+  tunnel** — inheriting its ssh target, key, and proxy, and reusing the pooled
+  connection. This fixes rooms failing to connect because the old `[chat] host`
+  string carried none of the host's SSH settings. **Multi-room:** every host that
+  declares a room is joined; the Rooms view lists them and you switch between
+  them. `room_user` overrides the display name (defaults to the SSH login).
+- A legacy `[chat]` table still works **when its `host` names a fleet entry** —
+  it's resolved to that host (so it now picks up the correct ssh target + key too).
+  Migrate it to the host entry when convenient.
+
 ## [0.41.1] — 2026-06-11
 
 ### Fixed

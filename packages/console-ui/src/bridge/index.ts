@@ -118,6 +118,9 @@ export interface JumpHost {
   port?: number       // falls back to SSH default (22)
   identityFile?: string
   group?: string      // sidebar display group label (e.g. "Production", "Staging")
+  room?: string       // chat room hosted on this host (runspec-room) — opt-in
+  room_port?: number  // the room server's localhost port on this host
+  room_user?: string  // display name in the room (defaults to the SSH login)
 }
 
 export interface HistoryLogLine {
@@ -385,11 +388,24 @@ export interface TriggerListResult {
 // The room is a "dumb message pipe with presence" the console connects to over
 // the SSH tunnel; the bridge fans its events to the UI as runspec:room_* events.
 
-// Connection state for the Rooms view (bridge.get_room_state).
-export interface RoomState {
-  connected: boolean   // the chat source is live (a chat trigger is active)
-  room: string         // configured [chat] room ("" when chat isn't configured)
-  user: string         // this console's display name (configured or SSH-defaulted)
+// One configured room (declared on a fleet host entry) + its live state.
+export interface RoomInfo {
+  room: string         // the room name
+  host: string         // the fleet host it's hosted on
+  user: string         // this console's display name in the room
+  connected: boolean   // currently joined (tunnel up)
+}
+
+// All configured rooms (bridge.get_room_state). Empty when none are configured.
+export interface RoomsState {
+  rooms: RoomInfo[]
+}
+
+// runspec:room_connection — a room's live connection flipped (connect / drop).
+export interface RoomConnection {
+  room: string
+  host: string
+  connected: boolean
 }
 
 // runspec:room_message — a sent message (server-stamped id/ts/sender).
@@ -489,7 +505,7 @@ export interface BridgeApi {
   // Send a draft an agent-mode trigger saved (the card's Send button).
   send_trigger_draft: (entryId: string) => Promise<{ ok: boolean; to?: string; subject?: string; error?: string }>
   // ── chat room (Rooms view) ─────────────────────────────────────────────────
-  get_room_state: () => Promise<RoomState>
+  get_room_state: () => Promise<RoomsState>
   // The composer's one outbound path. The agent never reaches this — a proposed
   // reply only pre-fills the composer (runspec:room_draft); the human sends.
   send_room_message: (room: string, text: string) => Promise<{ ok: boolean; error?: string }>

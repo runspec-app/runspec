@@ -236,13 +236,14 @@ class Bridge:
         self._trigger_cards: dict[str, dict[str, Any]] = {}
         # Audit feed: every event the engine sees + its disposition (bounded ring).
         self._trigger_events: list[dict[str, Any]] = []
-        # The chat room is joined always-on (whenever [chat] is configured),
-        # independent of triggers, by a reconnecting supervisor thread. _chat_source
-        # is the live ChatSource while connected (drives send_room_message /
-        # presence / get_room_state); None between attempts or when unconfigured.
-        self._chat_source: Any = None
+        # Chat rooms are a property of fleet host entries (room + room_port in
+        # runspec_hosts.toml). The console joins each declared room always-on,
+        # independent of triggers, via a reconnecting supervisor per room — using
+        # that host's own ssh target + key so the tunnel reuses the pooled
+        # connection. Keyed by room name: live ChatSource while connected.
+        self._chat_sources: dict[str, Any] = {}
         self._chat_stop = threading.Event()
-        self._chat_supervisor: threading.Thread | None = None
+        self._chat_supervisors: dict[str, threading.Thread] = {}
         self._hosts: list[dict[str, Any]] = []
         # Named source-side stream filters (runspec_filters.toml). Loaded once at
         # startup and reloaded on save; resolved by name when a relay/download
@@ -3225,6 +3226,14 @@ class Bridge:
                 entry["identityFile"] = h["identityFile"]
             if h.get("group"):
                 entry["group"] = h["group"]
+            if h.get("room"):
+                entry["room"] = h["room"]
+            if isinstance(h.get("room_port"), int) and not isinstance(
+                h.get("room_port"), bool
+            ):
+                entry["room_port"] = h["room_port"]
+            if h.get("room_user"):
+                entry["room_user"] = h["room_user"]
             result.append(entry)
         return result
 
@@ -3253,9 +3262,20 @@ class Bridge:
                 entry["identityFile"] = _normalize_path(h["identityFile"])
             if h.get("group"):
                 entry["group"] = h["group"]
+            # Chat room hosted on this fleet host: a room name + the server's
+            # localhost port on it. The room tunnel reuses this host's ssh target +
+            # key (see _room_specs / make_host_room_factory).
+            room = str(h.get("room") or "").strip()
+            room_port = h.get("room_port")
+            if room and isinstance(room_port, int) and not isinstance(room_port, bool):
+                entry["room"] = room
+                entry["room_port"] = room_port
+                if str(h.get("room_user") or "").strip():
+                    entry["room_user"] = h["room_user"].strip()
             entries.append(entry)
         save_hosts(hosts_path(), entries)
         self._reload_hosts()
+        self.restart_chat()  # re-join rooms with the updated host config
         threading.Thread(target=self._refresh_cycle, daemon=True).start()
 
     def get_filters(self) -> list[dict[str, Any]]:
@@ -4845,68 +4865,106 @@ class Bridge:
     # ── always-on chat room membership ──────────────────────────────────────────
 
     def start_chat(self) -> None:
-        """Join the chat room whenever ``[chat]`` is configured — independent of
-        triggers (the room is a coordination surface, not just a trigger source).
-        Runs a reconnecting supervisor for the session. Idempotent; a no-op when
-        there's no SSH pool or ``[chat]`` host/port/room aren't set."""
-        from . import config
-        from .sources.chat_transport import (
-            default_chat_user,
-            transport_factory_from_config,
-        )
+        """Join every room declared on a fleet host (``room`` + ``room_port`` on the
+        host entry) — always-on, independent of triggers. One reconnecting
+        supervisor per room, each tunnelling over that host's own pooled
+        connection. Idempotent; a no-op with no SSH pool or no rooms configured."""
+        from .sources.chat_transport import make_host_room_factory
 
         with self._lock:
-            if self._chat_supervisor is not None:
+            if self._chat_supervisors:
                 return  # already running
             pool = self._ssh_pool
         if pool is None:
             return
-        factory = transport_factory_from_config(pool)
-        if factory is None:
-            return  # [chat] host/port not configured
+        specs = self._room_specs()
+        if not specs:
+            return
+        ssh_cfg = self.get_config().get("ssh")
+        ssh_cfg = ssh_cfg if isinstance(ssh_cfg, dict) else None
+        self._chat_stop.clear()
+        threads: dict[str, threading.Thread] = {}
+        for spec in specs:
+            room = spec["room"]
+            if room in threads:
+                logger.warning(
+                    "chat: duplicate room %r (host %r) — skipping", room, spec["host"]
+                )
+                continue
+            factory = make_host_room_factory(pool, spec, global_ssh_config=ssh_cfg)
+            threads[room] = threading.Thread(
+                target=self._chat_supervise,
+                args=(spec, factory),
+                name=f"chat-{room}",
+                daemon=True,
+            )
+        with self._lock:
+            self._chat_supervisors = threads
+        for thread in threads.values():
+            thread.start()
+
+    def _room_specs(self) -> list[dict[str, Any]]:
+        """Room specs from fleet host entries, with a legacy ``[chat]`` fallback
+        (a ``[chat]`` table whose ``host`` names a fleet entry — so older configs
+        keep working *and* pick up that host's ssh target + key)."""
+        from . import config
+        from .sources.chat_transport import default_room_user, host_rooms
+
+        self._reload_hosts()
+        specs = host_rooms(self._hosts)
+        if specs:
+            return specs
         cfg = config.read_chat()
         room = str(cfg.get("room") or "").strip()
-        if not room:
-            return  # no room to join
-        user = str(cfg.get("user") or "").strip() or default_chat_user(cfg)
-        self._chat_stop.clear()
-        thread = threading.Thread(
-            target=self._chat_supervise,
-            args=(factory, user, room),
-            name="chat-supervisor",
-            daemon=True,
-        )
-        with self._lock:
-            self._chat_supervisor = thread
-        thread.start()
+        port = cfg.get("port")
+        name = str(cfg.get("host") or "").strip()
+        if not (room and name and isinstance(port, int) and not isinstance(port, bool)):
+            return []
+        entry = next((h for h in self._hosts if str(h.get("name") or "") == name), None)
+        ssh_target = str((entry or {}).get("ssh") or "").strip()
+        if not ssh_target:
+            return []  # legacy host must resolve to a fleet entry with an ssh target
+        return [
+            {
+                "host": name,
+                "ssh_target": ssh_target,
+                "identity_file": entry.get("identityFile") or None,
+                "room": room,
+                "port": int(port),
+                "dest_host": str(cfg.get("dest_host") or "127.0.0.1"),
+                "user": str(cfg.get("user") or "").strip()
+                or default_room_user(ssh_target),
+            }
+        ]
 
     def stop_chat(self) -> None:
-        """Leave the room and stop the reconnect supervisor. Idempotent."""
+        """Leave every room and stop all reconnect supervisors. Idempotent."""
         self._chat_stop.set()
         with self._lock:
-            thread = self._chat_supervisor
-            self._chat_supervisor = None
-        if thread is not None:
+            threads = list(self._chat_supervisors.values())
+            self._chat_supervisors = {}
+        for thread in threads:
             thread.join(timeout=3)
+        with self._lock:
+            self._chat_sources = {}
 
     def restart_chat(self) -> None:
-        """Re-join with fresh config (after a ``[chat]`` or rota change)."""
+        """Re-join with fresh config (after a host/room, ``[chat]`` or rota change)."""
         self.stop_chat()
         self.start_chat()
 
-    # Backoff bounds for the reconnect loop (seconds); module-level so tests can
-    # shrink them.
+    # Backoff bounds for the reconnect loop (seconds); attributes so tests shrink them.
     _CHAT_BACKOFF_START = 2.0
     _CHAT_BACKOFF_MAX = 60.0
 
-    def _chat_supervise(self, factory: Any, user: str, room: str) -> None:
-        """Own one chat connection at a time: connect, run until it drops, then
-        reconnect with exponential backoff — until stop_chat(). Drives presence off
-        the rota for each connection and keeps ``self._chat_source`` pointed at the
-        live source for send_room_message / get_room_state. ``room``/``user`` are
-        captured at start_chat time so a mid-session config edit can't split them."""
+    def _chat_supervise(self, spec: dict[str, Any], factory: Any) -> None:
+        """Own one room's connection: connect, run until it drops, then reconnect
+        with exponential backoff — until stop_chat(). Drives presence off the rota
+        and keeps ``self._chat_sources[room]`` pointed at the live source for
+        send_room_message / get_room_state."""
         from .sources.chat import ChatSource
 
+        room, user, host = spec["room"], spec["user"], spec["host"]
         backoff = self._CHAT_BACKOFF_START
         while not self._chat_stop.is_set():
             closed = threading.Event()
@@ -4916,18 +4974,20 @@ class Bridge:
             try:
                 source.start(self._on_chat_event)
             except Exception:
-                logger.exception("chat: connect failed")
+                logger.exception("chat: connect to room %r failed", room)
                 if self._chat_stop.wait(backoff):
                     break
                 backoff = min(backoff * 2, self._CHAT_BACKOFF_MAX)
                 continue
-            # Connected. Track it, reset backoff, and drive presence off the rota.
             with self._lock:
-                self._chat_source = source
+                self._chat_sources[room] = source
             backoff = self._CHAT_BACKOFF_START
             watcher = _RotaPresenceWatcher(self._build_clock_ok(), source.set_presence)
             watcher.start()
-            self._dispatch("runspec:room_connection", {"connected": True})
+            self._dispatch(
+                "runspec:room_connection",
+                {"room": room, "host": host, "connected": True},
+            )
             # Wait until the connection drops or we're told to stop (poll so stop
             # stays responsive).
             while not self._chat_stop.is_set() and not closed.wait(0.5):
@@ -4935,8 +4995,11 @@ class Bridge:
             watcher.stop()
             source.stop()
             with self._lock:
-                self._chat_source = None
-            self._dispatch("runspec:room_connection", {"connected": False})
+                self._chat_sources.pop(room, None)
+            self._dispatch(
+                "runspec:room_connection",
+                {"room": room, "host": host, "connected": False},
+            )
             if self._chat_stop.is_set():
                 break
             # Unexpected drop → back off, then reconnect.
@@ -4945,7 +5008,7 @@ class Bridge:
             backoff = min(backoff * 2, self._CHAT_BACKOFF_MAX)
 
     def _on_chat_event(self, event: Any) -> None:
-        """The chat source's emit: fan every event to the Rooms view, and route
+        """A chat source's emit: fan every event to the Rooms view, and route
         *messages* (not presence) to the live trigger engine so a chat trigger can
         still fire. Presence stays UI-only, out of the trigger audit feed."""
         payload = dict(event.payload)
@@ -4962,18 +5025,20 @@ class Bridge:
                 logger.exception("chat: routing message to the trigger engine failed")
 
     def send_room_message(self, room: str, text: str) -> dict[str, Any]:
-        """Post a human-composed message to the chat room — the Rooms composer's
-        one outbound path. The agent never reaches this: a proposed reply only
+        """Post a human-composed message to ``room`` — the Rooms composer's one
+        outbound path. The agent never reaches this: a proposed reply only
         pre-fills the composer (runspec:room_draft); the human reviews and sends.
-        Returns ``{ok}`` or ``{ok: False, error}``. ``room`` is accepted for the
-        wire/UI symmetry; a console speaks only in its configured room."""
+        Returns ``{ok}`` or ``{ok: False, error}``."""
+        room = str(room or "").strip()
         text = str(text or "").strip()
         if not text:
             return {"ok": False, "error": "empty message"}
         with self._lock:
-            src = self._chat_source
+            src = self._chat_sources.get(room) if room else None
+            if src is None and len(self._chat_sources) == 1 and not room:
+                src = next(iter(self._chat_sources.values()))
         if src is None:
-            return {"ok": False, "error": "not connected to a chat room"}
+            return {"ok": False, "error": "not connected to that room"}
         try:
             src.send_message(text)
         except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
@@ -4982,21 +5047,23 @@ class Bridge:
         return {"ok": True}
 
     def get_room_state(self) -> dict[str, Any]:
-        """For the Rooms view: the configured ``[chat]`` room, this console's
-        display name (the configured user, else the SSH-defaulted one), and whether
-        the chat source is currently connected. ``room`` is empty when chat isn't
-        configured — the view shows a 'not configured' state."""
-        from . import config
-        from .sources.chat_transport import default_chat_user
-
-        cfg = config.read_chat()
-        room = str(cfg.get("room") or "").strip()
-        user = str(cfg.get("user") or "").strip()
-        if not user and room:
-            user = default_chat_user(cfg)
+        """For the Rooms view: every configured room (from the fleet host entries),
+        each with its host, this console's display name there, and whether it's
+        currently connected. ``{"rooms": []}`` when none are configured — the view
+        shows a 'no rooms' state."""
+        specs = self._room_specs()
         with self._lock:
-            connected = self._chat_source is not None
-        return {"connected": connected, "room": room, "user": user}
+            connected = set(self._chat_sources)
+        rooms = [
+            {
+                "room": s["room"],
+                "host": s["host"],
+                "user": s["user"],
+                "connected": s["room"] in connected,
+            }
+            for s in specs
+        ]
+        return {"rooms": rooms}
 
     def _abort_turns(self, ids: set[str] | None) -> None:
         """Unblock in-flight turns: signal each cancel flag and wake each pending

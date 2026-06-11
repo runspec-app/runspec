@@ -1118,7 +1118,12 @@ export const mockApi: BridgeApi = {
     console.log('mock: send_trigger_draft', entryId)
     return { ok: true, to: 'alice@bigcustomer.com', subject: 'Re: Outage on web01' }
   },
-  get_room_state: async () => ({ connected: true, room: 'ops', user: 'alice@web01' }),
+  get_room_state: async () => ({
+    rooms: [
+      { room: 'ops', host: 'web01', user: 'alice@web01', connected: true },
+      { room: 'dba', host: 'db01', user: 'alice@db01', connected: false },
+    ],
+  }),
   send_room_message: async (room: string, text: string) => {
     console.log('mock: send_room_message', room, text)
     // Echo into the transcript so the Rooms view is interactive in the browser

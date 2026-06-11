@@ -126,7 +126,7 @@ def _supervisor_stub():
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._chat_stop = threading.Event()
-    s._chat_source = None
+    s._chat_sources = {}
     s._trigger_engine = None
     s.dispatched: list[tuple[str, dict]] = []
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
@@ -136,6 +136,9 @@ def _supervisor_stub():
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
     s._chat_supervise = types.MethodType(Bridge._chat_supervise, s)
     return s
+
+
+_SPEC = {"room": "ops", "host": "web01", "user": "me"}
 
 
 def test_chat_supervisor_reconnects_until_stopped():
@@ -149,9 +152,7 @@ def test_chat_supervisor_reconnects_until_stopped():
         return _OneShotTransport()
 
     s._chat_stop.clear()
-    th = threading.Thread(
-        target=s._chat_supervise, args=(factory, "me", "ops"), daemon=True
-    )
+    th = threading.Thread(target=s._chat_supervise, args=(_SPEC, factory), daemon=True)
     th.start()
     deadline = time.time() + 3
     while len(calls) < 3 and time.time() < deadline:
@@ -160,22 +161,21 @@ def test_chat_supervisor_reconnects_until_stopped():
     th.join(timeout=2)
 
     assert len(calls) >= 3  # it kept reconnecting after each drop
-    assert s._chat_source is None  # cleared once stopped
-    kinds = [
-        d["connected"] for ev, d in s.dispatched if ev == "runspec:room_connection"
-    ]
-    assert True in kinds and False in kinds  # connect/disconnect were surfaced
+    assert s._chat_sources == {}  # cleared once stopped
+    conns = [d for ev, d in s.dispatched if ev == "runspec:room_connection"]
+    assert {"room": "ops", "host": "web01", "connected": True} in conns
+    assert {"room": "ops", "host": "web01", "connected": False} in conns
 
 
 def test_start_chat_noop_without_pool():
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._chat_stop = threading.Event()
-    s._chat_supervisor = None
-    s._ssh_pool = None  # pooling disabled → can't tunnel → no room
+    s._chat_supervisors = {}
+    s._ssh_pool = None  # pooling disabled → can't tunnel → no rooms
     s.start_chat = types.MethodType(Bridge.start_chat, s)
     s.start_chat()
-    assert s._chat_supervisor is None  # nothing started
+    assert s._chat_supervisors == {}  # nothing started
 
 
 # ── send_room_message ─────────────────────────────────────────────────────────
@@ -189,29 +189,34 @@ class _FakeSource:
         self.sent.append(text)
 
 
-def _send_stub(chat_source: Any):
+def _send_stub(sources: dict[str, Any]):
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
-    s._chat_source = chat_source
+    s._chat_sources = sources
     s.send_room_message = types.MethodType(Bridge.send_room_message, s)
     return s
 
 
-def test_send_room_message_routes_to_source():
+def test_send_room_message_routes_to_room():
     src = _FakeSource()
-    out = _send_stub(src).send_room_message("ops", "on it")
+    out = _send_stub({"ops": src}).send_room_message("ops", "on it")
     assert out == {"ok": True}
     assert src.sent == ["on it"]
 
 
+def test_send_room_message_unknown_room():
+    out = _send_stub({"ops": _FakeSource()}).send_room_message("other", "hi")
+    assert out["ok"] is False and "not connected" in out["error"]
+
+
 def test_send_room_message_without_connection():
-    out = _send_stub(None).send_room_message("ops", "hi")
+    out = _send_stub({}).send_room_message("ops", "hi")
     assert out["ok"] is False and "not connected" in out["error"]
 
 
 def test_send_room_message_rejects_empty():
     src = _FakeSource()
-    out = _send_stub(src).send_room_message("ops", "   ")
+    out = _send_stub({"ops": src}).send_room_message("ops", "   ")
     assert out["ok"] is False and "empty" in out["error"]
     assert src.sent == []  # nothing dispatched on the wire
 
@@ -219,40 +224,76 @@ def test_send_room_message_rejects_empty():
 # ── get_room_state ────────────────────────────────────────────────────────────
 
 
-def _state_stub(chat_source: Any):
+def _state_stub(specs: list[dict[str, Any]], sources: dict[str, Any]):
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
-    s._chat_source = chat_source
+    s._chat_sources = sources
+    s._room_specs = lambda: specs
     s.get_room_state = types.MethodType(Bridge.get_room_state, s)
     return s
 
 
-def test_get_room_state_unconfigured(monkeypatch):
+def test_get_room_state_no_rooms():
+    assert _state_stub([], {}).get_room_state() == {"rooms": []}
+
+
+def test_get_room_state_lists_rooms_with_connection():
+    specs = [
+        {"room": "ops", "host": "web01", "user": "alice@web01"},
+        {"room": "dba", "host": "db01", "user": "alice@db01"},
+    ]
+    out = _state_stub(specs, {"ops": _FakeSource()}).get_room_state()
+    assert out == {
+        "rooms": [
+            {"room": "ops", "host": "web01", "user": "alice@web01", "connected": True},
+            {"room": "dba", "host": "db01", "user": "alice@db01", "connected": False},
+        ]
+    }
+
+
+# ── _room_specs (host entries + legacy [chat] fallback) ───────────────────────
+
+
+def _specs_stub(hosts: list[dict[str, Any]]):
+    s = types.SimpleNamespace()
+    s._hosts = hosts
+    s._reload_hosts = lambda: None
+    s._room_specs = types.MethodType(Bridge._room_specs, s)
+    return s
+
+
+def test_room_specs_from_host_entries(monkeypatch):
     from runspec_console import config
 
     monkeypatch.setattr(config, "read_chat", lambda: {})
-    out = _state_stub(None).get_room_state()
-    assert out == {"connected": False, "room": "", "user": ""}
+    s = _specs_stub(
+        [{"name": "web01", "ssh": "ops@web01", "room": "ops", "room_port": 8765}]
+    )
+    specs = s._room_specs()
+    assert len(specs) == 1
+    assert specs[0]["room"] == "ops" and specs[0]["ssh_target"] == "ops@web01"
 
 
-def test_get_room_state_configured_and_connected(monkeypatch):
+def test_room_specs_legacy_chat_resolves_to_host(monkeypatch):
+    # A legacy [chat] table whose `host` names a fleet entry inherits that host's
+    # ssh target + key (so old configs keep working AND get the fixed connection).
     from runspec_console import config
 
     monkeypatch.setattr(
-        config, "read_chat", lambda: {"room": "ops", "user": "alice@web01"}
+        config, "read_chat", lambda: {"host": "web01", "port": 8765, "room": "ops"}
     )
-    out = _state_stub(_FakeSource()).get_room_state()
-    assert out == {"connected": True, "room": "ops", "user": "alice@web01"}
+    s = _specs_stub([{"name": "web01", "ssh": "ops@web01", "identityFile": "~/.ssh/k"}])
+    specs = s._room_specs()
+    assert len(specs) == 1
+    assert specs[0]["ssh_target"] == "ops@web01"
+    assert specs[0]["identity_file"] == "~/.ssh/k"  # inherited from the matched host
 
 
-def test_get_room_state_defaults_user_when_unset(monkeypatch):
+def test_room_specs_empty_when_nothing_configured(monkeypatch):
     from runspec_console import config
-    from runspec_console.sources import chat_transport
 
-    monkeypatch.setattr(config, "read_chat", lambda: {"room": "ops", "host": "web01"})
-    monkeypatch.setattr(chat_transport.getpass, "getuser", lambda: "bob", raising=False)
-    out = _state_stub(None).get_room_state()
-    assert out == {"connected": False, "room": "ops", "user": "bob@web01"}
+    monkeypatch.setattr(config, "read_chat", lambda: {})
+    assert _specs_stub([{"name": "web01", "ssh": "ops@web01"}])._room_specs() == []
 
 
 # ── _gated_propose_reply guards (pre-confirm early returns) ────────────────────

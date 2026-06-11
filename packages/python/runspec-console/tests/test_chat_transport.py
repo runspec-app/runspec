@@ -18,10 +18,10 @@ from runspec_console.sources import chat_transport
 from runspec_console.sources.chat import ChatSource
 from runspec_console.sources.chat_transport import (
     ChannelChatTransport,
-    default_chat_user,
     default_user_from_ssh,
+    host_rooms,
+    make_host_room_factory,
     make_tunnel_transport_factory,
-    transport_factory_from_config,
 )
 
 
@@ -159,20 +159,63 @@ def test_factory_opens_tunnel_with_expected_args():
     assert pool.released == 1
 
 
-def test_transport_factory_from_config(monkeypatch):
-    monkeypatch.setattr(
-        chat_transport.config, "read_chat", lambda: {"host": "jump-1", "port": 8765}
-    )
-    factory = transport_factory_from_config(FakePool(FakeChannel()))
-    assert factory is not None
+# ── host-room specs + per-host factory ────────────────────────────────────────
 
 
-def test_transport_factory_from_config_none_when_unconfigured(monkeypatch):
-    monkeypatch.setattr(chat_transport.config, "read_chat", lambda: {})
-    assert transport_factory_from_config(FakePool(FakeChannel())) is None
-    # host present but port missing/non-int → still None
-    monkeypatch.setattr(chat_transport.config, "read_chat", lambda: {"host": "j"})
-    assert transport_factory_from_config(FakePool(FakeChannel())) is None
+def test_host_rooms_extracts_specs_from_entries():
+    hosts = [
+        {"name": "web01", "ssh": "ops@web01:22", "room": "ops", "room_port": 8765},
+        {"name": "nochat", "ssh": "x@y"},  # no room → skipped
+        {"name": "noport", "ssh": "a@b", "room": "r"},  # no room_port → skipped
+        {
+            "name": "badport",
+            "ssh": "a@b",
+            "room": "r",
+            "room_port": True,
+        },  # bool → skip
+    ]
+    specs = host_rooms(hosts)
+    assert len(specs) == 1
+    s = specs[0]
+    assert s["host"] == "web01" and s["ssh_target"] == "ops@web01:22"
+    assert s["room"] == "ops" and s["port"] == 8765
+    assert s["user"] == "ops@web01:22"  # SSH login default (target carries a user)
+
+
+def test_host_rooms_room_user_override_and_identity():
+    hosts = [
+        {
+            "name": "web01",
+            "ssh": "web01",
+            "identityFile": "~/.ssh/k",
+            "room": "ops",
+            "room_port": 8765,
+            "room_user": "alice",
+        }
+    ]
+    s = host_rooms(hosts)[0]
+    assert s["user"] == "alice"  # explicit override wins
+    assert s["identity_file"] == "~/.ssh/k"
+
+
+def test_make_host_room_factory_uses_host_ssh_and_threads_config():
+    ssh = {"proxy_jump": "bastion"}
+    spec = {
+        "host": "web01",
+        "ssh_target": "ops@web01:22",
+        "identity_file": "~/.ssh/k",
+        "room": "ops",
+        "port": 8765,
+        "dest_host": "127.0.0.1",
+        "user": "ops@web01:22",
+    }
+    pool = FakePool(FakeChannel([b'{"type": "message", "text": "x"}\n']))
+    factory = make_host_room_factory(pool, spec, global_ssh_config=ssh)
+    factory()
+    target, dest_host, dest_port, kw = pool.calls[0]
+    assert target == "ops@web01:22" and dest_host == "127.0.0.1" and dest_port == 8765
+    assert kw["identity_file"] == "~/.ssh/k"  # the host's own key
+    assert kw["global_ssh_config"] == ssh  # global [ssh] threaded through
 
 
 # ── end-to-end: factory → ChatSource → events ──────────────────────────────────
@@ -221,9 +264,11 @@ def test_default_user_from_ssh_never_blank():
     assert default_user_from_ssh("web01", "") == "web01"
 
 
-def test_default_chat_user_reads_host(monkeypatch):
+def test_default_room_user_from_ssh_target(monkeypatch):
+    from runspec_console.sources.chat_transport import default_room_user
+
     monkeypatch.setattr(
         chat_transport.getpass, "getuser", lambda: "alice", raising=False
     )
-    assert default_chat_user({"host": "web01"}) == "alice@web01"
-    assert default_chat_user({"host": "bob@web01"}) == "bob@web01"
+    assert default_room_user("web01") == "alice@web01"
+    assert default_room_user("bob@web01") == "bob@web01"

@@ -29,7 +29,6 @@ import logging
 import threading
 from typing import Any, Callable, Protocol
 
-from .. import config
 from .chat import ChatTransport, TransportFactory
 
 logger = logging.getLogger("runspec.console.triggers.chat")
@@ -188,31 +187,66 @@ def default_user_from_ssh(ssh_target: str, os_user: str) -> str:
     return f"{os_user}@{target}" if os_user else target
 
 
-def default_chat_user(cfg: dict[str, Any]) -> str:
-    """The SSH-defaulted room user for a ``[chat]`` config table (``host`` + the
-    local OS user). Convenience for the bridge — see ``default_user_from_ssh``."""
+def default_room_user(ssh_target: str) -> str:
+    """The SSH-defaulted room display name for a host — its ssh login. The server
+    can't see the OS user over the tunnel, so the console declares one."""
     try:
         os_user = getpass.getuser()
     except Exception:
         os_user = ""
-    return default_user_from_ssh(str(cfg.get("host") or ""), os_user)
+    return default_user_from_ssh(ssh_target, os_user)
 
 
-def transport_factory_from_config(
+def host_rooms(hosts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract the room specs declared on fleet host entries — those with a
+    ``room`` name, a ``room_port`` (the server's localhost port on that host) and
+    an ``ssh`` target. Each spec carries everything the tunnel needs, *inherited
+    from the host*: its ssh target + identityFile (so the tunnel reuses the pooled
+    connection), the room, the port, and a display user (``room_user`` override,
+    else the SSH login)."""
+    specs: list[dict[str, Any]] = []
+    for h in hosts:
+        ssh_target = str(h.get("ssh") or "").strip()
+        room = str(h.get("room") or "").strip()
+        port = h.get("room_port")
+        # bool is an int subclass — a TOML true/false is not a valid port.
+        if (
+            not ssh_target
+            or not room
+            or not isinstance(port, int)
+            or isinstance(port, bool)
+        ):
+            continue
+        user = str(h.get("room_user") or "").strip() or default_room_user(ssh_target)
+        specs.append(
+            {
+                "host": str(h.get("name") or ssh_target),
+                "ssh_target": ssh_target,
+                "identity_file": h.get("identityFile") or None,
+                "room": room,
+                "port": int(port),
+                "dest_host": str(h.get("room_dest_host") or "127.0.0.1"),
+                "user": user,
+            }
+        )
+    return specs
+
+
+def make_host_room_factory(
     pool: DirectTcpipOpener,
-) -> TransportFactory | None:
-    """Build the tunnel factory from the ``[chat]`` config, or ``None`` if the
-    room isn't configured (``host`` + ``port`` required). Convenience for the
-    bridge wiring; ``room``/``user`` are read by ``ChatSource`` itself."""
-    cfg = config.read_chat()
-    host = str(cfg.get("host") or "").strip()
-    port = cfg.get("port")
-    if not host or not isinstance(port, int):
-        return None
+    spec: dict[str, Any],
+    *,
+    global_ssh_config: dict[str, Any] | None = None,
+) -> TransportFactory:
+    """Tunnel factory for one room spec (from :func:`host_rooms`). Rides the host's
+    own ssh target + identityFile + the global ``[ssh]`` config, so the room tunnel
+    reuses the working pooled connection to that host instead of opening a fresh,
+    mis-configured one."""
     return make_tunnel_transport_factory(
         pool,
-        host,
-        port,
-        dest_host=str(cfg.get("dest_host") or "127.0.0.1"),
-        identity_file=cfg.get("identity_file") or None,
+        str(spec["ssh_target"]),
+        int(spec["port"]),
+        dest_host=str(spec.get("dest_host") or "127.0.0.1"),
+        identity_file=spec.get("identity_file") or None,
+        global_ssh_config=global_ssh_config,
     )

@@ -550,6 +550,8 @@ interface HostFormValues {
   port?: number
   identityFile?: string
   group?: string
+  room?: string
+  room_port?: number
 }
 
 function toToml(hosts: JumpHost[]): string {
@@ -559,6 +561,8 @@ function toToml(hosts: JumpHost[]): string {
     if (h.port) lines.push(`port = ${h.port}`)
     if (h.identityFile) lines.push(`identity_file = "${h.identityFile}"`)
     if (h.group) lines.push(`group = "${h.group}"`)
+    if (h.room) lines.push(`room = "${h.room}"`)
+    if (h.room_port) lines.push(`room_port = ${h.room_port}`)
     if (h.runspec_paths?.length) {
       const paths = h.runspec_paths.map(p => `"${p}"`).join(', ')
       lines.push(`runspec_paths = [${paths}]`)
@@ -644,10 +648,20 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
 
   const save = async () => {
     const values = await form.validateFields()
-    if (editingKey === '') {
-      await persist([...hosts, values as JumpHost])
+    // <Input type="number"> yields a string — coerce the room port, and drop the
+    // room fields when no room is set (the backend wants an int port or nothing).
+    const v: HostFormValues = { ...values }
+    v.room = (v.room ?? '').toString().trim() || undefined
+    if (v.room && v.room_port != null && `${v.room_port}` !== '') {
+      v.room_port = Number(v.room_port)
     } else {
-      await persist(hosts.map(h => h.name === editingKey ? { ...h, ...values } : h))
+      delete v.room
+      delete v.room_port
+    }
+    if (editingKey === '') {
+      await persist([...hosts, v as JumpHost])
+    } else {
+      await persist(hosts.map(h => h.name === editingKey ? { ...h, ...v } : h))
     }
     setEditingKey(null)
     form.resetFields()
@@ -781,6 +795,14 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
             <Form.Item name="group" label="Group">
               <Input placeholder="e.g. Production, Staging (optional)" />
             </Form.Item>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+              <Form.Item name="room" label="Chat room" help="If runspec-room runs on this host, the console joins this room over the tunnel.">
+                <Input placeholder="e.g. ops (optional)" style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+              <Form.Item name="room_port" label="Room port">
+                <Input placeholder="8765" type="number" />
+              </Form.Item>
+            </div>
             <Space style={{ marginTop: 2, marginBottom: 8 }}>
               <Button size="small" type="primary" icon={<CheckOutlined />} onClick={save}>Save</Button>
               <Button size="small" icon={<CloseOutlined />} onClick={cancel}>Cancel</Button>
