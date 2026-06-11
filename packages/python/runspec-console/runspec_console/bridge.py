@@ -3237,7 +3237,29 @@ class Bridge:
             result.append(entry)
         return result
 
+    # Host-entry keys the Hosts editor owns (and rebuilds on save). Everything
+    # else in an entry — e.g. room_dest_host, role, or a hand-added key — is
+    # preserved verbatim so a save through the UI never silently drops it.
+    _MANAGED_HOST_KEYS = frozenset(
+        {
+            "name",
+            "ssh",
+            "hostname",
+            "user",
+            "port",
+            "runspec_paths",
+            "runspec_path",
+            "identityFile",
+            "group",
+            "room",
+            "room_port",
+            "room_user",
+        }
+    )
+
     def save_jump_hosts(self, hosts: list[dict[str, Any]]) -> None:
+        # Freshest on-disk entries, to carry over any keys the editor doesn't manage.
+        existing = {str(e.get("name") or ""): e for e in load_hosts(hosts_path())}
         entries: list[dict[str, Any]] = []
         for h in hosts:
             hostname = h.get("hostname", "")
@@ -3272,6 +3294,11 @@ class Bridge:
                 entry["room_port"] = room_port
                 if str(h.get("room_user") or "").strip():
                     entry["room_user"] = h["room_user"].strip()
+            # Carry over any unmanaged keys from the existing entry (room_dest_host,
+            # role, …) so they survive an editor save.
+            for k, v in existing.get(str(h.get("name") or ""), {}).items():
+                if k not in self._MANAGED_HOST_KEYS and k not in entry:
+                    entry[k] = v
             entries.append(entry)
         save_hosts(hosts_path(), entries)
         self._reload_hosts()
@@ -4869,7 +4896,10 @@ class Bridge:
         host entry) — always-on, independent of triggers. One reconnecting
         supervisor per room, each tunnelling over that host's own pooled
         connection. Idempotent; a no-op with no SSH pool or no rooms configured."""
-        from .sources.chat_transport import make_host_room_factory
+        from .sources.chat_transport import (
+            make_host_room_exec_factory,
+            make_host_room_factory,
+        )
 
         with self._lock:
             if self._chat_supervisors:
@@ -4891,7 +4921,14 @@ class Bridge:
                     "chat: duplicate room %r (host %r) — skipping", room, spec["host"]
                 )
                 continue
-            factory = make_host_room_factory(pool, spec, global_ssh_config=ssh_cfg)
+            if spec.get("via") == "exec":
+                # SSH port-forwarding blocked → run console-room connect over an
+                # exec channel instead (no direct-tcpip tunnel).
+                factory = make_host_room_exec_factory(
+                    pool, spec, global_ssh_config=ssh_cfg
+                )
+            else:
+                factory = make_host_room_factory(pool, spec, global_ssh_config=ssh_cfg)
             threads[room] = threading.Thread(
                 target=self._chat_supervise,
                 args=(spec, factory),
@@ -4910,8 +4947,14 @@ class Bridge:
         from . import config
         from .sources.chat_transport import default_room_user, host_rooms
 
+        # The configured [ssh] default username — the login the tunnel actually
+        # authenticates as. Used as the room display name when a host's ssh target
+        # carries no user@ (so a Windows console shows the Linux identity).
+        ssh_section = self.get_config().get("ssh")
+        ssh_user = str((ssh_section or {}).get("user") or "")
+
         self._reload_hosts()
-        specs = host_rooms(self._hosts)
+        specs = host_rooms(self._hosts, ssh_user=ssh_user)
         if specs:
             return specs
         cfg = config.read_chat()
@@ -4933,7 +4976,7 @@ class Bridge:
                 "port": int(port),
                 "dest_host": str(cfg.get("dest_host") or "127.0.0.1"),
                 "user": str(cfg.get("user") or "").strip()
-                or default_room_user(ssh_target),
+                or default_room_user(ssh_target, ssh_user),
             }
         ]
 

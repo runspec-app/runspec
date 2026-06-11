@@ -52,6 +52,22 @@ class DirectTcpipOpener(Protocol):
     ) -> tuple[Any, Callable[[], None]]: ...
 
 
+class ExecOpener(Protocol):
+    """The slice of ``SSHConnectionPool`` the exec transport needs: ``exec`` a
+    command on a pooled transport, returning ``(channel, release)``. The channel's
+    stdout/stdin behave like the direct-tcpip channel's recv/sendall, so the same
+    NDJSON framing (``ChannelChatTransport``) drives both."""
+
+    def open_exec(
+        self,
+        ssh_target: str,
+        command: str,
+        *,
+        identity_file: str | None = ...,
+        global_ssh_config: dict[str, Any] | None = ...,
+    ) -> tuple[Any, Callable[[], None]]: ...
+
+
 def _decode(line: bytes) -> dict[str, Any] | None:
     """Parse one framed line to a dict, or ``None`` for blank / malformed / non-object."""
     text = line.strip()
@@ -172,38 +188,45 @@ def make_tunnel_transport_factory(
     return factory
 
 
-def default_user_from_ssh(ssh_target: str, os_user: str) -> str:
-    """Derive a room display name from the SSH target when ``[chat] user`` is
-    unset. The tunnel hides the OS user from the server, so the console declares
-    one; the natural default is the SSH login it connects as. Use a ``user@host``
-    target as-is; otherwise prefix the local OS user (→ ``alice@web01``). Falls
-    back to the OS user, then ``"console"``, so it's never blank."""
+def default_user_from_ssh(ssh_target: str, fallback_user: str) -> str:
+    """Derive a room display name from the SSH target. The tunnel hides the OS user
+    from the server, so the console declares one; the natural default is the SSH
+    *login* it connects as. Use a ``user@host`` target as-is; otherwise prefix
+    ``fallback_user`` (→ ``alice@web01``). Empty target → ``fallback_user`` or
+    ``"console"`` so it's never blank."""
     target = (ssh_target or "").strip()
-    os_user = (os_user or "").strip()
+    fb = (fallback_user or "").strip()
     if not target:
-        return os_user or "console"
+        return fb or "console"
     if "@" in target:
         return target
-    return f"{os_user}@{target}" if os_user else target
+    return f"{fb}@{target}" if fb else target
 
 
-def default_room_user(ssh_target: str) -> str:
-    """The SSH-defaulted room display name for a host — its ssh login. The server
-    can't see the OS user over the tunnel, so the console declares one."""
-    try:
-        os_user = getpass.getuser()
-    except Exception:
-        os_user = ""
-    return default_user_from_ssh(ssh_target, os_user)
+def default_room_user(ssh_target: str, ssh_user: str = "") -> str:
+    """The SSH-defaulted room display name for a host — its ssh login. Prefers the
+    configured ``[ssh]`` username (``ssh_user``, the login the tunnel actually
+    authenticates as) over the local OS user, so a Windows console connecting to a
+    Linux host shows the Linux identity, not the Windows one."""
+    fallback = (ssh_user or "").strip()
+    if not fallback:
+        try:
+            fallback = getpass.getuser()
+        except Exception:
+            fallback = ""
+    return default_user_from_ssh(ssh_target, fallback)
 
 
-def host_rooms(hosts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def host_rooms(
+    hosts: list[dict[str, Any]], *, ssh_user: str = ""
+) -> list[dict[str, Any]]:
     """Extract the room specs declared on fleet host entries — those with a
     ``room`` name, a ``room_port`` (the server's localhost port on that host) and
     an ``ssh`` target. Each spec carries everything the tunnel needs, *inherited
     from the host*: its ssh target + identityFile (so the tunnel reuses the pooled
     connection), the room, the port, and a display user (``room_user`` override,
-    else the SSH login)."""
+    else the SSH login — ``ssh_user`` is the configured ``[ssh]`` default username,
+    preferred over the local OS user)."""
     specs: list[dict[str, Any]] = []
     for h in hosts:
         ssh_target = str(h.get("ssh") or "").strip()
@@ -217,7 +240,20 @@ def host_rooms(hosts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             or isinstance(port, bool)
         ):
             continue
-        user = str(h.get("room_user") or "").strip() or default_room_user(ssh_target)
+        user = str(h.get("room_user") or "").strip() or default_room_user(
+            ssh_target, ssh_user
+        )
+        dest_host = str(h.get("room_dest_host") or "127.0.0.1")
+        # `room_via = "exec"` opts a host into the exec-channel transport (for a
+        # network that blocks SSH port-forwarding): the console runs
+        # `console-room connect` on the host instead of opening a direct-tcpip
+        # tunnel. `room_command` is the console-room binary there (default on PATH).
+        via = (
+            "exec"
+            if str(h.get("room_via") or "").strip().lower() == "exec"
+            else "tunnel"
+        )
+        room_command = str(h.get("room_command") or "console-room").strip()
         specs.append(
             {
                 "host": str(h.get("name") or ssh_target),
@@ -225,8 +261,12 @@ def host_rooms(hosts: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "identity_file": h.get("identityFile") or None,
                 "room": room,
                 "port": int(port),
-                "dest_host": str(h.get("room_dest_host") or "127.0.0.1"),
+                "dest_host": dest_host,
                 "user": user,
+                "via": via,
+                "exec_command": (
+                    f"{room_command} connect --host {dest_host} --port {int(port)}"
+                ),
             }
         )
     return specs
@@ -250,3 +290,25 @@ def make_host_room_factory(
         identity_file=spec.get("identity_file") or None,
         global_ssh_config=global_ssh_config,
     )
+
+
+def make_host_room_exec_factory(
+    pool: ExecOpener,
+    spec: dict[str, Any],
+    *,
+    global_ssh_config: dict[str, Any] | None = None,
+) -> TransportFactory:
+    """Exec-channel factory for a room spec — runs ``spec['exec_command']`` (a
+    ``console-room connect`` on the host) over an SSH exec channel and frames NDJSON
+    over its stdio. For networks that block SSH port-forwarding; no tunnel."""
+
+    def factory() -> ChatTransport:
+        channel, release = pool.open_exec(
+            str(spec["ssh_target"]),
+            str(spec["exec_command"]),
+            identity_file=spec.get("identity_file") or None,
+            global_ssh_config=global_ssh_config,
+        )
+        return ChannelChatTransport(channel, release)
+
+    return factory

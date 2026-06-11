@@ -8,6 +8,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.43.0] — 2026-06-11
+
+### Added
+- **Exec-channel transport for rooms — join without SSH port-forwarding.** Set
+  `room_via = "exec"` on a host entry and the console runs `console-room connect`
+  on that host over a normal SSH *exec* channel (then it connects to the room's
+  local port there), instead of opening a `direct-tcpip` tunnel. This works on
+  networks that block forwarding — a hardened `sshd` (`AllowTcpForwarding no` /
+  `PermitOpen`) or a security appliance that resets tunnels. `room_command` sets
+  the `console-room` path on the host (default: on `PATH`); the NDJSON framing is
+  shared with the tunnel transport, so behaviour is otherwise identical. Requires
+  `runspec-room` ≥ 0.4.0 on the host (for the `connect` subcommand).
+
+## [0.42.1] — 2026-06-11
+
+### Fixed
+- **Room display name showed the local OS user instead of the SSH login.** When a
+  host's `ssh` target carried no `user@` (the login comes from the `[ssh]` default
+  username), the room announced you as your *local* (e.g. Windows) user. It now
+  prefers the configured `[ssh]` username, so a Windows console connecting to a
+  Linux host shows the Linux identity. Order: `room_user` → `user@host` →
+  `[ssh]` default user → local OS user.
+- **Saving a host in the editor dropped hand-added keys.** `save_jump_hosts`
+  rebuilt each entry from a fixed field list, silently deleting anything else
+  (e.g. `room_dest_host`, `role`) on the next save. It now preserves unmanaged
+  keys verbatim — so a `room_dest_host = "localhost"` (to work around an sshd
+  `PermitOpen` that allows `localhost` but not `127.0.0.1`) survives.
+
+### Added
+- **Display name** field in the Hosts editor (next to Chat room / Room port) —
+  sets `room_user` on the host entry without hand-editing TOML.
+
 ## [0.42.0] — 2026-06-11
 
 ### Changed

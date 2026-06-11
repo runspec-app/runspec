@@ -28,6 +28,47 @@ from runspec_console.bridge import Bridge, _RotaPresenceWatcher
 from runspec_console.events import Event
 
 
+# ── save_jump_hosts preserves unmanaged keys (e.g. room_dest_host) ────────────
+
+
+def test_save_jump_hosts_preserves_unmanaged_keys(tmp_path, monkeypatch):
+    from runspec_console import bridge as bridge_mod
+
+    hosts_file = tmp_path / "runspec_hosts.toml"
+    hosts_file.write_text(
+        '[[host]]\nname = "web01"\nssh = "ops@web01"\n'
+        'room = "ops"\nroom_port = 8765\nroom_dest_host = "localhost"\n'
+        'runspec_paths = ["runspec"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bridge_mod, "hosts_path", lambda: hosts_file)
+
+    s = types.SimpleNamespace()
+    s._MANAGED_HOST_KEYS = Bridge._MANAGED_HOST_KEYS
+    s._reload_hosts = lambda: None
+    s.restart_chat = lambda: None
+    s._refresh_cycle = lambda: None
+    s.save_jump_hosts = types.MethodType(Bridge.save_jump_hosts, s)
+
+    # The editor sends the host WITHOUT room_dest_host (a field it doesn't manage).
+    s.save_jump_hosts(
+        [
+            {
+                "name": "web01",
+                "hostname": "web01",
+                "user": "ops",
+                "room": "ops",
+                "room_port": 8765,
+                "runspec_paths": ["runspec"],
+            }
+        ]
+    )
+
+    saved = {e["name"]: e for e in bridge_mod.load_hosts(hosts_file)}
+    assert saved["web01"].get("room_dest_host") == "localhost"  # preserved, not dropped
+    assert saved["web01"]["room"] == "ops" and saved["web01"]["room_port"] == 8765
+
+
 # ── _on_chat_event (UI fan-out + engine routing) ───────────────────────────────
 
 
@@ -254,12 +295,24 @@ def test_get_room_state_lists_rooms_with_connection():
 # ── _room_specs (host entries + legacy [chat] fallback) ───────────────────────
 
 
-def _specs_stub(hosts: list[dict[str, Any]]):
+def _specs_stub(hosts: list[dict[str, Any]], ssh: dict[str, Any] | None = None):
     s = types.SimpleNamespace()
     s._hosts = hosts
     s._reload_hosts = lambda: None
+    s.get_config = lambda: {"ssh": ssh} if ssh else {}
     s._room_specs = types.MethodType(Bridge._room_specs, s)
     return s
+
+
+def test_room_specs_uses_ssh_default_user_for_bare_host(monkeypatch):
+    from runspec_console import config
+
+    monkeypatch.setattr(config, "read_chat", lambda: {})
+    s = _specs_stub(
+        [{"name": "web01", "ssh": "web01", "room": "ops", "room_port": 8765}],
+        ssh={"user": "linuxuser"},
+    )
+    assert s._room_specs()[0]["user"] == "linuxuser@web01"
 
 
 def test_room_specs_from_host_entries(monkeypatch):

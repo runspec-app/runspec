@@ -235,6 +235,40 @@ class PooledConnection:
 
         return chan, release
 
+    def open_exec(self, command: str) -> tuple[Any, Callable[[], None]]:
+        """Open a session channel and ``exec`` ``command`` on this transport.
+
+        The channel's stdout is read with ``recv`` and stdin written with
+        ``sendall`` — the same byte-stream interface as ``open_direct_tcpip`` — so
+        callers (e.g. the chat exec transport) drive it identically. Returns
+        ``(channel, release)``; the session slot is held until ``release()``.
+        """
+        self._sessions.acquire()
+        try:
+            self.last_used = self._clock()
+            transport = self._client.get_transport()
+            if transport is None:
+                raise OSError("transport closed")
+            chan = transport.open_session()
+            chan.exec_command(command)
+        except BaseException:
+            self._sessions.release()
+            raise
+
+        released = threading.Event()
+
+        def release() -> None:
+            if not released.is_set():
+                released.set()
+                try:
+                    chan.close()
+                except Exception:
+                    pass
+                self.last_used = self._clock()
+                self._sessions.release()
+
+        return chan, release
+
     def close(self) -> None:
         try:
             self._client.close()
@@ -478,6 +512,23 @@ class SSHConnectionPool:
         cfg = global_ssh_config or {}
         conn = self._acquire_conn(ssh_target, identity_file, cfg)
         return conn.open_direct_tcpip(dest_host, dest_port)
+
+    def open_exec(
+        self,
+        ssh_target: str,
+        command: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> tuple[Any, Callable[[], None]]:
+        """Exec ``command`` on a pooled transport, returning ``(channel, release)``.
+
+        The chat exec transport uses this to run ``console-room connect`` on the
+        host when SSH port-forwarding is unavailable — no ``direct-tcpip`` needed.
+        """
+        cfg = global_ssh_config or {}
+        conn = self._acquire_conn(ssh_target, identity_file, cfg)
+        return conn.open_exec(command)
 
     def connectable(
         self,

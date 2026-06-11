@@ -4,6 +4,18 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.4.0]
+
+### Added
+- **`console-room connect` — the exec-channel relay.** A subcommand that connects
+  to the room server's local NDJSON port and pipes it over stdin/stdout. It lets a
+  console join a room **without SSH port-forwarding**: instead of opening a
+  `direct-tcpip` tunnel, the console runs `console-room connect --port 8765` on the
+  host over a normal SSH *exec* channel (which works even when `AllowTcpForwarding`
+  is off or a network appliance resets tunnels). Stdout carries only the relayed
+  bytes; diagnostics go to stderr. See the console's `room_via = "exec"` host
+  setting.
+
 ## [0.3.0]
 
 **S3: OIDC login + sessions + TLS.** The browser door is now authenticated.

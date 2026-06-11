@@ -20,6 +20,7 @@ from runspec_console.sources.chat_transport import (
     ChannelChatTransport,
     default_user_from_ssh,
     host_rooms,
+    make_host_room_exec_factory,
     make_host_room_factory,
     make_tunnel_transport_factory,
 )
@@ -49,10 +50,15 @@ class FakePool:
     def __init__(self, channel: FakeChannel) -> None:
         self._channel = channel
         self.calls: list[tuple[Any, ...]] = []
+        self.exec_calls: list[tuple[Any, ...]] = []
         self.released = 0
 
     def open_direct_tcpip(self, ssh_target, dest_host, dest_port, **kw):
         self.calls.append((ssh_target, dest_host, dest_port, kw))
+        return self._channel, self._release
+
+    def open_exec(self, ssh_target, command, **kw):
+        self.exec_calls.append((ssh_target, command, kw))
         return self._channel, self._release
 
     def _release(self) -> None:
@@ -218,6 +224,51 @@ def test_make_host_room_factory_uses_host_ssh_and_threads_config():
     assert kw["global_ssh_config"] == ssh  # global [ssh] threaded through
 
 
+def test_host_rooms_default_via_tunnel_with_exec_command():
+    hosts = [{"name": "web01", "ssh": "ops@web01", "room": "ops", "room_port": 8765}]
+    s = host_rooms(hosts)[0]
+    assert s["via"] == "tunnel"  # default
+    assert s["exec_command"] == "console-room connect --host 127.0.0.1 --port 8765"
+
+
+def test_host_rooms_exec_via_and_custom_command():
+    hosts = [
+        {
+            "name": "web01",
+            "ssh": "ops@web01",
+            "room": "ops",
+            "room_port": 8765,
+            "room_via": "exec",
+            "room_command": "~/.venv/bin/console-room",
+            "room_dest_host": "localhost",
+        }
+    ]
+    s = host_rooms(hosts)[0]
+    assert s["via"] == "exec"
+    assert (
+        s["exec_command"]
+        == "~/.venv/bin/console-room connect --host localhost --port 8765"
+    )
+
+
+def test_make_host_room_exec_factory_runs_connect_command():
+    spec = {
+        "ssh_target": "ops@web01",
+        "identity_file": "~/.ssh/k",
+        "exec_command": "console-room connect --host 127.0.0.1 --port 8765",
+    }
+    pool = FakePool(FakeChannel([b'{"type": "message", "text": "x"}\n']))
+    factory = make_host_room_exec_factory(pool, spec, global_ssh_config={"user": "ops"})
+    transport = factory()
+    target, command, kw = pool.exec_calls[0]
+    assert target == "ops@web01"
+    assert command == "console-room connect --host 127.0.0.1 --port 8765"
+    assert kw["identity_file"] == "~/.ssh/k" and kw["global_ssh_config"] == {
+        "user": "ops"
+    }
+    assert transport.recv() == {"type": "message", "text": "x"}  # NDJSON framing reused
+
+
 # ── end-to-end: factory → ChatSource → events ──────────────────────────────────
 
 
@@ -264,11 +315,24 @@ def test_default_user_from_ssh_never_blank():
     assert default_user_from_ssh("web01", "") == "web01"
 
 
-def test_default_room_user_from_ssh_target(monkeypatch):
+def test_default_room_user_prefers_ssh_user_over_os_user(monkeypatch):
     from runspec_console.sources.chat_transport import default_room_user
 
+    # getpass would return the *local* (e.g. Windows) user — must NOT win.
     monkeypatch.setattr(
-        chat_transport.getpass, "getuser", lambda: "alice", raising=False
+        chat_transport.getpass, "getuser", lambda: "winuser", raising=False
     )
-    assert default_room_user("web01") == "alice@web01"
+    # A user@host target is used as-is.
     assert default_room_user("bob@web01") == "bob@web01"
+    # Bare host + configured [ssh] user → that Linux login, not the OS user.
+    assert default_room_user("web01", "linuxuser") == "linuxuser@web01"
+    # Bare host + no [ssh] user → falls back to the OS user (last resort).
+    assert default_room_user("web01") == "winuser@web01"
+
+
+def test_host_rooms_uses_ssh_user_for_bare_host(monkeypatch):
+    monkeypatch.setattr(
+        chat_transport.getpass, "getuser", lambda: "winuser", raising=False
+    )
+    hosts = [{"name": "web01", "ssh": "web01", "room": "ops", "room_port": 8765}]
+    assert host_rooms(hosts, ssh_user="linuxuser")[0]["user"] == "linuxuser@web01"

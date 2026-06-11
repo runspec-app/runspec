@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 
 from .hub import Hub
 from .ndjson_server import serve_ndjson
@@ -143,10 +144,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    # `console-room connect …` is the exec-transport relay (stdio↔local room port).
+    # It must keep stdout pure (it's the data channel), so it configures no logging.
+    if raw and raw[0] == "connect":
+        from .connect import main as connect_main
+
+        raise SystemExit(connect_main(raw[1:]))
+
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    args = _parse_args(argv)
+    args = _parse_args(raw)
     try:
         if args.ndjson_only:
             asyncio.run(run_ndjson_only(args.ndjson_host, args.ndjson_port, args.db))

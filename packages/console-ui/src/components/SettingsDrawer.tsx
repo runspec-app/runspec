@@ -552,6 +552,7 @@ interface HostFormValues {
   group?: string
   room?: string
   room_port?: number
+  room_user?: string
 }
 
 function toToml(hosts: JumpHost[]): string {
@@ -563,6 +564,7 @@ function toToml(hosts: JumpHost[]): string {
     if (h.group) lines.push(`group = "${h.group}"`)
     if (h.room) lines.push(`room = "${h.room}"`)
     if (h.room_port) lines.push(`room_port = ${h.room_port}`)
+    if (h.room_user) lines.push(`room_user = "${h.room_user}"`)
     if (h.runspec_paths?.length) {
       const paths = h.runspec_paths.map(p => `"${p}"`).join(', ')
       lines.push(`runspec_paths = [${paths}]`)
@@ -652,11 +654,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     // room fields when no room is set (the backend wants an int port or nothing).
     const v: HostFormValues = { ...values }
     v.room = (v.room ?? '').toString().trim() || undefined
+    v.room_user = (v.room_user ?? '').toString().trim() || undefined
     if (v.room && v.room_port != null && `${v.room_port}` !== '') {
       v.room_port = Number(v.room_port)
     } else {
       delete v.room
       delete v.room_port
+      delete v.room_user
     }
     if (editingKey === '') {
       await persist([...hosts, v as JumpHost])
@@ -801,6 +805,9 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               </Form.Item>
               <Form.Item name="room_port" label="Room port">
                 <Input placeholder="8765" type="number" />
+              </Form.Item>
+              <Form.Item name="room_user" label="Display name" help="Your name in the room. Defaults to the SSH login.">
+                <Input placeholder="defaults to SSH login" />
               </Form.Item>
             </div>
             <Space style={{ marginTop: 2, marginBottom: 8 }}>
