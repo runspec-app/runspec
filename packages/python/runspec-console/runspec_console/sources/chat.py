@@ -151,12 +151,17 @@ class ChatSource:
         user: str | None = None,
         transport: ChatTransport | None = None,
         transport_factory: TransportFactory | None = None,
+        on_closed: Callable[[], None] | None = None,
     ) -> None:
         cfg = config.read_chat()
         self._room = room if room is not None else _str(cfg.get("room"))
         self._user = user if user is not None else _str(cfg.get("user"))
         self._transport = transport
         self._transport_factory = transport_factory
+        # Fired when the recv loop ends because the channel dropped (not via
+        # stop()), so an always-on owner can reconnect. Never called on a clean
+        # stop().
+        self._on_closed = on_closed
         self._emit: EmitFn | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -267,6 +272,13 @@ class ChatSource:
             if obj is None:  # channel closed
                 break
             self._handle(obj)
+        # If the loop ended because the channel dropped (not a clean stop()),
+        # notify the owner so it can reconnect.
+        if not self._stop.is_set() and self._on_closed is not None:
+            try:
+                self._on_closed()
+            except Exception:
+                logger.exception("chat: on_closed callback failed")
 
 
 register_source("chat", ChatSource)

@@ -1,14 +1,15 @@
 """
-test_chat_bridge.py — slice-3 bridge wiring for the chat-room source.
+test_chat_bridge.py — bridge wiring for the always-on chat-room source.
 
-Covers the seams added to wire ``ChatSource`` into the bridge without an LLM, an
-SSH tunnel, or a webview:
+Covers the seams that wire ``ChatSource`` into the bridge without an LLM, an SSH
+tunnel, or a webview:
 
-- ``_ChatUIFanout`` — fans message + presence to the Rooms UI; only messages
-  reach the trigger engine; tracks the live inner source via on_start/on_stop.
+- ``_on_chat_event`` — fans message + presence to the Rooms UI; routes *messages*
+  (not presence) to the live trigger engine via ``engine.feed``.
 - ``_RotaPresenceWatcher`` — pushes presence to the room only when the rota's
   on-shift state flips.
-- ``send_room_message`` — the composer's one outbound path (and its guards).
+- ``send_room_message`` / ``get_room_state`` — the composer's outbound path and
+  the Rooms view's connection state.
 - ``_gated_propose_reply`` early-return guards (the confirmed path is exercised
   by the autonomy-gate tests).
 
@@ -23,84 +24,53 @@ import threading
 import types
 from typing import Any
 
-from runspec_console.bridge import Bridge, _ChatUIFanout, _RotaPresenceWatcher
+from runspec_console.bridge import Bridge, _RotaPresenceWatcher
 from runspec_console.events import Event
 
 
-# ── _ChatUIFanout ─────────────────────────────────────────────────────────────
+# ── _on_chat_event (UI fan-out + engine routing) ───────────────────────────────
 
 
-class _FakeInner:
-    """Stand-in ChatSource: records lifecycle and captures the wrapped emit."""
-
+class _FakeEngine:
     def __init__(self) -> None:
-        self.emit: Any = None
-        self.started = False
-        self.stopped = False
+        self.fed: list[Event] = []
 
-    def available(self) -> tuple[bool, str]:
-        return (True, "")
-
-    def event_types(self) -> list[str]:
-        return ["message", "presence"]
-
-    def start(self, emit: Any) -> None:
-        self.emit = emit
-        self.started = True
-
-    def stop(self) -> None:
-        self.stopped = True
+    def feed(self, event: Event) -> None:
+        self.fed.append(event)
 
 
-def _fanout():
-    inner = _FakeInner()
-    dispatched: list[tuple[str, dict]] = []
-    starts: list[Any] = []
-    stops: list[bool] = []
-    wrapper = _ChatUIFanout(
-        inner,
-        lambda ev, detail: dispatched.append((ev, detail)),
-        on_start=lambda src: starts.append(src),
-        on_stop=lambda: stops.append(True),
-    )
-    return inner, wrapper, dispatched, starts, stops
+def _event_stub(engine: Any = None):
+    s = types.SimpleNamespace()
+    s._lock = threading.Lock()
+    s._trigger_engine = engine
+    s.dispatched: list[tuple[str, dict]] = []
+    s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
+    s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
+    return s
 
 
-def test_fanout_message_reaches_ui_and_engine():
-    inner, wrapper, dispatched, starts, _ = _fanout()
-    engine_seen: list[Event] = []
-    wrapper.start(engine_seen.append)
-
-    assert inner.started and starts == [inner]  # on_start tracked the inner source
-    inner.emit(Event.new("chat", "message", {"room": "ops", "text": "hi"}))
-
-    assert dispatched == [("runspec:room_message", {"room": "ops", "text": "hi"})]
-    assert len(engine_seen) == 1 and engine_seen[0].type == "message"
+def test_on_chat_event_message_reaches_ui_and_engine():
+    engine = _FakeEngine()
+    s = _event_stub(engine)
+    s._on_chat_event(Event.new("chat", "message", {"room": "ops", "text": "hi"}))
+    assert s.dispatched == [("runspec:room_message", {"room": "ops", "text": "hi"})]
+    assert len(engine.fed) == 1 and engine.fed[0].type == "message"
 
 
-def test_fanout_presence_is_ui_only():
-    inner, wrapper, dispatched, _, _ = _fanout()
-    engine_seen: list[Event] = []
-    wrapper.start(engine_seen.append)
-
-    inner.emit(Event.new("chat", "presence", {"user": "ana", "status": "away"}))
-
-    assert dispatched == [("runspec:room_presence", {"user": "ana", "status": "away"})]
-    assert engine_seen == []  # presence never reaches the engine / audit feed
-
-
-def test_fanout_stop_runs_inner_and_on_stop():
-    inner, wrapper, _, _, stops = _fanout()
-    wrapper.start(lambda _ev: None)
-    wrapper.stop()
-    assert inner.stopped and stops == [True]
+def test_on_chat_event_presence_is_ui_only():
+    engine = _FakeEngine()
+    s = _event_stub(engine)
+    s._on_chat_event(Event.new("chat", "presence", {"user": "ana", "status": "away"}))
+    assert s.dispatched == [
+        ("runspec:room_presence", {"user": "ana", "status": "away"})
+    ]
+    assert engine.fed == []  # presence never reaches the engine / audit feed
 
 
-def test_fanout_delegates_available_and_event_types():
-    inner, wrapper, *_ = _fanout()
-    assert wrapper.available() == (True, "")
-    assert wrapper.event_types() == ["message", "presence"]
-    assert wrapper.id == "chat"
+def test_on_chat_event_message_with_no_engine_still_fans_to_ui():
+    s = _event_stub(None)  # no trigger engine running
+    s._on_chat_event(Event.new("chat", "message", {"room": "ops", "text": "hi"}))
+    assert s.dispatched == [("runspec:room_message", {"room": "ops", "text": "hi"})]
 
 
 # ── _RotaPresenceWatcher ──────────────────────────────────────────────────────
@@ -131,6 +101,81 @@ def test_presence_watcher_swallows_clock_errors():
     w = _RotaPresenceWatcher(boom, pushed.append)
     w._tick()  # must not raise
     assert pushed == []
+
+
+# ── reconnect supervisor (_chat_supervise / start_chat) ───────────────────────
+
+
+class _OneShotTransport:
+    """A transport that 'drops' immediately (recv → None), forcing a reconnect."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+
+    def send(self, obj: dict[str, Any]) -> None:
+        self.sent.append(obj)
+
+    def recv(self) -> dict[str, Any] | None:
+        return None  # channel already closed → ChatSource fires on_closed
+
+    def close(self) -> None:
+        pass
+
+
+def _supervisor_stub():
+    s = types.SimpleNamespace()
+    s._lock = threading.Lock()
+    s._chat_stop = threading.Event()
+    s._chat_source = None
+    s._trigger_engine = None
+    s.dispatched: list[tuple[str, dict]] = []
+    s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
+    s._build_clock_ok = lambda: lambda: True
+    s._CHAT_BACKOFF_START = 0.01
+    s._CHAT_BACKOFF_MAX = 0.01
+    s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
+    s._chat_supervise = types.MethodType(Bridge._chat_supervise, s)
+    return s
+
+
+def test_chat_supervisor_reconnects_until_stopped():
+    import time
+
+    s = _supervisor_stub()
+    calls: list[int] = []
+
+    def factory():
+        calls.append(1)
+        return _OneShotTransport()
+
+    s._chat_stop.clear()
+    th = threading.Thread(
+        target=s._chat_supervise, args=(factory, "me", "ops"), daemon=True
+    )
+    th.start()
+    deadline = time.time() + 3
+    while len(calls) < 3 and time.time() < deadline:
+        time.sleep(0.01)
+    s._chat_stop.set()
+    th.join(timeout=2)
+
+    assert len(calls) >= 3  # it kept reconnecting after each drop
+    assert s._chat_source is None  # cleared once stopped
+    kinds = [
+        d["connected"] for ev, d in s.dispatched if ev == "runspec:room_connection"
+    ]
+    assert True in kinds and False in kinds  # connect/disconnect were surfaced
+
+
+def test_start_chat_noop_without_pool():
+    s = types.SimpleNamespace()
+    s._lock = threading.Lock()
+    s._chat_stop = threading.Event()
+    s._chat_supervisor = None
+    s._ssh_pool = None  # pooling disabled → can't tunnel → no room
+    s.start_chat = types.MethodType(Bridge.start_chat, s)
+    s.start_chat()
+    assert s._chat_supervisor is None  # nothing started
 
 
 # ── send_room_message ─────────────────────────────────────────────────────────

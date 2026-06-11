@@ -161,6 +161,59 @@ def test_start_sends_hello_first_with_identity():
     assert first_presence > 0
 
 
+class _BlockingTransport:
+    """recv() blocks until close() — to exercise a clean stop() (no on_closed)."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self._ev = __import__("threading").Event()
+        self.closed = False
+
+    def send(self, obj: dict[str, Any]) -> None:
+        self.sent.append(obj)
+
+    def recv(self) -> dict[str, Any] | None:
+        self._ev.wait()
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+        self._ev.set()
+
+
+def test_on_closed_fires_when_channel_drops():
+    # The fake transport's recv returns None once drained → an unexpected drop.
+    transport = FakeTransport(inbound=[{"type": "message", "sender": "a", "text": "x"}])
+    closed: list[bool] = []
+    src = ChatSource(
+        room="ops",
+        user="me",
+        transport=transport,
+        on_closed=lambda: closed.append(True),
+    )
+    src.start(lambda ev: None)
+    src._thread.join(timeout=2)  # type: ignore[union-attr]
+    assert closed == [True]
+
+
+def test_on_closed_not_fired_on_clean_stop():
+    transport = _BlockingTransport()
+    closed: list[bool] = []
+    src = ChatSource(
+        room="ops",
+        user="me",
+        transport=transport,
+        on_closed=lambda: closed.append(True),
+    )
+    src.start(lambda ev: None)
+    thread = src._thread
+    src.stop()  # sets _stop, closes transport → recv unblocks to None, loop sees stop
+    if thread is not None:
+        thread.join(timeout=2)
+    assert closed == []  # a deliberate stop must not look like a drop
+    assert transport.closed is True
+
+
 def test_run_drains_inbound_and_emits():
     transport = FakeTransport(
         inbound=[

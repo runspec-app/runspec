@@ -146,15 +146,18 @@ to the requester ("on it, 5 min"), which *is* the "who enacts" negotiation.
    framing/buffering tested with a fake channel, no new dependency) +
    `make_tunnel_transport_factory` / `transport_factory_from_config`. Wired
    end-to-end into `ChatSource` in tests.
-3. **Bridge wiring** ✅ *done* — `ChatSource` built with the tunnel transport via
-   a `create_source` hook (the pool is injected, so it bypasses the zero-arg
-   registry); `message`/`presence` fanned to the Rooms view via `_dispatch`
-   (`_ChatUIFanout` — presence is UI-only, only messages reach the engine);
-   `send_room_message`; the confirm-gated `propose_reply` agent tool (the speak
-   checkpoint — pre-fills the composer via `runspec:room_draft`, never sends);
-   `set_presence` driven from the rota by `_RotaPresenceWatcher`. The source
-   starts/stops with the engine (active only with an enabled `source = "chat"`
-   trigger + `[chat]` host/port/room).
+3. **Bridge wiring** ✅ *done* — `ChatSource` built with the tunnel transport;
+   `message`/`presence` fanned to the Rooms view via `_dispatch` (`_on_chat_event`
+   — presence is UI-only; messages also routed to the live engine via
+   `engine.feed`, so the engine never owns the source); `send_room_message`; the
+   confirm-gated `propose_reply` agent tool (the speak checkpoint — pre-fills the
+   composer via `runspec:room_draft`, never sends); `set_presence` driven from the
+   rota by `_RotaPresenceWatcher`. **Always-on:** a reconnecting supervisor
+   (`start_chat` / `_chat_supervise`) joins whenever `[chat]` host/port/room are
+   configured — independent of triggers (the room is a coordination surface, not
+   just a trigger source). The engine treats `chat` as an `external_sources` id so
+   it never starts a second one. Connection state is surfaced as
+   `runspec:room_connection`.
 4. **`console-ui` Rooms view** ✅ *done* — `views/RoomsView.tsx`: live transcript +
    presence + composer, fed by `runspec:room_message` / `room_presence` /
    `room_draft`; the composer's send is the one outbound path

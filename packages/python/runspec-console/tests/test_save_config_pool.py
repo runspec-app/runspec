@@ -50,6 +50,11 @@ class _SaveStub:
         self.built.append(p)
         return p
 
+    def restart_chat(self) -> None:
+        # save_config re-joins the room when [chat] or the pool changed; the room
+        # itself is exercised elsewhere, so here it's a no-op.
+        self.chat_restarted = getattr(self, "chat_restarted", 0) + 1
+
     save_config = Bridge.save_config
     _apply_ssh_config = Bridge._apply_ssh_config
 

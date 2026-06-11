@@ -357,6 +357,7 @@ class TriggerEngine:
         executor: Executor | None = None,
         max_workers: int = 2,
         clock_ok: Callable[[], bool] = lambda: True,
+        external_sources: set[str] | None = None,
     ) -> None:
         self._triggers = list(triggers)
         self._handler = handler
@@ -365,6 +366,10 @@ class TriggerEngine:
         # by rota / no match) — the audit feed of everything the engine sees.
         self._on_event = on_event
         self._create_source = create_source
+        # Source ids the engine must NOT start itself — they're owned elsewhere and
+        # push events in via feed() (e.g. the always-on chat source the bridge
+        # manages across engine restarts). Their triggers still match normally.
+        self._external = set(external_sources or ())
         # Returns True when triggers may fire now (the working-hours rota gate).
         # Default always-True = no gating.
         self._clock_ok = clock_ok
@@ -390,7 +395,9 @@ class TriggerEngine:
         with self._lock:
             if self._started:
                 return problems
-            wanted = {t.source for t in self._triggers if t.enabled}
+            # Externally-owned sources (e.g. chat) aren't started here — the owner
+            # runs them and pushes events through feed(); their triggers still match.
+            wanted = {t.source for t in self._triggers if t.enabled} - self._external
             for source_id in sorted(wanted):
                 src = self._create_source(source_id)
                 if src is None:
@@ -427,6 +434,14 @@ class TriggerEngine:
         May be called from a source's own thread.
         """
         self._route(event)
+
+    def feed(self, event: Event) -> Future[None] | None:
+        """Route an event from an *externally-owned* source (one declared in
+        ``external_sources`` and run by the caller, not started by the engine).
+        Same path as a built-in source's emit — match, rota-gate, dispatch — so a
+        chat message the bridge owns fires triggers identically. Safe to call from
+        another thread; a no-op-ish route when the engine matches nothing."""
+        return self._route(event)
 
     def _route(self, event: Event) -> Future[None] | None:
         """Route an event to every matching trigger.

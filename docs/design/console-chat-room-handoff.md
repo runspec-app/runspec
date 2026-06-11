@@ -43,11 +43,12 @@ interact with by hand yet — this is expected.
   (and `reply_to` stays `None` — chat has no entry_id).
 - Tests: `tests/test_chat_bridge.py` (fan-out, presence watcher, send guards,
   propose-reply guards) + new cases in `tests/test_trigger_runner.py`.
-- Lifecycle: the chat source starts/stops **with the engine** (so it's active
-  only when a `source = "chat"` trigger is enabled *and* `[chat]` host/port/room
-  are set). Consequence to revisit in slice 4: you can't be *in* the room (see
-  transcript / chat to humans) without a chat trigger configured — if always-on
-  room membership is wanted, the source lifecycle must move out of the engine.
+- Lifecycle: **always-on** (updated — the source was decoupled from the engine).
+  A reconnecting supervisor (`start_chat` / `_chat_supervise`) joins whenever
+  `[chat]` host/port/room are configured, independent of triggers, so you can be
+  *in* the room (transcript / chat to humans / presence) with no chat trigger at
+  all. The engine marks `chat` an `external_sources` id and receives its messages
+  via `engine.feed`, so a chat trigger still fires.
 
 ---
 

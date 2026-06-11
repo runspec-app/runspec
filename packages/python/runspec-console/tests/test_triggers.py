@@ -470,6 +470,63 @@ def test_start_skips_disabled_trigger_sources():
     assert created == []  # disabled trigger's source never started
 
 
+# ── external sources (engine doesn't start them; feed() routes their events) ──
+
+
+def test_external_source_not_started():
+    created: list[str] = []
+
+    def factory(name):
+        created.append(name)
+        return FakeSource(id=name)
+
+    t = Trigger.from_config({"name": "t", "source": "chat", "event": "message"})
+    engine = TriggerEngine(
+        [t],
+        handler=lambda *a: None,
+        create_source=factory,
+        external_sources={"chat"},
+    )
+    problems = engine.start()
+    assert created == []  # the engine never constructs an external source
+    assert problems == []  # …and reports no 'unavailable' noise for it
+
+
+def test_feed_routes_external_event_to_handler():
+    seen: list[tuple[str, Event]] = []
+
+    def handler(card, trigger, event):
+        seen.append((trigger.name, event))
+
+    t = Trigger.from_config({"name": "chatty", "source": "chat", "event": "message"})
+    engine = TriggerEngine(
+        [t],
+        handler=handler,
+        create_source=lambda name: None,
+        external_sources={"chat"},
+        executor=InlineExecutor(),
+    )
+    engine.start()
+    engine.feed(Event.new("chat", "message", {"room": "ops", "text": "help"}))
+    assert [name for name, _ in seen] == ["chatty"]
+
+
+def test_feed_respects_the_rota_gate():
+    seen: list[str] = []
+    t = Trigger.from_config({"name": "t", "source": "chat", "event": "message"})
+    engine = TriggerEngine(
+        [t],
+        handler=lambda c, tr, e: seen.append(tr.name),
+        create_source=lambda name: None,
+        external_sources={"chat"},
+        executor=InlineExecutor(),
+        clock_ok=lambda: False,  # outside working hours
+    )
+    engine.start()
+    engine.feed(Event.new("chat", "message", {"text": "x"}))
+    assert seen == []  # gated by the rota, same as a built-in source's events
+
+
 # ── per-trigger serialisation (real thread pool) ─────────────────────────────
 
 

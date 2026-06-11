@@ -150,64 +150,6 @@ class _BridgeTriggerOps:
         )
 
 
-class _ChatUIFanout:
-    """Wraps a ``ChatSource`` so room events also reach the Rooms view.
-
-    The chat source emits ``message`` and ``presence`` events. Both are fanned to
-    the frontend over ``_dispatch`` (``runspec:room_message`` /
-    ``runspec:room_presence``) so the Rooms view shows the live transcript and
-    presence list; only ``message`` events flow on to the trigger engine (so a
-    reaction can fire). Presence is UI-only — the engine never sees it, keeping it
-    out of the trigger audit feed. ``on_start`` / ``on_stop`` let the bridge track
-    the live inner source (for ``send_room_message`` and rota presence) only while
-    it is actually started — the engine builds a source but skips ``start`` when it
-    is unavailable.
-
-    Satisfies the ``EventSource`` protocol; the engine drives it like any source.
-    """
-
-    id = "chat"
-
-    def __init__(
-        self,
-        inner: Any,
-        dispatch: Callable[[str, dict[str, Any]], None],
-        *,
-        on_start: Callable[[Any], None] | None = None,
-        on_stop: Callable[[], None] | None = None,
-    ) -> None:
-        self._inner = inner
-        self._dispatch = dispatch
-        self._on_start = on_start
-        self._on_stop = on_stop
-
-    def available(self) -> tuple[bool, str]:
-        return self._inner.available()
-
-    def event_types(self) -> list[str]:
-        return list(self._inner.event_types())
-
-    def start(self, emit: Callable[[Any], None]) -> None:
-        def wrapped(event: Any) -> None:
-            payload = dict(event.payload)
-            if event.type == "presence":
-                self._dispatch("runspec:room_presence", payload)
-                return  # UI-only — the engine never sees presence
-            self._dispatch("runspec:room_message", payload)
-            emit(event)  # messages reach the engine for trigger matching
-
-        self._inner.start(wrapped)
-        if self._on_start is not None:
-            self._on_start(self._inner)
-
-    def stop(self) -> None:
-        try:
-            self._inner.stop()
-        finally:
-            if self._on_stop is not None:
-                self._on_stop()
-
-
 class _RotaPresenceWatcher:
     """Pushes console presence to the chat room as the working-hours rota flips.
 
@@ -294,11 +236,13 @@ class Bridge:
         self._trigger_cards: dict[str, dict[str, Any]] = {}
         # Audit feed: every event the engine sees + its disposition (bounded ring).
         self._trigger_events: list[dict[str, Any]] = []
-        # The live chat-room source (the inner ChatSource, not the UI-fanout
-        # wrapper), set while it is started — drives send_room_message and the
-        # rota presence push. None when no chat trigger is configured/available.
+        # The chat room is joined always-on (whenever [chat] is configured),
+        # independent of triggers, by a reconnecting supervisor thread. _chat_source
+        # is the live ChatSource while connected (drives send_room_message /
+        # presence / get_room_state); None between attempts or when unconfigured.
         self._chat_source: Any = None
-        self._presence_watcher: _RotaPresenceWatcher | None = None
+        self._chat_stop = threading.Event()
+        self._chat_supervisor: threading.Thread | None = None
         self._hosts: list[dict[str, Any]] = []
         # Named source-side stream filters (runspec_filters.toml). Loaded once at
         # startup and reloaded on save; resolved by name when a relay/download
@@ -343,6 +287,7 @@ class Bridge:
         import atexit
 
         atexit.register(self._close_ssh_pool)
+        atexit.register(self.stop_chat)  # stop the room reconnect supervisor
         atexit.register(self.stop_triggers)  # quit any source pump threads cleanly
         # Unblock any in-flight turn parked at the autonomy gate so closing the
         # app can't hang waiting to join a worker stuck in event.wait(). Registered
@@ -365,13 +310,22 @@ class Bridge:
             self._start_refresh_watcher()
         # Start configured event triggers now the window can receive dispatches.
         self.start_triggers()
+        # Join the chat room (always-on, independent of triggers) — its connect/
+        # presence dispatches need the window up too.
+        self.start_chat()
         # Abort in-flight turns the moment the window closes, so a turn parked at
         # the autonomy gate can't stall shutdown. Best-effort across pywebview
         # versions (the event may be absent).
         try:
             window.events.closed += self._abort_all_turns
+            window.events.closed += self._on_window_closed
         except Exception:
             logger.debug("could not hook window 'closed' event", exc_info=True)
+
+    def _on_window_closed(self, *_args: Any) -> None:
+        """Window-close handler: leave the room cleanly so the supervisor thread
+        doesn't keep reconnecting after the UI is gone."""
+        self.stop_chat()
 
     def _build_ssh_pool(self) -> Any:
         """Construct the SSH connection pool from current ``[ssh]`` config.
@@ -2576,7 +2530,12 @@ class Bridge:
             data = {**data, "ssh": _normalize_ssh_section(ssh)}
         write_config(data)
         self._adapter = None
+        pool_before = self._ssh_pool
         self._apply_ssh_config(old.get("ssh"), data.get("ssh"))
+        # Re-join the room if its [chat] config changed, or the SSH pool was
+        # rebuilt (the supervisor's tunnel factory is bound to the pool instance).
+        if old.get("chat") != data.get("chat") or self._ssh_pool is not pool_before:
+            self.restart_chat()
 
     def _apply_ssh_config(
         self, old_ssh: dict[str, Any] | None, new_ssh: dict[str, Any] | None
@@ -4788,12 +4747,11 @@ class Bridge:
         with self._lock:
             if self._trigger_engine is not None:
                 return
-        from datetime import datetime
 
         from . import sources  # noqa: F401 — registers built-in event sources
-        from .config import read_rota, read_triggers, trigger_file_error
+        from .config import read_triggers, trigger_file_error
         from .trigger_runner import make_handler
-        from .triggers import _DAYS, TriggerEngine, load_triggers, within_rota
+        from .triggers import TriggerEngine, load_triggers
 
         file_error = trigger_file_error()
         if file_error:
@@ -4813,10 +4771,54 @@ class Bridge:
             # carries a message to reply to.
             draft_available=True,
         )
-        # Working-hours rota gate (read fresh each event so a window boundary is
-        # respected without restarting). No/disabled rota → always-on. With
-        # source="outlook", availability comes from the calendar (falling back to
-        # the console grid if it can't be read); otherwise the manual grid.
+        engine = TriggerEngine(
+            triggers,
+            handler=handler,
+            on_card=self._on_trigger_card,
+            on_event=self._on_trigger_event,
+            clock_ok=self._build_clock_ok(),
+            # The chat source is owned by the always-on supervisor (start_chat),
+            # not the engine — it pushes messages in via engine.feed(). Marking it
+            # external stops the engine constructing/starting a second one.
+            external_sources={"chat"},
+        )
+        problems = engine.start()
+        with self._lock:
+            self._trigger_engine = engine
+        for problem in problems:
+            logger.info("trigger source: %s", problem)
+        # Note: no UI dispatch here. start_triggers() runs from set_window(),
+        # before the web view has finished starting, so an evaluate_js push would
+        # raise (harmlessly, but noisily). The Triggers tab pulls this state via
+        # list_triggers() on mount and after any enable/disable, so a push isn't
+        # needed — and restart_triggers() re-runs this once the window is up.
+
+    def stop_triggers(self) -> None:
+        # Wake only *trigger* turns parked at the gate (ids that are trigger
+        # cards) so the engine's workers aren't stuck in event.wait() when we tear
+        # the executor down — without disturbing an in-flight chat turn (restart
+        # is also used by the enable/disable toggle). The chat source is not the
+        # engine's to stop — it runs always-on (see start_chat/stop_chat).
+        with self._lock:
+            engine = self._trigger_engine
+            self._trigger_engine = None
+            card_ids = set(self._trigger_cards)
+        self._abort_turns(card_ids)
+        if engine is not None:
+            engine.stop()
+
+    def _build_clock_ok(self) -> Callable[[], bool]:
+        """Build the working-hours rota gate (read fresh each call so a window
+        boundary is respected without restarting). No/disabled rota → always-on.
+        With source="outlook", availability comes from the calendar (falling back
+        to the console grid if it can't be read); otherwise the manual grid. Shared
+        by the trigger engine and the chat presence watcher so room presence and
+        trigger firing follow the same schedule."""
+        from datetime import datetime
+
+        from .config import read_rota
+        from .triggers import _DAYS, within_rota
+
         rota = read_rota()
         grid_configured = any(isinstance(rota.get(d), dict) for d in _DAYS)
 
@@ -4838,101 +4840,126 @@ class Bridge:
                 return within_rota(rota, now) if grid_configured else True
             return within_rota(rota, now)
 
-        # The chat source needs the SSH pool injected (for its tunnel transport),
-        # but the source registry's factory is zero-arg — so the bridge builds the
-        # chat source itself and the engine reaches it through this create_source
-        # hook instead of the registry. Every other source stays zero-arg.
-        from .events import create_source as default_create_source
+        return clock_ok
 
-        def create_source(source_id: str) -> Any:
-            if source_id == "chat":
-                return self._build_chat_source()
-            return default_create_source(source_id)
+    # ── always-on chat room membership ──────────────────────────────────────────
 
-        engine = TriggerEngine(
-            triggers,
-            handler=handler,
-            on_card=self._on_trigger_card,
-            on_event=self._on_trigger_event,
-            clock_ok=clock_ok,
-            create_source=create_source,
-        )
-        problems = engine.start()
-        with self._lock:
-            self._trigger_engine = engine
-            chat = self._chat_source  # set by _ChatUIFanout.start if it started
-        for problem in problems:
-            logger.info("trigger source: %s", problem)
-        # If the chat source connected, drive its room presence off the same rota
-        # clock the engine gates triggers with (available on-shift, away off).
-        if chat is not None:
-            watcher = _RotaPresenceWatcher(clock_ok, chat.set_presence)
-            watcher.start()
-            with self._lock:
-                self._presence_watcher = watcher
-        # Note: no UI dispatch here. start_triggers() runs from set_window(),
-        # before the web view has finished starting, so an evaluate_js push would
-        # raise (harmlessly, but noisily). The Triggers tab pulls this state via
-        # list_triggers() on mount and after any enable/disable, so a push isn't
-        # needed — and restart_triggers() re-runs this once the window is up.
-
-    def stop_triggers(self) -> None:
-        # Wake only *trigger* turns parked at the gate (ids that are trigger
-        # cards) so the engine's workers aren't stuck in event.wait() when we tear
-        # the executor down — without disturbing an in-flight chat turn (restart
-        # is also used by the enable/disable toggle).
-        with self._lock:
-            engine = self._trigger_engine
-            self._trigger_engine = None
-            card_ids = set(self._trigger_cards)
-            watcher = self._presence_watcher
-            self._presence_watcher = None
-        if watcher is not None:
-            watcher.stop()  # stop pushing presence before the source closes
-        self._abort_turns(card_ids)
-        if engine is not None:
-            engine.stop()  # → _ChatUIFanout.stop → clears self._chat_source
-        with self._lock:
-            self._chat_source = None  # belt-and-suspenders if engine was None
-
-    def _build_chat_source(self) -> Any:
-        """Construct the chat source with a pooled SSH-tunnel transport, wrapped so
-        its events also reach the Rooms view. The engine calls this (via the
-        create_source hook in start_triggers) for a ``source = "chat"`` trigger.
-
-        Reports unavailable (and the engine skips ``start``) when there's no SSH
-        pool or the ``[chat]`` room isn't configured — so it never half-starts."""
+    def start_chat(self) -> None:
+        """Join the chat room whenever ``[chat]`` is configured — independent of
+        triggers (the room is a coordination surface, not just a trigger source).
+        Runs a reconnecting supervisor for the session. Idempotent; a no-op when
+        there's no SSH pool or ``[chat]`` host/port/room aren't set."""
         from . import config
-        from .sources.chat import ChatSource
         from .sources.chat_transport import (
             default_chat_user,
             transport_factory_from_config,
         )
 
-        factory = (
-            transport_factory_from_config(self._ssh_pool)
-            if self._ssh_pool is not None
-            else None
-        )
-        # Identity for the room: the configured [chat] user, else the SSH login the
-        # tunnel connects as (the server can't see the OS user over direct-tcpip).
+        with self._lock:
+            if self._chat_supervisor is not None:
+                return  # already running
+            pool = self._ssh_pool
+        if pool is None:
+            return
+        factory = transport_factory_from_config(pool)
+        if factory is None:
+            return  # [chat] host/port not configured
         cfg = config.read_chat()
+        room = str(cfg.get("room") or "").strip()
+        if not room:
+            return  # no room to join
         user = str(cfg.get("user") or "").strip() or default_chat_user(cfg)
-        inner = ChatSource(user=user, transport_factory=factory)
-        return _ChatUIFanout(
-            inner,
-            self._dispatch,
-            on_start=self._set_chat_source,
-            on_stop=self._clear_chat_source,
+        self._chat_stop.clear()
+        thread = threading.Thread(
+            target=self._chat_supervise,
+            args=(factory, user, room),
+            name="chat-supervisor",
+            daemon=True,
         )
-
-    def _set_chat_source(self, inner: Any) -> None:
         with self._lock:
-            self._chat_source = inner
+            self._chat_supervisor = thread
+        thread.start()
 
-    def _clear_chat_source(self) -> None:
+    def stop_chat(self) -> None:
+        """Leave the room and stop the reconnect supervisor. Idempotent."""
+        self._chat_stop.set()
         with self._lock:
-            self._chat_source = None
+            thread = self._chat_supervisor
+            self._chat_supervisor = None
+        if thread is not None:
+            thread.join(timeout=3)
+
+    def restart_chat(self) -> None:
+        """Re-join with fresh config (after a ``[chat]`` or rota change)."""
+        self.stop_chat()
+        self.start_chat()
+
+    # Backoff bounds for the reconnect loop (seconds); module-level so tests can
+    # shrink them.
+    _CHAT_BACKOFF_START = 2.0
+    _CHAT_BACKOFF_MAX = 60.0
+
+    def _chat_supervise(self, factory: Any, user: str, room: str) -> None:
+        """Own one chat connection at a time: connect, run until it drops, then
+        reconnect with exponential backoff — until stop_chat(). Drives presence off
+        the rota for each connection and keeps ``self._chat_source`` pointed at the
+        live source for send_room_message / get_room_state. ``room``/``user`` are
+        captured at start_chat time so a mid-session config edit can't split them."""
+        from .sources.chat import ChatSource
+
+        backoff = self._CHAT_BACKOFF_START
+        while not self._chat_stop.is_set():
+            closed = threading.Event()
+            source = ChatSource(
+                room=room, user=user, transport_factory=factory, on_closed=closed.set
+            )
+            try:
+                source.start(self._on_chat_event)
+            except Exception:
+                logger.exception("chat: connect failed")
+                if self._chat_stop.wait(backoff):
+                    break
+                backoff = min(backoff * 2, self._CHAT_BACKOFF_MAX)
+                continue
+            # Connected. Track it, reset backoff, and drive presence off the rota.
+            with self._lock:
+                self._chat_source = source
+            backoff = self._CHAT_BACKOFF_START
+            watcher = _RotaPresenceWatcher(self._build_clock_ok(), source.set_presence)
+            watcher.start()
+            self._dispatch("runspec:room_connection", {"connected": True})
+            # Wait until the connection drops or we're told to stop (poll so stop
+            # stays responsive).
+            while not self._chat_stop.is_set() and not closed.wait(0.5):
+                pass
+            watcher.stop()
+            source.stop()
+            with self._lock:
+                self._chat_source = None
+            self._dispatch("runspec:room_connection", {"connected": False})
+            if self._chat_stop.is_set():
+                break
+            # Unexpected drop → back off, then reconnect.
+            if self._chat_stop.wait(backoff):
+                break
+            backoff = min(backoff * 2, self._CHAT_BACKOFF_MAX)
+
+    def _on_chat_event(self, event: Any) -> None:
+        """The chat source's emit: fan every event to the Rooms view, and route
+        *messages* (not presence) to the live trigger engine so a chat trigger can
+        still fire. Presence stays UI-only, out of the trigger audit feed."""
+        payload = dict(event.payload)
+        if event.type == "presence":
+            self._dispatch("runspec:room_presence", payload)
+            return
+        self._dispatch("runspec:room_message", payload)
+        with self._lock:
+            engine = self._trigger_engine
+        if engine is not None:
+            try:
+                engine.feed(event)
+            except Exception:
+                logger.exception("chat: routing message to the trigger engine failed")
 
     def send_room_message(self, room: str, text: str) -> dict[str, Any]:
         """Post a human-composed message to the chat room — the Rooms composer's
@@ -5050,11 +5077,13 @@ class Bridge:
         return {"ok": found}
 
     def save_rota(self, rota: dict[str, Any]) -> dict[str, Any]:
-        """Save the working-hours rota and restart the engine so it takes effect."""
+        """Save the working-hours rota and restart the engine so it takes effect.
+        Also re-join the room so chat presence follows the new schedule."""
         from .config import write_rota
 
         write_rota(dict(rota or {}))
         self.restart_triggers()
+        self.restart_chat()
         return {"ok": True}
 
     def get_trigger_board(self) -> list[dict[str, Any]]:

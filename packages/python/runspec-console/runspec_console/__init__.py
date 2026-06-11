@@ -22,7 +22,7 @@ from runspec_console.adapters.base import (
     register_adapter,
 )
 
-__version__ = "0.40.0"
+__version__ = "0.41.0"
 
 __all__ = [
     "ModelAdapter",

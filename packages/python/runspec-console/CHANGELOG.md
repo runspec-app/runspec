@@ -8,6 +8,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.41.0] — 2026-06-11
+
+### Changed
+- **The chat room is now always-on.** The console joins the room whenever
+  `[chat]` (host/port/room) is configured — no longer only while a `source =
+  "chat"` trigger is enabled. The room is a coordination surface in its own right:
+  you can read the transcript, see who's present, and chat with people without
+  authoring any automation. A reconnecting supervisor keeps the connection up for
+  the session (exponential backoff on drops), and presence still follows the
+  working-hours rota. Chat triggers still fire — the trigger engine receives room
+  messages even though it no longer owns the connection. The Rooms view shows live
+  connection status (`offline — reconnecting…` while a tunnel is re-establishing).
+
 ## [0.40.0] — 2026-06-11
 
 ### Added

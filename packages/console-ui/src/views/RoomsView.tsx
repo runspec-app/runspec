@@ -84,13 +84,22 @@ export function RoomsView({ active }: { active: boolean }) {
       message.info('The agent proposed a reply — review and send it.')
       inputRef.current?.focus?.()
     }
+    // The reconnect supervisor pushes live connection state (connect/drop), so
+    // the header reflects an always-on connection coming and going.
+    const onConnection = (e: Event) => {
+      const c = (e as CustomEvent<{ connected: boolean }>).detail
+      setState(prev => ({ ...prev, connected: !!c.connected }))
+      if (!c.connected) setPresence(prev => prev.filter(u => u === stateRef.current.user))
+    }
     window.addEventListener('runspec:room_message', onMessage)
     window.addEventListener('runspec:room_presence', onPresence)
     window.addEventListener('runspec:room_draft', onDraft)
+    window.addEventListener('runspec:room_connection', onConnection)
     return () => {
       window.removeEventListener('runspec:room_message', onMessage)
       window.removeEventListener('runspec:room_presence', onPresence)
       window.removeEventListener('runspec:room_draft', onDraft)
+      window.removeEventListener('runspec:room_connection', onConnection)
     }
   }, [])
 
@@ -134,7 +143,7 @@ export function RoomsView({ active }: { active: boolean }) {
             <span>
               No chat room configured.<br />
               Set <Text code>[chat]</Text> <Text code>host</Text> / <Text code>port</Text> / <Text code>room</Text> in
-              your config, and add a <Text code>source = "chat"</Text> trigger to join.
+              your config to join — the console connects automatically.
             </span>
           }
         />
@@ -155,7 +164,7 @@ export function RoomsView({ active }: { active: boolean }) {
           icon={<WifiOutlined />}
           color={state.connected ? 'green' : 'default'}
         >
-          {state.connected ? 'connected' : 'away — no chat trigger active'}
+          {state.connected ? 'connected' : 'offline — reconnecting…'}
         </Tag>
         <Tooltip title="Your display name in the room">
           <Text type="secondary" style={{ fontSize: 12 }}>{state.user}</Text>
@@ -208,7 +217,7 @@ export function RoomsView({ active }: { active: boolean }) {
           value={draft}
           onChange={e => setDraft(e.target.value)}
           onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); send() } }}
-          placeholder={state.connected ? 'Message the room… (Enter to send, Shift+Enter for a newline)' : 'Not connected — enable a chat trigger to join'}
+          placeholder={state.connected ? 'Message the room… (Enter to send, Shift+Enter for a newline)' : 'Offline — reconnecting to the room…'}
           autoSize={{ minRows: 1, maxRows: 4 }}
           disabled={!state.connected}
         />
