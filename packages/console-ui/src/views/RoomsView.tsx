@@ -228,9 +228,9 @@ export function RoomsView({ active }: { active: boolean }) {
                 : [...present].sort().map(u => (
                     <div key={u} style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ color: '#3fb950', fontSize: 10 }}>●</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <Text style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {u}{u === selfUser ? ' (you)' : ''}
-                      </span>
+                      </Text>
                     </div>
                   ))}
             </div>

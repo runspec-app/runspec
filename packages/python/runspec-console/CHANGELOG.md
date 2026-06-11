@@ -8,6 +8,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.43.1] — 2026-06-11
+
+### Fixed
+- **Rooms presence list was unreadable in dark mode.** The participant names used
+  an unthemed `<span>` (black text), so they vanished against the dark panel. They
+  now use the themed text component, like the rest of the view.
+
 ## [0.43.0] — 2026-06-11
 
 ### Added
