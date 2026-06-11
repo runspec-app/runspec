@@ -4,6 +4,22 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.4.1]
+
+### Fixed
+- **Browser door 500'd on `/me` in dev mode.** With no OIDC configured there's no
+  `SessionMiddleware`, and Starlette's `request.session` *asserts* it's installed
+  (raising `AssertionError`, which the `getattr` guard didn't catch). `session_user`
+  now guards the access, so the dev-mode web UI loads.
+- Added a `/favicon.ico` route (204 No Content) to silence the browser's 404.
+- **Browser UI showed the join form and the chat panel at the same time.** `.join`
+  and `#app` set `display: flex`, which overrode the `hidden` attribute the JS
+  toggles — so neither ever hid. Added `[hidden] { display: none !important }`.
+
+### Added
+- `deploy/console-room.service` — a `systemd` **user** unit (no root) + README
+  steps to run the server as a managed daemon (`systemctl --user` + `enable-linger`).
+
 ## [0.4.0]
 
 ### Added

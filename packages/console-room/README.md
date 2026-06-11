@@ -59,6 +59,38 @@ console-room --host 0.0.0.0 --port 443 \
 uvicorn is proxy-header-aware (`X-Forwarded-Proto`), so you can drop `--tls-*` and
 let nginx/Caddy terminate TLS instead.
 
+## Run it as a service (no root)
+
+A `systemd` **user** unit ships in [`deploy/console-room.service`](deploy/console-room.service)
+— it runs as you, no root, surviving logout via `enable-linger`.
+
+```bash
+pip install --user runspec-room          # or into a venv (then fix ExecStart)
+
+mkdir -p ~/.config/systemd/user
+cp deploy/console-room.service ~/.config/systemd/user/
+
+# config (optional) — the server reads CONSOLE_ROOM_* env:
+mkdir -p ~/.config/console-room
+cat > ~/.config/console-room/console-room.env <<'EOF'
+CONSOLE_ROOM_NDJSON_PORT=8765
+CONSOLE_ROOM_PORT=8090
+# CONSOLE_ROOM_HOST=0.0.0.0          # expose the browser door (then set OIDC!)
+# CONSOLE_ROOM_OIDC_ISSUER=...
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now console-room
+loginctl enable-linger "$USER"           # keep it running after you log out
+
+systemctl --user status console-room
+journalctl --user -u console-room -f     # logs
+```
+
+Edit `ExecStart` in the unit if `console-room` isn't at `~/.local/bin/console-room`
+(e.g. a venv). To serve only the console NDJSON door, append `--ndjson-only` to
+`ExecStart`.
+
 ## Wire protocol (NDJSON, one JSON object per line)
 
 Console → server:

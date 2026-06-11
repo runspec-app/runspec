@@ -34,6 +34,7 @@ from starlette.responses import (
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
+    Response,
 )
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -123,6 +124,9 @@ def create_app(
     async def healthz(_request: Any) -> JSONResponse:
         return JSONResponse({"ok": True})
 
+    async def favicon(_request: Any) -> Response:
+        return Response(status_code=204)  # no icon — silence the browser's 404
+
     # ── OIDC routes (auth mode only) ──────────────────────────────────────────
     async def login(request: Any) -> Any:
         assert auth is not None and oauth is not None
@@ -163,6 +167,7 @@ def create_app(
     routes: list[Any] = [
         WebSocketRoute("/ws", ws_room, name="ws"),
         Route("/healthz", healthz, name="healthz"),
+        Route("/favicon.ico", favicon, name="favicon"),
         Route("/me", me, name="me"),
         Route("/", index, name="index"),
     ]

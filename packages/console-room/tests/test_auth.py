@@ -133,3 +133,14 @@ def test_session_user_safe_without_session():
     assert session_user(_Conn(None)) == ""
     assert session_user(object()) == ""  # no .session attr at all
     assert session_user(_Conn({})) == ""  # session present, no user
+
+
+def test_session_user_safe_when_session_property_raises():
+    # Starlette's request.session asserts SessionMiddleware is installed (dev mode
+    # has none) — accessing it raises AssertionError, which must not 500 /me.
+    class _NoMiddleware:
+        @property
+        def session(self):
+            raise AssertionError("SessionMiddleware must be installed")
+
+    assert session_user(_NoMiddleware()) == ""

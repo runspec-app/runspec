@@ -10,6 +10,9 @@
   --warn: #d29922;
 }
 * { box-sizing: border-box; }
+/* `.join` / `#app` set display:flex, which beats the UA [hidden] rule — so the
+   JS `hidden` toggle wouldn't hide them. Force it. */
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg);

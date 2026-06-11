@@ -94,9 +94,14 @@ def identity_from_userinfo(userinfo: dict[str, Any] | None) -> str:
 
 def session_user(conn: Any) -> str:
     """The logged-in user on a request/websocket (``conn.session['user']``), or
-    ``""`` if there's no session / no user. Safe on connections without a session
-    (dev mode adds no SessionMiddleware)."""
-    session = getattr(conn, "session", None)
+    ``""`` if there's no session / no user. Safe on connections without a session:
+    in dev mode there's no ``SessionMiddleware``, and Starlette's ``request.session``
+    *asserts* it's installed — raising ``AssertionError`` (not ``AttributeError``),
+    which a plain ``getattr`` default wouldn't swallow — so guard the access."""
+    try:
+        session = getattr(conn, "session", None)
+    except Exception:
+        return ""
     if not isinstance(session, dict):
         return ""
     user = session.get("user")

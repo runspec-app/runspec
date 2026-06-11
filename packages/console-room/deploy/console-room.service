@@ -1,0 +1,25 @@
+# console-room.service — run the runspec chat-room server as a *user* systemd
+# service (no root). Install per-user with `systemctl --user`; see README
+# "Run it as a service". Config comes from the env file below (the server reads
+# CONSOLE_ROOM_* — host/ports/db/TLS/OIDC).
+
+[Unit]
+Description=runspec chat-room server (console-room)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+# Adjust to where console-room is installed for your user:
+#   pip install --user runspec-room  → %h/.local/bin/console-room
+#   a venv                            → %h/venvs/room/bin/console-room
+ExecStart=%h/.local/bin/console-room
+# Optional config — CONSOLE_ROOM_PORT / _NDJSON_PORT / _DB / _HOST and the
+# CONSOLE_ROOM_OIDC_* / _TLS_* vars. The leading '-' makes the file optional.
+EnvironmentFile=-%h/.config/console-room/console-room.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

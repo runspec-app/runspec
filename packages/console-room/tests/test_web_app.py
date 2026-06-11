@@ -51,6 +51,19 @@ def test_static_index_served():
         assert r.status_code == 200 and "runspec room" in r.text
 
 
+def test_me_in_dev_mode_has_no_session_error():
+    # Dev mode installs no SessionMiddleware; /me must not 500 on request.session.
+    with _client() as client:
+        r = client.get("/me")
+        assert r.status_code == 200
+        assert r.json() == {"auth": False, "user": ""}
+
+
+def test_favicon_returns_no_content():
+    with _client() as client:
+        assert client.get("/favicon.ico").status_code == 204
+
+
 def test_ws_requires_room():
     with _client() as client:
         with pytest.raises(Exception):
