@@ -156,6 +156,17 @@ def docs_url() -> str:
     return DEFAULT_DOCS_URL
 
 
+def read_chat() -> dict[str, Any]:
+    """The ``[chat]`` room-source table from config.toml ({} when unset).
+
+    Connection config for the chat trigger source: ``host`` (the SSH host the
+    room web app runs on), ``port`` (its localhost port on that host, reached
+    over the tunnel), ``room``, and the console's display ``user``.
+    """
+    chat = read_config().get("chat")
+    return dict(chat) if isinstance(chat, dict) else {}
+
+
 def confirm_notifications_enabled() -> bool:
     """`[console] confirm_notifications` — raise a desktop toast when an agent
     tool call hits the autonomy gate. Defaults to True; set false to silence the

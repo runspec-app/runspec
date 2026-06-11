@@ -9,7 +9,8 @@ that can't run here simply reports ``available() -> (False, reason)``.
 
 from __future__ import annotations
 
+from . import chat  # noqa: F401 — registers the "chat" source
 from . import notifications  # noqa: F401 — registers the "notifications" source
 from . import outlook  # noqa: F401 — registers the "outlook" source
 
-__all__ = ["notifications", "outlook"]
+__all__ = ["chat", "notifications", "outlook"]
