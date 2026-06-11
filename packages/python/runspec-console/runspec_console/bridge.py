@@ -3234,6 +3234,10 @@ class Bridge:
                 entry["room_port"] = h["room_port"]
             if h.get("room_user"):
                 entry["room_user"] = h["room_user"]
+            if str(h.get("room_via") or "").strip().lower() == "exec":
+                entry["room_via"] = "exec"
+            if h.get("room_exec_command"):
+                entry["room_exec_command"] = h["room_exec_command"]
             result.append(entry)
         return result
 
@@ -3254,6 +3258,8 @@ class Bridge:
             "room",
             "room_port",
             "room_user",
+            "room_via",
+            "room_exec_command",
         }
     )
 
@@ -3294,6 +3300,11 @@ class Bridge:
                 entry["room_port"] = room_port
                 if str(h.get("room_user") or "").strip():
                     entry["room_user"] = h["room_user"].strip()
+                # Exec-channel transport (for networks that block port-forwarding).
+                if str(h.get("room_via") or "").strip().lower() == "exec":
+                    entry["room_via"] = "exec"
+                if str(h.get("room_exec_command") or "").strip():
+                    entry["room_exec_command"] = h["room_exec_command"].strip()
             # Carry over any unmanaged keys from the existing entry (room_dest_host,
             # role, …) so they survive an editor save.
             for k, v in existing.get(str(h.get("name") or ""), {}).items():

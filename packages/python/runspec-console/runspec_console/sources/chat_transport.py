@@ -245,15 +245,20 @@ def host_rooms(
         )
         dest_host = str(h.get("room_dest_host") or "127.0.0.1")
         # `room_via = "exec"` opts a host into the exec-channel transport (for a
-        # network that blocks SSH port-forwarding): the console runs
-        # `console-room connect` on the host instead of opening a direct-tcpip
-        # tunnel. `room_command` is the console-room binary there (default on PATH).
+        # network that blocks SSH port-forwarding): the console runs a relay command
+        # on the host instead of opening a direct-tcpip tunnel. The command is
+        # `room_exec_command` verbatim if set (e.g. `socat - TCP:127.0.0.1:8765`),
+        # else `{room_command} connect …` (room_command is the console-room binary,
+        # default on PATH).
         via = (
             "exec"
             if str(h.get("room_via") or "").strip().lower() == "exec"
             else "tunnel"
         )
         room_command = str(h.get("room_command") or "console-room").strip()
+        exec_command = str(h.get("room_exec_command") or "").strip() or (
+            f"{room_command} connect --host {dest_host} --port {int(port)}"
+        )
         specs.append(
             {
                 "host": str(h.get("name") or ssh_target),
@@ -264,9 +269,7 @@ def host_rooms(
                 "dest_host": dest_host,
                 "user": user,
                 "via": via,
-                "exec_command": (
-                    f"{room_command} connect --host {dest_host} --port {int(port)}"
-                ),
+                "exec_command": exec_command,
             }
         )
     return specs

@@ -231,6 +231,24 @@ def test_host_rooms_default_via_tunnel_with_exec_command():
     assert s["exec_command"] == "console-room connect --host 127.0.0.1 --port 8765"
 
 
+def test_host_rooms_exec_command_full_override():
+    # room_exec_command is used verbatim (e.g. socat / nc), bypassing the
+    # `{room_command} connect …` builder.
+    hosts = [
+        {
+            "name": "web01",
+            "ssh": "ops@web01",
+            "room": "ops",
+            "room_port": 8765,
+            "room_via": "exec",
+            "room_exec_command": "socat - TCP:127.0.0.1:8765",
+        }
+    ]
+    s = host_rooms(hosts)[0]
+    assert s["via"] == "exec"
+    assert s["exec_command"] == "socat - TCP:127.0.0.1:8765"
+
+
 def test_host_rooms_exec_via_and_custom_command():
     hosts = [
         {

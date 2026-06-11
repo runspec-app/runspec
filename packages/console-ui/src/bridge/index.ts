@@ -121,6 +121,8 @@ export interface JumpHost {
   room?: string       // chat room hosted on this host (runspec-room) — opt-in
   room_port?: number  // the room server's localhost port on this host
   room_user?: string  // display name in the room (defaults to the SSH login)
+  room_via?: string   // "exec" to join over an SSH exec channel (no port-forward)
+  room_exec_command?: string  // exec-mode relay command on the host (e.g. socat / console-room connect)
 }
 
 export interface HistoryLogLine {

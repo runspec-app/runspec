@@ -553,6 +553,8 @@ interface HostFormValues {
   room?: string
   room_port?: number
   room_user?: string
+  room_via?: string
+  room_exec_command?: string
 }
 
 function toToml(hosts: JumpHost[]): string {
@@ -565,6 +567,8 @@ function toToml(hosts: JumpHost[]): string {
     if (h.room) lines.push(`room = "${h.room}"`)
     if (h.room_port) lines.push(`room_port = ${h.room_port}`)
     if (h.room_user) lines.push(`room_user = "${h.room_user}"`)
+    if (h.room_via === 'exec') lines.push(`room_via = "exec"`)
+    if (h.room_exec_command) lines.push(`room_exec_command = "${h.room_exec_command}"`)
     if (h.runspec_paths?.length) {
       const paths = h.runspec_paths.map(p => `"${p}"`).join(', ')
       lines.push(`runspec_paths = [${paths}]`)
@@ -655,12 +659,16 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     const v: HostFormValues = { ...values }
     v.room = (v.room ?? '').toString().trim() || undefined
     v.room_user = (v.room_user ?? '').toString().trim() || undefined
+    v.room_exec_command = (v.room_exec_command ?? '').toString().trim() || undefined
+    v.room_via = v.room_via === 'exec' ? 'exec' : undefined
     if (v.room && v.room_port != null && `${v.room_port}` !== '') {
       v.room_port = Number(v.room_port)
     } else {
       delete v.room
       delete v.room_port
       delete v.room_user
+      delete v.room_via
+      delete v.room_exec_command
     }
     if (editingKey === '') {
       await persist([...hosts, v as JumpHost])
@@ -808,6 +816,19 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               </Form.Item>
               <Form.Item name="room_user" label="Display name" help="Your name in the room. Defaults to the SSH login.">
                 <Input placeholder="defaults to SSH login" />
+              </Form.Item>
+              <Form.Item name="room_via" label="Connect via" help="Tunnel forwards a port; exec runs a relay command (for networks that block forwarding).">
+                <Select
+                  options={[
+                    { value: 'tunnel', label: 'Tunnel (port-forward)' },
+                    { value: 'exec', label: 'Exec (relay command)' },
+                  ]}
+                  allowClear
+                  placeholder="tunnel (default)"
+                />
+              </Form.Item>
+              <Form.Item name="room_exec_command" label="Relay command" help="Optional override run on the host when via=exec, e.g. socat - TCP:127.0.0.1:8765. Defaults to console-room connect.">
+                <Input placeholder="defaults to console-room connect" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
             </div>
             <Space style={{ marginTop: 2, marginBottom: 8 }}>

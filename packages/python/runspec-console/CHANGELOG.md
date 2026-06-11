@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.43.2] — 2026-06-11
+
+### Added
+- **Per-host exec relay command + Hosts-editor fields for the exec transport.**
+  A fleet host can now override the exec-channel relay command verbatim with
+  `room_exec_command` (e.g. `socat - TCP:127.0.0.1:8765`), bypassing the default
+  `console-room connect …` builder — useful where only a specific relay binary is
+  available. The Hosts editor gained matching **Connect via** (tunnel/exec) and
+  **Relay command** fields, so a room that needs the no-forwarding exec transport
+  can be configured from the UI instead of hand-editing `runspec_hosts.toml`.
+
 ## [0.43.1] — 2026-06-11
 
 ### Fixed
