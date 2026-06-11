@@ -36,7 +36,14 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-from .config import filters_path, hosts_path, read_config, write_config
+from . import notify
+from .config import (
+    confirm_notifications_enabled,
+    filters_path,
+    hosts_path,
+    read_config,
+    write_config,
+)
 from .discovery import discover_local, discover_remote
 from .executor import run_local, run_remote
 from .hosts import load_hosts, save_hosts, venv_name
@@ -4015,7 +4022,88 @@ class Bridge:
                 "autonomy": level,
             },
         )
+        self._notify_confirm(tool_name, tool_input, level)
         return request_id, event, holder
+
+    # ── desktop notification for confirmation events ──────────────────────────
+    #
+    # The in-app Approve/Deny card only helps if the window is in focus. When a
+    # tool call parks on the autonomy gate we also raise an OS toast + flash the
+    # taskbar so the user is pulled back to answer (it otherwise times out as a
+    # deny after _CONFIRM_TIMEOUT_S). Sending a toast is independent of the
+    # "read notifications" consent the listener source needs — see notify.py.
+
+    # The native window title, matching app.py's create_window / FindWindow.
+    _WINDOW_TITLE = "runspec console"
+
+    def _confirm_notifications_enabled(self) -> bool:
+        try:
+            return confirm_notifications_enabled()
+        except Exception:
+            return True
+
+    def _notify_confirm(
+        self, tool_name: str, tool_input: dict[str, Any], level: str
+    ) -> None:
+        """Best-effort desktop toast + taskbar flash for a pending confirm.
+
+        Gates (availability, opt-out) and message-building run synchronously; the
+        actual toast/flash is offloaded so the event-loop thread that streams
+        tokens isn't blocked. Any failure is swallowed — a missed notification
+        must never disturb the confirmation flow."""
+        try:
+            ok, _ = notify.available()
+            if not ok:
+                return
+            if not self._confirm_notifications_enabled():
+                return
+            title, body = notify.build_confirm_message(tool_name, tool_input)
+        except Exception:
+            logger.debug("notify_confirm setup failed", exc_info=True)
+            return
+
+        def _raise() -> None:
+            try:
+                notify.notify(title, body, on_click=self._focus_window)
+                self._flash_window()
+            except Exception:
+                logger.debug("desktop notify failed", exc_info=True)
+
+        threading.Thread(target=_raise, name="notify-confirm", daemon=True).start()
+
+    def _flash_window(self) -> None:
+        """Flash the taskbar button until the console is foregrounded. Needs no
+        notification permission, so it's the fallback when the toast is
+        suppressed. Windows-only, best-effort."""
+        if sys.platform != "win32":
+            return
+        try:
+            import win32gui
+
+            hwnd = win32gui.FindWindow(None, self._WINDOW_TITLE)
+            if not hwnd:
+                return
+            # FLASHW_ALL (0x3) | FLASHW_TIMERNOFG (0xC): flash until foreground.
+            win32gui.FlashWindowEx(hwnd, 0x0000000F, 0, 0)
+        except Exception:
+            logger.debug("flash window failed", exc_info=True)
+
+    def _focus_window(self) -> None:
+        """Bring the console to the foreground (toast click handler).
+        Windows-only, best-effort."""
+        if sys.platform != "win32":
+            return
+        try:
+            import win32con
+            import win32gui
+
+            hwnd = win32gui.FindWindow(None, self._WINDOW_TITLE)
+            if not hwnd:
+                return
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(hwnd)
+        except Exception:
+            logger.debug("focus window failed", exc_info=True)
 
     def _finish_confirm(
         self, request_id: str, holder: dict[str, bool], timed_out: bool

@@ -29,6 +29,10 @@ class _StubBridge:
     def _dispatch(self, event, detail):
         self._dispatched.append((event, detail))
 
+    def _notify_confirm(self, *a, **k):
+        # Desktop toast is orthogonal to the gate logic under test; no-op here.
+        pass
+
     def _run_tool_sync(self, name, tool_input):
         return self._run_result
 

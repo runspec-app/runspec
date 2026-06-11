@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.38.4"
+version = "0.39.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -36,14 +36,17 @@ anthropic = ["anthropic>=0.40.0"]
 openai    = ["openai>=1.0.0"]
 bedrock   = ["anthropic[bedrock]>=0.40.0"]
 langserve = ["httpx>=0.27"]
-# PyWinRT projection for the system notification-listener trigger source (Teams /
-# Slack / any toast). Windows-only; the source reports it as unavailable until
-# installed and granted. PyWinRT (winrt-*) ships wheels through current Python
-# versions (3.13+), so this installs without a C toolchain / Visual Studio.
+# PyWinRT projection for two notification surfaces: *reading* system toasts (the
+# listener trigger source — Teams / Slack / any toast, needs the `.Management`
+# namespace + a user consent grant) and *sending* confirm toasts (notify.py —
+# `.UI.Notifications` + `.Data.Xml.Dom`, no consent needed). Windows-only; both
+# report themselves unavailable until installed. PyWinRT (winrt-*) ships wheels
+# through current Python versions (3.13+), so this installs without a C toolchain.
 notifications = [
     "winrt-runtime>=2.0 ; sys_platform == 'win32'",
     "winrt-Windows.Foundation>=2.0 ; sys_platform == 'win32'",
     "winrt-Windows.Foundation.Collections>=2.0 ; sys_platform == 'win32'",
+    "winrt-Windows.Data.Xml.Dom>=2.0 ; sys_platform == 'win32'",
     "winrt-Windows.UI.Notifications>=2.0 ; sys_platform == 'win32'",
     "winrt-Windows.UI.Notifications.Management>=2.0 ; sys_platform == 'win32'",
     "winrt-Windows.ApplicationModel>=2.0 ; sys_platform == 'win32'",

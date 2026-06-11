@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.39.0] — 2026-06-11
+
+### Added
+- **Desktop notifications when an agent tool call needs your approval.** When a
+  runnable hits the autonomy gate (the default `confirm` level — and `supervised`
+  too) the console now raises a Windows toast ("Approval needed: <runnable>")
+  *and* flashes the taskbar button, so you're pulled back to answer instead of
+  the prompt silently timing out as a deny after five minutes while the window
+  is in the background. Clicking the toast foregrounds the console; you still
+  approve/deny in the existing in-app card. Covers every confirmation path (chat
+  agent, trigger board, supervised runs) from the single `_register_confirm`
+  chokepoint.
+  - *Works on locked-down corporate machines:* **sending** a toast uses
+    `ToastNotificationManager` and is gated only by the per-app "send
+    notifications" toggle — it does **not** need the "let apps read my
+    notifications" consent the existing listener trigger source requires. So a
+    machine with reading disabled still gets confirm toasts. The taskbar flash
+    needs no notification permission at all and is the fallback if the toast is
+    suppressed.
+  - *Off-Windows:* a safe no-op (logged only).
+  - Opt out with `[console] confirm_notifications = false` in `config.toml` to
+    silence the toast while keeping the in-app card.
+  - The optional `[notifications]` extra now also carries
+    `winrt-Windows.Data.Xml.Dom` (needed to build the toast); the existing
+    `winrt-Windows.UI.Notifications` projection does the send. No new
+    permissions, Windows-only.
+
+
 ## [0.38.4] — 2026-06-10
 
 ### Fixed

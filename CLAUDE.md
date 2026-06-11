@@ -213,7 +213,7 @@ Both Python and Node packages are active and published.
 |---|---|---|---|
 | `runspec` | 0.32.2 | PyPI | Core library (reference implementation) |
 | `runspec-node` | 0.28.1 | npm | Node port |
-| `runspec-console` | 0.28.0 | PyPI | pywebview desktop console — agentic chat + Forms + SSH jump-host fleet UI (frontend in `packages/console-ui`) |
+| `runspec-console` | 0.39.0 | PyPI | pywebview desktop console — agentic chat + Forms + SSH jump-host fleet UI (frontend in `packages/console-ui`); desktop toast + taskbar flash on agent confirm-gate events (Windows; `[notifications]` extra) |
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console) |
 | `runspec-linux` | 0.2.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs (thin wrappers over `runspec-linux-core`) |
 | `runspec-linux-core` | 0.1.0 | PyPI | Pure-Python logic core behind `runspec-linux` — importable helpers, **no runspec dep / no runspec.toml / no entry points** (surfaces zero runnables) |

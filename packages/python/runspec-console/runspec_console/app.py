@@ -170,7 +170,12 @@ def main() -> None:
 
     import webview
 
+    from . import notify
     from .bridge import Bridge
+
+    # Pin the AppUserModelID before any toast so confirm notifications carry a
+    # stable runspec identity in the Action Center.
+    notify.set_app_id()
 
     bridge = Bridge()
     bridge.set_debug(debug_enabled)

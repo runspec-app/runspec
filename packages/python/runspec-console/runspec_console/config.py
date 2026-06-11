@@ -156,6 +156,18 @@ def docs_url() -> str:
     return DEFAULT_DOCS_URL
 
 
+def confirm_notifications_enabled() -> bool:
+    """`[console] confirm_notifications` — raise a desktop toast when an agent
+    tool call hits the autonomy gate. Defaults to True; set false to silence the
+    OS notification while keeping the in-app Approve/Deny card."""
+    console = read_config().get("console")
+    if isinstance(console, dict):
+        val = console.get("confirm_notifications")
+        if isinstance(val, bool):
+            return val
+    return True
+
+
 def _toml_str(v: str) -> str:
     """Escape a Python string as a TOML basic string literal.
 
