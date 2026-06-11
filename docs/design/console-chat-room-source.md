@@ -1,7 +1,8 @@
 # Design: chat-room event source for runspec-console
 
-**Status:** In progress. Source module + tests landed; SSH-tunnel transport,
-Rooms view, and bridge wiring are staged below.
+**Status:** In progress. Source module, SSH-tunnel transport, and bridge wiring
+(slice 3) landed with tests; the console-ui Rooms view and the room server itself
+remain. Staged below.
 **Scope:** A third trigger event source (`chat`), symmetric to Outlook and the
 notification listener. Cross-platform (no OS API — it's a network client).
 
@@ -145,11 +146,22 @@ to the requester ("on it, 5 min"), which *is* the "who enacts" negotiation.
    framing/buffering tested with a fake channel, no new dependency) +
    `make_tunnel_transport_factory` / `transport_factory_from_config`. Wired
    end-to-end into `ChatSource` in tests.
-3. **Bridge wiring** — construct `ChatSource` with the tunnel transport; fan
-   `message`/`presence` to the Rooms view via `_dispatch`; `send_room_message`;
-   the confirm-gated "post to room" agent tool (the speak checkpoint); drive
-   `set_presence` from the rota state.
-4. **`console-ui` Rooms view** — transcript + presence + composer.
+3. **Bridge wiring** ✅ *done* — `ChatSource` built with the tunnel transport via
+   a `create_source` hook (the pool is injected, so it bypasses the zero-arg
+   registry); `message`/`presence` fanned to the Rooms view via `_dispatch`
+   (`_ChatUIFanout` — presence is UI-only, only messages reach the engine);
+   `send_room_message`; the confirm-gated `propose_reply` agent tool (the speak
+   checkpoint — pre-fills the composer via `runspec:room_draft`, never sends);
+   `set_presence` driven from the rota by `_RotaPresenceWatcher`. The source
+   starts/stops with the engine (active only with an enabled `source = "chat"`
+   trigger + `[chat]` host/port/room).
+4. **`console-ui` Rooms view** ✅ *done* — `views/RoomsView.tsx`: live transcript +
+   presence + composer, fed by `runspec:room_message` / `room_presence` /
+   `room_draft`; the composer's send is the one outbound path
+   (`bridge.send_room_message`), and `room_draft` pre-fills it (the agent's
+   proposed reply, for the human to edit and send). Stays mounted across tab
+   switches so the transcript keeps filling. Connection/identity from
+   `bridge.get_room_state`.
 
 ---
 

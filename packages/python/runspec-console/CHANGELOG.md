@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.40.0] — 2026-06-11
+
+### Added
+- **Rooms — a team chat room inside the console.** A new tab showing the live
+  transcript, who's present, and a composer, so the console is a participant in a
+  shared on-call room alongside the people who log in from a browser. A message in
+  the room is a `chat` trigger event: an on-shift console reacts through the
+  normal trigger machinery (`match` → rule/agent → autonomy gate). Nothing the
+  console says is automatic — an agent can **propose** a reply, which only
+  pre-fills the composer (`runspec:room_draft`); **you** edit and send it.
+- The console joins over its existing **SSH tunnel** (a `direct-tcpip` channel to
+  the room server's localhost port) — its right to be in the room *is* its SSH
+  access, so there's no new exposed port and no second credential. Presence
+  follows the working-hours rota: available on-shift, away otherwise. Identity is
+  the configured `[chat] user`, defaulting to the SSH login (`alice@web01`).
+- Configure with a `[chat]` table (`host` / `port` / `room` / optional `user`) and
+  a `source = "chat"` trigger. The room server itself is the new **`runspec-room`**
+  package (`packages/console-room/`).
+
+
 ## [0.39.0] — 2026-06-11
 
 ### Added

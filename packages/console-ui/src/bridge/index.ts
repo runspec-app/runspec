@@ -381,6 +381,42 @@ export interface TriggerListResult {
 }
 
 
+// ── chat room (Rooms view) ───────────────────────────────────────────────────
+// The room is a "dumb message pipe with presence" the console connects to over
+// the SSH tunnel; the bridge fans its events to the UI as runspec:room_* events.
+
+// Connection state for the Rooms view (bridge.get_room_state).
+export interface RoomState {
+  connected: boolean   // the chat source is live (a chat trigger is active)
+  room: string         // configured [chat] room ("" when chat isn't configured)
+  user: string         // this console's display name (configured or SSH-defaulted)
+}
+
+// runspec:room_message — a sent message (server-stamped id/ts/sender).
+export interface RoomMessage {
+  room: string
+  sender: string
+  text: string
+  id: string
+  ts: number
+}
+
+// runspec:room_presence — a participant's live presence in a room.
+export interface RoomPresence {
+  room: string
+  user: string
+  status: 'available' | 'away'
+}
+
+// runspec:room_draft — an agent-proposed reply pre-filling the composer (the
+// "speak" checkpoint: the human edits and sends; the agent never sends).
+export interface RoomDraft {
+  id: string
+  room: string
+  text: string
+}
+
+
 export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
   get_runnables: (host: string) => Promise<Runnable[]>
@@ -452,6 +488,11 @@ export interface BridgeApi {
   get_trigger_events: () => Promise<TriggerEvent[]>
   // Send a draft an agent-mode trigger saved (the card's Send button).
   send_trigger_draft: (entryId: string) => Promise<{ ok: boolean; to?: string; subject?: string; error?: string }>
+  // ── chat room (Rooms view) ─────────────────────────────────────────────────
+  get_room_state: () => Promise<RoomState>
+  // The composer's one outbound path. The agent never reaches this — a proposed
+  // reply only pre-fills the composer (runspec:room_draft); the human sends.
+  send_room_message: (room: string, text: string) => Promise<{ ok: boolean; error?: string }>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>

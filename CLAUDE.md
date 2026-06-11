@@ -213,7 +213,8 @@ Both Python and Node packages are active and published.
 |---|---|---|---|
 | `runspec` | 0.32.2 | PyPI | Core library (reference implementation) |
 | `runspec-node` | 0.28.1 | npm | Node port |
-| `runspec-console` | 0.39.0 | PyPI | pywebview desktop console — agentic chat + Forms + SSH jump-host fleet UI (frontend in `packages/console-ui`); desktop toast + taskbar flash on agent confirm-gate events (Windows; `[notifications]` extra) |
+| `runspec-console` | 0.40.0 | PyPI | pywebview desktop console — agentic chat + Forms + SSH jump-host fleet UI (frontend in `packages/console-ui`); desktop toast + taskbar flash on agent confirm-gate events (Windows; `[notifications]` extra); **Rooms** chat-room tab + `chat` trigger source (joins the room server over the SSH tunnel) |
+| `runspec-room` | 0.3.0 | (unreleased) | The chat-room server (`packages/console-room/`) — a "dumb message pipe with presence". Two front doors, one process: consoles via NDJSON over the SSH tunnel (localhost), people via an OIDC-authenticated browser web app (Starlette + uvicorn, TLS, SQLite transcript). See `docs/design/console-room-server.md` |
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console) |
 | `runspec-linux` | 0.2.0 | PyPI | 21 Linux system admin runnables — `pip install` into remote venvs (thin wrappers over `runspec-linux-core`) |
 | `runspec-linux-core` | 0.1.0 | PyPI | Pure-Python logic core behind `runspec-linux` — importable helpers, **no runspec dep / no runspec.toml / no entry points** (surfaces zero runnables) |

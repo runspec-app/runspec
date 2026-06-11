@@ -19,6 +19,7 @@ import {
   BugOutlined,
   FileTextOutlined,
   ReadOutlined,
+  CommentOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -26,6 +27,7 @@ import { HistoryView } from './views/HistoryView'
 import { LogsView } from './views/LogsView'
 import { SchedulesView } from './views/SchedulesView'
 import { TriggersView } from './views/TriggersView'
+import { RoomsView } from './views/RoomsView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
@@ -40,7 +42,7 @@ import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'analytics' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rooms' | 'analytics' | 'dev'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -261,6 +263,7 @@ export default function App() {
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]}><BellOutlined /></Badge>
         : <BellOutlined />,
     },
+    { key: 'rooms'     as ViewKey, label: 'Rooms',     icon: <CommentOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ]
 
@@ -464,6 +467,13 @@ export default function App() {
                     the live tool_confirm and the buttons can't return until timeout. */}
                 <div style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                   <TriggersView />
+                </div>
+                {/* Rooms stays mounted (display toggle) so the live transcript +
+                    presence keep filling from the runspec:room_* event stream even
+                    while another tab is shown — unmounting would drop the history
+                    and the listeners. */}
+                <div style={{ display: view === 'rooms' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                  <RoomsView active={view === 'rooms'} />
                 </div>
                 {/* History stays mounted (display toggle) so its fetched records
                     survive tab switches — returning shows the last data instantly

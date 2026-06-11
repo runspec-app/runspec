@@ -24,6 +24,7 @@ jobs:
       jsm: ${{ steps.filter.outputs.jsm }}
       snow: ${{ steps.filter.outputs.snow }}
       console: ${{ steps.filter.outputs.console }}
+      console-room: ${{ steps.filter.outputs.console-room }}
       webops: ${{ steps.filter.outputs.webops }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
@@ -61,6 +62,9 @@ jobs:
             console:
               - 'packages/python/runspec-console/**'
               - 'packages/console-ui/**'
+              - '.github/workflows/ci.yml'
+            console-room:
+              - 'packages/console-room/**'
               - '.github/workflows/ci.yml'
             webops:
               - 'packages/node-webops/**'
@@ -576,6 +580,79 @@ jobs:
           pkg = files('runspec_snow')
           assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
           from runspec_snow import create_record, update_state, resolve_state_value
+          print('Wheel contents OK')
+          "
+
+  # ── runspec-room (the chat-room server) ─────────────────────────────────────
+
+  console-room-quality:
+    name: "console-room quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.console-room == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/console-room
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  console-room-test:
+    name: runspec-room test
+    needs: changes
+    if: needs.changes.outputs.console-room == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/console-room
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Type check
+        run: mypy console_room
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('console_room')
+          assert (pkg / 'web' / 'frontend' / 'index.html').is_file(), 'frontend missing from wheel'
+          from console_room import Hub, TranscriptStore
           print('Wheel contents OK')
           "
 

@@ -18,6 +18,8 @@ from runspec_console.sources import chat_transport
 from runspec_console.sources.chat import ChatSource
 from runspec_console.sources.chat_transport import (
     ChannelChatTransport,
+    default_chat_user,
+    default_user_from_ssh,
     make_tunnel_transport_factory,
     transport_factory_from_config,
 )
@@ -198,3 +200,30 @@ def test_chat_source_drains_tunnel(monkeypatch):
     assert texts == ["one", "two"]  # own echo dropped
     # presence "available" was announced over the same tunnel on start
     assert b'"status": "available"' in chan.sent
+
+
+# ── SSH-defaulted room identity ────────────────────────────────────────────────
+
+
+def test_default_user_from_ssh_target_with_user():
+    # A user@host target is already a login identity → used as-is.
+    assert default_user_from_ssh("alice@web01", "localguy") == "alice@web01"
+
+
+def test_default_user_from_ssh_target_without_user():
+    # Bare host → prefix the local OS user (the SSH login shape).
+    assert default_user_from_ssh("web01", "alice") == "alice@web01"
+
+
+def test_default_user_from_ssh_never_blank():
+    assert default_user_from_ssh("", "alice") == "alice"
+    assert default_user_from_ssh("", "") == "console"
+    assert default_user_from_ssh("web01", "") == "web01"
+
+
+def test_default_chat_user_reads_host(monkeypatch):
+    monkeypatch.setattr(
+        chat_transport.getpass, "getuser", lambda: "alice", raising=False
+    )
+    assert default_chat_user({"host": "web01"}) == "alice@web01"
+    assert default_chat_user({"host": "bob@web01"}) == "bob@web01"

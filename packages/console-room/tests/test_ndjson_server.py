@@ -1,0 +1,185 @@
+"""
+test_ndjson_server.py — the console door's frame handling.
+
+Drives NdjsonConsoleConnection with a fed StreamReader + a fake writer (no real
+sockets) against a real Hub + fake store, so the handshake / dispatch / framing
+are exercised end-to-end without networking. A second fake participant in the room
+receives the broadcasts. Run via asyncio.run (no pytest-asyncio dependency).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+
+from console_room.hub import Hub
+from console_room.models import Message
+from console_room.ndjson_server import NdjsonConsoleConnection
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+class FakeStore:
+    def __init__(self) -> None:
+        self.appended: list[Message] = []
+
+    def append(self, msg: Message) -> None:
+        self.appended.append(msg)
+
+    def recent(self, room: str, limit: int) -> list[Message]:
+        return []
+
+
+class FakeWriter:
+    """Captures written bytes; satisfies the StreamWriter slice the connection
+    uses (write / drain / close / wait_closed)."""
+
+    def __init__(self) -> None:
+        self.chunks: list[bytes] = []
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        self.chunks.append(data)
+
+    async def drain(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        pass
+
+    def frames(self) -> list[dict[str, Any]]:
+        text = b"".join(self.chunks).decode("utf-8")
+        return [json.loads(ln) for ln in text.splitlines() if ln.strip()]
+
+
+class FakeP:
+    def __init__(self, user: str, room: str) -> None:
+        self.user = user
+        self.room = room
+        self.wants_backscroll = False
+        self.frames: list[dict[str, Any]] = []
+
+    async def send(self, frame: dict[str, Any]) -> None:
+        self.frames.append(frame)
+
+
+def _reader(*frames: dict[str, Any]) -> asyncio.StreamReader:
+    r = asyncio.StreamReader()
+    for f in frames:
+        r.feed_data((json.dumps(f) + "\n").encode("utf-8"))
+    r.feed_eof()
+    return r
+
+
+# ── handshake ─────────────────────────────────────────────────────────────────
+
+
+def test_no_hello_closes_without_joining():
+    async def scenario():
+        hub = Hub(FakeStore())
+        reader = _reader({"type": "message", "room": "ops", "text": "x"})
+        writer = FakeWriter()
+        await NdjsonConsoleConnection(reader, writer).run(hub)
+        return hub, writer
+
+    hub, writer = run(scenario())
+    assert hub.room_size("ops") == 0  # never joined
+    assert writer.closed and writer.frames() == []
+
+
+def test_hello_then_message_is_stamped_and_broadcast():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        observer = FakeP("b", "ops")
+        await hub.join(observer)
+        observer.frames.clear()
+        reader = _reader(
+            {"type": "hello", "room": "ops", "user": "alice@web01"},
+            {"type": "message", "room": "ops", "text": "rolling out"},
+        )
+        writer = FakeWriter()
+        await NdjsonConsoleConnection(reader, writer).run(hub)
+        return store, writer, observer
+
+    store, writer, observer = run(scenario())
+    # Persisted with the connection-declared sender.
+    assert len(store.appended) == 1
+    assert store.appended[0].sender == "alice@web01"
+    assert store.appended[0].text == "rolling out"
+    # Echoed back to the sending connection.
+    msg_frames = [f for f in writer.frames() if f["type"] == "message"]
+    assert msg_frames and msg_frames[0]["text"] == "rolling out"
+    # And delivered to the other room member.
+    assert [f["text"] for f in observer.frames if f["type"] == "message"] == [
+        "rolling out"
+    ]
+
+
+def test_per_frame_user_cannot_spoof_sender():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        reader = _reader(
+            {"type": "hello", "room": "ops", "user": "real"},
+            # A later frame tries to claim a different user — must be ignored.
+            {"type": "message", "room": "ops", "text": "hi", "user": "imposter"},
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return store
+
+    store = run(scenario())
+    assert store.appended[0].sender == "real"
+
+
+def test_presence_frame_relayed_and_leave_on_eof():
+    async def scenario():
+        hub = Hub(FakeStore())
+        observer = FakeP("b", "ops")
+        await hub.join(observer)
+        observer.frames.clear()
+        reader = _reader(
+            {"type": "hello", "room": "ops", "user": "a"},
+            {"type": "presence", "room": "ops", "status": "away"},
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return hub, observer
+
+    hub, observer = run(scenario())
+    statuses = [
+        (f["user"], f["status"]) for f in observer.frames if f["type"] == "presence"
+    ]
+    # join → available, the explicit presence frame → away, EOF leave → away.
+    assert ("a", "available") in statuses
+    assert statuses[-1] == ("a", "away")
+    assert hub.room_size("ops") == 1  # the console left on EOF; observer remains
+
+
+def test_blank_and_malformed_lines_are_skipped():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"\n")  # blank
+        reader.feed_data(b"not json\n")  # malformed
+        reader.feed_data(b"[1,2,3]\n")  # JSON but not an object
+        reader.feed_data(
+            (json.dumps({"type": "hello", "room": "ops", "user": "a"}) + "\n").encode()
+        )
+        reader.feed_data(
+            (
+                json.dumps({"type": "message", "room": "ops", "text": "ok"}) + "\n"
+            ).encode()
+        )
+        reader.feed_eof()
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return store
+
+    store = run(scenario())
+    assert [m.text for m in store.appended] == ["ok"]  # survived the junk lines

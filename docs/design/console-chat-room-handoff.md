@@ -11,13 +11,43 @@ design in `console-chat-room-source.md`. Delete once the feature ships.
 |---|---|---|
 | 1 | `sources/chat.py` — `ChatSource` event source (+ `[chat]` config) | ✅ merged (#183) |
 | 2 | `sources/chat_transport.py` — NDJSON-over-SSH-tunnel transport | ✅ merged (#183) |
-| 3 | **Bridge wiring** — construct the source w/ a real transport, UI fan-out, `send_room_message`, draft-reply, rota-driven presence | ⬜ next |
-| 4 | **console-ui Rooms view** — transcript + presence + composer | ⬜ |
-| — | **Room server** (the web app itself) | ⬜ not started — separate artifact |
+| 3 | **Bridge wiring** — construct the source w/ a real transport, UI fan-out, `send_room_message`, draft-reply, rota-driven presence | ✅ done (branch `claude/console-chat-room-2apgjx`) |
+| 4 | **console-ui Rooms view** — transcript + presence + composer | ✅ done (branch) |
+| — | **Console integration** — `hello` frame + SSH-defaulted `user` | ✅ done (branch) |
+| — | **Room server** (`packages/console-room/`, runspec-room) — console NDJSON door + OIDC browser door + TLS | ✅ done (branch) — see `console-room-server.md` |
 
-**Not runnable end-to-end yet.** Until slice 3 wires a transport, the source
-reports `available() → (False, …)` and starts nothing. No UI, no server. There
-is nothing to interact with by hand at the moment — this is expected.
+**Not runnable end-to-end yet.** Slice 3 wires the console side (source built
+with the pooled tunnel transport, events fanned to the UI, `send_room_message`,
+the confirm-gated `propose_reply` speak-checkpoint, rota-driven presence), all
+unit-tested with fakes — but there is still **no room server** to connect to and
+**no Rooms view** to see it in. Until a server exists the tunnel transport simply
+fails to connect; the wiring is correct and tested regardless. Nothing to
+interact with by hand yet — this is expected.
+
+### Slice 3 — what landed (Python, branch `claude/console-chat-room-2apgjx`)
+
+- `bridge.py`: `_ChatUIFanout` (wraps `ChatSource`: fans `message`+`presence` to
+  the UI via `_dispatch` → `runspec:room_message` / `runspec:room_presence`; only
+  `message` reaches the engine, so presence never clutters the trigger audit
+  feed); `_RotaPresenceWatcher` (polls the engine's `clock_ok`, pushes
+  `set_presence` only on an on-shift flip); `_build_chat_source` (constructs
+  `ChatSource(transport_factory=transport_factory_from_config(pool))` and is
+  reached by the engine through a `create_source` hook in `start_triggers`, since
+  the registry factory is zero-arg); `send_room_message(room, text)` js_api →
+  `ChatSource.send_message`; `_gated_propose_reply` (the speak checkpoint:
+  confirm-gated, dispatches `runspec:room_draft` to pre-fill the composer — never
+  sends).
+- `trigger_runner.py`: `propose_reply_schema()`; `compose_system(draft_kind=…)`
+  branches the draft note (`"room"` → propose_reply / composer, `"mail"` →
+  draft_reply / Drafts); `make_handler` binds `room` from a `chat` event's payload
+  (and `reply_to` stays `None` — chat has no entry_id).
+- Tests: `tests/test_chat_bridge.py` (fan-out, presence watcher, send guards,
+  propose-reply guards) + new cases in `tests/test_trigger_runner.py`.
+- Lifecycle: the chat source starts/stops **with the engine** (so it's active
+  only when a `source = "chat"` trigger is enabled *and* `[chat]` host/port/room
+  are set). Consequence to revisit in slice 4: you can't be *in* the room (see
+  transcript / chat to humans) without a chat trigger configured — if always-on
+  room membership is wanted, the source lifecycle must move out of the engine.
 
 ---
 

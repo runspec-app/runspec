@@ -1118,4 +1118,16 @@ export const mockApi: BridgeApi = {
     console.log('mock: send_trigger_draft', entryId)
     return { ok: true, to: 'alice@bigcustomer.com', subject: 'Re: Outage on web01' }
   },
+  get_room_state: async () => ({ connected: true, room: 'ops', user: 'alice@web01' }),
+  send_room_message: async (room: string, text: string) => {
+    console.log('mock: send_room_message', room, text)
+    // Echo into the transcript so the Rooms view is interactive in the browser
+    // mock (the real server echoes a sender's own message back).
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('runspec:room_message', {
+        detail: { room, sender: 'alice@web01', text, id: 'mock-' + Date.now(), ts: Date.now() / 1000 },
+      }))
+    }, 80)
+    return { ok: true }
+  },
 }

@@ -13,6 +13,7 @@ from runspec_console.trigger_runner import (
     compose_system,
     draft_reply_schema,
     make_handler,
+    propose_reply_schema,
     render_event,
 )
 
@@ -28,7 +29,16 @@ class FakeOps:
         self._agent_summary = agent_summary
 
     def run_agent_turn(
-        self, chat_id, system, message, *, draft, reply_to=None, record=None, stage=None
+        self,
+        chat_id,
+        system,
+        message,
+        *,
+        draft,
+        reply_to=None,
+        room=None,
+        record=None,
+        stage=None,
     ):
         self.agent_calls.append(
             {
@@ -37,6 +47,7 @@ class FakeOps:
                 "message": message,
                 "draft": draft,
                 "reply_to": reply_to,
+                "room": room,
                 "record_callable": callable(record),
             }
         )
@@ -200,6 +211,55 @@ def test_draft_reply_schema_shape():
     assert schema["name"] == "draft_reply"
     assert schema["input_schema"]["required"] == ["body"]
     assert "never sends" in schema["description"]
+
+
+# ── handler: chat-room drafting (propose_reply, not draft_reply) ───────────────
+
+
+def test_compose_system_room_draft_note():
+    """draft_kind='room' describes propose_reply (composer), not draft_reply."""
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "chat",
+            "event": "message",
+            "reply": {"draft": True, "style": "friendly"},
+        }
+    )
+    sys = compose_system(t, "base", draft_available=True, draft_kind="room")
+    assert "propose_reply" in sys and "composer" in sys
+    assert "draft_reply" not in sys
+    assert "friendly" in sys
+
+
+def test_handler_chat_draft_binds_room_not_reply_to():
+    """A chat-message event drafts to the room composer: room bound from the
+    payload, reply_to left None (no entry_id), system mentions propose_reply."""
+    ops = FakeOps()
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "chat",
+            "event": "message",
+            "reply": {"draft": True},
+        }
+    )
+    card, _ = _card("t")
+    make_handler(ops, draft_available=True)(
+        card, t, Event.new("chat", "message", {"room": "ops", "text": "help"})
+    )
+    call = ops.agent_calls[0]
+    assert call["draft"] is True
+    assert call["room"] == "ops"  # bound from the event
+    assert call["reply_to"] is None  # chat has no entry_id
+    assert "propose_reply" in call["system"]
+
+
+def test_propose_reply_schema_shape():
+    schema = propose_reply_schema()
+    assert schema["name"] == "propose_reply"
+    assert schema["input_schema"]["required"] == ["text"]
+    assert "NEVER sent" in schema["description"]
 
 
 # ── handler: rule mode ────────────────────────────────────────────────────────

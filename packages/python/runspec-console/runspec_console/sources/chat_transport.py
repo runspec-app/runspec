@@ -23,6 +23,7 @@ seam is the pool call in :func:`make_tunnel_transport_factory`, which is thin.
 
 from __future__ import annotations
 
+import getpass
 import json
 import logging
 import threading
@@ -170,6 +171,31 @@ def make_tunnel_transport_factory(
         return ChannelChatTransport(channel, release)
 
     return factory
+
+
+def default_user_from_ssh(ssh_target: str, os_user: str) -> str:
+    """Derive a room display name from the SSH target when ``[chat] user`` is
+    unset. The tunnel hides the OS user from the server, so the console declares
+    one; the natural default is the SSH login it connects as. Use a ``user@host``
+    target as-is; otherwise prefix the local OS user (→ ``alice@web01``). Falls
+    back to the OS user, then ``"console"``, so it's never blank."""
+    target = (ssh_target or "").strip()
+    os_user = (os_user or "").strip()
+    if not target:
+        return os_user or "console"
+    if "@" in target:
+        return target
+    return f"{os_user}@{target}" if os_user else target
+
+
+def default_chat_user(cfg: dict[str, Any]) -> str:
+    """The SSH-defaulted room user for a ``[chat]`` config table (``host`` + the
+    local OS user). Convenience for the bridge — see ``default_user_from_ssh``."""
+    try:
+        os_user = getpass.getuser()
+    except Exception:
+        os_user = ""
+    return default_user_from_ssh(str(cfg.get("host") or ""), os_user)
 
 
 def transport_factory_from_config(

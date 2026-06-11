@@ -38,16 +38,19 @@ class BridgeOps(Protocol):
         *,
         draft: bool,
         reply_to: str | None = None,
+        room: str | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
     ) -> str:
         """Run an isolated, headless agent turn under ``chat_id`` (the card id),
         with ``system`` as its system prompt and ``message`` as the sole user
-        turn. ``draft`` requests the draft_reply tool be offered; ``reply_to`` is
-        the source message's id the draft should reply to (required for drafting).
-        ``record`` (if given) is called with a short note per tool/gate step, for
-        the card timeline. ``stage`` reports the card stage ("awaiting_human" /
-        "running") as the turn progresses. Returns a short summary for the card.
+        turn. ``draft`` requests a reply-drafting tool be offered; for an Outlook
+        event ``reply_to`` is the source message's id the draft replies to, and
+        for a chat event ``room`` is the room a proposed reply targets (each is
+        required to offer its respective tool). ``record`` (if given) is called
+        with a short note per tool/gate step, for the card timeline. ``stage``
+        reports the card stage ("awaiting_human" / "running") as the turn
+        progresses. Returns a short summary for the card.
         """
         ...
 
@@ -89,20 +92,37 @@ def render_event(event: Event) -> str:
 
 
 def compose_system(
-    trigger: Trigger, base_system: str = "", *, draft_available: bool = False
+    trigger: Trigger,
+    base_system: str = "",
+    *,
+    draft_available: bool = False,
+    draft_kind: str = "mail",
 ) -> str:
     """Build the system prompt for an agent-mode trigger: the base assistant
-    prompt, the trigger's own rules, and (when enabled) the draft-reply note."""
+    prompt, the trigger's own rules, and (when enabled) the reply-drafting note.
+
+    ``draft_kind`` selects which drafting tool the note describes — ``"mail"``
+    for the Outlook ``draft_reply`` (saved to Drafts) or ``"room"`` for the chat
+    ``propose_reply`` (pre-fills the room composer). Either way nothing is sent:
+    the user reviews and sends."""
     parts: list[str] = []
     if base_system.strip():
         parts.append(base_system.strip())
     if trigger.rules.strip():
         parts.append("Rules for this trigger:\n" + trigger.rules.strip())
     if draft_available:
-        note = (
-            "You may draft a reply with the draft_reply tool. Save it as a draft "
-            "only — never send. Keep it short; the user will review and send it."
-        )
+        if draft_kind == "room":
+            note = (
+                "You may propose a reply with the propose_reply tool. It never "
+                "sends — your text only lands in the room's composer for the user "
+                "to review, edit, and send. Keep it short."
+            )
+        else:
+            note = (
+                "You may draft a reply with the draft_reply tool. Save it as a "
+                "draft only — never send. Keep it short; the user will review and "
+                "send it."
+            )
         if trigger.reply.style.strip():
             note += "\nPreferred style: " + trigger.reply.style.strip()
         parts.append(note)
@@ -134,6 +154,32 @@ def draft_reply_schema() -> dict[str, Any]:
     }
 
 
+def propose_reply_schema() -> dict[str, Any]:
+    """Anthropic-format tool schema for the built-in propose_reply tool — the
+    chat-room analogue of draft_reply. Offered to an agent-mode trigger turn only
+    when drafting is enabled and the event is a chat message (carries a ``room``).
+    The text is placed in the room composer for the user to send — never sent by
+    the agent (design §2: speak = draft → human sends)."""
+    return {
+        "name": "propose_reply",
+        "description": (
+            "Propose a reply to the chat message that triggered this run. The text "
+            "is placed in the room's composer for the user to review, edit, and "
+            "send — it is NEVER sent automatically. Provide the message text only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The proposed reply text to pre-fill the composer.",
+                }
+            },
+            "required": ["text"],
+        },
+    }
+
+
 def make_handler(
     ops: BridgeOps, *, base_system: str = "", draft_available: bool = False
 ) -> Handler:
@@ -153,10 +199,22 @@ def make_handler(
             return
 
         draft = draft_available and trigger.reply.draft
-        # Drafting needs a source message to reply to (Outlook mail carries an
-        # entry_id); without one the bridge simply won't offer the draft tool.
-        reply_to = (event.payload.get("entry_id") or None) if draft else None
-        system = compose_system(trigger, base_system, draft_available=draft)
+        # A chat-message event drafts into the room composer (propose_reply, keyed
+        # by the event's room); an Outlook mail event drafts a saved reply
+        # (draft_reply, keyed by the message entry_id). Without the respective key
+        # the bridge simply won't offer the tool (e.g. an Outlook reminder has no
+        # entry_id).
+        is_chat = event.source == "chat"
+        reply_to = (
+            (event.payload.get("entry_id") or None) if (draft and not is_chat) else None
+        )
+        room = (event.payload.get("room") or None) if (draft and is_chat) else None
+        system = compose_system(
+            trigger,
+            base_system,
+            draft_available=draft,
+            draft_kind="room" if is_chat else "mail",
+        )
         card.move(Column.TRIAGE)
         summary = ops.run_agent_turn(
             card.id,
@@ -164,6 +222,7 @@ def make_handler(
             render_event(event),
             draft=draft,
             reply_to=reply_to,
+            room=room,
             record=card.log,  # per-tool/gate steps onto the card timeline
             stage=lambda col: card.move(col),  # awaiting_human → running stages
         )

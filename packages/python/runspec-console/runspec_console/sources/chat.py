@@ -182,8 +182,11 @@ class ChatSource:
         self._stop.clear()
         if self._transport is None and self._transport_factory is not None:
             self._transport = self._transport_factory()
-        # Announce presence the moment we connect (we're available; the rota may
-        # flip us to "away" later via set_presence).
+        # Declare identity first — the room server expects ``hello`` as the opening
+        # frame and binds the name to the connection (the tunnel hides the OS user,
+        # so the console states it). Then announce presence (we're available; the
+        # rota may flip us to "away" later via set_presence).
+        self._send_hello()
         self._send_presence("available")
         self._thread = threading.Thread(
             target=self._run, name="chat-listener", daemon=True
@@ -219,6 +222,19 @@ class ChatSource:
             transport.send({"type": "message", "room": self._room, "text": text})
         except Exception:
             logger.exception("chat: send_message failed")
+
+    def _send_hello(self) -> None:
+        """Announce identity on connect — the first frame the room server expects.
+        It binds ``user`` to this connection and stamps it onto every later
+        message, so a per-message sender can't be spoofed. A blank user is left to
+        the server to fill (it falls back to ``unknown``)."""
+        transport = self._transport
+        if transport is None:
+            return
+        try:
+            transport.send({"type": "hello", "room": self._room, "user": self._user})
+        except Exception:
+            logger.exception("chat: hello send failed")
 
     def _send_presence(self, status: str) -> None:
         transport = self._transport

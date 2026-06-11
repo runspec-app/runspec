@@ -113,6 +113,7 @@ class _BridgeTriggerOps:
         *,
         draft: bool,
         reply_to: str | None = None,
+        room: str | None = None,
         record: Any = None,
         stage: Any = None,
     ) -> str:
@@ -122,6 +123,7 @@ class _BridgeTriggerOps:
             message,
             draft=draft,
             reply_to=reply_to,
+            room=room,
             record=record,
             stage=stage,
         )
@@ -146,6 +148,120 @@ class _BridgeTriggerOps:
                 "text": text,
             },
         )
+
+
+class _ChatUIFanout:
+    """Wraps a ``ChatSource`` so room events also reach the Rooms view.
+
+    The chat source emits ``message`` and ``presence`` events. Both are fanned to
+    the frontend over ``_dispatch`` (``runspec:room_message`` /
+    ``runspec:room_presence``) so the Rooms view shows the live transcript and
+    presence list; only ``message`` events flow on to the trigger engine (so a
+    reaction can fire). Presence is UI-only — the engine never sees it, keeping it
+    out of the trigger audit feed. ``on_start`` / ``on_stop`` let the bridge track
+    the live inner source (for ``send_room_message`` and rota presence) only while
+    it is actually started — the engine builds a source but skips ``start`` when it
+    is unavailable.
+
+    Satisfies the ``EventSource`` protocol; the engine drives it like any source.
+    """
+
+    id = "chat"
+
+    def __init__(
+        self,
+        inner: Any,
+        dispatch: Callable[[str, dict[str, Any]], None],
+        *,
+        on_start: Callable[[Any], None] | None = None,
+        on_stop: Callable[[], None] | None = None,
+    ) -> None:
+        self._inner = inner
+        self._dispatch = dispatch
+        self._on_start = on_start
+        self._on_stop = on_stop
+
+    def available(self) -> tuple[bool, str]:
+        return self._inner.available()
+
+    def event_types(self) -> list[str]:
+        return list(self._inner.event_types())
+
+    def start(self, emit: Callable[[Any], None]) -> None:
+        def wrapped(event: Any) -> None:
+            payload = dict(event.payload)
+            if event.type == "presence":
+                self._dispatch("runspec:room_presence", payload)
+                return  # UI-only — the engine never sees presence
+            self._dispatch("runspec:room_message", payload)
+            emit(event)  # messages reach the engine for trigger matching
+
+        self._inner.start(wrapped)
+        if self._on_start is not None:
+            self._on_start(self._inner)
+
+    def stop(self) -> None:
+        try:
+            self._inner.stop()
+        finally:
+            if self._on_stop is not None:
+                self._on_stop()
+
+
+class _RotaPresenceWatcher:
+    """Pushes console presence to the chat room as the working-hours rota flips.
+
+    A console is *available* in the room while on-shift and *away* otherwise (see
+    the design §1). The rota only changes at window boundaries — no event arrives
+    to drive it — so this polls ``clock_ok`` on an interval and calls
+    ``set_presence`` only when the on-shift state actually flips. The first tick
+    aligns presence with the rota immediately (the source announces "available" on
+    connect, which the rota may correct to "away")."""
+
+    def __init__(
+        self,
+        clock_ok: Callable[[], bool],
+        set_presence: Callable[[bool], None],
+        *,
+        interval: float = 30.0,
+    ) -> None:
+        self._clock_ok = clock_ok
+        self._set_presence = set_presence
+        self._interval = interval
+        self._stop = threading.Event()
+        self._last: bool | None = None
+        self._thread: threading.Thread | None = None
+
+    def _tick(self) -> None:
+        """Evaluate the rota once; push presence only on a change (split out so
+        the flip logic is unit-tested without the thread / sleep)."""
+        try:
+            on = bool(self._clock_ok())
+        except Exception:
+            logger.exception("chat: rota clock check failed")
+            return
+        if on == self._last:
+            return
+        self._last = on
+        try:
+            self._set_presence(on)
+        except Exception:
+            logger.exception("chat: presence push failed")
+
+    def start(self) -> None:
+        self._tick()  # align presence with the rota right away
+        self._thread = threading.Thread(
+            target=self._run, name="chat-presence", daemon=True
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            self._tick()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread = None
 
 
 class Bridge:
@@ -178,6 +294,11 @@ class Bridge:
         self._trigger_cards: dict[str, dict[str, Any]] = {}
         # Audit feed: every event the engine sees + its disposition (bounded ring).
         self._trigger_events: list[dict[str, Any]] = []
+        # The live chat-room source (the inner ChatSource, not the UI-fanout
+        # wrapper), set while it is started — drives send_room_message and the
+        # rota presence push. None when no chat trigger is configured/available.
+        self._chat_source: Any = None
+        self._presence_watcher: _RotaPresenceWatcher | None = None
         self._hosts: list[dict[str, Any]] = []
         # Named source-side stream filters (runspec_filters.toml). Loaded once at
         # startup and reloaded on save; resolved by name when a relay/download
@@ -4717,18 +4838,38 @@ class Bridge:
                 return within_rota(rota, now) if grid_configured else True
             return within_rota(rota, now)
 
+        # The chat source needs the SSH pool injected (for its tunnel transport),
+        # but the source registry's factory is zero-arg — so the bridge builds the
+        # chat source itself and the engine reaches it through this create_source
+        # hook instead of the registry. Every other source stays zero-arg.
+        from .events import create_source as default_create_source
+
+        def create_source(source_id: str) -> Any:
+            if source_id == "chat":
+                return self._build_chat_source()
+            return default_create_source(source_id)
+
         engine = TriggerEngine(
             triggers,
             handler=handler,
             on_card=self._on_trigger_card,
             on_event=self._on_trigger_event,
             clock_ok=clock_ok,
+            create_source=create_source,
         )
         problems = engine.start()
         with self._lock:
             self._trigger_engine = engine
+            chat = self._chat_source  # set by _ChatUIFanout.start if it started
         for problem in problems:
             logger.info("trigger source: %s", problem)
+        # If the chat source connected, drive its room presence off the same rota
+        # clock the engine gates triggers with (available on-shift, away off).
+        if chat is not None:
+            watcher = _RotaPresenceWatcher(clock_ok, chat.set_presence)
+            watcher.start()
+            with self._lock:
+                self._presence_watcher = watcher
         # Note: no UI dispatch here. start_triggers() runs from set_window(),
         # before the web view has finished starting, so an evaluate_js push would
         # raise (harmlessly, but noisily). The Triggers tab pulls this state via
@@ -4744,9 +4885,91 @@ class Bridge:
             engine = self._trigger_engine
             self._trigger_engine = None
             card_ids = set(self._trigger_cards)
+            watcher = self._presence_watcher
+            self._presence_watcher = None
+        if watcher is not None:
+            watcher.stop()  # stop pushing presence before the source closes
         self._abort_turns(card_ids)
         if engine is not None:
-            engine.stop()
+            engine.stop()  # → _ChatUIFanout.stop → clears self._chat_source
+        with self._lock:
+            self._chat_source = None  # belt-and-suspenders if engine was None
+
+    def _build_chat_source(self) -> Any:
+        """Construct the chat source with a pooled SSH-tunnel transport, wrapped so
+        its events also reach the Rooms view. The engine calls this (via the
+        create_source hook in start_triggers) for a ``source = "chat"`` trigger.
+
+        Reports unavailable (and the engine skips ``start``) when there's no SSH
+        pool or the ``[chat]`` room isn't configured — so it never half-starts."""
+        from . import config
+        from .sources.chat import ChatSource
+        from .sources.chat_transport import (
+            default_chat_user,
+            transport_factory_from_config,
+        )
+
+        factory = (
+            transport_factory_from_config(self._ssh_pool)
+            if self._ssh_pool is not None
+            else None
+        )
+        # Identity for the room: the configured [chat] user, else the SSH login the
+        # tunnel connects as (the server can't see the OS user over direct-tcpip).
+        cfg = config.read_chat()
+        user = str(cfg.get("user") or "").strip() or default_chat_user(cfg)
+        inner = ChatSource(user=user, transport_factory=factory)
+        return _ChatUIFanout(
+            inner,
+            self._dispatch,
+            on_start=self._set_chat_source,
+            on_stop=self._clear_chat_source,
+        )
+
+    def _set_chat_source(self, inner: Any) -> None:
+        with self._lock:
+            self._chat_source = inner
+
+    def _clear_chat_source(self) -> None:
+        with self._lock:
+            self._chat_source = None
+
+    def send_room_message(self, room: str, text: str) -> dict[str, Any]:
+        """Post a human-composed message to the chat room — the Rooms composer's
+        one outbound path. The agent never reaches this: a proposed reply only
+        pre-fills the composer (runspec:room_draft); the human reviews and sends.
+        Returns ``{ok}`` or ``{ok: False, error}``. ``room`` is accepted for the
+        wire/UI symmetry; a console speaks only in its configured room."""
+        text = str(text or "").strip()
+        if not text:
+            return {"ok": False, "error": "empty message"}
+        with self._lock:
+            src = self._chat_source
+        if src is None:
+            return {"ok": False, "error": "not connected to a chat room"}
+        try:
+            src.send_message(text)
+        except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
+            logger.exception("send_room_message failed")
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    def get_room_state(self) -> dict[str, Any]:
+        """For the Rooms view: the configured ``[chat]`` room, this console's
+        display name (the configured user, else the SSH-defaulted one), and whether
+        the chat source is currently connected. ``room`` is empty when chat isn't
+        configured — the view shows a 'not configured' state."""
+        from . import config
+        from .sources.chat_transport import default_chat_user
+
+        cfg = config.read_chat()
+        room = str(cfg.get("room") or "").strip()
+        user = str(cfg.get("user") or "").strip()
+        if not user and room:
+            user = default_chat_user(cfg)
+        with self._lock:
+            connected = self._chat_source is not None
+        return {"connected": connected, "room": room, "user": user}
 
     def _abort_turns(self, ids: set[str] | None) -> None:
         """Unblock in-flight turns: signal each cancel flag and wake each pending
@@ -4880,6 +5103,7 @@ class Bridge:
         *,
         draft: bool,
         reply_to: str | None = None,
+        room: str | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
     ) -> str:
@@ -4889,8 +5113,9 @@ class Bridge:
         (mirroring send_chat). The card id doubles as the chat_id so the turn's
         token / tool / confirm events attribute to the card on the board.
         ``reply_to`` (when ``draft``) is the Outlook message id the draft_reply
-        tool replies to. ``record`` logs per-tool steps to the card timeline.
-        Returns a summary for display on the card."""
+        tool replies to; ``room`` (when ``draft``) is the chat room the
+        propose_reply tool drafts into. ``record`` logs per-tool steps to the card
+        timeline. Returns a summary for display on the card."""
         try:
             adapter = self._get_adapter(system_override=system)
         except Exception as exc:  # noqa: BLE001 — surface, don't crash the worker
@@ -4910,6 +5135,7 @@ class Bridge:
                     message,
                     adapter,
                     reply_to=reply_to if draft else None,
+                    room=room if draft else None,
                     record=record,
                     stage=stage,
                 )
@@ -4924,24 +5150,28 @@ class Bridge:
         message: str,
         adapter: Any,
         reply_to: str | None = None,
+        room: str | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
     ) -> str:
         """A headless agent loop for a trigger card. Like _agentic_chat_turn but
         against an isolated, throwaway history (never the shared chat) so a
         trigger never pollutes the user's conversation. Same toolset and the same
-        autonomy gate (_gated_run_tool_async). When ``reply_to`` is set, the
-        built-in draft_reply tool is offered (and handled inline).
+        autonomy gate (_gated_run_tool_async). When ``reply_to`` is set the
+        built-in draft_reply tool is offered; when ``room`` is set the chat
+        propose_reply tool is offered (both handled inline).
 
         Returns a short summary (the model's closing reply + any tool actions)
         for display on the kanban card — trigger turns have no chat transcript,
         so this is where the agent's output becomes visible."""
-        from .trigger_runner import draft_reply_schema
+        from .trigger_runner import draft_reply_schema, propose_reply_schema
 
         start = time.monotonic()
         tools = self._runnables_to_tools()
         if reply_to:
             tools = [*tools, draft_reply_schema()]
+        if room:
+            tools = [*tools, propose_reply_schema()]
         history: list[dict[str, Any]] = [{"role": "user", "content": message}]
         with self._lock:
             cancel = self._chat_cancels.get(chat_id) or threading.Event()
@@ -4996,6 +5226,10 @@ class Bridge:
                 elif tc.name == "draft_reply":
                     output = await self._gated_draft_reply(
                         tc.input, chat_id, reply_to, stage=stage
+                    )
+                elif tc.name == "propose_reply":
+                    output = await self._gated_propose_reply(
+                        tc.input, chat_id, room, stage=stage
                     )
                 else:
                     output = await self._gated_run_tool_async(
@@ -5078,6 +5312,52 @@ class Bridge:
                 },
             )
         return str(result.get("message", ""))
+
+    async def _gated_propose_reply(
+        self,
+        tool_input: dict[str, Any],
+        chat_id: str,
+        room: str | None,
+        stage: Callable[[str], None] | None = None,
+    ) -> str:
+        """Confirm, then surface an agent-proposed reply into the room composer.
+
+        The chat 'speak' checkpoint (design §2): nothing reaches the room
+        automatically. Gated with the same confirm prompt as every other tool, so
+        the card parks in 'awaiting human' until approved. On approval the text
+        only pre-fills the composer (runspec:room_draft) — the human reviews,
+        edits, and sends it (send_room_message). The agent never sends."""
+        text = str((tool_input or {}).get("text") or "").strip()
+        if not room:
+            return "✗ propose_reply: no room to reply to."
+        if not text:
+            return "✗ propose_reply: empty text — nothing to propose."
+        if stage is not None:
+            stage("awaiting_human")
+        request_id, event, holder = self._register_confirm(
+            chat_id, "propose_reply", tool_input, "confirm"
+        )
+        timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
+        approved = self._finish_confirm(request_id, holder, timed_out)
+        if holder.get("cancelled"):
+            return "⏹ propose_reply was not run — you stopped the assistant."
+        if not approved:
+            # Declined, but the turn continues — surface that as 'running' rather
+            # than leaving the card stuck in 'awaiting_human'.
+            if stage is not None:
+                stage("running")
+            return "✗ You declined to propose the reply."
+        if stage is not None:
+            stage("running")
+        # Pre-fill the room composer; the human reviews and sends from the Rooms
+        # view (send_room_message). Nothing goes on the wire here.
+        self._dispatch(
+            "runspec:room_draft", {"id": chat_id, "room": room, "text": text}
+        )
+        return (
+            f"✓ Proposed a reply into the room composer for {room}. Review it in "
+            "the Rooms view, then edit and send it — nothing was sent."
+        )
 
     def _save_reply_draft(self, entry_id: str, body: str) -> dict[str, Any]:
         """Blocking Outlook-COM draft save. Returns ``{ok, message, entry_id, to,

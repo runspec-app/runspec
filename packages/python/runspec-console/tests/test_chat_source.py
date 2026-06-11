@@ -147,6 +147,20 @@ def test_start_announces_presence_then_stop_says_away():
     assert transport.closed is True
 
 
+def test_start_sends_hello_first_with_identity():
+    transport = FakeTransport()
+    src = ChatSource(room="ops", user="console-1", transport=transport)
+    src.start(lambda ev: None)
+    src.stop()
+    # hello is the opening frame, carrying the declared room + user.
+    assert transport.sent[0] == {"type": "hello", "room": "ops", "user": "console-1"}
+    # …and it precedes the first presence announcement.
+    first_presence = next(
+        i for i, m in enumerate(transport.sent) if m["type"] == "presence"
+    )
+    assert first_presence > 0
+
+
 def test_run_drains_inbound_and_emits():
     transport = FakeTransport(
         inbound=[

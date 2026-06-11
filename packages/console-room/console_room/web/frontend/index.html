@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>runspec room</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <!-- Join gate. In dev mode the browser declares its name; when the server has
+         OIDC enabled the name comes from the session (and the field is locked). -->
+    <form id="join" class="join">
+      <h1>runspec room</h1>
+      <label id="user-label">Your name <input id="user" autocomplete="off" placeholder="alice" /></label>
+      <label>Room <input id="room" autocomplete="off" placeholder="ops" value="ops" /></label>
+      <button type="submit">Join</button>
+      <p id="join-hint" class="hint">Dev login — single sign-on is used when configured.</p>
+    </form>
+
+    <main id="app" hidden>
+      <header>
+        <span id="title"></span>
+        <span class="spacer"></span>
+        <span id="status" class="status"></span>
+        <a id="logout" class="logout" href="/logout" hidden>Sign out</a>
+      </header>
+      <div class="body">
+        <ul id="transcript" class="transcript"></ul>
+        <aside class="presence">
+          <h2>Present</h2>
+          <ul id="presence"></ul>
+        </aside>
+      </div>
+      <form id="composer" class="composer">
+        <input id="text" autocomplete="off" placeholder="Message…" />
+        <button type="submit">Send</button>
+      </form>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
