@@ -63,6 +63,11 @@ swap the manifest, tag prefix, and version.
    - The release workflow rebuilds from the tagged commit (for console: builds the
      `console-ui` Vite bundle into the wheel, builds the wheel, smoke-tests it, then
      publishes), so there's no stale-artifact risk.
+   - **The `tag` input must be the exact tag, `{prefix}v{version}`** (e.g.
+     `console-v0.4.0`) — hyphen before `v`, no spaces. A malformed input (a space,
+     a missing `-v`) now fails fast at the first step ("Validate release tag")
+     instead of wasting a build + publish and then erroring cryptically on
+     `gh release create`.
 
 Order matters: **merge first, then dispatch.** Dispatching before the merge/auto-tag
 means the tag doesn't exist yet and the run fails.
@@ -79,8 +84,16 @@ means the tag doesn't exist yet and the run fails.
 - **The release tag must point at a commit on `main`.** The tag-push path of each
   release workflow enforces this (`git merge-base --is-ancestor`). auto-tag always
   tags the merge commit, so this holds for the standard flow.
-- **Re-releasing a version doesn't work** — PyPI/npm reject duplicate versions, and
-  auto-tag skips a tag that already exists. Always bump to a fresh version.
+- **Re-releasing a *new* version doesn't work** — PyPI/npm reject duplicate
+  versions, and auto-tag skips a tag that already exists. To ship changed code,
+  always bump to a fresh version.
+- **Recovering a *partial* release is fine** — if the publish succeeded but the
+  `github-release` job failed (e.g. a bad tag input), just re-dispatch the same
+  workflow on the correct tag. The publish step is idempotent (`skip-existing`
+  for PyPI; an `npm view` guard for npm), so it skips the already-uploaded
+  artifacts and proceeds to create the GitHub Release. This does **not** let you
+  re-publish changed code under an existing version — only finish an interrupted
+  release.
 - **`runspec-linux` depends on `runspec-linux-core`** — when both need releasing,
   publish `runspec-linux-core` to PyPI **first**, then `runspec-linux`. A
   `runspec-linux` wheel can't resolve its `runspec-linux-core>=…` floor until that

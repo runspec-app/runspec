@@ -23,6 +23,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^linux-v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::Release tag '$RELEASE_TAG' is not well-formed — expected linux-v<x.y.z> (e.g. linux-v0.2.0). If you started this run manually, correct the 'tag' input: a hyphen before v, and no spaces."
+            exit 1
+          fi
+
       - name: Verify tag is on main
         if: github.event_name == 'push'
         run: |
@@ -78,6 +87,11 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotent re-run: if PyPI already has these files (e.g. a prior run
+          # published but the github-release job failed), skip rather than error,
+          # so the release can be completed by re-running the workflow.
+          skip-existing: true
 
   github-release:
     name: Create GitHub Release

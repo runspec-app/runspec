@@ -23,6 +23,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^node-v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::Release tag '$RELEASE_TAG' is not well-formed — expected node-v<x.y.z> (e.g. node-v0.28.1). If you started this run manually, correct the 'tag' input: a hyphen before v, and no spaces."
+            exit 1
+          fi
+
       - name: Verify tag is on main
         if: github.event_name == 'push'
         run: |
@@ -56,7 +65,17 @@ jobs:
 
       - name: Publish
         working-directory: packages/node
-        run: npm publish
+        # Idempotent re-run: skip if npm already has this version (e.g. a prior
+        # run published but the github-release job failed), so re-running can
+        # still create the GitHub Release.
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "npm already has $NAME@$VERSION — skipping publish."
+          else
+            npm publish
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

@@ -54,3 +54,8 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotent re-run: if PyPI already has these files (e.g. a prior run
+          # published but the github-release job failed), skip rather than error,
+          # so the release can be completed by re-running the workflow.
+          skip-existing: true
