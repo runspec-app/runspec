@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.41.1] — 2026-06-11
+
+### Fixed
+- **Confirm-event desktop toasts never appeared on Windows.** The toast send
+  called `ToastNotificationManager.create_toast_notifier(app_id)`, but pywinrt
+  projects that name as the *no-arg* `CreateToastNotifier()` overload — passing
+  it an AUMID raised `TypeError: Invalid parameter count`, which the best-effort
+  guard swallowed (so only a debug-log line, no toast; the taskbar flash still
+  fired). The AUMID overload is projected as `create_toast_notifier_with_id`;
+  the notifier is now built via that, falling back to the no-arg form (which
+  uses the process AUMID set by `set_app_id()`) when it isn't present. The
+  `winrt`-free unit tests now cover the overload selection.
+
+
 ## [0.41.0] — 2026-06-11
 
 ### Changed

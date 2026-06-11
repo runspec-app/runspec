@@ -123,6 +123,22 @@ def set_app_id() -> None:
         logger.debug("set_app_id failed", exc_info=True)
 
 
+def _create_notifier(manager: Any) -> Any:
+    """Build a ToastNotifier from the WinRT manager.
+
+    ``CreateToastNotifier`` is overloaded — a no-arg form and a
+    ``CreateToastNotifier(applicationId)`` form. pywinrt projects the latter
+    under the distinct name ``create_toast_notifier_with_id``; the bare
+    ``create_toast_notifier`` is the *no-arg* overload, so passing it an AUMID
+    raises ``TypeError: Invalid parameter count``. Prefer the explicit-AUMID
+    overload — the documented path for an unpackaged Win32 app — and fall back
+    to the no-arg form, which uses the process AUMID set by ``set_app_id()``."""
+    make_with_id = getattr(manager, "create_toast_notifier_with_id", None)
+    if make_with_id is not None:
+        return make_with_id(_APP_ID)
+    return manager.create_toast_notifier()
+
+
 def notify(
     title: str, body: str, *, on_click: Callable[[], None] | None = None
 ) -> bool:
@@ -150,7 +166,7 @@ def notify(
                     logger.debug("toast on_click failed", exc_info=True)
 
             toast.add_activated(_activated)
-        ToastNotificationManager.create_toast_notifier(_APP_ID).show(toast)
+        _create_notifier(ToastNotificationManager).show(toast)
         return True
     except Exception:
         logger.debug("desktop notification failed", exc_info=True)

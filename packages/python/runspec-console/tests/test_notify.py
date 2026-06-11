@@ -60,6 +60,39 @@ def test_toast_xml_escapes_special_chars():
     assert "<tag>" not in xml
 
 
+# ── notifier overload selection (the "Invalid parameter count" fix) ───────────
+
+
+def test_create_notifier_prefers_explicit_aumid_overload():
+    calls = []
+
+    class Mgr:
+        # CreateToastNotifier(applicationId) — pywinrt projects the String
+        # overload under this suffixed name.
+        def create_toast_notifier_with_id(self, aumid):
+            calls.append(("with_id", aumid))
+            return "notifier"
+
+        def create_toast_notifier(self):
+            calls.append(("noarg",))
+            return "noarg-notifier"
+
+    assert notify._create_notifier(Mgr()) == "notifier"
+    assert calls == [("with_id", notify._APP_ID)]  # AUMID passed, no-arg untouched
+
+
+def test_create_notifier_falls_back_to_no_arg():
+    calls = []
+
+    class Mgr:  # only the no-arg overload exists
+        def create_toast_notifier(self):
+            calls.append("noarg")
+            return "noarg-notifier"
+
+    assert notify._create_notifier(Mgr()) == "noarg-notifier"
+    assert calls == ["noarg"]
+
+
 # ── platform guards ───────────────────────────────────────────────────────────
 
 
