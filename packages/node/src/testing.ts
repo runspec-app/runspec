@@ -314,18 +314,12 @@ export class ParseHarness {
     return argv;
   }
 
+  // `suppressSummary` is retained for back-compat but is now a no-op: the
+  // run-summary terminal echo is opt-in (`summary_console`, default off), so a
+  // parse never leaks the closing line into test output, and the audit record
+  // is written to the log file only — never the console.
   private withSummaryPinned<T>(fn: () => T): T {
-    if (!this.suppressSummary) return fn();
-    const prefix = this.scriptName.toUpperCase().replace(/-/g, '_');
-    const key = `RUNSPEC_${prefix}_ARG_NO_SUMMARY`;
-    const prev = process.env[key];
-    process.env[key] = '1';
-    try {
-      return fn();
-    } finally {
-      if (prev === undefined) delete process.env[key];
-      else process.env[key] = prev;
-    }
+    return fn();
   }
 }
 

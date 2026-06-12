@@ -169,8 +169,7 @@ def _isolated_process_state() -> Iterator[None]:
     runspec.parse() (driven by ParseHarness.smoke) may mutate os.environ via a
     runnable's .runspec_env and install a sys.excepthook when [config.logging] is
     declared. Testing many runnables in one process would otherwise let one
-    runnable's environment bleed into the next. (ParseHarness already pins
-    RUNSPEC_ARG_NO_SUMMARY itself.)
+    runnable's environment bleed into the next.
     """
     import os
 

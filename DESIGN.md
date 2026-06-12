@@ -1434,22 +1434,19 @@ This is the version of `runspec` that makes the tool genuinely transformative ra
 
 ### Reserved-name schema validator
 
-Auto-injected arguments are growing — `debug` and `no-summary` are added by
-the language pack whenever `[config.logging]` is present. Today, if a user
-runnable already declares an arg with one of those names, the injection
+The language pack auto-injects `debug` whenever `[config.logging]` is present.
+Today, if a user runnable already declares an arg with that name, the injection
 silently no-ops and the auto-feature is quietly disabled. That's a confusing
 failure mode.
 
-A validator pass should centralise the reserved set
-(`{debug, no-summary, help}` and the reserved top-level section name
-`config`) and raise a clear `RunSpecError` at parse time when a user
-definition collides — with a renaming suggestion in the message. The set
-needs to be one constant in one module so future additions are a one-line
-change.
+A validator pass should centralise the reserved set (`{debug, help}` and the
+reserved top-level section name `config`) and raise a clear `RunSpecError` at
+parse time when a user definition collides — with a renaming suggestion in the
+message. The set needs to be one constant in one module so future additions are
+a one-line change.
 
 This is purely a friendlier-error change; it doesn't expand the spec. Track
-as a follow-up; not part of the run-summary work that introduced
-`no-summary`.
+as a follow-up.
 
 ### Invocation audit record
 
@@ -1461,7 +1458,7 @@ not yet combined in the file.
 Extend `_emit_run_summary()` to include the invocation context that is currently
 available at `parse()` return time: `source` (path to `runspec.toml`), and
 `arg_sources` (a dict of `{arg_name: "cli"|"env"|"default"}` for each arg,
-excluding auto-injected internals like `debug` and `no-summary`). Thread these
+excluding auto-injected internals like `debug`). Thread these
 through `configure_logging()` into `_summary_state` so they are available at exit.
 
 Adding arg *values* requires `_collect_extra` to recurse into nested dicts, or

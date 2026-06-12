@@ -126,31 +126,6 @@ def _parse_impl(
             "max_length": None,
         }
 
-    # Auto-inject --no-summary when [config.logging] is present. Suppresses the
-    # per-run summary record/stderr line for that one invocation.
-    if config.get("logging") and "no-summary" not in raw_script["args"]:
-        raw_script["args"]["no-summary"] = {
-            "name": "no-summary",
-            "type": "flag",
-            "options": None,
-            "default": False,
-            "required": False,
-            "description": "Suppress the per-run summary record and stderr line.",
-            "multiple": False,
-            "delimiter": None,
-            "short": None,
-            "env": None,
-            "deprecated": None,
-            "autonomy": None,
-            "ui": None,
-            "meta": None,
-            "position": None,
-            "range": None,
-            "pattern": None,
-            "min_length": None,
-            "max_length": None,
-        }
-
     # 5. Resolve subcommand if any. Global (top-level) args are merged into the
     # effective arg set so subcommands inherit them; command tokens are stripped
     # from argv_list, leaving flags/positionals for _parse_argv.
@@ -231,19 +206,15 @@ def _parse_impl(
 
     # 16. Configure logging (no-op when [config.logging] absent)
     debug = False
-    no_summary = False
     if config.get("logging"):
         pair = coerced_values.get("debug")  # stores (value, source) tuples
         if pair and pair[0] is not None:
             debug = bool(pair[0])
-        ns_pair = coerced_values.get("no_summary")  # _coerce_values normalises dashes
-        if ns_pair and ns_pair[0] is not None:
-            no_summary = bool(ns_pair[0])
 
     # Serialize invocation args for the run_summary audit record.
-    # Excludes auto-injected flags (debug, no_summary) and password args — a
-    # secret must never be written to the audit log.
-    _auto_args = {"debug", "no_summary"}
+    # Excludes the auto-injected --debug flag and password args — a secret must
+    # never be written to the audit log.
+    _auto_args = {"debug"}
     invocation_args = {k: {"value": str(arg.value), "source": arg.source} for k, arg in runspec_obj._args.items() if arg.value is not None and k not in _auto_args and arg.type != "password"}
 
     try:
@@ -251,7 +222,6 @@ def _parse_impl(
             config.get("logging"),
             runnable_name=name,
             debug=debug,
-            no_summary=no_summary,
             autonomy=autonomy,
             agent=agent,
             command_path=command_path,

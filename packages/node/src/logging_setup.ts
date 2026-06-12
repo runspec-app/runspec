@@ -764,7 +764,6 @@ export interface ConfigureLoggingOptions {
   runnableName: string;
   configPath: string;
   debug?: boolean;
-  noSummary?: boolean;
   autonomy?: string;
   agent?: boolean;
   commandPath?: string[];
@@ -793,12 +792,13 @@ export interface ConfigureLoggingOptions {
  * `package.json` skipping `node_modules`, mirroring Python's venv-root
  * convention. Falls back to `~/logs/` when no project root is found.
  *
- * Run summary (when `logCfg.summary` is true and `noSummary` is false)
- * counts log events by level and emits a single record at process exit
- * with duration, exit code, exception class, and per-level counts to the
- * audit file. The human-readable one-line echo to stderr is opt-in via
- * `logCfg.summaryConsole` (default false) so stdout stays clean for pipes and
- * the line never reaches a stderr=ERROR log processor by default.
+ * Run summary (when `logCfg.summary` is true) counts log events by level and
+ * emits a single record at process exit with duration, exit code, exception
+ * class, and per-level counts to the audit file. The human-readable one-line
+ * echo to stderr is opt-in via `logCfg.summaryConsole` (default false) so
+ * stdout stays clean for pipes and the line never reaches a stderr=ERROR log
+ * processor by default. To skip the audit record, set `summary = false` in
+ * `[config.logging]`.
  */
 export function configureLogging(opts: ConfigureLoggingOptions): void {
   if (!opts.logCfg || _configured) return;
@@ -830,18 +830,14 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
   const counter = new RunSummaryCounter();
   _handlers.push(counter);
 
-  const runnablePrefix = opts.runnableName.toUpperCase().replace(/-/g, '_');
-  // Per-invocation kill switch (--no-summary / env) suppresses both parts.
-  const suppressed =
-    !!opts.noSummary ||
-    ['1', 'true', 'yes'].includes((process.env[`RUNSPEC_${runnablePrefix}_ARG_NO_SUMMARY`] ?? '').toLowerCase());
   // `summary` gates the structured audit record (the data the console
   // history/analytics tabs and `runspec logs` read). `summary_console` gates the
   // human-readable terminal echo — off by default so stdout stays clean for pipes
   // and the line never reaches a stream that log processors (e.g. Rundeck, which
-  // tags stderr as ERROR) would flag.
-  const writeRecord = opts.logCfg.summary !== false && !suppressed;
-  const writeConsole = opts.logCfg.summaryConsole === true && !suppressed;
+  // tags stderr as ERROR) would flag. Both are package-level controls; set
+  // `summary = false` in [config.logging] to drop the record.
+  const writeRecord = opts.logCfg.summary !== false;
+  const writeConsole = opts.logCfg.summaryConsole === true;
 
   if (writeRecord || writeConsole) {
     const [user, userTarget] = _getInvoker();

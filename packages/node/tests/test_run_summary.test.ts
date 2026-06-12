@@ -20,15 +20,14 @@ function tmpDir(): string {
 }
 
 function makeCfg(dir: string, overrides: Record<string, unknown> = {}): Parameters<typeof configureLogging>[0] {
-  const { debug, noSummary, autonomy, agent, commandPath, ...logOverrides } = overrides as {
-    debug?: boolean; noSummary?: boolean; autonomy?: string; agent?: boolean; commandPath?: string[];
+  const { debug, autonomy, agent, commandPath, ...logOverrides } = overrides as {
+    debug?: boolean; autonomy?: string; agent?: boolean; commandPath?: string[];
   } & Record<string, unknown>;
   return {
     logCfg: { rotate: 'midnight', keep: 7, summary: true, ...logOverrides },
     runnableName: 'myscript',
     configPath: path.join(dir, 'runspec.toml'),
     debug,
-    noSummary,
     autonomy,
     agent,
     commandPath,
@@ -46,7 +45,6 @@ function captureStderr() {
 
 beforeEach(() => {
   _resetForTest();
-  delete process.env['RUNSPEC_MYSCRIPT_ARG_NO_SUMMARY'];
 });
 
 afterAll(() => {
@@ -168,16 +166,6 @@ test('summary emit is idempotent', () => {
 
 // ── disable switches ─────────────────────────────────────────────────────────
 
-test('noSummary option disables summary', () => {
-  const dir = tmpDir();
-  configureLogging(makeCfg(dir, { noSummary: true }));
-  const cap = captureStderr();
-  emitRunSummary(); // no-op because state is null
-  cap.restore();
-  expect(cap.lines.join('')).not.toContain('runspec: ');
-  expect(fs.existsSync(path.join(dir, 'logs', 'myscript.log'))).toBe(false);
-});
-
 test('summary=false in config disables the audit record', () => {
   const dir = tmpDir();
   configureLogging(makeCfg(dir, { summary: false }));
@@ -208,16 +196,6 @@ test('summary_console works independently of summary (line on, record off)', () 
     ? fs.readFileSync(logFile, 'utf-8').trim().split('\n').map(l => JSON.parse(l))
     : [];
   expect(records.find(o => o.logger === RUN_SUMMARY_LOGGER)).toBeUndefined();
-});
-
-test('RUNSPEC_MYSCRIPT_ARG_NO_SUMMARY=1 disables summary', () => {
-  process.env['RUNSPEC_MYSCRIPT_ARG_NO_SUMMARY'] = '1';
-  const dir = tmpDir();
-  configureLogging(makeCfg(dir));
-  const cap = captureStderr();
-  emitRunSummary();
-  cap.restore();
-  expect(cap.lines.join('')).not.toContain('runspec: ');
 });
 
 // ── stderr line shape ────────────────────────────────────────────────────────

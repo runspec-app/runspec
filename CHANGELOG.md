@@ -7,6 +7,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.36.0] / [node-0.32.0] — 2026-06-12
+
+### Removed
+
+- **The auto-injected `--no-summary` flag** (and its `RUNSPEC_*_ARG_NO_SUMMARY`
+  env var) is gone from every `[config.logging]` runnable. It dated from when the
+  run-summary line was *always* printed to stderr and existed to mute that noise
+  for a single run. The `0.33.0` / `node-0.29.0` split made the terminal echo
+  opt-in (`summary_console`, default off), which left the flag mostly doing one
+  thing: suppressing the structured **audit record** — the data the console
+  **history**/**analytics** tabs and `runspec logs` read. Exposing a per-run
+  "don't record me" switch as a global flag on every runnable undermined that
+  feature and read confusingly (a double-negative defaulting to false), so it has
+  been removed.
+    - **Suppression is now package-level only.** Set `summary = false` in
+      `[config.logging]` to drop the audit record; leave `summary_console` off
+      (the default) to keep the terminal quiet. Both remain in place and
+      unchanged.
+    - **No behaviour change for a default config** — the audit record was, and
+      still is, written on every run.
+    - `configureLogging` / `configure_logging` no longer accept a
+      `noSummary` / `no_summary` parameter. The `ParseHarness` `suppress_summary`
+      / `suppressSummary` option is retained for back-compat but is now a no-op
+      (the opt-in echo never leaks into test output).
+    - Applied at parity in **Python** (`0.36.0`) and **Node** (`node-0.32.0`);
+      `spec/SPEC.md`, `docs/logging.md`, and `docs/testing.md` updated.
+
 ## [node-0.31.0] — 2026-06-12
 
 ### Added

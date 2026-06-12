@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import os
 import tempfile
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -314,21 +313,14 @@ class ParseHarness:
 
     @contextlib.contextmanager
     def _env(self) -> Iterator[None]:
-        """Pin RUNSPEC_ARG_NO_SUMMARY during a parse so the run-summary line does
-        not leak into test output for specs with [config.logging]."""
-        if not self._suppress_summary:
-            yield
-            return
-        key = "RUNSPEC_ARG_NO_SUMMARY"
-        prev = os.environ.get(key)
-        os.environ[key] = "1"
-        try:
-            yield
-        finally:
-            if prev is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = prev
+        """Context wrapper around a parse.
+
+        The ``suppress_summary`` knob is retained for back-compat but is now a
+        no-op: since the run-summary terminal echo is opt-in (``summary_console``,
+        default off), a parse never leaks the closing line into test output, and
+        the audit record is written to the log file only — never the console.
+        """
+        yield
 
 
 def harness(

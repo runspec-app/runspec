@@ -76,8 +76,8 @@ def _normalise_logging(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     stdout stays clean for pipes and the line never lands on a stream that log
     processors (e.g. Rundeck) tag as ERROR. Turn it on for interactive use.
 
-    Suppress both for a single invocation with `--no-summary` or
-    `RUNSPEC_NO_SUMMARY=1`.
+    Both are package-level controls: set `summary = false` to drop the audit
+    record, `summary_console = false` (the default) to keep the terminal quiet.
     """
     if raw is None:
         return None

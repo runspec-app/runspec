@@ -87,7 +87,6 @@ def configure_logging(
     *,
     runnable_name: str,
     debug: bool = False,
-    no_summary: bool = False,
     autonomy: str | None = None,
     agent: bool = False,
     command_path: list[str] | None = None,
@@ -122,12 +121,13 @@ def configure_logging(
     users / parallel runs (no shared file, hence no rotation race) at the cost
     of moving retention to `runspec logs compact`/`prune`.
 
-    Run summary (when `log_cfg["summary"]` is true and `no_summary` is false)
-    counts log events by level and emits a single record at process exit
-    with duration, exit code, exception class, and per-level counts to the
-    audit file. The human-readable one-line echo to stderr is opt-in via
-    `log_cfg["summary_console"]` (default false) so stdout stays clean for
-    pipes and the line never reaches a stderr=ERROR log processor by default.
+    Run summary (when `log_cfg["summary"]` is true) counts log events by level
+    and emits a single record at process exit with duration, exit code,
+    exception class, and per-level counts to the audit file. The human-readable
+    one-line echo to stderr is opt-in via `log_cfg["summary_console"]` (default
+    false) so stdout stays clean for pipes and the line never reaches a
+    stderr=ERROR log processor by default. To skip the audit record entirely,
+    set `summary = false` in `[config.logging]`.
     """
     global _configured, _summary_state, _debug
     if log_cfg is None or _configured:
@@ -201,17 +201,14 @@ def configure_logging(
     # summary is off. The hook also reads _summary_state when present.
     _install_excepthook()
 
-    runnable_prefix = runnable_name.upper().replace("-", "_")
-    # Per-invocation kill switch (--no-summary / env) suppresses both the file
-    # record and the console echo for this one run.
-    suppressed = no_summary or _env_truthy(f"RUNSPEC_{runnable_prefix}_ARG_NO_SUMMARY")
     # `summary` gates the structured audit record (the data the console
     # history/analytics tabs and `runspec logs` read). `summary_console` gates
     # the human-readable terminal echo — off by default so stdout stays clean
     # for pipes and the line never reaches a stream that log processors (e.g.
-    # Rundeck, which tags stderr as ERROR) would flag.
-    write_record = bool(log_cfg.get("summary", True)) and not suppressed
-    write_console = bool(log_cfg.get("summary_console", False)) and not suppressed
+    # Rundeck, which tags stderr as ERROR) would flag. Both are package-level
+    # controls in [config.logging]; set `summary = false` to drop the record.
+    write_record = bool(log_cfg.get("summary", True))
+    write_console = bool(log_cfg.get("summary_console", False))
     if write_record or write_console:
         user, user_target = _get_invoker()
         _summary_state = {
@@ -290,10 +287,6 @@ def _collect_extra(record: logging.LogRecord) -> dict[str, Any]:
             continue
         result[key] = _redact_value(key, val) if isinstance(val, str) else val
     return result
-
-
-def _env_truthy(name: str) -> bool:
-    return os.environ.get(name, "").lower() in ("1", "true", "yes")
 
 
 def _get_invoker() -> tuple[str, str | None]:

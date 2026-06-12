@@ -275,10 +275,12 @@ line doesn't trip log processors that flag any case-insensitive `error` match â€
 e.g. Rundeck's output highlighter, which would otherwise colour a clean run red
 and tag it at ERROR level for downstream consumers.
 
-A `--no-summary` flag is auto-added alongside `--debug` and suppresses
-both the record and the stderr line for the invocation. The
-`RUNSPEC_NO_SUMMARY=1` environment variable does the same. The
-`no-summary` name is reserved when `[config.logging]` is present.
+The summary has two package-level controls in `[config.logging]`: `summary`
+(default true) gates the structured audit record, and `summary_console`
+(default false) gates the human-readable stderr line. Set `summary = false`
+to drop the record entirely. There is no per-invocation override flag â€”
+the audit record is the data the console history/analytics read, so it is
+not exposed as a user-facing toggle on every runnable.
 
 In agent mode, `runspec serve` returns the same information per call via
 the MCP `_meta` extension:

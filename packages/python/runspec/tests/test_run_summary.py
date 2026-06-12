@@ -335,11 +335,6 @@ class TestExcStructuredHelpers:
 
 
 class TestDisable:
-    def test_no_summary_param_disables_summary(self, capsys, tmp_path):
-        configure_logging(_cfg(summary=True), runnable_name="x", no_summary=True)
-        # _summary_state must NOT be populated when summary is disabled
-        assert ls._summary_state is None
-
     def test_summary_false_in_config_disables_record(self, tmp_path):
         # summary=False drops the audit record; with console off (default) the
         # whole hook is inactive.
@@ -358,12 +353,6 @@ class TestDisable:
         log_path = tmp_path / "logs" / "x.log"
         lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()] if log_path.exists() else []
         assert not any(obj.get("logger") == "runspec.runsummary" for obj in lines)
-
-    def test_env_var_disables_summary(self, monkeypatch):
-        monkeypatch.setenv("RUNSPEC_X_ARG_NO_SUMMARY", "1")
-        # Suppresses both parts even with console explicitly on.
-        configure_logging(_cfg(summary=True, summary_console=True), runnable_name="x")
-        assert ls._summary_state is None
 
 
 # ── Stderr line shape ────────────────────────────────────────────────────────

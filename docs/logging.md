@@ -300,14 +300,21 @@ summary_console = true   # show the closing line in the terminal
 
 (The level words are abbreviated `warn`/`err` purely to keep the line terse.)
 
-Suppress **both** parts for a single invocation with `--no-summary` (or
-`RUNSPEC_ARG_NO_SUMMARY=1`). Set `summary = false` to drop the audit record too
-(note: that also removes the run from the console history/analytics).
+Both parts are **package-level** controls in `[config.logging]` — there is no
+per-invocation override flag on the runnable. Set `summary = false` to drop the
+audit record (note: that also removes the run from the console
+history/analytics), and leave `summary_console` off (the default) to keep the
+terminal quiet.
 
 !!! note "Availability"
     Run summaries landed in **runspec 0.12.x** and **node-0.12.0**. The
     `summary`/`summary_console` split (audit record always; terminal echo
-    opt-in) arrived in **runspec 0.33.0** and **node-0.29.0**.
+    opt-in) arrived in **runspec 0.33.0** and **node-0.29.0**. The
+    per-invocation `--no-summary` flag (and `RUNSPEC_*_ARG_NO_SUMMARY` env
+    var) was removed in **runspec 0.36.0** and **node-0.32.0** — once the
+    echo became opt-in, the flag mostly served to suppress the audit record
+    the console depends on, so suppression now lives only at the package level
+    (`summary = false`).
 
 ---
 

@@ -165,17 +165,17 @@ def h() -> ParseHarness:
 
 @pytest.fixture(autouse=True)
 def _quiet_runspec(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep output clean for a [config.logging] spec, and never trip into the
-    agent/interactive paths from a stray env var on the host."""
-    monkeypatch.setenv("RUNSPEC_ARG_NO_SUMMARY", "1")
+    """Never trip into the agent/interactive paths from a stray env var on the
+    host."""
     monkeypatch.delenv("RUNSPEC_AGENT", raising=False)
 ```
 
-`_quiet_runspec` is `autouse`, so it applies everywhere: it pins
-`RUNSPEC_ARG_NO_SUMMARY=1` (which also silences the trailing
-`runspec: … completed` summary line for logging-enabled specs) and clears
+`_quiet_runspec` is `autouse`, so it applies everywhere: it clears
 `RUNSPEC_AGENT` so the host environment can't change parsing behaviour
-mid-suite. `monkeypatch.setenv` restores both after the session.
+mid-suite. No summary-suppression is needed — the `runspec: … completed`
+terminal line is opt-in (`summary_console`, default off), so a parse never
+leaks it into test output, and the audit record is written to the log file
+only.
 
 Then a parse-layer test file is just:
 

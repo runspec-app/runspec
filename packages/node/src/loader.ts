@@ -41,7 +41,7 @@ function normaliseLogging(raw: Record<string, unknown> | undefined): LoggingConf
   // (default false) additionally echoes a one-line human-readable summary to the
   // terminal (stderr); off by default so stdout stays clean for pipes and the
   // line never lands on a stream that log processors (e.g. Rundeck) tag as ERROR.
-  // Suppress both per-invocation with `--no-summary` or `RUNSPEC_NO_SUMMARY=1`.
+  // Both are package-level controls: set `summary = false` to drop the record.
   if (raw === undefined) return undefined;
   // `store` selects the file layout: 'single' = one rotating {runnable}.log;
   // 'per-run' = one file per invocation. Unknown values fall back to 'single'
