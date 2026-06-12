@@ -83,6 +83,21 @@ def test_ws_rejected_without_session():
             pass
 
 
+def test_ws_reject_logs_actionable_diagnostic(caplog):
+    # A reject closes before accept → the browser sees a bare HTTP 403 with no
+    # close code, so the server log is the only place that says *why*. Assert it
+    # names the 4401 cause and the cookie tell (no session cookie rode this
+    # handshake — the discriminator for the "proxy drops cookies on upgrade" bug).
+    client = TestClient(_app())
+    with caplog.at_level("WARNING", logger="console_room.web"):
+        with pytest.raises(Exception):
+            with client.websocket_connect("/ws?room=ops"):
+                pass
+    msg = "\n".join(r.getMessage() for r in caplog.records)
+    assert "4401" in msg and "session" in msg
+    assert "cookie-header=no" in msg and "session-cookie=no" in msg
+
+
 # ── the login → session → access path ─────────────────────────────────────────
 
 

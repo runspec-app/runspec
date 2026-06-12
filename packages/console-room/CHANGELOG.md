@@ -4,6 +4,20 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.5.3]
+
+### Changed
+- **WebSocket rejects now log an actionable diagnostic.** A `/ws` handshake that
+  fails an auth/identity check closes *before* `accept()`, which the ASGI server
+  turns into a bare **HTTP 403** at the browser — the custom close code (4401/
+  4000) never reaches it, so the browser can't say *why*. Each reject branch now
+  logs one line naming the cause and a handshake summary (`client`, `origin`,
+  `cookie-header`, `session-cookie`). The cookie fields are the tell for the
+  common "login works over HTTP but the WebSocket 403s" case: a reverse proxy
+  that forwards `Cookie` on normal requests but drops it on the `Upgrade` request
+  leaves the WS with no session (`cookie-header=no`). No behaviour change — the
+  same connections are accepted/rejected as before, just traceable now.
+
 ## [0.5.2]
 
 ### Fixed

@@ -72,6 +72,18 @@ def test_ws_requires_room():
                 pass
 
 
+def test_ws_no_room_logs_diagnostic(caplog):
+    # The dev-mode no-room reject logs which branch fired (so a bare HTTP 403 at
+    # the browser is traceable in the server log).
+    with _client() as client:
+        with caplog.at_level("INFO", logger="console_room.web"):
+            with pytest.raises(Exception):
+                with client.websocket_connect("/ws?user=ana"):
+                    pass
+    msg = "\n".join(r.getMessage() for r in caplog.records)
+    assert "no ?room= or ?queue=" in msg
+
+
 def test_ws_two_clients_exchange_message_and_presence():
     store = FakeStore()
     with _client(store) as client:

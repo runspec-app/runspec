@@ -52,6 +52,26 @@ FRONTEND_DIR = Path(__file__).parent / "frontend"
 INDEX_HTML = FRONTEND_DIR / "index.html"
 
 
+def _ws_diag(websocket: WebSocket) -> str:
+    """A one-line summary of a WebSocket handshake, for diagnosing a reject.
+
+    A reject closes the socket *before* ``accept()``, which the ASGI server
+    turns into an **HTTP 403** at the browser — the custom 4401/4000 close code
+    never reaches it. So the only way to tell *why* a browser saw a 403 is the
+    server log; this gives it the tells. The cookie fields are the key one for
+    the common "login works over HTTP but the WS 403s" case: a reverse proxy
+    that forwards ``Cookie`` on normal requests but drops it on the ``Upgrade``
+    request leaves the WS with no session (``cookie-header=no``)."""
+    client = websocket.client.host if websocket.client else "?"
+    origin = websocket.headers.get("origin") or "-"
+    cookie_header = "yes" if websocket.headers.get("cookie") else "no"
+    session_cookie = "yes" if "session" in websocket.cookies else "no"
+    return (
+        f"client={client} origin={origin} "
+        f"cookie-header={cookie_header} session-cookie={session_cookie}"
+    )
+
+
 class _StarletteWS:
     """Adapt a Starlette ``WebSocket`` to the ``WebSocketLike`` seam: ``receive``
     returns the next JSON object, ``{}`` for a non-JSON frame to skip, or ``None``
@@ -102,6 +122,15 @@ def create_app(
         if auth is not None:
             user = session_user(websocket)
             if not user:
+                logger.warning(
+                    "room: WS rejected (close 4401 → browser sees HTTP 403) — "
+                    "an authenticated session is required but none rode the "
+                    "handshake. %s. cookie-header=no → a proxy is stripping "
+                    "cookies on the WebSocket upgrade; cookie-header=yes but "
+                    "session-cookie=no → the session cookie isn't reaching the "
+                    "WS (name / path / Secure-over-plain-ws mismatch).",
+                    _ws_diag(websocket),
+                )
                 await websocket.close(code=4401)  # unauthenticated
                 return
         else:
@@ -114,14 +143,28 @@ def create_app(
         queue = (websocket.query_params.get("queue") or "").strip()
         if queue:
             if not valid_token(queue) or not valid_token(user):
+                logger.warning(
+                    "room: WS rejected (close 4000 → browser sees HTTP 403) — "
+                    "unusable helpdesk token (queue=%r user=%r): a path "
+                    "separator or whitespace is not allowed in either. %s",
+                    queue,
+                    user,
+                    _ws_diag(websocket),
+                )
                 await websocket.close(code=4000)  # unusable queue / identity token
                 return
             room = conversation_room(queue, user)
         else:
             room = (websocket.query_params.get("room") or "").strip()
             if not room:
+                logger.info(
+                    "room: WS rejected (close 4000 → browser sees HTTP 403) — "
+                    "no ?room= or ?queue= in the handshake query. %s",
+                    _ws_diag(websocket),
+                )
                 await websocket.close(code=4000)  # room required
                 return
+        logger.debug("room: WS accepted — user=%r room=%r", user, room)
         await websocket.accept()
         await BrowserConnection(_StarletteWS(websocket), user=user, room=room).run(hub)
 
