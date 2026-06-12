@@ -11,20 +11,68 @@ visitor browser → private conversation → agent inbox → **Claim** → reply
 visitor sees it (and a reply after Resolve reopens the thread). It works.
 
 **Published versions:** `runspec` 0.34.0 · `runspec-node` 0.30.0 ·
-`runspec-room` 0.5.0 · `runspec-console` up to 0.45.0 (on main). Design notes:
-`docs/design/helpdesk-rooms.md` (the full design + the H0–H4 markers below).
+`runspec-room` 0.5.1 · `runspec-console` 0.48.0 (all on main + published). Design
+notes: `docs/design/helpdesk-rooms.md` (the full design + the H0–H4 markers
+below); `docs/design/console-work-inbox.md` (the work inbox).
 
-**🔶 Open PRs to merge + publish first thing:**
-- **#206 — `runspec-room` 0.5.1**: visitor join form adapts to the link
-  (`?queue=` shows only the queue, hides Room; `?room=` hides queue; bare URL
-  shows both with a hint) + reads `?user=` for dev-mode identity. (Fixes the
-  "why both fields / joined `ops` / shows `guest`" papercuts.)
-- **#207 — `runspec-console` 0.46.0**: helpdesk **inbox notifications** (Rooms
-  tab count badge via a new `runspec:room_attention` event, corner toast on a new
-  visitor message, per-thread unread dots + left-list badges, mark-read on open).
-  Also folds in the **0.45.1 fixes** (cherry-picked, never released alone):
-  `room_command`-with-args used verbatim (no more `nc … connect --host` footgun /
-  `#` workaround); connection-tester fast-path + 12s timeout (was hanging).
+**🔶 Next live test — the self-service catalog / Forms (the one unexercised
+path).** Everything else in the loop is proven; the catalog has never been seen
+working live. Full step-by-step in the **"0.5.1 live-test checklist"** section
+just below. Status blocker was Nexus holding the `runspec-room` 0.5.1 wheel off
+the work host — pick up once it lands. **A TCP-forwarding-enabled host has now
+been found**, so the default `direct-tcpip` tunnel transport can be used (no more
+`room_via = "exec"` relay), which sidesteps most of the earlier deploy papercuts.
+
+## ✅ 0.5.1 live-test checklist (next session — start here)
+
+Folded in from the session that built console 0.47.0/0.48.0. Drives the whole
+helpdesk loop to the one still-unexercised feature (self-service catalog/Forms),
+on the newly-found **TCP-forwarding-enabled** host (default tunnel transport).
+
+**Prereqs — the version gates that bit us before:**
+- [ ] **runspec-room ≥ 0.5.1** is the *running process* on the host, not just the
+  installed wheel. An old process still serving gives `invalid hello; closing` →
+  console reconnect-loop. (≥ 0.5.0 is the hard floor for the namespace hello.)
+- [ ] **runspec-console ≥ 0.48.0** on the desktop (Hosts-editor queue fields +
+  room desktop notifications + the work Inbox).
+- [ ] For the catalog: the **agent host's runspec ≥ 0.34.0** (understands
+  `discoverable`). Older hosts surface nothing — safe, but the catalog stays empty.
+
+**Staff the queue — now via the UI (0.48.0, no hand-edited TOML):**
+- [ ] Settings → Jump Hosts → the TCP-forward host: set **Helpdesk queue** =
+  `it-support`, **Room port** = `8765`.
+- [ ] **Leave "Connect via" = Tunnel** (the default) — the win from the
+  forwarding-enabled host; skip `room_via = exec` / Relay command entirely.
+- [ ] Optionally set **Catalog allowlist** to scope self-service runnables (empty
+  = all marked).
+- [ ] Hit the in-app **Test** button to confirm tunnel + room handshake. *Don't*
+  trust a local `ssh host` test (OpenSSH ControlMaster/ProxyCommand ≠ the console's
+  pure-paramiko path).
+
+**The unexercised path — self-service catalog / Forms:**
+- [ ] On a host running runspec ≥ 0.34.0, mark one runnable
+  `discoverable = ["operator", "self-service"]`, **reinstall** so it surfaces.
+- [ ] Confirm the console **publishes the catalog** (on subscribe + each discovery
+  refresh).
+- [ ] Visitor browser at **`?queue=it-support`** (0.5.1 adapts the join form to
+  show only the queue) → **Catalog panel lights up** → submit a Form.
+- [ ] Submission lands as a **`⚙ request` card** in the inbox; enacting it runs
+  through the **autonomy gate**. ← last helpdesk feature never seen working live.
+
+**New 0.48.0 surfaces to watch while testing:**
+- [ ] **Inbox tab** (first tab): unclaimed thread → **Action needed → Claim**; the
+  catalog request's gate → **Needs approval → Approve/Deny**; **Open** deep-links
+  to the owning tab. Good single pane to drive the loop from.
+- [ ] **Desktop notification**: a visitor message while the console isn't focused
+  raises an OS toast + taskbar flash (Windows, `[notifications]` extra). Opt-out
+  `[console] room_notifications = false`.
+
+**Gotchas to remember:**
+- **Claim-gates spend** — an unclaimed thread is visible but burns no model tokens
+  until Claim.
+- **Rota toggles restart chat**, but the inbox is rota-independent.
+- Empty catalog ≈ agent host runspec < 0.34.0, or the runnable wasn't reinstalled
+  after marking `discoverable`.
 
 **Live-test learnings (corporate network — save future deploys hours):**
 - The host has **`AllowTcpForwarding no`** → the direct-tcpip tunnel is refused
