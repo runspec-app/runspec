@@ -237,6 +237,7 @@ def _supervisor_stub():
     s._chat_sources = {}
     s._agent_rooms = {}
     s._thread_states = {}
+    s._published_catalogs = {}
     s._trigger_engine = None
     s.dispatched: list[tuple[str, dict]] = []
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
@@ -246,8 +247,10 @@ def _supervisor_stub():
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
     s._feed_engine_for = types.MethodType(Bridge._feed_engine_for, s)
     s._chat_supervise = types.MethodType(Bridge._chat_supervise, s)
-    s._publish_catalog = lambda spec, source: s.published.append(spec["room"])
     s.published: list[str] = []
+    s._publish_catalog = lambda spec, source, *, force=False: s.published.append(
+        spec["room"]
+    )
     return s
 
 
@@ -294,9 +297,9 @@ def test_chat_supervisor_agent_mode_publishes_catalog_and_registers():
     registered: list[dict[str, str]] = []
     orig_publish = s._publish_catalog
 
-    def publish_and_snapshot(sp, source):
+    def publish_and_snapshot(sp, source, *, force=False):
         registered.append(dict(s._agent_rooms))  # registered before publishing
-        orig_publish(sp, source)
+        orig_publish(sp, source, force=force)
 
     s._publish_catalog = publish_and_snapshot
     s._chat_stop.clear()
@@ -404,6 +407,62 @@ def test_send_room_message_unstaffed_conversation_fails():
         "helpdesk/hr/carol@corp", "hi"
     )
     assert out["ok"] is False and "not connected" in out["error"]
+
+
+# ── catalog publish dedup ──────────────────────────────────────────────────────
+
+
+class _CatalogSource:
+    def __init__(self) -> None:
+        self.sends: list[list[dict]] = []
+
+    def send_catalog(self, tools: list[dict]) -> None:
+        self.sends.append(tools)
+
+
+def _catalog_stub(runnables: list[dict[str, Any]]):
+    s = types.SimpleNamespace()
+    s._lock = threading.Lock()
+    s._runnables_cache = runnables
+    s._catalog_index = {}
+    s._published_catalogs = {}
+    s._publish_catalog = types.MethodType(Bridge._publish_catalog, s)
+    return s
+
+
+def test_publish_catalog_skips_unchanged_then_sends_on_change():
+    rn = {
+        "name": "reset-password",
+        "host": "web01",
+        "description": "",
+        "autonomy": "confirm",
+        "args": [],
+        "requireCommand": False,
+        "rawSpec": {"discoverable": ["self-service"]},
+    }
+    s = _catalog_stub([rn])
+    spec = {"room": "helpdesk/it", "queue": "it"}
+    src = _CatalogSource()
+
+    s._publish_catalog(spec, src)  # first publish → sends
+    s._publish_catalog(spec, src)  # discovery refresh, nothing changed → skipped
+    assert len(src.sends) == 1
+    assert [t["name"] for t in src.sends[0]] == ["reset-password"]
+
+    # A new self-service runnable appears → the next refresh re-sends.
+    s._runnables_cache = [rn, {**rn, "name": "request-vm"}]
+    s._publish_catalog(spec, src)
+    assert len(src.sends) == 2
+    assert [t["name"] for t in src.sends[1]] == ["reset-password", "request-vm"]
+
+
+def test_publish_catalog_force_always_sends():
+    s = _catalog_stub([])
+    spec = {"room": "helpdesk/it", "queue": "it"}
+    src = _CatalogSource()
+    s._publish_catalog(spec, src, force=True)
+    s._publish_catalog(spec, src, force=True)  # reconnect → resend even if empty
+    assert src.sends == [[], []]
 
 
 # ── thread controls (claim / resolve / reopen / close) ─────────────────────────

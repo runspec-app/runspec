@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Empty, Input, Tag, Typography, message } from 'antd'
-import { SendOutlined, RobotOutlined, FlagOutlined, CheckOutlined, UndoOutlined, CloseOutlined } from '@ant-design/icons'
+import { SendOutlined, RobotOutlined, FlagOutlined, CheckOutlined, UndoOutlined, CloseOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
 import { bridge, type RoomInfo, type RoomMessage, type RoomPresence, type RoomConversation, type ThreadState } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
@@ -64,6 +64,7 @@ export function RoomsView({ active }: { active: boolean }) {
   const [threadSel, setThreadSel] = useState<Record<string, string>>({})
   const [sending, setSending] = useState(false)
   const [acting, setActing] = useState(false)
+  const [inboxCollapsed, setInboxCollapsed] = useState(false)
 
   const transcriptRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<any>(null)
@@ -277,11 +278,27 @@ export function RoomsView({ active }: { active: boolean }) {
         ))}
       </div>
 
-      {/* Helpdesk inbox: the queue's conversations */}
-      {isQueue && (
-        <div style={{ width: 220, flexShrink: 0, borderRight: `1px solid ${border}`, background: panelBg, overflowY: 'auto' }}>
-          <div style={{ padding: '10px 14px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: isDark ? '#8b93a3' : '#888' }}>
+      {/* Helpdesk inbox: the queue's conversations. Collapsible — tuck it away to
+          focus on a single conversation; a thin rail re-expands it. */}
+      {isQueue && inboxCollapsed && (
+        <div
+          onClick={() => setInboxCollapsed(false)}
+          title="Show inbox"
+          style={{ width: 32, flexShrink: 0, borderRight: `1px solid ${border}`, background: panelBg, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 12, gap: 8 }}
+        >
+          <MenuUnfoldOutlined style={{ color: isDark ? '#8b93a3' : '#888' }} />
+          <Text style={{ fontSize: 11, writingMode: 'vertical-rl', color: isDark ? '#8b93a3' : '#888' }}>
             Inbox · {queueThreads.length}
+          </Text>
+        </div>
+      )}
+      {isQueue && !inboxCollapsed && (
+        <div style={{ width: 240, flexShrink: 0, borderRight: `1px solid ${border}`, background: panelBg, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 8px 8px 14px' }}>
+            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: isDark ? '#8b93a3' : '#888' }}>
+              Inbox · {queueThreads.length}
+            </Text>
+            <Button type="text" size="small" icon={<MenuFoldOutlined />} onClick={() => setInboxCollapsed(true)} title="Hide inbox" />
           </div>
           {queueThreads.length === 0 ? (
             <div style={{ padding: '8px 14px' }}>
@@ -389,23 +406,28 @@ export function RoomsView({ active }: { active: boolean }) {
             ))}
           </div>
 
-          <div style={{ width: 160, flexShrink: 0, borderLeft: `1px solid ${border}`, background: panelBg, padding: '12px 14px', overflowY: 'auto' }}>
-            <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Present · {present.length}
-            </Text>
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {present.length === 0
-                ? <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
-                : [...present].sort().map(u => (
-                    <div key={u} style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ color: '#3fb950', fontSize: 10 }}>●</span>
-                      <Text style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {u}{u === selfUser ? ' (you)' : ''}
-                      </Text>
-                    </div>
-                  ))}
+          {/* Presence is meaningful for group chat (who's in the room); a
+              helpdesk thread is 1:1 (you + the visitor), so it's hidden there to
+              give the conversation the width. */}
+          {!isQueue && (
+            <div style={{ width: 160, flexShrink: 0, borderLeft: `1px solid ${border}`, background: panelBg, padding: '12px 14px', overflowY: 'auto' }}>
+              <Text type="secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Present · {present.length}
+              </Text>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {present.length === 0
+                  ? <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
+                  : [...present].sort().map(u => (
+                      <div key={u} style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ color: '#3fb950', fontSize: 10 }}>●</span>
+                        <Text style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {u}{u === selfUser ? ' (you)' : ''}
+                        </Text>
+                      </div>
+                    ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 8, padding: '12px 16px', borderTop: `1px solid ${border}`, flexShrink: 0 }}>

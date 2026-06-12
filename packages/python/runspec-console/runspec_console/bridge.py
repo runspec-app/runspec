@@ -254,6 +254,10 @@ class Bridge:
         self._thread_states: dict[str, dict[str, Any]] = {}
         self._agent_rooms: dict[str, str] = {}
         self._catalog_index: dict[str, dict[str, dict[str, Any]]] = {}
+        # namespace → last catalog actually published, so the periodic refresh
+        # only re-sends (and logs) when the contents change. Cleared on disconnect
+        # so the next subscribe republishes from scratch.
+        self._published_catalogs: dict[str, list[dict[str, Any]]] = {}
         self._hosts: list[dict[str, Any]] = []
         # Named source-side stream filters (runspec_filters.toml). Loaded once at
         # startup and reloaded on save; resolved by name when a relay/download
@@ -5063,8 +5067,9 @@ class Bridge:
             backoff = self._CHAT_BACKOFF_START
             if queue:
                 # Publish the queue's self-service catalog right after subscribing
-                # (and again whenever discovery refreshes — _publish_catalogs).
-                self._publish_catalog(spec, source)
+                # (forced — a fresh connection's hub has no catalog yet; later
+                # discovery refreshes republish only on change — _publish_catalogs).
+                self._publish_catalog(spec, source, force=True)
             watcher = _RotaPresenceWatcher(self._build_clock_ok(), source.set_presence)
             watcher.start()
             self._dispatch(
@@ -5080,6 +5085,9 @@ class Bridge:
             with self._lock:
                 self._chat_sources.pop(room, None)
                 self._agent_rooms.pop(room, None)
+                self._published_catalogs.pop(
+                    room, None
+                )  # force a fresh publish on reconnect
             self._dispatch(
                 "runspec:room_connection",
                 {"room": room, "host": host, "connected": False, "queue": queue},
@@ -5091,23 +5099,34 @@ class Bridge:
                 break
             backoff = min(backoff * 2, self._CHAT_BACKOFF_MAX)
 
-    def _publish_catalog(self, spec: dict[str, Any], source: Any) -> None:
+    def _publish_catalog(
+        self, spec: dict[str, Any], source: Any, *, force: bool = False
+    ) -> None:
         """Build and publish one queue's self-service catalog from the discovery
-        cache (best-effort — a failed publish never breaks the connection; the
-        next discovery refresh or reconnect republishes)."""
+        cache. **Idempotent**: the catalog is only sent (and logged) when its
+        contents changed since the last publish for this namespace — so the
+        periodic discovery refresh doesn't re-emit an unchanged catalog every
+        cycle. ``force`` overrides the diff (the subscribe path always sends, as
+        a fresh connection's hub has no catalog yet). Best-effort — a failed
+        publish never breaks the connection; the next refresh or reconnect
+        republishes."""
         from .catalog import build_catalog
 
         try:
+            key = spec["room"]
             with self._lock:
                 runnables = list(self._runnables_cache)
             allowlist = spec.get("catalog_allowlist")
             tools, index = build_catalog(runnables, allowlist=allowlist)
             with self._lock:
-                self._catalog_index[spec["room"]] = index
+                self._catalog_index[key] = index  # enactment map — keep current
+                unchanged = not force and self._published_catalogs.get(key) == tools
+                if not unchanged:
+                    self._published_catalogs[key] = tools
+            if unchanged:
+                return  # nothing to send — the room already has this catalog
             source.send_catalog(tools)
-            logger.info(
-                "chat: published %d tool(s) to %r catalog", len(tools), spec["room"]
-            )
+            logger.info("chat: published %d tool(s) to %r catalog", len(tools), key)
         except Exception:
             logger.exception("chat: catalog publish for %r failed", spec.get("room"))
 
