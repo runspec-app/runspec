@@ -4,6 +4,16 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.5.2]
+
+### Fixed
+- **Catalog request form fits a many-arg runnable.** The visitor form rendered
+  inside the 180px catalog rail, so a runnable with lots of arguments overflowed
+  (no horizontal scroll) and was unusable. When opened, the form now lifts into a
+  centered modal (dimmed backdrop) and lays its fields out in responsive columns,
+  so a wide form has room. CSS-only — the open/close is still the existing
+  `reqForm.hidden` toggle.
+
 ## [0.5.1]
 
 ### Changed
