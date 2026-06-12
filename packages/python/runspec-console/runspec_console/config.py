@@ -179,6 +179,19 @@ def confirm_notifications_enabled() -> bool:
     return True
 
 
+def room_notifications_enabled() -> bool:
+    """`[console] room_notifications` — raise a desktop toast + taskbar flash when
+    a chat-room/helpdesk message arrives and the console isn't in the foreground.
+    Defaults to True; set false to silence the OS notification while keeping the
+    in-app toast and unread badges."""
+    console = read_config().get("console")
+    if isinstance(console, dict):
+        val = console.get("room_notifications")
+        if isinstance(val, bool):
+            return val
+    return True
+
+
 def _toml_str(v: str) -> str:
     """Escape a Python string as a TOML basic string literal.
 

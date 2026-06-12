@@ -78,6 +78,35 @@ def build_confirm_message(
     return (f"Approval needed: {display}", summarize_args(tool_input))
 
 
+def _visitor_of(room: str) -> str:
+    """The visitor segment of a ``helpdesk/<queue>/<visitor>`` room, else ``""``.
+    Mirrors the UI's ``visitorOf`` so the toast names the person, not the path."""
+    parts = room.split("/")
+    return parts[2] if len(parts) >= 3 and parts[0] == "helpdesk" else ""
+
+
+def build_room_message(payload: dict[str, Any]) -> tuple[str, str]:
+    """(title, body) for an inbound chat-room / helpdesk message toast.
+
+    A helpdesk message names the visitor (derived from the room path) and the
+    queue; a group-chat message names the sender and the room. ``kind ==
+    "request"`` is surfaced as a self-service request rather than a chat line."""
+    room = str(payload.get("room") or "")
+    sender = str(payload.get("sender") or "")
+    is_request = payload.get("kind") == "request"
+    visitor = _visitor_of(room)
+    if visitor:
+        queue = room.split("/")[1] if len(room.split("/")) >= 2 else ""
+        who = f"{visitor} · {queue}" if queue else visitor
+    else:
+        who = sender or room or "Someone"
+    verb = "sent a request" if is_request else "messaged you"
+    body = str(payload.get("text") or "").strip() or "Open runspec console to reply."
+    if len(body) > _MAX_BODY:
+        body = body[: _MAX_BODY - 1].rstrip() + "…"
+    return (f"{who} {verb}", body)
+
+
 def _toast_xml(title: str, body: str) -> str:
     return (
         "<toast><visual><binding template='ToastGeneric'>"

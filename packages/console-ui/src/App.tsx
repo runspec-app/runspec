@@ -20,6 +20,7 @@ import {
   FileTextOutlined,
   ReadOutlined,
   CommentOutlined,
+  InboxOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -28,6 +29,7 @@ import { LogsView } from './views/LogsView'
 import { SchedulesView } from './views/SchedulesView'
 import { TriggersView } from './views/TriggersView'
 import { RoomsView } from './views/RoomsView'
+import { WorkInboxView } from './views/WorkInboxView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
@@ -39,10 +41,12 @@ const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m =>
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { useInFlight } from './bridge/useInFlight'
+import { useWorkInbox } from './bridge/useWorkInbox'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
+import type { WorkItem } from './bridge/workInbox'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rooms' | 'analytics' | 'dev'
+type ViewKey = 'inbox' | 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rooms' | 'analytics' | 'dev'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -77,6 +81,10 @@ export default function App() {
   // so it's visible from any tab).
   const [roomAttention, setRoomAttention] = useState(0)
   const inFlight = useInFlight()
+  // The unified work inbox — one list of things needing the operator across the
+  // confirm-gate, Triggers, and Rooms/helpdesk surfaces. Lives at the root so it
+  // keeps accruing while another tab is shown.
+  const inbox = useWorkInbox()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
   const selectedHostGroups = selectedHostObj?.groups ?? []
@@ -179,6 +187,12 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args, commandPath } }))
   }
 
+  // Deep-link a work-inbox row to its owning tab. (Selecting the specific card /
+  // thread within that tab is a fast-follow; switching to it is enough for v1.)
+  const handleOpenWorkItem = (item: WorkItem) => {
+    setView(item.origin.tab)
+  }
+
   const handleOpenForm = (runnable: Runnable, commandPath: string[] = []) => {
     setPendingForm({ runnable, commandPath })
     setView('forms')
@@ -254,6 +268,13 @@ export default function App() {
   const textCol   = isDark ? '#ccc'    : '#333'
 
   const navTabs = [
+    {
+      key: 'inbox' as ViewKey,
+      label: 'Inbox',
+      icon: inbox.count > 0
+        ? <Badge count={inbox.count} size="small" offset={[2, -1]}><InboxOutlined /></Badge>
+        : <InboxOutlined />,
+    },
     {
       key: 'console' as ViewKey,
       label: 'Console',
@@ -476,6 +497,12 @@ export default function App() {
             {/* View area */}
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
+                {/* The work inbox is a pure renderer over the root-level store,
+                    so it's safe to mount only when shown — the projection keeps
+                    accruing regardless via useWorkInbox at the App root. */}
+                <div style={{ display: view === 'inbox' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                  {view === 'inbox' && <WorkInboxView inbox={inbox} onOpen={handleOpenWorkItem} />}
+                </div>
                 <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                   <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
                 </div>

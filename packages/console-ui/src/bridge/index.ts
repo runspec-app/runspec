@@ -123,6 +123,8 @@ export interface JumpHost {
   room_user?: string  // display name in the room (defaults to the SSH login)
   room_via?: string   // "exec" to join over an SSH exec channel (no port-forward)
   room_exec_command?: string  // exec-mode relay command on the host (e.g. socat / console-room connect)
+  room_queue?: string  // helpdesk queue this console staffs on the host's room server (agent mode)
+  room_catalog?: string[]  // optional per-queue catalog allowlist (bare self-service runnable names)
 }
 
 export interface HistoryLogLine {
@@ -340,6 +342,19 @@ export interface TriggerCard {
   timeline?: TimelineEntry[]   // timestamped audit trail of stage changes + steps
 }
 
+// A parked autonomy-gate confirm — the runspec:tool_confirm event's shape, also
+// returned by get_pending_confirms for cold-start. `id` is the chat/card id; a
+// confirm whose id matches a live trigger card belongs to that card (the work
+// inbox folds it there, the same id-match the Triggers tab badge uses).
+export interface PendingConfirm {
+  id: string
+  request_id: string
+  tool_name: string
+  tool_input: Record<string, unknown>
+  autonomy: string
+  created_at?: number
+}
+
 // runspec:trigger_event detail — every event the engine saw, with its
 // disposition: which triggers fired (matched), which matched but were gated by
 // the rota (skipped), or neither (no match).
@@ -542,6 +557,10 @@ export interface BridgeApi {
   save_rota: (rota: Rota) => Promise<{ ok: boolean }>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>
+  // Cold-start snapshot for the work inbox: autonomy-gate confirms parked before
+  // the view mounted (the live path only emits runspec:tool_confirm for later ones).
+  get_pending_confirms: () => Promise<PendingConfirm[]>
+  // ─────────────────────────────────────────────────────────────────────────
   // Send a draft an agent-mode trigger saved (the card's Send button).
   send_trigger_draft: (entryId: string) => Promise<{ ok: boolean; to?: string; subject?: string; error?: string }>
   // ── chat room (Rooms view) ─────────────────────────────────────────────────

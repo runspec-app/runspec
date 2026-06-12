@@ -327,6 +327,11 @@ const MOCK_JUMP_HOSTS: JumpHost[] = [
   { name: 'prod-1', hostname: 'hostname1.company.com', user: 'jason', group: 'Production' },
   { name: 'prod-2', hostname: 'hostname2.company.com', user: 'jason', group: 'Production' },
   { name: 'logs-1', hostname: 'hostname3.company.com', user: 'jason', group: 'Production' },
+  {
+    name: 'web01', hostname: 'web01.company.com', user: 'ops', group: 'Production',
+    room: 'ops', room_port: 8765, room_via: 'exec',
+    room_queue: 'it-support', room_catalog: ['reset-password', 'request-vm'],
+  },
 ]
 
 const MOCK_HOSTS: Host[] = [
@@ -1107,6 +1112,12 @@ export const mockApi: BridgeApi = {
         { ts: Date.now() / 1000 - 30, text: 'triggered' },
         { ts: Date.now() / 1000 - 29, text: 'triage' },
       ],
+    },
+  ],
+  get_pending_confirms: async () => [
+    {
+      id: 'chat-main', request_id: 'req-demo-1', tool_name: 'prod-1__restart-service',
+      tool_input: { service: 'nginx' }, autonomy: 'confirm', created_at: Date.now() / 1000 - 45,
     },
   ],
   get_trigger_events: async () => [

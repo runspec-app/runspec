@@ -69,6 +69,89 @@ def test_save_jump_hosts_preserves_unmanaged_keys(tmp_path, monkeypatch):
     assert saved["web01"]["room"] == "ops" and saved["web01"]["room_port"] == 8765
 
 
+def _save_host_stub(bridge_mod, hosts_file, monkeypatch):
+    monkeypatch.setattr(bridge_mod, "hosts_path", lambda: hosts_file)
+    s = types.SimpleNamespace()
+    s._MANAGED_HOST_KEYS = Bridge._MANAGED_HOST_KEYS
+    s._reload_hosts = lambda: None
+    s.restart_chat = lambda: None
+    s._refresh_cycle = lambda: None
+    s.save_jump_hosts = types.MethodType(Bridge.save_jump_hosts, s)
+    s.get_jump_hosts = types.MethodType(Bridge.get_jump_hosts, s)
+    return s
+
+
+def test_save_jump_hosts_writes_room_queue_and_catalog(tmp_path, monkeypatch):
+    from runspec_console import bridge as bridge_mod
+
+    hosts_file = tmp_path / "runspec_hosts.toml"
+    s = _save_host_stub(bridge_mod, hosts_file, monkeypatch)
+
+    # A queue-only host (no group-chat room) still needs the room port.
+    s.save_jump_hosts(
+        [
+            {
+                "name": "web01",
+                "hostname": "web01",
+                "user": "ops",
+                "room_port": 8765,
+                "room_queue": "it-support",
+                "room_catalog": ["reset-password", "  ", "request-vm"],
+                "runspec_paths": ["runspec"],
+            }
+        ]
+    )
+
+    saved = {e["name"]: e for e in bridge_mod.load_hosts(hosts_file)}["web01"]
+    assert saved["room_queue"] == "it-support"
+    assert saved["room_port"] == 8765
+    assert "room" not in saved  # queue without a group-chat room
+    # Blank/whitespace catalog names are dropped.
+    assert saved["room_catalog"] == ["reset-password", "request-vm"]
+
+
+def test_save_jump_hosts_drops_queue_without_port(tmp_path, monkeypatch):
+    from runspec_console import bridge as bridge_mod
+
+    hosts_file = tmp_path / "runspec_hosts.toml"
+    s = _save_host_stub(bridge_mod, hosts_file, monkeypatch)
+
+    s.save_jump_hosts(
+        [
+            {
+                "name": "web01",
+                "hostname": "web01",
+                "user": "ops",
+                "room_queue": "it-support",  # no room_port → can't connect → drop
+                "runspec_paths": ["runspec"],
+            }
+        ]
+    )
+
+    saved = {e["name"]: e for e in bridge_mod.load_hosts(hosts_file)}["web01"]
+    assert "room_queue" not in saved and "room_port" not in saved
+
+
+def test_get_jump_hosts_round_trips_queue(tmp_path, monkeypatch):
+    from runspec_console import bridge as bridge_mod
+
+    hosts_file = tmp_path / "runspec_hosts.toml"
+    hosts_file.write_text(
+        '[[host]]\nname = "web01"\nssh = "ops@web01"\n'
+        'room_port = 8765\nroom_queue = "it-support"\n'
+        'room_catalog = ["reset-password"]\nrunspec_paths = ["runspec"]\n',
+        encoding="utf-8",
+    )
+    s = _save_host_stub(bridge_mod, hosts_file, monkeypatch)
+    s._hosts = bridge_mod.load_hosts(hosts_file)
+    s._reload_hosts = lambda: None
+
+    entry = {e["name"]: e for e in s.get_jump_hosts()}["web01"]
+    assert entry["room_queue"] == "it-support"
+    assert entry["room_catalog"] == ["reset-password"]
+    assert entry["room_port"] == 8765
+
+
 # ── _on_chat_event (UI fan-out + engine routing) ───────────────────────────────
 
 
@@ -88,6 +171,7 @@ def _event_stub(engine: Any = None, agent_rooms: dict[str, str] | None = None):
     s._thread_states = {}
     s.dispatched: list[tuple[str, dict]] = []
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
+    s._notify_room_message = lambda payload: None  # OS toast tested in test_notify
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
     s._feed_engine_for = types.MethodType(Bridge._feed_engine_for, s)
     return s

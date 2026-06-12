@@ -54,15 +54,30 @@ a form submit lands as a `⚙ request` card in the inbox (enacted via the autono
 gate). That's the last helpdesk feature not yet seen working live.
 
 **Next directions (not started):**
-- **Unified "work inbox"** (the user's idea): Triggers + Rooms share the
-  agent-handoff path and both are attention surfaces. Decided *not* to merge the
-  tabs (different data models) — 0.46.0's attention layer (badge/toast/unread) is
-  the first step. A real "one list of items needing you" spanning trigger cards +
-  helpdesk threads is a deliberate future design.
-- **Hosts-editor fields** for `room_queue` / `room_catalog` (staffing a queue
-  still needs hand-edited TOML; unmanaged keys are preserved, so it's safe today).
-- **OS/desktop notifications** for room messages (parity with the confirm-gate
-  toast; 0.46.0 only does in-app toasts).
+- ~~**Unified "work inbox"** (the user's idea)~~ — **v1 BUILT**
+  (`runspec-console` 0.48.0, same branch). Design + decisions:
+  `docs/design/console-work-inbox.md`. A `WorkItem` *projection/index* (not a
+  merge, not a store) aggregating confirm gates + trigger cards + helpdesk threads
+  into one **Inbox** tab, urgency-tiered (blocking → actionable → fyi), inline
+  Approve/Deny/Claim + Open-to-owning-tab. Pure logic in `bridge/workInbox.ts`
+  (tested), thin `useWorkInbox.ts` hook at the App root, new
+  `get_pending_confirms()` getter for cold-start. **Left for later:** in-tab
+  focus-on-open, group-chat unread as `fyi` (design §12 Q2), the optional backend
+  aggregator + notification consolidation (design §10).
+- ~~**Hosts-editor fields** for `room_queue` / `room_catalog`~~ — **DONE**
+  (`runspec-console` 0.47.0, branch `claude/helpdesk-console-room-next-j2e42j`):
+  the Jump Hosts editor now manages both keys (queue field + catalog-allowlist
+  tag box), riding the existing Room port + transport; export emits them; queue
+  validated (no slash/space) and dropped without a port. Staffing a queue no
+  longer needs hand-edited TOML.
+- ~~**OS/desktop notifications** for room messages~~ — **DONE**
+  (`runspec-console` 0.47.0, same branch): inbound room/helpdesk messages raise
+  an OS toast + taskbar flash (click → focus) at parity with the confirm-gate
+  notification, suppressed when the console is already foregrounded (the in-app
+  toast covers that). `notify.build_room_message` (pure, tested) names the
+  visitor + queue; gated by `[console] room_notifications` (default on),
+  Windows-only via the `[notifications]` extra. Fired from `_on_chat_event`
+  (`bridge._notify_room_message`).
 - §10 parked questions below (multi-queue routing, SLA/auto-close, browser agent
   inbox).
 

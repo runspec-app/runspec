@@ -42,6 +42,7 @@ from .config import (
     filters_path,
     hosts_path,
     read_config,
+    room_notifications_enabled,
     write_config,
 )
 from .discovery import discover_local, discover_remote
@@ -351,6 +352,11 @@ class Bridge:
         self._pending_confirms: dict[
             str, tuple[str, threading.Event, dict[str, bool]]
         ] = {}
+        # request_id → display metadata for the same pending confirm, kept in
+        # parallel so the work-inbox cold-start snapshot (get_pending_confirms)
+        # can show a parked gate that predates the view mounting. Populated in
+        # _register_confirm, dropped in _finish_confirm alongside the tuple above.
+        self._pending_confirm_meta: dict[str, dict[str, Any]] = {}
         self._ssh_log_handler: _ParamikoDevHandler | None = None
         # SSH log records captured before the window attaches are buffered here
         # (not dropped), then flushed to the Dev tab once it's ready — so the
@@ -3317,6 +3323,12 @@ class Bridge:
                 entry["room_via"] = "exec"
             if h.get("room_exec_command"):
                 entry["room_exec_command"] = h["room_exec_command"]
+            if h.get("room_queue"):
+                entry["room_queue"] = h["room_queue"]
+            if isinstance(h.get("room_catalog"), list):
+                names = [str(n).strip() for n in h["room_catalog"] if str(n).strip()]
+                if names:
+                    entry["room_catalog"] = names
             result.append(entry)
         return result
 
@@ -3339,6 +3351,8 @@ class Bridge:
             "room_user",
             "room_via",
             "room_exec_command",
+            "room_queue",
+            "room_catalog",
         }
     )
 
@@ -3369,14 +3383,26 @@ class Bridge:
                 entry["identityFile"] = _normalize_path(h["identityFile"])
             if h.get("group"):
                 entry["group"] = h["group"]
-            # Chat room hosted on this fleet host: a room name + the server's
-            # localhost port on it. The room tunnel reuses this host's ssh target +
-            # key (see _room_specs / make_host_room_factory).
+            # Chat room hosted on this fleet host: a group-chat ``room`` and/or a
+            # helpdesk ``room_queue``, plus the server's localhost port on it. Both
+            # ride this host's ssh target + key (see _room_specs / host_rooms); the
+            # transport keys (user/via/exec command) are shared between them.
             room = str(h.get("room") or "").strip()
+            queue = str(h.get("room_queue") or "").strip()
             room_port = h.get("room_port")
-            if room and isinstance(room_port, int) and not isinstance(room_port, bool):
-                entry["room"] = room
+            has_port = isinstance(room_port, int) and not isinstance(room_port, bool)
+            if (room or queue) and has_port:
                 entry["room_port"] = room_port
+                if room:
+                    entry["room"] = room
+                if queue:
+                    entry["room_queue"] = queue
+                    # Optional per-queue catalog allowlist (bare runnable names).
+                    catalog = h.get("room_catalog")
+                    if isinstance(catalog, list):
+                        names = [str(n).strip() for n in catalog if str(n).strip()]
+                        if names:
+                            entry["room_catalog"] = names
                 if str(h.get("room_user") or "").strip():
                     entry["room_user"] = h["room_user"].strip()
                 # Exec-channel transport (for networks that block port-forwarding).
@@ -4223,6 +4249,14 @@ class Bridge:
         holder = {"approved": False, "cancelled": False}
         with self._lock:
             self._pending_confirms[request_id] = (chat_id, event, holder)
+            self._pending_confirm_meta[request_id] = {
+                "id": chat_id,
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "autonomy": level,
+                "created_at": time.time(),
+            }
         logger.info(
             "autonomy gate: prompting for %s (autonomy=%s) request_id=%s",
             tool_name,
@@ -4322,11 +4356,63 @@ class Bridge:
         except Exception:
             logger.debug("focus window failed", exc_info=True)
 
+    def _window_is_foreground(self) -> bool:
+        """True if the console window is currently the foreground window. Lets a
+        room toast stay quiet while the user is already in the app (the in-app
+        toast covers that). Windows-only; False elsewhere / on error so a missed
+        check errs toward notifying."""
+        if sys.platform != "win32":
+            return False
+        try:
+            import win32gui
+
+            hwnd = win32gui.FindWindow(None, self._WINDOW_TITLE)
+            return bool(hwnd) and win32gui.GetForegroundWindow() == hwnd
+        except Exception:
+            logger.debug("foreground check failed", exc_info=True)
+            return False
+
+    def _notify_room_message(self, payload: dict[str, Any]) -> None:
+        """Best-effort desktop toast + taskbar flash for an inbound room message.
+
+        Parity with ``_notify_confirm``: pull the user back to a chat-room /
+        helpdesk message they can't see. Suppressed when the console is already
+        foreground (the in-app toast handles that) or opted out via
+        ``[console] room_notifications``. Every gate and the actual toast are
+        swallowed on error — a missed notification must never disturb the chat
+        flow. The server drops the console's own echo, so every event here is
+        from someone else."""
+        try:
+            ok, _ = notify.available()
+            if not ok:
+                return
+            if self._window_is_foreground():
+                return
+            try:
+                if not room_notifications_enabled():
+                    return
+            except Exception:
+                pass  # config unreadable → default to notifying
+            title, body = notify.build_room_message(payload)
+        except Exception:
+            logger.debug("notify_room setup failed", exc_info=True)
+            return
+
+        def _raise() -> None:
+            try:
+                notify.notify(title, body, on_click=self._focus_window)
+                self._flash_window()
+            except Exception:
+                logger.debug("desktop room notify failed", exc_info=True)
+
+        threading.Thread(target=_raise, name="notify-room", daemon=True).start()
+
     def _finish_confirm(
         self, request_id: str, holder: dict[str, bool], timed_out: bool
     ) -> bool:
         with self._lock:
             self._pending_confirms.pop(request_id, None)
+            self._pending_confirm_meta.pop(request_id, None)
         if timed_out:
             logger.warning(
                 "autonomy gate: request_id=%s timed out after %ds — treating as deny",
@@ -5250,6 +5336,7 @@ class Bridge:
             self._dispatch("runspec:room_conversation", payload)
             return
         self._dispatch("runspec:room_message", payload)
+        self._notify_room_message(payload)
         if not self._feed_engine_for(payload):
             return
         with self._lock:
@@ -5624,6 +5711,20 @@ class Bridge:
         with self._lock:
             cards = list(self._trigger_cards.values())
         return sorted(cards, key=lambda c: c.get("created_at", 0.0))
+
+    def get_pending_confirms(self) -> list[dict[str, Any]]:
+        """Snapshot of the autonomy-gate confirms currently parked (oldest first).
+
+        The cold-start seed for the work inbox: a tool call can be waiting on the
+        gate before the inbox view mounts (it only hears the live
+        ``runspec:tool_confirm`` for gates raised *after* it subscribes). Each row
+        mirrors that event's shape (``id`` = the chat/card id, ``request_id``,
+        ``tool_name``, ``tool_input``, ``autonomy``) plus ``created_at`` for
+        ordering. The frontend folds a confirm whose ``id`` matches a live trigger
+        card into that card (same id-match the tab badge uses)."""
+        with self._lock:
+            meta = list(self._pending_confirm_meta.values())
+        return sorted(meta, key=lambda m: m.get("created_at", 0.0))
 
     def get_trigger_events(self) -> list[dict[str, Any]]:
         """The recent event-audit feed (every event seen + its disposition)."""

@@ -555,6 +555,8 @@ interface HostFormValues {
   room_user?: string
   room_via?: string
   room_exec_command?: string
+  room_queue?: string
+  room_catalog?: string[]
 }
 
 function toToml(hosts: JumpHost[]): string {
@@ -569,6 +571,11 @@ function toToml(hosts: JumpHost[]): string {
     if (h.room_user) lines.push(`room_user = "${h.room_user}"`)
     if (h.room_via === 'exec') lines.push(`room_via = "exec"`)
     if (h.room_exec_command) lines.push(`room_exec_command = "${h.room_exec_command}"`)
+    if (h.room_queue) lines.push(`room_queue = "${h.room_queue}"`)
+    if (h.room_catalog?.length) {
+      const names = h.room_catalog.map(n => `"${n}"`).join(', ')
+      lines.push(`room_catalog = [${names}]`)
+    }
     if (h.runspec_paths?.length) {
       const paths = h.runspec_paths.map(p => `"${p}"`).join(', ')
       lines.push(`runspec_paths = [${paths}]`)
@@ -658,18 +665,27 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     // room fields when no room is set (the backend wants an int port or nothing).
     const v: HostFormValues = { ...values }
     v.room = (v.room ?? '').toString().trim() || undefined
+    v.room_queue = (v.room_queue ?? '').toString().trim() || undefined
     v.room_user = (v.room_user ?? '').toString().trim() || undefined
     v.room_exec_command = (v.room_exec_command ?? '').toString().trim() || undefined
     v.room_via = v.room_via === 'exec' ? 'exec' : undefined
-    if (v.room && v.room_port != null && `${v.room_port}` !== '') {
+    v.room_catalog = Array.isArray(v.room_catalog)
+      ? v.room_catalog.map(s => s.toString().trim()).filter(Boolean)
+      : undefined
+    // The room port is shared: a host can host a group-chat room, staff a
+    // helpdesk queue, or both — all over the one server on this port.
+    if ((v.room || v.room_queue) && v.room_port != null && `${v.room_port}` !== '') {
       v.room_port = Number(v.room_port)
     } else {
       delete v.room
+      delete v.room_queue
       delete v.room_port
       delete v.room_user
       delete v.room_via
       delete v.room_exec_command
     }
+    // The catalog allowlist only means anything alongside a staffed queue.
+    if (!v.room_queue || !v.room_catalog?.length) delete v.room_catalog
     if (editingKey === '') {
       await persist([...hosts, v as JumpHost])
     } else {
@@ -829,6 +845,24 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               </Form.Item>
               <Form.Item name="room_exec_command" label="Relay command" help="Optional override run on the host when via=exec, e.g. socat - TCP:127.0.0.1:8765. Defaults to console-room connect.">
                 <Input placeholder="defaults to console-room connect" style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+              <Form.Item
+                name="room_queue"
+                label="Helpdesk queue"
+                help="Staff a helpdesk queue on this host's room server (agent mode). Uses Room port above. No slashes or spaces."
+                rules={[{ pattern: /^[^\s/]+$/, message: 'No slashes or spaces' }]}
+              >
+                <Input placeholder="e.g. it-support (optional)" style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+              <Form.Item name="room_catalog" label="Catalog allowlist" help="Optional: limit the queue's self-service catalog to these runnables. Empty = every self-service-marked runnable.">
+                <Select
+                  mode="tags"
+                  tokenSeparators={[',', ' ']}
+                  allowClear
+                  placeholder="all self-service runnables"
+                  open={false}
+                  suffixIcon={null}
+                />
               </Form.Item>
             </div>
             <Space style={{ marginTop: 2, marginBottom: 8 }}>

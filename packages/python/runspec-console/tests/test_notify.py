@@ -32,6 +32,36 @@ def test_build_confirm_message_matches_gate_display():
     assert title == "Approval needed: flush-dns"
 
 
+def test_build_room_message_names_helpdesk_visitor_and_queue():
+    title, body = notify.build_room_message(
+        {"room": "helpdesk/it-support/alice@corp", "text": "my laptop won't boot"}
+    )
+    assert title == "alice@corp · it-support messaged you"
+    assert body == "my laptop won't boot"
+
+
+def test_build_room_message_request_kind_reads_as_request():
+    title, _ = notify.build_room_message(
+        {"room": "helpdesk/it-support/bob", "kind": "request", "text": "Reset password"}
+    )
+    assert title == "bob · it-support sent a request"
+
+
+def test_build_room_message_group_chat_names_sender_and_falls_back():
+    title, body = notify.build_room_message(
+        {"room": "ops", "sender": "ana", "text": ""}
+    )
+    assert title == "ana messaged you"
+    assert "console" in body.lower()  # empty text → call to action
+
+
+def test_build_room_message_truncates_long_body():
+    _, body = notify.build_room_message(
+        {"room": "ops", "sender": "x", "text": "z" * 500}
+    )
+    assert len(body) <= notify._MAX_BODY and body.endswith("…")
+
+
 def test_summarize_args_renders_key_values():
     assert notify.summarize_args({"host": "web01", "force": True}) == (
         "host=web01, force=True"
@@ -124,6 +154,7 @@ class _StubBridge:
     def __init__(self, enabled=True):
         self._lock = threading.Lock()
         self._pending_confirms = {}
+        self._pending_confirm_meta = {}
         self._dispatched = []
         self._enabled = enabled
 
@@ -194,3 +225,78 @@ def test_notify_confirm_never_raises(monkeypatch):
     )
     b = _StubBridge()
     b._notify_confirm("local__x", {}, "confirm")  # swallowed
+
+
+# ── room-message notification gate ────────────────────────────────────────────
+
+
+class _RoomStubBridge:
+    """Binds the room-notify path onto a light stub (no Bridge.__init__)."""
+
+    _WINDOW_TITLE = "runspec console"
+
+    def __init__(self, *, foreground=False):
+        self._foreground = foreground
+        self._flashed = False
+
+    def _window_is_foreground(self):
+        return self._foreground
+
+    def _flash_window(self):
+        self._flashed = True
+
+    def _focus_window(self):
+        pass
+
+    _notify_room_message = Bridge._notify_room_message
+
+
+def _arm_room_notify(monkeypatch, *, enabled=True):
+    from runspec_console import bridge as bridge_mod
+
+    built = []
+    monkeypatch.setattr(notify, "available", lambda: (True, ""))
+    monkeypatch.setattr(
+        notify, "build_room_message", lambda p: built.append(p) or ("T", "B")
+    )
+    monkeypatch.setattr(notify, "notify", lambda *a, **k: True)
+    monkeypatch.setattr(bridge_mod, "room_notifications_enabled", lambda: enabled)
+    return built
+
+
+def test_notify_room_builds_when_backgrounded(monkeypatch):
+    built = _arm_room_notify(monkeypatch)
+    b = _RoomStubBridge(foreground=False)
+    b._notify_room_message({"room": "helpdesk/it/alice", "text": "help"})
+    # build happens synchronously before the offloaded toast thread.
+    assert built == [{"room": "helpdesk/it/alice", "text": "help"}]
+
+
+def test_notify_room_suppressed_when_foreground(monkeypatch):
+    built = _arm_room_notify(monkeypatch)
+    b = _RoomStubBridge(foreground=True)  # user already in the app
+    b._notify_room_message({"room": "ops", "text": "hi"})
+    assert built == []  # in-app toast covers it → no OS toast
+
+
+def test_notify_room_respects_opt_out(monkeypatch):
+    built = _arm_room_notify(monkeypatch, enabled=False)
+    b = _RoomStubBridge(foreground=False)
+    b._notify_room_message({"room": "ops", "text": "hi"})
+    assert built == []
+
+
+def test_notify_room_skips_when_unavailable(monkeypatch):
+    built = _arm_room_notify(monkeypatch)
+    monkeypatch.setattr(notify, "available", lambda: (False, "nope"))
+    b = _RoomStubBridge(foreground=False)
+    b._notify_room_message({"room": "ops", "text": "hi"})
+    assert built == []
+
+
+def test_notify_room_never_raises(monkeypatch):
+    monkeypatch.setattr(
+        notify, "available", lambda: (_ for _ in ()).throw(RuntimeError)
+    )
+    b = _RoomStubBridge(foreground=False)
+    b._notify_room_message({"room": "ops", "text": "hi"})  # swallowed

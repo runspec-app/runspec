@@ -8,6 +8,49 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.48.0] — 2026-06-12
+
+### Added
+- **Unified work inbox (v1).** A new **Inbox** tab (first in the nav, with a
+  count badge visible from anywhere) gathers everything needing the operator into
+  one list across the three attention surfaces: parked autonomy-gate confirms
+  (chat *and* trigger), unclaimed helpdesk threads in queues you staff, and
+  in-progress trigger cards. Rows are tiered — **Needs approval** (blocking;
+  oldest first, since gates time out) → **Action needed** (an unclaimed visitor —
+  Claim inline) → **In progress** (your assigned threads + triage/running cards).
+  Inline **Approve/Deny** (confirms) and **Claim** (threads) route to the existing
+  bridge methods; **Open** deep-links to the owning tab. It's a *projection*, not
+  a new store: the owning surfaces stay authoritative and a row leaves when they
+  emit their terminal event. A trigger card's `awaiting_human` gate folds into its
+  single confirm row (the same id-match the tab badges use), so it's never
+  double-counted. New `get_pending_confirms()` bridge getter supplies the
+  cold-start snapshot for gates parked before the view mounted. Design:
+  `docs/design/console-work-inbox.md`.
+
+## [0.47.0] — 2026-06-12
+
+### Added
+- **Hosts-editor fields for helpdesk staffing.** The Jump Hosts editor now
+  manages `room_queue` (the helpdesk queue this console staffs on the host's
+  room server, agent mode) and `room_catalog` (an optional per-queue
+  self-service catalog allowlist of bare runnable names; empty = every
+  `self-service`-marked runnable). Both ride the existing **Room port** and
+  share the room transport (`room_via` / relay command), so a host can host a
+  group-chat room, staff a queue, or both over the one server. Previously these
+  keys needed hand-edited TOML — they were preserved across editor saves but
+  not surfaced. Export (`jump_hosts.toml`) emits them too. The queue field
+  rejects slashes/whitespace (mirrors the room server's token rule), and a
+  queue without a room port is dropped (it can't connect).
+- **Desktop notifications for room messages.** An inbound chat-room / helpdesk
+  message now raises an OS toast + taskbar flash (clicking it focuses the
+  console), at parity with the confirm-gate notification — so help-desk work
+  pulls you back even when the console is minimised. Suppressed when the console
+  is already in the foreground (the in-app toast covers that). Windows-only
+  (`[notifications]` extra), best-effort, and opt-out via
+  `[console] room_notifications = false` (keeps the in-app toast + unread
+  badges). A helpdesk toast names the visitor + queue; a `request`-kind message
+  reads as a request.
+
 ## [0.46.0] — 2026-06-12
 
 ### Added

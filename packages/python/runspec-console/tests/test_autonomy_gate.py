@@ -22,6 +22,7 @@ class _StubBridge:
         self._lock = threading.Lock()
         self._runnables_cache = runnables
         self._pending_confirms = {}
+        self._pending_confirm_meta = {}
         self._chat_cancels = {}
         self._dispatched = []
         self._run_result = run_result
@@ -40,6 +41,7 @@ class _StubBridge:
     _confirm_decision = Bridge._confirm_decision
     _register_confirm = Bridge._register_confirm
     _finish_confirm = Bridge._finish_confirm
+    get_pending_confirms = Bridge.get_pending_confirms
     _gated_run_tool = Bridge._gated_run_tool
     _gated_run_tool_async = Bridge._gated_run_tool_async
     _await_confirmation = Bridge._await_confirmation
@@ -266,3 +268,32 @@ def test_async_cancel_during_pending_confirm_unblocks_and_refuses():
     assert "stopped" in out.lower()
     assert elapsed < 2  # woke immediately, didn't sit on the confirm timeout
     assert not b._pending_confirms  # entry cleaned up
+
+
+# ── get_pending_confirms (work-inbox cold-start snapshot) ─────────────────────
+
+
+def test_get_pending_confirms_lists_parked_gates_oldest_first():
+    b = _StubBridge(_runnable("confirm"))
+    r1, _, _ = b._register_confirm(
+        "chat1", "local__flush-dns", {"force": True}, "confirm"
+    )
+    r2, _, _ = b._register_confirm("card9", "local__restart", {}, "supervised")
+
+    rows = b.get_pending_confirms()
+    assert [r["request_id"] for r in rows] == [r1, r2]  # oldest first
+    first = rows[0]
+    # Mirrors the runspec:tool_confirm event shape the live path emits.
+    assert first["id"] == "chat1"
+    assert first["tool_name"] == "local__flush-dns"
+    assert first["tool_input"] == {"force": True}
+    assert first["autonomy"] == "confirm"
+    assert "created_at" in first
+
+
+def test_get_pending_confirms_drops_finished_gate():
+    b = _StubBridge(_runnable("confirm"))
+    rid, _, holder = b._register_confirm("chat1", "local__flush-dns", {}, "confirm")
+    assert len(b.get_pending_confirms()) == 1
+    b._finish_confirm(rid, holder, timed_out=False)
+    assert b.get_pending_confirms() == []  # leaves the snapshot when answered
