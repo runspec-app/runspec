@@ -261,7 +261,17 @@ Was paused because the helpdesk decision may rewrite this content. When settled:
 - Delete `docs/design/console-chat-room-handoff.md` (shipped) — and this file too
   once consumed.
 
-## ⚠️ Hatchling issue to fix (found while inspecting the release)
+## ✅ Hatchling sdist issue — FIXED (wheel-only publish, option a)
+
+**Resolved** on branch `claude/console-room-next-session-f6sdma`:
+`.github/workflows/console-release.yml` no longer builds or uploads an sdist —
+the "Build sdist" step is gone and only the (smoke-tested, force-included) wheel
+is published. The wheel is pure `py3-none-any` so it always applies; a comment on
+the wheel-build step records why the sdist is intentionally omitted. Confirmed via
+scan that `runspec-console` is the **only** package force-including a generated
+asset without an sdist target, so no other release workflow needed the change.
+
+Original write-up (for context):
 
 `packages/python/runspec-console/pyproject.toml` force-includes the gitignored
 Vite output **only under the wheel target**:

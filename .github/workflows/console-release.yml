@@ -52,6 +52,13 @@ jobs:
         working-directory: packages/console-ui
         run: npm run build
 
+      # Wheel-only publish (intentional — no sdist). The wheel is pure
+      # py3-none-any so it always applies. The Vite UI under
+      # runspec_console/dist/ is gitignored and only force-included into the
+      # wheel target (see pyproject [tool.hatch.build.targets.wheel.force-include]),
+      # so a hatchling sdist would ship without the UI (dist/index.html missing
+      # → runtime failure). Rather than smuggle a built artifact into a source
+      # dist, we publish the wheel alone.
       - name: Build wheel
         working-directory: packages/python/runspec-console
         run: |
@@ -70,10 +77,6 @@ jobs:
           assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
           print('Wheel contents OK')
           "
-
-      - name: Build sdist
-        working-directory: packages/python/runspec-console
-        run: python -m hatchling build -t sdist
 
       - uses: actions/upload-artifact@v7
         with:
