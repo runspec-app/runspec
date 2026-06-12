@@ -14,6 +14,12 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
+  # Lets docs/changelog.md include the repository-root CHANGELOG.md so the two
+  # never drift. base_path is the repo root (mkdocs runs from there);
+  # check_paths fails the build if the included file ever goes missing.
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
 
 nav:
   - Home: index.md
