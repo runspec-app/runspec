@@ -475,3 +475,98 @@ def test_agent_subscribe_is_caught_up_on_open_threads_state():
     late = run(scenario())
     # The late-joining agent's inbox shows the assigned thread on subscribe.
     assert ("assigned", "a1") in _convs(late)
+
+
+# ── self-service catalog + visitor requests ───────────────────────────────────
+
+CATALOG = [
+    {
+        "name": "reset-password",
+        "description": "Reset it",
+        "inputSchema": {"type": "object"},
+    },
+    {"name": "request-vm", "description": "Provision a VM"},
+]
+
+
+def test_catalog_publish_and_clear():
+    hub = Hub(FakeStore())
+    hub.set_catalog(IT, CATALOG)
+    assert [t["name"] for t in hub.catalog_for(IT)] == ["reset-password", "request-vm"]
+    assert hub.catalog_for("helpdesk/hr") == []  # other queues unaffected
+    hub.set_catalog(IT, [])  # last console off shift clears it
+    assert hub.catalog_for(IT) == []
+
+
+def test_visitor_request_persisted_and_fanned_to_agent():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        hub.set_catalog(IT, CATALOG)
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        agent.frames.clear()
+        alice.frames.clear()
+        ok = await hub.visitor_request(alice, "reset-password", {"user": "alice"})
+        return store, hub, agent, alice, ok
+
+    store, hub, agent, alice, ok = run(scenario())
+    assert ok
+    # Persisted as a request-kind message with the machine payload.
+    saved = store.appended[0]
+    assert saved.kind == "request"
+    assert saved.data == {"tool": "reset-password", "args": {"user": "alice"}}
+    assert saved.text.startswith("Requested: reset-password")
+    # The submission opened the thread and reached the agent's inbox.
+    assert hub.conversation_state(ALICE) == "open"
+    agent_msgs = [f for f in agent.frames if f["type"] == "message"]
+    assert agent_msgs and agent_msgs[0]["kind"] == "request"
+    assert agent_msgs[0]["data"]["tool"] == "reset-password"
+    # Echoed to the visitor too.
+    assert any(f.get("kind") == "request" for f in alice.frames)
+
+
+def test_visitor_request_refused_for_unknown_tool():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        hub.set_catalog(IT, CATALOG)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join(alice)
+        alice.frames.clear()
+        ok = await hub.visitor_request(alice, "rotate-root-key", {})  # not in catalog
+        return store, alice, ok
+
+    store, alice, ok = run(scenario())
+    assert not ok
+    assert store.appended == [] and alice.frames == []
+
+
+def test_visitor_request_refused_outside_conversation_room():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        hub.set_catalog(IT, CATALOG)
+        chatter = FakeP("oncall", "ops")  # a group-chat room, not a conversation
+        await hub.join(chatter)
+        ok = await hub.visitor_request(chatter, "reset-password", {})
+        return store, ok
+
+    store, ok = run(scenario())
+    assert not ok and store.appended == []
+
+
+def test_visitor_request_refused_for_oversized_args():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        hub.set_catalog(IT, CATALOG)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join(alice)
+        ok = await hub.visitor_request(alice, "reset-password", {"blob": "x" * 10_000})
+        return store, ok
+
+    store, ok = run(scenario())
+    assert not ok and store.appended == []

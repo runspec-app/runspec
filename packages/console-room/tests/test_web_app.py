@@ -155,3 +155,73 @@ def test_helpdesk_visitor_rejects_bad_queue_token():
         with pytest.raises(Exception):
             with client.websocket_connect("/ws?queue=a/b&user=ana"):
                 pass
+
+
+# ── catalog endpoint + request flow ────────────────────────────────────────────
+
+CATALOG = [
+    {
+        "name": "reset-password",
+        "description": "Reset your password",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"user": {"type": "string"}},
+            "required": ["user"],
+        },
+    }
+]
+
+
+def _client_with_catalog(store=None):
+    hub = Hub(store or FakeStore())
+    hub.set_catalog("helpdesk/it", CATALOG)
+    return TestClient(create_app(hub))
+
+
+def test_catalog_endpoint_serves_published_tools():
+    with _client_with_catalog() as client:
+        r = client.get("/catalog?queue=it")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["queue"] == "it"
+        assert [t["name"] for t in body["tools"]] == ["reset-password"]
+        # An unpublished queue is an empty catalog, not an error.
+        assert client.get("/catalog?queue=hr").json()["tools"] == []
+
+
+def test_catalog_endpoint_requires_valid_queue():
+    with _client_with_catalog() as client:
+        assert client.get("/catalog").status_code == 400
+        assert client.get("/catalog?queue=a/b").status_code == 400
+
+
+def test_visitor_request_over_ws_lands_as_structured_message():
+    store = FakeStore()
+    with _client_with_catalog(store) as client:
+        with client.websocket_connect("/ws?queue=it&user=alice@corp") as alice:
+            alice.send_json(
+                {"type": "request", "tool": "reset-password", "args": {"user": "alice"}}
+            )
+            opened = alice.receive_json()
+            assert opened["type"] == "conversation" and opened["state"] == "open"
+            got = alice.receive_json()
+            assert got["type"] == "message" and got["kind"] == "request"
+            assert got["data"] == {"tool": "reset-password", "args": {"user": "alice"}}
+            assert got["text"].startswith("Requested: reset-password")
+    saved = store.appended[0]
+    assert saved.kind == "request" and saved.room == "helpdesk/it/alice@corp"
+
+
+def test_visitor_request_for_unknown_tool_is_refused():
+    store = FakeStore()
+    with _client_with_catalog(store) as client:
+        with client.websocket_connect("/ws?queue=it&user=alice@corp") as alice:
+            alice.send_json({"type": "request", "tool": "rotate-root-key", "args": {}})
+            # Nothing comes back for the refused request; a normal message after it
+            # is the next frame the visitor sees (proving the socket stayed open).
+            alice.send_json({"type": "message", "text": "hello?"})
+            opened = alice.receive_json()
+            assert opened["type"] == "conversation"
+            got = alice.receive_json()
+            assert got["type"] == "message" and got["text"] == "hello?"
+    assert all(m.kind == "chat" for m in store.appended)

@@ -22,6 +22,7 @@ from typing import Any
 
 from .hub import Hub
 from .models import (
+    CATALOG,
     CLAIM,
     CLOSE,
     MESSAGE,
@@ -29,6 +30,7 @@ from .models import (
     REOPEN,
     RESOLVE,
     normalize_status,
+    parse_catalog,
     parse_hello,
 )
 
@@ -134,6 +136,12 @@ class NdjsonConsoleConnection:
             room = str(frame.get("room") or "").strip()
             if room:
                 await getattr(hub, self._CONTROLS[kind])(self, room)
+        elif self.is_agent and kind == CATALOG:
+            # The console publishing its queue's self-service catalog (filtered to
+            # x-discoverable ∋ "self-service" on its side). [] clears it.
+            tools = parse_catalog(frame)
+            if tools is not None:
+                hub.set_catalog(self.namespace, tools)
         # hello-after-hello, agent presence, and unknown types are ignored.
 
     async def _read_frame(self) -> dict[str, Any] | None:

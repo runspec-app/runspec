@@ -35,10 +35,24 @@ join/subscribe catch-up replays state. NDJSON control frames wired. `claim` is t
 gate for the deferred agent turn. 97 tests pass; still no runspec-room version bump
 (lands when user-facing, end of H3/H4).
 
-**Next slices (not started):** **H3** visitor browser view + the `self-service`
-runspec catalog (pick → Form → structured request into the thread) → H4
-agent-console inbox view. See `helpdesk-rooms.md` §9. H3 is where `discoverable`
-(H0) + the conversation (H1/H2) meet the UI.
+**✅ H3 — visitor view + self-service catalog — DONE** (branch
+`claude/runspec-room-h3-w0s5f0`, stacked on the H1+H2 PR #199). **Catalog
+decisions (user-confirmed, resolves parked question 2):** consoles publish the
+catalog (agent pushes a `catalog` frame of its `self-service`-marked tool schemas
+over NDJSON; room caches per queue, last-writer-wins; `GET /catalog?queue=`
+serves visitors, auth-gated); default scope = all marked + optional console-side
+per-queue allowlist; catalog is always browsable (portal-style panel). Room stays
+runspec-free and never executes: a form submit → `request`-kind message (human
+text + `data` = tool/args), catalog-validated + size-capped, opens/reopens the
+thread. `Message` gained `kind`/`data`; SQLite migrates in place. Visitor UI:
+catalog panel + schema-generated forms (`inputSchema` → select/checkbox/number/
+text), lifecycle chip, request cards, `?queue=` deep links. 117 tests pass.
+
+**Next slice (not started):** **H4** — the runspec-console side: agent inbox view
+(threads, claim/resolve, drafts via speak checkpoint) + the catalog publisher
+(filter discovered tools to `x-discoverable ∋ "self-service"`, optional per-queue
+allowlist, publish on subscribe/refresh). Last slice before end-to-end. Then:
+runspec-room version bump + CHANGELOG (user-facing now).
 
 **Parked open questions (stored for next — from `helpdesk-rooms.md` §10):**
 1. **Queue routing** — single helpdesk queue vs multiple departmental queues, and

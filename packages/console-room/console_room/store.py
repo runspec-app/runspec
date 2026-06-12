@@ -10,6 +10,7 @@ broadcasting. See docs/design/console-room-server.md §4.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -39,10 +40,24 @@ class TranscriptStore:
                     room   TEXT NOT NULL,
                     sender TEXT NOT NULL,
                     text   TEXT NOT NULL,
-                    ts     REAL NOT NULL
+                    ts     REAL NOT NULL,
+                    kind   TEXT NOT NULL DEFAULT 'chat',
+                    data   TEXT
                 )
                 """
             )
+            # Migrate a pre-helpdesk transcript in place: the kind/data columns
+            # were added for catalog requests; older rows are plain chat.
+            cols = {
+                r[1]
+                for r in self._conn.execute("PRAGMA table_info(messages)").fetchall()
+            }
+            if "kind" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'"
+                )
+            if "data" not in cols:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN data TEXT")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_messages_room_ts ON messages (room, ts)"
             )
@@ -51,11 +66,12 @@ class TranscriptStore:
     def append(self, msg: Message) -> None:
         """Persist a sent message. Idempotent on ``id`` (a re-delivered id is
         ignored rather than raising)."""
+        data = json.dumps(msg.data) if msg.data is not None else None
         with self._lock:
             self._conn.execute(
-                "INSERT OR IGNORE INTO messages (id, room, sender, text, ts) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (msg.id, msg.room, msg.sender, msg.text, msg.ts),
+                "INSERT OR IGNORE INTO messages (id, room, sender, text, ts, kind, data) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (msg.id, msg.room, msg.sender, msg.text, msg.ts, msg.kind, data),
             )
             self._conn.commit()
 
@@ -66,12 +82,21 @@ class TranscriptStore:
             return []
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, room, sender, text, ts FROM messages "
+                "SELECT id, room, sender, text, ts, kind, data FROM messages "
                 "WHERE room = ? ORDER BY ts DESC, id DESC LIMIT ?",
                 (room, limit),
             ).fetchall()
         msgs = [
-            Message(id=r[0], room=r[1], sender=r[2], text=r[3], ts=r[4]) for r in rows
+            Message(
+                id=r[0],
+                room=r[1],
+                sender=r[2],
+                text=r[3],
+                ts=r[4],
+                kind=r[5] or "chat",
+                data=json.loads(r[6]) if r[6] else None,
+            )
+            for r in rows
         ]
         msgs.reverse()  # newest-N fetched DESC → return chronological
         return msgs

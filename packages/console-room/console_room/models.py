@@ -23,12 +23,25 @@ HELLO = "hello"
 MESSAGE = "message"
 PRESENCE = "presence"
 CONVERSATION = "conversation"  # server → client: a conversation's lifecycle state
+CATALOG = "catalog"  # agent → server: the queue's self-service tool schemas
+REQUEST = "request"  # visitor → server: a structured catalog request (tool + args)
 
 # Inbound control-frame tags (agent → server): drive the conversation lifecycle.
 CLAIM = "claim"
 RESOLVE = "resolve"
 REOPEN = "reopen"
 CLOSE = "close"
+
+# Message kinds — how a transcript entry was produced. "chat" is a typed message;
+# "request" is a structured catalog submission (text = human summary, data = the
+# machine payload the agent console enacts).
+KIND_CHAT = "chat"
+KIND_REQUEST = "request"
+
+# Caps for agent-published catalogs and visitor request payloads, so a hostile or
+# broken client can't bloat the cache / the transcript.
+CATALOG_TOOLS_CAP = 200
+REQUEST_ARGS_CAP = 8_000  # serialized-JSON character budget for request args
 
 _VALID_STATUS = ("available", "away")
 
@@ -53,16 +66,31 @@ def _cap(text: str) -> str:
 
 @dataclass(frozen=True)
 class Message:
-    """One sent message — the unit the transcript stores and broadcasts."""
+    """One sent message — the unit the transcript stores and broadcasts.
+
+    ``kind`` distinguishes a typed chat line (``"chat"``, the default) from a
+    structured catalog request (``"request"``); ``data`` carries the request's
+    machine payload (tool + args) and is ``None`` for plain chat. Both default so
+    every pre-existing call site builds plain chat messages unchanged."""
 
     room: str
     sender: str
     text: str
     id: str
     ts: float
+    kind: str = KIND_CHAT
+    data: dict[str, Any] | None = None
 
     @classmethod
-    def new(cls, room: str, sender: str, text: str) -> Message:
+    def new(
+        cls,
+        room: str,
+        sender: str,
+        text: str,
+        *,
+        kind: str = KIND_CHAT,
+        data: dict[str, Any] | None = None,
+    ) -> Message:
         """Build a message, stamping a fresh ``id`` + ``ts`` (the server's job)."""
         return cls(
             room=_str(room),
@@ -70,18 +98,26 @@ class Message:
             text=_cap(_str(text)),
             id=new_id(),
             ts=now_ts(),
+            kind=kind,
+            data=data,
         )
 
     def to_frame(self) -> dict[str, Any]:
-        """The server → client ``message`` frame for this message."""
-        return {
+        """The server → client ``message`` frame for this message. ``data`` is
+        included only when present, so plain chat frames are unchanged on the
+        wire (consoles ignore unknown fields either way)."""
+        frame: dict[str, Any] = {
             "type": MESSAGE,
             "room": self.room,
             "sender": self.sender,
             "text": self.text,
             "id": self.id,
             "ts": self.ts,
+            "kind": self.kind,
         }
+        if self.data is not None:
+            frame["data"] = self.data
+        return frame
 
 
 def presence_frame(room: str, user: str, status: str) -> dict[str, Any]:
@@ -133,6 +169,35 @@ class Hello:
     @property
     def is_agent(self) -> bool:
         return bool(self.namespace)
+
+
+def parse_catalog(obj: Any) -> list[dict[str, Any]] | None:
+    """Parse an agent's ``catalog`` frame into a validated tool list, or ``None``
+    if it isn't one.
+
+    Light validation by design — the room is a dumb pipe, not a schema authority.
+    Each entry must be a dict with a non-empty string ``name``; everything else
+    (``description``, ``inputSchema``, ``x-autonomy``, …) passes through as the
+    consoles published it. The list is capped at ``CATALOG_TOOLS_CAP`` and an
+    empty list is valid (it *clears* the queue's catalog — e.g. the last console
+    going off shift)."""
+    if not isinstance(obj, dict) or _str(obj.get("type")) != CATALOG:
+        return None
+    tools = obj.get("tools")
+    if not isinstance(tools, list):
+        return None
+    result: list[dict[str, Any]] = []
+    for entry in tools[:CATALOG_TOOLS_CAP]:
+        if isinstance(entry, dict) and _str(entry.get("name")).strip():
+            result.append(entry)
+    return result
+
+
+def request_text(tool: str, args: dict[str, Any]) -> str:
+    """The human-readable transcript line for a catalog request — what a person
+    (or a console's pre-filter) reads; the machine payload travels in ``data``."""
+    rendered = ", ".join(f"{k}={v}" for k, v in args.items())
+    return f"Requested: {tool}" + (f" — {rendered}" if rendered else "")
 
 
 def parse_hello(obj: Any) -> Hello | None:

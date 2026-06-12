@@ -23,7 +23,7 @@ import logging
 from typing import Any, Protocol
 
 from ..hub import Hub
-from ..models import MESSAGE, PRESENCE, normalize_status
+from ..models import MESSAGE, PRESENCE, REQUEST, normalize_status
 
 logger = logging.getLogger("console_room.web")
 
@@ -74,4 +74,14 @@ class BrowserConnection:
                 await hub.on_message(self, text)
         elif kind == PRESENCE:
             await hub.on_presence(self, normalize_status(frame.get("status")))
+        elif kind == REQUEST:
+            # A catalog submission from this visitor's form. The hub validates the
+            # tool against the queue's published catalog and is a no-op outside a
+            # conversation room — so a group-chat browser can't smuggle requests.
+            tool = str(frame.get("tool") or "").strip()
+            args = frame.get("args")
+            if tool:
+                await hub.visitor_request(
+                    self, tool, args if isinstance(args, dict) else {}
+                )
         # unknown types are ignored

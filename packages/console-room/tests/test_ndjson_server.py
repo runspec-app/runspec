@@ -277,6 +277,38 @@ def test_agent_claim_and_resolve_control_frames_drive_lifecycle():
     assert hub.conversation_state("helpdesk/it/alice@corp") == "resolved"
 
 
+def test_agent_catalog_frame_publishes_to_queue():
+    async def scenario():
+        hub = Hub(FakeStore())
+        reader = _reader(
+            {"type": "hello", "namespace": "helpdesk/it", "user": "agent@web01"},
+            {
+                "type": "catalog",
+                "tools": [{"name": "reset-password", "description": "Reset it"}],
+            },
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return hub
+
+    hub = run(scenario())
+    assert [t["name"] for t in hub.catalog_for("helpdesk/it")] == ["reset-password"]
+
+
+def test_member_catalog_frame_is_ignored():
+    # Only agents publish catalogs — a group-chat console's frame is dropped.
+    async def scenario():
+        hub = Hub(FakeStore())
+        reader = _reader(
+            {"type": "hello", "room": "ops", "user": "console@web01"},
+            {"type": "catalog", "tools": [{"name": "sneaky"}]},
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return hub
+
+    hub = run(scenario())
+    assert hub.catalog_for("ops") == []
+
+
 def test_member_control_frames_are_ignored():
     # A plain room member (visitor / group-chat console) can't drive the lifecycle.
     async def scenario():

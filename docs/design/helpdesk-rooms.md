@@ -293,16 +293,31 @@ the console's speak + autonomy gates, and the Forms surface.
   join/subscribe catch-up replays current state. NDJSON control frames wired
   (agents only). `claim` is the gate a console uses to release the deferred agent
   turn. Tested at the state-machine, hub, and wire levels.
-- **H3 — visitor browser view + catalog/Forms.** The `self-service` catalog for a
-  queue; pick → Form → structured request into the thread.
+- **H3 — visitor browser view + catalog/Forms. ✅ done.** **Catalog architecture
+  decided (resolves open question 2): consoles publish it.** The agent console —
+  the side that already discovers runnables over SSH+MCP and sees H0's
+  `x-discoverable` — pushes a `catalog` frame (its `self-service`-marked tool
+  schemas) over its existing NDJSON connection; the room caches per queue
+  (last-writer-wins) and serves visitors via `GET /catalog?queue=` (auth-gated).
+  Default scope: everything marked, with an optional per-queue allowlist on the
+  console side as a narrowing knob. The room stays runspec-free and **never
+  executes anything**: a form submit becomes a `request`-kind message in the
+  thread (text = human summary, `data` = tool+args payload), validated against
+  the published catalog + size caps, lifecycle-driving like any visitor message —
+  enactment only ever happens on an agent console behind its speak/autonomy
+  gates. `Message` gained `kind`/`data` (additive; SQLite migrates in place).
+  Visitor UI (vanilla, no build): always-browsable catalog panel, forms generated
+  from each tool's `inputSchema` (enum→select, boolean→checkbox, number/integer→
+  number), lifecycle chip from `conversation` frames, request cards in the
+  transcript, `?queue=` deep links.
 - **H4 — agent-console inbox view.** Many-threads inbox, claim/resolve, drafts via
-  the existing speak checkpoint.
+  the existing speak checkpoint — plus the console-side catalog publisher (filter
+  discovered tools to `x-discoverable ∋ "self-service"`, optional per-queue
+  allowlist, publish on subscribe/refresh).
 
-H0 shipped first (cleanest, most reusable, unblocks the catalog); H1 is the
-server-side spine the rest hangs off; H2 gives each thread a lifecycle. **Next: H3**
-— the visitor browser view + the `self-service` runspec catalog (Forms → structured
-request into the thread), where `discoverable` (H0) and the conversation (H1/H2)
-finally meet the UI.
+H0 unblocked the catalog; H1 is the server-side spine; H2 the lifecycle; H3 the
+visitor-facing half. **Next: H4** — the runspec-console side (inbox UI + catalog
+publisher), the last slice before the helpdesk is end-to-end.
 
 ---
 

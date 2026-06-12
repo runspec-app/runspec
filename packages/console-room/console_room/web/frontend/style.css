@@ -98,3 +98,69 @@ header .spacer { flex: 1; }
 
 .composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--panel); }
 .composer input { flex: 1; }
+
+/* ── help desk ── */
+/* Conversation lifecycle chip in the header (driven by conversation frames). */
+.convstate {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.convstate.open { color: var(--warn); border-color: var(--warn); }
+.convstate.assigned { color: var(--accent); border-color: var(--accent); }
+.convstate.resolved { color: var(--ok); border-color: var(--ok); }
+.convstate.closed { color: var(--muted); }
+
+/* A structured catalog request in the transcript. */
+.msg.req .text {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #101a28;
+}
+
+/* The self-service catalog panel (helpdesk mode). */
+#catalog-panel { margin-bottom: 16px; }
+#catalog { list-style: none; margin: 0 0 8px; padding: 0; }
+.cat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cat-item:hover { border-color: var(--accent); }
+.cat-name { font-weight: 600; color: var(--accent); }
+.cat-desc { font-size: 12px; color: var(--muted); }
+.cat-empty { font-size: 12px; color: var(--muted); padding: 4px 0; }
+
+/* The schema-generated request form. */
+#reqform { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+#reqform h3 { margin: 0; font-size: 14px; color: var(--accent); }
+#reqform p { margin: 0; }
+#reqform label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+#reqform input:not([type="checkbox"]), #reqform select {
+  background: #0c0e12;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font: inherit;
+}
+#reqform .form-row { display: flex; gap: 8px; }
+#reqform button {
+  background: var(--accent);
+  color: #04121f;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+#reqform button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }

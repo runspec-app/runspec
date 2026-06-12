@@ -12,12 +12,20 @@ connection (S2) plug into the same hub. See docs/design/console-room-server.md �
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Protocol, runtime_checkable
 
-from .conversation import namespace_matches, parse_conversation_room
+from .conversation import namespace_matches, parse_conversation_room, queue_namespace
 from .lifecycle import Conversation, ConversationRegistry
-from .models import Message, conversation_frame, presence_frame
+from .models import (
+    KIND_REQUEST,
+    REQUEST_ARGS_CAP,
+    Message,
+    conversation_frame,
+    presence_frame,
+    request_text,
+)
 
 logger = logging.getLogger("console_room.hub")
 
@@ -87,6 +95,7 @@ class Hub:
         self._rooms: dict[str, set[Participant]] = {}
         self._agents: dict[str, set[Agent]] = {}  # namespace -> subscribed agents
         self._convs = ConversationRegistry()  # helpdesk thread lifecycle (live)
+        self._catalogs: dict[str, list[dict[str, Any]]] = {}  # namespace -> tools
         self._lock = asyncio.Lock()  # guards _rooms / _agents membership
 
     def _members_locked(self, room: str) -> set[Recipient]:
@@ -257,6 +266,68 @@ class Hub:
         hub has no record of it yet."""
         conv = self._convs.get(room)
         return conv.state if conv is not None else None
+
+    # ── self-service catalog ──────────────────────────────────────────────────
+    # The catalog comes FROM the agent consoles (the side that discovers runnables
+    # over SSH+MCP and sees H0's x-discoverable audiences) — the room just caches
+    # the published tool schemas per queue and serves them to visitors. It never
+    # learns what runspec is and never executes anything: a visitor submission is
+    # only ever a structured message an agent console enacts through its own
+    # speak/autonomy gates. See docs/design/helpdesk-rooms.md §5.
+
+    def set_catalog(self, namespace: str, tools: list[dict[str, Any]]) -> None:
+        """Publish (or clear, with ``[]``) the self-service catalog for a queue
+        namespace. Last writer wins — with multiple consoles on one queue the
+        most recent publish is the truth, which tracks 'what the on-shift fleet
+        can run right now'."""
+        if tools:
+            self._catalogs[namespace] = tools
+        else:
+            self._catalogs.pop(namespace, None)
+        logger.info("room: catalog for %r now has %d tool(s)", namespace, len(tools))
+
+    def catalog_for(self, namespace: str) -> list[dict[str, Any]]:
+        """The published self-service tools for a queue namespace (may be [])."""
+        return list(self._catalogs.get(namespace, ()))
+
+    async def visitor_request(
+        self, p: Participant, tool: str, args: dict[str, Any]
+    ) -> bool:
+        """A visitor submits a catalog request from their conversation: validate it
+        against the queue's published catalog, then persist + broadcast it as a
+        ``request``-kind message (text = human summary, data = machine payload).
+        Drives the lifecycle like any visitor message (open/reopen). Returns
+        ``False`` when refused — unknown tool, oversized args, or not a
+        conversation room — so the door can tell the client."""
+        parsed = parse_conversation_room(p.room)
+        if parsed is None:
+            logger.warning("room: request from non-conversation room %r", p.room)
+            return False
+        queue, _visitor = parsed
+        ns = queue_namespace(queue)
+        if not any(t.get("name") == tool for t in self._catalogs.get(ns, ())):
+            logger.warning(
+                "room: %r requested %r — not in the %r catalog", p.user, tool, ns
+            )
+            return False
+        if len(json.dumps(args)) > REQUEST_ARGS_CAP:
+            logger.warning(
+                "room: %r request for %r refused — args too large", p.user, tool
+            )
+            return False
+        conv = self._convs.open_or_reopen(p.room)
+        if conv is not None:
+            await self._broadcast(p.room, conversation_frame(*conv.frame_fields()))
+        msg = Message.new(
+            p.room,
+            p.user,
+            request_text(tool, args),
+            kind=KIND_REQUEST,
+            data={"tool": tool, "args": args},
+        )
+        await asyncio.to_thread(self._store.append, msg)
+        await self._broadcast(p.room, msg.to_frame())
+        return True
 
     async def on_presence(self, p: Participant, status: str) -> None:
         """Relay a participant's presence change (e.g. a console's rota flip) to
