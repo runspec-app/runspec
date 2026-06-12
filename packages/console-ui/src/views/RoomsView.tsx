@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Empty, Input, Typography, message } from 'antd'
-import { SendOutlined, RobotOutlined } from '@ant-design/icons'
-import { bridge, type RoomInfo, type RoomMessage, type RoomPresence } from '../bridge'
+import { Button, Empty, Input, Tag, Typography, message } from 'antd'
+import { SendOutlined, RobotOutlined, FlagOutlined, CheckOutlined, UndoOutlined, CloseOutlined } from '@ant-design/icons'
+import { bridge, type RoomInfo, type RoomMessage, type RoomPresence, type RoomConversation, type ThreadState } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
 const { Text } = Typography
@@ -11,24 +11,45 @@ const { Text } = Typography
 // joins each one always-on over that host's SSH tunnel. This view lists the rooms,
 // and shows the selected room's live transcript + presence + composer, all fed by
 // the bridge's runspec:room_* events:
-//   • room_message    → append to that room's transcript
-//   • room_presence   → that room's presence list
-//   • room_connection → that room's connected flag (reconnect surfaces here)
-//   • room_draft      → switch to the room + pre-fill the composer (agent's
-//                       proposed reply — the human edits and sends; agent never does)
+//   • room_message      → append to that room's transcript
+//   • room_presence     → that room's presence list
+//   • room_connection   → that room's connected flag (reconnect surfaces here)
+//   • room_conversation → a helpdesk thread's lifecycle state (open/assigned/…)
+//   • room_draft        → switch to the room + pre-fill the composer (agent's
+//                         proposed reply — the human edits and sends; agent never does)
 // A console drops the server's echo of its *own* messages, so we append our sent
 // messages optimistically.
+//
+// **Helpdesk agent mode** (a host entry with room_queue): the entry is a queue
+// the console staffs. Its panel is an INBOX of private visitor conversations
+// (helpdesk/<queue>/<visitor>), each with a lifecycle chip and Claim / Resolve /
+// Reopen / Close controls. Claiming a thread is also what releases the agent LLM
+// turn for it — unclaimed threads are visible but never spend the model.
 
 interface Msg {
   sender: string
   text: string
   id: string
   ts: number
+  kind?: string
 }
 
 function fmtTime(ts: number): string {
   if (!ts) return ''
   return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+// helpdesk/<queue>/<visitor> → the visitor identity (the thread's human label).
+function visitorOf(room: string): string {
+  const parts = room.split('/')
+  return parts.length === 3 ? parts[2] : room
+}
+
+const STATE_COLORS: Record<string, string> = {
+  open: 'gold',
+  assigned: 'blue',
+  resolved: 'green',
+  closed: 'default',
 }
 
 export function RoomsView({ active }: { active: boolean }) {
@@ -38,7 +59,11 @@ export function RoomsView({ active }: { active: boolean }) {
   const [messages, setMessages] = useState<Record<string, Msg[]>>({})
   const [presence, setPresence] = useState<Record<string, string[]>>({})
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  // Helpdesk inbox: conversation room → lifecycle, and per-queue thread selection.
+  const [threads, setThreads] = useState<Record<string, ThreadState>>({})
+  const [threadSel, setThreadSel] = useState<Record<string, string>>({})
   const [sending, setSending] = useState(false)
+  const [acting, setActing] = useState(false)
 
   const transcriptRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<any>(null)
@@ -52,6 +77,12 @@ export function RoomsView({ active }: { active: boolean }) {
 
   const refreshState = () => bridge.get_room_state().then(s => {
     setRooms(s.rooms)
+    // Seed the inbox with the threads the hub caught us up on at subscribe.
+    setThreads(prev => {
+      const next = { ...prev }
+      for (const r of s.rooms) for (const [room, st] of Object.entries(r.threads || {})) next[room] = st
+      return next
+    })
     // Seed presence with ourselves for each connected room (the server never
     // echoes our own presence back).
     setPresence(prev => {
@@ -74,7 +105,7 @@ export function RoomsView({ active }: { active: boolean }) {
       setMessages(prev => {
         const list = prev[m.room] || []
         if (m.id && list.some(x => x.id === m.id)) return prev   // dedupe by id
-        return { ...prev, [m.room]: [...list, { sender: m.sender, text: m.text, id: m.id, ts: m.ts }] }
+        return { ...prev, [m.room]: [...list, { sender: m.sender, text: m.text, id: m.id, ts: m.ts, kind: m.kind }] }
       })
     }
     const onPresence = (e: Event) => {
@@ -83,6 +114,10 @@ export function RoomsView({ active }: { active: boolean }) {
         const without = (prev[p.room] || []).filter(u => u !== p.user)
         return { ...prev, [p.room]: p.status === 'available' ? [...without, p.user] : without }
       })
+    }
+    const onConversation = (e: Event) => {
+      const c = (e as CustomEvent<RoomConversation>).detail
+      setThreads(prev => ({ ...prev, [c.room]: { state: c.state, assignee: c.assignee } }))
     }
     const onConnection = (e: Event) => {
       const c = (e as CustomEvent<{ room: string; host: string; connected: boolean }>).detail
@@ -95,43 +130,75 @@ export function RoomsView({ active }: { active: boolean }) {
     const onDraft = (e: Event) => {
       const d = (e as CustomEvent<{ id: string; room: string; text: string }>).detail
       setDrafts(prev => ({ ...prev, [d.room]: d.text }))
-      setSelected(d.room)
-      message.info(`The agent proposed a reply in #${d.room} — review and send it.`)
+      // A draft for a helpdesk conversation selects its queue entry + the thread;
+      // a group-chat draft selects the room directly.
+      const ns = d.room.startsWith('helpdesk/') ? d.room.split('/').slice(0, 2).join('/') : ''
+      if (ns) {
+        setSelected(ns)
+        setThreadSel(prev => ({ ...prev, [ns]: d.room }))
+        message.info(`The agent proposed a reply to ${visitorOf(d.room)} — review and send it.`)
+      } else {
+        setSelected(d.room)
+        message.info(`The agent proposed a reply in #${d.room} — review and send it.`)
+      }
       setTimeout(() => inputRef.current?.focus?.(), 0)
     }
     window.addEventListener('runspec:room_message', onMessage)
     window.addEventListener('runspec:room_presence', onPresence)
+    window.addEventListener('runspec:room_conversation', onConversation)
     window.addEventListener('runspec:room_connection', onConnection)
     window.addEventListener('runspec:room_draft', onDraft)
     return () => {
       window.removeEventListener('runspec:room_message', onMessage)
       window.removeEventListener('runspec:room_presence', onPresence)
+      window.removeEventListener('runspec:room_conversation', onConversation)
       window.removeEventListener('runspec:room_connection', onConnection)
       window.removeEventListener('runspec:room_draft', onDraft)
     }
   }, [userByRoom])
 
-  // Pin the transcript to the newest message when the selected room's log grows.
+  const current = rooms.find(r => r.room === selected)
+  const isQueue = !!current?.queue
+  // In queue mode the composer + transcript target the selected THREAD.
+  const activeRoom = isQueue ? (threadSel[selected] || '') : selected
+  const draft = drafts[activeRoom] || ''
+  const setDraft = (v: string) => setDrafts(prev => ({ ...prev, [activeRoom]: v }))
+
+  // Pin the transcript to the newest message when the active log grows.
   useEffect(() => {
     const el = transcriptRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages, selected])
+  }, [messages, activeRoom])
 
-  const current = rooms.find(r => r.room === selected)
-  const draft = drafts[selected] || ''
-  const setDraft = (v: string) => setDrafts(prev => ({ ...prev, [selected]: v }))
+  // The inbox: every conversation under this queue's namespace — the lifecycle
+  // map (hub catch-up) unioned with any room we've seen messages for.
+  const queueThreads = useMemo(() => {
+    if (!isQueue || !current) return []
+    const prefix = current.room + '/'
+    const roomsSeen = new Set<string>([
+      ...Object.keys(threads).filter(r => r.startsWith(prefix)),
+      ...Object.keys(messages).filter(r => r.startsWith(prefix)),
+    ])
+    return [...roomsSeen].sort().map(room => ({
+      room,
+      visitor: visitorOf(room),
+      state: threads[room]?.state || 'open',
+      assignee: threads[room]?.assignee ?? null,
+      last: (messages[room] || []).slice(-1)[0],
+    }))
+  }, [isQueue, current, threads, messages])
 
   const send = async () => {
     const text = draft.trim()
-    if (!text || sending || !selected) return
+    if (!text || sending || !activeRoom) return
     setSending(true)
     try {
-      const res = await bridge.send_room_message(selected, text)
+      const res = await bridge.send_room_message(activeRoom, text)
       if (!res.ok) { message.error(res.error || 'Could not send the message'); return }
       const me = userByRoom[selected] || 'me'
       setMessages(prev => ({
         ...prev,
-        [selected]: [...(prev[selected] || []), { sender: me, text, id: 'local-' + Date.now(), ts: Date.now() / 1000 }],
+        [activeRoom]: [...(prev[activeRoom] || []), { sender: me, text, id: 'local-' + Date.now(), ts: Date.now() / 1000 }],
       }))
       setDraft('')
     } catch (err) {
@@ -139,6 +206,21 @@ export function RoomsView({ active }: { active: boolean }) {
     } finally {
       setSending(false)
       inputRef.current?.focus?.()
+    }
+  }
+
+  const control = async (kind: 'claim' | 'resolve' | 'reopen' | 'close') => {
+    if (!activeRoom || acting) return
+    setActing(true)
+    try {
+      const call = { claim: bridge.claim_thread, resolve: bridge.resolve_thread, reopen: bridge.reopen_thread, close: bridge.close_thread }[kind]
+      const res = await call(activeRoom)
+      if (!res.ok) message.error(res.error || `Could not ${kind} the thread`)
+      // The new state arrives as a runspec:room_conversation broadcast.
+    } catch (err) {
+      message.error(String(err))
+    } finally {
+      setActing(false)
     }
   }
 
@@ -153,8 +235,9 @@ export function RoomsView({ active }: { active: boolean }) {
           description={
             <span>
               No chat rooms.<br />
-              Add <Text code>room</Text> and <Text code>room_port</Text> to a host in your
-              fleet (Hosts tab) — the console joins it automatically over that host's tunnel.
+              Add <Text code>room</Text> (group chat) or <Text code>room_queue</Text> (help desk)
+              plus <Text code>room_port</Text> to a host in your fleet (Hosts tab) — the console
+              joins it automatically over that host's tunnel.
             </span>
           }
         />
@@ -163,8 +246,10 @@ export function RoomsView({ active }: { active: boolean }) {
   }
 
   const selfUser = current?.user || ''
-  const msgs = messages[selected] || []
+  const msgs = messages[activeRoom] || []
   const present = presence[selected] || []
+  const activeThread = isQueue ? queueThreads.find(t => t.room === activeRoom) : undefined
+  const mineAssigned = activeThread?.assignee === selfUser
 
   return (
     <div style={{ height: '100%', display: 'flex', minHeight: 0 }}>
@@ -185,19 +270,94 @@ export function RoomsView({ active }: { active: boolean }) {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ color: r.connected ? '#3fb950' : '#888', fontSize: 10 }}>●</span>
-              <Text strong style={{ fontSize: 13 }}>#{r.room}</Text>
+              <Text strong style={{ fontSize: 13 }}>{r.queue ? `⛑ ${r.queue}` : `#${r.room}`}</Text>
             </div>
-            <Text type="secondary" style={{ fontSize: 11 }}>{r.host}</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>{r.queue ? 'help desk · ' : ''}{r.host}</Text>
           </div>
         ))}
       </div>
 
-      {/* Selected room */}
+      {/* Helpdesk inbox: the queue's conversations */}
+      {isQueue && (
+        <div style={{ width: 220, flexShrink: 0, borderRight: `1px solid ${border}`, background: panelBg, overflowY: 'auto' }}>
+          <div style={{ padding: '10px 14px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: isDark ? '#8b93a3' : '#888' }}>
+            Inbox · {queueThreads.length}
+          </div>
+          {queueThreads.length === 0 ? (
+            <div style={{ padding: '8px 14px' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>No conversations yet.</Text>
+            </div>
+          ) : queueThreads.map(t => (
+            <div
+              key={t.room}
+              onClick={() => setThreadSel(prev => ({ ...prev, [selected]: t.room }))}
+              style={{
+                padding: '8px 14px', cursor: 'pointer',
+                background: t.room === activeRoom ? (isDark ? '#22262e' : '#eef2f8') : 'transparent',
+                borderLeft: t.room === activeRoom ? `2px solid ${accent}` : '2px solid transparent',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
+                <Text strong style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.visitor}</Text>
+                <Tag color={STATE_COLORS[t.state] || 'default'} style={{ marginRight: 0, fontSize: 10, lineHeight: '16px' }}>{t.state}</Tag>
+              </div>
+              {t.assignee && (
+                <Text type="secondary" style={{ fontSize: 11 }}>→ {t.assignee === selfUser ? 'you' : t.assignee}</Text>
+              )}
+              {t.last && (
+                <div style={{ fontSize: 11, color: isDark ? '#8b93a3' : '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {t.last.text}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Selected room / thread */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
-          <Text strong style={{ fontSize: 14 }}>#{selected}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>on {current?.host}</Text>
-          <span style={{ flex: 1 }} />
+          {isQueue ? (
+            <>
+              <Text strong style={{ fontSize: 14 }}>{activeThread ? visitorOf(activeRoom) : `⛑ ${current?.queue}`}</Text>
+              {activeThread && (
+                <Tag color={STATE_COLORS[activeThread.state] || 'default'}>
+                  {activeThread.state}{activeThread.assignee ? ` · ${activeThread.assignee === selfUser ? 'you' : activeThread.assignee}` : ''}
+                </Tag>
+              )}
+              <span style={{ flex: 1 }} />
+              {activeThread && (
+                <>
+                  {(activeThread.state === 'open' || (activeThread.state === 'assigned' && !mineAssigned)) && (
+                    <Button size="small" type="primary" icon={<FlagOutlined />} loading={acting} onClick={() => control('claim')}>
+                      Claim
+                    </Button>
+                  )}
+                  {activeThread.state === 'assigned' && mineAssigned && (
+                    <Button size="small" icon={<CheckOutlined />} loading={acting} onClick={() => control('resolve')}>
+                      Resolve
+                    </Button>
+                  )}
+                  {(activeThread.state === 'resolved' || activeThread.state === 'closed') && (
+                    <Button size="small" icon={<UndoOutlined />} loading={acting} onClick={() => control('reopen')}>
+                      Reopen
+                    </Button>
+                  )}
+                  {activeThread.state !== 'closed' && (
+                    <Button size="small" danger icon={<CloseOutlined />} loading={acting} onClick={() => control('close')}>
+                      Close
+                    </Button>
+                  )}
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <Text strong style={{ fontSize: 14 }}>#{selected}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>on {current?.host}</Text>
+              <span style={{ flex: 1 }} />
+            </>
+          )}
           <Text type="secondary" style={{ fontSize: 12 }}>
             {current?.connected ? 'connected' : 'offline — reconnecting…'}
           </Text>
@@ -205,14 +365,25 @@ export function RoomsView({ active }: { active: boolean }) {
 
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
           <div ref={transcriptRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
-            {msgs.length === 0 ? (
+            {isQueue && !activeThread ? (
+              <div style={{ marginTop: 40 }}>
+                <Empty description="Pick a conversation from the inbox" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              </div>
+            ) : msgs.length === 0 ? (
               <div style={{ marginTop: 40 }}>
                 <Empty description="No messages yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
               </div>
             ) : msgs.map((m, i) => (
               <div key={m.id || i} style={{ display: 'flex', gap: 8, padding: '3px 0', alignItems: 'baseline' }}>
                 <Text strong style={{ color: m.sender === selfUser ? '#3fb950' : accent, whiteSpace: 'nowrap' }}>{m.sender}</Text>
-                <Text style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</Text>
+                {m.kind === 'request' ? (
+                  <span style={{ flex: 1 }}>
+                    <Tag color="purple" style={{ fontSize: 10, lineHeight: '16px' }}>request</Tag>
+                    <Text style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</Text>
+                  </span>
+                ) : (
+                  <Text style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</Text>
+                )}
                 <Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{fmtTime(m.ts)}</Text>
               </div>
             ))}
@@ -243,17 +414,24 @@ export function RoomsView({ active }: { active: boolean }) {
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); send() } }}
-            placeholder={current?.connected ? `Message #${selected}… (Enter to send, Shift+Enter for a newline)` : 'Offline — reconnecting to the room…'}
+            placeholder={
+              !current?.connected ? 'Offline — reconnecting to the room…'
+              : isQueue && !activeThread ? 'Pick a conversation to reply…'
+              : isQueue ? `Reply to ${visitorOf(activeRoom)}… (Enter to send, Shift+Enter for a newline)`
+              : `Message #${selected}… (Enter to send, Shift+Enter for a newline)`
+            }
             autoSize={{ minRows: 1, maxRows: 4 }}
-            disabled={!current?.connected}
+            disabled={!current?.connected || (isQueue && !activeThread)}
           />
-          <Button type="primary" icon={<SendOutlined />} onClick={send} loading={sending} disabled={!current?.connected || !draft.trim()}>
+          <Button type="primary" icon={<SendOutlined />} onClick={send} loading={sending} disabled={!current?.connected || !draft.trim() || (isQueue && !activeThread)}>
             Send
           </Button>
         </div>
         <div style={{ padding: '0 16px 8px', marginTop: -4 }}>
           <Text type="secondary" style={{ fontSize: 11 }}>
-            <RobotOutlined /> Tip: the agent can propose replies here — you always review and send.
+            <RobotOutlined /> {isQueue
+              ? 'Tip: claim a thread to own it — that also lets the agent draft replies for it. You always review and send.'
+              : 'Tip: the agent can propose replies here — you always review and send.'}
           </Text>
         </div>
       </div>

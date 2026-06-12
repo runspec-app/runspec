@@ -1120,8 +1120,15 @@ export const mockApi: BridgeApi = {
   },
   get_room_state: async () => ({
     rooms: [
-      { room: 'ops', host: 'web01', user: 'alice@web01', connected: true },
-      { room: 'dba', host: 'db01', user: 'alice@db01', connected: false },
+      { room: 'ops', host: 'web01', user: 'alice@web01', connected: true, queue: '' },
+      { room: 'dba', host: 'db01', user: 'alice@db01', connected: false, queue: '' },
+      {
+        room: 'helpdesk/it-support', host: 'web01', user: 'alice@web01', connected: true, queue: 'it-support',
+        threads: {
+          'helpdesk/it-support/bob@corp': { state: 'open', assignee: null },
+          'helpdesk/it-support/carol@corp': { state: 'assigned', assignee: 'alice@web01' },
+        },
+      },
     ],
   }),
   send_room_message: async (room: string, text: string) => {
@@ -1131,6 +1138,42 @@ export const mockApi: BridgeApi = {
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('runspec:room_message', {
         detail: { room, sender: 'alice@web01', text, id: 'mock-' + Date.now(), ts: Date.now() / 1000 },
+      }))
+    }, 80)
+    return { ok: true }
+  },
+  claim_thread: async (room: string) => {
+    console.log('mock: claim_thread', room)
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('runspec:room_conversation', {
+        detail: { room, state: 'assigned', assignee: 'alice@web01' },
+      }))
+    }, 80)
+    return { ok: true }
+  },
+  resolve_thread: async (room: string) => {
+    console.log('mock: resolve_thread', room)
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('runspec:room_conversation', {
+        detail: { room, state: 'resolved', assignee: 'alice@web01' },
+      }))
+    }, 80)
+    return { ok: true }
+  },
+  reopen_thread: async (room: string) => {
+    console.log('mock: reopen_thread', room)
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('runspec:room_conversation', {
+        detail: { room, state: 'open', assignee: null },
+      }))
+    }, 80)
+    return { ok: true }
+  },
+  close_thread: async (room: string) => {
+    console.log('mock: close_thread', room)
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('runspec:room_conversation', {
+        detail: { room, state: 'closed', assignee: null },
       }))
     }, 80)
     return { ok: true }

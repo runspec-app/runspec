@@ -217,25 +217,46 @@ def default_room_user(ssh_target: str, ssh_user: str = "") -> str:
     return default_user_from_ssh(ssh_target, fallback)
 
 
+#: Room namespace prefix for helpdesk queues — must match the room server's
+#: console_room.conversation.HELPDESK_PREFIX.
+HELPDESK_PREFIX = "helpdesk"
+
+
+def _valid_queue(queue: str) -> bool:
+    """A queue token must not contain the namespace separator or whitespace —
+    mirrors the room server's ``valid_token`` (a bad token could escape its
+    namespace)."""
+    return bool(queue) and not any(c == "/" or c.isspace() for c in queue)
+
+
 def host_rooms(
     hosts: list[dict[str, Any]], *, ssh_user: str = ""
 ) -> list[dict[str, Any]]:
     """Extract the room specs declared on fleet host entries — those with a
-    ``room`` name, a ``room_port`` (the server's localhost port on that host) and
-    an ``ssh`` target. Each spec carries everything the tunnel needs, *inherited
+    ``room`` name (group chat) and/or a ``room_queue`` (helpdesk agent mode),
+    plus a ``room_port`` (the server's localhost port on that host) and an
+    ``ssh`` target. Each spec carries everything the tunnel needs, *inherited
     from the host*: its ssh target + identityFile (so the tunnel reuses the pooled
     connection), the room, the port, and a display user (``room_user`` override,
     else the SSH login — ``ssh_user`` is the configured ``[ssh]`` default username,
-    preferred over the local OS user)."""
+    preferred over the local OS user).
+
+    **Helpdesk agent mode:** ``room_queue = "it-support"`` declares this console
+    an agent of that queue on the host's room server. The spec's ``room`` key is
+    the queue *namespace* (``helpdesk/it-support``) — unique alongside any plain
+    ``room`` the same host also declares — with ``queue`` carrying the bare name
+    and ``catalog_allowlist`` the optional ``room_catalog`` narrowing list (bare
+    runnable names; absent = publish every self-service-marked runnable)."""
     specs: list[dict[str, Any]] = []
     for h in hosts:
         ssh_target = str(h.get("ssh") or "").strip()
         room = str(h.get("room") or "").strip()
+        queue = str(h.get("room_queue") or "").strip()
         port = h.get("room_port")
         # bool is an int subclass — a TOML true/false is not a valid port.
         if (
             not ssh_target
-            or not room
+            or not (room or queue)
             or not isinstance(port, int)
             or isinstance(port, bool)
         ):
@@ -259,19 +280,30 @@ def host_rooms(
         exec_command = str(h.get("room_exec_command") or "").strip() or (
             f"{room_command} connect --host {dest_host} --port {int(port)}"
         )
-        specs.append(
-            {
-                "host": str(h.get("name") or ssh_target),
-                "ssh_target": ssh_target,
-                "identity_file": h.get("identityFile") or None,
-                "room": room,
-                "port": int(port),
-                "dest_host": dest_host,
-                "user": user,
-                "via": via,
-                "exec_command": exec_command,
-            }
-        )
+        base = {
+            "host": str(h.get("name") or ssh_target),
+            "ssh_target": ssh_target,
+            "identity_file": h.get("identityFile") or None,
+            "port": int(port),
+            "dest_host": dest_host,
+            "user": user,
+            "via": via,
+            "exec_command": exec_command,
+        }
+        if room:
+            specs.append({**base, "room": room, "queue": ""})
+        if _valid_queue(queue):
+            allowlist = h.get("room_catalog")
+            specs.append(
+                {
+                    **base,
+                    "room": f"{HELPDESK_PREFIX}/{queue}",
+                    "queue": queue,
+                    "catalog_allowlist": [str(n) for n in allowlist]
+                    if isinstance(allowlist, list)
+                    else None,
+                }
+            )
     return specs
 
 

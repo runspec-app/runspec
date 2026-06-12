@@ -54,12 +54,20 @@ def test_message_payload():
         "text": "prod is down",
         "id": "m1",
         "ts": 5.0,
+        "kind": "chat",
     }
 
 
 def test_message_payload_tolerates_missing_and_bad_ts():
     p = message_payload({"text": "hi", "ts": "not-a-number"})
-    assert p == {"room": "", "sender": "", "text": "hi", "id": "", "ts": 0.0}
+    assert p == {
+        "room": "",
+        "sender": "",
+        "text": "hi",
+        "id": "",
+        "ts": 0.0,
+        "kind": "chat",
+    }
 
 
 def test_message_payload_caps_long_text():
@@ -314,4 +322,109 @@ def test_event_types():
     assert ChatSource(room="ops", transport=FakeTransport()).event_types() == [
         "message",
         "presence",
+        "conversation",
     ]
+
+
+# ── helpdesk agent mode ────────────────────────────────────────────────────────
+
+
+def _agent(transport: FakeTransport) -> ChatSource:
+    return ChatSource(
+        room="", namespace="helpdesk/it", user="agent@web01", transport=transport
+    )
+
+
+def test_agent_hello_declares_namespace():
+    transport = FakeTransport()
+    src = _agent(transport)
+    src.start(lambda ev: None)
+    src.stop()
+    assert transport.sent[0] == {
+        "type": "hello",
+        "namespace": "helpdesk/it",
+        "user": "agent@web01",
+    }
+    # Agent presence is server-side (namespace join/leave) — never sent.
+    assert [m for m in transport.sent if m["type"] == "presence"] == []
+
+
+def test_agent_send_message_names_the_conversation():
+    transport = FakeTransport()
+    src = _agent(transport)
+    src.start(lambda ev: None)
+    src.send_message("on it", room="helpdesk/it/alice@corp")
+    src.stop()
+    sent = [m for m in transport.sent if m["type"] == "message"]
+    assert sent == [
+        {"type": "message", "room": "helpdesk/it/alice@corp", "text": "on it"}
+    ]
+
+
+def test_agent_send_message_without_conversation_is_dropped():
+    transport = FakeTransport()
+    src = _agent(transport)
+    src.start(lambda ev: None)
+    src.send_message("lost")  # no room named, no member room to fall back to
+    src.stop()
+    assert [m for m in transport.sent if m["type"] == "message"] == []
+
+
+def test_send_catalog_and_controls_are_agent_only():
+    member_t = FakeTransport()
+    member = ChatSource(room="ops", user="c", transport=member_t)
+    member.start(lambda ev: None)
+    member.send_catalog([{"name": "x"}])
+    member.send_control("claim", "helpdesk/it/alice@corp")
+    member.stop()
+    assert [m for m in member_t.sent if m["type"] in ("catalog", "claim")] == []
+
+    agent_t = FakeTransport()
+    agent = _agent(agent_t)
+    agent.start(lambda ev: None)
+    agent.send_catalog([{"name": "reset-password"}])
+    agent.send_control("claim", "helpdesk/it/alice@corp")
+    agent.send_control("resolve", "helpdesk/it/alice@corp")
+    agent.send_control("drop-tables", "helpdesk/it/alice@corp")  # unknown → dropped
+    agent.stop()
+    kinds = [m["type"] for m in agent_t.sent]
+    assert "catalog" in kinds and "claim" in kinds and "resolve" in kinds
+    assert "drop-tables" not in kinds
+    cat = next(m for m in agent_t.sent if m["type"] == "catalog")
+    assert cat["tools"] == [{"name": "reset-password"}]
+
+
+def test_parse_inbound_conversation_frame():
+    ev = parse_inbound(
+        {
+            "type": "conversation",
+            "room": "helpdesk/it/alice@corp",
+            "state": "assigned",
+            "assignee": "agent@web01",
+        },
+        "agent@web01",
+    )
+    assert ev is not None and ev.type == "conversation"
+    assert ev.payload == {
+        "room": "helpdesk/it/alice@corp",
+        "state": "assigned",
+        "assignee": "agent@web01",
+    }
+
+
+def test_message_payload_carries_request_kind_and_data():
+    payload = message_payload(
+        {
+            "type": "message",
+            "room": "helpdesk/it/alice@corp",
+            "sender": "alice@corp",
+            "text": "Requested: reset-password",
+            "kind": "request",
+            "data": {"tool": "reset-password", "args": {"user": "alice"}},
+        }
+    )
+    assert payload["kind"] == "request"
+    assert payload["data"] == {"tool": "reset-password", "args": {"user": "alice"}}
+    # Plain chat (and older servers sending no kind) default to "chat", no data.
+    plain = message_payload({"type": "message", "room": "ops", "text": "hi"})
+    assert plain["kind"] == "chat" and "data" not in plain

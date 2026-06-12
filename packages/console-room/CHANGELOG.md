@@ -4,6 +4,44 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.5.0]
+
+### Added — helpdesk mode (private conversations + self-service catalog)
+
+The room server gains a second routing mode built on the same hub, store,
+transports and OIDC door: a corporate **help desk** where each signed-in
+visitor has a **private conversation** with a team of agent consoles. Group
+chat is unchanged throughout — a room with no agents behaves exactly as
+before. See `docs/design/helpdesk-rooms.md`.
+
+- **Private conversations.** A conversation is a room named **server-side** as
+  `helpdesk/<queue>/<visitor>` from the OIDC session — a visitor can never name
+  (and so never read) another visitor's thread. Browser door: `?queue=` joins
+  your own thread; `?room=` group chat is untouched.
+- **Namespace agents.** A console's `hello` may declare a `namespace`
+  (`helpdesk/<queue>`) instead of a `room`: the hub fans every conversation
+  under the queue to it (the agent's inbox), present and future. Agent posts
+  name their target conversation and are refused outside the namespace.
+- **Conversation lifecycle.** `open → assigned → resolved → closed` (+ reopen
+  by visitor reply), driven by agent-only `claim` / `resolve` / `reopen` /
+  `close` control frames; every change broadcasts a `conversation` state frame
+  to the visitor + team, and join/subscribe catch-up replays current state.
+- **Self-service catalog.** Agent consoles publish a `catalog` frame (their
+  `self-service`-marked runnable schemas); the room caches per queue
+  (last-writer-wins, `[]` clears) and serves visitors via `GET /catalog?queue=`
+  (auth-gated). **The room never executes anything**: a visitor form submit
+  becomes a `request`-kind message (human text + `{tool, args}` payload),
+  validated against the published catalog + size caps — enactment happens only
+  on an agent console behind its speak/autonomy gates.
+- **Visitor web UI.** A "Help desk queue" join option + `?queue=` deep links,
+  an always-browsable catalog panel with forms generated from each tool's
+  `inputSchema`, a lifecycle chip, and request cards in the transcript.
+
+### Changed
+- `Message` gains `kind` (`chat`|`request`) + `data` — additive on the wire;
+  the SQLite store adds the two columns and migrates a pre-helpdesk transcript
+  in place.
+
 ## [0.4.1]
 
 ### Fixed

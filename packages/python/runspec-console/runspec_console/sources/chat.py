@@ -79,17 +79,25 @@ def _float(val: Any) -> float:
 
 
 def message_payload(obj: dict[str, Any]) -> dict[str, Any]:
-    """Extract the ``message`` payload from a wire dict."""
+    """Extract the ``message`` payload from a wire dict.
+
+    ``kind``/``data`` carry the helpdesk request shape: a visitor's catalog
+    submission arrives as ``kind="request"`` with ``data={"tool", "args"}`` —
+    plain chat is ``kind="chat"`` with no data (older servers send neither)."""
     text = _str(obj.get("text"))
     if len(text) > _TEXT_CAP:
         text = text[:_TEXT_CAP] + "…"
-    return {
+    payload = {
         "room": _str(obj.get("room")),
         "sender": _str(obj.get("sender")),
         "text": text,
         "id": _str(obj.get("id")),
         "ts": _float(obj.get("ts")),
+        "kind": _str(obj.get("kind")) or "chat",
     }
+    if isinstance(obj.get("data"), dict):
+        payload["data"] = obj["data"]
+    return payload
 
 
 def presence_payload(obj: dict[str, Any]) -> dict[str, Any]:
@@ -101,6 +109,16 @@ def presence_payload(obj: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def conversation_payload(obj: dict[str, Any]) -> dict[str, Any]:
+    """Extract a ``conversation`` lifecycle payload (helpdesk thread state)."""
+    assignee = obj.get("assignee")
+    return {
+        "room": _str(obj.get("room")),
+        "state": _str(obj.get("state")),
+        "assignee": _str(assignee) if assignee is not None else None,
+    }
+
+
 def parse_inbound(obj: Any, self_user: str) -> Event | None:
     """Convert one inbound wire dict to an :class:`Event`, or ``None`` to drop it.
 
@@ -108,6 +126,8 @@ def parse_inbound(obj: Any, self_user: str) -> Event | None:
     a ``message`` whose ``sender`` is this console (``self_user``): the server
     echoes our own sent messages back, and a console must never react to its own
     acks. A console's own ``presence`` echo is dropped for the same reason.
+    ``conversation`` frames (helpdesk thread lifecycle) always pass — state is
+    server-authoritative, even when this console's claim caused it.
     """
     if not isinstance(obj, dict):
         return None
@@ -120,6 +140,8 @@ def parse_inbound(obj: Any, self_user: str) -> Event | None:
         if self_user and _str(obj.get("user")) == self_user:
             return None
         return Event.new("chat", "presence", presence_payload(obj))
+    if kind == "conversation":
+        return Event.new("chat", "conversation", conversation_payload(obj))
     return None
 
 
@@ -149,6 +171,7 @@ class ChatSource:
         *,
         room: str | None = None,
         user: str | None = None,
+        namespace: str | None = None,
         transport: ChatTransport | None = None,
         transport_factory: TransportFactory | None = None,
         on_closed: Callable[[], None] | None = None,
@@ -156,6 +179,10 @@ class ChatSource:
         cfg = config.read_chat()
         self._room = room if room is not None else _str(cfg.get("room"))
         self._user = user if user is not None else _str(cfg.get("user"))
+        # Helpdesk agent mode: subscribe to a whole queue namespace
+        # (``helpdesk/<queue>``) instead of one room. The hub fans every
+        # conversation under it to this connection — the agent's inbox.
+        self._namespace = _str(namespace)
         self._transport = transport
         self._transport_factory = transport_factory
         # Fired when the recv loop ends because the channel dropped (not via
@@ -166,15 +193,20 @@ class ChatSource:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
+    @property
+    def is_agent(self) -> bool:
+        """True when this source is a helpdesk agent (namespace-subscribed)."""
+        return bool(self._namespace)
+
     def available(self) -> tuple[bool, str]:
-        if not self._room:
+        if not self._room and not self._namespace:
             return (False, "no chat room configured — set [chat] room in config")
         if self._transport is None and self._transport_factory is None:
             return (False, "chat transport not yet wired")
         return (True, "")
 
     def event_types(self) -> list[str]:
-        return ["message", "presence"]
+        return ["message", "presence", "conversation"]
 
     def start(self, emit: EmitFn) -> None:
         ok, reason = self.available()
@@ -215,35 +247,76 @@ class ChatSource:
         """Publish a presence change (the bridge calls this when the rota flips)."""
         self._send_presence("available" if available else "away")
 
-    def send_message(self, text: str) -> None:
-        """Send a human-composed message to the room. The agent never calls this
-        directly — a drafted reply only pre-fills the composer; the human sends
-        (see design §2)."""
+    def send_message(self, text: str, *, room: str | None = None) -> None:
+        """Send a human-composed message. The agent never calls this directly —
+        a drafted reply only pre-fills the composer; the human sends (design §2).
+
+        In room mode the target is this source's room. In agent mode the caller
+        must name the conversation (``room=``) — the hub routes it to that one
+        visitor (+ the team) and refuses a target outside our namespace."""
         transport = self._transport
         if transport is None:
             logger.info("chat: send_message with no transport — dropped")
             return
+        target = (room or "").strip() or self._room
+        if not target:
+            logger.info("chat: agent send_message without a conversation — dropped")
+            return
         try:
-            transport.send({"type": "message", "room": self._room, "text": text})
+            transport.send({"type": "message", "room": target, "text": text})
         except Exception:
             logger.exception("chat: send_message failed")
+
+    def send_catalog(self, tools: list[dict[str, Any]]) -> None:
+        """Publish the queue's self-service catalog (agent mode only). The room
+        caches it per namespace and serves it to visitors; ``[]`` clears it."""
+        transport = self._transport
+        if transport is None or not self.is_agent:
+            return
+        try:
+            transport.send({"type": "catalog", "tools": tools})
+        except Exception:
+            logger.exception("chat: catalog send failed")
+
+    _CONTROL_KINDS = ("claim", "resolve", "reopen", "close")
+
+    def send_control(self, kind: str, room: str) -> None:
+        """Send a conversation-lifecycle control frame (agent mode only):
+        claim / resolve / reopen / close on one conversation. The hub enforces
+        the namespace boundary and broadcasts the state change."""
+        transport = self._transport
+        if transport is None or not self.is_agent or kind not in self._CONTROL_KINDS:
+            return
+        try:
+            transport.send({"type": kind, "room": room})
+        except Exception:
+            logger.exception("chat: control %r send failed", kind)
 
     def _send_hello(self) -> None:
         """Announce identity on connect — the first frame the room server expects.
         It binds ``user`` to this connection and stamps it onto every later
         message, so a per-message sender can't be spoofed. A blank user is left to
-        the server to fill (it falls back to ``unknown``)."""
+        the server to fill (it falls back to ``unknown``). An agent declares its
+        queue ``namespace`` instead of a room — the server subscribes it to every
+        conversation under that queue."""
         transport = self._transport
         if transport is None:
             return
+        frame = (
+            {"type": "hello", "namespace": self._namespace, "user": self._user}
+            if self.is_agent
+            else {"type": "hello", "room": self._room, "user": self._user}
+        )
         try:
-            transport.send({"type": "hello", "room": self._room, "user": self._user})
+            transport.send(frame)
         except Exception:
             logger.exception("chat: hello send failed")
 
     def _send_presence(self, status: str) -> None:
+        # Agent presence is server-side (join/leave of the namespace) — the hub
+        # ignores agent presence frames, so don't send them.
         transport = self._transport
-        if transport is None:
+        if transport is None or self.is_agent:
             return
         try:
             transport.send({"type": "presence", "room": self._room, "status": status})

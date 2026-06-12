@@ -80,13 +80,16 @@ class _FakeEngine:
         self.fed.append(event)
 
 
-def _event_stub(engine: Any = None):
+def _event_stub(engine: Any = None, agent_rooms: dict[str, str] | None = None):
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._trigger_engine = engine
+    s._agent_rooms = dict(agent_rooms or {})
+    s._thread_states = {}
     s.dispatched: list[tuple[str, dict]] = []
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
+    s._feed_engine_for = types.MethodType(Bridge._feed_engine_for, s)
     return s
 
 
@@ -112,6 +115,70 @@ def test_on_chat_event_message_with_no_engine_still_fans_to_ui():
     s = _event_stub(None)  # no trigger engine running
     s._on_chat_event(Event.new("chat", "message", {"room": "ops", "text": "hi"}))
     assert s.dispatched == [("runspec:room_message", {"room": "ops", "text": "hi"})]
+
+
+# ── helpdesk: conversation frames + the claim gate ─────────────────────────────
+
+_NS = "helpdesk/it"
+_THREAD = "helpdesk/it/alice@corp"
+
+
+def _conv(state: str, assignee: str | None) -> Event:
+    return Event.new(
+        "chat", "conversation", {"room": _THREAD, "state": state, "assignee": assignee}
+    )
+
+
+def test_conversation_frame_is_ui_only_and_tracked():
+    engine = _FakeEngine()
+    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s._on_chat_event(_conv("open", None))
+    assert s.dispatched == [
+        (
+            "runspec:room_conversation",
+            {"room": _THREAD, "state": "open", "assignee": None},
+        )
+    ]
+    assert engine.fed == []  # lifecycle never reaches the engine
+    assert s._thread_states[_THREAD] == {"state": "open", "assignee": None}
+
+
+def test_unclaimed_thread_message_is_ui_only():
+    """The claim gate: no agent turn (engine feed) until a human claims."""
+    engine = _FakeEngine()
+    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s._on_chat_event(_conv("open", None))
+    s._on_chat_event(
+        Event.new("chat", "message", {"room": _THREAD, "text": "help", "kind": "chat"})
+    )
+    assert (
+        "runspec:room_message",
+        {"room": _THREAD, "text": "help", "kind": "chat"},
+    ) in s.dispatched
+    assert engine.fed == []  # visible in the inbox, but no model spend
+
+
+def test_claimed_by_me_thread_message_feeds_engine():
+    engine = _FakeEngine()
+    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s._on_chat_event(_conv("assigned", "agent@web01"))  # we claimed it
+    s._on_chat_event(Event.new("chat", "message", {"room": _THREAD, "text": "help"}))
+    assert len(engine.fed) == 1 and engine.fed[0].payload["room"] == _THREAD
+
+
+def test_claimed_by_teammate_thread_message_is_ui_only():
+    engine = _FakeEngine()
+    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s._on_chat_event(_conv("assigned", "agent2@web02"))  # a teammate owns it
+    s._on_chat_event(Event.new("chat", "message", {"room": _THREAD, "text": "help"}))
+    assert engine.fed == []  # their thread, their console's turn
+
+
+def test_group_chat_message_unaffected_by_agent_mode():
+    engine = _FakeEngine()
+    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s._on_chat_event(Event.new("chat", "message", {"room": "ops", "text": "deploy"}))
+    assert len(engine.fed) == 1  # plain rooms keep the original behaviour
 
 
 # ── _RotaPresenceWatcher ──────────────────────────────────────────────────────
@@ -168,6 +235,8 @@ def _supervisor_stub():
     s._lock = threading.Lock()
     s._chat_stop = threading.Event()
     s._chat_sources = {}
+    s._agent_rooms = {}
+    s._thread_states = {}
     s._trigger_engine = None
     s.dispatched: list[tuple[str, dict]] = []
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
@@ -175,7 +244,10 @@ def _supervisor_stub():
     s._CHAT_BACKOFF_START = 0.01
     s._CHAT_BACKOFF_MAX = 0.01
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
+    s._feed_engine_for = types.MethodType(Bridge._feed_engine_for, s)
     s._chat_supervise = types.MethodType(Bridge._chat_supervise, s)
+    s._publish_catalog = lambda spec, source: s.published.append(spec["room"])
+    s.published: list[str] = []
     return s
 
 
@@ -204,8 +276,50 @@ def test_chat_supervisor_reconnects_until_stopped():
     assert len(calls) >= 3  # it kept reconnecting after each drop
     assert s._chat_sources == {}  # cleared once stopped
     conns = [d for ev, d in s.dispatched if ev == "runspec:room_connection"]
-    assert {"room": "ops", "host": "web01", "connected": True} in conns
-    assert {"room": "ops", "host": "web01", "connected": False} in conns
+    assert {"room": "ops", "host": "web01", "connected": True, "queue": ""} in conns
+    assert {"room": "ops", "host": "web01", "connected": False, "queue": ""} in conns
+    assert s.published == []  # a plain room never publishes a catalog
+
+
+def test_chat_supervisor_agent_mode_publishes_catalog_and_registers():
+    import time
+
+    s = _supervisor_stub()
+    spec = {
+        "room": "helpdesk/it",
+        "host": "web01",
+        "user": "agent@web01",
+        "queue": "it",
+    }
+    registered: list[dict[str, str]] = []
+    orig_publish = s._publish_catalog
+
+    def publish_and_snapshot(sp, source):
+        registered.append(dict(s._agent_rooms))  # registered before publishing
+        orig_publish(sp, source)
+
+    s._publish_catalog = publish_and_snapshot
+    s._chat_stop.clear()
+    th = threading.Thread(
+        target=s._chat_supervise, args=(spec, _OneShotTransport), daemon=True
+    )
+    th.start()
+    deadline = time.time() + 3
+    while not s.published and time.time() < deadline:
+        time.sleep(0.01)
+    s._chat_stop.set()
+    th.join(timeout=2)
+
+    assert "helpdesk/it" in s.published  # the catalog went out on subscribe
+    assert registered and registered[0].get("helpdesk/it") == "agent@web01"
+    assert s._agent_rooms == {}  # cleared once stopped
+    conns = [d for ev, d in s.dispatched if ev == "runspec:room_connection"]
+    assert {
+        "room": "helpdesk/it",
+        "host": "web01",
+        "connected": True,
+        "queue": "it",
+    } in conns
 
 
 def test_start_chat_noop_without_pool():
@@ -225,16 +339,28 @@ def test_start_chat_noop_without_pool():
 class _FakeSource:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.targets: list[str | None] = []
+        self.controls: list[tuple[str, str]] = []
 
-    def send_message(self, text: str) -> None:
+    def send_message(self, text: str, *, room: str | None = None) -> None:
         self.sent.append(text)
+        self.targets.append(room)
+
+    def send_control(self, kind: str, room: str) -> None:
+        self.controls.append((kind, room))
 
 
-def _send_stub(sources: dict[str, Any]):
+def _send_stub(sources: dict[str, Any], agent_rooms: dict[str, str] | None = None):
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._chat_sources = sources
+    s._agent_rooms = dict(agent_rooms or {})
     s.send_room_message = types.MethodType(Bridge.send_room_message, s)
+    s._thread_control = types.MethodType(Bridge._thread_control, s)
+    s.claim_thread = types.MethodType(Bridge.claim_thread, s)
+    s.resolve_thread = types.MethodType(Bridge.resolve_thread, s)
+    s.reopen_thread = types.MethodType(Bridge.reopen_thread, s)
+    s.close_thread = types.MethodType(Bridge.close_thread, s)
     return s
 
 
@@ -262,13 +388,68 @@ def test_send_room_message_rejects_empty():
     assert src.sent == []  # nothing dispatched on the wire
 
 
+def test_send_room_message_routes_conversation_via_agent_source():
+    """A helpdesk conversation isn't a source key — it rides the agent source
+    staffing its namespace, with the conversation named on the frame."""
+    src = _FakeSource()
+    stub = _send_stub({"helpdesk/it": src}, agent_rooms={"helpdesk/it": "agent@web01"})
+    out = stub.send_room_message("helpdesk/it/alice@corp", "have you rebooted?")
+    assert out == {"ok": True}
+    assert src.sent == ["have you rebooted?"]
+    assert src.targets == ["helpdesk/it/alice@corp"]
+
+
+def test_send_room_message_unstaffed_conversation_fails():
+    out = _send_stub({}, agent_rooms={}).send_room_message(
+        "helpdesk/hr/carol@corp", "hi"
+    )
+    assert out["ok"] is False and "not connected" in out["error"]
+
+
+# ── thread controls (claim / resolve / reopen / close) ─────────────────────────
+
+
+def test_thread_controls_route_via_agent_source():
+    src = _FakeSource()
+    stub = _send_stub({"helpdesk/it": src}, agent_rooms={"helpdesk/it": "agent@web01"})
+    thread = "helpdesk/it/alice@corp"
+    assert stub.claim_thread(thread) == {"ok": True}
+    assert stub.resolve_thread(thread) == {"ok": True}
+    assert stub.reopen_thread(thread) == {"ok": True}
+    assert stub.close_thread(thread) == {"ok": True}
+    assert src.controls == [
+        ("claim", thread),
+        ("resolve", thread),
+        ("reopen", thread),
+        ("close", thread),
+    ]
+
+
+def test_thread_control_refused_outside_staffed_queues():
+    src = _FakeSource()
+    stub = _send_stub({"helpdesk/it": src}, agent_rooms={"helpdesk/it": "agent@web01"})
+    out = stub.claim_thread("helpdesk/hr/carol@corp")
+    assert out["ok"] is False and "not staffing" in out["error"]
+    assert src.controls == []
+
+
+def test_thread_control_requires_a_room():
+    out = _send_stub({}).claim_thread("")
+    assert out["ok"] is False
+
+
 # ── get_room_state ────────────────────────────────────────────────────────────
 
 
-def _state_stub(specs: list[dict[str, Any]], sources: dict[str, Any]):
+def _state_stub(
+    specs: list[dict[str, Any]],
+    sources: dict[str, Any],
+    thread_states: dict[str, dict[str, Any]] | None = None,
+):
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._chat_sources = sources
+    s._thread_states = dict(thread_states or {})
     s._room_specs = lambda: specs
     s.get_room_state = types.MethodType(Bridge.get_room_state, s)
     return s
@@ -286,9 +467,38 @@ def test_get_room_state_lists_rooms_with_connection():
     out = _state_stub(specs, {"ops": _FakeSource()}).get_room_state()
     assert out == {
         "rooms": [
-            {"room": "ops", "host": "web01", "user": "alice@web01", "connected": True},
-            {"room": "dba", "host": "db01", "user": "alice@db01", "connected": False},
+            {
+                "room": "ops",
+                "host": "web01",
+                "user": "alice@web01",
+                "connected": True,
+                "queue": "",
+            },
+            {
+                "room": "dba",
+                "host": "db01",
+                "user": "alice@db01",
+                "connected": False,
+                "queue": "",
+            },
         ]
+    }
+
+
+def test_get_room_state_queue_entry_carries_its_threads():
+    specs = [
+        {"room": "helpdesk/it", "host": "web01", "user": "agent@web01", "queue": "it"},
+    ]
+    threads = {
+        "helpdesk/it/alice@corp": {"state": "open", "assignee": None},
+        "helpdesk/hr/carol@corp": {"state": "open", "assignee": None},  # other queue
+    }
+    out = _state_stub(specs, {}, thread_states=threads).get_room_state()
+    entry = out["rooms"][0]
+    assert entry["queue"] == "it"
+    # Only this queue's conversations are exposed on the entry.
+    assert entry["threads"] == {
+        "helpdesk/it/alice@corp": {"state": "open", "assignee": None}
     }
 
 

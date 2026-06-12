@@ -48,11 +48,22 @@ thread. `Message` gained `kind`/`data`; SQLite migrates in place. Visitor UI:
 catalog panel + schema-generated forms (`inputSchema` → select/checkbox/number/
 text), lifecycle chip, request cards, `?queue=` deep links. 117 tests pass.
 
-**Next slice (not started):** **H4** — the runspec-console side: agent inbox view
-(threads, claim/resolve, drafts via speak checkpoint) + the catalog publisher
-(filter discovered tools to `x-discoverable ∋ "self-service"`, optional per-queue
-allowlist, publish on subscribe/refresh). Last slice before end-to-end. Then:
-runspec-room version bump + CHANGELOG (user-facing now).
+**✅ H4 — agent inbox + catalog publisher — DONE** (branch
+`claude/runspec-room-h4-w0s5f0`). The runspec-console side: `room_queue` on a
+fleet host staffs that queue (agent-mode `hello` with the namespace); Rooms tab
+gains an **inbox** of the queue's conversations (lifecycle chips,
+Claim/Resolve/Reopen/Close, request-kind messages tagged, replies via the
+existing composer); **claim-gated agent turns** at the bridge (`_feed_engine_for`
+— a staffed queue's messages feed the trigger engine only when the thread is
+assigned to this console); **catalog publisher** (`runspec_console/catalog.py` —
+`rawSpec.discoverable ∋ "self-service"`, optional `room_catalog` allowlist,
+visitor-form contract, dedupe, name→runnable index kept for enactment; publishes
+on subscribe + every discovery refresh). New bridge APIs claim/resolve/reopen/
+close_thread; `runspec:room_conversation` UI event. **All five slices done —
+helpdesk is end-to-end.** Versions bumped + changelogs written: `runspec-room`
+0.5.0, `runspec-console` 0.44.0 (publishing is the user's manual step). Hosts
+editor fields for `room_queue`/`room_catalog` are a future polish — hand-edited
+TOML keys survive the editor (unmanaged keys are preserved).
 
 **Parked open questions (stored for next — from `helpdesk-rooms.md` §10):**
 1. **Queue routing** — single helpdesk queue vs multiple departmental queues, and

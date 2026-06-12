@@ -269,6 +269,60 @@ def test_host_rooms_exec_via_and_custom_command():
     )
 
 
+# ── helpdesk agent specs (room_queue) ──────────────────────────────────────────
+
+
+def test_host_rooms_queue_yields_agent_spec():
+    hosts = [
+        {
+            "name": "web01",
+            "ssh": "ops@web01",
+            "room_queue": "it-support",
+            "room_port": 8765,
+            "room_catalog": ["reset-password", "request-vm"],
+        }
+    ]
+    specs = host_rooms(hosts)
+    assert len(specs) == 1
+    s = specs[0]
+    # The spec key is the queue NAMESPACE; queue carries the bare name.
+    assert s["room"] == "helpdesk/it-support" and s["queue"] == "it-support"
+    assert s["catalog_allowlist"] == ["reset-password", "request-vm"]
+    assert s["port"] == 8765
+
+
+def test_host_rooms_queue_without_catalog_means_all_marked():
+    hosts = [
+        {"name": "w", "ssh": "a@b", "room_queue": "it", "room_port": 8765},
+    ]
+    assert host_rooms(hosts)[0]["catalog_allowlist"] is None
+
+
+def test_host_rooms_room_and_queue_coexist_as_two_specs():
+    hosts = [
+        {
+            "name": "web01",
+            "ssh": "ops@web01",
+            "room": "ops",
+            "room_queue": "it",
+            "room_port": 8765,
+        }
+    ]
+    specs = host_rooms(hosts)
+    assert [s["room"] for s in specs] == ["ops", "helpdesk/it"]
+    assert [s["queue"] for s in specs] == ["", "it"]
+    # Both ride the same tunnel parameters.
+    assert {s["port"] for s in specs} == {8765}
+
+
+def test_host_rooms_invalid_queue_token_skipped():
+    hosts = [
+        {"name": "w", "ssh": "a@b", "room_queue": "a/b", "room_port": 8765},
+        {"name": "x", "ssh": "a@b", "room_queue": "a b", "room_port": 8765},
+    ]
+    assert host_rooms(hosts) == []
+
+
 def test_make_host_room_exec_factory_runs_connect_command():
     spec = {
         "ssh_target": "ops@web01",

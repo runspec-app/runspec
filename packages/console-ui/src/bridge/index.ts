@@ -390,12 +390,23 @@ export interface TriggerListResult {
 // The room is a "dumb message pipe with presence" the console connects to over
 // the SSH tunnel; the bridge fans its events to the UI as runspec:room_* events.
 
+// A helpdesk conversation's lifecycle (the room server's `conversation` frames).
+export interface ThreadState {
+  state: 'open' | 'assigned' | 'resolved' | 'closed' | string
+  assignee: string | null
+}
+
 // One configured room (declared on a fleet host entry) + its live state.
+// `queue` marks a helpdesk agent entry (room_queue on the host): the console is
+// subscribed to that queue's namespace and `room` is the namespace key
+// (helpdesk/<queue>); `threads` seeds the inbox (conversation room → state).
 export interface RoomInfo {
-  room: string         // the room name
+  room: string         // the room name (or queue namespace in agent mode)
   host: string         // the fleet host it's hosted on
   user: string         // this console's display name in the room
   connected: boolean   // currently joined (tunnel up)
+  queue: string        // bare queue name in agent mode; '' for group chat
+  threads?: Record<string, ThreadState>
 }
 
 // All configured rooms (bridge.get_room_state). Empty when none are configured.
@@ -408,15 +419,28 @@ export interface RoomConnection {
   room: string
   host: string
   connected: boolean
+  queue?: string
 }
 
-// runspec:room_message — a sent message (server-stamped id/ts/sender).
+// runspec:room_message — a sent message (server-stamped id/ts/sender). A
+// visitor's catalog submission arrives as kind="request" with the machine
+// payload in `data`; plain chat is kind="chat" (older servers send neither).
 export interface RoomMessage {
   room: string
   sender: string
   text: string
   id: string
   ts: number
+  kind?: string
+  data?: { tool: string; args: Record<string, unknown> }
+}
+
+// runspec:room_conversation — a helpdesk thread's lifecycle state changed
+// (open on first visitor message, assigned on claim, resolved/closed/reopened).
+export interface RoomConversation {
+  room: string
+  state: string
+  assignee: string | null
 }
 
 // runspec:room_presence — a participant's live presence in a room.
@@ -510,7 +534,15 @@ export interface BridgeApi {
   get_room_state: () => Promise<RoomsState>
   // The composer's one outbound path. The agent never reaches this — a proposed
   // reply only pre-fills the composer (runspec:room_draft); the human sends.
+  // For a helpdesk thread, pass the conversation room (helpdesk/<queue>/<visitor>);
+  // the bridge routes it via the agent connection staffing that queue.
   send_room_message: (room: string, text: string) => Promise<{ ok: boolean; error?: string }>
+  // Helpdesk thread lifecycle (agent mode). Claiming a thread also releases the
+  // agent LLM turn for it — no model spend on unclaimed threads.
+  claim_thread: (room: string) => Promise<{ ok: boolean; error?: string }>
+  resolve_thread: (room: string) => Promise<{ ok: boolean; error?: string }>
+  reopen_thread: (room: string) => Promise<{ ok: boolean; error?: string }>
+  close_thread: (room: string) => Promise<{ ok: boolean; error?: string }>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>

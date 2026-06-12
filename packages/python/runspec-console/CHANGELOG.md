@@ -8,6 +8,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.44.0] — 2026-06-12
+
+### Added
+- **Helpdesk agent mode — staff a runspec-room queue from the console.** A fleet
+  host entry with `room_queue = "it-support"` (plus the usual `room_port`)
+  subscribes the console to that queue's namespace on the host's room server:
+  the Rooms tab gains an **inbox** of that queue's private visitor conversations
+  with lifecycle chips (open / assigned / resolved / closed) and **Claim /
+  Resolve / Reopen / Close** controls. Replies go through the existing composer
+  (the agent only ever pre-fills it — the human sends). A host may declare both
+  `room` and `room_queue`; group chat is unchanged. See
+  `docs/design/helpdesk-rooms.md`.
+- **Claim-gated agent turns.** A message in a staffed queue feeds the trigger
+  engine — and so can start an agent LLM turn — only once the thread is
+  **assigned to this console** (someone clicked Claim). Unclaimed threads are
+  visible in the inbox but never spend the model; group-chat triggers behave as
+  before.
+- **Self-service catalog publisher.** On subscribe (and after every fleet
+  discovery refresh) the console publishes the queue's catalog to the room: the
+  discovered runnables marked `discoverable ∋ "self-service"` (H0 keyword),
+  converted to the visitor form contract (`name`/`description`/`inputSchema`,
+  password args omitted, subcommand runnables skipped), de-duplicated across
+  hosts. `room_catalog = ["reset-password", …]` on the host entry narrows it
+  (absent = all marked). Hosts running an older runspec surface nothing —
+  safe by default.
+- **Visitor requests in the transcript.** A catalog submission arrives as a
+  `request`-kind message tagged in the inbox transcript, carrying the
+  `{tool, args}` payload for enactment through the normal autonomy gate.
+- New bridge API: `claim_thread` / `resolve_thread` / `reopen_thread` /
+  `close_thread`; `get_room_state()` entries carry `queue` + initial `threads`;
+  new `runspec:room_conversation` UI event.
+
+---
+
 ## [0.43.2] — 2026-06-11
 
 ### Added

@@ -310,14 +310,25 @@ the console's speak + autonomy gates, and the Forms surface.
   from each tool's `inputSchema` (enum→select, boolean→checkbox, number/integer→
   number), lifecycle chip from `conversation` frames, request cards in the
   transcript, `?queue=` deep links.
-- **H4 — agent-console inbox view.** Many-threads inbox, claim/resolve, drafts via
-  the existing speak checkpoint — plus the console-side catalog publisher (filter
-  discovered tools to `x-discoverable ∋ "self-service"`, optional per-queue
-  allowlist, publish on subscribe/refresh).
+- **H4 — agent-console inbox view + catalog publisher. ✅ done.** The
+  runspec-console side (`runspec-console` 0.44.0 / `runspec-room` 0.5.0): a fleet
+  host entry's `room_queue` staffs that queue — the console's `hello` declares the
+  namespace, the Rooms tab gains an **inbox** of the queue's conversations
+  (lifecycle chips, Claim/Resolve/Reopen/Close, replies via the existing
+  composer/speak path, `request`-kind messages tagged). **Claim-gated agent
+  turns** implemented at the bridge: a staffed queue's messages feed the trigger
+  engine only when the thread is assigned to *this* console — unclaimed threads
+  are visible but never spend the model (the §4 deferred-react design, realised).
+  **Catalog publisher**: on subscribe + after every discovery refresh, the console
+  publishes the queue's `self-service`-marked runnables (from `rawSpec.discoverable`
+  — old runspec hosts surface nothing, safe by default) converted to the visitor
+  form contract, deduped across hosts, narrowed by the optional `room_catalog`
+  allowlist; the name→runnable index is kept for enactment.
 
-H0 unblocked the catalog; H1 is the server-side spine; H2 the lifecycle; H3 the
-visitor-facing half. **Next: H4** — the runspec-console side (inbox UI + catalog
-publisher), the last slice before the helpdesk is end-to-end.
+All five slices are done — the helpdesk is **end-to-end**: visitor browser →
+private conversation → agent inbox → claim → (gated) agent turn → speak/autonomy
+gates → runspec enactment, with the catalog flowing console → room → visitor form
+→ structured request → console.
 
 ---
 

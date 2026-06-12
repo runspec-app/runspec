@@ -244,6 +244,16 @@ class Bridge:
         self._chat_sources: dict[str, Any] = {}
         self._chat_stop = threading.Event()
         self._chat_supervisors: dict[str, threading.Thread] = {}
+        # Helpdesk agent mode (a host entry with room_queue). Threads the hub has
+        # told us about: conversation room → {state, assignee} from `conversation`
+        # frames (populated by the subscribe catch-up, kept live after). Agent
+        # namespaces we're connected under → our display user there (the identity
+        # the hub records as assignee on our claims). Catalog index: namespace →
+        # bare tool name → the discovered runnable, so a visitor request can be
+        # mapped back to (host, runnable) at enactment time.
+        self._thread_states: dict[str, dict[str, Any]] = {}
+        self._agent_rooms: dict[str, str] = {}
+        self._catalog_index: dict[str, dict[str, dict[str, Any]]] = {}
         self._hosts: list[dict[str, Any]] = []
         # Named source-side stream filters (runspec_filters.toml). Loaded once at
         # startup and reloaded on save; resolved by name when a relay/download
@@ -4655,6 +4665,12 @@ class Bridge:
         with self._lock:
             self._runnables_cache = deduped
         self._dispatch("runspec:runnables_updated", {})
+        # The fleet's runnables changed — refresh every staffed queue's
+        # self-service catalog so visitors are offered what can run *now*.
+        try:
+            self._publish_catalogs()
+        except Exception:
+            logger.exception("chat: catalog republish after discovery failed")
 
         # Close transports that have gone idle beyond their TTL (cheap, per-cycle
         # — no separate timer thread).
@@ -5019,11 +5035,18 @@ class Bridge:
         from .sources.chat import ChatSource
 
         room, user, host = spec["room"], spec["user"], spec["host"]
+        # A spec with a queue is helpdesk agent mode: subscribe to the queue
+        # namespace (the spec's room key IS the namespace) instead of one room.
+        queue = str(spec.get("queue") or "")
         backoff = self._CHAT_BACKOFF_START
         while not self._chat_stop.is_set():
             closed = threading.Event()
             source = ChatSource(
-                room=room, user=user, transport_factory=factory, on_closed=closed.set
+                room="" if queue else room,
+                namespace=room if queue else None,
+                user=user,
+                transport_factory=factory,
+                on_closed=closed.set,
             )
             try:
                 source.start(self._on_chat_event)
@@ -5035,12 +5058,18 @@ class Bridge:
                 continue
             with self._lock:
                 self._chat_sources[room] = source
+                if queue:
+                    self._agent_rooms[room] = user
             backoff = self._CHAT_BACKOFF_START
+            if queue:
+                # Publish the queue's self-service catalog right after subscribing
+                # (and again whenever discovery refreshes — _publish_catalogs).
+                self._publish_catalog(spec, source)
             watcher = _RotaPresenceWatcher(self._build_clock_ok(), source.set_presence)
             watcher.start()
             self._dispatch(
                 "runspec:room_connection",
-                {"room": room, "host": host, "connected": True},
+                {"room": room, "host": host, "connected": True, "queue": queue},
             )
             # Wait until the connection drops or we're told to stop (poll so stop
             # stays responsive).
@@ -5050,9 +5079,10 @@ class Bridge:
             source.stop()
             with self._lock:
                 self._chat_sources.pop(room, None)
+                self._agent_rooms.pop(room, None)
             self._dispatch(
                 "runspec:room_connection",
-                {"room": room, "host": host, "connected": False},
+                {"room": room, "host": host, "connected": False, "queue": queue},
             )
             if self._chat_stop.is_set():
                 break
@@ -5061,15 +5091,76 @@ class Bridge:
                 break
             backoff = min(backoff * 2, self._CHAT_BACKOFF_MAX)
 
+    def _publish_catalog(self, spec: dict[str, Any], source: Any) -> None:
+        """Build and publish one queue's self-service catalog from the discovery
+        cache (best-effort — a failed publish never breaks the connection; the
+        next discovery refresh or reconnect republishes)."""
+        from .catalog import build_catalog
+
+        try:
+            with self._lock:
+                runnables = list(self._runnables_cache)
+            allowlist = spec.get("catalog_allowlist")
+            tools, index = build_catalog(runnables, allowlist=allowlist)
+            with self._lock:
+                self._catalog_index[spec["room"]] = index
+            source.send_catalog(tools)
+            logger.info(
+                "chat: published %d tool(s) to %r catalog", len(tools), spec["room"]
+            )
+        except Exception:
+            logger.exception("chat: catalog publish for %r failed", spec.get("room"))
+
+    def _publish_catalogs(self) -> None:
+        """Republish every connected agent queue's catalog — called after a
+        discovery refresh so the room always offers what the fleet can run now."""
+        specs = [s for s in self._room_specs() if s.get("queue")]
+        with self._lock:
+            sources = dict(self._chat_sources)
+        for spec in specs:
+            source = sources.get(spec["room"])
+            if source is not None:
+                self._publish_catalog(spec, source)
+
+    def _feed_engine_for(self, payload: dict[str, Any]) -> bool:
+        """The claim gate for agent (helpdesk) messages. A message in a queue we
+        staff feeds the trigger engine — and so can start an agent LLM turn —
+        only once the thread is **assigned to this console** (someone clicked
+        Claim). Unclaimed-thread messages stay UI-only: the inbox shows them,
+        but no model spend happens until a human claims (helpdesk-rooms.md §4).
+        Group-chat messages (no covering namespace) always feed."""
+        room = str(payload.get("room") or "")
+        with self._lock:
+            agent_rooms = dict(self._agent_rooms)
+            state = self._thread_states.get(room)
+        for namespace, agent_user in agent_rooms.items():
+            if room == namespace or room.startswith(namespace + "/"):
+                return bool(state) and state.get("assignee") == agent_user
+        return True
+
     def _on_chat_event(self, event: Any) -> None:
         """A chat source's emit: fan every event to the Rooms view, and route
         *messages* (not presence) to the live trigger engine so a chat trigger can
-        still fire. Presence stays UI-only, out of the trigger audit feed."""
+        still fire. Presence stays UI-only, out of the trigger audit feed.
+        ``conversation`` frames (helpdesk thread lifecycle) update the thread map
+        and go to the UI only — the claim gate reads the map (_feed_engine_for)."""
         payload = dict(event.payload)
         if event.type == "presence":
             self._dispatch("runspec:room_presence", payload)
             return
+        if event.type == "conversation":
+            room = str(payload.get("room") or "")
+            if room:
+                with self._lock:
+                    self._thread_states[room] = {
+                        "state": payload.get("state"),
+                        "assignee": payload.get("assignee"),
+                    }
+            self._dispatch("runspec:room_conversation", payload)
+            return
         self._dispatch("runspec:room_message", payload)
+        if not self._feed_engine_for(payload):
+            return
         with self._lock:
             engine = self._trigger_engine
         if engine is not None:
@@ -5087,18 +5178,68 @@ class Bridge:
         text = str(text or "").strip()
         if not text:
             return {"ok": False, "error": "empty message"}
+        target: str | None = None  # the conversation a namespace send must name
         with self._lock:
             src = self._chat_sources.get(room) if room else None
             if src is None and len(self._chat_sources) == 1 and not room:
                 src = next(iter(self._chat_sources.values()))
+            if src is None and room:
+                # A helpdesk conversation (helpdesk/<queue>/<visitor>) isn't a
+                # source key — route via the agent source staffing its namespace.
+                for namespace in self._agent_rooms:
+                    if room.startswith(namespace + "/"):
+                        src = self._chat_sources.get(namespace)
+                        target = room
+                        break
         if src is None:
             return {"ok": False, "error": "not connected to that room"}
         try:
-            src.send_message(text)
+            src.send_message(text, room=target)
         except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
             logger.exception("send_room_message failed")
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
+
+    def _thread_control(self, kind: str, room: str) -> dict[str, Any]:
+        """Send one conversation-lifecycle control frame (claim/resolve/reopen/
+        close) via the agent source staffing the conversation's namespace. The
+        hub is the authority — it enforces the queue boundary and broadcasts the
+        resulting state, which comes back as a ``conversation`` frame."""
+        room = str(room or "").strip()
+        if not room:
+            return {"ok": False, "error": "no conversation named"}
+        with self._lock:
+            src = None
+            for namespace in self._agent_rooms:
+                if room == namespace or room.startswith(namespace + "/"):
+                    src = self._chat_sources.get(namespace)
+                    break
+        if src is None:
+            return {"ok": False, "error": "not staffing that conversation's queue"}
+        try:
+            src.send_control(kind, room)
+        except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
+            logger.exception("thread %s failed", kind)
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    def claim_thread(self, room: str) -> dict[str, Any]:
+        """Claim a helpdesk conversation for this console (→ assigned). This is
+        also the gate that lets the thread's messages reach the trigger engine —
+        no agent turn runs on an unclaimed thread."""
+        return self._thread_control("claim", room)
+
+    def resolve_thread(self, room: str) -> dict[str, Any]:
+        """Mark a conversation resolved (the visitor can reopen by replying)."""
+        return self._thread_control("resolve", room)
+
+    def reopen_thread(self, room: str) -> dict[str, Any]:
+        """Reopen a resolved/closed conversation (back to the queue)."""
+        return self._thread_control("reopen", room)
+
+    def close_thread(self, room: str) -> dict[str, Any]:
+        """Close a conversation (terminal; a visitor reply still reopens)."""
+        return self._thread_control("close", room)
 
     def get_room_state(self) -> dict[str, Any]:
         """For the Rooms view: every configured room (from the fleet host entries),
@@ -5108,15 +5249,27 @@ class Bridge:
         specs = self._room_specs()
         with self._lock:
             connected = set(self._chat_sources)
-        rooms = [
-            {
+            thread_states = {k: dict(v) for k, v in self._thread_states.items()}
+        rooms = []
+        for s in specs:
+            entry: dict[str, Any] = {
                 "room": s["room"],
                 "host": s["host"],
                 "user": s["user"],
                 "connected": s["room"] in connected,
+                "queue": str(s.get("queue") or ""),
             }
-            for s in specs
-        ]
+            if entry["queue"]:
+                # The inbox's initial threads — the hub's subscribe catch-up plus
+                # everything since, keyed by conversation room. Live updates ride
+                # runspec:room_conversation.
+                prefix = s["room"] + "/"
+                entry["threads"] = {
+                    room: state
+                    for room, state in thread_states.items()
+                    if room.startswith(prefix)
+                }
+            rooms.append(entry)
         return {"rooms": rooms}
 
     def _abort_turns(self, ids: set[str] | None) -> None:
