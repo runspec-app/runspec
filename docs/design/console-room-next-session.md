@@ -3,7 +3,72 @@
 Working notes for resuming the console chat-room work. Picks up after PR #194.
 Not a design doc — delete or fold into `console-room-server.md` once consumed.
 
-## Helpdesk pivot — decided + H0 shipped (resume here)
+## ⏩ RESUME HERE — helpdesk MVP shipped, live-tested, now polishing
+
+**The whole helpdesk (H0–H4) is built, merged, and published**, and the
+end-to-end loop has been **live-tested on a locked-down corporate host**:
+visitor browser → private conversation → agent inbox → **Claim** → reply → the
+visitor sees it (and a reply after Resolve reopens the thread). It works.
+
+**Published versions:** `runspec` 0.34.0 · `runspec-node` 0.30.0 ·
+`runspec-room` 0.5.0 · `runspec-console` up to 0.45.0 (on main). Design notes:
+`docs/design/helpdesk-rooms.md` (the full design + the H0–H4 markers below).
+
+**🔶 Open PRs to merge + publish first thing:**
+- **#206 — `runspec-room` 0.5.1**: visitor join form adapts to the link
+  (`?queue=` shows only the queue, hides Room; `?room=` hides queue; bare URL
+  shows both with a hint) + reads `?user=` for dev-mode identity. (Fixes the
+  "why both fields / joined `ops` / shows `guest`" papercuts.)
+- **#207 — `runspec-console` 0.46.0**: helpdesk **inbox notifications** (Rooms
+  tab count badge via a new `runspec:room_attention` event, corner toast on a new
+  visitor message, per-thread unread dots + left-list badges, mark-read on open).
+  Also folds in the **0.45.1 fixes** (cherry-picked, never released alone):
+  `room_command`-with-args used verbatim (no more `nc … connect --host` footgun /
+  `#` workaround); connection-tester fast-path + 12s timeout (was hanging).
+
+**Live-test learnings (corporate network — save future deploys hours):**
+- The host has **`AllowTcpForwarding no`** → the direct-tcpip tunnel is refused
+  (`Administratively prohibited`). Must use `room_via = "exec"`. (0.45.0 now logs
+  one actionable line + the Test button names it.)
+- SSH egress is via a **single HTTP CONNECT proxy** (`[ssh] proxy` /
+  `use_ssh_config` + a `ProxyCommand`), the same one discovery/transfers use. A
+  room-connect *timeout* there is transient startup concurrency, not a config
+  error (the Test button says so now).
+- A local `ssh host …` test is **misleading** — it exercises OpenSSH
+  ControlMaster/ProxyCommand the console (pure paramiko) never uses. Use the
+  in-app **Test** button instead.
+- The relay is pluggable: **`nc` works** (`room_exec_command = "nc 127.0.0.1 8765"`,
+  or `room_command = "nc 127.0.0.1 8765"` once 0.46.0 lands). `console-room connect`
+  needs the **full venv path** (exec PATH is bare).
+- The **room server must be ≥ 0.5.0** — an older one rejects the agent's
+  `namespace` hello (`invalid hello; closing`) → the console reconnect-loops.
+  (Watch for a 0.5.0-installed-but-old-process-running mismatch.)
+- **Rota toggles restart chat** (`save_rota → restart_chat`); the inbox itself is
+  rota-independent (UI dispatch happens before the rota/engine gate).
+
+**▶️ What's left to actually try (the one unexercised path):** the **self-service
+catalog / Forms**. The test queue still has **0 tools** because nothing is marked
+`discoverable = ["operator","self-service"]` yet. Mark one runnable on a host
+running runspec ≥ 0.34.0, reinstall, and the visitor's Catalog panel lights up →
+a form submit lands as a `⚙ request` card in the inbox (enacted via the autonomy
+gate). That's the last helpdesk feature not yet seen working live.
+
+**Next directions (not started):**
+- **Unified "work inbox"** (the user's idea): Triggers + Rooms share the
+  agent-handoff path and both are attention surfaces. Decided *not* to merge the
+  tabs (different data models) — 0.46.0's attention layer (badge/toast/unread) is
+  the first step. A real "one list of items needing you" spanning trigger cards +
+  helpdesk threads is a deliberate future design.
+- **Hosts-editor fields** for `room_queue` / `room_catalog` (staffing a queue
+  still needs hand-edited TOML; unmanaged keys are preserved, so it's safe today).
+- **OS/desktop notifications** for room messages (parity with the confirm-gate
+  toast; 0.46.0 only does in-app toasts).
+- §10 parked questions below (multi-queue routing, SLA/auto-close, browser agent
+  inbox).
+
+---
+
+## Helpdesk pivot — decided + H0 shipped (build history)
 
 The helpdesk direction is agreed and written up in
 **`docs/design/helpdesk-rooms.md`** (private per-user conversations + a curated,
