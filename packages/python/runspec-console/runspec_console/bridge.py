@@ -5364,19 +5364,16 @@ class Bridge:
         return {"rooms": rooms}
 
     def test_room_connection(self, host: str) -> dict[str, Any]:
-        """Diagnose a room/queue's connection the way the supervisor reaches it —
-        an isolated, fresh attempt (no pool backoff, no effect on the live
-        connection) over the *same* paramiko path (HTTP proxy, key, ssh_config),
-        so the UI can show the real outcome instead of a buried traceback.
+        """Diagnose a room/queue's connection for the UI, fast and always-responsive.
 
-        Steps, matching the transport: connect+auth to the host (the ``ssh``
-        stage — where the proxy timeout surfaces), open the tunnel / exec relay
-        (``channel`` — where blocked forwarding surfaces), and for exec confirm
-        the relay didn't immediately exit (``room`` — the room server is actually
-        listening). Returns the ``_classify_room_connection`` shape plus the host
-        / room / queue it tested."""
-        from .executor import _make_ssh_client
-
+        Fast path: if the room is already connected (the live agent/room is up),
+        say so immediately — no new connection. Otherwise run an isolated, fresh
+        attempt over the *same* paramiko path the supervisor uses (HTTP proxy,
+        key, ssh_config, then tunnel/exec relay), but **bounded by a hard
+        timeout** so the button always returns a verdict instead of spinning on a
+        slow proxied connect. The attempt ignores pool backoff and doesn't disturb
+        the live connection; its result carries the localised ``stage`` (ssh /
+        channel / room) and a hint."""
         specs = [
             s
             for s in self._room_specs()
@@ -5391,15 +5388,69 @@ class Bridge:
                 "hint": "Add room/room_port (group chat) or room_queue/room_port (help desk) to this host.",
             }
         spec = specs[0]
-        cfg = self.get_config().get("ssh")
-        cfg = cfg if isinstance(cfg, dict) else None
-        via = str(spec.get("via") or "tunnel")
         meta = {
             "host": host,
             "room": spec["room"],
             "queue": str(spec.get("queue") or ""),
         }
 
+        # Fast path — the live connection is already up (the common case).
+        with self._lock:
+            connected = spec["room"] in self._chat_sources
+        if connected:
+            label = (
+                f"queue {spec['queue']}"
+                if spec.get("queue")
+                else f"room {spec['room']}"
+            )
+            return {
+                **meta,
+                "ok": True,
+                "stage": "ok",
+                "message": f"Connected — the console is currently joined to {label} on {host}.",
+                "hint": None,
+            }
+
+        cfg = self.get_config().get("ssh")
+        cfg = cfg if isinstance(cfg, dict) else None
+
+        # Slow path — a fresh attempt, bounded so the UI never hangs. paramiko's
+        # blocking connect can't be cancelled, so we run it in a daemon thread and
+        # report a timeout verdict if it overruns (the thread dies on its own).
+        result: dict[str, Any] = {}
+
+        def attempt() -> None:
+            result.update(self._attempt_room_connection(spec, cfg, meta))
+
+        worker = threading.Thread(target=attempt, name="room-conn-test", daemon=True)
+        worker.start()
+        worker.join(timeout=12.0)
+        if worker.is_alive():
+            return {
+                **meta,
+                "ok": False,
+                "stage": "ssh",
+                "message": "Timed out (12s) opening a fresh connection — the SSH connect (through the HTTP proxy, if set) is slow or stuck.",
+                "hint": "If discovery/transfers work, this is usually transient proxy load — retry. The live room may still connect on its own retry.",
+            }
+        return result or {
+            **meta,
+            "ok": False,
+            "stage": "ssh",
+            "message": "Connection test produced no result.",
+            "hint": None,
+        }
+
+    def _attempt_room_connection(
+        self, spec: dict[str, Any], cfg: dict[str, Any] | None, meta: dict[str, Any]
+    ) -> dict[str, Any]:
+        """One isolated room-connect attempt (blocking) → a classified result.
+        Runs the supervisor's transport: connect+auth (``ssh`` stage), open the
+        tunnel / exec relay (``channel``), and for exec confirm the relay didn't
+        immediately exit (``room``)."""
+        from .executor import _make_ssh_client
+
+        via = str(spec.get("via") or "tunnel")
         client = None
         chan = None
         try:
@@ -5429,8 +5480,8 @@ class Bridge:
             except Exception as exc:  # noqa: BLE001
                 return {**_classify_room_connection(exc, via=via), **meta}
 
-            # Exec: the relay (console-room connect) connects to localhost:port on
-            # the host. If the room server is down it exits straight away — catch
+            # Exec: the relay (console-room connect / nc) connects to localhost:port
+            # on the host. If the room server is down it exits straight away — catch
             # that so "host reachable but room down" isn't reported as success.
             if via == "exec":
                 time.sleep(1.5)
@@ -5463,7 +5514,7 @@ class Bridge:
                 "ok": True,
                 "stage": "ok",
                 "message": (
-                    f"Connected to the room on {host} (port {spec['port']}, via {via})."
+                    f"Connected to the room on {meta['host']} (port {spec['port']}, via {via})."
                     + (f" Queue {spec['queue']}." if spec.get("queue") else "")
                 ),
                 "hint": None,

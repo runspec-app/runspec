@@ -408,3 +408,38 @@ def test_host_rooms_uses_ssh_user_for_bare_host(monkeypatch):
     )
     hosts = [{"name": "web01", "ssh": "web01", "room": "ops", "room_port": 8765}]
     assert host_rooms(hosts, ssh_user="linuxuser")[0]["user"] == "linuxuser@web01"
+
+
+def test_host_rooms_room_command_with_args_used_verbatim():
+    # A room_command that already carries arguments (a space) is the full command
+    # — the console must NOT append `connect --host --port` (that broke nc).
+    hosts = [
+        {
+            "name": "web01",
+            "ssh": "ops@web01",
+            "room": "ops",
+            "room_port": 8765,
+            "room_via": "exec",
+            "room_command": "nc 127.0.0.1 8765",
+        }
+    ]
+    s = host_rooms(hosts)[0]
+    assert s["exec_command"] == "nc 127.0.0.1 8765"  # verbatim, no suffix
+
+
+def test_host_rooms_bare_room_command_gets_connect_suffix():
+    hosts = [
+        {
+            "name": "web01",
+            "ssh": "ops@web01",
+            "room": "ops",
+            "room_port": 8765,
+            "room_via": "exec",
+            "room_command": "/opt/venv/bin/console-room",
+        }
+    ]
+    s = host_rooms(hosts)[0]
+    assert (
+        s["exec_command"]
+        == "/opt/venv/bin/console-room connect --host 127.0.0.1 --port 8765"
+    )

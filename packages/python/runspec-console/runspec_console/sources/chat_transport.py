@@ -267,19 +267,29 @@ def host_rooms(
         dest_host = str(h.get("room_dest_host") or "127.0.0.1")
         # `room_via = "exec"` opts a host into the exec-channel transport (for a
         # network that blocks SSH port-forwarding): the console runs a relay command
-        # on the host instead of opening a direct-tcpip tunnel. The command is
-        # `room_exec_command` verbatim if set (e.g. `socat - TCP:127.0.0.1:8765`),
-        # else `{room_command} connect …` (room_command is the console-room binary,
-        # default on PATH).
+        # on the host instead of opening a direct-tcpip tunnel. The command is, in
+        # order: `room_exec_command` verbatim if set (e.g. `socat - TCP:127.0.0.1:8765`);
+        # else `room_command` verbatim if it already carries arguments (a space —
+        # e.g. `nc 127.0.0.1 8765`), since the operator clearly gave a full command;
+        # else `{room_command} connect --host … --port …` (room_command is the bare
+        # console-room binary, which takes that subcommand).
         via = (
             "exec"
             if str(h.get("room_via") or "").strip().lower() == "exec"
             else "tunnel"
         )
         room_command = str(h.get("room_command") or "console-room").strip()
-        exec_command = str(h.get("room_exec_command") or "").strip() or (
-            f"{room_command} connect --host {dest_host} --port {int(port)}"
-        )
+        explicit_exec = str(h.get("room_exec_command") or "").strip()
+        if explicit_exec:
+            exec_command = explicit_exec
+        elif " " in room_command:
+            # Already a full command (has args) → use as-is; don't append the
+            # console-room subcommand (that's what broke `nc 127.0.0.1 8765`).
+            exec_command = room_command
+        else:
+            exec_command = (
+                f"{room_command} connect --host {dest_host} --port {int(port)}"
+            )
         base = {
             "host": str(h.get("name") or ssh_target),
             "ssh_target": ssh_target,

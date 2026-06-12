@@ -72,6 +72,10 @@ export default function App() {
   // Count of trigger runs waiting on a human confirm — drives the Triggers tab
   // badge so a pending approval is visible from any tab.
   const [triggerAwaiting, setTriggerAwaiting] = useState(0)
+  // Rooms/threads with unread messages — the Rooms tab badge (RoomsView owns the
+  // per-thread unread state and publishes the count via runspec:room_attention,
+  // so it's visible from any tab).
+  const [roomAttention, setRoomAttention] = useState(0)
   const inFlight = useInFlight()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
@@ -194,6 +198,13 @@ export default function App() {
     return () => window.removeEventListener('runspec:chat_active', onActive)
   }, [])
 
+  // Rooms tab badge — RoomsView publishes the unread room/thread count.
+  useEffect(() => {
+    const onAttention = (e: Event) => setRoomAttention((e as CustomEvent<{ count: number }>).detail.count)
+    window.addEventListener('runspec:room_attention', onAttention)
+    return () => window.removeEventListener('runspec:room_attention', onAttention)
+  }, [])
+
   // Track how many trigger runs are waiting on a human confirm, for the Triggers
   // tab badge. A run is "awaiting" when its card sits in the awaiting_human
   // column or has a live tool_confirm. tool_confirm is filtered to trigger cards
@@ -263,7 +274,13 @@ export default function App() {
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]}><BellOutlined /></Badge>
         : <BellOutlined />,
     },
-    { key: 'rooms'     as ViewKey, label: 'Rooms',     icon: <CommentOutlined /> },
+    {
+      key: 'rooms' as ViewKey,
+      label: 'Rooms',
+      icon: roomAttention > 0
+        ? <Badge count={roomAttention} size="small" offset={[2, -1]}><CommentOutlined /></Badge>
+        : <CommentOutlined />,
+    },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ]
 

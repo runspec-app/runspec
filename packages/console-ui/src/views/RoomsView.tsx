@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Empty, Input, Modal, Tag, Typography, message } from 'antd'
+import { Button, Empty, Input, Modal, Tag, Typography, message, notification } from 'antd'
 import { SendOutlined, RobotOutlined, FlagOutlined, CheckOutlined, UndoOutlined, CloseOutlined, DownOutlined, UpOutlined, ApiOutlined } from '@ant-design/icons'
 import { bridge, type RoomInfo, type RoomMessage, type RoomPresence, type RoomConversation, type ThreadState } from '../bridge'
 import { useIsDark } from '../ThemeContext'
@@ -66,9 +66,17 @@ export function RoomsView({ active }: { active: boolean }) {
   const [acting, setActing] = useState(false)
   const [inboxCollapsed, setInboxCollapsed] = useState(false)
   const [testing, setTesting] = useState(false)
+  // Per-room unread count: messages that arrived while you weren't viewing that
+  // room/thread. Drives the inbox dots and the Rooms tab badge; clears when you
+  // open the thread with the tab visible.
+  const [unread, setUnread] = useState<Record<string, number>>({})
 
   const transcriptRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<any>(null)
+  // Refs so the stable event listeners read the *current* view target without
+  // re-subscribing on every selection change.
+  const activeRoomRef = useRef('')
+  const tabActiveRef = useRef(active)
 
   // room name → this console's display name there (for "mine" styling + presence).
   const userByRoom = useMemo(() => {
@@ -109,6 +117,20 @@ export function RoomsView({ active }: { active: boolean }) {
         if (m.id && list.some(x => x.id === m.id)) return prev   // dedupe by id
         return { ...prev, [m.room]: [...list, { sender: m.sender, text: m.text, id: m.id, ts: m.ts, kind: m.kind }] }
       })
+      // Attention: a message for a room/thread you're not actively viewing is
+      // unread (our own replies are optimistic, not events; the server drops our
+      // echo — so an inbound event is always from someone else). Badge + toast.
+      const viewing = tabActiveRef.current && m.room === activeRoomRef.current
+      if (!viewing) {
+        setUnread(prev => ({ ...prev, [m.room]: (prev[m.room] || 0) + 1 }))
+        const who = m.room.startsWith('helpdesk/') ? visitorOf(m.room) : (m.sender || m.room)
+        notification.open({
+          message: `${who} ${m.kind === 'request' ? 'sent a request' : 'sent a message'}`,
+          description: (m.text || '').slice(0, 140),
+          placement: 'bottomRight',
+          duration: 4,
+        })
+      }
     }
     const onPresence = (e: Event) => {
       const p = (e as CustomEvent<RoomPresence>).detail
@@ -166,6 +188,34 @@ export function RoomsView({ active }: { active: boolean }) {
   const draft = drafts[activeRoom] || ''
   const setDraft = (v: string) => setDrafts(prev => ({ ...prev, [activeRoom]: v }))
 
+  // Keep the refs the message listener reads in sync.
+  useEffect(() => { activeRoomRef.current = activeRoom }, [activeRoom])
+  useEffect(() => { tabActiveRef.current = active }, [active])
+
+  // Viewing a room/thread (with the Rooms tab visible) marks it read.
+  useEffect(() => {
+    if (active && activeRoom) setUnread(prev => (prev[activeRoom] ? { ...prev, [activeRoom]: 0 } : prev))
+  }, [active, activeRoom])
+
+  // Publish the attention count (rooms/threads with unread) so the App can badge
+  // the Rooms tab from any view.
+  const attentionCount = useMemo(() => Object.values(unread).filter(n => n > 0).length, [unread])
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('runspec:room_attention', { detail: { count: attentionCount } }))
+  }, [attentionCount])
+
+  // Per-entry unread for the Rooms list: a queue counts its threads-with-unread;
+  // a group room counts its unread messages.
+  const roomUnread = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const r of rooms) {
+      m[r.room] = r.queue
+        ? Object.entries(unread).filter(([room, n]) => n > 0 && room.startsWith(r.room + '/')).length
+        : (unread[r.room] || 0)
+    }
+    return m
+  }, [rooms, unread])
+
   // Pin the transcript to the newest message when the active log grows.
   useEffect(() => {
     const el = transcriptRef.current
@@ -187,8 +237,9 @@ export function RoomsView({ active }: { active: boolean }) {
       state: threads[room]?.state || 'open',
       assignee: threads[room]?.assignee ?? null,
       last: (messages[room] || []).slice(-1)[0],
+      unread: unread[room] || 0,
     }))
-  }, [isQueue, current, threads, messages])
+  }, [isQueue, current, threads, messages, unread])
 
   const send = async () => {
     const text = draft.trim()
@@ -232,6 +283,7 @@ export function RoomsView({ active }: { active: boolean }) {
   const testConnection = async () => {
     if (!current || testing) return
     setTesting(true)
+    const hide = message.loading(`Testing connection to ${current.host}…`, 0)
     try {
       const r = await bridge.test_room_connection(current.host)
       const body = r.hint ? `${r.message}\n\n→ ${r.hint}` : r.message
@@ -242,8 +294,9 @@ export function RoomsView({ active }: { active: boolean }) {
         width: 520,
       })
     } catch (err) {
-      message.error(String(err))
+      message.error(`Connection test failed: ${String(err)}`)
     } finally {
+      hide()
       setTesting(false)
     }
   }
@@ -296,6 +349,11 @@ export function RoomsView({ active }: { active: boolean }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ color: r.connected ? '#3fb950' : '#888', fontSize: 10 }}>●</span>
               <Text strong style={{ fontSize: 13 }}>{r.queue ? `⛑ ${r.queue}` : `#${r.room}`}</Text>
+              {roomUnread[r.room] > 0 && (
+                <span style={{ marginLeft: 'auto', minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, background: accent, color: '#fff', fontSize: 10, lineHeight: '16px', textAlign: 'center' }}>
+                  {roomUnread[r.room]}
+                </span>
+              )}
             </div>
             <Text type="secondary" style={{ fontSize: 11 }}>{r.queue ? 'help desk · ' : ''}{r.host}</Text>
           </div>
@@ -331,8 +389,9 @@ export function RoomsView({ active }: { active: boolean }) {
                       borderLeft: t.room === activeRoom ? `2px solid ${accent}` : '2px solid transparent',
                     }}
                   >
+                    <span style={{ width: 8, flexShrink: 0, color: accent, fontSize: 13, lineHeight: '8px' }} title={t.unread ? `${t.unread} unread` : ''}>{t.unread > 0 ? '●' : ''}</span>
                     <Tag color={STATE_COLORS[t.state] || 'default'} style={{ marginRight: 0, fontSize: 10, lineHeight: '16px', width: 66, textAlign: 'center' }}>{t.state}</Tag>
-                    <Text strong style={{ fontSize: 13, width: 150, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.visitor}</Text>
+                    <Text strong={t.unread > 0} style={{ fontSize: 13, width: 150, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: t.unread > 0 ? accent : undefined }}>{t.visitor}</Text>
                     <Text type="secondary" style={{ fontSize: 11, width: 88, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {t.assignee ? `→ ${t.assignee === selfUser ? 'you' : t.assignee}` : ''}
                     </Text>

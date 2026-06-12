@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.46.0] — 2026-06-12
+
+### Added
+- **Helpdesk inbox notifications.** The **Rooms** tab now carries a count badge
+  of rooms/threads with unread messages (visible from any tab); a new visitor
+  message you're not looking at raises a corner toast (visitor + preview); and
+  each inbox thread shows an unread dot + count, with the queue/room entries in
+  the left list badged too. Opening a thread (with the tab visible) marks it
+  read. Keeps you aware of incoming help-desk work without living in the tab —
+  the first step toward a unified attention surface across Triggers and Rooms.
+
+### Fixed
+- **`room_command` with arguments is now used verbatim** (exec transport). A
+  bare `room_command` (e.g. `console-room`) still gets `connect --host … --port …`
+  appended, but one that *already* carries arguments — `nc 127.0.0.1 8765`,
+  `socat - TCP:127.0.0.1:8765` — is run as-is. Previously the suffix was appended
+  to *everything*, so `room_command = "nc 127.0.0.1 8765"` actually ran
+  `nc 127.0.0.1 8765 connect --host … --port …`, which nc rejected → the relay
+  exited → the reconnect loop. (Custom relays still belong in `room_exec_command`;
+  this just stops `room_command` being a footgun.)
+- **Connection tester no longer hangs on a spinning button.** It now short-circuits
+  to an instant OK when the room is already connected, and bounds the fresh-attempt
+  path with a hard 12s timeout (returning a clear "timed out" verdict) instead of
+  blocking on a slow proxied SSH connect. The Rooms-tab "Test" button shows a
+  "Testing…" indicator immediately and always resolves to a dialog.
+
+---
+
 ## [0.45.0] — 2026-06-12
 
 ### Added

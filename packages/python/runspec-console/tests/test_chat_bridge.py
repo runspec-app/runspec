@@ -720,3 +720,18 @@ def test_test_room_connection_unconfigured_host():
     s.test_room_connection = types.MethodType(Bridge.test_room_connection, s)
     r = s.test_room_connection("nope")
     assert not r["ok"] and r["stage"] == "config"
+
+
+def test_test_room_connection_fast_path_when_connected():
+    from runspec_console.bridge import Bridge
+
+    s = types.SimpleNamespace()
+    s._lock = threading.Lock()
+    s._room_specs = lambda: [
+        {"host": "web01", "room": "helpdesk/it", "queue": "it", "ssh_target": "a@web01"}
+    ]
+    s._chat_sources = {"helpdesk/it": object()}  # already connected
+    s.test_room_connection = types.MethodType(Bridge.test_room_connection, s)
+    r = s.test_room_connection("web01")
+    assert r["ok"] and r["stage"] == "ok" and "Connected" in r["message"]
+    # No SSH attempt happened — get_config was never needed.
