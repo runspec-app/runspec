@@ -16,6 +16,14 @@ repos:
       - id: ruff-check
         args: [--fix]
         files: '^packages/.*\.py$'
+  # Secret + internal-identifier scanning. Uses .gitleaks.toml (default ruleset
+  # plus a tripwire for internal hostnames/domains and the service-account
+  # name). Scans staged changes on commit. Bump with `pre-commit autoupdate`.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
   - repo: local
     hooks:
       - id: docs-drift-check
