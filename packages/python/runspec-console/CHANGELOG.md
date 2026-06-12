@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.50.0] — 2026-06-12
+
+A shared mailbox becomes a **second channel** on a help-desk queue, reusing the
+queue-card / claim / lifecycle model. An internal help request or alerting email
+shows up as a ticket in the Triggers inbox; operators claim it (coordinated across
+consoles with no central server), work it, and reply — and a restart recovers
+in-flight state. See `docs/design/helpdesk-channels.md`.
+
+### Added
+- **Shared mailbox → queue card.** A new `[mailboxes]` table in `config.toml` maps
+  a mailbox address to a queue; an Outlook `new_mail` to a mapped mailbox folds
+  onto one Triggers card per conversation (`source = "email"`). Recipients are
+  matched against the real SMTP addresses from the transport headers (To/Cc +
+  `Delivered-To` / `X-Original-To` / `Received: … for`), so distribution-list
+  delivery is recognised and a lookalike address can't match. Personal/other mail
+  never becomes a card.
+- **Mailbox claim + lifecycle (first-ack-wins).** Claiming sends an
+  `X-Runspec-Claim` marker email to the mailbox itself (threaded); every console
+  folds the thread (`mailbox_claim.fold_conversation`) and converges on the same
+  owner/state. The email card gets Claim / Resolve / Reopen / Close; ownership is
+  read-after-write (never optimistic).
+- **Ownership-gated reply.** Only the owning console may reply to the requester;
+  the reply drafts + sends via Outlook **as the shared mailbox**
+  (`SentOnBehalfOfName`), so the requester sees the queue identity.
+- **Startup backlog scan.** `NewMailEx` is forward-only; on startup the console
+  replays each mapped mailbox through the fold (`GetSharedDefaultFolder`) to
+  recover in-flight conversations + claim state. Items are deduped (Message-ID /
+  EntryID) so the scan and the live source can't double-count.
+
+
 ## [0.49.0] — 2026-06-12
 
 The helpdesk surfaces collapse into **one operator tab — Triggers**. A queue

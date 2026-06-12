@@ -579,6 +579,16 @@ export interface BridgeApi {
   resolve_thread: (room: string) => Promise<{ ok: boolean; error?: string }>
   reopen_thread: (room: string) => Promise<{ ok: boolean; error?: string }>
   close_thread: (room: string) => Promise<{ ok: boolean; error?: string }>
+  // Email queue-card lifecycle (the shared-mailbox channel). Keyed by card_id,
+  // not a room: claim/lifecycle ride a marker email to the mailbox itself, and
+  // state changes when that ack lands back and folds (mailbox_claim).
+  claim_email_thread: (cardId: string) => Promise<{ ok: boolean; error?: string }>
+  resolve_email_thread: (cardId: string) => Promise<{ ok: boolean; error?: string }>
+  reopen_email_thread: (cardId: string) => Promise<{ ok: boolean; error?: string }>
+  close_email_thread: (cardId: string) => Promise<{ ok: boolean; error?: string }>
+  // Reply to the requester (drafts in Outlook + sends). Gated server-side on
+  // confirmed ownership — only the owning console may message the requester.
+  reply_email_thread: (cardId: string, body: string) => Promise<{ ok: boolean; error?: string }>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>

@@ -353,11 +353,13 @@ class TriggerEngine:
         handler: Handler,
         on_card: Callable[[TriggerCard], None] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        on_source_event: Callable[[Event], None] | None = None,
         create_source: Callable[[str], EventSource | None] = _default_create_source,
         executor: Executor | None = None,
         max_workers: int = 2,
         clock_ok: Callable[[], bool] = lambda: True,
         external_sources: set[str] | None = None,
+        always_start: set[str] | None = None,
     ) -> None:
         self._triggers = list(triggers)
         self._handler = handler
@@ -365,11 +367,20 @@ class TriggerEngine:
         # Called once per incoming event with its disposition (matched / skipped
         # by rota / no match) — the audit feed of everything the engine sees.
         self._on_event = on_event
+        # Called with every *raw* event before routing (full payload, regardless
+        # of whether any trigger matches) — the bridge uses it to fold a
+        # shared-mailbox new_mail event onto a queue card, the email analog of the
+        # chat source's emit. Best-effort: a failing hook never blocks routing.
+        self._on_source_event = on_source_event
         self._create_source = create_source
         # Source ids the engine must NOT start itself — they're owned elsewhere and
         # push events in via feed() (e.g. the always-on chat source the bridge
         # manages across engine restarts). Their triggers still match normally.
         self._external = set(external_sources or ())
+        # Source ids to start even when no enabled trigger names them — e.g.
+        # "outlook" when a shared mailbox is mapped to a queue but the desk runs no
+        # mail/reminder trigger, so new_mail still flows in to surface queue cards.
+        self._always_start = set(always_start or ())
         # Returns True when triggers may fire now (the working-hours rota gate).
         # Default always-True = no gating.
         self._clock_ok = clock_ok
@@ -397,7 +408,9 @@ class TriggerEngine:
                 return problems
             # Externally-owned sources (e.g. chat) aren't started here — the owner
             # runs them and pushes events through feed(); their triggers still match.
-            wanted = {t.source for t in self._triggers if t.enabled} - self._external
+            wanted = (
+                {t.source for t in self._triggers if t.enabled} | self._always_start
+            ) - self._external
             for source_id in sorted(wanted):
                 src = self._create_source(source_id)
                 if src is None:
@@ -451,6 +464,11 @@ class TriggerEngine:
         working-hours rota, matching triggers are skipped (dropped, not queued)
         unless they set ``ignore_rota``.
         """
+        if self._on_source_event is not None:
+            try:
+                self._on_source_event(event)
+            except Exception:
+                logger.exception("trigger source-event hook failed")
         last: Future[None] | None = None
         clock_ok = self._clock_ok()
         matched: list[str] = []

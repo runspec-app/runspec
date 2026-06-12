@@ -176,6 +176,7 @@ def _event_stub(engine: Any = None, agent_rooms: dict[str, str] | None = None):
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
     s._feed_engine_for = types.MethodType(Bridge._feed_engine_for, s)
     s._touch_queue_card = types.MethodType(Bridge._touch_queue_card, s)
+    s._evict_trigger_cards = types.MethodType(Bridge._evict_trigger_cards, s)
     return s
 
 

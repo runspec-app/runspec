@@ -18,9 +18,13 @@ import pytest
 from runspec_console.sources.outlook import (
     OutlookSource,
     _mail_payload,
+    _received_ts_from_headers,
+    _recipients_from_headers,
     _reminder_payload,
     _split_categories,
+    read_mailbox_items,
     save_reply_draft,
+    send_claim_marker,
     send_draft,
 )
 
@@ -38,6 +42,7 @@ def test_mail_payload_basic():
         ReceivedTime="2026-06-09 10:00",
         Categories="Red Category, Blue Category",
         EntryID="ENT123",
+        ConversationID="CONV789",
     )
     p = _mail_payload(mail)
     assert p == {
@@ -48,7 +53,98 @@ def test_mail_payload_basic():
         "received": "2026-06-09 10:00",
         "categories": ["Red Category", "Blue Category"],
         "entry_id": "ENT123",
+        "conversation_id": "CONV789",
+        # No PropertyAccessor on the fake → no transport headers → no header fields.
+        "recipients": [],
+        "received_ts": 0.0,
+        "message_id": "",
+        "claim_marker": "",
     }
+
+
+def test_mail_payload_conversation_id_empty_when_missing():
+    # A MailItem without ConversationID must not raise — the bridge then folds on
+    # a normalised subject instead.
+    assert _mail_payload(SimpleNamespace(Subject="hi"))["conversation_id"] == ""
+
+
+def test_mail_payload_recipients_from_transport_headers():
+    # The real SMTP address comes from the transport header block, not the To
+    # display name — read via the COM PropertyAccessor (faked here).
+    blob = "To: IT Support <it-support@corp.com>\r\nSubject: hi\r\n"
+    mail = SimpleNamespace(
+        Subject="hi",
+        To="IT Support",  # display name only — no address here
+        PropertyAccessor=SimpleNamespace(GetProperty=lambda prop: blob),
+    )
+    assert _mail_payload(mail)["recipients"] == ["it-support@corp.com"]
+
+
+# ── transport-header recipient parsing (pure) ─────────────────────────────────
+
+
+def test_recipients_from_headers_to_and_cc():
+    blob = (
+        "To: IT Support <it-support@corp.com>, other@x.com\r\n"
+        "Cc: Boss <boss@corp.com>\r\nSubject: x\r\n"
+    )
+    assert _recipients_from_headers(blob) == [
+        "it-support@corp.com",
+        "other@x.com",
+        "boss@corp.com",
+    ]
+
+
+def test_recipients_from_headers_envelope_delivery_for_alias():
+    # An alias hides the mailbox from To; Delivered-To and the Received `for`
+    # clause still name the real envelope recipient.
+    blob = (
+        "To: help@corp.com\r\n"
+        "Delivered-To: it-support@corp.com\r\n"
+        "Received: from mx.corp.com by store.corp.com for <it-support@corp.com>;"
+        " Tue, 9 Jun 2026 10:00:00 +0000\r\n"
+        "Subject: x\r\n"
+    )
+    got = _recipients_from_headers(blob)
+    assert "help@corp.com" in got and "it-support@corp.com" in got
+
+
+def test_recipients_from_headers_dedupes_and_lowercases():
+    blob = "To: IT-Support@Corp.com\r\nCc: it-support@corp.com\r\nSubject: x\r\n"
+    assert _recipients_from_headers(blob) == ["it-support@corp.com"]
+
+
+def test_recipients_from_headers_empty_blob():
+    assert _recipients_from_headers("") == []
+    assert _recipients_from_headers("   ") == []
+
+
+def test_received_ts_from_headers_parses_date():
+    blob = "Date: Tue, 09 Jun 2026 10:00:00 +0000\r\nSubject: x\r\n"
+    assert _received_ts_from_headers(blob) == 1780999200.0  # 2026-06-09T10:00:00Z
+
+
+def test_received_ts_from_headers_absent_or_bad():
+    assert _received_ts_from_headers("Subject: x\r\n") == 0.0
+    assert _received_ts_from_headers("Date: not-a-date\r\n") == 0.0
+
+
+def test_mail_payload_marker_and_ordering_from_headers():
+    blob = (
+        "To: it-support@corp.com\r\n"
+        "Date: Tue, 09 Jun 2026 10:00:00 +0000\r\n"
+        "Message-ID: <ack-1@corp.com>\r\n"
+        "X-Runspec-Claim: it-support/CONV1/ana@web01/claim\r\n"
+        "Subject: RE: help\r\n"
+    )
+    mail = SimpleNamespace(
+        Subject="RE: help",
+        PropertyAccessor=SimpleNamespace(GetProperty=lambda prop: blob),
+    )
+    p = _mail_payload(mail)
+    assert p["claim_marker"] == "it-support/CONV1/ana@web01/claim"
+    assert p["message_id"] == "<ack-1@corp.com>"
+    assert p["received_ts"] == 1780999200.0
 
 
 def test_mail_payload_sender_fallback_to_name():
@@ -199,6 +295,35 @@ def test_send_draft_off_windows():
         return
     with pytest.raises(RuntimeError, match="Windows"):
         send_draft("ENT1")
+
+
+# ── claim marker send guards ──────────────────────────────────────────────────
+
+
+def test_send_claim_marker_requires_entry_id(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")  # past the platform guard
+    with pytest.raises(RuntimeError, match="no source message"):
+        send_claim_marker("", "it-support/CONV1/ana/claim", "it-support@corp.com")
+
+
+def test_send_claim_marker_requires_queue_address(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    with pytest.raises(RuntimeError, match="shared-mailbox address"):
+        send_claim_marker("ENT1", "it-support/CONV1/ana/claim", "")
+
+
+def test_send_claim_marker_off_windows():
+    if sys.platform == "win32":
+        return
+    with pytest.raises(RuntimeError, match="Windows"):
+        send_claim_marker("ENT1", "m", "it-support@corp.com")
+
+
+def test_read_mailbox_items_off_windows_or_empty_address():
+    # Best-effort: returns [] off-Windows or with no mailbox address (never raises).
+    assert read_mailbox_items("") == []
+    if sys.platform != "win32":
+        assert read_mailbox_items("it-support@corp.com") == []
 
 
 # ── calendar rota decision ────────────────────────────────────────────────────

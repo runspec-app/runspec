@@ -167,6 +167,35 @@ def read_chat() -> dict[str, Any]:
     return dict(chat) if isinstance(chat, dict) else {}
 
 
+def read_mailboxes() -> dict[str, str]:
+    """The ``[mailboxes]`` shared-mailbox → queue map from config.toml ({} unset).
+
+    The email channel's queue key is the recipient address: mail to a declared
+    shared mailbox belongs to that mailbox's queue, exactly as ``room_queue``
+    declares a chat queue on a host entry. One ``address = "queue"`` line per
+    shared mailbox::
+
+        [mailboxes]
+        "it-support@corp.com" = "it-support"
+
+    Addresses are lowercased (matched case-insensitively against an email's
+    recipients); blank addresses/queues are dropped. Personal mail — anything not
+    addressed to a declared mailbox — never maps to a queue (so it never becomes
+    a queue card). This is surface-only config; the room_*/transport keys are
+    untouched. See docs/design/helpdesk-channels.md.
+    """
+    raw = read_config().get("mailboxes")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for address, queue in raw.items():
+        addr = str(address or "").strip().lower()
+        name = str(queue or "").strip()
+        if addr and name:
+            out[addr] = name
+    return out
+
+
 def confirm_notifications_enabled() -> bool:
     """`[console] confirm_notifications` — raise a desktop toast when an agent
     tool call hits the autonomy gate. Defaults to True; set false to silence the

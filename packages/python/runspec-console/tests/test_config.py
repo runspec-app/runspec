@@ -66,6 +66,42 @@ class TestWindowsPathRoundTrip(unittest.TestCase):
         self.assertEqual(_roundtrip(data), data)
 
 
+class TestReadMailboxes(unittest.TestCase):
+    """The [mailboxes] shared-mailbox → queue map (the email channel's surface)."""
+
+    def _read(self, raw: dict) -> dict:
+        import runspec_console.config as cfg
+
+        orig = cfg.read_config
+        cfg.read_config = lambda: raw
+        try:
+            return cfg.read_mailboxes()
+        finally:
+            cfg.read_config = orig
+
+    def test_missing_section_is_empty(self) -> None:
+        self.assertEqual(self._read({}), {})
+
+    def test_address_lowercased_queue_preserved(self) -> None:
+        out = self._read({"mailboxes": {"IT-Support@Corp.com": "it-support"}})
+        self.assertEqual(out, {"it-support@corp.com": "it-support"})
+
+    def test_blank_address_or_queue_dropped(self) -> None:
+        out = self._read(
+            {
+                "mailboxes": {
+                    "  ": "it-support",
+                    "hr@corp.com": "  ",
+                    "ok@corp.com": "ok",
+                }
+            }
+        )
+        self.assertEqual(out, {"ok@corp.com": "ok"})
+
+    def test_non_table_section_is_empty(self) -> None:
+        self.assertEqual(self._read({"mailboxes": "nope"}), {})
+
+
 class TestTomlStringEscaper(unittest.TestCase):
     def test_plain_string_unchanged_apart_from_quotes(self) -> None:
         self.assertEqual(_toml_str("hello"), '"hello"')

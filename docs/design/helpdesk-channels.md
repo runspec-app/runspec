@@ -1,9 +1,203 @@
 # Help desk channels — one queue, many channels
 
-> Status: **design / discussion captured** (not yet built). Builds on the
-> queue-in-Triggers work in PR #217 (`console: fold helpdesk queues into the
-> Triggers tab`). See also `helpdesk-rooms.md`, `console-room-server.md`,
-> `console-triggers.md`.
+> Status: **slices 1–5 built** (email as a queue card; mailbox claim + lifecycle;
+> the ownership-gated reply, sent as the shared mailbox). Remaining: audit parity,
+> and the email conversation-pane transcript (Q7). Builds on the queue-in-Triggers
+> work in PR #217 (`console: fold helpdesk queues into the Triggers tab`). See also
+> `helpdesk-rooms.md`, `console-room-server.md`, `console-triggers.md`.
+
+## Status & handover (read this first)
+
+> This section is the single source of truth for picking the email channel back
+> up — it lives here, not in a PR body, so a fresh session finds it. The
+> per-slice "Implemented — slice N" sections below have the detail.
+
+**Where it stands:** slices 1–5 shipped on branch `claude/email-queue-cards-godjdh`
+(PR #221 against `main`), all tests green. The email channel only activates when a
+`[mailboxes]` table is configured, so it's a no-op for existing users until then.
+
+**Architecture map (where each piece lives):**
+
+- `runspec_console/mailbox_claim.py` — **pure** claim domain (the keystone):
+  `Marker`, `format_marker`/`parse_marker`, `marker_from_headers`,
+  `fold_conversation(events) → {state, owner}` (first-ack-wins; lifecycle only
+  from the owner; requester reply after resolve/close reopens). No COM.
+- `runspec_console/sources/outlook.py` — all COM, platform-guarded. `_mail_payload`
+  now carries `recipients`, `received_ts`, `message_id`, `claim_marker`. New:
+  `send_claim_marker` (the ack), `read_mailbox_items` (backlog scan),
+  `save_reply_draft(…, from_mailbox=)`. Pure header parsers
+  (`_recipients_from_headers`, `_received_ts`, `_header_field`) are fake-tested.
+- `runspec_console/bridge.py` — orchestration: `_ingest_email` (dedup → append a
+  fold event → refresh the card's state/owner/`owned_by_me`),
+  `claim/resolve/reopen/close_email_thread`, `reply_email_thread`,
+  `_scan_email_backlog`, `_agent_identity`. State: `_email_threads`, `_email_seen`.
+  The engine gained `on_source_event` + `always_start` (`triggers.py`).
+- UI: `packages/console-ui/src/views/TriggersView.tsx` (email cards get the queue
+  chip + lifecycle buttons via `controlEmail`; reply composer in the detail drawer
+  when `owned_by_me`), `bridge/index.ts` + `bridge/mock.ts`.
+
+**⚠️ Must verify on a real Exchange box (could not be tested off-Windows):**
+
+1. **Cross-console ack delivery** — each operator's Outlook must fire `NewMailEx`
+   for the shared mailbox (monitored as a secondary store). Backlog scan covers
+   cold-start; the live race window is Exchange replication latency.
+2. **The exact COM calls** — `Reply()` re-addressing for the marker,
+   `PS_INTERNET_HEADERS` for the `X-Runspec-Claim` header round-trip, the ack
+   threading on the same `ConversationID`, `SentOnBehalfOfName`,
+   `GetSharedDefaultFolder`.
+
+**Next steps, in priority order:**
+
+1. **Real-Exchange smoke test** of the two caveats above — the main thing blocking
+   confidence in the live multi-console path.
+2. **Email agent-turn flow** — the real "audit parity" unlock: a claim-gated agent
+   turn that *proposes* a reply on an owned email ticket behind the autonomy gate
+   (mirror chat's `_feed_engine_for` + `_gated_propose_reply`). This is where email
+   starts emitting the same agent `run_summary` records as chat.
+3. **Losing-ack hygiene (Q6)** — mark-read / file the internal marker acks to a
+   subfolder so hot threads don't accumulate visible plumbing.
+4. **Thread-transcript pane (Q7)** — retain requester-message bodies per
+   conversation (payloads already flow through `_ingest_email`; no new COM) and
+   render them in the drawer.
+
+**Watch-outs:**
+
+- `_email_seen` dedups on Message-ID then EntryID — distinct mail items must have
+  distinct ids (real items do; test fakes were given unique ids).
+- The fold order key is `(received_ts, message_id)`; `received_ts` prefers the
+  store `ReceivedTime` so header-less internal mail still orders correctly.
+- `scripts/check_docs.py` only scans top-level `docs/*.md`, **not** `docs/design/`,
+  so the ` ```toml ` `[mailboxes]` example here is not schema-validated.
+
+## Implemented — slice 5: reply as the shared mailbox (Q5)
+
+`reply_email_thread` now sends the reply **as the queue's shared mailbox** (sets
+`SentOnBehalfOfName` on the draft via a new `from_mailbox` arg to
+`save_reply_draft`), so the requester sees the queue identity, not the operator.
+Whether it lands as send-as ("IT Support") or send-on-behalf ("X on behalf of IT
+Support") is decided by the Exchange permission on the mailbox — the COM call is
+the same, so it works whichever the org grants.
+
+## Implemented — slice 4: the forward-only catch-up (startup backlog scan)
+
+`NewMailEx` is forward-only — it misses mail (and claim/lifecycle acks) that
+arrived while the console was down, and chat gets catch-up from the hub on
+reconnect but email has none (Q1). The fix reuses the fold:
+
+- **`read_mailbox_items(mailbox_address, limit)`** (COM) — resolves the shared
+  mailbox via `GetSharedDefaultFolder` (the staffer is a member) and returns the
+  most recent items as `new_mail` payloads. Best-effort: `[]` off-Windows / on any
+  error.
+- **`_scan_email_backlog`** — on startup, for each mapped mailbox, replays those
+  items through `_ingest_email`; the fold reconstructs each in-flight conversation
+  and its current owner/state from the thread's markers. Runs off-thread (the COM
+  read can be slow) so it never blocks startup; the Triggers tab pulls the board
+  on mount, so the recovered cards surface even before the webview is up.
+- **Dedup** — `_ingest_email` folds each item once (by Message-ID / EntryID), so
+  the scan and the live `NewMailEx` source overlapping on an item is harmless, and
+  a re-scan doesn't pile up duplicate timeline entries.
+
+## Implemented — slice 3: the ownership-gated reply
+
+The owner replies to the requester. Building on the claim fold, the reply is
+**gated on confirmed ownership** (rule 3): only the console whose claim ack is the
+earliest in the fold may message the requester, so a losing claimant never does.
+
+- **Bridge** — `_ingest_email` now also sets `detail.owned_by_me` (does the fold's
+  owner match this console's identity?). `reply_email_thread(card_id, body)`
+  refuses unless `owned_by_me`, then drafts a reply to the requester's latest
+  message and sends it via the existing `save_reply_draft` + `send_draft`. It's
+  human-initiated (the operator typed and clicked Send), so it goes straight
+  through — the autonomy gate is for *agent*-proposed replies, a later step. The
+  reply is logged on the card timeline.
+- **UI** — the email card's detail drawer shows a reply composer **only when this
+  console owns the conversation** (and the bridge enforces the same gate
+  server-side); the drawer header shows the current owner.
+
+(Slice 5 below removes the original send-from limitation: the reply now goes out
+as the shared mailbox.)
+
+## Implemented — slice 2: mailbox claim + lifecycle (first-ack-wins)
+
+A shared mailbox has no hub, so claim coordination rides the mailbox itself.
+Claiming (or changing lifecycle) sends a tiny **marker email addressed to the
+queue address itself** — never the requester — threaded on the conversation; every
+staffing console sees it land and folds it. **First ack wins.** What shipped:
+
+- **The validated fold (keystone, pure)** — `mailbox_claim.py`: a `Marker`
+  (kind/queue/conversationId/agent) with format/parse + `marker_from_headers`, and
+  `fold_conversation` — replay a conversation's ordered events → `{state, owner}`:
+  the earliest claim-ack wins ownership; `resolve`/`reopen`/`close` count only from
+  the owner; a requester reply after resolve/close reopens. Same lifecycle the chat
+  side gets from its hub, reconstructed locally from the thread. Fully unit-tested,
+  no COM.
+- **The marker carrier** — a custom `X-Runspec-Claim` internet header, set on the
+  outbound ack via the PS_INTERNET_HEADERS named property and read back from the
+  transport-header block. The note's recommended path for internal same-org mail
+  (Q3); invisible to humans, unlike Outlook categories (which don't even transmit
+  between mailboxes).
+- **Ordering** — the fold sorts by `(received_ts, message_id)`. `received_ts`
+  prefers the store's `ReceivedTime` (≈ server `receivedDateTime`, present on every
+  received item, including header-less internal mail), falling back to the `Date`
+  header; `message_id` is the same-instant tiebreak (Q's rule 1).
+- **Bridge wiring** — `_ingest_email` records each new_mail (requester message or
+  marker ack) into a per-conversation event list and refreshes the card's
+  state/owner from the fold; a marker ack is internal plumbing (never a summary
+  bump). `claim/resolve/reopen/close_email_thread(card_id)` send the marker email
+  via `send_claim_marker` (COM: `Reply()` to stay threaded, re-addressed to the
+  mailbox, header set, send). Ownership is **never** set optimistically — it
+  changes only when the ack lands back and folds (read-after-write, rule 2). The
+  console identity in markers is `[console] agent_id` or `<osuser>@<host>`.
+- **UI** — the email card gets the same Claim/Resolve/Reopen/Close buttons as a
+  chat queue card, routed by `card_id` to the email lifecycle methods.
+
+Still deferred: the **customer-facing reply** (gated on confirmed ownership + the
+autonomy gate, via `save_reply_draft`/`send_draft`), the **forward-only startup
+backlog scan** + thread re-read to reconstruct state on launch (Q1), losing-ack
+hygiene (Q6), and audit parity. The cross-console convergence window is Exchange's
+replication latency to each member's store (Q2) — accepted.
+
+## Implemented — slice 1: a shared mailbox as a queue card
+
+The first slice surfaces a shared-mailbox email as a queue card in the Triggers
+inbox, reusing the chat queue-card model — no claim mechanism yet (the card stays
+`open`). What shipped:
+
+- **Mapping config** — a top-level `[mailboxes]` table in `config.toml` maps a
+  shared-mailbox address to its queue (the email analog of `room_queue`, but
+  *not* host-bound: desktop Outlook is local, with no SSH host):
+  ```toml
+  [mailboxes]
+  "it-support@corp.com" = "it-support"
+  ```
+  `config.read_mailboxes()` lowercases addresses and drops blanks. Mail not
+  addressed to a mapped mailbox (personal/other mail) never becomes a card.
+- **Recipient → queue matching** resolves the *real* SMTP recipients, not the
+  `MailItem.To` display names. `_mail_payload` reads the raw transport header
+  block (MAPI `PR_TRANSPORT_MESSAGE_HEADERS` via the COM `PropertyAccessor`) and a
+  pure stdlib parser (`_recipients_from_headers`) pulls addresses from `To`/`Cc`
+  plus the envelope-delivery headers (`Delivered-To` / `X-Original-To` / the
+  `Received: … for <addr>` trace) — so a mailbox reached via an alias or
+  distribution list is still recognised. The bridge matches those **exactly**
+  against the map (a lookalike can't match), falling back to a substring match on
+  the display `To` for internal MAPI mail that carries no header block. (The
+  alias-only-no-header tail is the future store-based signal, Q1/Q4.)
+- **The new_mail → queue card fold** — `_mail_payload` now carries the Outlook
+  `ConversationID`; the trigger engine calls a new `on_source_event` observer for
+  every raw event, and the bridge's `_on_engine_event` folds an `outlook:new_mail`
+  whose recipient matches a mapped mailbox onto one card per conversation
+  (`_touch_email_card`, keyed `queue:email:<conversationId>`): `source = "email"`,
+  `trigger = "queue:<name>"`, visitor = From, summary = subject/snippet. The
+  engine `always_start`s the Outlook source when a mailbox is mapped, so the
+  channel works without any mail/reminder trigger.
+- **UI** — `TriggersView` renders an `email` card with the lifecycle chip (`open`)
+  like a chat queue card; the hub-backed claim/lifecycle controls + live
+  conversation pane stay gated to chat (`source === 'chat'`) until the
+  MailboxClaim fold lands.
+
+Deferred to later slices (see Open questions): the MailboxClaim mechanism
+(first-ack-wins), forward-only startup backlog scan, the email conversation pane
++ reply path, and audit parity.
 
 ## The idea
 

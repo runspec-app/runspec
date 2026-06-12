@@ -1201,4 +1201,26 @@ export const mockApi: BridgeApi = {
     }, 80)
     return { ok: true }
   },
+  // Email queue-card lifecycle. The real bridge sends a marker email and the
+  // state updates when the ack folds back in; the mock just acknowledges.
+  claim_email_thread: async (cardId: string) => {
+    console.log('mock: claim_email_thread', cardId)
+    return { ok: true }
+  },
+  resolve_email_thread: async (cardId: string) => {
+    console.log('mock: resolve_email_thread', cardId)
+    return { ok: true }
+  },
+  reopen_email_thread: async (cardId: string) => {
+    console.log('mock: reopen_email_thread', cardId)
+    return { ok: true }
+  },
+  close_email_thread: async (cardId: string) => {
+    console.log('mock: close_email_thread', cardId)
+    return { ok: true }
+  },
+  reply_email_thread: async (cardId: string, body: string) => {
+    console.log('mock: reply_email_thread', cardId, body)
+    return { ok: true }
+  },
 }
