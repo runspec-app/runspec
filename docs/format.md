@@ -75,6 +75,7 @@ description     = "Deploy to production"       # recommended
 autonomy        = "manual"                     # optional
 autonomy-reason = "Irreversible operation"     # optional
 output          = "text"                       # optional
+discoverable    = true                         # optional, default true; also false or ["operator","self-service"]
 hosts           = ["web-01", "web-02"]         # optional, see Remote Execution
 run_as          = "deploy"                     # optional, see Remote Execution
 become_method   = "sudo"                       # optional, default "sudo"
@@ -112,6 +113,25 @@ emitted schema so agents know whether to display or parse the response.
 | `text` | Human-readable output (default) |
 | `json` | Structured JSON — agent can parse and act on it |
 | `html` | HTML output (reserved for future UI use) |
+
+### `discoverable`
+
+Declares **which audiences** may discover the runnable. Where `serve` controls
+*the context* (`local` vs `remote`), `discoverable` controls *who* — they compose.
+
+| Value | Audiences | Meaning |
+|---|---|---|
+| `true` (default) | `["operator"]` | Operator-visible (`runspec serve`/`local`). Not in any self-service catalog. |
+| `false` | `[]` | Hidden from all discovery — an internal helper. |
+| `["operator", "self-service"]` | as written | Operator-visible **and** offered in the visitor catalog. |
+| `["self-service"]` | as written | Only in the visitor catalog — hidden from `runspec serve`/`local`. |
+
+The `self-service` audience is **opt-in**: a runnable reaches a visitor-facing
+catalog only by listing it explicitly, so the default never exposes a runnable to
+untrusted users. `runspec serve` skips runnables that aren't operator-discoverable
+(the way to hide an internal helper from the agent surface); `runspec local` still
+lists everything and carries the canonical audience list as `x-discoverable` in
+emitted schemas. Metadata only — it adds no runtime behaviour to the runnable.
 
 ### `examples`
 

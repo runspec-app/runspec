@@ -666,6 +666,45 @@ def test_serve_includes_runnable_with_serve_true_explicitly(tmp_path):
     assert "worker" in captured_tools
 
 
+def test_serve_skips_runnable_not_operator_discoverable(tmp_path):
+    """serve is an operator surface — runnables hidden from `operator` are skipped."""
+    from unittest.mock import patch
+
+    toml = tmp_path / "pkg" / "runspec.toml"
+    toml.parent.mkdir()
+    toml.write_text(
+        "[helper]\ndiscoverable = false\ndescription = 'Internal helper'\n\n"
+        "[reset]\ndiscoverable = ['self-service']\ndescription = 'Visitor-only'\n\n"
+        "[both]\ndiscoverable = ['operator', 'self-service']\ndescription = 'Operator + visitor'\n\n"
+        "[plain]\ndescription = 'Default operator'\n",
+        encoding="utf-8",
+    )
+
+    discovered = [
+        {"source": str(toml), "runnable": "helper", "spec": {"discoverable": False, "description": "Internal helper"}},
+        {"source": str(toml), "runnable": "reset", "spec": {"discoverable": ["self-service"], "description": "Visitor-only"}},
+        {"source": str(toml), "runnable": "both", "spec": {"discoverable": ["operator", "self-service"], "description": "Operator + visitor"}},
+        {"source": str(toml), "runnable": "plain", "spec": {"description": "Default operator"}},
+    ]
+
+    captured_tools: dict = {}
+
+    def fake_mcp_loop(tools, arg_specs, exec_specs, name):
+        captured_tools.update(tools)
+
+    with (
+        patch("runspec.cli._discover_installed", return_value=discovered),
+        patch("runspec.serve._mcp_loop", fake_mcp_loop),
+        patch("runspec.serve._find_script", return_value=None),
+    ):
+        serve()
+
+    assert "helper" not in captured_tools, "discoverable=false must hide from the agent surface"
+    assert "reset" not in captured_tools, "self-service-only must hide from the operator surface"
+    assert "both" in captured_tools, "operator-discoverable runnables stay exposed"
+    assert "plain" in captured_tools, "default (absent) is operator-discoverable"
+
+
 # ── serve context helpers ─────────────────────────────────────────────────────
 
 

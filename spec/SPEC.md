@@ -391,6 +391,7 @@ autonomy        = "confirm"                               # optional
 autonomy-reason = "Why this level was chosen"             # optional
 output          = "text"                                  # optional
 serve           = true                                    # optional, default true; also false or ["local","remote"]
+discoverable    = true                                    # optional, default true; also false or ["operator","self-service"]
 run_as          = "username"                              # optional, see Remote Execution
 become_method   = "sudo"                                  # optional, default "sudo"
 become_flags    = "-H"                                    # optional
@@ -461,6 +462,67 @@ description = "Generate a server-side report"
 contains an unknown context string.
 
 Default when unspecified: `true`.
+
+### `discoverable`
+
+Declares **which audiences** may discover this runnable. Where `serve` controls
+*the context* a runnable is exposed in (`local` vs `remote`), `discoverable`
+controls *who* it is exposed to. The two are orthogonal filters that compose.
+
+**Forms:**
+
+| Value | Canonical audiences | Meaning |
+|---|---|---|
+| `true` (default) | `["operator"]` | Visible to operator surfaces (`runspec local`, `runspec serve`). Not in any self-service catalog. |
+| `false` | `[]` | Hidden from all discovery surfaces — an internal helper. |
+| `["operator"]` | `["operator"]` | Same as `true`. |
+| `["operator", "self-service"]` | as written | Operator-visible **and** offered in the self-service catalog. |
+| `["self-service"]` | as written | Offered only in the self-service catalog — hidden from `runspec serve`/`local`. |
+
+**Audiences:**
+
+| Audience | Surface |
+|---|---|
+| `operator` | The trusted operator/agent surfaces — `runspec serve` (MCP tools) and `runspec local`. This is the default. |
+| `self-service` | A visitor-facing catalog (e.g. a help desk). **Opt-in only** — a runnable reaches it solely by listing `"self-service"` explicitly; the bare `true` shorthand deliberately does *not* imply it, so a runnable is never offered to untrusted users by accident. |
+
+```toml
+[reset-password]
+description  = "Reset the caller's password"
+discoverable = ["operator", "self-service"]   # operator surfaces AND the visitor catalog
+
+[rotate-root-key]
+description  = "Rotate the cluster root key"
+discoverable = false                           # internal helper — hidden everywhere
+
+[list-tickets]
+description  = "List open tickets"
+# absent ≡ true ≡ ["operator"] — operator-visible, but not in the visitor catalog
+```
+
+**Effect on the surfaces:**
+
+- `runspec serve` exposes a runnable as an MCP tool only when its `serve` context
+  matches **and** `operator` is among its discoverable audiences. A runnable that
+  is not operator-discoverable (`discoverable = false` or a list without
+  `"operator"`) is skipped — the way to hide an internal helper from the agent
+  surface even though its package is installed.
+- `runspec local` still **lists every** runnable (it is the developer's diagnostic
+  view), annotating any non-default audience. Its emitted schemas
+  (`--format mcp`/`openai`/`anthropic`) carry the canonical audience list as
+  `x-discoverable` so a downstream consumer can filter by audience.
+- A self-service catalog (a separate consumer, not the core library) filters to
+  runnables whose audiences include `self-service`.
+
+**Backward compatibility:** absence means `["operator"]`, so every existing
+package keeps surfacing in `runspec serve`/`local` unchanged. This is metadata
+only — it adds no runtime behaviour to the runnable itself.
+
+**Validation:** an unknown audience string, or an empty list (`discoverable = []`,
+which should be written `false`), is reported as an error by `runspec serve` and
+flagged by `runspec local`.
+
+Default when unspecified: `true` (i.e. `["operator"]`).
 
 ### `output`
 

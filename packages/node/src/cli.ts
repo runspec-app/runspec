@@ -7,6 +7,7 @@ import * as logs from './logs';
 import { loadRaw } from './loader';
 import { inferScript } from './inference';
 import { parse } from './parser';
+import { normaliseDiscoverable } from './discovery';
 import type { ScriptSpec, ArgSpec } from './models';
 
 const _CLI_CONFIG = path.join(__dirname, 'runspec.toml');
@@ -520,6 +521,7 @@ export function buildSchema(name: string, script: ScriptSpec, fmt: string): Reco
     description: script.description ?? '',
     'x-autonomy': script.autonomy ?? 'confirm',
     'x-output': script.output ?? 'text',
+    'x-discoverable': normaliseDiscoverable(script.discoverable),
     inputSchema: { type: 'object', properties },
   };
 

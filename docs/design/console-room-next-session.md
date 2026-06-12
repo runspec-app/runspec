@@ -3,6 +3,36 @@
 Working notes for resuming the console chat-room work. Picks up after PR #194.
 Not a design doc — delete or fold into `console-room-server.md` once consumed.
 
+## Helpdesk pivot — decided + H0 shipped (resume here)
+
+The helpdesk direction is agreed and written up in
+**`docs/design/helpdesk-rooms.md`** (private per-user conversations + a curated,
+runspec-validated self-service catalog; consoles-only agents; the two existing
+front doors already split visitor/agent). Build order is H0..H4 in that note's §9.
+
+**✅ H0 — the `discoverable` keyword — DONE** (branch `claude/runspec-room-dev-w0s5f0`):
+audience-scoped runnable-level field (`true`/`false`/`["operator","self-service"]`,
+operator-default, self-service opt-in), at parity in Python (`runspec` 0.34.0) and
+Node (`runspec-node` 0.30.0). Spec + schema + format.md + compliance fixtures +
+CHANGELOG all moved together; `runspec serve` now skips non-operator runnables and
+schemas carry `x-discoverable`; `RunSpec.runspec_discoverable` exposes it.
+
+**Next slices (not started):** H1 hub namespace/prefix participant + server-side
+conversation naming → H2 lifecycle + control frames → H3 visitor browser view +
+catalog/Forms → H4 agent-console inbox view. See `helpdesk-rooms.md` §9.
+
+**Parked open questions (stored for next — from `helpdesk-rooms.md` §10):**
+1. **Queue routing** — single helpdesk queue vs multiple departmental queues, and
+   whether a visitor's department auto-routes or they pick. Leakage concern leans
+   multi-queue; H1's `helpdesk/<queue>/<visitor>` naming already allows it — ship
+   single, design for many.
+2. **Catalog source of truth** — per-queue explicit allowlist of `self-service`
+   runnables vs every `self-service`-marked runnable installed on the agent hosts.
+   Leaning explicit per-queue allowlist (tight blast radius).
+3. **SLA / notifications** — resolved-idle auto-close, unassigned-too-long nudge.
+   Out of scope for the first cut; the lifecycle gives the hooks.
+4. **Browser agent inbox** — deferred by the consoles-only cut; additive later.
+
 ## Where things stand (shipped)
 
 The chat-room feature is built and live-tested on a locked-down corporate host:
@@ -36,18 +66,21 @@ The chat-room feature is built and live-tested on a locked-down corporate host:
 
 ## Open ideas for next session
 
-### 1. Helpdesk-on-rooms (user's pivot idea — DISCUSS, don't build yet)
-Reframe: instead of multi-party rooms, a **support/help-widget** model — many
-visitors, a few agents "on shift", 1:1 sessions that close on "resolved", plus an
-embeddable website chat widget. My recommendation (agreed to revisit while testing):
-**don't pivot the core — layer on it.** A support session = a 2-seat room with a
-lifecycle; the widget = a third front door on the same pipe. What it *adds* (not
-removes): session lifecycle (open→assigned→resolved→closed), routing/queue, and an
-anonymous/lightly-authed visitor identity. **The one real design point is the
-identity flip:** today "a console's SSH access *is* its right to be in the room";
-in helpdesk the agent is the SSH/console side and the visitor is an anonymous web
-user. If we proceed, write a short design note covering: session state machine,
-routing (next-on-shift), widget front door, and that identity model.
+### 1. Helpdesk-on-rooms — ✅ RESOLVED, design agreed → `docs/design/helpdesk-rooms.md`
+The "discuss, don't build yet" item is settled. Decisions (see the design note):
+**private per-user conversations**, not a shared room — each SSO visitor sees only
+their own thread (kills cross-department leakage + makes attribution the primary
+key + easy corporate sell). The "identity flip" worry is moot: the existing two
+doors already split the roles — **browser door = visitor** (OIDC), **console door
+= agent** (SSH-gated). **Agents are consoles only** (clean visitor/agent cut). A
+help-desk interaction = private chat **+** a curated, runspec-validated
+**self-service catalog** (Forms) enacted through the existing speak + autonomy
+gates; the catalog is curated by a new **`discoverable`** spec keyword
+(audience-scoped: `true`/`false`/`["operator","self-service"]`, default operator,
+visitor-facing is opt-in). Build order: **H0 `discoverable` keyword first**
+(self-contained, ships value alone), then hub namespace participant → lifecycle →
+visitor view/catalog → agent inbox. Full state machine, routing, and identity
+model are in the design note.
 
 ### 2. Docs housekeeping (deferred from the 3-item polish task)
 Was paused because the helpdesk decision may rewrite this content. When settled:

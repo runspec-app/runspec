@@ -1,7 +1,7 @@
 # Integration fixture: complex.toml
 # Tests subcommands, groups, multiple values, autonomy escalation,
 # env vars, choices, ranges, flags, deprecated args, string validation
-# (pattern / min-length / max-length), and require-command.
+# (pattern / min-length / max-length), require-command, and discoverable.
 
 [config]
 autonomy-default = "confirm"
@@ -9,8 +9,9 @@ lang             = "python"
 version          = "1"
 
 [pipeline]
-description = "Process and validate data pipeline files"
-autonomy    = "confirm"
+description  = "Process and validate data pipeline files"
+autonomy     = "confirm"
+discoverable = ["operator", "self-service"]   # operator surfaces AND a visitor catalog
 
 [pipeline.commands.run]
 description     = "Run the pipeline against one or more input files"
@@ -51,9 +52,11 @@ strict = {default = false}
 format = {options = ["json", "csv", "parquet"], default = "json"}
 
 # require-command: choosing a subcommand is mandatory at the db level.
+# discoverable = false: an internal helper hidden from all discovery surfaces.
 [db]
 description     = "Database administration"
 require-command = true
+discoverable    = false
 
 [db.commands.migrate]
 description = "Apply pending migrations"

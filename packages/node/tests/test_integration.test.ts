@@ -191,6 +191,14 @@ describe('complex.toml', () => {
     // Defaults to false where unset.
     expect(raw.runnables['pipeline'].requireCommand).toBe(false);
   });
+
+  test('discoverable: raw value preserved by the loader', () => {
+    const raw = loadRaw(COMPLEX);
+    expect(raw.runnables['pipeline'].discoverable).toEqual(['operator', 'self-service']);
+    expect(raw.runnables['db'].discoverable).toBe(false);
+    // Absent on the subcommands → undefined (defaults to operator-visible downstream).
+    expect(raw.runnables['pipeline'].commands['run'].discoverable).toBeUndefined();
+  });
 });
 
 // ── cross-fixture: inference rules ────────────────────────────────────────────

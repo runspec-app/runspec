@@ -905,11 +905,14 @@ def _build_schema(name: str, script: dict[str, Any], fmt: str) -> dict[str, Any]
         if arg.get("required"):
             required_args.append(arg_name)
 
+    from runspec.discovery import normalise_discoverable
+
     schema: dict[str, Any] = {
         "name": name,
         "description": script.get("description") or "",
         "x-autonomy": script.get("autonomy", "confirm"),
         "x-output": script.get("output", "text"),
+        "x-discoverable": normalise_discoverable(script.get("discoverable")),
         "inputSchema": {
             "type": "object",
             "properties": properties,
@@ -1135,7 +1138,21 @@ def _print_local_text(discovered: list[dict[str, Any]]) -> None:
 
             has_ep = (bin_dir / name).exists() or (bin_dir / f"{name}.exe").exists()
             callable_marker = "" if has_ep else "  [not callable]"
-            print(f"    {name:<24} {desc[:48]:<50}  [{autonomy}]{callable_marker}")
+            # Annotate any non-default discoverability so the developer sees that a
+            # runnable is hidden from operator agents or offered to the catalog.
+            from runspec.discovery import OPERATOR, normalise_discoverable, validate_discoverable
+
+            audiences = normalise_discoverable(runnable.get("discoverable"))
+            if audiences == [OPERATOR]:
+                disc_marker = ""
+            elif not audiences:
+                disc_marker = "  [discoverable=false]"
+            else:
+                disc_marker = f"  [audiences: {', '.join(audiences)}]"
+            print(f"    {name:<24} {desc[:48]:<50}  [{autonomy}]{disc_marker}{callable_marker}")
+
+            for err in validate_discoverable(runnable.get("discoverable")):
+                errors.append(f"'{name}' discoverable: {err}")
 
             if not has_ep:
                 errors.append(f"'{name}' entry point not registered — add to [project.scripts] in pyproject.toml and re-run pip install")

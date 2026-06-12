@@ -24,6 +24,9 @@ from typing import Any
 from runspec.become import build_become_argv as _build_become_argv
 from runspec.become import resolve_run_as as _resolve_run_as
 from runspec.become import validate_run_as_patterns as _validate_run_as_patterns
+from runspec.discovery import OPERATOR as _OPERATOR
+from runspec.discovery import is_discoverable_to as _is_discoverable_to
+from runspec.discovery import validate_discoverable as _validate_discoverable
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 MCP_SPEC = "https://github.com/modelcontextprotocol/specification"
@@ -111,6 +114,19 @@ def serve() -> None:
             sys.stderr.flush()
             sys.exit(1)
         if not _is_serve_match(runnable.get("serve"), serve_context):
+            continue
+
+        # Validate `discoverable` and skip runnables not exposed to the operator
+        # audience — `serve` is an operator surface (orthogonal to the serve
+        # *context* filter above). An internal helper (discoverable = false, or a
+        # list without "operator") is hidden from the agent surface this way.
+        disc_errors = _validate_discoverable(runnable.get("discoverable"))
+        if disc_errors:
+            for err in disc_errors:
+                sys.stderr.write(f"runspec serve: {rname}.discoverable: {err}\n")
+            sys.stderr.flush()
+            sys.exit(1)
+        if not _is_discoverable_to(runnable.get("discoverable"), _OPERATOR):
             continue
 
         # Skip tools restricted to other hosts

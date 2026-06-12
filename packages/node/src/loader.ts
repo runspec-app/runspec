@@ -67,6 +67,7 @@ function normaliseScript(name: string, raw: Record<string, unknown>): ScriptSpec
     autonomy: raw['autonomy'] as string | undefined,
     autonomyReason: raw['autonomy-reason'] as string | undefined,
     output: raw['output'] as string | undefined,
+    discoverable: raw['discoverable'] as boolean | string[] | undefined,
     requireCommand: (raw['require-command'] as boolean | undefined) ?? false,
     args: normaliseArgs((raw['args'] ?? {}) as Record<string, unknown>),
     groups: normaliseGroups((raw['groups'] ?? {}) as Record<string, unknown>),

@@ -171,6 +171,25 @@
           ],
           "default": true
         },
+        "discoverable": {
+          "description": "Which audiences may discover this runnable. true/false or a list of audiences ('operator', 'self-service'). Orthogonal to serve. Surfaces as x-discoverable in emitted schemas.",
+          "oneOf": [
+            {
+              "type": "boolean",
+              "description": "true (default) — operator-visible (≡ [\"operator\"]); false — hidden from all discovery surfaces."
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["operator", "self-service"]
+              },
+              "minItems": 1,
+              "description": "Discover only in the listed audiences. 'operator' = runspec serve/local; 'self-service' = a visitor-facing catalog (opt-in only)."
+            }
+          ],
+          "default": true
+        },
         "hosts": {
           "type": "array",
           "items": { "type": "string" },

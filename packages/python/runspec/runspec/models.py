@@ -314,6 +314,18 @@ class RunSpec:
         return self.__runspec_groups__
 
     @property
+    def runspec_discoverable(self) -> list[str]:
+        """Canonical discoverability audiences for this runnable (e.g. ['operator']).
+
+        Normalised from the `discoverable` keyword: absent/`true` → ['operator'],
+        `false` → [], a list → itself. A consumer (e.g. a self-service catalog)
+        filters runnables by membership: `'self-service' in args.runspec_discoverable`.
+        """
+        from runspec.discovery import normalise_discoverable
+
+        return normalise_discoverable(self.__runspec_spec__.get("discoverable"))
+
+    @property
     def runspec_command(self) -> str | None:
         """Active subcommand name (leaf), or None if no subcommand was invoked."""
         path = self.__runspec_command_path__

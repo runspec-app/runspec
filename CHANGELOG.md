@@ -7,6 +7,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.34.0] / [node-0.30.0] — 2026-06-12
+
+### Added
+
+- **`discoverable` keyword — per-runnable, audience-scoped visibility.** A new
+  optional runnable-level field that declares *which audiences* may discover a
+  runnable, orthogonal to `serve` (which declares *the context*). Until now
+  discovery was all-or-nothing per package: installing any dist that depends on
+  `runspec` surfaced **every** runnable in it to `runspec serve`/`local`.
+  `discoverable` lets one package hold both an agent-facing runnable and an
+  internal helper and expose only the former.
+    - **Forms:** `true` (default) ≡ `["operator"]` — operator-visible
+      (`runspec serve`/`local`); `false` ≡ `[]` — hidden from all discovery
+      surfaces; or an explicit audience list. Audiences: `operator` (the trusted
+      agent surfaces) and `self-service` (a visitor-facing catalog, e.g. a help
+      desk).
+    - **Self-service is opt-in / default-deny.** A runnable reaches the
+      `self-service` audience *only* by listing it explicitly — the bare `true`
+      shorthand never implies it, so a runnable is never offered to untrusted
+      users by accident (matching runspec's "safe by default" posture).
+    - **Backward compatible:** absence means `["operator"]`, so every existing
+      package keeps surfacing in `runspec serve`/`local` unchanged. Metadata
+      only — no runtime behaviour is added to the runnable, no new dependency.
+    - **Surfaces:** `runspec serve` skips runnables not discoverable to
+      `operator` (validating the field first, like `serve`); `runspec local`
+      still lists everything (the developer's diagnostic view), annotates any
+      non-default audience, and emits the canonical audience list as
+      `x-discoverable` on every tool schema (`--format mcp`/`openai`/`anthropic`)
+      so downstream consumers can filter by audience. A parsed `RunSpec` exposes
+      `runspec_discoverable` (Python).
+    - Implemented at parity in **Python** (`runspec` 0.34.0) and **Node**
+      (`runspec-node` 0.30.0); covered by the shared compliance fixtures
+      (`tests/integration/fixtures/complex.toml`). Documented in `spec/SPEC.md`,
+      `schema/runspec.schema.json`, and `docs/format.md`.
+
 ## [0.33.0] / [node-0.29.0] — 2026-06-11
 
 ### Changed
