@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.45.0] — 2026-06-12
+
+### Added
+- **Room connection tester (Rooms tab → "Test").** Diagnoses a room/queue's
+  connection on demand over the *real* paramiko path the supervisor uses (HTTP
+  proxy, key, ssh_config, then the tunnel or exec relay), in an isolated attempt
+  that ignores the pool's connect-backoff and doesn't disturb the live
+  connection. It reports the actual blocker with a localised stage —
+  **ssh** (reach/auth the host, incl. the proxy), **channel** (tunnel/exec
+  relay), or **room** (the relay reached the host but the room server isn't
+  answering on the port) — plus an actionable hint, in a dialog. No more reading
+  tracebacks or fumbling with a local `ssh` command (which exercises OpenSSH
+  ControlMaster/config the console never uses).
+
+### Changed
+- **Blocked SSH port-forwarding now logs one actionable line, not a repeating
+  traceback.** A host with `AllowTcpForwarding no` refuses the direct-tcpip room
+  tunnel (`Administratively prohibited`) — a permanent condition the reconnect
+  loop would otherwise re-report as a full traceback every backoff. The
+  supervisor now detects it and points at the fix (`room_via = "exec"`); the same
+  classification powers the connection tester.
+- **Agent-mode chat source logs its queue.** `listening on queue 'helpdesk/<q>'`
+  instead of the empty `listening in room ''` (an agent subscribes to a namespace,
+  not a room).
+
+---
+
 ## [0.44.2] — 2026-06-12
 
 ### Changed

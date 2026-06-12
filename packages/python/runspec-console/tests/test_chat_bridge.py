@@ -639,3 +639,84 @@ def test_propose_reply_rejects_empty_text():
         _propose_stub()._gated_propose_reply({"text": "  "}, "card1", "ops")
     )
     assert out.startswith("✗") and "empty" in out
+
+
+# ── connect-error hint (blocked port-forwarding → exec) ────────────────────────
+
+
+def test_chat_connect_hint_for_blocked_forwarding():
+    from runspec_console.bridge import _chat_connect_hint
+
+    exc = Exception("ChannelException(1, 'Administratively prohibited')")
+    hint = _chat_connect_hint(exc, via="tunnel")
+    assert hint is not None and 'room_via = "exec"' in hint
+
+
+def test_chat_connect_hint_none_in_exec_mode():
+    from runspec_console.bridge import _chat_connect_hint
+
+    # Already on exec → the prohibited-forwarding hint doesn't apply.
+    exc = Exception("ChannelException(1, 'Administratively prohibited')")
+    assert _chat_connect_hint(exc, via="exec") is None
+
+
+def test_chat_connect_hint_none_for_other_errors():
+    from runspec_console.bridge import _chat_connect_hint
+
+    assert _chat_connect_hint(TimeoutError("timed out"), via="tunnel") is None
+
+
+# ── room connection tester (classifier) ────────────────────────────────────────
+
+
+def test_classify_room_connection_success():
+    from runspec_console.bridge import _classify_room_connection
+
+    r = _classify_room_connection(None, via="exec")
+    assert r["ok"] and r["stage"] == "ok"
+
+
+def test_classify_room_connection_proxy_timeout():
+    from runspec_console.bridge import _classify_room_connection
+
+    r = _classify_room_connection(TimeoutError("timed out"), via="exec")
+    assert not r["ok"] and r["stage"] == "ssh"
+    assert "proxy" in r["hint"].lower()
+
+
+def test_classify_room_connection_blocked_forwarding():
+    from runspec_console.bridge import _classify_room_connection
+
+    exc = Exception("ChannelException(1, 'Administratively prohibited')")
+    r = _classify_room_connection(exc, via="tunnel")
+    assert not r["ok"] and r["stage"] == "channel"
+    assert 'room_via = "exec"' in r["hint"]
+
+
+def test_classify_room_connection_backoff():
+    from runspec_console.bridge import _classify_room_connection
+
+    from runspec_console.ssh_pool import BackoffError
+
+    r = _classify_room_connection(
+        BackoffError("host in connect-backoff for 4s"), via="exec"
+    )
+    assert not r["ok"] and r["stage"] == "ssh" and "backoff" in r["message"].lower()
+
+
+def test_classify_room_connection_auth():
+    from runspec_console.bridge import _classify_room_connection
+
+    r = _classify_room_connection(Exception("Authentication failed."), via="exec")
+    assert not r["ok"] and r["stage"] == "ssh" and "identityFile" in r["message"]
+
+
+def test_test_room_connection_unconfigured_host():
+    from runspec_console.bridge import Bridge
+
+    s = types.SimpleNamespace()
+    s._room_specs = lambda: []
+    s.get_config = lambda: {}
+    s.test_room_connection = types.MethodType(Bridge.test_room_connection, s)
+    r = s.test_room_connection("nope")
+    assert not r["ok"] and r["stage"] == "config"

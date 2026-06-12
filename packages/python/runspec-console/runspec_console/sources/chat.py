@@ -335,7 +335,10 @@ class ChatSource:
         transport = self._transport
         if transport is None:
             return
-        logger.info("chat source: listening in room %r", self._room)
+        if self.is_agent:
+            logger.info("chat source: listening on queue %r", self._namespace)
+        else:
+            logger.info("chat source: listening in room %r", self._room)
         while not self._stop.is_set():
             try:
                 obj = transport.recv()

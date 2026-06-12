@@ -414,6 +414,20 @@ export interface RoomsState {
   rooms: RoomInfo[]
 }
 
+// bridge.test_room_connection — an isolated, on-demand diagnosis of a room's
+// connection over the real paramiko path (proxy/key/channel). `stage` localises
+// a failure: ssh (reach/auth the host), channel (tunnel/exec relay), room (relay
+// up but room server silent), config, or ok.
+export interface RoomConnTest {
+  ok: boolean
+  stage: 'ssh' | 'channel' | 'room' | 'config' | 'ok'
+  message: string
+  hint?: string | null
+  host?: string
+  room?: string
+  queue?: string
+}
+
 // runspec:room_connection — a room's live connection flipped (connect / drop).
 export interface RoomConnection {
   room: string
@@ -532,6 +546,9 @@ export interface BridgeApi {
   send_trigger_draft: (entryId: string) => Promise<{ ok: boolean; to?: string; subject?: string; error?: string }>
   // ── chat room (Rooms view) ─────────────────────────────────────────────────
   get_room_state: () => Promise<RoomsState>
+  // Diagnose a room/queue's connection on demand (the real paramiko path), so
+  // the operator sees the actual blocker instead of a buried traceback.
+  test_room_connection: (host: string) => Promise<RoomConnTest>
   // The composer's one outbound path. The agent never reaches this — a proposed
   // reply only pre-fills the composer (runspec:room_draft); the human sends.
   // For a helpdesk thread, pass the conversation room (helpdesk/<queue>/<visitor>);

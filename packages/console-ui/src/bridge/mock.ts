@@ -1131,6 +1131,18 @@ export const mockApi: BridgeApi = {
       },
     ],
   }),
+  test_room_connection: async (host: string) => {
+    console.log('mock: test_room_connection', host)
+    return {
+      ok: true,
+      stage: 'ok' as const,
+      host,
+      room: 'helpdesk/it-support',
+      queue: 'it-support',
+      message: `Connected to the room on ${host} (port 8765, via exec). Queue it-support.`,
+      hint: null,
+    }
+  },
   send_room_message: async (room: string, text: string) => {
     console.log('mock: send_room_message', room, text)
     // Echo into the transcript so the Rooms view is interactive in the browser

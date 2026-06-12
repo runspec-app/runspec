@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Empty, Input, Tag, Typography, message } from 'antd'
-import { SendOutlined, RobotOutlined, FlagOutlined, CheckOutlined, UndoOutlined, CloseOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
+import { Button, Empty, Input, Modal, Tag, Typography, message } from 'antd'
+import { SendOutlined, RobotOutlined, FlagOutlined, CheckOutlined, UndoOutlined, CloseOutlined, DownOutlined, UpOutlined, ApiOutlined } from '@ant-design/icons'
 import { bridge, type RoomInfo, type RoomMessage, type RoomPresence, type RoomConversation, type ThreadState } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
@@ -65,6 +65,7 @@ export function RoomsView({ active }: { active: boolean }) {
   const [sending, setSending] = useState(false)
   const [acting, setActing] = useState(false)
   const [inboxCollapsed, setInboxCollapsed] = useState(false)
+  const [testing, setTesting] = useState(false)
 
   const transcriptRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<any>(null)
@@ -225,6 +226,28 @@ export function RoomsView({ active }: { active: boolean }) {
     }
   }
 
+  // Diagnose this room's connection over the real paramiko path — shows the
+  // actual blocker (proxy timeout, blocked forwarding, room server down, …)
+  // instead of leaving the operator to read a log traceback.
+  const testConnection = async () => {
+    if (!current || testing) return
+    setTesting(true)
+    try {
+      const r = await bridge.test_room_connection(current.host)
+      const body = r.hint ? `${r.message}\n\n→ ${r.hint}` : r.message
+      const title = r.ok ? 'Connection OK' : `Connection problem · ${r.stage}`
+      ;(r.ok ? Modal.success : Modal.error)({
+        title,
+        content: <div style={{ whiteSpace: 'pre-wrap' }}>{body}</div>,
+        width: 520,
+      })
+    } catch (err) {
+      message.error(String(err))
+    } finally {
+      setTesting(false)
+    }
+  }
+
   const border = isDark ? '#303030' : '#e8e8e8'
   const panelBg = isDark ? '#1a1a1a' : '#fafafa'
   const accent = isDark ? '#4f9cf9' : '#1677ff'
@@ -369,6 +392,16 @@ export function RoomsView({ active }: { active: boolean }) {
           <Text type="secondary" style={{ fontSize: 12 }}>
             {current?.connected ? 'connected' : 'offline — reconnecting…'}
           </Text>
+          <Button
+            size="small"
+            type="text"
+            icon={<ApiOutlined />}
+            loading={testing}
+            onClick={testConnection}
+            title="Test this room's connection (diagnose proxy / tunnel / relay)"
+          >
+            Test
+          </Button>
         </div>
 
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>

@@ -150,6 +150,71 @@ class _BridgeTriggerOps:
         )
 
 
+def _chat_connect_hint(exc: BaseException, *, via: str) -> str | None:
+    """A concise, actionable message for a known-*permanent* chat-connect failure,
+    or ``None`` to fall back to a full traceback.
+
+    ``Administratively prohibited`` on a ``direct-tcpip`` channel means the host
+    refuses SSH port-forwarding (``AllowTcpForwarding no``) — retrying the tunnel
+    will never succeed, so a 20-line traceback every backoff is just noise. The
+    fix is the exec relay, so point the operator straight at it."""
+    if via != "exec" and "Administratively prohibited" in str(exc):
+        return (
+            "SSH port-forwarding is blocked on this host (Administratively "
+            'prohibited). Set room_via = "exec" on the host entry to reach the '
+            "room over an exec channel (console-room connect) instead of a tunnel."
+        )
+    return None
+
+
+def _classify_room_connection(exc: BaseException | None, *, via: str) -> dict[str, Any]:
+    """Turn a room-connect attempt's outcome into a structured, human-readable
+    result for the UI's connection tester: ``{ok, stage, message, hint}``.
+
+    ``stage`` localises the failure — ``ssh`` (reaching/authing the host, incl.
+    the HTTP proxy), ``channel`` (opening the tunnel / exec relay), ``room`` (the
+    relay reached the host but not the room server), or ``ok``. ``hint`` is an
+    actionable next step when we recognise the failure."""
+    if exc is None:
+        return {"ok": True, "stage": "ok", "message": "", "hint": None}
+    text = str(exc) or type(exc).__name__
+    low = text.lower()
+    if "in connect-backoff" in low:
+        return {
+            "ok": False,
+            "stage": "ssh",
+            "message": f"Host is in connect-backoff after recent failures ({text}). The always-on reconnect loop is already retrying — try again in a moment.",
+            "hint": None,
+        }
+    if isinstance(exc, TimeoutError) or "timed out" in low or "timeout" in low:
+        return {
+            "ok": False,
+            "stage": "ssh",
+            "message": "Timed out reaching the host — the SSH connection (through the HTTP proxy, if configured) didn't complete in time.",
+            "hint": "If the proxy works for discovery/transfers, this is usually transient at startup (many connections open at once) — retry. If it persists, check the [ssh] proxy host:port is reachable.",
+        }
+    if "administratively prohibited" in low:
+        return {
+            "ok": False,
+            "stage": "channel",
+            "message": "The host refused the tunnel — SSH port-forwarding is disabled (AllowTcpForwarding no).",
+            "hint": _chat_connect_hint(exc, via=via),
+        }
+    if "authentication" in low or "not a valid" in low or "no authentication" in low:
+        return {
+            "ok": False,
+            "stage": "ssh",
+            "message": f"SSH authentication failed ({text}). Check this host's key / identityFile.",
+            "hint": None,
+        }
+    return {
+        "ok": False,
+        "stage": "ssh",
+        "message": text,
+        "hint": _chat_connect_hint(exc, via=via),
+    }
+
+
 class _RotaPresenceWatcher:
     """Pushes console presence to the chat room as the working-hours rota flips.
 
@@ -5054,8 +5119,15 @@ class Bridge:
             )
             try:
                 source.start(self._on_chat_event)
-            except Exception:
-                logger.exception("chat: connect to room %r failed", room)
+            except Exception as exc:
+                # A blocked-forwarding failure is permanent — log one actionable
+                # line, not a fresh traceback every backoff. Genuinely unexpected
+                # errors still get the full traceback.
+                hint = _chat_connect_hint(exc, via=str(spec.get("via") or "tunnel"))
+                if hint:
+                    logger.error("chat: room %r — %s", room, hint)
+                else:
+                    logger.exception("chat: connect to room %r failed", room)
                 if self._chat_stop.wait(backoff):
                     break
                 backoff = min(backoff * 2, self._CHAT_BACKOFF_MAX)
@@ -5290,6 +5362,123 @@ class Bridge:
                 }
             rooms.append(entry)
         return {"rooms": rooms}
+
+    def test_room_connection(self, host: str) -> dict[str, Any]:
+        """Diagnose a room/queue's connection the way the supervisor reaches it —
+        an isolated, fresh attempt (no pool backoff, no effect on the live
+        connection) over the *same* paramiko path (HTTP proxy, key, ssh_config),
+        so the UI can show the real outcome instead of a buried traceback.
+
+        Steps, matching the transport: connect+auth to the host (the ``ssh``
+        stage — where the proxy timeout surfaces), open the tunnel / exec relay
+        (``channel`` — where blocked forwarding surfaces), and for exec confirm
+        the relay didn't immediately exit (``room`` — the room server is actually
+        listening). Returns the ``_classify_room_connection`` shape plus the host
+        / room / queue it tested."""
+        from .executor import _make_ssh_client
+
+        specs = [
+            s
+            for s in self._room_specs()
+            if s.get("host") == host or s.get("ssh_target") == host
+        ]
+        if not specs:
+            return {
+                "ok": False,
+                "stage": "config",
+                "host": host,
+                "message": f"No room or queue is configured on host {host!r}.",
+                "hint": "Add room/room_port (group chat) or room_queue/room_port (help desk) to this host.",
+            }
+        spec = specs[0]
+        cfg = self.get_config().get("ssh")
+        cfg = cfg if isinstance(cfg, dict) else None
+        via = str(spec.get("via") or "tunnel")
+        meta = {
+            "host": host,
+            "room": spec["room"],
+            "queue": str(spec.get("queue") or ""),
+        }
+
+        client = None
+        chan = None
+        try:
+            try:
+                client = _make_ssh_client(
+                    str(spec["ssh_target"]), spec.get("identity_file") or None, cfg
+                )
+            except Exception as exc:  # noqa: BLE001 — report, don't raise
+                return {**_classify_room_connection(exc, via=via), **meta}
+
+            transport = client.get_transport()
+            if transport is None:
+                return {
+                    **_classify_room_connection(OSError("transport closed"), via=via),
+                    **meta,
+                }
+            try:
+                if via == "exec":
+                    chan = transport.open_session()
+                    chan.exec_command(str(spec["exec_command"]))
+                else:
+                    chan = transport.open_channel(
+                        "direct-tcpip",
+                        (str(spec.get("dest_host") or "127.0.0.1"), int(spec["port"])),
+                        ("127.0.0.1", 0),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                return {**_classify_room_connection(exc, via=via), **meta}
+
+            # Exec: the relay (console-room connect) connects to localhost:port on
+            # the host. If the room server is down it exits straight away — catch
+            # that so "host reachable but room down" isn't reported as success.
+            if via == "exec":
+                time.sleep(1.5)
+                if chan.exit_status_ready():
+                    err = ""
+                    try:
+                        if chan.recv_stderr_ready():
+                            err = (
+                                chan.recv_stderr(2048)
+                                .decode("utf-8", "replace")
+                                .strip()
+                            )
+                    except Exception:
+                        pass
+                    return {
+                        **meta,
+                        "ok": False,
+                        "stage": "room",
+                        "message": (
+                            f"Reached the host, but the relay exited — the room "
+                            f"server isn't answering on port {spec['port']} "
+                            f"(is console-room running there?)."
+                            + (f" [{err}]" if err else "")
+                        ),
+                        "hint": "Start the room server on the host (console-room) and confirm its --ndjson-port matches this host's room_port.",
+                    }
+
+            return {
+                **meta,
+                "ok": True,
+                "stage": "ok",
+                "message": (
+                    f"Connected to the room on {host} (port {spec['port']}, via {via})."
+                    + (f" Queue {spec['queue']}." if spec.get("queue") else "")
+                ),
+                "hint": None,
+            }
+        finally:
+            try:
+                if chan is not None:
+                    chan.close()
+            except Exception:
+                pass
+            try:
+                if client is not None:
+                    client.close()
+            except Exception:
+                pass
 
     def _abort_turns(self, ids: set[str] | None) -> None:
         """Unblock in-flight turns: signal each cancel flag and wake each pending
