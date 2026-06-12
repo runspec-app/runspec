@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.44.1] — 2026-06-12
+
+### Fixed
+- **Helpdesk catalog re-published on every discovery refresh.** The periodic
+  refresh cycle re-sent (and re-logged `published N tool(s)`) each staffed
+  queue's catalog unconditionally — log spam plus redundant `catalog` frames to
+  the room. The publisher now tracks the last catalog sent per queue namespace
+  and only re-sends when its contents change. Subscribe still forces a send (a
+  fresh connection's hub has no catalog yet); a disconnect clears the cache so a
+  reconnect republishes from scratch.
+
+### Changed
+- **Helpdesk inbox layout.** The queue inbox column is now collapsible (fold to
+  a thin rail to focus on one conversation full-width), and the presence sidebar
+  is hidden in queue mode — a helpdesk thread is 1:1 (you + the visitor), so that
+  width goes to the conversation. Group chat is unchanged.
+
+---
+
 ## [0.44.0] — 2026-06-12
 
 ### Added
