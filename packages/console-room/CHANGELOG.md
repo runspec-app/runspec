@@ -4,6 +4,16 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.5.1]
+
+### Changed
+- **Visitor join form adapts to the link.** Arriving via a help-desk link
+  (`?queue=it-support`) now shows only the queue — the **Room** field (group
+  chat) is hidden, so a visitor isn't asked for both. A `?room=` link shows only
+  Room; a bare URL shows both with a one-line "queue *or* room, not both" hint.
+  (They were always alternatives — the queue wins when both are set — but the
+  form didn't say so.)
+
 ## [0.5.0]
 
 ### Added — helpdesk mode (private conversations + self-service catalog)

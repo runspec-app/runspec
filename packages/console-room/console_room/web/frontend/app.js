@@ -50,10 +50,25 @@
   }
   whoami();
 
-  // Deep links: /?queue=it joins the help desk directly; /?room=ops a group room.
+  // Adapt the join form to the link. A ?queue= visitor is a help-desk caller —
+  // hide the Room field entirely; a ?room= visitor is group chat — hide Queue.
+  // With neither (a bare URL) show both, with a hint that they're alternatives.
   const params = new URLSearchParams(location.search);
-  if (params.get("queue")) $("queue").value = params.get("queue");
-  if (params.get("room")) $("room").value = params.get("room");
+  const urlQueue = (params.get("queue") || "").trim();
+  const urlRoom = (params.get("room") || "").trim();
+  // Dev-mode identity from the link (?user=alice). In auth mode whoami() fills
+  // the name from the OIDC session and locks the field, overriding this.
+  const urlUser = (params.get("user") || "").trim();
+  if (urlUser) $("user").value = urlUser;
+  if (urlQueue) {
+    $("queue").value = urlQueue;
+    $("room-label").hidden = true;
+  } else if (urlRoom) {
+    $("room").value = urlRoom;
+    $("queue-label").hidden = true;
+  } else {
+    $("mode-hint").hidden = false;
+  }
 
   function wsUrl() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";

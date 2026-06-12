@@ -14,8 +14,9 @@
     <form id="join" class="join">
       <h1>runspec room</h1>
       <label id="user-label">Your name <input id="user" autocomplete="off" placeholder="alice" /></label>
-      <label>Room <input id="room" autocomplete="off" placeholder="ops" value="ops" /></label>
-      <label>Help desk queue <input id="queue" autocomplete="off" placeholder="it-support (leave blank for group chat)" /></label>
+      <label id="queue-label">Help desk queue <input id="queue" autocomplete="off" placeholder="it-support" /></label>
+      <label id="room-label">Room <input id="room" autocomplete="off" placeholder="ops" /></label>
+      <p id="mode-hint" class="hint" hidden>Fill a <b>queue</b> for a private support thread, or a <b>room</b> for group chat — not both.</p>
       <button type="submit">Join</button>
       <p id="join-hint" class="hint">Dev login — single sign-on is used when configured.</p>
     </form>
