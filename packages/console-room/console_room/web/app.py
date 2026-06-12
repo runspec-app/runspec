@@ -40,6 +40,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from ..conversation import conversation_room, valid_token
 from ..hub import Hub
 from ..ndjson_server import serve_ndjson
 from .auth import AuthConfig, build_oauth, identity_from_userinfo, session_user
@@ -98,7 +99,6 @@ def create_app(
 
     # ── WebSocket door ────────────────────────────────────────────────────────
     async def ws_room(websocket: WebSocket) -> None:
-        room = (websocket.query_params.get("room") or "").strip()
         if auth is not None:
             user = session_user(websocket)
             if not user:
@@ -106,9 +106,22 @@ def create_app(
                 return
         else:
             user = (websocket.query_params.get("user") or "").strip() or "guest"
-        if not room:
-            await websocket.close(code=4000)  # room required
-            return
+
+        # Two visitor shapes. A `queue` param means a helpdesk visitor: the room is
+        # derived server-side from the queue + the (authenticated) user, so a
+        # visitor can never name — and thus never read — another visitor's thread.
+        # Otherwise it's a group-chat browser naming its room directly (?room=).
+        queue = (websocket.query_params.get("queue") or "").strip()
+        if queue:
+            if not valid_token(queue) or not valid_token(user):
+                await websocket.close(code=4000)  # unusable queue / identity token
+                return
+            room = conversation_room(queue, user)
+        else:
+            room = (websocket.query_params.get("room") or "").strip()
+            if not room:
+                await websocket.close(code=4000)  # room required
+                return
         await websocket.accept()
         await BrowserConnection(_StarletteWS(websocket), user=user, room=room).run(hub)
 

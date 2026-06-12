@@ -15,23 +15,42 @@ import asyncio
 import logging
 from typing import Any, Protocol, runtime_checkable
 
-from .models import Message, presence_frame
+from .conversation import namespace_matches, parse_conversation_room
+from .lifecycle import Conversation, ConversationRegistry
+from .models import Message, conversation_frame, presence_frame
 
 logger = logging.getLogger("console_room.hub")
 
 
 @runtime_checkable
-class Participant(Protocol):
-    """A connected member of a room — the hub's view of any connection.
+class Recipient(Protocol):
+    """The minimum the hub needs to deliver a frame to a connection: a name to
+    stamp/log and an async ``send``. Both room members and namespace agents
+    satisfy it, so the broadcast path treats them uniformly."""
+
+    user: str
+
+    async def send(self, frame: dict[str, Any]) -> None: ...
+
+
+@runtime_checkable
+class Participant(Recipient, Protocol):
+    """A connected member of a single room — the hub's view of any connection.
 
     ``wants_backscroll`` is the load-bearing asymmetry: browsers want the recent
     transcript on join, consoles must never get it (forward-only)."""
 
-    user: str
     room: str
     wants_backscroll: bool
 
-    async def send(self, frame: dict[str, Any]) -> None: ...
+
+@runtime_checkable
+class Agent(Recipient, Protocol):
+    """A connection subscribed to a whole queue *namespace* rather than one room
+    (the helpdesk agent side). The hub fans every room under ``namespace`` to it,
+    present and future. Forward-only, like a console — never backscrolled."""
+
+    namespace: str
 
 
 @runtime_checkable
@@ -43,8 +62,8 @@ class Store(Protocol):
     def recent(self, room: str, limit: int) -> list[Message]: ...
 
 
-async def _safe_send(p: Participant, frame: dict[str, Any]) -> None:
-    """Send to one participant, swallowing failures so a dead/slow connection
+async def _safe_send(p: Recipient, frame: dict[str, Any]) -> None:
+    """Send to one recipient, swallowing failures so a dead/slow connection
     can't break a broadcast to the rest of the room."""
     try:
         await p.send(frame)
@@ -53,21 +72,39 @@ async def _safe_send(p: Participant, frame: dict[str, Any]) -> None:
 
 
 class Hub:
-    """Owns the live rooms and routes messages/presence between participants."""
+    """Owns the live rooms and routes messages/presence between participants.
+
+    Two kinds of recipient share the hub: **members** (one exact room each —
+    group-chat consoles and helpdesk visitors) and **agents** (subscribed to a
+    queue *namespace*, receiving every room under it). Agents are kept in a
+    separate registry and merged into a room's recipients by prefix match, so the
+    group-chat path is unchanged — a room with no agents behaves exactly as before.
+    """
 
     def __init__(self, store: Store, *, backscroll_limit: int = 50) -> None:
         self._store = store
         self._backscroll = backscroll_limit
         self._rooms: dict[str, set[Participant]] = {}
-        self._lock = asyncio.Lock()  # guards _rooms membership
+        self._agents: dict[str, set[Agent]] = {}  # namespace -> subscribed agents
+        self._convs = ConversationRegistry()  # helpdesk thread lifecycle (live)
+        self._lock = asyncio.Lock()  # guards _rooms / _agents membership
+
+    def _members_locked(self, room: str) -> set[Recipient]:
+        """Everyone who should receive ``room``'s traffic: its exact members plus
+        any namespace agent whose queue prefixes the room. Call under ``_lock``."""
+        members: set[Recipient] = set(self._rooms.get(room, ()))
+        for ns, agents in self._agents.items():
+            if namespace_matches(ns, room):
+                members |= agents
+        return members
 
     async def join(self, p: Participant) -> None:
-        """Add ``p`` to its room: tell it who's already here, replay backscroll if
-        it wants it (browsers only), then announce it to the others."""
+        """Add ``p`` to its room: tell it who's already here (members *and* any
+        subscribed agents), replay backscroll if it wants it (browsers only), then
+        announce it to the others."""
         async with self._lock:
-            members = self._rooms.setdefault(p.room, set())
-            existing = list(members)
-            members.add(p)
+            existing = self._members_locked(p.room)  # p not added yet
+            self._rooms.setdefault(p.room, set()).add(p)
         # Catch the newcomer up on who is already present.
         for other in existing:
             await _safe_send(p, presence_frame(p.room, other.user, "available"))
@@ -75,10 +112,62 @@ class Hub:
         if p.wants_backscroll:
             for msg in await self._recent(p.room):
                 await _safe_send(p, msg.to_frame())
-        # Announce the newcomer to everyone already in the room.
+        # Catch the newcomer up on the conversation's lifecycle state, if any —
+        # so a visitor reloading sees "assigned to … / resolved", not a blank slate.
+        conv = self._convs.get(p.room)
+        if conv is not None:
+            await _safe_send(p, conversation_frame(*conv.frame_fields()))
+        # Announce the newcomer to everyone already in the room (incl. agents).
         await self._broadcast(
             p.room, presence_frame(p.room, p.user, "available"), exclude=p
         )
+
+    async def join_agent(self, agent: Agent) -> None:
+        """Subscribe ``agent`` to its namespace: catch it up on every conversation
+        already open under that queue (the visitors present in each), then announce
+        the agent as available in those conversations. No backscroll — an agent is
+        forward-only, like a console."""
+        ns = agent.namespace
+        async with self._lock:
+            # Snapshot the open conversations under this namespace before joining.
+            active = {
+                room: list(members)
+                for room, members in self._rooms.items()
+                if namespace_matches(ns, room)
+            }
+            self._agents.setdefault(ns, set()).add(agent)
+        # Catch the agent up: who is in each open conversation (its inbox).
+        for room, members in active.items():
+            for other in members:
+                await _safe_send(agent, presence_frame(room, other.user, "available"))
+        # …and each thread's lifecycle state (open / assigned-to-whom / resolved),
+        # so a console can render its inbox without replaying history. Covers every
+        # known thread under the queue, including dormant ones with no one present.
+        for conv in self._convs.active_under(ns):
+            await _safe_send(agent, conversation_frame(*conv.frame_fields()))
+        # Tell each open conversation a team agent is now available.
+        for room in active:
+            await self._broadcast(
+                room, presence_frame(room, agent.user, "available"), exclude=agent
+            )
+
+    async def leave_agent(self, agent: Agent) -> None:
+        """Unsubscribe ``agent`` and mark it away in every conversation it covered
+        (best-effort; idempotent)."""
+        ns = agent.namespace
+        async with self._lock:
+            agents = self._agents.get(ns)
+            present = bool(agents and agent in agents)
+            if agents and agent in agents:
+                agents.remove(agent)
+                if not agents:
+                    self._agents.pop(ns, None)
+            active = [room for room in self._rooms if namespace_matches(ns, room)]
+        if present:
+            for room in active:
+                await self._broadcast(
+                    room, presence_frame(room, agent.user, "away"), exclude=agent
+                )
 
     async def leave(self, p: Participant) -> None:
         """Remove ``p`` and tell the room it's gone (best-effort; idempotent)."""
@@ -97,10 +186,77 @@ class Hub:
     async def on_message(self, p: Participant, text: str) -> None:
         """Stamp, persist, and broadcast a message — echoed to the sender too, so
         every client (including the author's other views) converges on the same
-        server-assigned id/ts."""
+        server-assigned id/ts.
+
+        In a helpdesk conversation room a visitor message also drives the
+        lifecycle: it opens the thread the first time and reopens it if it had been
+        resolved/closed — the conversation state goes out *before* the message so a
+        reopened thread is live again as the message lands."""
+        if parse_conversation_room(p.room) is not None:
+            conv = self._convs.open_or_reopen(p.room)
+            if conv is not None:
+                await self._broadcast(p.room, conversation_frame(*conv.frame_fields()))
         msg = Message.new(p.room, p.user, text)
         await asyncio.to_thread(self._store.append, msg)
         await self._broadcast(p.room, msg.to_frame())
+
+    async def agent_message(self, agent: Agent, room: str, text: str) -> None:
+        """An agent posts into a specific conversation ``room`` under its
+        namespace. Validated server-side: a target outside the agent's namespace
+        is refused, so an agent can't reach a queue it doesn't staff. Otherwise
+        identical to ``on_message`` — stamp, persist, broadcast (incl. echo)."""
+        if not namespace_matches(agent.namespace, room):
+            logger.warning(
+                "room: agent %r refused post to %r outside namespace %r",
+                agent.user,
+                room,
+                agent.namespace,
+            )
+            return
+        msg = Message.new(room, agent.user, text)
+        await asyncio.to_thread(self._store.append, msg)
+        await self._broadcast(room, msg.to_frame())
+
+    # ── conversation lifecycle (agent-driven control) ─────────────────────────
+    # claim / resolve / reopen / close move a thread through its states. Each is
+    # refused outside the agent's namespace (the queue boundary) and broadcasts the
+    # new state to the thread (visitor + team) only when something actually changed.
+
+    async def claim(self, agent: Agent, room: str) -> None:
+        """The agent takes ownership of ``room`` → assigned. This is the gate the
+        console uses to release the (deferred) agent turn — spend tracks the claim."""
+        await self._transition(agent, room, self._convs.claim, room, agent.user)
+
+    async def resolve(self, agent: Agent, room: str) -> None:
+        """Mark ``room`` resolved (a visitor reply will reopen it)."""
+        await self._transition(agent, room, self._convs.resolve, room)
+
+    async def reopen(self, agent: Agent, room: str) -> None:
+        """Reopen a resolved/closed ``room`` → open, back to the queue."""
+        await self._transition(agent, room, self._convs.reopen, room)
+
+    async def close(self, agent: Agent, room: str) -> None:
+        """Close ``room`` → terminal."""
+        await self._transition(agent, room, self._convs.close, room)
+
+    async def _transition(self, agent: Agent, room: str, op: Any, *args: Any) -> None:
+        if not namespace_matches(agent.namespace, room):
+            logger.warning(
+                "room: agent %r refused control of %r outside namespace %r",
+                agent.user,
+                room,
+                agent.namespace,
+            )
+            return
+        conv: Conversation | None = op(*args)
+        if conv is not None:
+            await self._broadcast(room, conversation_frame(*conv.frame_fields()))
+
+    def conversation_state(self, room: str) -> str | None:
+        """The current lifecycle state of ``room`` (for tests), or ``None`` if the
+        hub has no record of it yet."""
+        conv = self._convs.get(room)
+        return conv.state if conv is not None else None
 
     async def on_presence(self, p: Participant, status: str) -> None:
         """Relay a participant's presence change (e.g. a console's rota flip) to
@@ -115,16 +271,20 @@ class Hub:
         room: str,
         frame: dict[str, Any],
         *,
-        exclude: Participant | None = None,
+        exclude: Recipient | None = None,
     ) -> None:
         async with self._lock:
-            members = list(self._rooms.get(room, ()))
+            members = self._members_locked(room)
         for m in members:
             if m is exclude:
                 continue
             await _safe_send(m, frame)
 
     def room_size(self, room: str) -> int:
-        """Number of participants currently in ``room`` (for tests / a health
-        endpoint). Read-only snapshot."""
+        """Number of exact members currently in ``room`` (for tests / a health
+        endpoint). Excludes namespace agents. Read-only snapshot."""
         return len(self._rooms.get(room, ()))
+
+    def agent_count(self, namespace: str) -> int:
+        """Number of agents currently subscribed to ``namespace`` (for tests)."""
+        return len(self._agents.get(namespace, ()))

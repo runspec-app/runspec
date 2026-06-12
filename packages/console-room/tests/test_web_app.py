@@ -102,3 +102,56 @@ def test_ws_backscroll_on_join():
         with client.websocket_connect("/ws?room=ops&user=ana") as ana:
             first = ana.receive_json()
             assert first["type"] == "message" and first["text"] == "earlier"
+
+
+# ── helpdesk visitors (?queue=) ────────────────────────────────────────────────
+
+
+def test_helpdesk_visitor_room_is_derived_server_side():
+    # A ?queue= visitor's room is derived from the queue + identity, not supplied.
+    store = FakeStore()
+    with _client(store) as client:
+        with client.websocket_connect("/ws?queue=it&user=alice@corp") as alice:
+            alice.send_json({"type": "message", "text": "laptop won't boot"})
+            # The first message opens the thread: a conversation frame, then the echo.
+            opened = alice.receive_json()
+            assert opened["type"] == "conversation" and opened["state"] == "open"
+            assert opened["room"] == "helpdesk/it/alice@corp"
+            got = alice.receive_json()
+            assert got["type"] == "message" and got["text"] == "laptop won't boot"
+            assert got["room"] == "helpdesk/it/alice@corp"
+    assert store.appended[0].room == "helpdesk/it/alice@corp"
+
+
+def test_two_helpdesk_visitors_are_isolated():
+    # Two visitors on the same queue land in different private rooms and must
+    # never see each other's traffic — the cross-department-leakage guarantee.
+    # Were they sharing a room, bob's first frame would be a presence about alice;
+    # in isolation his first (and only) frame is his own message echo.
+    store = FakeStore()
+    with _client(store) as client:
+        with client.websocket_connect("/ws?queue=it&user=alice@corp") as alice:
+            with client.websocket_connect("/ws?queue=it&user=bob@corp") as bob:
+                alice.send_json({"type": "message", "text": "alice secret"})
+                bob.send_json({"type": "message", "text": "bob secret"})
+                # Each visitor sees only their own room's frames (open + echo),
+                # never the other's — were they sharing a room a cross frame would
+                # appear here.
+                a_frames = [alice.receive_json(), alice.receive_json()]
+                b_frames = [bob.receive_json(), bob.receive_json()]
+                assert {f["room"] for f in a_frames} == {"helpdesk/it/alice@corp"}
+                assert {f["room"] for f in b_frames} == {"helpdesk/it/bob@corp"}
+                a_msg = [f for f in a_frames if f["type"] == "message"][0]
+                b_msg = [f for f in b_frames if f["type"] == "message"][0]
+                assert a_msg["text"] == "alice secret"
+                assert b_msg["text"] == "bob secret"
+    # Both threads persisted under distinct, identity-derived rooms.
+    rooms = {m.room for m in store.appended}
+    assert rooms == {"helpdesk/it/alice@corp", "helpdesk/it/bob@corp"}
+
+
+def test_helpdesk_visitor_rejects_bad_queue_token():
+    with _client() as client:
+        with pytest.raises(Exception):
+            with client.websocket_connect("/ws?queue=a/b&user=ana"):
+                pass

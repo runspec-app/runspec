@@ -17,9 +17,28 @@ Node (`runspec-node` 0.30.0). Spec + schema + format.md + compliance fixtures +
 CHANGELOG all moved together; `runspec serve` now skips non-operator runnables and
 schemas carry `x-discoverable`; `RunSpec.runspec_discoverable` exposes it.
 
-**Next slices (not started):** H1 hub namespace/prefix participant + server-side
-conversation naming → H2 lifecycle + control frames → H3 visitor browser view +
-catalog/Forms → H4 agent-console inbox view. See `helpdesk-rooms.md` §9.
+**✅ H1 — hub namespace participant + conversation naming — DONE** (same branch):
+`console_room/conversation.py` (pure: `helpdesk/<queue>/<visitor>` naming,
+segment-boundary `namespace_matches`, `valid_token`); hub gains namespace
+**agents** alongside exact **members** (`join_agent`/`leave_agent`/`agent_message`,
+prefix-matched fan-out, group-chat untouched); doors wired (NDJSON `hello`
+`namespace` = agent mode; browser `?queue=` derives the visitor room server-side).
+82 tests pass. No runspec-room version bump yet — version + CHANGELOG land when the
+helpdesk is user-facing (end of H3/H4), per the console precedent.
+
+**✅ H2 — conversation lifecycle + control frames — DONE** (same branch):
+`console_room/lifecycle.py` (pure state machine open→assigned→resolved→closed +
+reopen; `ConversationRegistry`, change-vs-no-op return contract). Hub drives it:
+a visitor message opens/reopens; agent-only `claim`/`resolve`/`reopen`/`close`
+(namespace-scoped) broadcast a `conversation` state frame to visitor + team;
+join/subscribe catch-up replays state. NDJSON control frames wired. `claim` is the
+gate for the deferred agent turn. 97 tests pass; still no runspec-room version bump
+(lands when user-facing, end of H3/H4).
+
+**Next slices (not started):** **H3** visitor browser view + the `self-service`
+runspec catalog (pick → Form → structured request into the thread) → H4
+agent-console inbox view. See `helpdesk-rooms.md` §9. H3 is where `discoverable`
+(H0) + the conversation (H1/H2) meet the UI.
 
 **Parked open questions (stored for next — from `helpdesk-rooms.md` §10):**
 1. **Queue routing** — single helpdesk queue vs multiple departmental queues, and

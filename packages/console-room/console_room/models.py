@@ -22,6 +22,13 @@ TEXT_CAP = 20_000
 HELLO = "hello"
 MESSAGE = "message"
 PRESENCE = "presence"
+CONVERSATION = "conversation"  # server → client: a conversation's lifecycle state
+
+# Inbound control-frame tags (agent → server): drive the conversation lifecycle.
+CLAIM = "claim"
+RESOLVE = "resolve"
+REOPEN = "reopen"
+CLOSE = "close"
 
 _VALID_STATUS = ("available", "away")
 
@@ -93,24 +100,56 @@ def normalize_status(status: Any) -> str:
     return "available" if _str(status) == "available" else "away"
 
 
+def conversation_frame(
+    room: str, state: str, assignee: str | None = None
+) -> dict[str, Any]:
+    """A server → client ``conversation`` frame: a thread's lifecycle state and
+    its current assignee (``None`` when unassigned)."""
+    return {
+        "type": CONVERSATION,
+        "room": _str(room),
+        "state": _str(state),
+        "assignee": assignee,
+    }
+
+
 @dataclass(frozen=True)
 class Hello:
-    """A parsed ``hello`` frame — a console declaring its identity on connect."""
+    """A parsed ``hello`` frame — a console declaring its identity on connect.
+
+    Two shapes, distinguished by ``namespace``:
+
+    - **room member** (group-chat console, the original form): ``room`` set,
+      ``namespace`` blank — the connection joins that one room.
+    - **agent** (helpdesk console): ``namespace`` set, ``room`` blank — the
+      connection subscribes to a whole queue namespace and the hub fans every
+      conversation under it to that connection.
+    """
 
     user: str
     room: str
+    namespace: str = ""
+
+    @property
+    def is_agent(self) -> bool:
+        return bool(self.namespace)
 
 
 def parse_hello(obj: Any) -> Hello | None:
     """Parse a ``hello`` frame, or ``None`` if it isn't a valid one.
 
-    A blank ``room`` is rejected (a console must say which room it's joining); a
-    blank ``user`` falls back to ``"unknown"`` so a mis-configured console is still
-    visibly present rather than silently dropped."""
+    An agent declares a ``namespace`` (and needs no ``room``); a plain room member
+    declares a ``room`` (the original form). A frame with neither is rejected — a
+    console must say *what* it is joining. A blank ``user`` falls back to
+    ``"unknown"`` so a mis-configured console is still visibly present rather than
+    silently dropped. ``namespace`` wins if both are somehow present."""
     if not isinstance(obj, dict) or _str(obj.get("type")) != HELLO:
         return None
+    user = _str(obj.get("user")).strip() or "unknown"
+    namespace = _str(obj.get("namespace")).strip()
+    if namespace:
+        return Hello(user=user, room="", namespace=namespace)
     room = _str(obj.get("room")).strip()
     if not room:
         return None
-    user = _str(obj.get("user")).strip() or "unknown"
     return Hello(user=user, room=room)

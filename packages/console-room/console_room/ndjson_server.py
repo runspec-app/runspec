@@ -21,7 +21,16 @@ import logging
 from typing import Any
 
 from .hub import Hub
-from .models import MESSAGE, PRESENCE, normalize_status, parse_hello
+from .models import (
+    CLAIM,
+    CLOSE,
+    MESSAGE,
+    PRESENCE,
+    REOPEN,
+    RESOLVE,
+    normalize_status,
+    parse_hello,
+)
 
 logger = logging.getLogger("console_room.ndjson")
 
@@ -40,7 +49,9 @@ class NdjsonConsoleConnection:
         self._reader = reader
         self._writer = writer
         self.user = ""
-        self.room = ""
+        self.room = ""  # set in room-member mode
+        self.namespace = ""  # set in agent mode (subscribes to a whole queue)
+        self.is_agent = False
         self._send_lock = asyncio.Lock()  # serialise concurrent writes
 
     async def send(self, frame: dict[str, Any]) -> None:
@@ -57,29 +68,73 @@ class NdjsonConsoleConnection:
             logger.info("room: connection sent no/invalid hello; closing")
             await self._close()
             return
-        self.user, self.room = hello.user, hello.room
+        self.user = hello.user
+        if hello.is_agent:
+            await self._run_agent(hub, hello.namespace)
+        else:
+            await self._run_member(hub, hello.room)
+
+    async def _run_member(self, hub: Hub, room: str) -> None:
+        """Group-chat / visitor mode: join one room, pump frames, leave."""
+        self.room = room
         await hub.join(self)
         logger.info("room: %r joined %r", self.user, self.room)
         try:
-            while True:
-                frame = await self._read_frame()
-                if frame is None:
-                    break  # EOF / channel closed
-                await self._dispatch(hub, frame)
+            await self._pump(hub)
         finally:
             await hub.leave(self)
             await self._close()
             logger.info("room: %r left %r", self.user, self.room)
 
+    async def _run_agent(self, hub: Hub, namespace: str) -> None:
+        """Helpdesk agent mode: subscribe to a queue namespace, pump frames, leave."""
+        self.namespace = namespace
+        self.is_agent = True
+        await hub.join_agent(self)
+        logger.info("room: agent %r subscribed to %r", self.user, self.namespace)
+        try:
+            await self._pump(hub)
+        finally:
+            await hub.leave_agent(self)
+            await self._close()
+            logger.info(
+                "room: agent %r unsubscribed from %r", self.user, self.namespace
+            )
+
+    async def _pump(self, hub: Hub) -> None:
+        while True:
+            frame = await self._read_frame()
+            if frame is None:
+                break  # EOF / channel closed
+            await self._dispatch(hub, frame)
+
+    #: Agent control-frame type → the hub coroutine it drives. Each takes
+    #: ``(self, room)`` and moves the named conversation through its lifecycle.
+    _CONTROLS = {CLAIM: "claim", RESOLVE: "resolve", REOPEN: "reopen", CLOSE: "close"}
+
     async def _dispatch(self, hub: Hub, frame: dict[str, Any]) -> None:
         kind = frame.get("type")
         if kind == MESSAGE:
             text = str(frame.get("text") or "")
-            if text:
+            if not text:
+                return
+            if self.is_agent:
+                # An agent must name the conversation it is posting into; the hub
+                # refuses a target outside the agent's namespace.
+                room = str(frame.get("room") or "").strip()
+                if room:
+                    await hub.agent_message(self, room, text)
+            else:
                 await hub.on_message(self, text)
-        elif kind == PRESENCE:
+        elif kind == PRESENCE and not self.is_agent:
             await hub.on_presence(self, normalize_status(frame.get("status")))
-        # hello-after-hello and unknown types are ignored.
+        elif self.is_agent and kind in self._CONTROLS:
+            # Lifecycle control (claim/resolve/reopen/close) — agents only, scoped
+            # to a named conversation in the agent's namespace.
+            room = str(frame.get("room") or "").strip()
+            if room:
+                await getattr(hub, self._CONTROLS[kind])(self, room)
+        # hello-after-hello, agent presence, and unknown types are ignored.
 
     async def _read_frame(self) -> dict[str, Any] | None:
         """Read one JSON object, skipping blank / malformed lines; ``None`` at

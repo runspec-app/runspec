@@ -183,3 +183,111 @@ def test_blank_and_malformed_lines_are_skipped():
 
     store = run(scenario())
     assert [m.text for m in store.appended] == ["ok"]  # survived the junk lines
+
+
+# ── agent mode (helpdesk) ──────────────────────────────────────────────────────
+
+
+def test_agent_hello_subscribes_to_namespace_and_posts_into_conversation():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        # A visitor waiting in their private conversation under the IT queue.
+        visitor = FakeP("alice@corp", "helpdesk/it/alice@corp")
+        await hub.join(visitor)
+        visitor.frames.clear()
+        reader = _reader(
+            {"type": "hello", "namespace": "helpdesk/it", "user": "agent@web01"},
+            {"type": "message", "room": "helpdesk/it/alice@corp", "text": "on it"},
+        )
+        writer = FakeWriter()
+        await NdjsonConsoleConnection(reader, writer).run(hub)
+        return store, writer, visitor
+
+    store, writer, visitor = run(scenario())
+    # The agent's reply was persisted to the visitor's conversation and delivered.
+    assert store.appended[0].room == "helpdesk/it/alice@corp"
+    assert store.appended[0].sender == "agent@web01"
+    assert [f["text"] for f in visitor.frames if f["type"] == "message"] == ["on it"]
+    # The agent connection got its own echo.
+    assert any(f["type"] == "message" and f["text"] == "on it" for f in writer.frames())
+
+
+def test_agent_cannot_post_outside_its_namespace_over_the_wire():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        carol = FakeP("carol@corp", "helpdesk/hr/carol@corp")
+        await hub.join(carol)
+        carol.frames.clear()
+        reader = _reader(
+            {"type": "hello", "namespace": "helpdesk/it", "user": "agent@web01"},
+            # Target is an HR conversation — the agent only staffs IT.
+            {
+                "type": "message",
+                "room": "helpdesk/hr/carol@corp",
+                "text": "wrong queue",
+            },
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return store, carol
+
+    store, carol = run(scenario())
+    assert store.appended == []  # refused, not persisted
+    assert [f for f in carol.frames if f["type"] == "message"] == []
+
+
+def test_agent_is_caught_up_on_open_conversations_on_subscribe():
+    async def scenario():
+        hub = Hub(FakeStore())
+        alice = FakeP("alice@corp", "helpdesk/it/alice@corp")
+        await hub.join(alice)
+        reader = _reader(
+            {"type": "hello", "namespace": "helpdesk/it", "user": "agent@web01"}
+        )
+        writer = FakeWriter()
+        await NdjsonConsoleConnection(reader, writer).run(hub)
+        return writer
+
+    writer = run(scenario())
+    # On subscribe the agent learns alice has an open thread (presence, room-tagged).
+    presences = [
+        (f["room"], f["user"], f["status"])
+        for f in writer.frames()
+        if f["type"] == "presence"
+    ]
+    assert ("helpdesk/it/alice@corp", "alice@corp", "available") in presences
+
+
+def test_agent_claim_and_resolve_control_frames_drive_lifecycle():
+    async def scenario():
+        hub = Hub(FakeStore())
+        alice = FakeP("alice@corp", "helpdesk/it/alice@corp")
+        await hub.join(alice)
+        await hub.on_message(alice, "printer down")  # opens the thread
+        reader = _reader(
+            {"type": "hello", "namespace": "helpdesk/it", "user": "agent@web01"},
+            {"type": "claim", "room": "helpdesk/it/alice@corp"},
+            {"type": "resolve", "room": "helpdesk/it/alice@corp"},
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return hub
+
+    hub = run(scenario())
+    assert hub.conversation_state("helpdesk/it/alice@corp") == "resolved"
+
+
+def test_member_control_frames_are_ignored():
+    # A plain room member (visitor / group-chat console) can't drive the lifecycle.
+    async def scenario():
+        hub = Hub(FakeStore())
+        reader = _reader(
+            {"type": "hello", "room": "helpdesk/it/alice@corp", "user": "alice@corp"},
+            {"type": "message", "text": "printer down"},  # opens (visitor path)
+            {"type": "close", "room": "helpdesk/it/alice@corp"},  # must be ignored
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return hub
+
+    hub = run(scenario())
+    assert hub.conversation_state("helpdesk/it/alice@corp") == "open"  # not closed

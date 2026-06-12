@@ -271,23 +271,38 @@ the console's speak + autonomy gates, and the Forms surface.
 
 ---
 
-## 9. Slice plan (proposed)
+## 9. Slice plan
 
-- **H0 — `discoverable` keyword.** Spec + schema + format.md + Python/Node parity +
-  fixtures + CHANGELOG. Self-contained, no helpdesk code, ships value alone
-  (per-runnable visibility). *Foundation.*
-- **H1 — hub namespace participant + conversation naming.** Agent subscribes to a
-  queue glob; visitor room derived from session. Pure hub/server, tested with fakes
-  (no UI). Group-chat mode untouched.
-- **H2 — lifecycle + control frames.** open/assigned/resolved/closed, claim/resolve/
-  reopen/close; claim-gated agent turn (assignment = deferred react).
+- **H0 — `discoverable` keyword. ✅ done.** Spec + schema + format.md + Python/Node
+  parity + fixtures + CHANGELOG; per-runnable visibility. *Foundation.* (`runspec`
+  0.34.0 / `runspec-node` 0.30.0, PR #198.)
+- **H1 — hub namespace participant + conversation naming. ✅ done.** `conversation.py`
+  (pure naming/matching: `helpdesk/<queue>/<visitor>`, segment-boundary namespace
+  match, token validation). Hub gains **agents** (subscribe to a queue namespace,
+  fanned every room under it via a prefix-matched recipient merge) alongside exact
+  **members** — group-chat unchanged; `join_agent` / `leave_agent` /
+  `agent_message` (namespace-refused). Doors wired: the NDJSON `hello` gains an
+  optional `namespace` (agent mode); the browser door derives a visitor's room
+  server-side from `?queue=` + identity. Tested with fakes / StreamReaders /
+  TestClient.
+- **H2 — lifecycle + control frames. ✅ done.** `lifecycle.py` (pure state machine:
+  open→assigned→resolved→closed, reopen; `ConversationRegistry` with a
+  change-vs-no-op return contract). Hub drives it — a visitor message opens /
+  reopens a thread; agent-only `claim`/`resolve`/`reopen`/`close` (namespace-scoped)
+  move it on and broadcast a `conversation` state frame to the visitor + team;
+  join/subscribe catch-up replays current state. NDJSON control frames wired
+  (agents only). `claim` is the gate a console uses to release the deferred agent
+  turn. Tested at the state-machine, hub, and wire levels.
 - **H3 — visitor browser view + catalog/Forms.** The `self-service` catalog for a
   queue; pick → Form → structured request into the thread.
 - **H4 — agent-console inbox view.** Many-threads inbox, claim/resolve, drafts via
   the existing speak checkpoint.
 
-Ship H0 first regardless of how far the helpdesk goes — it's the cleanest, most
-reusable piece and unblocks the catalog.
+H0 shipped first (cleanest, most reusable, unblocks the catalog); H1 is the
+server-side spine the rest hangs off; H2 gives each thread a lifecycle. **Next: H3**
+— the visitor browser view + the `self-service` runspec catalog (Forms → structured
+request into the thread), where `discoverable` (H0) and the conversation (H1/H2)
+finally meet the UI.
 
 ---
 
