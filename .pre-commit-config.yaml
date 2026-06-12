@@ -1,7 +1,21 @@
 # Optional local hooks. Install with:  pip install pre-commit && pre-commit install
-# The docs drift check also runs in CI (see .github/workflows/ci.yml), so this
-# is a convenience for catching drift before you push.
+# The docs drift check and ruff (format + lint) also run in CI (see
+# .github/workflows/ci.yml), so these are a convenience for catching the same
+# failures before you push — most usefully the `console quality / format` check,
+# which trips on un-formatted Python.
 repos:
+  # ruff format + lint, mirroring each package's `ruff format --check .` /
+  # `ruff check .` CI step. ruff resolves the nearest pyproject.toml per file, so
+  # each package's own config applies. Pinned to the ruff CI installs. Scoped to
+  # package Python only (CI lints within each package dir, not the repo root).
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.17
+    hooks:
+      - id: ruff-format
+        files: '^packages/.*\.py$'
+      - id: ruff-check
+        args: [--fix]
+        files: '^packages/.*\.py$'
   - repo: local
     hooks:
       - id: docs-drift-check
