@@ -5333,10 +5333,17 @@ class Bridge:
                         "state": payload.get("state"),
                         "assignee": payload.get("assignee"),
                     }
+                self._touch_queue_card(
+                    room,
+                    state=payload.get("state"),
+                    assignee=payload.get("assignee"),
+                    have_state=True,
+                )
             self._dispatch("runspec:room_conversation", payload)
             return
         self._dispatch("runspec:room_message", payload)
         self._notify_room_message(payload)
+        self._touch_queue_card(str(payload.get("room") or ""), text=payload.get("text"))
         if not self._feed_engine_for(payload):
             return
         with self._lock:
@@ -5346,6 +5353,92 @@ class Bridge:
                 engine.feed(event)
             except Exception:
                 logger.exception("chat: routing message to the trigger engine failed")
+
+    # State → kanban column for a queue card's StatusBadge fallback (the row's
+    # real lifecycle chip is rendered from detail["state"] in the UI).
+    _QUEUE_STATE_COLUMN = {
+        "open": "triggered",
+        "assigned": "triage",
+        "resolved": "done",
+        "closed": "done",
+    }
+
+    @staticmethod
+    def _parse_queue_room(room: str) -> tuple[str, str] | None:
+        """Split a ``helpdesk/<queue>/<visitor>`` conversation room into
+        ``(queue, visitor)``; ``None`` for anything else (e.g. a group-chat room),
+        which never becomes a queue card."""
+        parts = room.split("/")
+        if len(parts) != 3 or parts[0] != "helpdesk" or not parts[1] or not parts[2]:
+            return None
+        return parts[1], parts[2]
+
+    def _touch_queue_card(
+        self,
+        room: str,
+        *,
+        text: Any = None,
+        state: Any = None,
+        assignee: Any = None,
+        have_state: bool = False,
+    ) -> None:
+        """Create or update the single trigger card that represents a helpdesk
+        conversation, so a queue message is a first-class card in the Triggers
+        inbox (not a separate tab). Keyed per conversation (``queue:<room>``) so
+        repeated messages update one card instead of flooding. ``text`` bumps the
+        summary + timeline; ``have_state`` (with ``state``/``assignee``) folds a
+        lifecycle change onto the card. Model spend stays gated on Claim — the
+        card forms regardless so the operator can see and claim it."""
+        parsed = Bridge._parse_queue_room(room)
+        if parsed is None:
+            return
+        queue, visitor = parsed
+        card_id = f"queue:{room}"
+        now = time.time()
+        with self._lock:
+            card = self._trigger_cards.get(card_id)
+            if card is None:
+                card = {
+                    "card_id": card_id,
+                    "trigger": f"queue:{queue}",
+                    "source": "chat",
+                    "event_type": "message",
+                    "summary": "",
+                    "column": "triggered",
+                    "detail": {"room": room, "queue": queue, "visitor": visitor},
+                    "created_at": now,
+                    "timeline": [],
+                }
+                self._trigger_cards[card_id] = card
+            detail = card["detail"]
+            if text:
+                snippet = str(text)
+                card["summary"] = (
+                    snippet if len(snippet) <= 120 else snippet[:117] + "…"
+                )
+                card["timeline"].append(
+                    {"ts": now, "text": f"{visitor}: {card['summary']}"}
+                )
+            if have_state:
+                detail["state"] = state
+                detail["assignee"] = assignee
+                card["column"] = Bridge._QUEUE_STATE_COLUMN.get(
+                    str(state or ""), card["column"]
+                )
+                card["timeline"].append({"ts": now, "text": f"conversation {state}"})
+            if not card["summary"]:
+                card["summary"] = f"{visitor} · {queue}"
+            # Same bound as _on_trigger_card so a long session can't grow without limit.
+            if len(self._trigger_cards) > 200:
+                oldest = sorted(
+                    self._trigger_cards.values(),
+                    key=lambda c: c.get("created_at", 0.0),
+                )[:50]
+                for old in oldest:
+                    if old["card_id"] != card_id:
+                        self._trigger_cards.pop(old["card_id"], None)
+            snapshot = dict(card)
+        self._dispatch("runspec:trigger_card", snapshot)
 
     def send_room_message(self, room: str, text: str) -> dict[str, Any]:
         """Post a human-composed message to ``room`` — the Rooms composer's one

@@ -19,8 +19,6 @@ import {
   BugOutlined,
   FileTextOutlined,
   ReadOutlined,
-  CommentOutlined,
-  InboxOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -28,8 +26,6 @@ import { HistoryView } from './views/HistoryView'
 import { LogsView } from './views/LogsView'
 import { SchedulesView } from './views/SchedulesView'
 import { TriggersView } from './views/TriggersView'
-import { RoomsView } from './views/RoomsView'
-import { WorkInboxView } from './views/WorkInboxView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
@@ -41,12 +37,10 @@ const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m =>
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { useInFlight } from './bridge/useInFlight'
-import { useWorkInbox } from './bridge/useWorkInbox'
 import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
-import type { WorkItem } from './bridge/workInbox'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'inbox' | 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rooms' | 'analytics' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'analytics' | 'dev'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -73,18 +67,10 @@ export default function App() {
   const [version, setVersion] = useState<string>('')
   const [updateInfo, setUpdateInfo] = useState<{ latest: string | null; updateAvailable: boolean } | null>(null)
   const [docsUrl, setDocsUrl] = useState<string>('')
-  // Count of trigger runs waiting on a human confirm — drives the Triggers tab
-  // badge so a pending approval is visible from any tab.
+  // Triggers tab badge — pending human confirms + waiting (unclaimed) queue
+  // conversations, so an approval or a new queue caller is visible from any tab.
   const [triggerAwaiting, setTriggerAwaiting] = useState(0)
-  // Rooms/threads with unread messages — the Rooms tab badge (RoomsView owns the
-  // per-thread unread state and publishes the count via runspec:room_attention,
-  // so it's visible from any tab).
-  const [roomAttention, setRoomAttention] = useState(0)
   const inFlight = useInFlight()
-  // The unified work inbox — one list of things needing the operator across the
-  // confirm-gate, Triggers, and Rooms/helpdesk surfaces. Lives at the root so it
-  // keeps accruing while another tab is shown.
-  const inbox = useWorkInbox()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
   const selectedHostGroups = selectedHostObj?.groups ?? []
@@ -187,12 +173,6 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args, commandPath } }))
   }
 
-  // Deep-link a work-inbox row to its owning tab. (Selecting the specific card /
-  // thread within that tab is a fast-follow; switching to it is enough for v1.)
-  const handleOpenWorkItem = (item: WorkItem) => {
-    setView(item.origin.tab)
-  }
-
   const handleOpenForm = (runnable: Runnable, commandPath: string[] = []) => {
     setPendingForm({ runnable, commandPath })
     setView('forms')
@@ -212,41 +192,40 @@ export default function App() {
     return () => window.removeEventListener('runspec:chat_active', onActive)
   }, [])
 
-  // Rooms tab badge — RoomsView publishes the unread room/thread count.
+  // Triggers tab badge: a card counts when it's awaiting a human confirm
+  // (awaiting_human column or a live tool_confirm) OR it's a waiting queue
+  // conversation — a queue card (source 'chat') still 'open' (unclaimed). One
+  // badge for both pending approvals and new callers. tool_confirm is filtered
+  // to known card ids so plain chat confirms don't count.
   useEffect(() => {
-    const onAttention = (e: Event) => setRoomAttention((e as CustomEvent<{ count: number }>).detail.count)
-    window.addEventListener('runspec:room_attention', onAttention)
-    return () => window.removeEventListener('runspec:room_attention', onAttention)
-  }, [])
-
-  // Track how many trigger runs are waiting on a human confirm, for the Triggers
-  // tab badge. A run is "awaiting" when its card sits in the awaiting_human
-  // column or has a live tool_confirm. tool_confirm is filtered to trigger cards
-  // (ids we've seen on a trigger_card event) so chat confirms don't count.
-  useEffect(() => {
-    const cardCols = new Map<string, string>()  // card_id -> column
-    const pending = new Set<string>()           // trigger card_ids awaiting confirm
+    type Info = { column: string; source?: string; state?: string }
+    const cardInfo = new Map<string, Info>()
+    const pending = new Set<string>()           // card_ids awaiting confirm
     const recompute = () => {
       let n = 0
-      for (const [id, col] of cardCols) if (pending.has(id) || col === 'awaiting_human') n++
+      for (const [id, info] of cardInfo) {
+        const awaiting = pending.has(id) || info.column === 'awaiting_human'
+        const queueWaiting = info.source === 'chat' && info.state === 'open'
+        if (awaiting || queueWaiting) n++
+      }
       setTriggerAwaiting(n)
     }
     const onCard = (e: Event) => {
-      const c = (e as CustomEvent).detail as { card_id: string; column: string }
-      cardCols.set(c.card_id, c.column)
+      const c = (e as CustomEvent).detail as { card_id: string; column: string; source?: string; detail?: { state?: string } }
+      cardInfo.set(c.card_id, { column: c.column, source: c.source, state: c.detail?.state })
       if (c.column !== 'awaiting_human') pending.delete(c.card_id)  // moved on
       recompute()
     }
     const onConfirm = (e: Event) => {
       const { id } = (e as CustomEvent).detail as { id: string }
-      if (cardCols.has(id)) { pending.add(id); recompute() }  // trigger cards only
+      if (cardInfo.has(id)) { pending.add(id); recompute() }  // known cards only
     }
     const onEnd = (e: Event) => {
       const { id } = (e as CustomEvent).detail as { id: string }
       if (pending.delete(id)) recompute()
     }
     bridge.get_trigger_board().then(board => {
-      board.forEach(c => cardCols.set(c.card_id, c.column))
+      board.forEach(c => cardInfo.set(c.card_id, { column: c.column, source: c.source, state: (c.detail as { state?: string } | undefined)?.state }))
       recompute()
     }).catch(() => {})
     window.addEventListener('runspec:trigger_card', onCard)
@@ -269,13 +248,6 @@ export default function App() {
 
   const navTabs = [
     {
-      key: 'inbox' as ViewKey,
-      label: 'Inbox',
-      icon: inbox.count > 0
-        ? <Badge count={inbox.count} size="small" offset={[2, -1]}><InboxOutlined /></Badge>
-        : <InboxOutlined />,
-    },
-    {
       key: 'console' as ViewKey,
       label: 'Console',
       icon: inFlight.length > 0
@@ -294,13 +266,6 @@ export default function App() {
       icon: triggerAwaiting > 0
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]}><BellOutlined /></Badge>
         : <BellOutlined />,
-    },
-    {
-      key: 'rooms' as ViewKey,
-      label: 'Rooms',
-      icon: roomAttention > 0
-        ? <Badge count={roomAttention} size="small" offset={[2, -1]}><CommentOutlined /></Badge>
-        : <CommentOutlined />,
     },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ]
@@ -497,12 +462,6 @@ export default function App() {
             {/* View area */}
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
-                {/* The work inbox is a pure renderer over the root-level store,
-                    so it's safe to mount only when shown — the projection keeps
-                    accruing regardless via useWorkInbox at the App root. */}
-                <div style={{ display: view === 'inbox' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                  {view === 'inbox' && <WorkInboxView inbox={inbox} onOpen={handleOpenWorkItem} />}
-                </div>
                 <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                   <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
                 </div>
@@ -511,13 +470,6 @@ export default function App() {
                     the live tool_confirm and the buttons can't return until timeout. */}
                 <div style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                   <TriggersView />
-                </div>
-                {/* Rooms stays mounted (display toggle) so the live transcript +
-                    presence keep filling from the runspec:room_* event stream even
-                    while another tab is shown — unmounting would drop the history
-                    and the listeners. */}
-                <div style={{ display: view === 'rooms' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                  <RoomsView active={view === 'rooms'} />
                 </div>
                 {/* History stays mounted (display toggle) so its fetched records
                     survive tab switches — returning shows the last data instantly

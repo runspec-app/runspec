@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.48.0"
+version = "0.49.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
     "runspec>=0.29.0",
-    "pywin32>=306",
+    "pywin32>=306 ; sys_platform == 'win32'",
     "cryptography>=42.0",
     "paramiko>=3.0",
     # Surfaces the Windows system-admin + Microsoft 365 runnables in the console

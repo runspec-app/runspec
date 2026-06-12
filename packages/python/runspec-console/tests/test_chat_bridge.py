@@ -169,11 +169,13 @@ def _event_stub(engine: Any = None, agent_rooms: dict[str, str] | None = None):
     s._trigger_engine = engine
     s._agent_rooms = dict(agent_rooms or {})
     s._thread_states = {}
+    s._trigger_cards = {}
     s.dispatched: list[tuple[str, dict]] = []
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
     s._notify_room_message = lambda payload: None  # OS toast tested in test_notify
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
     s._feed_engine_for = types.MethodType(Bridge._feed_engine_for, s)
+    s._touch_queue_card = types.MethodType(Bridge._touch_queue_card, s)
     return s
 
 
@@ -217,14 +219,40 @@ def test_conversation_frame_is_ui_only_and_tracked():
     engine = _FakeEngine()
     s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
     s._on_chat_event(_conv("open", None))
-    assert s.dispatched == [
-        (
-            "runspec:room_conversation",
-            {"room": _THREAD, "state": "open", "assignee": None},
-        )
-    ]
+    # The conversation frame still fans to the Rooms/UI view…
+    assert (
+        "runspec:room_conversation",
+        {"room": _THREAD, "state": "open", "assignee": None},
+    ) in s.dispatched
     assert engine.fed == []  # lifecycle never reaches the engine
     assert s._thread_states[_THREAD] == {"state": "open", "assignee": None}
+    # …and folds onto the conversation's trigger card (lifecycle state on detail).
+    card = s._trigger_cards[f"queue:{_THREAD}"]
+    assert card["source"] == "chat" and card["trigger"] == "queue:it"
+    assert card["detail"]["state"] == "open"
+    assert card["detail"]["visitor"] == "alice@corp"
+
+
+def test_queue_message_creates_actionable_card():
+    """A staffed-queue message becomes a first-class card (one per conversation),
+    keyed so repeated messages update the same card rather than flooding."""
+    engine = _FakeEngine()
+    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s._on_chat_event(Event.new("chat", "message", {"room": _THREAD, "text": "help me"}))
+    s._on_chat_event(Event.new("chat", "message", {"room": _THREAD, "text": "anyone?"}))
+    cards = [d for ev, d in s.dispatched if ev == "runspec:trigger_card"]
+    assert cards  # the message surfaced a card
+    assert len({c["card_id"] for c in cards}) == 1  # one card, updated in place
+    card = s._trigger_cards[f"queue:{_THREAD}"]
+    assert card["summary"] == "anyone?"  # latest message
+    assert card["trigger"] == "queue:it" and card["event_type"] == "message"
+
+
+def test_group_chat_message_creates_no_queue_card():
+    engine = _FakeEngine()
+    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s._on_chat_event(Event.new("chat", "message", {"room": "ops", "text": "deploy?"}))
+    assert s._trigger_cards == {}  # plain rooms are not queue conversations
 
 
 def test_unclaimed_thread_message_is_ui_only():

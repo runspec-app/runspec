@@ -824,13 +824,18 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <Input placeholder="e.g. Production, Staging (optional)" />
             </Form.Item>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
-              <Form.Item name="room" label="Chat room" help="If runspec-room runs on this host, the console joins this room over the tunnel.">
-                <Input placeholder="e.g. ops (optional)" style={{ fontFamily: 'monospace' }} />
+              <Form.Item
+                name="room_queue"
+                label="Queue"
+                help="Staff a help-desk queue on this host's queue server (agent mode). Uses Queue port below. No slashes or spaces."
+                rules={[{ pattern: /^[^\s/]+$/, message: 'No slashes or spaces' }]}
+              >
+                <Input placeholder="e.g. it-support" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
-              <Form.Item name="room_port" label="Room port">
+              <Form.Item name="room_port" label="Queue port">
                 <Input placeholder="8765" type="number" />
               </Form.Item>
-              <Form.Item name="room_user" label="Display name" help="Your name in the room. Defaults to the SSH login.">
+              <Form.Item name="room_user" label="Display name" help="Your name in the queue. Defaults to the SSH login.">
                 <Input placeholder="defaults to SSH login" />
               </Form.Item>
               <Form.Item name="room_via" label="Connect via" help="Tunnel forwards a port; exec runs a relay command (for networks that block forwarding).">
@@ -846,13 +851,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <Form.Item name="room_exec_command" label="Relay command" help="Optional override run on the host when via=exec, e.g. socat - TCP:127.0.0.1:8765. Defaults to console-room connect.">
                 <Input placeholder="defaults to console-room connect" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
-              <Form.Item
-                name="room_queue"
-                label="Helpdesk queue"
-                help="Staff a helpdesk queue on this host's room server (agent mode). Uses Room port above. No slashes or spaces."
-                rules={[{ pattern: /^[^\s/]+$/, message: 'No slashes or spaces' }]}
-              >
-                <Input placeholder="e.g. it-support (optional)" style={{ fontFamily: 'monospace' }} />
+              <Form.Item name="room" label="Group chat room" help="Optional non-helpdesk group chat on this host's queue server. For a help desk, set Queue above instead.">
+                <Input placeholder="e.g. ops (optional)" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
               <Form.Item name="room_catalog" label="Catalog allowlist" help="Optional: limit the queue's self-service catalog to these runnables. Empty = every self-service-marked runnable.">
                 <Select

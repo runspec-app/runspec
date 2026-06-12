@@ -482,20 +482,20 @@ function ToolCallBlock({
           : entry.running
             ? <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} />
             : <ApiOutlined style={{ color: '#52c41a', fontSize: 12 }} />}
-        <Text code style={{ fontSize: 12 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
+        <Text code style={{ fontSize: 12, flexShrink: 0 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
         {args.length > 0 && (
-          <Text style={{ color: '#555', fontSize: 11 }}>
+          <Text ellipsis style={{ flex: 1, minWidth: 0, color: '#555', fontSize: 11 }}>
             {args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
           </Text>
         )}
         {awaiting && (
-          <Text style={{ color: '#e6a23c', fontSize: 11, marginLeft: 'auto' }}>needs approval</Text>
+          <Text style={{ color: '#e6a23c', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>needs approval</Text>
         )}
         {!awaiting && entry.running && (
-          <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto' }}>running…</Text>
+          <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>running…</Text>
         )}
         {entry.output !== undefined && !entry.running && (
-          <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto' }}>
+          <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>
             {expanded ? '▲ hide output' : '▼ show output'}
           </Text>
         )}
@@ -507,7 +507,21 @@ function ToolCallBlock({
             The assistant wants to run this. Autonomy is{' '}
             <strong style={{ color: '#e6a23c' }}>{awaiting}</strong>, so it needs your go-ahead.
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          {args.length > 0 && (
+            // The header preview ellipsises; show the full args here, wrapped, so
+            // the operator can see exactly what they're approving — a many-arg
+            // runnable used to push this (and the buttons) off-screen.
+            <pre style={{
+              margin: '0 0 10px', padding: '8px 10px',
+              background: '#141414', borderRadius: 4,
+              fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: '#9aa5b1',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              maxHeight: 180, overflowY: 'auto',
+            }}>
+              {args.map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n')}
+            </pre>
+          )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={() => onAnswer?.(true)}>
               Approve &amp; run
             </Button>

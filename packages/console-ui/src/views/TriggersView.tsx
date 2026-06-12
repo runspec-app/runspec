@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input, Drawer } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined, SendOutlined } from '@ant-design/icons'
+import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined, SendOutlined, FlagOutlined, UndoOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark } from '../ThemeContext'
+
+// A queue card (source === 'chat') is a helpdesk conversation surfaced in the
+// Triggers inbox; these drive its lifecycle chip + conversation pane.
+type QueueMsg = { sender?: string; text?: string; id?: string; ts?: number; kind?: string }
+const STATE_COLORS: Record<string, string> = {
+  open: 'gold', assigned: 'blue', resolved: 'green', closed: 'default',
+}
+const isQueueCard = (c: TriggerCard) => c.source === 'chat'
+const visitorOf = (room: string) => room.split('/').slice(2).join('/') || room
 
 const DAYS: [string, string][] = [
   ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
@@ -182,11 +191,17 @@ export function TriggersView() {
   const [cards, setCards] = useState<Record<string, TriggerCard>>({})
   const [pending, setPending] = useState<Record<string, PendingConfirm>>({})
   const [config, setConfig] = useState<TriggerListResult | null>(null)
-  const [notes, setNotes] = useState<string[]>([])
   // Streamed agent text per card id (its reasoning/reply as it arrives).
   const [streams, setStreams] = useState<Record<string, string>>({})
   // The run whose detail drawer is open (card_id), or null.
   const [selected, setSelected] = useState<string | null>(null)
+  // The queue conversation shown in the bottom pane (card_id), or null.
+  const [convo, setConvo] = useState<string | null>(null)
+  // Live transcript per conversation room, and the composer draft per room.
+  const [messages, setMessages] = useState<Record<string, QueueMsg[]>>({})
+  const [convoDraft, setConvoDraft] = useState<Record<string, string>>({})
+  const [acting, setActing] = useState(false)
+  const [sending, setSending] = useState(false)
   // Event-audit feed: every event seen + its disposition (newest first).
   const [events, setEvents] = useState<TriggerEvent[]>([])
   // Draft replies an agent-mode trigger saved, keyed by card id — drives the
@@ -240,10 +255,24 @@ export function TriggersView() {
       })
     }
     const onStatus = () => loadConfig()
-    const onNote = (e: Event) => {
-      const { label, text } = (e as CustomEvent).detail as { label?: string; text?: string }
-      const line = label || text
-      if (line) setNotes(prev => [line, ...prev].slice(0, 20))
+    const onMessage = (e: Event) => {
+      const m = (e as CustomEvent).detail as QueueMsg & { room?: string }
+      const room = m.room || ''
+      if (!room.startsWith('helpdesk/')) return  // queue conversations only
+      setMessages(prev => {
+        const list = prev[room] || []
+        if (m.id && list.some(x => x.id === m.id)) return prev  // dedupe by id
+        return { ...prev, [room]: [...list, { sender: m.sender, text: m.text, id: m.id, ts: m.ts, kind: m.kind }] }
+      })
+    }
+    const onRoomDraft = (e: Event) => {
+      // An agent-proposed reply pre-fills the conversation composer (the human
+      // reviews + sends) and brings that conversation into view.
+      const d = (e as CustomEvent).detail as { room?: string; text?: string }
+      const room = d.room || ''
+      if (!room.startsWith('helpdesk/')) return
+      setConvoDraft(prev => ({ ...prev, [room]: d.text || '' }))
+      setConvo(`queue:${room}`)
     }
     const onEvent = (e: Event) => {
       const rec = (e as CustomEvent).detail as TriggerEvent
@@ -260,7 +289,8 @@ export function TriggersView() {
     window.addEventListener('runspec:tool_confirm', onConfirm)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:trigger_status', onStatus)
-    window.addEventListener('runspec:trigger_note', onNote)
+    window.addEventListener('runspec:room_message', onMessage)
+    window.addEventListener('runspec:room_draft', onRoomDraft)
     window.addEventListener('runspec:trigger_event', onEvent)
     window.addEventListener('runspec:trigger_draft', onDraft)
     return () => {
@@ -269,7 +299,8 @@ export function TriggersView() {
       window.removeEventListener('runspec:tool_confirm', onConfirm)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:trigger_status', onStatus)
-      window.removeEventListener('runspec:trigger_note', onNote)
+      window.removeEventListener('runspec:room_message', onMessage)
+      window.removeEventListener('runspec:room_draft', onRoomDraft)
       window.removeEventListener('runspec:trigger_event', onEvent)
       window.removeEventListener('runspec:trigger_draft', onDraft)
     }
@@ -298,6 +329,28 @@ export function TriggersView() {
     setPending(prev => { const next = { ...prev }; delete next[cardId]; return next })
   }
 
+  // Queue-conversation lifecycle (Claim/Resolve/Reopen/Close) — the same controls
+  // the Rooms inbox had; the new state comes back as a folded trigger card.
+  const control = async (kind: 'claim' | 'resolve' | 'reopen' | 'close', room: string) => {
+    setActing(true)
+    try {
+      const fn = { claim: bridge.claim_thread, resolve: bridge.resolve_thread, reopen: bridge.reopen_thread, close: bridge.close_thread }[kind]
+      await fn(room)
+    } catch (err) { console.error(err) }
+    finally { setActing(false) }
+  }
+
+  const sendReply = async (room: string) => {
+    const text = (convoDraft[room] || '').trim()
+    if (!text) return
+    setSending(true)
+    try {
+      const res = await bridge.send_room_message(room, text)
+      if (res.ok) setConvoDraft(prev => ({ ...prev, [room]: '' }))
+    } catch (err) { console.error(err) }
+    finally { setSending(false) }
+  }
+
   const toggleEnabled = async (name: string, enabled: boolean) => {
     await bridge.set_trigger_enabled(name, enabled)
     loadConfig()
@@ -311,6 +364,9 @@ export function TriggersView() {
   const statusOf = (card: TriggerCard) =>
     pending[card.card_id] ? 'awaiting_human' : card.column
   const selectedCard = selected ? cards[selected] : undefined
+  const convoCard = convo ? cards[convo] : undefined
+  const convoRoom = (convoCard?.detail?.room as string | undefined) || ''
+  const convoState = (convoCard?.detail?.state as string | undefined) || 'open'
 
   const dim = isDark ? '#888' : '#999'
   const cardBg = isDark ? '#1f1f1f' : '#fafafa'
@@ -459,25 +515,43 @@ export function TriggersView() {
         <Empty description={<span style={{ color: dim }}>No trigger runs yet.</span>} />
       ) : (
         <div style={{ border: `1px solid ${border}`, borderRadius: 6 }}>
-          {runs.map((card, i) => (
+          {runs.map((card, i) => {
+            const q = isQueueCard(card)
+            const st = (card.detail?.state as string | undefined) || 'open'
+            const room = (card.detail?.room as string | undefined) || ''
+            return (
             <div
               key={card.card_id}
-              onClick={() => setSelected(card.card_id)}
+              onClick={() => (q ? setConvo(card.card_id) : setSelected(card.card_id))}
               style={{
-                display: 'flex', gap: 8, alignItems: 'baseline', padding: '8px 10px',
+                display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px',
                 borderBottom: i < runs.length - 1 ? `1px solid ${border}` : undefined,
                 cursor: 'pointer', fontSize: 12,
-                background: selected === card.card_id ? colBg : undefined,
+                background: selected === card.card_id || convo === card.card_id ? colBg : undefined,
               }}
             >
-              <StatusBadge status={statusOf(card)} />
+              {q
+                ? <Tag color={STATE_COLORS[st] || 'default'} style={{ marginInlineEnd: 0, flexShrink: 0 }}>{st}</Tag>
+                : <StatusBadge status={statusOf(card)} />}
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>
                 {card.summary}
               </span>
               <span style={{ color: dim, flexShrink: 0 }}>{card.trigger}</span>
+              {q && st === 'open' && (
+                <Button size="small" type="primary" icon={<FlagOutlined />} loading={acting}
+                  onClick={e => { e.stopPropagation(); control('claim', room) }}>Claim</Button>
+              )}
+              {q && st === 'assigned' && (
+                <Button size="small" icon={<CheckOutlined />} loading={acting}
+                  onClick={e => { e.stopPropagation(); control('resolve', room) }}>Resolve</Button>
+              )}
+              {q && (st === 'resolved' || st === 'closed') && (
+                <Button size="small" icon={<UndoOutlined />} loading={acting}
+                  onClick={e => { e.stopPropagation(); control('reopen', room) }}>Reopen</Button>
+              )}
               {pending[card.card_id] && (
                 <Button
-                  size="small" type="primary"
+                  size="small" type="primary" danger={q}
                   onClick={e => { e.stopPropagation(); setSelected(card.card_id) }}
                 >
                   Review
@@ -485,7 +559,8 @@ export function TriggersView() {
               )}
               <span style={{ color: dim, fontFamily: 'monospace', flexShrink: 0 }}>{fmtTime(card.created_at)}</span>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -594,24 +669,70 @@ export function TriggersView() {
         })()}
       </Drawer>
 
-      {notes.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ color: dim, fontSize: 12, marginBottom: 6 }}>Recent activity</div>
-          {notes.map((n, i) => (
-            <div key={i} style={{ fontSize: 12, color: dim, fontFamily: 'monospace', marginBottom: 2 }}>{n}</div>
-          ))}
+      {/* Conversation pane — the selected queue card's transcript + reply box, a
+          persistent pane under the inbox (this is where the old Rooms tab's chat
+          now lives). Approve/Deny for a request still rides the right Drawer. */}
+      {convoCard && (
+        <div style={{ marginTop: 16, border: `1px solid ${border}`, borderRadius: 6, display: 'flex', flexDirection: 'column', maxHeight: 440 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: `1px solid ${border}` }}>
+            <Tag color={STATE_COLORS[convoState] || 'default'} style={{ marginInlineEnd: 0 }}>{convoState}</Tag>
+            <span style={{ fontWeight: 600 }}>{visitorOf(convoRoom)}</span>
+            <span style={{ color: dim }}>· {convoCard.detail?.queue as string}</span>
+            <Space style={{ marginLeft: 'auto' }}>
+              {convoState === 'open' && (
+                <Button size="small" type="primary" icon={<FlagOutlined />} loading={acting} onClick={() => control('claim', convoRoom)}>Claim</Button>
+              )}
+              {convoState === 'assigned' && (
+                <Button size="small" icon={<CheckOutlined />} loading={acting} onClick={() => control('resolve', convoRoom)}>Resolve</Button>
+              )}
+              {(convoState === 'resolved' || convoState === 'closed') && (
+                <Button size="small" icon={<UndoOutlined />} loading={acting} onClick={() => control('reopen', convoRoom)}>Reopen</Button>
+              )}
+              {convoState !== 'closed' && (
+                <Button size="small" danger icon={<CloseOutlined />} loading={acting} onClick={() => control('close', convoRoom)}>Close</Button>
+              )}
+              <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setConvo(null)} title="Hide conversation" />
+            </Space>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', minHeight: 120 }}>
+            {(messages[convoRoom] || []).length === 0 ? (
+              <div style={{ color: dim, fontSize: 12 }}>No messages yet.</div>
+            ) : (messages[convoRoom] || []).map((m, i) => (
+              <div key={m.id || i} style={{ display: 'flex', gap: 8, padding: '3px 0', alignItems: 'baseline', fontSize: 13 }}>
+                <span style={{ fontWeight: 600, color: dim, whiteSpace: 'nowrap' }}>{m.sender || visitorOf(convoRoom)}</span>
+                {m.kind === 'request' && <Tag color="purple" style={{ fontSize: 10 }}>request</Tag>}
+                <span style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</span>
+                <span style={{ color: dim, fontSize: 11, whiteSpace: 'nowrap' }}>{m.ts ? fmtTime(m.ts) : ''}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8, padding: '10px 12px', borderTop: `1px solid ${border}` }}>
+            <Input.TextArea
+              value={convoDraft[convoRoom] || ''}
+              onChange={e => setConvoDraft(prev => ({ ...prev, [convoRoom]: e.target.value }))}
+              onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); sendReply(convoRoom) } }}
+              placeholder={`Reply to ${visitorOf(convoRoom)}… (Enter to send, Shift+Enter for newline)`}
+              autoSize={{ minRows: 1, maxRows: 4 }}
+            />
+            <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={() => sendReply(convoRoom)} disabled={!(convoDraft[convoRoom] || '').trim()}>Send</Button>
+          </div>
         </div>
       )}
 
-      {/* Event audit feed — every event seen and what happened to it */}
-      <div style={{ marginTop: 20 }}>
-        <div style={{ color: dim, fontSize: 12, marginBottom: 6 }}>
-          Event log <span style={{ color: dim }}>· every event seen, matched or not</span>
-        </div>
-        {events.length === 0 ? (
-          <div style={{ color: dim, fontSize: 12 }}>No events yet.</div>
-        ) : (
-          <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 6 }}>
+      {/* Event audit feed — collapsible (like Triggers / Working hours), so it
+          frees vertical space for the conversation pane above. */}
+      <Collapse
+        size="small"
+        style={{ marginTop: 20 }}
+        items={[{
+          key: 'events',
+          label: (
+            <span><BellOutlined /> Event log<span style={{ color: dim, fontSize: 12 }}> · every event seen, matched or not</span></span>
+          ),
+          children: events.length === 0 ? (
+            <div style={{ color: dim, fontSize: 12 }}>No events yet.</div>
+          ) : (
+            <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 6 }}>
             {events.map((ev, i) => {
               const disposition =
                 ev.matched.length > 0
@@ -635,9 +756,10 @@ export function TriggersView() {
                 </div>
               )
             })}
-          </div>
-        )}
-      </div>
+            </div>
+          ),
+        }]}
+      />
     </div>
   )
 }

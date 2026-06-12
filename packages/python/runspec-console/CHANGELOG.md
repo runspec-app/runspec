@@ -8,6 +8,44 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.49.0] — 2026-06-12
+
+The helpdesk surfaces collapse into **one operator tab — Triggers**. A queue
+message is now just another trigger, so the separate **Rooms** and **Inbox**
+tabs are gone and everything an operator acts on lives in one place.
+
+### Changed
+- **Queue conversations are first-class Triggers cards.** A message in a staffed
+  help-desk queue surfaces as a card in the Triggers inbox (one per conversation,
+  updated in place), carrying the conversation's lifecycle state. The row shows a
+  state chip + inline **Claim / Resolve / Reopen**, and **Approve/Deny** for a
+  request reuses the exact same right-hand detail panel as a trigger run — no
+  separate gate. Model spend stays gated on **Claim** (an unclaimed conversation
+  is visible but never starts an agent turn).
+- **Conversation pane under the inbox.** Opening a queue card shows its transcript
+  + reply composer in a pane below the inbox (where the old Rooms tab's chat now
+  lives); an agent-proposed reply pre-fills it for review-and-send.
+- **Removed the Rooms and Inbox tabs.** The Triggers tab is the single operator
+  surface; its badge now covers pending approvals **and** waiting (unclaimed)
+  queue callers.
+- **Triggers layout** — dropped the "Recent activity" strip (the event log
+  supersedes it) and moved the event log into a collapsible, freeing room for the
+  conversation pane.
+- **Vocabulary: room → queue.** The Hosts editor now leads with **Queue** /
+  **Queue port** (group chat is a clearly-secondary "Group chat room" field),
+  matching the browser side that always said *queue*.
+
+### Fixed
+- **A many-arg request no longer pushes the Approve/Deny gate off-screen.** The
+  autonomy-gate tool-call card rendered every argument inline on one un-truncated
+  line, forcing the row wider than the window so the **Approve & run / Deny**
+  buttons scrolled out of view. The header preview now ellipsises to a single
+  line and the full argument list is shown **wrapped** in the gate body, directly
+  above the buttons — so the operator reads exactly what they're approving.
+- **Packaging:** `pywin32` now carries a `sys_platform == 'win32'` marker, so a
+  non-Windows `pip install runspec-console` can resolve its dependencies.
+
+
 ## [0.48.0] — 2026-06-12
 
 ### Added
