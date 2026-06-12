@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Empty, Input, Tag, Typography, message } from 'antd'
-import { SendOutlined, RobotOutlined, FlagOutlined, CheckOutlined, UndoOutlined, CloseOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
+import { SendOutlined, RobotOutlined, FlagOutlined, CheckOutlined, UndoOutlined, CloseOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
 import { bridge, type RoomInfo, type RoomMessage, type RoomPresence, type RoomConversation, type ThreadState } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
@@ -251,6 +251,7 @@ export function RoomsView({ active }: { active: boolean }) {
   const present = presence[selected] || []
   const activeThread = isQueue ? queueThreads.find(t => t.room === activeRoom) : undefined
   const mineAssigned = activeThread?.assignee === selfUser
+  const openCount = queueThreads.filter(t => t.state === 'open').length
 
   return (
     <div style={{ height: '100%', display: 'flex', minHeight: 0 }}>
@@ -278,61 +279,51 @@ export function RoomsView({ active }: { active: boolean }) {
         ))}
       </div>
 
-      {/* Helpdesk inbox: the queue's conversations. Collapsible — tuck it away to
-          focus on a single conversation; a thin rail re-expands it. */}
-      {isQueue && inboxCollapsed && (
-        <div
-          onClick={() => setInboxCollapsed(false)}
-          title="Show inbox"
-          style={{ width: 32, flexShrink: 0, borderRight: `1px solid ${border}`, background: panelBg, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 12, gap: 8 }}
-        >
-          <MenuUnfoldOutlined style={{ color: isDark ? '#8b93a3' : '#888' }} />
-          <Text style={{ fontSize: 11, writingMode: 'vertical-rl', color: isDark ? '#8b93a3' : '#888' }}>
-            Inbox · {queueThreads.length}
-          </Text>
-        </div>
-      )}
-      {isQueue && !inboxCollapsed && (
-        <div style={{ width: 240, flexShrink: 0, borderRight: `1px solid ${border}`, background: panelBg, overflowY: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 8px 8px 14px' }}>
-            <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: isDark ? '#8b93a3' : '#888' }}>
-              Inbox · {queueThreads.length}
-            </Text>
-            <Button type="text" size="small" icon={<MenuFoldOutlined />} onClick={() => setInboxCollapsed(true)} title="Hide inbox" />
-          </div>
-          {queueThreads.length === 0 ? (
-            <div style={{ padding: '8px 14px' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>No conversations yet.</Text>
-            </div>
-          ) : queueThreads.map(t => (
-            <div
-              key={t.room}
-              onClick={() => setThreadSel(prev => ({ ...prev, [selected]: t.room }))}
-              style={{
-                padding: '8px 14px', cursor: 'pointer',
-                background: t.room === activeRoom ? (isDark ? '#22262e' : '#eef2f8') : 'transparent',
-                borderLeft: t.room === activeRoom ? `2px solid ${accent}` : '2px solid transparent',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
-                <Text strong style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.visitor}</Text>
-                <Tag color={STATE_COLORS[t.state] || 'default'} style={{ marginRight: 0, fontSize: 10, lineHeight: '16px' }}>{t.state}</Tag>
-              </div>
-              {t.assignee && (
-                <Text type="secondary" style={{ fontSize: 11 }}>→ {t.assignee === selfUser ? 'you' : t.assignee}</Text>
-              )}
-              {t.last && (
-                <div style={{ fontSize: 11, color: isDark ? '#8b93a3' : '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {t.last.text}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Selected room / thread */}
+      {/* Selected room / thread (in queue mode the inbox sits on top of it) */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {/* Helpdesk inbox — full-width rows on top, so each row carries a real
+            summary (status · visitor · assignee · last-message snippet · time).
+            Collapses up to its one-line header to give the conversation the screen. */}
+        {isQueue && (
+          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: '45%', borderBottom: `1px solid ${border}`, background: panelBg }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px 6px 16px', flexShrink: 0 }}>
+              <Text style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: isDark ? '#8b93a3' : '#888' }}>
+                Inbox · {queueThreads.length}{openCount > 0 ? ` · ${openCount} open` : ''}
+              </Text>
+              <Button type="text" size="small" icon={inboxCollapsed ? <DownOutlined /> : <UpOutlined />} onClick={() => setInboxCollapsed(c => !c)} title={inboxCollapsed ? 'Show inbox' : 'Hide inbox'} />
+            </div>
+            {!inboxCollapsed && (
+              <div style={{ overflowY: 'auto', minHeight: 0 }}>
+                {queueThreads.length === 0 ? (
+                  <div style={{ padding: '4px 16px 10px' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>No conversations yet.</Text>
+                  </div>
+                ) : queueThreads.map(t => (
+                  <div
+                    key={t.room}
+                    onClick={() => setThreadSel(prev => ({ ...prev, [selected]: t.room }))}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '7px 16px', cursor: 'pointer',
+                      background: t.room === activeRoom ? (isDark ? '#22262e' : '#eef2f8') : 'transparent',
+                      borderLeft: t.room === activeRoom ? `2px solid ${accent}` : '2px solid transparent',
+                    }}
+                  >
+                    <Tag color={STATE_COLORS[t.state] || 'default'} style={{ marginRight: 0, fontSize: 10, lineHeight: '16px', width: 66, textAlign: 'center' }}>{t.state}</Tag>
+                    <Text strong style={{ fontSize: 13, width: 150, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.visitor}</Text>
+                    <Text type="secondary" style={{ fontSize: 11, width: 88, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {t.assignee ? `→ ${t.assignee === selfUser ? 'you' : t.assignee}` : ''}
+                    </Text>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: isDark ? '#8b93a3' : '#888' }}>
+                      {t.last ? (t.last.kind === 'request' ? '⚙ ' : '') + t.last.text : '—'}
+                    </span>
+                    <Text type="secondary" style={{ fontSize: 11, flexShrink: 0, whiteSpace: 'nowrap' }}>{t.last ? fmtTime(t.last.ts) : ''}</Text>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
           {isQueue ? (
             <>

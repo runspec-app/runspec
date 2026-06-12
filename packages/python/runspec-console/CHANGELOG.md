@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.44.2] — 2026-06-12
+
+### Changed
+- **Helpdesk inbox moved on top of the conversation.** In queue mode the inbox is
+  now a full-width strip above the conversation (was a cramped side column), so
+  each thread row carries a real summary line — status · visitor · assignee ·
+  last-message snippet (catalog requests prefixed) · time — and the open count
+  shows in the header. Still collapses (now up/down) to give the conversation the
+  full screen. Group chat is unchanged.
+
+---
+
 ## [0.44.1] — 2026-06-12
 
 ### Fixed
