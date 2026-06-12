@@ -35,10 +35,13 @@ function normaliseLogging(raw: Record<string, unknown> | undefined): LoggingConf
   // response body), and verbosity for debugging is handled by the `--debug`
   // flag injected at parse time.
   //
-  // `summary` (default true) writes one record per run to the audit log and
-  // one human-readable line to stderr at process exit: duration, exit code,
-  // log-event counts by level. Suppress per-invocation with `--no-summary`
-  // or `RUNSPEC_NO_SUMMARY=1`.
+  // `summary` (default true) writes one structured record per run to the audit
+  // log at process exit (duration, exit code, per-level event counts) — the data
+  // the console history/analytics tabs and `runspec logs` read. `summary_console`
+  // (default false) additionally echoes a one-line human-readable summary to the
+  // terminal (stderr); off by default so stdout stays clean for pipes and the
+  // line never lands on a stream that log processors (e.g. Rundeck) tag as ERROR.
+  // Suppress both per-invocation with `--no-summary` or `RUNSPEC_NO_SUMMARY=1`.
   if (raw === undefined) return undefined;
   // `store` selects the file layout: 'single' = one rotating {runnable}.log;
   // 'per-run' = one file per invocation. Unknown values fall back to 'single'
@@ -48,6 +51,7 @@ function normaliseLogging(raw: Record<string, unknown> | undefined): LoggingConf
     rotate: String(raw['rotate'] ?? 'midnight'),
     keep: Number(raw['keep'] ?? 7),
     summary: raw['summary'] !== undefined ? Boolean(raw['summary']) : true,
+    summaryConsole: raw['summary_console'] !== undefined ? Boolean(raw['summary_console']) : false,
     store: store === 'per-run' ? 'per-run' : 'single',
   };
 }

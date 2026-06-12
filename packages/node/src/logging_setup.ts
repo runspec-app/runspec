@@ -75,6 +75,10 @@ interface SummaryState {
   emitted: boolean;
   user: string;
   userTarget: string | undefined;
+  /** Write the structured record to the audit log (gated by `summary`). */
+  writeRecord: boolean;
+  /** Echo the human-readable line to stderr (gated by `summary_console`). */
+  writeConsole: boolean;
 }
 
 let _summaryState: SummaryState | null = null;
@@ -225,8 +229,9 @@ function formatConsole(record: LogRecord, showTracebacks: boolean): string {
  * Treated as the runnable's primary output — captured as the response body
  * when `runspec serve` invokes the runnable as a subprocess.
  *
- * Drops `runspec.runsummary` records — those are file-only; the human form
- * of the summary is written directly to stderr by the exit hook.
+ * Drops `runspec.runsummary` records — those are file-only; the optional human
+ * echo of the summary is written directly to stderr by the exit hook (gated by
+ * `summary_console`).
  */
 class StdoutHandler implements Handler {
   constructor(public readonly level: number, private readonly showTracebacks: boolean) {}
@@ -490,9 +495,10 @@ function formatSummaryLine(state: SummaryState, durationMs: number, exitCode: nu
   const errors = (counts.ERROR ?? 0) + (counts.CRITICAL ?? 0);
   const secs = (durationMs / 1000).toFixed(2);
   const runnable = state.runnable;
-  // Abbreviated level words ("warn"/"err", never "warning"/"error") so the line
-  // doesn't trip Rundeck's case-insensitive `error` log-highlight/level filters,
-  // which would otherwise paint a clean run red over the literal "0 errors".
+  // Abbreviated level words ("warn"/"err", never "warning"/"error") keep the line
+  // terse. (Stream-tagging log processors like Rundeck classify by stream, not
+  // text — this echo is opt-in and stays on stderr, so a clean run isn't flagged
+  // ERROR unless an operator turns `summary_console` on in that env.)
   const events = `${total} events (${warnings} warn, ${errors} err)`;
   const userPart = state.userTarget
     ? ` | user: ${state.user} → ${state.userTarget} (sudo)`
@@ -519,28 +525,36 @@ export function emitRunSummary(): void {
   // process.exitCode if the user set it. Defaults to 0.
   const exitCode = state.exitCode !== 0 ? state.exitCode : (state.exception ? 1 : 0);
 
-  try {
-    getLogger(RUN_SUMMARY_LOGGER).info('run completed', {
-      event: 'run_summary',
-      runnable: state.runnable,
-      command_path: state.commandPath,
-      duration_ms: durationMs,
-      exit_code: exitCode,
-      agent: state.agent,
-      autonomy: state.autonomy,
-      exception: state.exception,
-      events: { ...state.counter.counts },
-      user: state.user,
-      user_target: state.userTarget ?? null,
-    });
-  } catch {
-    // never disrupt shutdown
+  // Audit record — gated by `summary`; the data the console + `runspec logs` read.
+  if (state.writeRecord) {
+    try {
+      getLogger(RUN_SUMMARY_LOGGER).info('run completed', {
+        event: 'run_summary',
+        runnable: state.runnable,
+        command_path: state.commandPath,
+        duration_ms: durationMs,
+        exit_code: exitCode,
+        agent: state.agent,
+        autonomy: state.autonomy,
+        exception: state.exception,
+        events: { ...state.counter.counts },
+        user: state.user,
+        user_target: state.userTarget ?? null,
+      });
+    } catch {
+      // never disrupt shutdown
+    }
   }
 
-  try {
-    process.stderr.write(formatSummaryLine(state, durationMs, exitCode) + '\n');
-  } catch {
-    // never disrupt shutdown
+  // Human-readable echo — opt-in (`summary_console`). Stays on stderr so it never
+  // pollutes stdout pipes; off by default so it never reaches Rundeck's
+  // stderr=ERROR tagging unless the operator explicitly asks for it.
+  if (state.writeConsole) {
+    try {
+      process.stderr.write(formatSummaryLine(state, durationMs, exitCode) + '\n');
+    } catch {
+      // never disrupt shutdown
+    }
   }
 }
 
@@ -781,7 +795,10 @@ export interface ConfigureLoggingOptions {
  *
  * Run summary (when `logCfg.summary` is true and `noSummary` is false)
  * counts log events by level and emits a single record at process exit
- * with duration, exit code, exception class, and per-level counts.
+ * with duration, exit code, exception class, and per-level counts to the
+ * audit file. The human-readable one-line echo to stderr is opt-in via
+ * `logCfg.summaryConsole` (default false) so stdout stays clean for pipes and
+ * the line never reaches a stderr=ERROR log processor by default.
  */
 export function configureLogging(opts: ConfigureLoggingOptions): void {
   if (!opts.logCfg || _configured) return;
@@ -814,12 +831,19 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
   _handlers.push(counter);
 
   const runnablePrefix = opts.runnableName.toUpperCase().replace(/-/g, '_');
-  const summaryEnabled =
-    opts.logCfg.summary !== false &&
-    !opts.noSummary &&
-    !['1', 'true', 'yes'].includes((process.env[`RUNSPEC_${runnablePrefix}_ARG_NO_SUMMARY`] ?? '').toLowerCase());
+  // Per-invocation kill switch (--no-summary / env) suppresses both parts.
+  const suppressed =
+    !!opts.noSummary ||
+    ['1', 'true', 'yes'].includes((process.env[`RUNSPEC_${runnablePrefix}_ARG_NO_SUMMARY`] ?? '').toLowerCase());
+  // `summary` gates the structured audit record (the data the console
+  // history/analytics tabs and `runspec logs` read). `summary_console` gates the
+  // human-readable terminal echo — off by default so stdout stays clean for pipes
+  // and the line never reaches a stream that log processors (e.g. Rundeck, which
+  // tags stderr as ERROR) would flag.
+  const writeRecord = opts.logCfg.summary !== false && !suppressed;
+  const writeConsole = opts.logCfg.summaryConsole === true && !suppressed;
 
-  if (summaryEnabled) {
+  if (writeRecord || writeConsole) {
     const [user, userTarget] = _getInvoker();
     _summaryState = {
       counter,
@@ -833,6 +857,8 @@ export function configureLogging(opts: ConfigureLoggingOptions): void {
       emitted: false,
       user,
       userTarget,
+      writeRecord,
+      writeConsole,
     };
   }
 

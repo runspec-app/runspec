@@ -67,10 +67,17 @@ def _normalise_logging(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     response body), and verbosity for debugging is handled by the `--debug`
     flag injected at parse time.
 
-    `summary` (default true) writes one record per run to the audit log and
-    one human-readable line to stderr at process exit: duration, exit code,
-    log-event counts by level. Suppress per-invocation with `--no-summary`
-    or `RUNSPEC_NO_SUMMARY=1`.
+    `summary` (default true) writes one structured record per run to the audit
+    log at process exit: duration, exit code, log-event counts by level. This
+    is the data the console history/analytics tabs and `runspec logs` read.
+
+    `summary_console` (default false) additionally echoes a one-line
+    human-readable summary to the terminal (stderr). It is off by default so
+    stdout stays clean for pipes and the line never lands on a stream that log
+    processors (e.g. Rundeck) tag as ERROR. Turn it on for interactive use.
+
+    Suppress both for a single invocation with `--no-summary` or
+    `RUNSPEC_NO_SUMMARY=1`.
     """
     if raw is None:
         return None
@@ -79,6 +86,7 @@ def _normalise_logging(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         "rotate": str(raw.get("rotate", "midnight")),
         "keep": int(raw.get("keep", 7)),
         "summary": bool(raw.get("summary", True)),
+        "summary_console": bool(raw.get("summary_console", False)),
         # 'single' = one rotating {runnable}.log; 'per-run' = one file per
         # invocation. Unknown values fall back to 'single' — the schema check
         # flags typos; runtime stays lenient like the rest of this normaliser.

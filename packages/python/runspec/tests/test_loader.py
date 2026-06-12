@@ -340,7 +340,7 @@ class TestLoggingNormalisation:
         p = tmp_path / "runspec.toml"
         p.write_text("[config.logging]\n\n[greet]\n")
         cfg = load_raw(p)["config"]["logging"]
-        assert cfg == {"rotate": "midnight", "keep": 7, "summary": True, "store": "single"}
+        assert cfg == {"rotate": "midnight", "keep": 7, "summary": True, "summary_console": False, "store": "single"}
 
     def test_logging_summary_explicit_false(self, tmp_path):
         p = tmp_path / "runspec.toml"
@@ -351,6 +351,13 @@ class TestLoggingNormalisation:
         p = tmp_path / "runspec.toml"
         p.write_text("[config.logging]\nsummary = true\n\n[greet]\n")
         assert load_raw(p)["config"]["logging"]["summary"] is True
+
+    def test_logging_summary_console_defaults_false_and_parses(self, tmp_path):
+        p = tmp_path / "runspec.toml"
+        p.write_text("[config.logging]\n\n[greet]\n")
+        assert load_raw(p)["config"]["logging"]["summary_console"] is False
+        p.write_text("[config.logging]\nsummary_console = true\n\n[greet]\n")
+        assert load_raw(p)["config"]["logging"]["summary_console"] is True
 
     def test_logging_store_per_run(self, tmp_path):
         p = tmp_path / "runspec.toml"

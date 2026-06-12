@@ -1,7 +1,13 @@
 export interface LoggingConfig {
   rotate: string;
   keep: number;
+  /** Write the structured run-summary record to the audit log (default true) —
+   *  the data the console history/analytics tabs and `runspec logs` read. */
   summary: boolean;
+  /** Also echo a one-line human-readable summary to stderr at exit (default
+   *  false). Off by default so stdout stays clean for pipes and the line is
+   *  never tagged ERROR by stream-classifying log processors (e.g. Rundeck). */
+  summaryConsole?: boolean;
   /** Log file layout: 'single' (default, one rotating {runnable}.log) or
    *  'per-run' (one {runnable}.{utc-ts}.{run_id}.log per invocation). */
   store?: string;

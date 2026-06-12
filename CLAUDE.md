@@ -161,6 +161,18 @@ that flips DEBUG on everywhere — stdout, tracebacks, and the audit file —
 in one shot. Stderr stays pinned at WARNING regardless. No `level` knob —
 silencing INFO would break agent responses.
 
+Run summary (0.33.0): two independently gated parts. `[config.logging] summary`
+(default **true**) writes the structured `run_summary` record to the audit log —
+the data the console history/analytics tabs and `runspec logs` read.
+`summary_console` (default **false**) echoes the one-line human-readable summary
+to stderr. The echo is off by default so stdout stays clean for pipes and a
+clean run never lands on a stream that stream-classifying log processors (e.g.
+Rundeck, which tags *all* stderr as ERROR) would flag — turning it on is the
+opt-in for interactive use. `--no-summary` / `RUNSPEC_*_ARG_NO_SUMMARY=1`
+suppresses both. (Before 0.33.0 the record and the always-on stderr echo were
+fused under `summary`; the abbreviation `errors`→`err` couldn't fix Rundeck
+because Rundeck classifies by stream, not text.)
+
 ---
 
 ## Do Not
@@ -201,7 +213,7 @@ CLI commands: `init`, `local`, `jump`, `serve` (renamed in 0.8.0 to mirror Pytho
 `[config.logging]` implemented in 0.9.0 — runnables call `getLogger(name)` from `runspec-node`.
 Extra fields (0.10.0): `logger.info('msg', { user_id: '42' })` — `error` key extracts an Error; all other keys appear under `"extra"` in the JSON log.
 Console routing (0.11.0) mirrors Python: INFO → stdout; WARNING+ → stderr with level prefix. No `level` knob. `[config.logging]` auto-adds a `--debug` flag (`RUNSPEC_ARG_DEBUG=1`) that flips DEBUG on everywhere — stdout *and* the audit file (the file defaults to INFO, same as stdout, so external library DEBUG noise stays out of the log).
-Run summary (0.12.0): same closing-line + audit-record shape as Python 0.12.3. `[config.logging] summary = true` (default on); per-invocation suppression via `--no-summary` or `RUNSPEC_ARG_NO_SUMMARY=1`. Log file now lands at `{project_root}/logs/{runnable}.log` — the nearest ancestor `package.json` skipping `node_modules`, falling back to `~/logs/`. `runspec serve` returns a `_meta.runspec` block on every `tools/call` response (`tool`, `duration_ms`, `exit_code`).
+Run summary (0.12.0): same closing-line + audit-record shape as Python 0.12.3. `[config.logging] summary = true` (default on); per-invocation suppression via `--no-summary` or `RUNSPEC_ARG_NO_SUMMARY=1`. Log file now lands at `{project_root}/logs/{runnable}.log` — the nearest ancestor `package.json` skipping `node_modules`, falling back to `~/logs/`. `runspec serve` returns a `_meta.runspec` block on every `tools/call` response (`tool`, `duration_ms`, `exit_code`). Record/console split (node-0.29.0): mirrors Python 0.33.0 — `summary` (default true) gates the audit record; `summary_console` (default false) gates the human-readable stderr echo (off by default so stdout stays clean for pipes and the line never hits Rundeck's stderr=ERROR tagging).
 
 ---
 
@@ -211,8 +223,8 @@ Both Python and Node packages are active and published.
 
 | Package | Version | PyPI / npm | Notes |
 |---|---|---|---|
-| `runspec` | 0.32.2 | PyPI | Core library (reference implementation) |
-| `runspec-node` | 0.28.1 | npm | Node port |
+| `runspec` | 0.33.0 | PyPI | Core library (reference implementation) |
+| `runspec-node` | 0.29.0 | npm | Node port |
 | `runspec-console` | 0.43.0 | PyPI | pywebview desktop console — agentic chat + Forms + SSH jump-host fleet UI (frontend in `packages/console-ui`); desktop toast + taskbar flash on agent confirm-gate events (Windows; `[notifications]` extra); **Rooms** chat-room tab + `chat` trigger source — **always-on, multi-room**: rooms are a property of a fleet host (`room`/`room_port` on the host entry), joined over that host's own SSH tunnel, reconnecting, independent of triggers. `room_via = "exec"` runs `console-room connect` over an SSH exec channel for networks that block port-forwarding |
 | `runspec-room` | 0.4.1 | (unreleased) | The chat-room server (`packages/console-room/`) — a "dumb message pipe with presence". Two front doors, one process: consoles via NDJSON over the SSH tunnel (localhost), people via an OIDC-authenticated browser web app (Starlette + uvicorn, TLS, SQLite transcript). `console-room connect` is the exec-channel relay (stdio↔local room port) for the no-forwarding transport. See `docs/design/console-room-server.md` |
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console) |

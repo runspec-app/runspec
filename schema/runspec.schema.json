@@ -57,8 +57,13 @@
             },
             "summary": {
               "type": "boolean",
-              "description": "Emit a closing summary line after each run.",
+              "description": "Write a structured run-summary record (duration, exit code, per-level event counts) to the audit log after each run. This is the data the console history/analytics tabs and 'runspec logs' read.",
               "default": true
+            },
+            "summary_console": {
+              "type": "boolean",
+              "description": "Also echo a one-line human-readable summary to the terminal (stderr) at exit. Off by default so stdout stays clean for pipes and the line is never tagged ERROR by stream-classifying log processors (e.g. Rundeck). Enable for interactive use.",
+              "default": false
             },
             "store": {
               "type": "string",

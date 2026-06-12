@@ -7,6 +7,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.33.0] / [node-0.29.0] — 2026-06-11
+
+### Changed
+
+- **Run summary split into an always-on audit record and an opt-in console
+  echo.** The `errors`→`err` abbreviation in `0.32.2` could not fix the Rundeck
+  problem because Rundeck classifies log lines by **stream**, not text: it tags
+  *everything* on stderr as ERROR regardless of content, and the summary line
+  was always written to stderr. Rather than route the line cleverly (which would
+  trade the Rundeck issue for polluted stdout pipes), the summary is now two
+  independently controlled parts:
+    - `summary` (`[config.logging]`, default **true**, unchanged) writes the
+      structured `run_summary` record to the audit log — the data the console
+      **history**/**analytics** tabs and `runspec logs` read.
+    - `summary_console` (default **false**, new) echoes the one-line
+      human-readable summary to stderr. Off by default, so a clean run never
+      lands on a stream a processor tags ERROR (Rundeck/CI stay green with zero
+      config) and stdout stays clean for shell pipes. Turn it on for interactive
+      use.
+  The per-invocation `--no-summary` / `RUNSPEC_*_ARG_NO_SUMMARY=1` kill switch
+  still suppresses both parts. The JSON audit record shape is unchanged, so
+  existing history/analytics keep working untouched. The previously fused
+  behaviour (`summary = false` dropping the audit record too) is now decoupled —
+  `summary_console` controls only the terminal echo. Same change in both the
+  Python (`0.33.0`) and Node (`node-0.29.0`) packs.
+
 ## [0.32.2] / [node-0.28.1] — 2026-06-10
 
 ### Changed

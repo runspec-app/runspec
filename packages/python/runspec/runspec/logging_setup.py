@@ -124,7 +124,10 @@ def configure_logging(
 
     Run summary (when `log_cfg["summary"]` is true and `no_summary` is false)
     counts log events by level and emits a single record at process exit
-    with duration, exit code, exception class, and per-level counts.
+    with duration, exit code, exception class, and per-level counts to the
+    audit file. The human-readable one-line echo to stderr is opt-in via
+    `log_cfg["summary_console"]` (default false) so stdout stays clean for
+    pipes and the line never reaches a stderr=ERROR log processor by default.
     """
     global _configured, _summary_state, _debug
     if log_cfg is None or _configured:
@@ -146,8 +149,9 @@ def configure_logging(
     sensitive = _SensitiveFilter()
 
     # Below WARNING → stdout (treated as the runnable's primary output).
-    # Drop run-summary records — they go to the file only; the human-visible
-    # form is written directly to stderr by the atexit hook.
+    # Drop run-summary records — they go to the file only; the optional
+    # human-visible echo is written directly to stderr by the atexit hook
+    # (gated by `summary_console`).
     # Also suppress print-captured records (_from_print) to avoid double output.
     out_handler = logging.StreamHandler(sys.stdout)
     out_handler._runspec_stream = "stdout"  # type: ignore[attr-defined]
@@ -198,8 +202,17 @@ def configure_logging(
     _install_excepthook()
 
     runnable_prefix = runnable_name.upper().replace("-", "_")
-    summary_enabled = bool(log_cfg.get("summary", True)) and not no_summary and not _env_truthy(f"RUNSPEC_{runnable_prefix}_ARG_NO_SUMMARY")
-    if summary_enabled:
+    # Per-invocation kill switch (--no-summary / env) suppresses both the file
+    # record and the console echo for this one run.
+    suppressed = no_summary or _env_truthy(f"RUNSPEC_{runnable_prefix}_ARG_NO_SUMMARY")
+    # `summary` gates the structured audit record (the data the console
+    # history/analytics tabs and `runspec logs` read). `summary_console` gates
+    # the human-readable terminal echo — off by default so stdout stays clean
+    # for pipes and the line never reaches a stream that log processors (e.g.
+    # Rundeck, which tags stderr as ERROR) would flag.
+    write_record = bool(log_cfg.get("summary", True)) and not suppressed
+    write_console = bool(log_cfg.get("summary_console", False)) and not suppressed
+    if write_record or write_console:
         user, user_target = _get_invoker()
         _summary_state = {
             "counter": counter,
@@ -214,6 +227,8 @@ def configure_logging(
             "user_target": user_target,
             "run_id": run_id,
             "invocation_args": invocation_args or {},
+            "write_record": write_record,
+            "write_console": write_console,
         }
         atexit.register(_emit_run_summary)
 
@@ -579,9 +594,10 @@ def _format_summary_line(state: dict[str, Any], duration_ms: int, exit_code: int
     user = state.get("user", "unknown")
     user_target = state.get("user_target")
     user_part = f" | user: {user} → {user_target} (sudo)" if user_target else f" | user: {user}"
-    # Abbreviated level words ("warn"/"err", never "warning"/"error") so the line
-    # doesn't trip Rundeck's case-insensitive `error` log-highlight/level filters,
-    # which would otherwise paint a clean run red over the literal "0 errors".
+    # Abbreviated level words ("warn"/"err", never "warning"/"error") keep the
+    # line terse. (Stream-tagging log processors like Rundeck classify by stream,
+    # not text — this echo is opt-in and stays on stderr, so a clean run isn't
+    # flagged ERROR unless an operator turns `summary_console` on in that env.)
     events = f"{total} events ({warnings} warn, {errors} err)"
     if state["exception"] or exit_code != 0:
         exc = state["exception"]
@@ -591,7 +607,8 @@ def _format_summary_line(state: dict[str, Any], duration_ms: int, exit_code: int
 
 
 def _emit_run_summary() -> None:
-    """atexit hook — emit one summary record to the file and one line to stderr."""
+    """atexit hook — emit the summary record to the file (gated by `summary`)
+    and, when `summary_console` is on, one human-readable line to stderr."""
     state = _summary_state
     if state is None or state["emitted"]:
         return
@@ -603,29 +620,35 @@ def _emit_run_summary() -> None:
     exit_code = 1 if state["exception"] else 0
 
     # File record via the standard logger — picked up by the file handler only
-    # (console handlers filter out runspec.runsummary by logger name).
+    # (console handlers filter out runspec.runsummary by logger name). Gated by
+    # `summary`; this is the record the console + `runspec logs` consume.
     invocation_args = state.get("invocation_args", {})
-    with contextlib.suppress(Exception):
-        logging.getLogger(_RUN_SUMMARY_LOGGER).info(
-            "run completed",
-            extra={
-                "event": "run_summary",
-                "run_id": state.get("run_id"),
-                "runnable": state["runnable"],
-                "command_path": state["command_path"],
-                "duration_ms": duration_ms,
-                "exit_code": exit_code,
-                "agent": state["agent"],
-                "autonomy": state["autonomy"],
-                "exception": state["exception"],
-                "events": dict(state["counter"].counts),
-                "user": state["user"],
-                "user_target": state["user_target"],
-                "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
-                "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
-            },
-        )
+    if state.get("write_record", True):
+        with contextlib.suppress(Exception):
+            logging.getLogger(_RUN_SUMMARY_LOGGER).info(
+                "run completed",
+                extra={
+                    "event": "run_summary",
+                    "run_id": state.get("run_id"),
+                    "runnable": state["runnable"],
+                    "command_path": state["command_path"],
+                    "duration_ms": duration_ms,
+                    "exit_code": exit_code,
+                    "agent": state["agent"],
+                    "autonomy": state["autonomy"],
+                    "exception": state["exception"],
+                    "events": dict(state["counter"].counts),
+                    "user": state["user"],
+                    "user_target": state["user_target"],
+                    "invocation_args": {k: v["value"] for k, v in invocation_args.items()},
+                    "arg_sources": {k: v["source"] for k, v in invocation_args.items()},
+                },
+            )
 
-    with contextlib.suppress(Exception):
-        sys.stderr.write(_format_summary_line(state, duration_ms, exit_code) + "\n")
-        sys.stderr.flush()
+    # Human-readable echo — opt-in (`summary_console`). Stays on stderr so it
+    # never pollutes stdout pipes; off by default so it never reaches Rundeck's
+    # stderr=ERROR tagging unless the operator explicitly asks for it.
+    if state.get("write_console", False):
+        with contextlib.suppress(Exception):
+            sys.stderr.write(_format_summary_line(state, duration_ms, exit_code) + "\n")
+            sys.stderr.flush()

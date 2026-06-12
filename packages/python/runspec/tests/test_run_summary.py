@@ -48,8 +48,8 @@ def _reset(monkeypatch):
     ls._debug = False
 
 
-def _cfg(summary=True):
-    return {"rotate": "midnight", "keep": 7, "summary": summary}
+def _cfg(summary=True, summary_console=False):
+    return {"rotate": "midnight", "keep": 7, "summary": summary, "summary_console": summary_console}
 
 
 # ── Counter ──────────────────────────────────────────────────────────────────
@@ -101,13 +101,25 @@ class TestEmit:
         assert s["extra"]["exit_code"] == 0
         assert s["extra"]["exception"] is None
 
-    def test_summary_writes_line_to_stderr(self, capsys):
-        configure_logging(_cfg(), runnable_name="myscript")
+    def test_summary_console_writes_line_to_stderr(self, capsys):
+        configure_logging(_cfg(summary_console=True), runnable_name="myscript")
         logging.getLogger("test.stderr").info("ran")
         _emit_run_summary()
         err = capsys.readouterr().err
         assert "runspec: myscript completed" in err
         assert "events" in err
+
+    def test_console_echo_off_by_default(self, tmp_path, capsys):
+        # Default: the audit record is written but NO human line hits stderr —
+        # keeps stdout clean for pipes and dodges Rundeck's stderr=ERROR tagging.
+        configure_logging(_cfg(), runnable_name="myscript")
+        logging.getLogger("test.default").info("ran")
+        _emit_run_summary()
+        err = capsys.readouterr().err
+        assert "runspec: myscript" not in err
+        log_path = tmp_path / "logs" / "myscript.log"
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()]
+        assert any(obj["logger"] == "runspec.runsummary" for obj in lines)
 
     def test_summary_not_in_console_handlers(self, capsys):
         """The JSON form is file-only — neither stdout nor stderr should contain it."""
@@ -146,7 +158,7 @@ class TestExceptionCapture:
         assert ls._summary_state["exception"]["message"] == "boom"
 
     def test_failure_summary_includes_exception_class(self, capsys):
-        configure_logging(_cfg(), runnable_name="failing")
+        configure_logging(_cfg(summary_console=True), runnable_name="failing")
         try:
             raise RuntimeError("bad")
         except RuntimeError:
@@ -328,13 +340,29 @@ class TestDisable:
         # _summary_state must NOT be populated when summary is disabled
         assert ls._summary_state is None
 
-    def test_summary_false_in_config_disables(self):
+    def test_summary_false_in_config_disables_record(self, tmp_path):
+        # summary=False drops the audit record; with console off (default) the
+        # whole hook is inactive.
         configure_logging(_cfg(summary=False), runnable_name="x")
         assert ls._summary_state is None
 
+    def test_summary_console_active_even_when_record_off(self, tmp_path, capsys):
+        # The two switches are independent: summary=False, summary_console=True
+        # → no audit record, but the human line still prints.
+        configure_logging(_cfg(summary=False, summary_console=True), runnable_name="x")
+        assert ls._summary_state is not None
+        logging.getLogger("t").info("ran")
+        _emit_run_summary()
+        err = capsys.readouterr().err
+        assert "runspec: x completed" in err
+        log_path = tmp_path / "logs" / "x.log"
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()] if log_path.exists() else []
+        assert not any(obj.get("logger") == "runspec.runsummary" for obj in lines)
+
     def test_env_var_disables_summary(self, monkeypatch):
         monkeypatch.setenv("RUNSPEC_X_ARG_NO_SUMMARY", "1")
-        configure_logging(_cfg(summary=True), runnable_name="x")
+        # Suppresses both parts even with console explicitly on.
+        configure_logging(_cfg(summary=True, summary_console=True), runnable_name="x")
         assert ls._summary_state is None
 
 
@@ -343,9 +371,8 @@ class TestDisable:
 
 class TestStderrLine:
     def test_summary_uses_abbreviated_levels(self, capsys):
-        # Abbreviated "warn"/"err" (no "warning"/"error") keeps the line from
-        # tripping Rundeck's case-insensitive `error` log-highlight filter.
-        configure_logging(_cfg(), runnable_name="r")
+        # Abbreviated "warn"/"err" (no "warning"/"error") keeps the line terse.
+        configure_logging(_cfg(summary_console=True), runnable_name="r")
         logging.getLogger("t").warning("one")
         _emit_run_summary()
         err = capsys.readouterr().err
@@ -354,7 +381,7 @@ class TestStderrLine:
         assert "error" not in err
 
     def test_summary_counts_render_without_pluralising(self, capsys):
-        configure_logging(_cfg(), runnable_name="r")
+        configure_logging(_cfg(summary_console=True), runnable_name="r")
         logging.getLogger("t").warning("a")
         logging.getLogger("t").warning("b")
         _emit_run_summary()
@@ -383,7 +410,7 @@ class TestInvoker:
     def test_user_appended_to_stderr_line(self, capsys, monkeypatch):
         monkeypatch.delenv("SUDO_USER", raising=False)
         monkeypatch.setenv("USER", "alice")
-        configure_logging(_cfg(), runnable_name="r")
+        configure_logging(_cfg(summary_console=True), runnable_name="r")
         _emit_run_summary()
         err = capsys.readouterr().err
         assert "| user: alice" in err
@@ -391,7 +418,7 @@ class TestInvoker:
     def test_sudo_user_shown_with_target(self, capsys, monkeypatch):
         monkeypatch.setenv("SUDO_USER", "alice")
         monkeypatch.setenv("USER", "root")
-        configure_logging(_cfg(), runnable_name="r")
+        configure_logging(_cfg(summary_console=True), runnable_name="r")
         _emit_run_summary()
         err = capsys.readouterr().err
         assert "| user: alice → root (sudo)" in err

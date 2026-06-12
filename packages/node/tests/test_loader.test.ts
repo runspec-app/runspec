@@ -178,7 +178,7 @@ test('normalises [config.logging] with defaults', () => {
 description = "hi"
 `);
   const raw = loadRaw(file);
-  expect(raw.config.logging).toEqual({ rotate: 'midnight', keep: 7, summary: true, store: 'single' });
+  expect(raw.config.logging).toEqual({ rotate: 'midnight', keep: 7, summary: true, summaryConsole: false, store: 'single' });
 });
 
 test('normalises [config.logging] store = per-run', () => {
@@ -222,7 +222,7 @@ summary = false
 description = "hi"
 `);
   const raw = loadRaw(file);
-  expect(raw.config.logging).toEqual({ rotate: '10 MB', keep: 3, summary: false, store: 'single' });
+  expect(raw.config.logging).toEqual({ rotate: '10 MB', keep: 3, summary: false, summaryConsole: false, store: 'single' });
 });
 
 test('[config.logging] summary defaults to true when omitted', () => {

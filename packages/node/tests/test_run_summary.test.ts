@@ -111,9 +111,9 @@ test('summary writes one record to the audit file', () => {
   expect(typeof s.extra.duration_ms).toBe('number');
 });
 
-test('summary writes a one-line summary to stderr', () => {
+test('summary_console writes a one-line summary to stderr', () => {
   const dir = tmpDir();
-  configureLogging(makeCfg(dir));
+  configureLogging(makeCfg(dir, { summaryConsole: true }));
   getLogger('test.stderr').info('ran');
   const cap = captureStderr();
   emitRunSummary();
@@ -121,6 +121,21 @@ test('summary writes a one-line summary to stderr', () => {
   const joined = cap.lines.join('');
   expect(joined).toContain('runspec: myscript completed');
   expect(joined).toContain('events');
+});
+
+test('console echo is off by default — record written, no stderr line', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir)); // summary on (default), summary_console off (default)
+  getLogger('test.default').info('ran');
+  const cap = captureStderr();
+  emitRunSummary();
+  cap.restore();
+  // No human-readable line on stderr...
+  expect(cap.lines.join('')).not.toContain('runspec: myscript');
+  // ...but the structured audit record is still written to the file.
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8');
+  const summary = content.trim().split('\n').map(l => JSON.parse(l)).find(o => o.logger === RUN_SUMMARY_LOGGER);
+  expect(summary.extra.event).toBe('run_summary');
 });
 
 test('summary is not echoed to stdout or stderr via console handlers', () => {
@@ -163,13 +178,36 @@ test('noSummary option disables summary', () => {
   expect(fs.existsSync(path.join(dir, 'logs', 'myscript.log'))).toBe(false);
 });
 
-test('summary=false in config disables summary', () => {
+test('summary=false in config disables the audit record', () => {
   const dir = tmpDir();
   configureLogging(makeCfg(dir, { summary: false }));
+  getLogger('t').info('ran');
   const cap = captureStderr();
   emitRunSummary();
   cap.restore();
   expect(cap.lines.join('')).not.toContain('runspec: ');
+  const logFile = path.join(dir, 'logs', 'myscript.log');
+  const records = fs.existsSync(logFile)
+    ? fs.readFileSync(logFile, 'utf-8').trim().split('\n').map(l => JSON.parse(l))
+    : [];
+  expect(records.find(o => o.logger === RUN_SUMMARY_LOGGER)).toBeUndefined();
+});
+
+test('summary_console works independently of summary (line on, record off)', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir, { summary: false, summaryConsole: true }));
+  getLogger('t').info('ran');
+  const cap = captureStderr();
+  emitRunSummary();
+  cap.restore();
+  // The human line is emitted...
+  expect(cap.lines.join('')).toContain('runspec: myscript completed');
+  // ...but no run_summary record lands in the audit file.
+  const logFile = path.join(dir, 'logs', 'myscript.log');
+  const records = fs.existsSync(logFile)
+    ? fs.readFileSync(logFile, 'utf-8').trim().split('\n').map(l => JSON.parse(l))
+    : [];
+  expect(records.find(o => o.logger === RUN_SUMMARY_LOGGER)).toBeUndefined();
 });
 
 test('RUNSPEC_MYSCRIPT_ARG_NO_SUMMARY=1 disables summary', () => {
@@ -185,10 +223,9 @@ test('RUNSPEC_MYSCRIPT_ARG_NO_SUMMARY=1 disables summary', () => {
 // ── stderr line shape ────────────────────────────────────────────────────────
 
 test('success line uses abbreviated "warn"/"err" (no "warning"/"error")', () => {
-  // Abbreviated levels keep the line from tripping Rundeck's case-insensitive
-  // `error` log-highlight filter, which would paint a clean run red.
+  // Abbreviated levels keep the line terse (the console echo is opt-in).
   const dir = tmpDir();
-  configureLogging(makeCfg(dir));
+  configureLogging(makeCfg(dir, { summaryConsole: true }));
   getLogger('t').warning('one');
   const cap = captureStderr();
   emitRunSummary();
@@ -201,7 +238,7 @@ test('success line uses abbreviated "warn"/"err" (no "warning"/"error")', () => 
 
 test('counts render without pluralising the level words', () => {
   const dir = tmpDir();
-  configureLogging(makeCfg(dir));
+  configureLogging(makeCfg(dir, { summaryConsole: true }));
   getLogger('t').warning('a');
   getLogger('t').warning('b');
   const cap = captureStderr();
@@ -217,7 +254,7 @@ test('user appended to stderr line (no sudo)', () => {
   const origSudo = process.env['SUDO_USER'];
   delete process.env['SUDO_USER'];
   process.env['USER'] = 'alice';
-  configureLogging(makeCfg(dir));
+  configureLogging(makeCfg(dir, { summaryConsole: true }));
   const cap = captureStderr();
   emitRunSummary();
   cap.restore();
@@ -229,7 +266,7 @@ test('sudo user shown with arrow and target', () => {
   const dir = tmpDir();
   process.env['SUDO_USER'] = 'alice';
   process.env['USER'] = 'root';
-  configureLogging(makeCfg(dir));
+  configureLogging(makeCfg(dir, { summaryConsole: true }));
   const cap = captureStderr();
   emitRunSummary();
   cap.restore();

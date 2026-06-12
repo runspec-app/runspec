@@ -269,30 +269,45 @@ automatic. See the shared-venv deployment guide for copy-paste schedules.
 ## Run summary
 
 When `[config.logging]` is present, runspec emits a **run summary** at process
-exit — one structured record to the audit log plus one human-readable line to
-stderr:
+exit. This has two independently controlled parts:
 
+- **The audit record** (`summary`, default **on**) — one structured JSON record
+  written to the audit log. It captures the run's duration, exit code, log-event
+  counts by level, the effective autonomy, whether it ran under an agent
+  (`runspec serve`), the command path, and any uncaught exception. This is the
+  data the console **history**/**analytics** tabs and `runspec logs` read, so it
+  gives every invocation an audit-trail entry even when the tool logs nothing.
+
+- **The console echo** (`summary_console`, default **off**) — one human-readable
+  line to **stderr**:
+
+  ```
+  runspec: deploy completed in 1.84s — 12 events (2 warn, 0 err)
+  ```
+
+The echo is **off by default** for two reasons: stdout stays clean for shell
+pipes (`mytool --json | jq` is never polluted — and the line, when on, is on
+stderr, which `|` doesn't capture either), and the line never lands on a stream
+that **stream-classifying log processors tag as ERROR**. Rundeck, for example,
+labels *everything* on stderr as ERROR regardless of content — so an
+unconditional echo would paint a clean run red there. Leaving it off keeps
+Rundeck/CI output clean with zero configuration; turn it on for interactive use:
+
+```toml
+[config.logging]
+summary_console = true   # show the closing line in the terminal
 ```
-runspec: deploy completed in 1.84s — 12 events (2 warn, 0 err)
-```
 
-The level words are abbreviated (`warn`/`err`, never `warning`/`error`) so the
-line survives log processors that flag any case-insensitive `error` match — e.g.
-Rundeck's output highlighter, which would otherwise paint a clean run red and tag
-it at ERROR level for anything consuming Rundeck's output.
+(The level words are abbreviated `warn`/`err` purely to keep the line terse.)
 
-The record captures the run's duration, exit code, log-event counts by level,
-the effective autonomy, whether it ran under an agent (`runspec serve`), the
-command path, and any uncaught exception. It gives every invocation an audit
-trail entry even when the tool itself logs nothing.
-
-Summaries are on by default. Suppress a single invocation with `--no-summary`
-(or `RUNSPEC_ARG_NO_SUMMARY=1`), or turn them off entirely with
-`summary = false` under `[config.logging]`.
+Suppress **both** parts for a single invocation with `--no-summary` (or
+`RUNSPEC_ARG_NO_SUMMARY=1`). Set `summary = false` to drop the audit record too
+(note: that also removes the run from the console history/analytics).
 
 !!! note "Availability"
-    Run summaries landed in **runspec 0.12.x** and **node-0.12.0** (same
-    closing-line and record shape in both).
+    Run summaries landed in **runspec 0.12.x** and **node-0.12.0**. The
+    `summary`/`summary_console` split (audit record always; terminal echo
+    opt-in) arrived in **runspec 0.33.0** and **node-0.29.0**.
 
 ---
 
