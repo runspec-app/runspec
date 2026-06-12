@@ -38,6 +38,10 @@ export interface ArgSpec {
   env?: string | string[];
   deprecated?: string;
   autonomy?: string;
+  // Per-arg discoverability audiences. Operators/agents always see every arg;
+  // this gates only the visitor self-service form, which includes the arg solely
+  // when 'self-service' is listed (default-deny). See normaliseDiscoverable.
+  discoverable?: boolean | string[];
   ui?: string;
   hint?: string; // UI placeholder/hint text (str/path/password types)
   meta?: Record<string, unknown>;

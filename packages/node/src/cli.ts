@@ -556,6 +556,12 @@ function argToJsonSchema(arg: ArgSpec): Record<string, unknown> {
   if (arg.maxLength !== undefined) prop['maxLength'] = arg.maxLength;
   if (arg.multiple) prop = { type: 'array', items: prop };
 
+  // Per-arg discoverability — only when declared. An absent x-discoverable reads
+  // as operator-only (default-deny) to the visitor catalog, mirroring runspec.
+  if (arg.discoverable !== undefined) {
+    prop['x-discoverable'] = normaliseDiscoverable(arg.discoverable);
+  }
+
   return prop;
 }
 

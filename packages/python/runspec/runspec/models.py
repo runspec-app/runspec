@@ -62,6 +62,11 @@ class Arg:
     env: str | None = None
     deprecated: str | None = None
     autonomy: str | None = None
+    # Per-arg discoverability audiences (raw spec value). Operators/agents always
+    # see every arg; this gates only visitor-facing surfaces (the self-service
+    # catalog form), which include an arg solely when 'self-service' is listed —
+    # default-deny. See runspec.discovery.normalise_discoverable.
+    discoverable: bool | list[str] | None = None
     ui: str | None = None
     hint: str | None = None  # UI placeholder/hint text (str/path/password types)
     meta: dict[str, Any] | None = None

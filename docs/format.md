@@ -204,6 +204,7 @@ description = "Output quality. Values below 60 are rarely useful."
 | `env` | string \| array | Environment variable fallback(s), checked after the CLI and before the default. |
 | `deprecated` | string | Deprecation message shown on use. |
 | `autonomy` | string | Per-arg autonomy override. Most restrictive level wins. |
+| `discoverable` | bool \| array | Audiences that see this arg on the visitor self-service form. Default-deny — listed only when it contains `"self-service"`. See [Visitor-form curation](#visitor-form-curation-discoverable). |
 | `ui` | string | Form control hint. Inferred from type if omitted. |
 | `hint` | string | Placeholder text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined pass-through metadata. runspec never reads it. |
@@ -313,6 +314,51 @@ runspec-console renders `hint` as the input's placeholder.
 
 !!! note "Availability"
     The `hint` field was added in **runspec 0.30.0** and **node-0.27.0**.
+
+### Visitor-form curation (`discoverable`)
+
+[`discoverable`](#discoverable) at the runnable level decides whether a runnable
+reaches a visitor-facing self-service catalog at all. Set it on an **argument**
+to curate *which of that runnable's args* appear on the visitor's generated form —
+without hiding anything from operators or the agent.
+
+The arg level consults only the `self-service` audience, and it is **default-deny**:
+an arg appears on the visitor form **only** when its `discoverable` explicitly
+lists `"self-service"`. Operators and the agent always see every argument (they
+enact the runnable; an input can't be hidden from the caller), so a bare `true`,
+`false`, or `["operator"]` all keep an arg *off* the visitor form.
+
+```toml
+[request-vm]
+description  = "Provision a VM for the caller"
+discoverable = ["operator", "self-service"]    # the runnable is in the catalog
+
+[request-vm.args]
+size          = {options = ["small", "medium", "large"], discoverable = ["self-service"]}
+region        = {default = "eu-west-1",                   discoverable = ["self-service"]}
+justification = {type = "str",                            discoverable = ["self-service"]}
+project_id    = {type = "str"}        # operator-only: off the visitor form
+force         = {type = "flag"}       # operator-only: off the visitor form
+```
+
+The visitor sees a three-field form (`size`, `region`, `justification`). The
+operator-only args are resolved when the request is enacted — from their
+`default`, or supplied by the operator/agent at the autonomy gate. (A `password`
+arg is always excluded from visitor forms regardless of `discoverable`.)
+
+| Value | On the visitor form? | Operator sees it? |
+|---|---|---|
+| absent | no (default-deny) | yes |
+| `["self-service"]` | yes | yes |
+| `["operator", "self-service"]` | yes | yes |
+| `["operator"]` / `true` / `false` | no | yes |
+
+The emitted arg schema carries the canonical audience list as `x-discoverable`
+when set; the self-service catalog publisher filters on it.
+
+!!! note "Availability"
+    Arg-level `discoverable` was added in **runspec 0.35.0**. Node parity is
+    tracked separately.
 
 ### Multiple values (`multiple`, `delimiter`)
 

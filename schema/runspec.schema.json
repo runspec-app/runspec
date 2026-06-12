@@ -394,6 +394,24 @@
           "$ref": "#/$defs/autonomy_level",
           "description": "Per-arg autonomy override. Escalates to this level if more restrictive than the runnable level."
         },
+        "discoverable": {
+          "description": "Which audiences see this arg on visitor-facing surfaces (the self-service catalog form). Operators/agents always see every arg; this only gates the visitor form, which includes the arg solely when 'self-service' is listed (default-deny). Surfaces as x-discoverable on the emitted arg schema.",
+          "oneOf": [
+            {
+              "type": "boolean",
+              "description": "true ≡ [\"operator\"] (operator-only, not on the visitor form); false hides it from discovery surfaces. Neither opts into self-service."
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["operator", "self-service"]
+              },
+              "minItems": 1,
+              "description": "List 'self-service' to put the arg on the visitor catalog form (opt-in only). 'operator' is implicit — operators always see every arg."
+            }
+          ]
+        },
         "ui": {
           "type": "string",
           "enum": ["text", "password", "number", "file", "directory", "checkbox", "radio", "select", "multiselect", "slider"],

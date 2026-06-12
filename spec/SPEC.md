@@ -524,6 +524,20 @@ flagged by `runspec local`.
 
 Default when unspecified: `true` (i.e. `["operator"]`).
 
+**Arg-level `discoverable` (since runspec 0.35.0).** The same keyword may be set on
+an individual **argument** to curate which of a runnable's args appear on a
+visitor-facing self-service form, without hiding anything from operators. The arg
+level consults **only** the `self-service` audience and is **default-deny**: an arg
+is on the visitor form only when its `discoverable` explicitly lists
+`"self-service"`. Operators and the agent always see every argument — they enact
+the runnable, and an input cannot be hidden from the caller — so `true`, `false`,
+and `["operator"]` all keep an arg off the visitor form (a `password` arg is always
+excluded regardless). Operator surfaces (`runspec serve`/`local`) are unaffected by
+arg-level `discoverable`; only the self-service catalog consults it, via the
+per-arg `x-discoverable` emitted on the arg schema. Curating subcommands and a
+console-side per-queue allowlist are possible later additions; this cut covers
+top-level args.
+
 ### `output`
 
 Declares what the runnable writes to stdout. Used by agent frameworks and the
@@ -718,6 +732,7 @@ description = "Controls output quality. Values below 60 rarely useful."
 | `env` | string | Environment variable fallback. |
 | `deprecated` | string | Deprecation message shown on use. |
 | `autonomy` | string | Per-arg autonomy override. Escalates if more restrictive. |
+| `discoverable` | bool \| array | Audiences that see this arg on the visitor self-service form. Default-deny: included only when it lists `"self-service"`. Operators always see every arg. See below. |
 | `ui` | string | Form control hint. Inferred from type if omitted. |
 | `hint` | string | Placeholder / hint text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined metadata. Pass-through — runspec never interprets the contents. |
@@ -747,6 +762,7 @@ fields that *are* present.
 | `env` | `None` | When set, the named env var is checked before the spec default. |
 | `deprecated` | `None` | Set to a string message; shown on use. |
 | `autonomy` | inherits `[config] autonomy-default` (which itself defaults to `"confirm"`) | Per-arg overrides escalate the runnable's effective autonomy if more restrictive. |
+| `discoverable` | `None` (absent ≡ operator-only; not on the visitor form) | Only the `self-service` audience is consulted at the arg level. Emitted as `x-discoverable` when set. |
 | `ui` | derived from `type` at render time (text/number/checkbox/dropdown/etc.) | See "Form Control Inference". |
 | `hint` | `None` | Optional UI placeholder text; no effect on parsing or validation. |
 | `meta` | `None` | Pass-through — runspec never reads it. |

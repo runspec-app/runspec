@@ -46,3 +46,25 @@ ticket = {type = "str", multiple = true, pattern = "[A-Z]+-[0-9]+"}
   // The per-item constraint validates each element, so it belongs in items.
   expect(ticket['items']).toEqual({ type: 'string', pattern: '[A-Z]+-[0-9]+' });
 });
+
+test('arg-level discoverable emits normalised x-discoverable', () => {
+  const schema = schemaFor(
+    `
+[request-vm]
+[request-vm.args]
+size = {options = ["s", "m", "l"], discoverable = ["self-service"]}
+force = {type = "flag", discoverable = true}
+region = {default = "eu"}
+`,
+    'request-vm',
+  );
+  const props = (schema['inputSchema'] as Record<string, Record<string, unknown>>)['properties'] as Record<
+    string,
+    Record<string, unknown>
+  >;
+  expect(props['size']['x-discoverable']).toEqual(['self-service']);
+  // true → ["operator"]: operators always see it, but it's NOT on the visitor form.
+  expect(props['force']['x-discoverable']).toEqual(['operator']);
+  // Absent → omitted (reads as operator-only / default-deny to the catalog).
+  expect(props['region']).not.toHaveProperty('x-discoverable');
+});

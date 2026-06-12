@@ -922,6 +922,7 @@ def _build_runspec(
             env=spec.get("env"),
             deprecated=spec.get("deprecated"),
             autonomy=spec.get("autonomy"),
+            discoverable=spec.get("discoverable"),
             ui=spec.get("ui"),
             hint=spec.get("hint"),
             meta=spec.get("meta"),

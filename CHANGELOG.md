@@ -7,6 +7,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.31.0] — 2026-06-12
+
+### Added
+
+- **Arg-level `discoverable` — Node parity** with `runspec` 0.35.0. The
+  `discoverable` keyword may be set on an individual argument to curate which of a
+  runnable's args appear on a visitor self-service form. Default-deny,
+  self-service-only: an arg is on the visitor form only when its `discoverable`
+  lists `"self-service"`; operators always see every arg. Carried through the
+  loader (`ArgSpec.discoverable`) and emitted as per-arg `x-discoverable` on the
+  tool schema when set.
+
+## [0.35.0] — 2026-06-12
+
+### Added
+
+- **Arg-level `discoverable` — curate which args reach a visitor form.** The
+  `discoverable` keyword (added at the runnable level in 0.34.0) may now be set on
+  an individual **argument**, to control which of a runnable's args appear on a
+  visitor-facing self-service catalog form — without hiding anything from
+  operators or the agent.
+    - **Default-deny, self-service-only.** The arg level consults *only* the
+      `self-service` audience: an arg is on the visitor form **only** when its
+      `discoverable` explicitly lists `"self-service"`. Operators and the agent
+      always see every argument (they enact the runnable — an input can't be
+      hidden from the caller), so `true`, `false`, and `["operator"]` all keep an
+      arg off the visitor form. A `password` arg is always excluded regardless.
+    - **Emitted as `x-discoverable`** on the per-arg schema (when set), mirroring
+      the runnable-level field, so the self-service catalog publisher can filter.
+    - **Operator surfaces unchanged:** `runspec serve`/`local` show every arg —
+      arg-level `discoverable` only ever subtracts from the visitor form.
+    - Carried through the loader and surfaced on the parsed `Arg` (`Arg.discoverable`).
+      Schema, `spec/SPEC.md`, and `docs/format.md` updated together. Node parity
+      is tracked separately. Per-subcommand curation is a later addition.
+
 ## [0.34.0] / [node-0.30.0] — 2026-06-12
 
 ### Added

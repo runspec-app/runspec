@@ -981,6 +981,14 @@ def _arg_to_json_schema(arg: dict[str, Any]) -> dict[str, Any]:
     if arg.get("meta"):
         prop["x-meta"] = arg["meta"]
 
+    # Per-arg discoverability audiences — only emitted when declared. Consumers
+    # of the visitor catalog include an arg only when 'self-service' is present;
+    # an absent x-discoverable therefore reads as operator-only (default-deny).
+    if arg.get("discoverable") is not None:
+        from runspec.discovery import normalise_discoverable
+
+        prop["x-discoverable"] = normalise_discoverable(arg["discoverable"])
+
     return prop
 
 
