@@ -5872,7 +5872,11 @@ class Bridge:
 
         for address in sorted(self._mailbox_queues()):
             try:
-                for payload in read_mailbox_items(address, limit):
+                # read_mailbox_items returns newest-first; replay **oldest-first**
+                # so each card's created_at rises with mail recency — the inbox
+                # (sorted newest-created first) then shows the newest mail on top,
+                # matching live mail rather than inverting the backlog.
+                for payload in reversed(read_mailbox_items(address, limit)):
                     # replay=True: reconstruct claim/lifecycle state without
                     # re-feeding a claimed event (no re-draft on restart).
                     self._ingest_email(payload, replay=True)

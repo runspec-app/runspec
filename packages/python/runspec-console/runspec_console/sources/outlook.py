@@ -38,7 +38,7 @@ import queue
 import re
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from ..events import EmitFn, Event, register_source
@@ -139,6 +139,22 @@ def _header_field(blob: str, name: str) -> str:
     return _str(msg.get(name)).strip()
 
 
+def _named_header(mail: Any, name: str) -> str:
+    """Read a custom internet header carried as a **PS_INTERNET_HEADERS named
+    property** directly off the MailItem — the same property :func:`send_claim_marker`
+    sets. This is the reliable read for **internal same-org mail**, whose
+    ``PR_TRANSPORT_MESSAGE_HEADERS`` block is empty (it never traversed SMTP
+    transport), so parsing the transport blob can't see the header — the marker on
+    an internal claim ack would otherwise be missed and the ack mistaken for a new
+    requester email. ``name`` is the lowercase header (e.g. ``x-runspec-claim``);
+    ``""`` when absent / off-COM. Duck-typed + failure-swallowing, like
+    :func:`_transport_headers`."""
+    try:
+        return _str(mail.PropertyAccessor.GetProperty(_PS_INTERNET_HEADERS + name))
+    except Exception:
+        return ""
+
+
 def _received_ts_from_headers(blob: str) -> float:
     """The originating ``Date`` header as a POSIX timestamp (0.0 when absent /
     unparseable). Gives the mailbox-claim fold a stable *server-ish* order key —
@@ -197,8 +213,14 @@ def _mail_payload(mail: Any) -> dict[str, Any]:
         "received_ts": _received_ts(mail, headers),
         "message_id": _header_field(headers, "Message-ID"),
         # The X-Runspec-Claim marker value on a claim/lifecycle ack email (""
-        # for an ordinary message); the bridge parses it via mailbox_claim.
-        "claim_marker": _header_field(headers, "X-Runspec-Claim"),
+        # for an ordinary message); the bridge parses it via mailbox_claim. Read
+        # the PS_INTERNET_HEADERS named property first (the canonical source we
+        # set — survives internal same-org delivery, where the transport blob is
+        # empty), falling back to the transport header for externally-routed mail.
+        "claim_marker": (
+            _named_header(mail, "x-runspec-claim")
+            or _header_field(headers, "X-Runspec-Claim")
+        ),
     }
 
 
@@ -529,12 +551,113 @@ def send_claim_marker(
 # console reconstructs in-flight conversations and their current claim/state.
 
 
-def read_mailbox_items(mailbox_address: str, limit: int = 50) -> list[dict[str, Any]]:
+def _shared_inbox(namespace: Any, mailbox_address: str) -> Any | None:
+    """Resolve a shared mailbox's Inbox folder, tolerant of how it's mounted in the
+    Outlook profile. Returns the folder, or ``None`` if no strategy works.
+
+    Outlook surfaces a shared mailbox three different ways, and only the first
+    works with ``GetSharedDefaultFolder`` (which is for *delegate* access to
+    someone else's default folders):
+
+    1. **Delegated** — granted access to the mailbox →
+       ``GetSharedDefaultFolder(recipient, olFolderInbox)``.
+    2. **Added as an account** (own credentials / a manual add) — it appears in
+       ``namespace.Accounts`` with its ``SmtpAddress``; use
+       ``account.DeliveryStore.GetDefaultFolder(olFolderInbox)``.
+    3. **Auto-mapped as a secondary store** — it appears as a top-level folder in
+       ``namespace.Folders`` named for the mailbox; match it and take ``Inbox``.
+
+    When the mailbox is mounted as its own store (cases 2/3 — the common setup),
+    ``GetSharedDefaultFolder`` raises **E_NOTIMPL (0x80004001)**, so we fall
+    through to the store-based strategies. Operates on the COM ``namespace`` passed
+    in (no win32 import here), so the strategy selection is unit-testable with
+    fakes."""
+    OL_FOLDER_INBOX = 6
+    target = mailbox_address.strip().lower()
+
+    # 1) Delegate access.
+    try:
+        recipient = namespace.CreateRecipient(mailbox_address)
+        recipient.Resolve()
+        if getattr(recipient, "Resolved", False):
+            return namespace.GetSharedDefaultFolder(recipient, OL_FOLDER_INBOX)
+    except Exception as exc:  # noqa: BLE001 — E_NOTIMPL when it's its own store
+        logger.info(
+            "outlook: delegate access to %s unavailable (%s); trying stores",
+            mailbox_address,
+            exc,
+        )
+
+    # 2) Added as an account — match on SMTP, take its delivery store's Inbox.
+    try:
+        for account in namespace.Accounts:
+            smtp = str(getattr(account, "SmtpAddress", "") or "").strip().lower()
+            if smtp and smtp == target:
+                store = getattr(account, "DeliveryStore", None)
+                if store is not None:
+                    return store.GetDefaultFolder(OL_FOLDER_INBOX)
+    except Exception:  # noqa: BLE001 — best-effort; fall through to folders
+        logger.info("outlook: account lookup for %s failed", mailbox_address)
+
+    # 3) Auto-mapped secondary store — a top-level folder named for the mailbox.
+    local = target.split("@", 1)[0]
+    try:
+        for store_folder in namespace.Folders:
+            name = str(getattr(store_folder, "Name", "") or "").strip().lower()
+            if name and (
+                name == target or local == name or local in name.replace(" ", "-")
+            ):
+                try:
+                    return store_folder.Folders["Inbox"]
+                except Exception:  # noqa: BLE001 — this store has no Inbox; keep looking
+                    continue
+    except Exception:  # noqa: BLE001 — best-effort
+        logger.info("outlook: store-folder lookup for %s failed", mailbox_address)
+
+    return None
+
+
+def _recent_filter(now: datetime, days: int) -> str:
+    """A **DASL** date filter for "received in the last ``days``". DASL uses an
+    ISO-8601 date, so it's **locale-independent** — unlike a jet ``[ReceivedTime]``
+    restriction, whose date must match the machine's short-date format. Pure, so
+    the filter string is unit-tested without COM."""
+    cutoff = now - timedelta(days=days)
+    stamp = cutoff.strftime("%Y-%m-%d %H:%M")
+    return f"@SQL=\"urn:schemas:httpmail:datereceived\" >= '{stamp}'"
+
+
+def _recent_items(folder: Any, now: datetime, days: int) -> Any:
+    """The folder's ``Items`` restricted to the last ``days`` — so a *massive*
+    shared mailbox is never sorted or enumerated whole. ``days <= 0`` means no
+    window. Best-effort: if the store rejects the ``Restrict`` (some do), fall back
+    to the unfiltered collection rather than failing the scan."""
+    items = folder.Items
+    if days <= 0:
+        return items
+    try:
+        return items.Restrict(_recent_filter(now, days))
+    except Exception:  # noqa: BLE001 — Restrict unsupported on this store
+        logger.info("outlook: date Restrict unsupported; scanning unfiltered")
+        return items
+
+
+def read_mailbox_items(
+    mailbox_address: str, limit: int = 50, days: int = 14
+) -> list[dict[str, Any]]:
     """The most recent ``limit`` items in a shared mailbox's Inbox, newest first,
-    as ``new_mail`` payloads (same shape OnNewMailEx emits). Resolves the mailbox
-    via ``GetSharedDefaultFolder`` (the staffer is a member, so it's accessible
-    without credentials). Best-effort: ``[]`` off-Windows, on an unresolved
-    mailbox, or on any COM error — a failed scan never blocks startup. Windows-only.
+    as ``new_mail`` payloads (same shape OnNewMailEx emits). The mailbox's Inbox is
+    resolved by :func:`_shared_inbox`, which tolerates delegate / account /
+    auto-mapped-store mountings.
+
+    **Bounded for a large mailbox** (a shared help-desk inbox can hold hundreds of
+    thousands of items): only mail received in the last ``days`` is considered (a
+    ``Restrict``, so the whole folder is never sorted), and only the newest
+    ``limit`` are read — fetched lazily via ``GetFirst``/``GetNext``, so at most
+    ``limit`` message bodies are ever touched.
+
+    Best-effort: ``[]`` off-Windows, on an unresolvable mailbox, or on any COM
+    error — a failed scan never blocks startup. Windows-only.
     """
     if sys.platform != "win32" or not mailbox_address:
         return []
@@ -546,22 +669,30 @@ def read_mailbox_items(mailbox_address: str, limit: int = 50) -> list[dict[str, 
     try:
         app = win32com.client.Dispatch("Outlook.Application")
         namespace = app.GetNamespace("MAPI")
-        recipient = namespace.CreateRecipient(mailbox_address)
-        recipient.Resolve()
-        if not recipient.Resolved:
-            logger.info("outlook: shared mailbox %s did not resolve", mailbox_address)
+        folder = _shared_inbox(namespace, mailbox_address)
+        if folder is None:
+            # Not a crash — the live NewMailEx channel still surfaces new mail; we
+            # just couldn't read existing items to recover in-flight threads on
+            # start. A clear hint beats an alarming traceback.
+            logger.warning(
+                "outlook: could not open the Inbox for shared mailbox %s — backlog "
+                "scan skipped. Make sure the mailbox is added to your Outlook "
+                "profile (its own account or an auto-mapped mailbox).",
+                mailbox_address,
+            )
             return []
-        folder = namespace.GetSharedDefaultFolder(recipient, 6)  # olFolderInbox
-        items = folder.Items
+        items = _recent_items(folder, datetime.now(), days)
         items.Sort("[ReceivedTime]", True)  # descending — newest first
         out: list[dict[str, Any]] = []
-        for item in items:
-            if len(out) >= limit:
-                break
+        # Lazy: walk newest-first and stop at `limit`, so a massive mailbox never
+        # has more than `limit` items materialised (the window already bounds Sort).
+        item = items.GetFirst()
+        while item is not None and len(out) < limit:
             try:
                 out.append(_mail_payload(item))
             except Exception:
-                continue  # skip a single unreadable item, keep scanning
+                pass  # skip a single unreadable item, keep scanning
+            item = items.GetNext()
         return out
     except Exception:
         logger.exception("outlook: backlog scan of %s failed", mailbox_address)

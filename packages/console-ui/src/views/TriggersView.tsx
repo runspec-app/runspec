@@ -779,10 +779,11 @@ export function TriggersView() {
         </div>
       )}
 
-      {/* Event audit feed — collapsible (like Triggers / Working hours), so it
-          frees vertical space for the conversation pane above. */}
+      {/* Event audit feed — open by default so the trail (every event seen, its
+          disposition) is visible without a click; collapsible to free space. */}
       <Collapse
         size="small"
+        defaultActiveKey={['events']}
         style={{ marginTop: 20 }}
         items={[{
           key: 'events',

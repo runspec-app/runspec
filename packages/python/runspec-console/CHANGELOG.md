@@ -8,6 +8,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.51.1] — 2026-06-13
+
+### Fixed
+- **Shared-mailbox backlog scan: tolerate how the mailbox is mounted.** The
+  startup scan resolved the shared mailbox only via `GetSharedDefaultFolder`,
+  which is for *delegate* access and raises **E_NOTIMPL (0x80004001)** when the
+  mailbox is added to the profile as its own store (an account, or an auto-mapped
+  mailbox — the common setup). `read_mailbox_items` now resolves the Inbox via a
+  new `_shared_inbox` helper that tries, in order: delegate access, an
+  `Accounts` SMTP match (`DeliveryStore.GetDefaultFolder`), then an auto-mapped
+  top-level store folder. On total failure it logs one actionable warning and
+  skips the scan (the live `NewMailEx` channel is unaffected) instead of a noisy
+  traceback.
+- **Backlog scan is bounded for a massive shared mailbox.** It now restricts to
+  mail received in the last `days` (default 14) via a locale-independent DASL
+  `Restrict` — so a folder with hundreds of thousands of items is **never sorted
+  or enumerated whole** — and reads only the newest `limit` lazily via
+  `GetFirst`/`GetNext`, touching at most `limit` message bodies. Falls back to an
+  unfiltered scan only if the store rejects the `Restrict`.
+- **Recovered email cards order newest-on-top.** The backlog scan now replays its
+  (newest-first) items **oldest-first**, so each recovered card's `created_at`
+  rises with mail recency and the Triggers inbox (newest-created first) shows the
+  newest mail on top — matching live mail instead of inverting the backlog.
+- **Claim markers are detected on internal mail.** The `X-Runspec-Claim` marker is
+  *set* via a PS_INTERNET_HEADERS named property but was *read* only from the
+  transport-header blob — which is **empty for internal same-org mail** (it never
+  traverses SMTP), so an internal claim ack was missed and mistaken for a fresh
+  requester email (a reply→agent-turn loop). `_mail_payload` now reads the marker
+  from the named property first (the canonical source we set; survives internal
+  delivery), falling back to the transport header for externally-routed mail.
+- **Event log opens by default.** The Triggers audit feed (every event seen + its
+  disposition) is expanded on load, so the trail is visible without relying on the
+  collapse toggle.
+
+
 ## [0.51.0] — 2026-06-13
 
 The email help-desk channel reaches **audit parity** with chat: an owned email

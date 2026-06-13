@@ -447,6 +447,35 @@ def test_backlog_scan_reconstructs_claimed_conversation(monkeypatch):
     assert card["detail"]["owner"] == "ana@web01"
 
 
+def test_backlog_scan_replays_oldest_first(monkeypatch):
+    """read_mailbox_items returns newest-first; the scan replays them oldest-first
+    so a card's created_at rises with mail recency — the newest-first inbox then
+    shows the newest mail on top instead of inverting the backlog."""
+    from runspec_console.sources import outlook
+
+    # newest-first, the contract of read_mailbox_items
+    items = [
+        _mail(
+            to="it-support@corp.com",
+            subject="newest",
+            entry_id="N",
+            conversation_id="N",
+        ),
+        _mail(
+            to="it-support@corp.com",
+            subject="oldest",
+            entry_id="O",
+            conversation_id="O",
+        ),
+    ]
+    monkeypatch.setattr(outlook, "read_mailbox_items", lambda addr, limit=50: items)
+    s = _email_stub(_MAP)
+    order: list[str] = []
+    s._ingest_email = lambda payload, replay=False: order.append(payload["subject"])
+    s._scan_email_backlog()
+    assert order == ["oldest", "newest"]  # replayed oldest → newest
+
+
 def test_ingest_dedupes_an_overlapping_item():
     """The same item seen by both the scan and the live source folds only once."""
     s = _email_stub(_MAP)
