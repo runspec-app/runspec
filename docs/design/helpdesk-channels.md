@@ -1,5 +1,16 @@
 # Help desk channels — one queue, many channels
 
+> **Model update (0.52.0): email is "only triggered mail, forward-only."** A
+> shared-mailbox email opens a claimable **ticket** only when it matches a
+> configured `outlook`/`new_mail` trigger's `match` — the operator curates which
+> mail is a ticket, so the help-desk inbox surfaces the *triggered flow*, not a
+> mirror of the whole mailbox. No matching trigger ⇒ no card (ordinary inbox mail,
+> untouched). The channel is forward-only: the **startup backlog scan is removed**
+> (claim/lifecycle state lives in the mailbox markers and re-coordinates on the
+> next message after a restart). Chat is unchanged — a help-desk conversation is
+> triggered by construction, so every one is claimable. Below, "slice 1's *every
+> email → card*" and "slice 4's backlog scan" are superseded by this.
+>
 > Status: **slices 1–6.2 built** (email as a queue card; mailbox claim + lifecycle;
 > the ownership-gated reply, sent as the shared mailbox; the **claim-gated agent
 > turn** with audit/`run_summary` parity; the agent draft sent **as the queue**;
@@ -16,13 +27,46 @@
 > up — it lives here, not in a PR body, so a fresh session finds it. The
 > per-slice "Implemented — slice N" sections below have the detail.
 
-**Where it stands:** slices 1–5 shipped on branch `claude/email-queue-cards-godjdh`
-(PR #221 against `main`); slice 6 (the claim-gated agent turn) is on branch
-`claude/helpdesk-channels-design-otyxsj`. All tests green. The email channel only
-activates when a `[mailboxes]` table is configured, so it's a no-op for existing
-users until then; the agent turn additionally needs a configured Outlook
-agent-mode trigger (`source = "outlook"`, `event = "new_mail"`, `reply.draft =
-true`) — exactly as chat needs a configured chat trigger.
+**Where it stands (session handoff, 2026-06-13):**
+
+- **Released:** `runspec-console` **0.51.1** is on `main` (PR #221 → 0.50.0 slices
+  1–5; PR #223 → 0.51.0 slices 6/6.1/allowlist/6.2; PR #224 → 0.51.1 live-test
+  fixes: marker read on internal mail via the PS_INTERNET_HEADERS named property,
+  + event-log default-open).
+- **Open PR #225 (`claude/email-triggered-forward-only`, 0.52.0):** the model
+  change above — email opens a ticket only on a trigger `match`, channel is
+  forward-only (backlog scan removed). **Merge this if the model's right.**
+- **Parked branch `claude/helpdesk-channels-design-otyxsj` (no PR / no version
+  bump):** the **chat** side of history-on-claim — `runspec-room` replays a
+  conversation's transcript to an agent on claim (`replay` frame), and the console
+  ignores `replay` frames (no re-trigger). Waiting on: the chat `claimed`-event
+  emission (mirrors `email`/`claimed`), gated on the email draft-on-claim being
+  confirmed. Release `runspec-room` + `runspec-console` together (deployment
+  coupling — see `helpdesk-rooms.md` §4).
+- **Verified on a real Exchange box** (this session): live `NewMailEx` **does**
+  fire for the shared mailbox (no scan needed); claim ack round-trips and ownership
+  flips; the claim-gated agent turn proposes a reply on the next message.
+- **Blocked / unconfirmed:** **draft-on-claim** (the `email`/`claimed` agent turn)
+  — needs the event-log `email:claimed` row (`fired: draft-on-claim` vs `no match`)
+  to tell config-vs-code. The tester's work PC (Outlook/Windows login) broke mid-
+  test (corporate migration), so this is paused until a working box.
+
+**Open work, when testing resumes:**
+
+1. **Diagnose draft-on-claim** from the event-log `email:claimed` row (config or code).
+2. **Losing-ack hygiene (Q6)** — mark-read / file the internal marker acks to a
+   subfolder so the shared mailbox doesn't accumulate visible plumbing.
+3. **Chat draft-on-claim** — emit a `chat`/`claimed` event on the assignee→us flip
+   (mirrors email), completing the parked room/chat branch → release together.
+4. **Conversation-pane transcript (Q7)** — render retained `req_subject`/`req_body`.
+
+The email channel is a no-op until a `[mailboxes]` table **and** a matching
+`outlook`/`new_mail` trigger are configured (0.52.0); the agent draft additionally
+needs `reply.draft = true` + an LLM provider.
+
+> _Note: the "Architecture map", "Must verify", and per-slice sections below are
+> historical detail from the build-out; the bullets above are the current truth.
+> Notably, `_scan_email_backlog` / `read_mailbox_items` were **removed** in 0.52.0._
 
 **Architecture map (where each piece lives):**
 

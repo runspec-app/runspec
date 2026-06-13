@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.52.0] — 2026-06-13
+
+The email help-desk channel becomes **"only triggered mail, forward-only"** — it
+surfaces the *flow* of tickets, not a mirror of the whole shared mailbox.
+
+### Changed
+- **An email opens a ticket only when it matches a trigger.** A shared-mailbox
+  `new_mail` becomes a claimable card only if it matches a configured
+  `outlook`/`new_mail` trigger's `match` (the operator curates which mail is a
+  ticket); everything else stays ordinary inbox mail — no card, no per-conversation
+  state kept. A mapped mailbox with no matching trigger surfaces nothing. Claim
+  still gates the agent turn; markers still fold into an *existing* ticket (a
+  marker never opens one); chat is unchanged (a help-desk conversation is triggered
+  by construction). New `TriggerEngine.would_match` + `bridge._email_is_triggered`.
+- **Email channel is forward-only — the startup backlog scan is removed.** It only
+  reacts to mail that arrives while the console is running (`NewMailEx`). Claim/
+  lifecycle state lives in the mailbox markers and re-coordinates on the next
+  message after a restart, so the scan wasn't load-bearing. Drops
+  `_scan_email_backlog` and the COM scan helpers (`read_mailbox_items`,
+  `_shared_inbox`, `_recent_filter`, `_recent_items`) and the `_ingest_email`
+  `replay` plumbing. (The live-mail marker fix and event-log default-open from
+  0.51.1 stay.)
+
+
 ## [0.51.1] — 2026-06-13
 
 ### Fixed

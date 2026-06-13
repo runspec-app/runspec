@@ -489,6 +489,23 @@ def test_engine_feed_gate_failure_routes():
     assert fired == ["t"]
 
 
+def test_engine_would_match():
+    # would_match answers "is this triggered?" without dispatching — the email
+    # channel surfaces a ticket only for mail a trigger matches.
+    t = Trigger.from_config(
+        {
+            "name": "vip",
+            "source": "outlook",
+            "event": "new_mail",
+            "match": {"subject": "(?i)urgent"},
+        }
+    )
+    engine = TriggerEngine([t], handler=lambda *a: None)
+    assert engine.would_match(_mail(subject="URGENT: down")) is True
+    assert engine.would_match(_mail(subject="lunch?")) is False
+    assert engine.would_match(Event.new("chat", "message", {"text": "x"})) is False
+
+
 def test_engine_handler_exception_marks_failed():
     def handler(card, trigger, event):
         raise RuntimeError("boom")

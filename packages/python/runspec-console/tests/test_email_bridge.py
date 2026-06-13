@@ -96,7 +96,6 @@ _BRIDGE_METHODS = (
     "reopen_email_thread",
     "close_email_thread",
     "reply_email_thread",
-    "_scan_email_backlog",
 )
 
 
@@ -121,6 +120,9 @@ def _email_stub(mailboxes: dict[str, str]):
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
     s._mailbox_queues = lambda: dict(mailboxes)  # the [mailboxes] map, lowercased
     s._agent_identity = lambda: "me@console1"  # deterministic console identity
+    # A ticket opens only for *triggered* mail; default the gate open so the
+    # card-synthesis tests exercise the fold. The "not triggered" test overrides it.
+    s._email_is_triggered = lambda payload: True
     for name in _BRIDGE_METHODS:
         setattr(s, name, types.MethodType(getattr(Bridge, name), s))
     return s
@@ -423,66 +425,45 @@ def test_reply_rejects_empty_and_unknown():
     assert s.reply_email_thread("queue:email:nope", "hi")["ok"] is False
 
 
-# ── startup backlog scan + dedup (forward-only catch-up) ──────────────────────
+# ── ticket gate (only triggered mail opens a card) + dedup ────────────────────
 
 
-def test_backlog_scan_reconstructs_claimed_conversation(monkeypatch):
-    """A restart replays the mailbox through the fold, recovering an in-flight
-    conversation and its current owner/state from the thread's markers."""
-    from runspec_console.sources import outlook
-
-    backlog = [
-        _mail(to="it-support@corp.com", entry_id="M1"),
-        _marker_mail("claim", "ana@web01", received_ts=100, message_id="<a>"),
-    ]
-    monkeypatch.setattr(
-        outlook,
-        "read_mailbox_items",
-        lambda addr, limit=50: backlog if addr == "it-support@corp.com" else [],
-    )
+def test_untriggered_email_opens_no_ticket():
+    """An email that matches no trigger stays in the inbox — no card, and no
+    per-conversation state kept."""
     s = _email_stub(_MAP)
-    s._scan_email_backlog()
-    card = s._trigger_cards["queue:email:CONV1"]
-    assert card["detail"]["state"] == "assigned"
-    assert card["detail"]["owner"] == "ana@web01"
+    s._email_is_triggered = lambda payload: False
+    s._ingest_email(_mail(to="it-support@corp.com"))
+    assert s._trigger_cards == {}  # no ticket
+    assert s._email_threads == {}  # not even folded (no memory for inbox noise)
+    assert [ev for ev, _ in s.dispatched] == []  # nothing pushed to the UI
 
 
-def test_backlog_scan_replays_oldest_first(monkeypatch):
-    """read_mailbox_items returns newest-first; the scan replays them oldest-first
-    so a card's created_at rises with mail recency — the newest-first inbox then
-    shows the newest mail on top instead of inverting the backlog."""
-    from runspec_console.sources import outlook
-
-    # newest-first, the contract of read_mailbox_items
-    items = [
-        _mail(
-            to="it-support@corp.com",
-            subject="newest",
-            entry_id="N",
-            conversation_id="N",
-        ),
-        _mail(
-            to="it-support@corp.com",
-            subject="oldest",
-            entry_id="O",
-            conversation_id="O",
-        ),
-    ]
-    monkeypatch.setattr(outlook, "read_mailbox_items", lambda addr, limit=50: items)
+def test_marker_for_unsurfaced_thread_is_ignored():
+    """A claim/lifecycle ack for a conversation that never became a ticket (no
+    matching trigger) is ignored — a marker never *opens* a ticket."""
     s = _email_stub(_MAP)
-    order: list[str] = []
-    s._ingest_email = lambda payload, replay=False: order.append(payload["subject"])
-    s._scan_email_backlog()
-    assert order == ["oldest", "newest"]  # replayed oldest → newest
+    s._email_is_triggered = lambda payload: (
+        False
+    )  # would-be requester mail isn't a ticket
+    s._ingest_email(_marker_mail("claim", "me@console1"))
+    assert s._trigger_cards == {}
+
+
+def test_triggered_email_opens_a_ticket():
+    """A triggered email opens exactly one ticket (the gate default in the stub)."""
+    s = _email_stub(_MAP)
+    s._ingest_email(_mail(to="it-support@corp.com"))
+    assert "queue:email:CONV1" in s._trigger_cards
 
 
 def test_ingest_dedupes_an_overlapping_item():
-    """The same item seen by both the scan and the live source folds only once."""
+    """The live source re-delivering an item folds it only once."""
     s = _email_stub(_MAP)
     item = _mail(to="it-support@corp.com", entry_id="M1")
     item["message_id"] = "<dup>"
-    s._ingest_email(item)  # backlog scan
-    s._ingest_email(item)  # live NewMailEx for the same item
+    s._ingest_email(item)
+    s._ingest_email(item)  # a re-delivery of the same item
     card = s._trigger_cards["queue:email:CONV1"]
     requester_lines = [
         e for e in card["timeline"] if e["text"].startswith("alice@big.com:")
@@ -592,45 +573,6 @@ def test_ownership_flip_fires_once_not_on_later_messages():
         _mail(to="it-support@corp.com", subject="Re: more", entry_id="E2")
     )  # still owned → no new fire
     assert len(_claimed_events(s)) == 1
-
-
-def test_replay_reconstructs_without_feeding_a_claimed_event():
-    """The startup backlog scan (replay=True) rebuilds owner/state but never
-    re-feeds a claimed event — a restart must not re-draft a claimed thread."""
-    s = _email_stub(_MAP)
-    s._ingest_email(_mail(to="it-support@corp.com"), replay=True)
-    s._ingest_email(_marker_mail("claim", "me@console1"), replay=True)
-    assert s._trigger_cards["queue:email:CONV1"]["detail"]["owned_by_me"] is True
-    assert _claimed_events(s) == []
-
-
-def test_claimed_event_skipped_without_a_requester_message():
-    """A claim that folds before any requester message (no entry_id to reply to)
-    feeds nothing — nothing to draft a reply to."""
-    s = _email_stub(_MAP)
-    # Only a claim marker, never a requester message → no entry_id on the card.
-    s._ingest_email(_marker_mail("claim", "me@console1"))
-    assert _claimed_events(s) == []
-
-
-def test_backlog_scan_passes_replay(monkeypatch):
-    """_scan_email_backlog replays through the fold with replay=True (no re-draft
-    of an already-claimed conversation on restart)."""
-    from runspec_console.sources import outlook
-
-    backlog = [
-        _mail(to="it-support@corp.com", entry_id="M1"),
-        _marker_mail("claim", "me@console1", received_ts=100, message_id="<a>"),
-    ]
-    monkeypatch.setattr(
-        outlook,
-        "read_mailbox_items",
-        lambda addr, limit=50: backlog if addr == "it-support@corp.com" else [],
-    )
-    s = _email_stub(_MAP)
-    s._scan_email_backlog()
-    assert s._trigger_cards["queue:email:CONV1"]["detail"]["owned_by_me"] is True
-    assert _claimed_events(s) == []  # reconstruction never re-fires
 
 
 # ── send-as-mailbox resolution for the agent draft (_BridgeTriggerOps) ─────────

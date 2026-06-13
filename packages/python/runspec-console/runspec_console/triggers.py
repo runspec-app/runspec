@@ -488,6 +488,13 @@ class TriggerEngine:
         another thread; a no-op-ish route when the engine matches nothing."""
         return self._route(event)
 
+    def would_match(self, event: Event) -> bool:
+        """Whether any configured trigger matches ``event`` (source + event type +
+        ``match`` patterns), without dispatching it. Lets a host ask "is this
+        triggered?" — the email channel surfaces a ticket only for mail a trigger
+        matches, so the help-desk inbox isn't a mirror of the whole mailbox."""
+        return any(t.matches(event) for t in self._triggers)
+
     def _route(self, event: Event) -> Future[None] | None:
         """Route an event to every matching trigger.
 

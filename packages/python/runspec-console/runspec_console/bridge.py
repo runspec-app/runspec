@@ -5061,14 +5061,10 @@ class Bridge:
             self._trigger_engine = engine
         for problem in problems:
             logger.info("trigger source: %s", problem)
-        # Replay the shared-mailbox backlog off-thread (a COM read that can be
-        # slow) so a restart recovers in-flight email conversations + their claim
-        # state. The Triggers tab pulls the board on mount, so the cards this
-        # populates surface even though the webview isn't up yet.
-        if always_start:  # mailboxes are mapped
-            threading.Thread(
-                target=self._scan_email_backlog, name="email-backlog", daemon=True
-            ).start()
+        # The email channel is forward-only — it reacts to mail that arrives while
+        # the console is running (NewMailEx), with no startup backlog scan. Claim/
+        # lifecycle state lives in the mailbox markers and re-coordinates on the
+        # next message after a restart.
         # Note: no UI dispatch here. start_triggers() runs from set_window(),
         # before the web view has finished starting, so an evaluate_js push would
         # raise (harmlessly, but noisily). The Triggers tab pulls this state via
@@ -5601,30 +5597,50 @@ class Bridge:
                 return address
         return ""
 
-    def _ingest_email(self, payload: dict[str, Any], replay: bool = False) -> None:
-        """Record one shared-mailbox ``new_mail`` and refresh its trigger card —
-        the email analog of :meth:`_touch_queue_card`, but the card's lifecycle is
-        a **validated fold** of the conversation's marker events rather than a
-        hub's pushed state. Mail not addressed to a mapped mailbox never becomes a
-        card. A claim/lifecycle ack (``claim_marker`` set) folds into ownership/
-        state and is *not* shown as a requester message; an ordinary email bumps
-        the summary and can reopen a resolved/closed thread.
+    def _email_is_triggered(self, payload: dict[str, Any]) -> bool:
+        """Whether a shared-mailbox email matches a configured trigger — the gate
+        on **opening a ticket**. The operator curates which mail becomes a
+        claimable card via a trigger's ``match`` (so a busy shared mailbox doesn't
+        flood the help-desk inbox — we surface the *triggered* flow, not the whole
+        mailbox). No engine, or no trigger matches → not a ticket."""
+        from .events import Event
 
-        When this console **takes ownership** (a claim ack folds us in as owner),
-        a synthetic ``email``/``claimed`` event is fed to the trigger engine
-        carrying the latest requester message — so an agent-mode trigger
-        (``source = "email"``, ``event = "claimed"``) can draft a reply *on claim*,
-        which solves the single-message ticket (the new_mail gate only fires on a
-        *follow-up* message). ``replay = True`` (the startup backlog scan)
-        reconstructs state without re-feeding, so a restart never re-drafts an
-        already-claimed thread."""
+        with self._lock:
+            engine = self._trigger_engine
+        if engine is None:
+            return False
+        try:
+            return engine.would_match(Event.new("outlook", "new_mail", payload))
+        except Exception:  # noqa: BLE001 — a match check must never crash ingest
+            logger.exception("email: trigger-match check failed")
+            return False
+
+    def _ingest_email(self, payload: dict[str, Any]) -> None:
+        """Record one shared-mailbox ``new_mail`` and refresh its **ticket** card.
+
+        A ticket is opened only when a requester email **matches a configured
+        trigger** (:meth:`_email_is_triggered`); other mail stays ordinary inbox
+        mail — no card, no state kept. Mail not addressed to a mapped mailbox is
+        never a ticket either. For an existing ticket, an ordinary email bumps the
+        summary and can reopen a resolved/closed thread, and a claim/lifecycle ack
+        (``claim_marker`` set) folds into ownership/state (plumbing, not a requester
+        message — and it never *opens* a ticket).
+
+        When this console **takes ownership** (a claim ack folds us in as owner), a
+        synthetic ``email``/``claimed`` event is fed so an agent trigger
+        (``source = "email"``, ``event = "claimed"``) can draft a reply *on claim*.
+        Forward-only: there is no backlog scan — claim/lifecycle state lives in the
+        mailbox markers and re-coordinates on the next message after a restart."""
         from . import mailbox_claim
 
         queue = self._email_queue_for(payload)
         if queue is None:
-            return  # personal / non-queue mail — never a card
+            return  # personal / non-queue mail — never a ticket
         conversation = Bridge._email_conversation_key(payload)
         marker = mailbox_claim.parse_marker(str(payload.get("claim_marker") or ""))
+        # A triggered requester email may *open* a ticket; a marker never does
+        # (it's plumbing for a ticket that already exists).
+        triggered = marker is None and self._email_is_triggered(payload)
         order_key = (
             float(payload.get("received_ts") or 0.0),
             str(payload.get("message_id") or ""),
@@ -5644,8 +5660,13 @@ class Bridge:
         now = time.time()
         claimed_payload: dict[str, Any] | None = None  # set on the ownership flip
         with self._lock:
-            # Fold each item once — the startup scan and the live source overlap.
             if dedup_key and dedup_key in self._email_seen:
+                return  # folded already (the live source can re-deliver an item)
+            card = self._trigger_cards.get(card_id)
+            if card is None and not triggered:
+                # Not a ticket: an email that matched no trigger, or a marker for a
+                # thread we never surfaced. Leave it in the inbox — no card, and no
+                # per-conversation state kept (so non-ticket mail can't grow memory).
                 return
             if dedup_key:
                 if len(self._email_seen) > 20000:
@@ -5655,8 +5676,9 @@ class Bridge:
             events.append(event)
             folded = mailbox_claim.fold_conversation(events)
             state, owner = folded["state"], folded["owner"]
-            card = self._trigger_cards.get(card_id)
             if card is None:
+                # Only a triggered requester message reaches here, so the card is
+                # always opened by addressable mail; entry_id is set just below.
                 card = {
                     "card_id": card_id,
                     "trigger": f"queue:{queue}",
@@ -5669,9 +5691,6 @@ class Bridge:
                         "visitor": visitor,
                         "conversation_id": conversation,
                         "mailbox": self._email_mailbox_for(queue),
-                        # The reply target is a requester message, set in the
-                        # ``marker is None`` block — never a marker ack's id (which
-                        # would happen if a claim ack created the card first).
                         "entry_id": "",
                     },
                     "created_at": now,
@@ -5702,16 +5721,10 @@ class Bridge:
             # UI's "you can reply" affordance read this, not the raw owner string.
             detail["owned_by_me"] = bool(owner) and owner == me
             # Taking ownership (not-ours → ours): build the claimed event so a
-            # configured trigger can draft on claim. Live only (a replay rebuilds
-            # state without re-drafting), and only with a requester message to act
-            # on. recipients = [mailbox] so queue_mailbox_for resolves the send-as
-            # identity (the agent drafts as the queue).
-            if (
-                not replay
-                and detail["owned_by_me"]
-                and not prev_owned
-                and detail.get("entry_id")
-            ):
+            # configured trigger can draft on claim, with a requester message to
+            # act on. recipients = [mailbox] so queue_mailbox_for resolves the
+            # send-as identity (the agent drafts as the queue).
+            if detail["owned_by_me"] and not prev_owned and detail.get("entry_id"):
                 claimed_payload = {
                     "queue": queue,
                     "conversation_id": conversation,
@@ -5860,28 +5873,6 @@ class Bridge:
             snapshot = dict(card)
         self._dispatch("runspec:trigger_card", snapshot)
         return {"ok": True}
-
-    def _scan_email_backlog(self, limit: int = 50) -> None:
-        """Replay recent items from each mapped shared mailbox through the fold, so
-        a freshly-started console reconstructs in-flight conversations and their
-        current claim/lifecycle state — ``NewMailEx`` is forward-only and misses
-        anything that arrived while we were down (helpdesk-channels.md, Q1). Items
-        are deduped against the live source by id, so an overlap is harmless.
-        Best-effort; a failed scan never blocks startup."""
-        from .sources.outlook import read_mailbox_items
-
-        for address in sorted(self._mailbox_queues()):
-            try:
-                # read_mailbox_items returns newest-first; replay **oldest-first**
-                # so each card's created_at rises with mail recency — the inbox
-                # (sorted newest-created first) then shows the newest mail on top,
-                # matching live mail rather than inverting the backlog.
-                for payload in reversed(read_mailbox_items(address, limit)):
-                    # replay=True: reconstruct claim/lifecycle state without
-                    # re-feeding a claimed event (no re-draft on restart).
-                    self._ingest_email(payload, replay=True)
-            except Exception:
-                logger.exception("email: backlog scan of %s failed", address)
 
     def _on_engine_event(self, event: Any) -> None:
         """Raw-event observer the trigger engine calls for every event before

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import sys
 import threading
-from datetime import datetime
 from types import SimpleNamespace
 
 from runspec_console.events import Event, EventSource, available_sources, create_source
@@ -24,12 +23,8 @@ from runspec_console.sources.outlook import (
     _named_header,
     _received_ts_from_headers,
     _recipients_from_headers,
-    _recent_filter,
-    _recent_items,
     _reminder_payload,
-    _shared_inbox,
     _split_categories,
-    read_mailbox_items,
     save_reply_draft,
     send_claim_marker,
     send_draft,
@@ -256,125 +251,6 @@ def test_reminder_payload_without_inner_item():
     assert p["is_meeting"] is False  # no MeetingStatus → non-meeting
 
 
-# ── shared-mailbox Inbox resolution (delegate / account / auto-mapped store) ──
-#
-# _shared_inbox operates on the COM namespace object, so the strategy selection is
-# testable off-Windows with fakes. E_NOTIMPL (0x80004001) is the real-world signal
-# that the mailbox is mounted as its own store rather than delegated.
-
-INBOX = SimpleNamespace(tag="inbox")  # the folder a successful lookup returns
-
-
-class _Folders:
-    """A fake Folders collection supporting both iteration and ['Inbox']."""
-
-    def __init__(self, items=(), by_name=None):
-        self._items = list(items)
-        self._by_name = by_name or {}
-
-    def __iter__(self):
-        return iter(self._items)
-
-    def __getitem__(self, key):
-        return self._by_name[key]  # KeyError if absent — mirrors COM
-
-
-def _ns(*, delegate=None, accounts=(), folders=()):
-    """A fake MAPI namespace. ``delegate`` is the folder GetSharedDefaultFolder
-    returns; a string instead makes it raise that as a COM error (E_NOTIMPL)."""
-
-    def get_shared(recipient, folder_type):
-        if isinstance(delegate, str):
-            raise OSError(delegate)
-        if delegate is None:
-            raise OSError("(-2147467263, 'Not implemented', None, None)")  # E_NOTIMPL
-        return delegate
-
-    return SimpleNamespace(
-        CreateRecipient=lambda addr: SimpleNamespace(
-            Resolve=lambda: None, Resolved=True
-        ),
-        GetSharedDefaultFolder=get_shared,
-        Accounts=list(accounts),
-        Folders=list(folders),
-    )
-
-
-def test_shared_inbox_delegate_path():
-    ns = _ns(delegate=INBOX)
-    assert _shared_inbox(ns, "it-support@corp.com") is INBOX
-
-
-def test_shared_inbox_falls_back_to_account_on_e_notimpl():
-    # GetSharedDefaultFolder raises E_NOTIMPL → match the account by SMTP.
-    acct = SimpleNamespace(
-        SmtpAddress="IT-Support@Corp.com",  # case-insensitive match
-        DeliveryStore=SimpleNamespace(GetDefaultFolder=lambda ft: INBOX),
-    )
-    ns = _ns(delegate=None, accounts=[acct])
-    assert _shared_inbox(ns, "it-support@corp.com") is INBOX
-
-
-def test_shared_inbox_falls_back_to_auto_mapped_store():
-    # No delegate, no matching account → a top-level store folder named for the box.
-    store = SimpleNamespace(
-        Name="it-support", Folders=_Folders(by_name={"Inbox": INBOX})
-    )
-    ns = _ns(delegate=None, accounts=[], folders=[store])
-    assert _shared_inbox(ns, "it-support@corp.com") is INBOX
-
-
-def test_shared_inbox_returns_none_when_nothing_matches():
-    other = SimpleNamespace(Name="someone-else", Folders=_Folders(by_name={}))
-    ns = _ns(delegate=None, accounts=[], folders=[other])
-    assert _shared_inbox(ns, "it-support@corp.com") is None
-
-
-# ── bounded backlog read (don't sort/enumerate a massive shared mailbox) ──────
-
-
-class _Items:
-    """A fake Items collection that records Restrict calls."""
-
-    def __init__(self, restrict_result=None, raises=False):
-        self.restrict_calls = []
-        self._result = restrict_result
-        self._raises = raises
-
-    def Restrict(self, filt):  # noqa: N802 — COM name
-        self.restrict_calls.append(filt)
-        if self._raises:
-            raise OSError("Restrict not supported on this store")
-        return self._result
-
-
-def test_recent_filter_is_locale_independent_dasl():
-    f = _recent_filter(datetime(2026, 6, 13, 12, 0), 14)
-    assert f.startswith('@SQL="urn:schemas:httpmail:datereceived" >=')
-    assert "2026-05-30 12:00" in f  # 14 days before the reference instant (ISO)
-
-
-def test_recent_items_restricts_to_window():
-    restricted = object()
-    items = _Items(restrict_result=restricted)
-    out = _recent_items(SimpleNamespace(Items=items), datetime(2026, 6, 13, 12, 0), 14)
-    assert out is restricted
-    assert items.restrict_calls and "datereceived" in items.restrict_calls[0]
-
-
-def test_recent_items_no_window_returns_all_without_restrict():
-    items = _Items()
-    out = _recent_items(SimpleNamespace(Items=items), datetime(2026, 6, 13), 0)
-    assert out is items
-    assert items.restrict_calls == []  # days<=0 → never narrows
-
-
-def test_recent_items_falls_back_when_restrict_unsupported():
-    items = _Items(raises=True)
-    out = _recent_items(SimpleNamespace(Items=items), datetime(2026, 6, 13), 14)
-    assert out is items  # a rejecting store → unfiltered, not a failed scan
-
-
 # ── availability / platform guards ───────────────────────────────────────────
 
 
@@ -497,13 +373,6 @@ def test_send_claim_marker_off_windows():
         return
     with pytest.raises(RuntimeError, match="Windows"):
         send_claim_marker("ENT1", "m", "it-support@corp.com")
-
-
-def test_read_mailbox_items_off_windows_or_empty_address():
-    # Best-effort: returns [] off-Windows or with no mailbox address (never raises).
-    assert read_mailbox_items("") == []
-    if sys.platform != "win32":
-        assert read_mailbox_items("it-support@corp.com") == []
 
 
 # ── calendar rota decision ────────────────────────────────────────────────────
