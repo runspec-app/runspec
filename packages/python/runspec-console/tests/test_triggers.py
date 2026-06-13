@@ -121,12 +121,43 @@ def test_from_config_full():
             },
             "misplaced trigger keys",
         ),
+        (
+            {"name": "t", "source": "s", "event": "e", "runnables": "not-a-list"},
+            "'runnables' must be a list",
+        ),
+        (
+            # an agent allowlist is meaningless in rule mode (which runs `run`).
+            {
+                "name": "t",
+                "source": "s",
+                "event": "e",
+                "mode": "rule",
+                "run": "h__r",
+                "runnables": ["h__r"],
+            },
+            "agent tool allowlist",
+        ),
     ],
 )
 def test_from_config_errors(data, msg):
     with pytest.raises(ValueError) as exc:
         Trigger.from_config(data)
     assert msg in str(exc.value)
+
+
+def test_from_config_runnables_allowlist():
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "runnables": ["web01__check-memory", " restart-service ", ""],
+        }
+    )
+    # entries are trimmed and blanks dropped; default (no key) is an empty list.
+    assert t.runnables == ["web01__check-memory", "restart-service"]
+    bare = Trigger.from_config({"name": "t", "source": "s", "event": "e"})
+    assert bare.runnables == []
 
 
 # ── matching ──────────────────────────────────────────────────────────────────
@@ -387,6 +418,75 @@ def test_engine_routes_matching_event_to_handler():
     # one card created, ending DONE
     assert len(cards) >= 1
     assert any(c.column == Column.DONE for c in cards)
+
+
+def test_engine_feed_gate_suppresses_routing_and_audit():
+    # A feed_gate that rejects an event drops it entirely — no handler run, and
+    # no audit record (parity with the chat claim gate, where an unclaimed
+    # message never reaches the engine).
+    fired: list[str] = []
+    recs: list[dict] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    t = Trigger.from_config({"name": "t", "source": "outlook", "event": "new_mail"})
+    engine, fake, _ = _engine(
+        [t],
+        handler,
+        on_event=recs.append,
+        feed_gate=lambda e: bool(e.payload.get("allow")),
+    )
+    engine.start()
+    fake.fire("new_mail", {"subject": "blocked"})  # gate rejects
+    fake.fire("new_mail", {"subject": "ok", "allow": True})  # gate passes
+
+    assert fired == ["t"]
+    assert [r["summary"] for r in recs] == ["ok"]  # rejected event left no record
+
+
+def test_engine_feed_gate_runs_source_hook_before_suppressing():
+    # The source-event hook (queue-card fold) still runs for a gated event, so an
+    # unclaimed thread surfaces a card even though it isn't routed to triggers.
+    seen: list[str] = []
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    t = Trigger.from_config({"name": "t", "source": "outlook", "event": "new_mail"})
+    engine, fake, _ = _engine(
+        [t],
+        handler,
+        on_source_event=lambda e: seen.append(e.payload.get("subject", "")),
+        feed_gate=lambda e: False,
+    )
+    engine.start()
+    fake.fire("new_mail", {"subject": "x"})
+
+    assert seen == ["x"]  # hook ran (the card surfaces)
+    assert fired == []  # but routing was suppressed
+
+
+def test_engine_feed_gate_failure_routes():
+    # A raising gate must never block routing (fail open).
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    def boom(event):
+        raise RuntimeError("gate broke")
+
+    t = Trigger.from_config({"name": "t", "source": "outlook", "event": "new_mail"})
+    engine, fake, _ = _engine([t], handler, feed_gate=boom)
+    engine.start()
+    fake.fire("new_mail", {"subject": "x"})
+
+    assert fired == ["t"]
 
 
 def test_engine_handler_exception_marks_failed():

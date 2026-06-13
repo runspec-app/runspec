@@ -20,13 +20,17 @@ from runspec_console.trigger_runner import (
 
 class FakeOps:
     def __init__(
-        self, tool_output: str = "ok", agent_summary: str = "agent reply"
+        self,
+        tool_output: str = "ok",
+        agent_summary: str = "agent reply",
+        mailbox: str = "",
     ) -> None:
         self.agent_calls: list[dict[str, Any]] = []
         self.rule_calls: list[dict[str, Any]] = []
         self.chat_mirrors: list[dict[str, str]] = []
         self._tool_output = tool_output
         self._agent_summary = agent_summary
+        self._mailbox = mailbox  # what queue_mailbox_for returns for a queue event
 
     def run_agent_turn(
         self,
@@ -37,6 +41,8 @@ class FakeOps:
         draft,
         reply_to=None,
         room=None,
+        from_mailbox=None,
+        allowed_runnables=None,
         record=None,
         stage=None,
     ):
@@ -48,10 +54,17 @@ class FakeOps:
                 "draft": draft,
                 "reply_to": reply_to,
                 "room": room,
+                "from_mailbox": from_mailbox,
+                "allowed_runnables": allowed_runnables,
                 "record_callable": callable(record),
             }
         )
         return self._agent_summary
+
+    def queue_mailbox_for(self, payload):
+        # The bridge resolves a help-desk recipient to its shared mailbox; the
+        # fake returns whatever this case was constructed with ("" = personal).
+        return self._mailbox
 
     def run_rule_tool(self, chat_id, tool_name, tool_input):
         self.rule_calls.append(
@@ -186,6 +199,109 @@ def test_handler_agent_draft_only_when_both_enabled():
     )
     assert ops2.agent_calls[0]["draft"] is True
     assert ops2.agent_calls[0]["reply_to"] == "ENT9"  # bound from the event
+
+
+def test_handler_email_draft_binds_from_mailbox():
+    """A help-desk email draft replies as the shared mailbox (the queue identity):
+    from_mailbox is bound from the bridge's queue resolution."""
+    ops = FakeOps(mailbox="it-support@corp.com")
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "reply": {"draft": True},
+        }
+    )
+    card, _ = _card()
+    make_handler(ops, draft_available=True)(
+        card, t, Event.new("outlook", "new_mail", {"entry_id": "ENT9"})
+    )
+    assert ops.agent_calls[0]["from_mailbox"] == "it-support@corp.com"
+
+
+def test_handler_email_claimed_event_drafts_as_mail():
+    """A draft-on-claim trigger (source='email', event='claimed') routes like any
+    mail draft: reply_to from the event's entry_id, send-as the queue mailbox."""
+    ops = FakeOps(mailbox="it-support@corp.com")
+    t = Trigger.from_config(
+        {
+            "name": "draft-on-claim",
+            "source": "email",
+            "event": "claimed",
+            "reply": {"draft": True},
+        }
+    )
+    card, _ = _card()
+    make_handler(ops, draft_available=True)(
+        card,
+        t,
+        Event.new("email", "claimed", {"entry_id": "ENT1", "body": "help"}),
+    )
+    call = ops.agent_calls[0]
+    assert call["draft"] is True
+    assert call["reply_to"] == "ENT1"  # the requester message to reply to
+    assert call["from_mailbox"] == "it-support@corp.com"
+    assert call["room"] is None  # not a chat draft
+
+
+def test_handler_personal_mail_draft_has_no_from_mailbox():
+    """Non-queue mail drafts from the operator: from_mailbox stays None."""
+    ops = FakeOps(mailbox="")  # queue_mailbox_for → "" (not a mapped mailbox)
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "reply": {"draft": True},
+        }
+    )
+    card, _ = _card()
+    make_handler(ops, draft_available=True)(
+        card, t, Event.new("outlook", "new_mail", {"entry_id": "ENT9"})
+    )
+    assert ops.agent_calls[0]["from_mailbox"] is None
+
+
+def test_handler_chat_draft_has_no_from_mailbox():
+    """A chat draft (propose_reply) never resolves a mailbox."""
+    ops = FakeOps(mailbox="it-support@corp.com")
+    t = Trigger.from_config(
+        {"name": "t", "source": "chat", "event": "message", "reply": {"draft": True}}
+    )
+    card, _ = _card()
+    make_handler(ops, draft_available=True)(
+        card, t, Event.new("chat", "message", {"room": "ops", "text": "hi"})
+    )
+    assert ops.agent_calls[0]["from_mailbox"] is None
+
+
+def test_handler_binds_runnables_allowlist():
+    """An agent trigger with a runnables allowlist scopes the turn's tools."""
+    ops = FakeOps()
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "runnables": ["web01__check-memory", "restart-service"],
+        }
+    )
+    card, _ = _card()
+    make_handler(ops)(card, t, Event.new("outlook", "new_mail", {}))
+    assert ops.agent_calls[0]["allowed_runnables"] == [
+        "web01__check-memory",
+        "restart-service",
+    ]
+
+
+def test_handler_no_allowlist_passes_none():
+    """No runnables key → allowed_runnables is None (the agent sees every tool)."""
+    ops = FakeOps()
+    t = Trigger.from_config({"name": "t", "source": "outlook", "event": "new_mail"})
+    card, _ = _card()
+    make_handler(ops)(card, t, Event.new("outlook", "new_mail", {}))
+    assert ops.agent_calls[0]["allowed_runnables"] is None
 
 
 def test_handler_reply_to_none_without_entry_id():

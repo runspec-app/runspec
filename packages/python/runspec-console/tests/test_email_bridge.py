@@ -88,6 +88,8 @@ _BRIDGE_METHODS = (
     "_ingest_email",
     "_evict_trigger_cards",
     "_on_engine_event",
+    "_email_feed_gate",
+    "_feed_email_event",
     "_email_control",
     "claim_email_thread",
     "resolve_email_thread",
@@ -98,12 +100,23 @@ _BRIDGE_METHODS = (
 )
 
 
+class _FakeEngine:
+    """Records the synthetic lifecycle events the bridge feeds (e.g. claimed)."""
+
+    def __init__(self) -> None:
+        self.fed: list[Event] = []
+
+    def feed(self, event: Event) -> None:
+        self.fed.append(event)
+
+
 def _email_stub(mailboxes: dict[str, str]):
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._trigger_cards = {}
     s._email_threads = {}
     s._email_seen = set()
+    s._trigger_engine = _FakeEngine()  # captures fed claimed events
     s.dispatched: list[tuple[str, dict]] = []
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
     s._mailbox_queues = lambda: dict(mailboxes)  # the [mailboxes] map, lowercased
@@ -446,6 +459,165 @@ def test_ingest_dedupes_an_overlapping_item():
         e for e in card["timeline"] if e["text"].startswith("alice@big.com:")
     ]
     assert len(requester_lines) == 1  # folded once, not twice
+
+
+# ── the claim gate for email agent turns (mirrors chat's _feed_engine_for) ─────
+
+
+def _new_mail_event(payload: dict) -> Event:
+    return Event.new("outlook", "new_mail", payload)
+
+
+def test_feed_gate_blocks_unclaimed_queue_mail():
+    # A help-desk new_mail on an unowned thread surfaces the card but does NOT
+    # route — no model spend until someone here claims it.
+    s = _email_stub(_MAP)
+    mail = _mail(to="it-support@corp.com")
+    s._ingest_email(mail)  # surfaces the card (unowned)
+    assert s._trigger_cards["queue:email:CONV1"]["detail"]["owned_by_me"] is False
+    assert s._email_feed_gate(_new_mail_event(mail)) is False
+
+
+def test_feed_gate_passes_once_owned_by_this_console():
+    s = _email_stub(_MAP)
+    s._ingest_email(_mail(to="it-support@corp.com"))
+    s._ingest_email(_marker_mail("claim", "me@console1"))  # our claim folds
+    assert s._trigger_cards["queue:email:CONV1"]["detail"]["owned_by_me"] is True
+    follow_up = _mail(to="it-support@corp.com", entry_id="ENT2")
+    assert s._email_feed_gate(_new_mail_event(follow_up)) is True
+
+
+def test_feed_gate_blocks_when_a_teammate_owns_it():
+    s = _email_stub(_MAP)
+    s._ingest_email(_mail(to="it-support@corp.com"))
+    s._ingest_email(_marker_mail("claim", "ana@web01"))  # a teammate claims
+    follow_up = _mail(to="it-support@corp.com", entry_id="ENT2")
+    assert s._email_feed_gate(_new_mail_event(follow_up)) is False
+
+
+def test_feed_gate_blocks_a_marker_ack():
+    # A claim/lifecycle ack is internal plumbing — never an agent turn, even on a
+    # thread this console owns.
+    s = _email_stub(_MAP)
+    s._ingest_email(_mail(to="it-support@corp.com"))
+    s._ingest_email(_marker_mail("claim", "me@console1"))  # we own it
+    ack = _marker_mail("resolve", "me@console1", message_id="<ack2>")
+    assert s._email_feed_gate(_new_mail_event(ack)) is False
+
+
+def test_feed_gate_passes_non_queue_mail_ungated():
+    # Personal / other mail has no claim concept — a user's own Outlook trigger
+    # still fires.
+    s = _email_stub(_MAP)
+    assert s._email_feed_gate(_new_mail_event(_mail(to="me@corp.com"))) is True
+
+
+def test_feed_gate_passes_non_new_mail_events():
+    s = _email_stub(_MAP)
+    assert (
+        s._email_feed_gate(Event.new("outlook", "reminder", {"subject": "x"})) is True
+    )
+    assert s._email_feed_gate(Event.new("chat", "message", {"text": "hi"})) is True
+
+
+# ── draft on claim: a synthetic email/claimed trigger event ───────────────────
+
+
+def _claimed_events(stub):
+    return [e for e in stub._trigger_engine.fed if e.type == "claimed"]
+
+
+def test_claim_by_this_console_feeds_a_claimed_event():
+    """Taking ownership feeds one email/claimed event carrying the latest
+    requester message (so a configured trigger can draft on claim)."""
+    s = _email_stub(_MAP)
+    s._ingest_email(_mail(to="it-support@corp.com", subject="VPN down", body="help"))
+    s._ingest_email(_marker_mail("claim", "me@console1"))  # we win the claim
+    events = _claimed_events(s)
+    assert len(events) == 1
+    p = events[0].payload
+    assert events[0].source == "email"
+    assert p["queue"] == "it-support"
+    assert p["from"] == "alice@big.com"
+    assert p["subject"] == "VPN down"
+    assert p["body"] == "help"
+    assert p["entry_id"] == "ENT1"
+    # recipients = the mailbox, so queue_mailbox_for resolves the send-as identity.
+    assert p["recipients"] == ["it-support@corp.com"]
+
+
+def test_claim_by_teammate_feeds_no_claimed_event():
+    s = _email_stub(_MAP)
+    s._ingest_email(_mail(to="it-support@corp.com"))
+    s._ingest_email(_marker_mail("claim", "ana@web01"))  # a teammate wins
+    assert _claimed_events(s) == []
+
+
+def test_ownership_flip_fires_once_not_on_later_messages():
+    """The claimed event fires on the flip only — a follow-up message on an
+    already-owned thread doesn't re-fire it."""
+    s = _email_stub(_MAP)
+    s._ingest_email(_mail(to="it-support@corp.com", entry_id="E1"))
+    s._ingest_email(_marker_mail("claim", "me@console1"))  # flip → fires
+    s._ingest_email(
+        _mail(to="it-support@corp.com", subject="Re: more", entry_id="E2")
+    )  # still owned → no new fire
+    assert len(_claimed_events(s)) == 1
+
+
+def test_replay_reconstructs_without_feeding_a_claimed_event():
+    """The startup backlog scan (replay=True) rebuilds owner/state but never
+    re-feeds a claimed event — a restart must not re-draft a claimed thread."""
+    s = _email_stub(_MAP)
+    s._ingest_email(_mail(to="it-support@corp.com"), replay=True)
+    s._ingest_email(_marker_mail("claim", "me@console1"), replay=True)
+    assert s._trigger_cards["queue:email:CONV1"]["detail"]["owned_by_me"] is True
+    assert _claimed_events(s) == []
+
+
+def test_claimed_event_skipped_without_a_requester_message():
+    """A claim that folds before any requester message (no entry_id to reply to)
+    feeds nothing — nothing to draft a reply to."""
+    s = _email_stub(_MAP)
+    # Only a claim marker, never a requester message → no entry_id on the card.
+    s._ingest_email(_marker_mail("claim", "me@console1"))
+    assert _claimed_events(s) == []
+
+
+def test_backlog_scan_passes_replay(monkeypatch):
+    """_scan_email_backlog replays through the fold with replay=True (no re-draft
+    of an already-claimed conversation on restart)."""
+    from runspec_console.sources import outlook
+
+    backlog = [
+        _mail(to="it-support@corp.com", entry_id="M1"),
+        _marker_mail("claim", "me@console1", received_ts=100, message_id="<a>"),
+    ]
+    monkeypatch.setattr(
+        outlook,
+        "read_mailbox_items",
+        lambda addr, limit=50: backlog if addr == "it-support@corp.com" else [],
+    )
+    s = _email_stub(_MAP)
+    s._scan_email_backlog()
+    assert s._trigger_cards["queue:email:CONV1"]["detail"]["owned_by_me"] is True
+    assert _claimed_events(s) == []  # reconstruction never re-fires
+
+
+# ── send-as-mailbox resolution for the agent draft (_BridgeTriggerOps) ─────────
+
+
+def test_queue_mailbox_for_resolves_helpdesk_and_skips_personal():
+    """The trigger-ops adapter resolves a help-desk email event to its shared
+    mailbox (so the agent draft replies as the queue), and "" for other mail."""
+    from runspec_console.bridge import _BridgeTriggerOps
+
+    ops = _BridgeTriggerOps(_email_stub(_MAP))
+    assert (
+        ops.queue_mailbox_for({"recipients": ["it-support@corp.com"]})
+        == "it-support@corp.com"
+    )
+    assert ops.queue_mailbox_for({"to": "someone-else@corp.com"}) == ""
 
 
 # ── conversation key (ConversationID, with a normalised-subject fallback) ──────

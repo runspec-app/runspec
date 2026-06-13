@@ -210,6 +210,12 @@ diagnostics runnable against it, then draft (do not send) a reply summarising
 findings. Never send mail or restart a service without confirmation.
 """
 
+# agent mode (optional): scope the agent to an allowlist of runnables. Omit it and
+# the agent sees every discovered runnable; set it and the LLM still extracts and
+# decides, but only over these tools. Each entry matches a runnable's bare name or
+# its qualified "host__name" (a bare name allows it on every host).
+runnables = ["prod-web-01__service-status", "check-memory"]
+
 # (A5) Suggested reply — off by default. When on, an agent-mode trigger may use
 # the built-in `draft_reply` tool to save a short draft reply to Outlook Drafts
 # for the user to review and send. The console never sends mail itself.
@@ -230,7 +236,14 @@ style = "Concise, professional. Acknowledge, state next step, no commitments."
 - `mode = "rule"` maps payload → args via the **existing validator** (the
   `map` table), then runs one runnable through the gate. Fully deterministic.
 - `mode = "agent"` runs a headless agent turn seeded with `rules` + a rendered
-  summary of the event, with `_runnables_to_tools()` as its toolset.
+  summary of the event, with `_runnables_to_tools()` as its toolset. The optional
+  `runnables` allowlist is the **third point on the rule↔agent spectrum**: `rule`
+  runs one fixed runnable (no LLM), `agent` lets the LLM pick from *every*
+  runnable, and `agent` + `runnables` lets the LLM extract/decide but only over a
+  curated set. Empty/omitted = every runnable; an allowlist that matches nothing
+  logs a warning (a typo or a not-yet-discovered host) and the agent runs
+  tool-less rather than silently picking from all. Invalid in `rule` mode (which
+  already names its single runnable via `run`).
 - `autonomy` sets the gate level for runnables this trigger drives. **Defaults to
   `confirm`** — safe by default, exactly like runspec everywhere else. The
   per-runnable / per-arg escalation in `_effective_tool_autonomy` still applies

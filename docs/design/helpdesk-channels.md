@@ -1,10 +1,14 @@
 # Help desk channels — one queue, many channels
 
-> Status: **slices 1–5 built** (email as a queue card; mailbox claim + lifecycle;
-> the ownership-gated reply, sent as the shared mailbox). Remaining: audit parity,
-> and the email conversation-pane transcript (Q7). Builds on the queue-in-Triggers
-> work in PR #217 (`console: fold helpdesk queues into the Triggers tab`). See also
-> `helpdesk-rooms.md`, `console-room-server.md`, `console-triggers.md`.
+> Status: **slices 1–6.2 built** (email as a queue card; mailbox claim + lifecycle;
+> the ownership-gated reply, sent as the shared mailbox; the **claim-gated agent
+> turn** with audit/`run_summary` parity; the agent draft sent **as the queue**;
+> and **draft on claim** — claiming feeds an `email`/`claimed` trigger event so a
+> one-message ticket auto-drafts). Remaining: the email conversation-pane transcript
+> (Q7), losing-ack hygiene (Q6), and a real-Exchange smoke test. Builds on the
+> queue-in-Triggers work in PR #217 (`console: fold helpdesk queues into the
+> Triggers tab`). See also `helpdesk-rooms.md`, `console-room-server.md`,
+> `console-triggers.md`.
 
 ## Status & handover (read this first)
 
@@ -13,8 +17,12 @@
 > per-slice "Implemented — slice N" sections below have the detail.
 
 **Where it stands:** slices 1–5 shipped on branch `claude/email-queue-cards-godjdh`
-(PR #221 against `main`), all tests green. The email channel only activates when a
-`[mailboxes]` table is configured, so it's a no-op for existing users until then.
+(PR #221 against `main`); slice 6 (the claim-gated agent turn) is on branch
+`claude/helpdesk-channels-design-otyxsj`. All tests green. The email channel only
+activates when a `[mailboxes]` table is configured, so it's a no-op for existing
+users until then; the agent turn additionally needs a configured Outlook
+agent-mode trigger (`source = "outlook"`, `event = "new_mail"`, `reply.draft =
+true`) — exactly as chat needs a configured chat trigger.
 
 **Architecture map (where each piece lives):**
 
@@ -28,10 +36,15 @@
   `save_reply_draft(…, from_mailbox=)`. Pure header parsers
   (`_recipients_from_headers`, `_received_ts`, `_header_field`) are fake-tested.
 - `runspec_console/bridge.py` — orchestration: `_ingest_email` (dedup → append a
-  fold event → refresh the card's state/owner/`owned_by_me`),
-  `claim/resolve/reopen/close_email_thread`, `reply_email_thread`,
-  `_scan_email_backlog`, `_agent_identity`. State: `_email_threads`, `_email_seen`.
-  The engine gained `on_source_event` + `always_start` (`triggers.py`).
+  fold event → refresh the card's state/owner/`owned_by_me`; retains the latest
+  requester `req_subject`/`req_body`; feeds a `claimed` event on the ownership
+  flip unless `replay`), `claim/resolve/reopen/close_email_thread`,
+  `reply_email_thread`, `_scan_email_backlog` (replay), `_agent_identity`,
+  **`_email_feed_gate`** (the claim gate for agent turns — the email analog of
+  `_feed_engine_for`), **`_feed_email_event`** (feeds the synthetic `email`
+  lifecycle event). State: `_email_threads`, `_email_seen`. The engine gained
+  `on_source_event`, `always_start`, and **`feed_gate`** (`triggers.py`);
+  `"email"` is an external source.
 - UI: `packages/console-ui/src/views/TriggersView.tsx` (email cards get the queue
   chip + lifecycle buttons via `controlEmail`; reply composer in the detail drawer
   when `owned_by_me`), `bridge/index.ts` + `bridge/mock.ts`.
@@ -50,13 +63,26 @@
 
 1. **Real-Exchange smoke test** of the two caveats above — the main thing blocking
    confidence in the live multi-console path.
-2. **Email agent-turn flow** — the real "audit parity" unlock: a claim-gated agent
-   turn that *proposes* a reply on an owned email ticket behind the autonomy gate
-   (mirror chat's `_feed_engine_for` + `_gated_propose_reply`). This is where email
-   starts emitting the same agent `run_summary` records as chat.
-3. **Losing-ack hygiene (Q6)** — mark-read / file the internal marker acks to a
+2. ~~**Agent draft as the shared mailbox**~~ — **done** (slice 6.1). The agent turn
+   now threads `from_mailbox` through `run_agent_turn` → `_gated_draft_reply` →
+   `save_reply_draft`, so a help-desk email draft replies as the queue identity
+   (the trigger handler resolves it via `BridgeOps.queue_mailbox_for`); the card's
+   Send button reopens that already-saved draft, so the send-as is preserved.
+   Personal-mail triggers and chat `propose_reply` are unaffected.
+3. **Single-message tickets → make *claim* a trigger event.** The claim gate
+   mirrors chat: the agent turn fires on a *requester message that arrives after
+   claim*. **Done (slice 6.2):** taking ownership is now a first-class **event** the
+   existing trigger config binds to — not a bespoke `draft_on_claim` flag or a UI
+   button. See "Implemented — slice 6.2" below.
+   - **Related gap (own design note, not built):** the trigger config has no
+     *guided agent flow* — `rule` mode defines runnable+args (no LLM), `agent` mode
+     defines only `rules` (the LLM sees every runnable and picks). The `runnables`
+     allowlist (slice 6.x) narrows the *toolset*; pre-filling specific args, or a
+     "rule → agent narrate" two-step, is a broader change to the trigger model
+     (touches `console-triggers.md`), tracked separately.
+4. **Losing-ack hygiene (Q6)** — mark-read / file the internal marker acks to a
    subfolder so hot threads don't accumulate visible plumbing.
-4. **Thread-transcript pane (Q7)** — retain requester-message bodies per
+5. **Thread-transcript pane (Q7)** — retain requester-message bodies per
    conversation (payloads already flow through `_ingest_email`; no new COM) and
    render them in the drawer.
 
@@ -68,6 +94,103 @@
   store `ReceivedTime` so header-less internal mail still orders correctly.
 - `scripts/check_docs.py` only scans top-level `docs/*.md`, **not** `docs/design/`,
   so the ` ```toml ` `[mailboxes]` example here is not schema-validated.
+
+## Implemented — slice 6.2: draft on claim (claim is a trigger event)
+
+Solves the single-message ticket: the slice-6 gate only routes a *follow-up*
+requester message, so a one-message ticket (the common email case) never auto-
+drafts. Rather than a bespoke `draft_on_claim` flag or a card button, **taking
+ownership is now a first-class trigger event** the existing config binds to:
+
+```toml
+[triggers.draft-on-claim]
+source = "email"
+event  = "claimed"
+mode   = "agent"          # or "rule" — run a defined runnable on claim
+rules  = "Draft a concise reply to the requester's message."
+[triggers.draft-on-claim.reply]
+draft = true              # offers draft_reply → autonomy gate → saved draft
+```
+
+- **The event.** When `_ingest_email` folds a claim ack that flips ownership to
+  *this* console (unowned-by-us → owned-by-us, computed from `owned_by_me`), the
+  bridge feeds `Event.new("email", "claimed", {queue, conversation_id, from,
+  subject, entry_id, recipients=[mailbox], body})` — the same external-source
+  `engine.feed` path chat uses. `_feed_email_event` reads the engine under the lock
+  and feeds after releasing it (no handler-on-lock re-entrancy).
+- **The retained message.** The claim ack carries no requester content, so
+  `_ingest_email` now retains the latest requester message (`req_subject` /
+  `req_body` on the card detail) when it sees one; the claimed event replays it as
+  the agent's user turn. (A step toward the Q7 transcript, which wants bodies too.)
+- **`recipients = [mailbox]`** so `BridgeOps.queue_mailbox_for` resolves the
+  send-as identity and the agent drafts *as the queue* (slice 6.1), and `entry_id`
+  is the requester message the `draft_reply` tool replies to — the handler treats
+  a `source = "email"` event as a mail draft (`is_chat` is false).
+- **Routing.** `"email"` is registered as an external source (like chat) so the
+  engine never tries to *start* it; the synthetic event flows through `_route` →
+  `_on_engine_event` (ignores non-`outlook`) → `_email_feed_gate` (passes non-
+  `outlook`) → trigger matching. No matching trigger ⇒ a harmless no-op + audit
+  record. **Opt-in by config presence.**
+- **No re-draft on restart.** The startup backlog scan calls `_ingest_email(…,
+  replay=True)`, which reconstructs owner/state but suppresses the claimed event —
+  so a restart that re-folds an already-claimed thread doesn't re-draft. The flip
+  also fires *once* (only on the unowned→owned transition), and only when there's a
+  requester `entry_id` to reply to.
+- **Latent fix.** A card first created by a claim ack used to seed `entry_id` from
+  the ack's id; card creation now leaves `entry_id` empty until a requester message
+  sets it, so the reply target is never a marker.
+
+## Implemented — slice 6: the claim-gated agent turn (audit parity)
+
+The "audit parity" unlock. An email ticket now runs a **claim-gated agent turn**
+that drafts a reply behind the autonomy gate — and because it runs the *same*
+isolated agent loop as a chat trigger, email starts emitting the same agent
+audit / `run_summary` records (the History/Analytics tabs no longer go half-dark
+for email queues).
+
+The turn itself was already wired: a configured Outlook agent-mode trigger
+(`source = "outlook"`, `event = "new_mail"`, `mode = "agent"`, `reply.draft =
+true`) runs `_run_isolated_agent_turn` with `reply_to = entry_id`, offering the
+built-in `draft_reply` tool gated by `_gated_draft_reply` (save-to-Drafts, never
+sent). The piece that was **missing — and is the whole of this slice — is the
+claim gate**, so the turn doesn't run on every new mail regardless of ownership
+(which would burn model spend on unclaimed threads and have *both* consoles draft
+a reply, breaking first-ack-wins).
+
+- **The gate (keystone).** `bridge._email_feed_gate(event)` is the email analog of
+  `_feed_engine_for`: a shared-mailbox `new_mail` routes to the trigger engine —
+  and so can start an agent turn — **only once this console owns the folded
+  conversation** (`detail.owned_by_me`, set by the fold in `_ingest_email`). Two
+  further suppressions: a claim/lifecycle **marker ack** is internal plumbing
+  (`parse_marker` hit → never a turn), and **non-queue mail** (personal / other,
+  `_email_queue_for is None`) routes **ungated** so a user's own Outlook trigger
+  still works. Mirrors chat exactly: group-chat (no namespace) always feeds; a
+  help-desk thread feeds only when claimed.
+- **The engine seam.** `TriggerEngine` gained an optional `feed_gate:
+  Callable[[Event], bool]`, checked in `_route` **after** the `on_source_event`
+  hook (so the queue card is folded/surfaced first) and **before** trigger
+  matching. A rejected event is dropped entirely — no card, no run, **no audit
+  record** — exactly like an unclaimed chat message that never reaches `feed()`.
+  Fail-open: a raising gate never blocks routing. This keeps the engine
+  bridge-agnostic (the gate is injected, fake-tested with a plain predicate),
+  parallel to `clock_ok` / `on_source_event`.
+- **Why a gate and not handler-side filtering.** The card is dispatched *before*
+  the handler runs, so gating in the handler would flash a trigger card (and an
+  audit record) for every unclaimed email. Gating in `_route`, upstream of
+  dispatch, is the only place that achieves true chat parity (unclaimed ⇒
+  invisible to the trigger audit; the *queue* card still surfaces, because the
+  fold runs in the source-event hook above the gate).
+- **Audit parity falls out for free.** Once an owned-thread message routes, the
+  agent turn drives the same `runspec:token` / `runspec:tool_start|end` /
+  `runspec:run_end` dispatches and runs runnables through `_gated_run_tool_async`,
+  whose executions log `run_summary` records on their hosts — the records the
+  Analytics tab aggregates. No new audit plumbing; the gap was purely that email
+  turns never *started*.
+
+Drafting the agent reply *as the shared mailbox* landed as **slice 6.1** (the
+`from_mailbox` thread-through; see Next steps). Still deferred: the single-message
+ticket case — the gate fires on the next requester message, mirroring chat — to be
+solved by making *claim* a first-class trigger event (Next steps §3).
 
 ## Implemented — slice 5: reply as the shared mailbox (Q5)
 
@@ -317,7 +440,8 @@ ordered conversation.* This single model unifies chat and email.
 | Claim                     | ✓ (strong) | ✓ (log-folded)  |
 | Lifecycle open→…→closed   | ✓          | ✓               |
 | Autonomy gate on reply    | ✓          | ✓               |
-| Audit / analytics records | ✓          | **must match**  |
+| Claim-gated agent turn    | ✓          | ✓ (slice 6)     |
+| Audit / analytics records | ✓          | ✓ (slice 6)     |
 | Conversation pane         | ✓          | ✓ (email thread)|
 | Self-service catalog/forms| ✓          | ✗ (freeform)    |
 | Presence                  | ✓          | ✗               |

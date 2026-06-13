@@ -52,6 +52,7 @@ _TRIGGER_KEYS = frozenset(
         "post_to_chat",
         "rules",
         "run",
+        "runnables",
         "map",
         "reply",
         "match",
@@ -142,6 +143,11 @@ class Trigger:
     match: dict[str, str] = field(default_factory=dict)
     rules: str = ""  # agent mode: the LLM's per-trigger system prompt
     run: str = ""  # rule mode: "host__runnable"
+    # agent mode: an allowlist of runnable names the agent may call (empty = all).
+    # The third point on the rule↔agent spectrum: rule = one fixed runnable, agent
+    # = any runnable, agent+runnables = the LLM extracts/decides but only over
+    # these tools. Each entry matches a runnable's bare name or its "host__name".
+    runnables: list[str] = field(default_factory=list)
     arg_map: dict[str, str] = field(default_factory=dict)  # rule mode: payload→arg
     reply: ReplySettings = field(default_factory=ReplySettings)
 
@@ -212,6 +218,22 @@ class Trigger:
         if mode == "rule" and not run:
             raise ValueError(f"trigger '{name}' uses mode='rule' but has no 'run'")
 
+        runnables_raw = data.get("runnables")
+        if runnables_raw is None:
+            runnables: list[str] = []
+        elif isinstance(runnables_raw, list):
+            runnables = [str(x).strip() for x in runnables_raw if str(x).strip()]
+        else:
+            raise ValueError(
+                f"trigger '{name}': 'runnables' must be a list of runnable names, "
+                'e.g. runnables = ["web01__check-memory", "restart-service"]'
+            )
+        if runnables and mode == "rule":
+            raise ValueError(
+                f"trigger '{name}': 'runnables' is an agent tool allowlist (mode="
+                "'agent'); rule mode runs the single runnable named by 'run'."
+            )
+
         reply_raw = data.get("reply") or {}
         reply = ReplySettings(
             draft=bool(reply_raw.get("draft", False)),
@@ -230,6 +252,7 @@ class Trigger:
             match=match,
             rules=str(data.get("rules") or ""),
             run=run,
+            runnables=runnables,
             arg_map=arg_map,
             reply=reply,
         )
@@ -354,6 +377,7 @@ class TriggerEngine:
         on_card: Callable[[TriggerCard], None] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         on_source_event: Callable[[Event], None] | None = None,
+        feed_gate: Callable[[Event], bool] | None = None,
         create_source: Callable[[str], EventSource | None] = _default_create_source,
         executor: Executor | None = None,
         max_workers: int = 2,
@@ -372,6 +396,14 @@ class TriggerEngine:
         # shared-mailbox new_mail event onto a queue card, the email analog of the
         # chat source's emit. Best-effort: a failing hook never blocks routing.
         self._on_source_event = on_source_event
+        # A predicate the host supplies to suppress routing for an event (no
+        # card, no trigger run, no audit record) — checked once per event, after
+        # ``on_source_event`` so the host can fold the event onto a queue card
+        # first and decide from the folded state. The email claim gate uses it:
+        # a shared-mailbox new_mail only routes once this console owns the thread,
+        # mirroring how an unclaimed chat message never reaches feed(). Fail-open:
+        # a raising gate never blocks routing. Default (None) routes everything.
+        self._feed_gate = feed_gate
         self._create_source = create_source
         # Source ids the engine must NOT start itself — they're owned elsewhere and
         # push events in via feed() (e.g. the always-on chat source the bridge
@@ -460,7 +492,8 @@ class TriggerEngine:
         """Route an event to every matching trigger.
 
         Returns the Future of the last submitted run (handy for tests with a
-        synchronous executor); ``None`` if nothing matched. Outside the
+        synchronous executor); ``None`` if nothing matched. An event the
+        ``feed_gate`` rejects is dropped entirely (no card, no audit). Outside the
         working-hours rota, matching triggers are skipped (dropped, not queued)
         unless they set ``ignore_rota``.
         """
@@ -469,6 +502,15 @@ class TriggerEngine:
                 self._on_source_event(event)
             except Exception:
                 logger.exception("trigger source-event hook failed")
+        if self._feed_gate is not None:
+            try:
+                if not self._feed_gate(event):
+                    # Suppressed: the host folded it onto a queue card above, but
+                    # it's not routed (e.g. an unclaimed help-desk thread) — no
+                    # card, no run, no audit record, matching the chat claim gate.
+                    return None
+            except Exception:
+                logger.exception("trigger feed-gate failed")  # fail open — route
         last: Future[None] | None = None
         clock_ok = self._clock_ok()
         matched: list[str] = []

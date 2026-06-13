@@ -8,6 +8,61 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.51.0] — 2026-06-13
+
+The email help-desk channel reaches **audit parity** with chat: an owned email
+ticket now runs a **claim-gated agent turn** that drafts a reply behind the
+autonomy gate, emitting the same agent audit / `run_summary` records as a chat
+queue (so the History/Analytics tabs no longer go half-dark for email queues).
+See `docs/design/helpdesk-channels.md` (slice 6). Also adds a third point on the
+rule↔agent trigger spectrum: an agent trigger can be **scoped to an allowlist of
+runnables** (`docs/design/console-triggers.md` §5).
+
+### Added
+- **Claim gate for email agent turns.** `bridge._email_feed_gate` — the email
+  analog of `_feed_engine_for` — lets a shared-mailbox `new_mail` reach the
+  trigger engine (and so start an agent turn) only once this console **owns** the
+  folded conversation. A claim/lifecycle marker ack never starts a turn, and
+  non-queue (personal) mail routes ungated, so a user's own Outlook trigger is
+  unaffected. This stops both consoles drafting a reply on an unclaimed thread
+  (which would burn model spend and break first-ack-wins), mirroring chat where an
+  unclaimed thread never feeds the engine.
+- **`TriggerEngine` gained an injectable `feed_gate`** — a per-event predicate
+  checked in `_route` after the `on_source_event` hook (so the queue card is
+  surfaced first) and before trigger matching. A rejected event is dropped
+  entirely — no card, no run, no audit record — exactly like an unclaimed chat
+  message. Fail-open: a raising gate never blocks routing. The engine stays
+  bridge-agnostic (the gate is injected, fake-tested), parallel to `clock_ok`.
+- **Agent drafts reply as the shared mailbox.** A help-desk email agent turn now
+  drafts the reply *as the queue identity* (threads `from_mailbox` through
+  `run_agent_turn` → `_gated_draft_reply` → `save_reply_draft`), matching the
+  human reply path (slice 5). The trigger handler resolves the send-as mailbox
+  from the event via a new `BridgeOps.queue_mailbox_for`; personal/other mail and
+  chat drafts (propose_reply) are unaffected — they draft from the operator.
+- **Agent trigger `runnables` allowlist.** An agent-mode trigger may set
+  `runnables = ["host__name", "name", …]` to scope the LLM's toolset to a curated
+  set — the third point between `mode = "rule"` (one fixed runnable) and `mode =
+  "agent"` (every runnable). Each entry matches a runnable's bare name or its
+  qualified `host__name`. Empty/omitted keeps the current "any runnable"
+  behaviour; an allowlist that matches nothing logs a warning and the agent runs
+  tool-less (rather than silently falling back to all). Rejected in `rule` mode.
+- **Draft on claim — claiming is a trigger event.** Taking ownership of an email
+  ticket now feeds a synthetic `email`/`claimed` event (carrying the latest
+  requester message) to the trigger engine, so a one-message ticket can auto-draft
+  — the new_mail gate only fires on a *follow-up* message. Bind a normal trigger
+  (`source = "email"`, `event = "claimed"`, `reply.draft = true`); opt-in by config
+  presence. `_ingest_email` retains the requester subject/body and fires once on the
+  unowned→owned flip (only with a requester message to reply to); the startup
+  backlog scan replays with `replay=True` so a restart never re-drafts a claimed
+  thread. `"email"` is registered as an external engine source. Also fixes a latent
+  bug where a card first created by a claim ack seeded its reply `entry_id` from the
+  ack instead of a requester message.
+
+### Notes
+- The agent turn reuses the existing `draft_reply` path (save-to-Drafts, never
+  sent), gated by the autonomy prompt.
+
+
 ## [0.50.0] — 2026-06-12
 
 A shared mailbox becomes a **second channel** on a help-desk queue, reusing the

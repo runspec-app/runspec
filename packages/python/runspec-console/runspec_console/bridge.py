@@ -27,7 +27,7 @@ import threading
 import time
 import uuid
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +115,8 @@ class _BridgeTriggerOps:
         draft: bool,
         reply_to: str | None = None,
         room: str | None = None,
+        from_mailbox: str | None = None,
+        allowed_runnables: list[str] | None = None,
         record: Any = None,
         stage: Any = None,
     ) -> str:
@@ -125,9 +127,15 @@ class _BridgeTriggerOps:
             draft=draft,
             reply_to=reply_to,
             room=room,
+            from_mailbox=from_mailbox,
+            allowed_runnables=allowed_runnables,
             record=record,
             stage=stage,
         )
+
+    def queue_mailbox_for(self, payload: dict[str, Any]) -> str:
+        queue = self._bridge._email_queue_for(payload)
+        return self._bridge._email_mailbox_for(queue) if queue else ""
 
     def run_rule_tool(
         self, chat_id: str, tool_name: str, tool_input: dict[str, Any]
@@ -3933,10 +3941,19 @@ class Bridge:
             "cache_creation": field("cache_creation_input_tokens"),
         }
 
-    def _runnables_to_tools(self) -> list[dict[str, Any]]:
-        """Convert cached runnables to Anthropic-format tool schemas."""
+    def _runnables_to_tools(
+        self, allow: Collection[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Convert cached runnables to Anthropic-format tool schemas.
+
+        ``allow`` (when non-empty) scopes the result to an allowlist of runnable
+        names — each entry matches a runnable's bare ``name`` or its qualified
+        ``host__name`` (raw or the sanitised tool name) — so an agent-mode trigger
+        can be limited to a curated set of tools. ``None``/empty = every runnable.
+        """
         import re
 
+        allowset = {str(a).strip() for a in allow} if allow else None
         with self._lock:
             runnables = list(self._runnables_cache)
         tools: list[dict[str, Any]] = []
@@ -3946,6 +3963,10 @@ class Bridge:
             name = r.get("name", "")
             raw_name = f"{host}__{name}"
             tool_name = re.sub(r"[^a-zA-Z0-9_-]", "_", raw_name)[:64]
+            if allowset is not None and not (
+                name in allowset or raw_name in allowset or tool_name in allowset
+            ):
+                continue  # scoped out by the trigger's runnables allowlist
             if tool_name in seen_tool_names:
                 sys.stderr.write(
                     f"runspec-console: warning: duplicate tool name '{tool_name}' skipped"
@@ -5022,11 +5043,17 @@ class Bridge:
             # Fold a shared-mailbox new_mail event onto a queue card, regardless of
             # whether any trigger matches (the email analog of the chat source).
             on_source_event=self._on_engine_event,
+            # Claim-gate email agent turns: a help-desk new_mail only routes (and
+            # so can start an agent turn) once this console owns the thread — the
+            # email analog of _feed_engine_for. Non-queue mail routes ungated.
+            feed_gate=self._email_feed_gate,
             clock_ok=self._build_clock_ok(),
             # The chat source is owned by the always-on supervisor (start_chat),
             # not the engine — it pushes messages in via engine.feed(). Marking it
-            # external stops the engine constructing/starting a second one.
-            external_sources={"chat"},
+            # external stops the engine constructing/starting a second one. "email"
+            # is the bridge-synthesised lifecycle channel (the `claimed` event the
+            # bridge feeds on an ownership flip) — likewise fed, never started.
+            external_sources={"chat", "email"},
             always_start=always_start,
         )
         problems = engine.start()
@@ -5341,6 +5368,36 @@ class Bridge:
                 return bool(state) and state.get("assignee") == agent_user
         return True
 
+    def _email_feed_gate(self, event: Any) -> bool:
+        """The claim gate for email agent turns — the email analog of
+        :meth:`_feed_engine_for`. A shared-mailbox (help-desk queue) ``new_mail``
+        reaches the trigger engine — and so can start an agent turn that drafts a
+        reply — only once this console **owns** the folded conversation (someone
+        here clicked Claim and the ack folded back). Until then the mail is
+        UI-only: the queue card surfaces it (``_ingest_email`` runs in the
+        source-event hook, *before* this gate), but no model spend happens —
+        mirroring chat, where an unclaimed thread never feeds the engine.
+
+        Two further suppressions: a claim/lifecycle **marker ack** is internal
+        plumbing, never an agent turn; and non-queue mail (personal / other) feeds
+        normally — there's no claim concept for it, so a user's own Outlook
+        trigger still works ungated."""
+        if event.source != "outlook" or event.type != "new_mail":
+            return True
+        from . import mailbox_claim
+
+        payload = dict(event.payload)
+        if self._email_queue_for(payload) is None:
+            return True  # not a mapped mailbox — not a help-desk email
+        if mailbox_claim.parse_marker(str(payload.get("claim_marker") or "")):
+            return False  # a marker ack — plumbing, never an agent turn
+        conversation = Bridge._email_conversation_key(payload)
+        card_id = f"queue:email:{conversation}"
+        with self._lock:
+            card = self._trigger_cards.get(card_id)
+            detail = card.get("detail") if card else None
+        return bool(detail and detail.get("owned_by_me"))
+
     def _on_chat_event(self, event: Any) -> None:
         """A chat source's emit: fan every event to the Rooms view, and route
         *messages* (not presence) to the live trigger engine so a chat trigger can
@@ -5544,14 +5601,23 @@ class Bridge:
                 return address
         return ""
 
-    def _ingest_email(self, payload: dict[str, Any]) -> None:
+    def _ingest_email(self, payload: dict[str, Any], replay: bool = False) -> None:
         """Record one shared-mailbox ``new_mail`` and refresh its trigger card —
         the email analog of :meth:`_touch_queue_card`, but the card's lifecycle is
         a **validated fold** of the conversation's marker events rather than a
         hub's pushed state. Mail not addressed to a mapped mailbox never becomes a
         card. A claim/lifecycle ack (``claim_marker`` set) folds into ownership/
         state and is *not* shown as a requester message; an ordinary email bumps
-        the summary and can reopen a resolved/closed thread."""
+        the summary and can reopen a resolved/closed thread.
+
+        When this console **takes ownership** (a claim ack folds us in as owner),
+        a synthetic ``email``/``claimed`` event is fed to the trigger engine
+        carrying the latest requester message — so an agent-mode trigger
+        (``source = "email"``, ``event = "claimed"``) can draft a reply *on claim*,
+        which solves the single-message ticket (the new_mail gate only fires on a
+        *follow-up* message). ``replay = True`` (the startup backlog scan)
+        reconstructs state without re-feeding, so a restart never re-drafts an
+        already-claimed thread."""
         from . import mailbox_claim
 
         queue = self._email_queue_for(payload)
@@ -5576,6 +5642,7 @@ class Bridge:
         me = self._agent_identity()  # read config outside the lock
         dedup_key = str(payload.get("message_id") or payload.get("entry_id") or "")
         now = time.time()
+        claimed_payload: dict[str, Any] | None = None  # set on the ownership flip
         with self._lock:
             # Fold each item once — the startup scan and the live source overlap.
             if dedup_key and dedup_key in self._email_seen:
@@ -5602,7 +5669,10 @@ class Bridge:
                         "visitor": visitor,
                         "conversation_id": conversation,
                         "mailbox": self._email_mailbox_for(queue),
-                        "entry_id": str(payload.get("entry_id") or ""),
+                        # The reply target is a requester message, set in the
+                        # ``marker is None`` block — never a marker ack's id (which
+                        # would happen if a claim ack created the card first).
+                        "entry_id": "",
                     },
                     "created_at": now,
                     "timeline": [],
@@ -5615,17 +5685,42 @@ class Bridge:
                 entry_id = str(payload.get("entry_id") or "")
                 if entry_id:
                     detail["entry_id"] = entry_id
+                # Retain the latest requester message so a draft-on-claim turn has
+                # content to reply to — the claim ack that triggers it carries none.
+                detail["req_subject"] = subject
+                detail["req_body"] = str(payload.get("body") or "")
                 if snippet:
                     text = snippet if len(snippet) <= 120 else snippet[:117] + "…"
                     card["summary"] = text
                     card["timeline"].append({"ts": now, "text": f"{visitor}: {text}"})
             # Lifecycle/ownership come from the fold; log a transition once.
             prev_state = detail.get("state")
+            prev_owned = bool(detail.get("owned_by_me"))
             detail["state"] = state
             detail["owner"] = owner
             # Whether *this* console owns it — the reply gate (rule 3) and the
             # UI's "you can reply" affordance read this, not the raw owner string.
             detail["owned_by_me"] = bool(owner) and owner == me
+            # Taking ownership (not-ours → ours): build the claimed event so a
+            # configured trigger can draft on claim. Live only (a replay rebuilds
+            # state without re-drafting), and only with a requester message to act
+            # on. recipients = [mailbox] so queue_mailbox_for resolves the send-as
+            # identity (the agent drafts as the queue).
+            if (
+                not replay
+                and detail["owned_by_me"]
+                and not prev_owned
+                and detail.get("entry_id")
+            ):
+                claimed_payload = {
+                    "queue": queue,
+                    "conversation_id": conversation,
+                    "from": detail.get("visitor", ""),
+                    "subject": detail.get("req_subject", ""),
+                    "entry_id": detail.get("entry_id", ""),
+                    "recipients": [detail.get("mailbox", "")],
+                    "body": detail.get("req_body", ""),
+                }
             card["column"] = Bridge._QUEUE_STATE_COLUMN.get(state, card["column"])
             if state != prev_state:
                 who = f" by {owner}" if owner else ""
@@ -5637,6 +5732,24 @@ class Bridge:
             self._evict_trigger_cards(card_id)
             snapshot = dict(card)
         self._dispatch("runspec:trigger_card", snapshot)
+        if claimed_payload is not None:
+            self._feed_email_event("claimed", claimed_payload)
+
+    def _feed_email_event(self, kind: str, payload: dict[str, Any]) -> None:
+        """Feed a synthetic ``email`` lifecycle event (e.g. ``claimed``) to the
+        trigger engine — the same external-source path chat uses, so the existing
+        trigger config drives it. Best-effort: no engine, or a feed failure, is
+        logged and never blocks the caller."""
+        from .events import Event
+
+        with self._lock:
+            engine = self._trigger_engine
+        if engine is None:
+            return
+        try:
+            engine.feed(Event.new("email", kind, payload))
+        except Exception:
+            logger.exception("email: feeding %s event failed", kind)
 
     def _agent_identity(self) -> str:
         """A stable identity for this console in claim markers — ``[console]
@@ -5760,7 +5873,9 @@ class Bridge:
         for address in sorted(self._mailbox_queues()):
             try:
                 for payload in read_mailbox_items(address, limit):
-                    self._ingest_email(payload)
+                    # replay=True: reconstruct claim/lifecycle state without
+                    # re-feeding a claimed event (no re-draft on restart).
+                    self._ingest_email(payload, replay=True)
             except Exception:
                 logger.exception("email: backlog scan of %s failed", address)
 
@@ -6196,6 +6311,8 @@ class Bridge:
         draft: bool,
         reply_to: str | None = None,
         room: str | None = None,
+        from_mailbox: str | None = None,
+        allowed_runnables: list[str] | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
     ) -> str:
@@ -6206,8 +6323,11 @@ class Bridge:
         token / tool / confirm events attribute to the card on the board.
         ``reply_to`` (when ``draft``) is the Outlook message id the draft_reply
         tool replies to; ``room`` (when ``draft``) is the chat room the
-        propose_reply tool drafts into. ``record`` logs per-tool steps to the card
-        timeline. Returns a summary for display on the card."""
+        propose_reply tool drafts into; ``from_mailbox`` (when ``draft``) is the
+        shared mailbox a help-desk reply drafts *as*. ``allowed_runnables`` (when
+        non-empty) scopes the agent's runnable tools to that allowlist. ``record``
+        logs per-tool steps to the card timeline. Returns a summary for the
+        card."""
         try:
             adapter = self._get_adapter(system_override=system)
         except Exception as exc:  # noqa: BLE001 — surface, don't crash the worker
@@ -6228,6 +6348,8 @@ class Bridge:
                     adapter,
                     reply_to=reply_to if draft else None,
                     room=room if draft else None,
+                    from_mailbox=from_mailbox if draft else None,
+                    allowed_runnables=allowed_runnables,
                     record=record,
                     stage=stage,
                 )
@@ -6243,6 +6365,8 @@ class Bridge:
         adapter: Any,
         reply_to: str | None = None,
         room: str | None = None,
+        from_mailbox: str | None = None,
+        allowed_runnables: list[str] | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
     ) -> str:
@@ -6259,7 +6383,15 @@ class Bridge:
         from .trigger_runner import draft_reply_schema, propose_reply_schema
 
         start = time.monotonic()
-        tools = self._runnables_to_tools()
+        tools = self._runnables_to_tools(allow=allowed_runnables)
+        if allowed_runnables and not tools:
+            # A non-empty allowlist that matched no installed runnable — the agent
+            # would run tool-less. Surface it (a config typo / a host not yet
+            # discovered) rather than silently doing nothing.
+            logger.warning(
+                "trigger agent turn: runnables allowlist %s matched no runnable",
+                allowed_runnables,
+            )
         if reply_to:
             tools = [*tools, draft_reply_schema()]
         if room:
@@ -6317,7 +6449,7 @@ class Bridge:
                     output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — stopped."
                 elif tc.name == "draft_reply":
                     output = await self._gated_draft_reply(
-                        tc.input, chat_id, reply_to, stage=stage
+                        tc.input, chat_id, reply_to, from_mailbox, stage=stage
                     )
                 elif tc.name == "propose_reply":
                     output = await self._gated_propose_reply(
@@ -6361,13 +6493,16 @@ class Bridge:
         tool_input: dict[str, Any],
         chat_id: str,
         reply_to: str | None,
+        from_mailbox: str | None = None,
         stage: Callable[[str], None] | None = None,
     ) -> str:
         """Confirm, then save an agent-written reply to Outlook Drafts.
 
         Always gated (a mailbox write), reusing the same confirm prompt as every
         other tool call so the card parks in 'awaiting human' until approved. The
-        draft is saved, never sent."""
+        draft is saved, never sent. ``from_mailbox`` (a help-desk queue) drafts
+        the reply *as the shared mailbox* — the queue identity — matching the
+        human reply path; empty/None drafts from the operator."""
         body = str((tool_input or {}).get("body") or "").strip()
         if not reply_to:
             return "✗ draft_reply: no source message to reply to."
@@ -6390,7 +6525,9 @@ class Bridge:
             return "✗ You declined to save the draft reply."
         if stage is not None:
             stage("running")
-        result = await asyncio.to_thread(self._save_reply_draft, reply_to, body)
+        result = await asyncio.to_thread(
+            self._save_reply_draft, reply_to, body, from_mailbox
+        )
         # Hand the saved draft to the card so it can offer a Send button — the
         # human reviews the draft and sends it from the card (never the agent).
         if result.get("ok") and result.get("entry_id"):
@@ -6451,14 +6588,17 @@ class Bridge:
             "the Rooms view, then edit and send it — nothing was sent."
         )
 
-    def _save_reply_draft(self, entry_id: str, body: str) -> dict[str, Any]:
+    def _save_reply_draft(
+        self, entry_id: str, body: str, from_mailbox: str | None = None
+    ) -> dict[str, Any]:
         """Blocking Outlook-COM draft save. Returns ``{ok, message, entry_id, to,
         subject}`` — the ``message`` goes back to the agent; the rest lets the
-        card offer a Send button for the saved draft."""
+        card offer a Send button for the saved draft. ``from_mailbox`` drafts the
+        reply *as that shared mailbox* (the help-desk queue identity)."""
         try:
             from .sources.outlook import save_reply_draft
 
-            info = save_reply_draft(entry_id, body)
+            info = save_reply_draft(entry_id, body, from_mailbox=from_mailbox)
         except Exception as exc:  # noqa: BLE001 — report on the card, don't crash
             logger.exception("draft_reply: save failed")
             return {"ok": False, "message": f"✗ Could not save draft: {exc}"}

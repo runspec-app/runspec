@@ -39,6 +39,8 @@ class BridgeOps(Protocol):
         draft: bool,
         reply_to: str | None = None,
         room: str | None = None,
+        from_mailbox: str | None = None,
+        allowed_runnables: list[str] | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
     ) -> str:
@@ -47,11 +49,22 @@ class BridgeOps(Protocol):
         turn. ``draft`` requests a reply-drafting tool be offered; for an Outlook
         event ``reply_to`` is the source message's id the draft replies to, and
         for a chat event ``room`` is the room a proposed reply targets (each is
-        required to offer its respective tool). ``record`` (if given) is called
-        with a short note per tool/gate step, for the card timeline. ``stage``
-        reports the card stage ("awaiting_human" / "running") as the turn
-        progresses. Returns a short summary for the card.
+        required to offer its respective tool). ``from_mailbox`` (Outlook only) is
+        the shared-mailbox address to draft the reply *as* — the help-desk queue
+        identity; empty/None drafts from the operator. ``allowed_runnables``, when
+        non-empty, scopes the runnable tools the agent may call to that allowlist
+        (None/empty = every runnable). ``record`` (if given) is called with a short
+        note per tool/gate step, for the card timeline. ``stage`` reports the card
+        stage ("awaiting_human" / "running") as the turn progresses. Returns a
+        short summary for the card.
         """
+        ...
+
+    def queue_mailbox_for(self, payload: dict[str, Any]) -> str:
+        """The shared-mailbox address to reply *as* for a help-desk email event
+        (the queue identity), or ``""`` for personal/other mail (the operator
+        drafts from their own identity) and any non-email event. Lets the handler
+        bind the send-as mailbox without knowing the ``[mailboxes]`` map."""
         ...
 
     def run_rule_tool(
@@ -209,6 +222,13 @@ def make_handler(
             (event.payload.get("entry_id") or None) if (draft and not is_chat) else None
         )
         room = (event.payload.get("room") or None) if (draft and is_chat) else None
+        # A help-desk email draft replies *as the shared mailbox* (the queue
+        # identity), the same as the human reply path; the bridge resolves it from
+        # the event's recipient and returns "" for personal/other mail (drafts
+        # from the operator). Chat drafts (propose_reply) never use it.
+        from_mailbox = (
+            ops.queue_mailbox_for(event.payload) if (draft and not is_chat) else ""
+        ) or None
         system = compose_system(
             trigger,
             base_system,
@@ -223,6 +243,10 @@ def make_handler(
             draft=draft,
             reply_to=reply_to,
             room=room,
+            from_mailbox=from_mailbox,
+            # An empty allowlist means "any runnable" (the bridge treats None/empty
+            # the same); a non-empty one scopes the agent to those tools.
+            allowed_runnables=trigger.runnables or None,
             record=card.log,  # per-tool/gate steps onto the card timeline
             stage=lambda col: card.move(col),  # awaiting_human → running stages
         )

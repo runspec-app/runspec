@@ -11,6 +11,11 @@ on:
 jobs:
   analyze:
     name: Analyze ${{ matrix.language }}
+    # Code scanning upload (security-events: write) needs GitHub Advanced Security
+    # on a private repo. Skip while the repo is private; auto-resumes if it's made
+    # public again. (Drop these from required status checks while gated, so the
+    # skipped job can't block a merge.)
+    if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
     permissions:
       security-events: write

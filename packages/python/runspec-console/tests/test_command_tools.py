@@ -113,6 +113,41 @@ def test_flat_runnable_has_no_command_param():
     assert "command" not in tool["input_schema"]["properties"]
 
 
+# ── runnables allowlist scopes the agent's tools ──────────────────────────────
+
+
+def _allowlist_tools(allow):
+    runnables = [
+        {"host": "web01", "name": "check-memory", "args": []},
+        {"host": "web01", "name": "restart-service", "args": []},
+        {"host": "db01", "name": "check-memory", "args": []},
+    ]
+    tools = _ToolBridge(runnables)._runnables_to_tools(allow=allow)
+    return {t["name"] for t in tools}
+
+
+def test_allowlist_none_returns_every_tool():
+    # No allowlist → unrestricted (the agent --> any runnable behaviour).
+    assert _allowlist_tools(None) == {
+        "web01__check-memory",
+        "web01__restart-service",
+        "db01__check-memory",
+    }
+
+
+def test_allowlist_matches_qualified_and_bare_names():
+    # A qualified "host__name" pins one host; a bare name allows it on every host.
+    assert _allowlist_tools(["web01__restart-service", "check-memory"]) == {
+        "web01__restart-service",
+        "web01__check-memory",
+        "db01__check-memory",
+    }
+
+
+def test_allowlist_unknown_name_yields_no_tools():
+    assert _allowlist_tools(["nope"]) == set()
+
+
 # ── execution threads the chosen command ──────────────────────────────────────
 
 
