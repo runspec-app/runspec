@@ -64,6 +64,16 @@ class ChatTransport(Protocol):
 TransportFactory = Callable[[], ChatTransport]
 
 
+class VerifySender(Protocol):
+    """Send one email-verify mail as the queue mailbox. The production default is
+    Outlook send-as (``verify_mail.outlook_verify_sender``); tests inject a fake.
+    Raises on failure so the console can ack ``verify_sent`` with ``ok=false``."""
+
+    def __call__(
+        self, *, to: str, subject: str, body: str, from_mailbox: str
+    ) -> None: ...
+
+
 # ── pure payload extraction / routing (tested with fakes) ──────────────────────
 
 
@@ -208,6 +218,10 @@ class ChatSource:
         room: str | None = None,
         user: str | None = None,
         namespace: str | None = None,
+        queue: str = "",
+        queue_email: str = "",
+        queue_label: str = "",
+        verify_sender: VerifySender | None = None,
         transport: ChatTransport | None = None,
         transport_factory: TransportFactory | None = None,
         on_closed: Callable[[], None] | None = None,
@@ -219,6 +233,17 @@ class ChatSource:
         # (``helpdesk/<queue>``) instead of one room. The hub fans every
         # conversation under it to this connection — the agent's inbox.
         self._namespace = _str(namespace)
+        # Email-verify queue signup: the bare queue name + its mailbox + label this
+        # console advertises (so the room can offer it on the sign-up page and ask
+        # this console to send the verify mail as that mailbox). Empty queue_email →
+        # this console doesn't advertise for sign-up (the queue can still take
+        # requests; it just isn't a self-service email-verify target).
+        self._queue = _str(queue)
+        self._queue_email = _str(queue_email)
+        self._queue_label = _str(queue_label)
+        # The verify-mail sender (Outlook send-as by default; a fake in tests).
+        # Resolved lazily so importing chat.py never imports win32.
+        self._verify_sender = verify_sender
         self._transport = transport
         self._transport_factory = transport_factory
         # Fired when the recv loop ends because the channel dropped (not via
@@ -261,6 +286,9 @@ class ChatSource:
         # rota may flip us to "away" later via set_presence).
         self._send_hello()
         self._send_presence("available")
+        # Advertise this queue for email-verify sign-up (agent mode + mailbox set),
+        # so the room offers it on /signup and routes verify mail back here.
+        self._send_advertise()
         self._thread = threading.Thread(
             target=self._run, name="chat-listener", daemon=True
         )
@@ -313,6 +341,58 @@ class ChatSource:
             transport.send({"type": "catalog", "tools": tools})
         except Exception:
             logger.exception("chat: catalog send failed")
+
+    def _send_advertise(self) -> None:
+        """Advertise this console's queue for email-verify sign-up. Agent mode only,
+        and only when a queue mailbox is configured (no mailbox → the queue still
+        takes requests, it just isn't offered as a self-service sign-up target)."""
+        transport = self._transport
+        if transport is None or not self.is_agent or not self._queue_email:
+            return
+        try:
+            transport.send(
+                {
+                    "type": "advertise",
+                    "queue": self._queue,
+                    "queue_email": self._queue_email,
+                    "display_name": self._queue_label or self._queue,
+                }
+            )
+        except Exception:
+            logger.exception("chat: advertise send failed")
+
+    def _handle_send_verify(self, frame: dict[str, Any]) -> None:
+        """Act on a ``send_verify`` from the room: mail the verify link as the queue
+        mailbox, then ack ``verify_sent`` with the outcome. A failed send acks
+        ``ok=false`` so the room returns the row to its outbox to retry elsewhere."""
+        transport = self._transport
+        nonce = _str(frame.get("nonce"))
+        if transport is None or not self.is_agent or not nonce:
+            return
+        from .verify_mail import compose_verify_mail, outlook_verify_sender
+
+        sender = self._verify_sender or outlook_verify_sender
+        subject, body = compose_verify_mail(
+            _str(frame.get("name")),
+            _str(frame.get("queue")),
+            _str(frame.get("queue_email")),
+            _str(frame.get("verify_url")),
+        )
+        ok = False
+        try:
+            sender(
+                to=_str(frame.get("to")),
+                subject=subject,
+                body=body,
+                from_mailbox=_str(frame.get("queue_email")),
+            )
+            ok = True
+        except Exception:
+            logger.exception("chat: verify mail send failed")
+        try:
+            transport.send({"type": "verify_sent", "nonce": nonce, "ok": ok})
+        except Exception:
+            logger.exception("chat: verify_sent ack send failed")
 
     def _send_hello(self) -> None:
         """Announce identity on connect — the first frame the room server expects.
@@ -377,6 +457,11 @@ class ChatSource:
     def _handle(self, obj: Any) -> None:
         """Route one inbound wire dict (split out so routing is tested without
         threads, mirroring the pure-helper testing of the other sources)."""
+        # ``send_verify`` is a protocol action, not a trigger event: mail the link
+        # and ack, never emit. (Handled here since parse_inbound drops unknown types.)
+        if isinstance(obj, dict) and _str(obj.get("type")) == "send_verify":
+            self._handle_send_verify(obj)
+            return
         event = parse_inbound(obj, self._user)
         if event is not None and self._emit is not None:
             _safe_emit(self._emit, event)

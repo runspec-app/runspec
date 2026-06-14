@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.59.0] — 2026-06-14
+
+### Added
+- **Email-verified queue signup — the console side (slice 4 of 5).** A helpdesk
+  agent console now powers the room's `email-verify` sign-up door
+  (`docs/design/email-queue-signup.md` §4/§7), completing the end-to-end flow:
+  - **Advertises its queue for sign-up.** On connect, an agent console with a
+    `room_queue_email` set sends an `advertise` frame (`queue` + `queue_email` +
+    `display_name`) so the room offers the queue on `/signup`. New host fields:
+    **`room_queue_email`** (the queue's mailbox — the verify-from address *and* the
+    sign-up domain allowlist) and optional **`room_queue_label`** (the dropdown
+    label; defaults to the queue name). A queue without `room_queue_email` still
+    takes requests — it just isn't offered as a self-service sign-up target.
+  - **Sends the verify mail as the queue mailbox.** On a `send_verify` frame the
+    console composes the verify mail (`sources/verify_mail.py` — pure, tested) and
+    sends it via Outlook **send-as** the queue mailbox (`SentOnBehalfOfName`, a new
+    `outlook.send_verify_mail` — the one auto-send, since it's a system mail not an
+    agent reply), then acks `verify_sent`. A failed send acks `ok=false` so the
+    room returns the signup to its outbox and retries on another console. The
+    Outlook send is Windows-only; the composition + frame handling are tested on any
+    platform (a pluggable `verify_sender` seam), mirroring the email folder-watch
+    split.
+
 ## [0.58.0] — 2026-06-14
 
 ### Added

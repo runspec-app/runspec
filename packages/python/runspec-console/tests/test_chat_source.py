@@ -518,3 +518,141 @@ def test_message_payload_carries_request_kind_and_data():
     # Plain chat (and older servers sending no kind) default to "chat", no data.
     plain = message_payload({"type": "message", "room": "ops", "text": "hi"})
     assert plain["kind"] == "chat" and "data" not in plain
+
+
+# ── email-verify: advertise on connect + send_verify handling ─────────────────
+
+
+def _ev_agent(transport, **kw):
+    return ChatSource(
+        namespace="helpdesk/it-support",
+        user="agent@web01",
+        queue="it-support",
+        transport=transport,
+        **kw,
+    )
+
+
+def test_agent_advertises_queue_on_start_when_mailbox_set():
+    transport = FakeTransport()
+    src = _ev_agent(
+        transport, queue_email="it-support@corp.com", queue_label="IT Support"
+    )
+    src.start(lambda ev: None)
+    src.stop()
+    ads = [m for m in transport.sent if m["type"] == "advertise"]
+    assert ads == [
+        {
+            "type": "advertise",
+            "queue": "it-support",
+            "queue_email": "it-support@corp.com",
+            "display_name": "IT Support",
+        }
+    ]
+
+
+def test_advertise_display_name_defaults_to_queue():
+    transport = FakeTransport()
+    src = _ev_agent(transport, queue_email="it-support@corp.com")  # no label
+    src.start(lambda ev: None)
+    src.stop()
+    ad = next(m for m in transport.sent if m["type"] == "advertise")
+    assert ad["display_name"] == "it-support"
+
+
+def test_no_advertise_without_mailbox():
+    transport = FakeTransport()
+    src = _ev_agent(transport)  # no queue_email
+    src.start(lambda ev: None)
+    src.stop()
+    assert [m for m in transport.sent if m["type"] == "advertise"] == []
+
+
+def test_no_advertise_in_room_mode():
+    transport = FakeTransport()
+    src = ChatSource(room="ops", user="c", transport=transport)
+    src.start(lambda ev: None)
+    src.stop()
+    assert [m for m in transport.sent if m["type"] == "advertise"] == []
+
+
+def test_send_verify_mails_and_acks_ok():
+    transport = FakeTransport()
+    calls: list[dict[str, Any]] = []
+
+    def fake_sender(*, to, subject, body, from_mailbox):
+        calls.append({"to": to, "subject": subject, "body": body, "from": from_mailbox})
+
+    src = _ev_agent(
+        transport, queue_email="it-support@corp.com", verify_sender=fake_sender
+    )
+    src._handle(
+        {
+            "type": "send_verify",
+            "nonce": "n1",
+            "to": "jane@corp.com",
+            "name": "Jane Doe",
+            "queue": "it-support",
+            "queue_email": "it-support@corp.com",
+            "verify_url": "https://room.test/verify?token=t",
+        }
+    )
+    # The mail was composed + sent as the queue mailbox…
+    assert len(calls) == 1
+    assert calls[0]["to"] == "jane@corp.com"
+    assert calls[0]["from"] == "it-support@corp.com"
+    assert "https://room.test/verify?token=t" in calls[0]["body"]
+    # …and acked ok.
+    assert {"type": "verify_sent", "nonce": "n1", "ok": True} in transport.sent
+    # send_verify is a protocol action, not a trigger event.
+    assert src.event_types() and "send_verify" not in src.event_types()
+
+
+def test_send_verify_acks_failure_when_sender_raises():
+    transport = FakeTransport()
+
+    def boom(*, to, subject, body, from_mailbox):
+        raise RuntimeError("no Outlook here")
+
+    src = _ev_agent(transport, queue_email="it-support@corp.com", verify_sender=boom)
+    src._handle(
+        {
+            "type": "send_verify",
+            "nonce": "n2",
+            "to": "jane@corp.com",
+            "name": "Jane",
+            "queue": "it-support",
+            "queue_email": "it-support@corp.com",
+            "verify_url": "https://room.test/verify?token=t",
+        }
+    )
+    assert {"type": "verify_sent", "nonce": "n2", "ok": False} in transport.sent
+
+
+def test_send_verify_without_nonce_is_ignored():
+    transport = FakeTransport()
+    calls: list[Any] = []
+    src = _ev_agent(
+        transport,
+        queue_email="it-support@corp.com",
+        verify_sender=lambda **kw: calls.append(kw),
+    )
+    src._handle({"type": "send_verify", "to": "jane@corp.com"})  # no nonce
+    assert calls == [] and transport.sent == []
+
+
+def test_emitted_events_unaffected_by_send_verify_branch():
+    # A normal message still routes to an emitted event.
+    transport = FakeTransport()
+    emitted: list[Event] = []
+    src = _ev_agent(transport, queue_email="it-support@corp.com")
+    src._emit = emitted.append
+    src._handle(
+        {
+            "type": "message",
+            "room": "helpdesk/it-support/jane",
+            "sender": "jane",
+            "text": "hi",
+        }
+    )
+    assert [e.type for e in emitted] == ["message"]

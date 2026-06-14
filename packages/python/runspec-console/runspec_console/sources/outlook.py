@@ -447,6 +447,42 @@ def save_reply_draft(
         pythoncom.CoUninitialize()
 
 
+def send_verify_mail(
+    *, to: str, subject: str, body: str, from_mailbox: str = ""
+) -> dict[str, str]:
+    """Compose and **send** a fresh mail as the queue mailbox — the email-verify
+    link (docs/design/email-queue-signup.md §7).
+
+    Unlike :func:`save_reply_draft` / :func:`send_draft` (a human-reviewed agent
+    reply) this auto-sends: it is a system verification mail, not an agent reply, so
+    no card / draft step. ``from_mailbox`` sends it **as that shared mailbox**
+    (``SentOnBehalfOfName``) so the recipient sees the queue identity; send-as vs
+    send-on-behalf is decided by the Exchange permission, same COM call. Returns a
+    small summary; raises on failure. Windows-only; win32 imports stay inside.
+    """
+    if sys.platform != "win32":
+        raise RuntimeError("send_verify_mail requires Windows (Outlook COM)")
+    if not to:
+        raise RuntimeError("send_verify_mail has no recipient")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        mail = app.CreateItem(0)  # olMailItem
+        mail.To = to
+        mail.Subject = subject
+        mail.Body = body
+        if from_mailbox:
+            mail.SentOnBehalfOfName = from_mailbox  # send as the queue mailbox
+        mail.Send()
+        return {"to": to, "subject": subject}
+    finally:
+        pythoncom.CoUninitialize()
+
+
 def send_draft(entry_id: str) -> dict[str, str]:
     """Send a previously-saved draft by its ``entry_id`` (the card's Send button).
 

@@ -298,6 +298,30 @@ def test_host_rooms_queue_without_catalog_means_all_marked():
     assert host_rooms(hosts)[0]["catalog_allowlist"] is None
 
 
+def test_host_rooms_queue_carries_email_verify_fields():
+    hosts = [
+        {
+            "name": "web01",
+            "ssh": "ops@web01",
+            "room_queue": "it-support",
+            "room_port": 8765,
+            "room_queue_email": "it-support@corp.com",
+            "room_queue_label": "IT Support",
+        }
+    ]
+    s = host_rooms(hosts)[0]
+    assert s["queue_email"] == "it-support@corp.com"
+    assert s["queue_label"] == "IT Support"
+
+
+def test_host_rooms_queue_without_email_has_blank_fields():
+    hosts = [
+        {"name": "w", "ssh": "a@b", "room_queue": "it", "room_port": 8765},
+    ]
+    s = host_rooms(hosts)[0]
+    assert s["queue_email"] == "" and s["queue_label"] == ""
+
+
 def test_host_rooms_room_and_queue_coexist_as_two_specs():
     hosts = [
         {

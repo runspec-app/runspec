@@ -5233,6 +5233,9 @@ class Bridge:
                 room="" if queue else room,
                 namespace=room if queue else None,
                 user=user,
+                queue=queue,
+                queue_email=str(spec.get("queue_email") or ""),
+                queue_label=str(spec.get("queue_label") or ""),
                 transport_factory=factory,
                 on_closed=closed.set,
             )

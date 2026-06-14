@@ -312,6 +312,11 @@ def host_rooms(
                     "catalog_allowlist": [str(n) for n in allowlist]
                     if isinstance(allowlist, list)
                     else None,
+                    # Email-verify sign-up: the queue's mailbox (verify-from + the
+                    # allowlist domain) and an optional display label. Absent
+                    # ``room_queue_email`` → the queue isn't offered for sign-up.
+                    "queue_email": str(h.get("room_queue_email") or "").strip(),
+                    "queue_label": str(h.get("room_queue_label") or "").strip(),
                 }
             )
     return specs
