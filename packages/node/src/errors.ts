@@ -11,6 +11,7 @@ export class OutOfRange extends RunSpecError {}
 export class UnknownArg extends RunSpecError {}
 export class GroupViolation extends RunSpecError {}
 export class AutonomyViolation extends RunSpecError {}
+export class RunAsMismatch extends RunSpecError {}
 
 export function formatMissingRequired(name: string, spec: Record<string, unknown>): string {
   const lines = [
@@ -133,6 +134,15 @@ export function formatGroupExactlyOne(groupName: string, args: string[], provide
     `✗  Group '${groupName}' requires exactly one argument`,
     `   Got ${provided.length}: ${provided.map((a) => `--${a}`).join(', ')}`,
     `   Provide exactly one of: ${args.map((a) => `--${a}`).join(', ')}`,
+  ].join('\n');
+}
+
+export function formatRunAsMismatch(runnableName: string, detail: string): string {
+  return [
+    `✗  Refusing to run '${runnableName}': ${detail}.`,
+    `   This runnable declares a run_as user it must execute as.`,
+    '   Re-run under the intended account (e.g. `sudo -u <user> ...`, `runspec serve`,',
+    '   or `runspec jump`), or relax the check with enforce_run_as = "warn" (or "off").',
   ].join('\n');
 }
 

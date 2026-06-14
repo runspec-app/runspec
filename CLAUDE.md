@@ -228,7 +228,7 @@ Both Python and Node packages are active and published.
 | Package | Version | PyPI / npm | Notes |
 |---|---|---|---|
 | `runspec` | 0.37.0 | PyPI | Core library (reference implementation) |
-| `runspec-node` | 0.32.0 | npm | Node port |
+| `runspec-node` | 0.33.0 | npm | Node port |
 | `runspec-console` | 0.44.0 | PyPI | pywebview desktop console — agentic chat + Forms + SSH jump-host fleet UI (frontend in `packages/console-ui`); desktop toast + taskbar flash on agent confirm-gate events (Windows; `[notifications]` extra); **Rooms** chat-room tab + `chat` trigger source — **always-on, multi-room**: rooms are a property of a fleet host (`room`/`room_port` on the host entry), joined over that host's own SSH tunnel, reconnecting, independent of triggers. `room_via = "exec"` runs `console-room connect` over an SSH exec channel for networks that block port-forwarding. **Helpdesk agent mode** (0.44.0): `room_queue` on a host entry staffs that queue — inbox of private visitor conversations with claim/resolve controls, **claim-gated agent turns** (no model spend on unclaimed threads), and a **self-service catalog publisher** (`discoverable ∋ "self-service"` runnables, optional `room_catalog` allowlist) — see `docs/design/helpdesk-rooms.md` |
 | `runspec-room` | 0.5.0 | PyPI | The chat-room server (`packages/console-room/`) — a "dumb message pipe with presence". Two front doors, one process: consoles via NDJSON over the SSH tunnel (localhost), people via an OIDC-authenticated browser web app (Starlette + uvicorn, TLS, SQLite transcript). `console-room connect` is the exec-channel relay (stdio↔local room port) for the no-forwarding transport. **Helpdesk mode** (0.5.0): private per-visitor conversations (`helpdesk/<queue>/<visitor>`, room name derived server-side from the OIDC identity), namespace-subscribed agent consoles, conversation lifecycle (open→assigned→resolved→closed, claim/resolve/reopen/close), and a per-queue **self-service catalog** published by agent consoles + visitor forms generated from `inputSchema` — the room itself never executes anything. See `docs/design/console-room-server.md` + `docs/design/helpdesk-rooms.md` |
 | `runspec-chat` | 0.4.7 | PyPI | Chainlit chat UI (superseded by runspec-console) |
@@ -366,6 +366,17 @@ the custom `register_type` names demonstrated in the docs.)
 with Python 0.22.0/0.23.0. The shared compliance fixtures
 (`tests/integration/fixtures/complex.toml`) now exercise both and are verified
 identically by the Python and Node compliance suites.
+
+**Node parity — `enforce_run_as` (node-0.33.0):** the runtime identity gate from
+Python 0.37.0 is now in the Node pack. New `packages/node/src/become.ts` ports
+`resolveRunAs` (string / `$ENV` / per-host / first-match patterns) and
+`verifyRunAsIdentity` (uid comparison via `id`) — this is the first `run_as`
+support in Node, which previously had none (it builds no escalation command;
+`serve` doesn't sudo). On `parse()` the resolved `run_as` user is compared by
+uid to the effective user; `enforce_run_as` (`"error"` default / `"warn"` /
+`"off"`, per-runnable → `[config]` → library default) drives the reaction.
+No-op when `run_as` is empty or `process.geteuid` is undefined (Windows), and
+skipped by `loadSpec`.
 
 Build order: `emit --rundeck` first (current platform), `emit --ansible`
 second (migration target), `push --rundeck` last (CI/CD automation).

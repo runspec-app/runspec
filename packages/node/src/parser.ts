@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as os from 'os';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { findConfig } from './finder';
@@ -6,7 +7,8 @@ import { loadRaw } from './loader';
 import { inferScript, effectiveAutonomy } from './inference';
 import { coerce } from './types';
 import { validateArgs, validateGroups, raiseIfErrors } from './validator';
-import { RunSpecError, formatMissingCommand } from './errors';
+import { resolveRunAs, verifyRunAsIdentity } from './become';
+import { RunSpecError, RunAsMismatch, formatMissingCommand, formatRunAsMismatch } from './errors';
 import { configureLogging, installExceptionHook } from './logging_setup';
 import type { ParsedArgs, ScriptSpec, ArgSpec } from './models';
 
@@ -19,10 +21,12 @@ export interface ParseOptions {
   _enforceRequiredCommand?: boolean;
   /** Internal: prompt for missing required password args. loadSpec sets false. */
   _promptSecrets?: boolean;
+  /** Internal: verify the run_as identity (enforce_run_as). loadSpec sets false. */
+  _checkRunAs?: boolean;
 }
 
 export function parse(opts: ParseOptions = {}): ParsedArgs {
-  const { scriptName, argv: argvOverride, cwd, configPath: configPathOverride, _enforceRequiredCommand = true, _promptSecrets = true } = opts;
+  const { scriptName, argv: argvOverride, cwd, configPath: configPathOverride, _enforceRequiredCommand = true, _promptSecrets = true, _checkRunAs = true } = opts;
 
   const { configPath } = configPathOverride ? { configPath: configPathOverride } : findConfig(cwd);
   const raw = loadRaw(configPath);
@@ -89,6 +93,26 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
   if (argv.includes('--help') || argv.includes('-h')) {
     printHelp(name, activeScript, commandPath);
     process.exit(0);
+  }
+
+  // Verify run_as identity on the direct/import execution path. run_as is
+  // consumed by an executor (sudo escalation) *before* the process starts, so
+  // under one the effective user already matches and this passes silently; on
+  // the direct path nothing escalates, so this catches running as the wrong
+  // user. run_as/enforce_run_as are runnable-level, so they are read from the
+  // root spec (not the merged subcommand leaf). Runs after --help so
+  // `<name> --help` is always readable; skipped by loadSpec (introspection).
+  if (_checkRunAs) {
+    const rootSpec = raw.runnables[name];
+    const detail = verifyRunAsIdentity(resolveRunAs(rootSpec.runAs, os.hostname()));
+    if (detail) {
+      const level = rootSpec.enforceRunAs ?? config.enforceRunAs ?? 'error';
+      if (level === 'warn') {
+        process.stderr.write(`⚠  ${name}: ${detail}. (enforce_run_as = "warn" — continuing)\n`);
+      } else if (level !== 'off') {
+        throw new RunAsMismatch(formatRunAsMismatch(name, detail));
+      }
+    }
   }
 
   // Enforce require-command on the resolved leaf: if the deepest matched node
@@ -166,7 +190,9 @@ export function parse(opts: ParseOptions = {}): ParsedArgs {
 
 export function loadSpec(opts: ParseOptions = {}): ParsedArgs {
   // Secret prompting is disabled — introspection must never block on a prompt.
-  return parse({ ...opts, argv: [], _enforceRequiredCommand: false, _promptSecrets: false });
+  // The run_as identity check is likewise skipped: emitting schemas and listing
+  // runnables must never depend on who is running them.
+  return parse({ ...opts, argv: [], _enforceRequiredCommand: false, _promptSecrets: false, _checkRunAs: false });
 }
 
 function inferFromArgv(): string {

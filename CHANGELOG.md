@@ -36,6 +36,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   effective user match. Set `enforce_run_as = "warn"` (or `"off"`), per-runnable
   or in `[config]`, to relax it.
 
+## [node-0.33.0] — 2026-06-14
+
+### Added
+
+- **`enforce_run_as`** — Node parity with Python 0.37.0. On `parse()`, the
+  resolved `run_as` user is compared **by uid** to the process's effective user,
+  and `enforce_run_as` controls the reaction on a mismatch: `"error"` (default)
+  throws `RunAsMismatch`, `"warn"` writes to stderr and continues, `"off"`
+  disables the check. Settable per-runnable or project-wide via `[config]
+  enforce_run_as`; the runnable's own value wins. No-op when `run_as` resolves
+  empty or on a platform with no POSIX uid model (`process.geteuid` undefined,
+  e.g. Windows), and skipped during introspection (`loadSpec`).
+  - New `become.ts` ports the `run_as` resolver (`resolveRunAs` — string /
+    `$ENV` / per-host / first-match patterns) and `verifyRunAsIdentity` (the uid
+    comparison, looking users up via `id`). This is the first `run_as` support
+    in the Node pack — it had none previously.
+  - `RunAsMismatch` is exported from the package entry point.
+
+### Note
+
+- **Behaviour change:** the default is `"error"`, so a runnable that declares
+  `run_as` and is run directly as anyone other than the target user now throws
+  (previously the Node pack ignored `run_as` entirely). Set `enforce_run_as =
+  "warn"` (or `"off"`), per-runnable or in `[config]`, to relax it.
+
 ## [0.36.0] / [node-0.32.0] — 2026-06-12
 
 ### Removed

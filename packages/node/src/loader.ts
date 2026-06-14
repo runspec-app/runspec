@@ -22,6 +22,7 @@ export function loadRaw(configPath: string): RawSpec {
 function normaliseConfig(raw: Record<string, unknown>): RawConfig {
   return {
     autonomyDefault: (raw['autonomy-default'] as string | undefined) ?? 'confirm',
+    enforceRunAs: (raw['enforce_run_as'] as string | undefined) ?? 'error',
     lang: raw['lang'] as string | undefined,
     version: String(raw['version'] ?? '1'),
     logging: normaliseLogging(raw['logging'] as Record<string, unknown> | undefined),
@@ -68,6 +69,8 @@ function normaliseScript(name: string, raw: Record<string, unknown>): ScriptSpec
     autonomyReason: raw['autonomy-reason'] as string | undefined,
     output: raw['output'] as string | undefined,
     discoverable: raw['discoverable'] as boolean | string[] | undefined,
+    runAs: raw['run_as'],
+    enforceRunAs: raw['enforce_run_as'] as string | undefined,
     requireCommand: (raw['require-command'] as boolean | undefined) ?? false,
     args: normaliseArgs((raw['args'] ?? {}) as Record<string, unknown>),
     groups: normaliseGroups((raw['groups'] ?? {}) as Record<string, unknown>),

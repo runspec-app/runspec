@@ -1,7 +1,7 @@
 export { parse, loadSpec } from './parser';
 export { registerType, listTypes } from './types';
 export { tsTypeOf } from './inference';
-export { RunSpecError, MissingRequiredArg, InvalidChoice, OutOfRange, UnknownArg, GroupViolation, AutonomyViolation } from './errors';
+export { RunSpecError, MissingRequiredArg, InvalidChoice, OutOfRange, UnknownArg, GroupViolation, AutonomyViolation, RunAsMismatch } from './errors';
 export { findConfig } from './finder';
 export { loadRaw } from './loader';
 export { getLogger } from './logging_setup';

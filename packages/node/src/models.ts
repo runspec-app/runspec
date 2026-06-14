@@ -15,6 +15,8 @@ export interface LoggingConfig {
 
 export interface RawConfig {
   autonomyDefault: string;
+  /** Default enforce_run_as for runnables that don't declare one. */
+  enforceRunAs: string;
   lang?: string;
   version: string;
   logging?: LoggingConfig;
@@ -66,6 +68,13 @@ export interface ScriptSpec {
   output?: string;
   serve?: boolean | string[];
   discoverable?: boolean | string[];
+  /** The OS user the runnable must run as. String, $ENV ref, or a per-host /
+   *  pattern table. Consumed by an executor for escalation; on the direct path
+   *  it is the identity asserted by `enforceRunAs`. */
+  runAs?: unknown;
+  /** Reaction when the process is not running as the resolved `runAs` user on
+   *  the direct/import path: 'error' (default), 'warn', or 'off'. */
+  enforceRunAs?: string;
   requireCommand?: boolean;
   args: Record<string, ArgSpec>;
   groups: Record<string, GroupSpec>;
