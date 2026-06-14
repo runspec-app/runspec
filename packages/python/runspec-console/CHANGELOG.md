@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.58.0] — 2026-06-14
+
+### Added
+- **`/run` messages are surfaced as their own trigger event.** A visitor message
+  in a help-desk thread that starts with `/run` is fed to the trigger engine as a
+  distinct `chat`/`run` event (the chat analog of an email's `new_mail`), so it
+  lands in the Triggers **Event log** and a future trigger (`source = "chat"`,
+  `event = "run"`) can act on it. **No action is wired yet** — logged only; the
+  natural-language → runnable derivation is a later version. Every other chat
+  message feeds unchanged.
+
 ## [0.57.0] — 2026-06-14
 
 ### Changed

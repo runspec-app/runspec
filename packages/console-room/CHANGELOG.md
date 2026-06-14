@@ -4,6 +4,16 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.14.0]
+
+### Added
+- **`--assignment-timeout` / `CONSOLE_ROOM_ASSIGNMENT_TIMEOUT`** on the server —
+  the AFK release timeout is now configurable (was a hard-coded default). Seconds
+  an assigned request may sit before a console picks it up (sends `request_start`)
+  before it's auto-released to the queue + re-paged; **0 disables**. Default 300.
+  Passed through to `Hub(assignment_timeout=…)` in both web and `--ndjson-only`
+  modes.
+
 ## [0.13.0]
 
 ### Added

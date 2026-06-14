@@ -5343,7 +5343,9 @@ class Bridge:
         - ``request_status`` / ``page`` → UI (a request's claim-free lifecycle / a
           chime for an unassigned request); a page also raises a desktop notice.
         - ``message`` → UI + the live trigger engine (a configured chat trigger can
-          still fire) + an inbox card."""
+          still fire) + an inbox card. A ``/run …`` message is surfaced to the
+          engine as its own ``chat``/``run`` event (the chat analog of ``new_mail``)
+          so it lands in the event log; no action is wired to it yet."""
         payload = dict(event.payload)
         etype = event.type
         if etype == "presence":
@@ -5367,9 +5369,21 @@ class Bridge:
             engine = self._trigger_engine
         if engine is not None:
             try:
-                engine.feed(event)
+                engine.feed(self._chat_event_for_engine(event, payload))
             except Exception:
                 logger.exception("chat: routing message to the trigger engine failed")
+
+    @staticmethod
+    def _chat_event_for_engine(event: Any, payload: dict[str, Any]) -> Any:
+        """The event to feed the trigger engine for a chat message. A ``/run …``
+        message becomes a distinct ``chat``/``run`` event (first-class, like an
+        email's ``new_mail``) so it's logged and a future trigger can match it;
+        every other message feeds unchanged."""
+        if str(payload.get("text") or "").lstrip().startswith("/run"):
+            from .events import Event
+
+            return Event.new("chat", "run", payload)
+        return event
 
     # ── runnables portal: enact an assigned request ───────────────────────────
 

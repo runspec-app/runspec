@@ -176,6 +176,7 @@ def _event_stub(engine: Any = None):
     s._notify_page = lambda payload: s.paged.append(payload)
     s._enact_assignment = lambda payload: s.enacted.append(payload)
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
+    s._chat_event_for_engine = Bridge._chat_event_for_engine  # staticmethod
     s._touch_queue_card = types.MethodType(Bridge._touch_queue_card, s)
     s._evict_trigger_cards = types.MethodType(Bridge._evict_trigger_cards, s)
     return s
@@ -191,6 +192,24 @@ def test_on_chat_event_message_reaches_ui_and_engine():
     s._on_chat_event(Event.new("chat", "message", {"room": "ops", "text": "hi"}))
     assert s.dispatched == [("runspec:room_message", {"room": "ops", "text": "hi"})]
     assert len(engine.fed) == 1 and engine.fed[0].type == "message"
+
+
+def test_on_chat_event_run_message_feeds_a_run_event():
+    # A "/run …" message is surfaced as its own chat/run event (logged, future-
+    # matchable) — still a normal message to the Rooms UI.
+    engine = _FakeEngine()
+    s = _event_stub(engine)
+    payload = {"room": _THREAD, "text": "/run clean the temp dir", "sender": "alice"}
+    s._on_chat_event(Event.new("chat", "message", payload))
+    assert ("runspec:room_message", payload) in s.dispatched  # UI sees a message
+    assert len(engine.fed) == 1
+    assert engine.fed[0].source == "chat" and engine.fed[0].type == "run"
+    assert engine.fed[0].payload["text"] == "/run clean the temp dir"
+
+
+def test_chat_event_for_engine_passes_plain_messages_through():
+    msg = Event.new("chat", "message", {"text": "just chatting"})
+    assert Bridge._chat_event_for_engine(msg, msg.payload) is msg  # unchanged
 
 
 def test_on_chat_event_presence_is_ui_only():

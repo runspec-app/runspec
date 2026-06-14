@@ -29,12 +29,15 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_WEB_PORT = 8080
 DEFAULT_NDJSON_PORT = 8765
 DEFAULT_DB = "console_room.db"
+DEFAULT_ASSIGNMENT_TIMEOUT = 300.0
 
 
-async def run_ndjson_only(host: str, port: int, db_path: str) -> None:
+async def run_ndjson_only(
+    host: str, port: int, db_path: str, *, assignment_timeout: float = 300.0
+) -> None:
     """Serve only the console NDJSON door (S1 path, stdlib only)."""
     store = TranscriptStore(db_path)
-    hub = Hub(store)
+    hub = Hub(store, assignment_timeout=assignment_timeout)
     server = await serve_ndjson(hub, host, port)
     try:
         async with server:
@@ -52,6 +55,7 @@ def run_web(
     ndjson_port: int,
     tls_cert: str | None = None,
     tls_key: str | None = None,
+    assignment_timeout: float = 300.0,
 ) -> None:
     """Serve the browser WebSocket door (and, via the app lifespan, the console
     NDJSON door) under uvicorn. Imports the web stack lazily so ``--ndjson-only``
@@ -70,7 +74,7 @@ def run_web(
             "door in DEV mode with NO login. Do not expose this publicly."
         )
     store = TranscriptStore(db_path)
-    hub = Hub(store)
+    hub = Hub(store, assignment_timeout=assignment_timeout)
     app = create_app(hub, ndjson_addr=(ndjson_host, ndjson_port), auth=auth)
     try:
         uvicorn.run(
@@ -125,6 +129,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"SQLite transcript path (default: {DEFAULT_DB})",
     )
     parser.add_argument(
+        "--assignment-timeout",
+        type=float,
+        default=float(
+            _env("CONSOLE_ROOM_ASSIGNMENT_TIMEOUT", str(DEFAULT_ASSIGNMENT_TIMEOUT))
+        ),
+        help="seconds an assigned request may sit before a console picks it up "
+        "(sends request_start) — then it's auto-released to the queue and re-paged. "
+        f"0 disables. (default: {DEFAULT_ASSIGNMENT_TIMEOUT:g})",
+    )
+    parser.add_argument(
         "--tls-cert",
         default=_env("CONSOLE_ROOM_TLS_CERT", "") or None,
         help="path to the TLS certificate (PEM) — enables https/wss. Omit if a "
@@ -158,7 +172,14 @@ def main(argv: list[str] | None = None) -> None:
     args = _parse_args(raw)
     try:
         if args.ndjson_only:
-            asyncio.run(run_ndjson_only(args.ndjson_host, args.ndjson_port, args.db))
+            asyncio.run(
+                run_ndjson_only(
+                    args.ndjson_host,
+                    args.ndjson_port,
+                    args.db,
+                    assignment_timeout=args.assignment_timeout,
+                )
+            )
         else:
             run_web(
                 args.host,
@@ -168,6 +189,7 @@ def main(argv: list[str] | None = None) -> None:
                 ndjson_port=args.ndjson_port,
                 tls_cert=args.tls_cert,
                 tls_key=args.tls_key,
+                assignment_timeout=args.assignment_timeout,
             )
     except KeyboardInterrupt:
         logger.info("room: shutting down")
