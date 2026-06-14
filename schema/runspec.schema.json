@@ -14,6 +14,12 @@
       "enum": ["autonomous", "confirm", "supervised", "manual"],
       "description": "How much agent autonomy is permitted. Most restrictive level wins when multiple apply."
     },
+    "enforce_run_as": {
+      "type": "string",
+      "enum": ["off", "warn", "error"],
+      "description": "On the direct/import execution path, how to react when the process is not running as the resolved run_as user. 'error' (default) refuses to run; 'warn' logs and continues; 'off' disables the check. No-op when run_as is empty or on a platform with no POSIX uid model.",
+      "default": "error"
+    },
     "config": {
       "type": "object",
       "description": "Project-wide defaults. The only reserved top-level key — all other keys are runnable names.",
@@ -22,6 +28,10 @@
           "$ref": "#/$defs/autonomy_level",
           "description": "Default autonomy level for runnables that don't declare one.",
           "default": "confirm"
+        },
+        "enforce_run_as": {
+          "$ref": "#/$defs/enforce_run_as",
+          "description": "Default enforce_run_as for runnables that don't declare one."
         },
         "lang": {
           "type": "string",
@@ -197,6 +207,9 @@
         },
         "run_as": {
           "$ref": "#/$defs/run_as"
+        },
+        "enforce_run_as": {
+          "$ref": "#/$defs/enforce_run_as"
         },
         "become_method": {
           "type": "string",

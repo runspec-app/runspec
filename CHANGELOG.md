@@ -7,6 +7,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.37.0] — 2026-06-14
+
+### Added
+
+- **`enforce_run_as`** — a runtime identity gate for the direct/import execution
+  path. `run_as` is applied by an executor (`runspec serve` / SSH `sudo -u`)
+  *before* the process starts, so under one the runnable is already the target
+  user; but a runnable invoked directly (its entry point run by hand, from cron,
+  or imported) never escalates and nothing checked who was running it. On
+  `parse()`, the resolved `run_as` user is now compared **by uid** to the
+  process's effective user, and `enforce_run_as` controls the reaction:
+  `"error"` (default) refuses to run, `"warn"` logs to stderr and continues,
+  `"off"` disables the check. Settable per-runnable or project-wide via
+  `[config] enforce_run_as`; the runnable's own value wins. No-op when `run_as`
+  resolves empty (no escalation intended) or on a platform with no POSIX uid
+  model (e.g. Windows), and skipped entirely during introspection (`load_spec`,
+  `runspec local`, `emit`).
+  - New `runspec.become.verify_run_as_identity()` performs the comparison;
+    `errors.RunAsMismatch` is raised on the `"error"` path.
+
+### Note
+
+- **Behaviour change:** the default is `"error"`, so a runnable that declares
+  `run_as` and is run directly as anyone other than the target user now exits
+  non-zero (previously the direct path ignored `run_as` entirely). Under
+  `runspec serve` / `jump` nothing changes — escalation already makes the
+  effective user match. Set `enforce_run_as = "warn"` (or `"off"`), per-runnable
+  or in `[config]`, to relax it.
+
 ## [0.36.0] / [node-0.32.0] — 2026-06-12
 
 ### Removed

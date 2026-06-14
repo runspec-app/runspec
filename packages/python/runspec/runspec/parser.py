@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import inspect
 import os
+import socket
 import sys
 from pathlib import Path
 from typing import Any
 
 from runspec import errors
+from runspec.become import resolve_run_as, verify_run_as_identity
 from runspec.env import apply_env_file
 from runspec.finder import find_config
 from runspec.inference import effective_autonomy, infer_script
@@ -23,7 +25,9 @@ from runspec.types import coerce
 from runspec.validator import raise_if_errors, validate_args, validate_groups
 
 
-def parse(script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None, *, _enforce_required_command: bool = True, _prompt_secrets: bool = True) -> RunSpec:
+def parse(
+    script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None, *, _enforce_required_command: bool = True, _prompt_secrets: bool = True, _check_run_as: bool = True
+) -> RunSpec:
     """
     Parse arguments for the calling runnable.
 
@@ -40,7 +44,7 @@ def parse(script_name: str | None = None, argv: list[str] | None = None, config_
         RunSpec — the fully parsed, validated, coerced argument namespace.
     """
     try:
-        return _parse_impl(script_name, argv, config_path, enforce_required_command=_enforce_required_command, prompt_secrets=_prompt_secrets)
+        return _parse_impl(script_name, argv, config_path, enforce_required_command=_enforce_required_command, prompt_secrets=_prompt_secrets, check_run_as=_check_run_as)
     except errors.RunSpecError as e:
         print(str(e))
         sys.exit(1)
@@ -55,6 +59,7 @@ def _parse_impl(
     config_path: Path | None = None,
     enforce_required_command: bool = True,
     prompt_secrets: bool = True,
+    check_run_as: bool = True,
 ) -> RunSpec:
     """Internal: full parse pipeline. Raises on error — call parse() for CLI use."""
     # 1. Find config — explicit arg > RUNSPEC_CONFIG > caller's package > cwd.
@@ -136,6 +141,23 @@ def _parse_impl(
     if "--help" in argv_list or "-h" in argv_list:
         _print_help(name, raw_script, command_path, global_args)
         sys.exit(0)
+
+    # 6.4. Verify run_as identity on the direct/import execution path. run_as is
+    # consumed by an executor (runspec serve / SSH `sudo -u`) *before* the process
+    # starts, so under one the effective user already matches and this passes
+    # silently; on the direct path nothing escalates, so this catches running as
+    # the wrong user. run_as/enforce_run_as are runnable-level, so they are read
+    # from the root spec (not the merged subcommand leaf). Runs after --help so
+    # `<name> --help` is always readable; skipped for introspection (load_spec).
+    if check_run_as:
+        root_spec = raw["runnables"][name]
+        detail = verify_run_as_identity(resolve_run_as(root_spec.get("run_as"), socket.gethostname()))
+        if detail:
+            level = root_spec.get("enforce_run_as") or config.get("enforce_run_as") or "error"
+            if level == "warn":
+                sys.stderr.write(f'⚠  {name}: {detail}. (enforce_run_as = "warn" — continuing)\n')
+            elif level != "off":
+                raise errors.RunAsMismatch(errors.format_run_as_mismatch(name, detail))
 
     # 6.5. Enforce require-command. The resolved leaf carries the deepest node's
     # own commands/require_command, so this single check enforces at every depth
@@ -242,9 +264,11 @@ def load_spec(script_name: str | None = None, config_path: Path | None = None) -
 
     require-command is not enforced here: introspection/emit must succeed even
     for a runnable that mandates a subcommand on the CLI. Secret prompting is
-    also disabled — introspection must never block on an interactive prompt.
+    also disabled — introspection must never block on an interactive prompt. The
+    run_as identity check is likewise skipped: emitting schemas and listing
+    runnables must never depend on who is running them.
     """
-    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False, _prompt_secrets=False)
+    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False, _prompt_secrets=False, _check_run_as=False)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

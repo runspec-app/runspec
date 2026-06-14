@@ -725,6 +725,32 @@ run_as.patterns."prod[0-9]*"     = "produser"
 See [Jump Hosts](jump-hosts.md) for the full resolution table and the
 remote-command construction rules.
 
+### `enforce_run_as`
+
+`run_as` is applied by an executor (`runspec serve`, an SSH client, the console)
+*before* the process starts, so under one the runnable is already the target
+user. When a runnable is invoked directly — its installed entry point run by
+hand, from cron, or imported — nothing escalates and nothing checks who is
+running it. `enforce_run_as` closes that gap: on `parse()`, the resolved
+`run_as` user is compared (by uid) to the current process's effective user.
+
+```toml
+[deploy]
+run_as         = "oracle"
+enforce_run_as = "error"    # default — also: "warn", "off"
+```
+
+| Value | On mismatch |
+|---|---|
+| `"error"` (default) | `parse()` exits non-zero — the runnable does not run. |
+| `"warn"` | A warning is written to stderr; the runnable continues. |
+| `"off"` | No check. |
+
+It is a no-op when `run_as` resolves to the empty string (no escalation
+intended) or on a platform with no POSIX uid model (e.g. Windows). The default
+can be set project-wide via `[config] enforce_run_as`; a runnable's own value
+wins.
+
 ---
 
 ## Developer metadata

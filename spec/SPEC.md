@@ -52,6 +52,7 @@ Project-wide defaults. All fields are optional.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `autonomy-default` | string | `"confirm"` | Autonomy when unspecified on a script |
+| `enforce_run_as` | string | `"error"` | Default `enforce_run_as` for runnables that don't declare one. See [`enforce_run_as`](#enforce_run_as). |
 | `lang` | string | — | Preferred language for `runspec generate` |
 | `name` | string | — | MCP server name reported by `runspec serve`. Defaults to the venv directory name. The venv directory name must pass the naming check (see *Virtual Environment Identity*) regardless of whether this field is set. |
 | `version` | string | `"1"` | runspec spec version |
@@ -395,6 +396,7 @@ output          = "text"                                  # optional
 serve           = true                                    # optional, default true; also false or ["local","remote"]
 discoverable    = true                                    # optional, default true; also false or ["operator","self-service"]
 run_as          = "username"                              # optional, see Remote Execution
+enforce_run_as  = "error"                                 # optional, default "error"; also "warn", "off"
 become_method   = "sudo"                                  # optional, default "sudo"
 become_flags    = "-H"                                    # optional
 examples        = [...]                                   # optional, see Examples
@@ -665,6 +667,38 @@ Note: `su` uses a distinct syntax — the command and args are wrapped in a `-c`
 
 Optional flags passed to the become method. Example: `"-H"` resets HOME to the target
 user's home directory under `sudo`.
+
+### `enforce_run_as`
+
+`run_as` is consumed by the *executor* (`runspec serve`, an SSH client, the console)
+**before** the process starts — it wraps the command in `sudo -u {user} …`, so by the
+time the runnable's own code runs it is *already* that user. But a runnable can also be
+invoked directly — its installed entry point run by hand, from cron, or imported — and
+that path never passes through an executor, so nothing escalates and nothing checks who
+is running it.
+
+`enforce_run_as` closes that gap. When the runnable calls the library's parser, the
+parser resolves `run_as` for the local host and compares the resolved user to the
+current process's effective user. The two are compared by **uid** (the target is looked
+up with the platform's user database; a numeric `run_as` is taken as a uid directly), so
+account aliases sharing a uid are treated as equal.
+
+| Value | Behaviour on mismatch |
+|---|---|
+| `"error"` (default) | The parser raises / exits non-zero — the runnable does not run. |
+| `"warn"` | A warning is written to stderr; the runnable continues. |
+| `"off"` | No check is performed. |
+
+The check is a **no-op** when `run_as` resolves to the empty string (no escalation
+intended, so no identity to assert) or on a platform with no POSIX uid model (e.g.
+Windows, where there is nothing to compare). Under an executor that escalated correctly
+the effective user already matches, so the check passes silently — `enforce_run_as`
+only ever fires on the direct/import path (or if escalation silently failed).
+
+Resolution order (most specific wins): the runnable's own `enforce_run_as` → the
+`[config]` `enforce_run_as` default → the library default `"error"`. The check is not
+performed during pure introspection (loading a spec without parsing argv), so emitting
+schemas and listing runnables never depends on who is running them.
 
 ### Command building
 

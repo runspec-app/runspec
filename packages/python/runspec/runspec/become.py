@@ -67,6 +67,61 @@ def validate_run_as_patterns(run_as_spec: Any) -> list[str]:
     return errors
 
 
+def _uid_username(uid: int) -> str:
+    """Best-effort username for a uid; falls back to the numeric uid as a string."""
+    try:
+        import pwd
+
+        return pwd.getpwuid(uid).pw_name
+    except (KeyError, ImportError):
+        return str(uid)
+
+
+def verify_run_as_identity(run_as_user: str) -> str | None:
+    """Check that the current process is running as ``run_as_user``.
+
+    Returns ``None`` when the identity matches *or* the check cannot be
+    performed — an empty target (no escalation intended, so no identity to
+    assert) or a platform with no POSIX uid model (e.g. Windows). Returns a
+    human-readable detail string describing the mismatch otherwise.
+
+    The target is resolved to a uid (a numeric string is taken as a uid
+    directly, otherwise it is looked up by name) and compared to the process's
+    effective uid, so account aliases that share a uid are treated as equal.
+    This complements ``run_as``: an executor (``runspec serve`` / SSH ``sudo
+    -u``) escalates *before* the process starts, so under it the effective user
+    already matches and this passes silently; it only fires on the
+    direct/import path (or if escalation silently failed).
+    """
+    if not run_as_user:
+        return None
+
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        return None  # no POSIX uid model (Windows) — nothing to compare
+
+    try:
+        import pwd
+    except ImportError:  # pragma: no cover — POSIX ships pwd wherever geteuid exists
+        return None
+
+    try:
+        if run_as_user.isdigit():
+            target_uid = int(run_as_user)
+            pwd.getpwuid(target_uid)  # confirm it exists; raises KeyError otherwise
+        else:
+            target_uid = pwd.getpwnam(run_as_user).pw_uid
+    except KeyError:
+        return f"run_as user {run_as_user!r} does not exist on this host"
+
+    current_uid = geteuid()
+    if current_uid == target_uid:
+        return None
+
+    current_name = _uid_username(current_uid)
+    return f"the current process runs as {current_name!r} (uid {current_uid}), not {run_as_user!r} (uid {target_uid})"
+
+
 def build_become_argv(
     cmd_argv: list[str],
     run_as: str = "",

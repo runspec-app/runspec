@@ -50,6 +50,7 @@ def _normalise_config(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalise the [config] section, applying defaults."""
     return {
         "autonomy_default": raw.get("autonomy-default", "confirm"),
+        "enforce_run_as": raw.get("enforce_run_as", "error"),
         "lang": raw.get("lang"),
         "name": raw.get("name"),
         "version": str(raw.get("version", "1")),
@@ -110,6 +111,7 @@ def _normalise_script(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         "serve": raw.get("serve"),
         "discoverable": raw.get("discoverable"),
         "run_as": raw.get("run_as"),
+        "enforce_run_as": raw.get("enforce_run_as"),
         "become_method": raw.get("become_method", "sudo"),
         "become_flags": raw.get("become_flags"),
         "runspec_env": raw.get("runspec_env"),

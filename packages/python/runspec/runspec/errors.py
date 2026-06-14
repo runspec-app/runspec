@@ -54,6 +54,10 @@ class AutonomyViolation(RunSpecError):
     """An agent attempted to exceed its declared autonomy level."""
 
 
+class RunAsMismatch(RunSpecError):
+    """The process is not running as the user declared in run_as."""
+
+
 def format_missing_required(name: str, arg_spec: dict[str, Any]) -> str:
     lines = [
         f"✗  Missing required argument: --{name}",
@@ -220,6 +224,17 @@ def format_autonomy_violation(
         lines.append(f"   Reason: {reason}")
     lines.append("\n   Awaiting human confirmation...")
     return "\n".join(lines)
+
+
+def format_run_as_mismatch(runnable_name: str, detail: str) -> str:
+    return "\n".join(
+        [
+            f"✗  Refusing to run '{runnable_name}': {detail}.",
+            "   This runnable declares a run_as user it must execute as.",
+            "   Re-run under the intended account (e.g. `sudo -u <user> ...`, `runspec serve`,",
+            '   or `runspec jump`), or relax the check with enforce_run_as = "warn" (or "off").',
+        ]
+    )
 
 
 def format_deprecated(name: str, message: str) -> str:
