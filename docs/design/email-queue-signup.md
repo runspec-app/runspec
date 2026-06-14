@@ -1,7 +1,8 @@
 # Email-verified queue signup — internal self-service enrollment
 
-> **Status: shipped** (all 5 slices) — `runspec-room` 0.18.0 + `runspec-console`
-> 0.60.0. A new **auth mode**
+> **Status: shipped** (all 5 slices + the outbox expiry sweep) — `runspec-room`
+> 0.19.0 + `runspec-console` 0.61.0. See §11 for the operating & testing reference.
+> A new **auth mode**
 > for `runspec-room`: instead of OIDC, an internal employee signs up for a queue
 > with their email + name, proves the email by clicking a verify link, and is
 > then a member of that queue. The verify email is sent **by a connected console,
@@ -241,3 +242,58 @@ The room-side pieces (1, 2, the outbox state machine, the token helpers, the
 domain check, the advertisement aggregation) are pure and unit-tested on any
 platform; only the **Outlook send** (slice 4) needs Windows to verify — the same
 split the email folder-watch already uses.
+
+---
+
+## 11. Operating & testing (quick reference)
+
+A practical cheat-sheet for turning the mode on and exercising it end to end. The
+narrative above is the *why*; this is the *how*.
+
+### Room server (`runspec-room`, the room host)
+Set, then start `console-room`:
+
+| Env var | Required | Meaning |
+|---|---|---|
+| `CONSOLE_ROOM_AUTH=email-verify` | yes | Selects the mode (else `oidc` / `dev`). |
+| `CONSOLE_ROOM_SESSION_SECRET` | yes | Signs the session cookie **and** the verify token. A long random string. |
+| `CONSOLE_ROOM_PUBLIC_URL` | **yes** | The externally-reachable base URL the verify links point at, e.g. `https://rooms.corp.com`. Also `--public-url`. The server **refuses to start** without it (the emailed link is clicked later, so it can't be a per-request guess). |
+| `CONSOLE_ROOM_VERIFY_TTL` | no | Verify-link lifetime, seconds (default `1800`). |
+| `CONSOLE_ROOM_ENROLL_DB` | no | Members + outbox SQLite path (default: a sibling `…/<db>.enrollment.db` of the transcript DB). |
+
+Behind a reverse proxy: bind with `CONSOLE_ROOM_HOST=0.0.0.0`, terminate TLS at
+the proxy (uvicorn runs with `proxy_headers` on), and point `CONSOLE_ROOM_PUBLIC_URL`
+at the public name.
+
+### Console (`runspec-console`, the operator's machine — **Windows + Outlook**)
+On the **fleet host entry** that staffs the queue (the same entry that carries
+`room_queue` / `room_port`):
+
+| Host field | Required | Meaning |
+|---|---|---|
+| `room_queue` | yes | The queue namespace this console staffs (e.g. `"it-support"`). |
+| `room_port` | yes | The room server's localhost port on the SSH host. |
+| `room_queue_email` | for sign-up | The queue's mailbox, e.g. `"it-support@corp.com"` — both the **verify-from** address (Outlook send-as) and the **sign-up domain allowlist**. Omit it and the queue still takes requests; it just isn't offered on `/signup`. |
+| `room_queue_label` | no | Friendly dropdown label (default: the queue name). |
+
+The operator's Outlook needs **send-as / send-on-behalf** permission on the queue
+mailbox (that's an Exchange grant, not a runspec setting). The verify send is
+Outlook COM, so the console must run on Windows; everything else runs anywhere.
+
+### End-to-end smoke test
+1. Start the room in email-verify mode (env above), reachable at `CONSOLE_ROOM_PUBLIC_URL`.
+2. Run a Windows+Outlook console on shift, configured with `room_queue` + `room_queue_email` for a queue it staffs.
+3. Browse to `<public_url>/signup` → the queue appears in the dropdown.
+4. Sign up with a **same-domain** email + your full name → "check your email." (A foreign-domain email is rejected here.)
+5. The console's Outlook sends the verify mail **as the queue mailbox**; click the link → you're redirected into the portal, enrolled.
+6. Submit a catalogue request → the operator's console card shows **`Your Name <you@corp.com>`**.
+
+### Behaviour worth knowing when something looks off
+- **No console connected at sign-up?** The verify mail waits in the durable outbox and is **flushed to the first console that advertises the queue** (one console claims each send). The user just sees "we'll email you shortly."
+- **Send failed / console dropped mid-send?** The row returns to `pending` and is retried on another (or the reconnecting) console.
+- **Expired links** are swept from the outbox periodically (every ~5 min; older than the token TTL). `sent` rows are kept as the audit trail.
+- **Authorization is still per-request.** Enrollment only lets a visitor *see the catalogue and ask*; the operator **Accept** on the card is what runs the runnable.
+
+### Not built yet (deferred)
+- **Gated membership (v2)** — a per-queue opt-in where an operator approves *who joins* a sensitive queue (the handshake mirrors the verify outbox).
+- **The `/run` natural-language path** — already logged as a `chat`/`run` event; awaits the LLM derivation.

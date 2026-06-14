@@ -186,3 +186,73 @@ def test_verify_token_enrols_and_is_single_use():
 def test_verify_token_rejects_bad_token():
     hub = _hub()
     assert hub.verify_token("garbage") is None
+
+
+# ── expiry sweep ──────────────────────────────────────────────────────────────
+
+
+def test_sweep_expired_signups_drops_lapsed_pending():
+    from console_room.signup import PendingSignup
+
+    async def scenario():
+        hub = _hub()  # token_ttl defaults to 1800
+        # An old pending (created at epoch 0 → well past the TTL) and a fresh one.
+        hub._enrollment.add_pending(  # noqa: SLF001
+            PendingSignup("old", "a@corp.com", "A", "it-support", created_at=0.0)
+        )
+        hub._enrollment.add_pending(  # noqa: SLF001
+            PendingSignup(
+                "fresh",
+                "b@corp.com",
+                "B",
+                "it-support",
+                created_at=__import__("time").time(),
+            )
+        )
+        removed = await hub.sweep_expired_signups()
+        return hub, removed
+
+    hub, removed = asyncio.run(scenario())
+    assert removed == 1
+    assert hub._enrollment.get_pending("old") is None  # noqa: SLF001
+    assert hub._enrollment.get_pending("fresh") is not None  # noqa: SLF001
+
+
+def test_sweep_is_noop_without_email_verify():
+    async def scenario():
+        return await Hub(FakeStore()).sweep_expired_signups()
+
+    assert asyncio.run(scenario()) == 0
+
+
+def test_run_sweeper_returns_immediately_when_disabled():
+    async def scenario():
+        # No email-verify → returns at once (doesn't hang on the interval).
+        await asyncio.wait_for(Hub(FakeStore()).run_signup_sweeper(), timeout=1.0)
+        # Enabled but interval 0 → also a no-op.
+        await asyncio.wait_for(_hub().run_signup_sweeper(interval=0), timeout=1.0)
+
+    asyncio.run(scenario())
+
+
+def test_run_sweeper_ticks_and_sweeps_then_cancels():
+    from contextlib import suppress
+
+    from console_room.signup import PendingSignup
+
+    async def scenario():
+        hub = _hub()
+        hub._enrollment.add_pending(  # noqa: SLF001
+            PendingSignup("old", "a@corp.com", "A", "it-support", created_at=0.0)
+        )
+        task = asyncio.create_task(hub.run_signup_sweeper(interval=0.01))
+        for _ in range(100):  # poll up to ~1s for the first tick to sweep
+            await asyncio.sleep(0.01)
+            if hub._enrollment.get_pending("old") is None:  # noqa: SLF001
+                break
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        return hub._enrollment.get_pending("old")  # noqa: SLF001
+
+    assert asyncio.run(scenario()) is None

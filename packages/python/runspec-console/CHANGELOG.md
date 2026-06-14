@@ -8,7 +8,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.60.0] — 2026-06-14
+## [0.61.0] — 2026-06-14
 
 ### Added
 - **Email-verified queue signup — visitor name on the operator card (slice 5 of 5,

@@ -44,6 +44,12 @@ from .signup import (
 
 logger = logging.getLogger("console_room.hub")
 
+#: How often the email-verify outbox is swept for expired pending signups
+#: (seconds). A row lingers at most one interval past the token TTL before it's
+#: dropped — exact cadence doesn't matter (an expired link just makes the user
+#: re-sign), so a periodic cleanup is enough.
+SWEEP_INTERVAL = 300.0
+
 
 @runtime_checkable
 class Recipient(Protocol):
@@ -403,6 +409,35 @@ class Hub:
         self._enrollment.add_member(member)
         logger.info("room: %r verified into %r", member.email, member.queue)
         return member
+
+    async def sweep_expired_signups(self) -> int:
+        """Drop pending signups whose verify link has lapsed (older than the token
+        TTL) — they're un-verifiable, so the user re-signs. ``sent`` rows are kept as
+        the audit trail. Returns how many were removed; ``0`` when email-verify isn't
+        configured. Runs the SQLite delete off the event loop."""
+        if self._enrollment is None or self._email_verify is None:
+            return 0
+        return await asyncio.to_thread(
+            self._enrollment.sweep_expired, float(self._email_verify.token_ttl)
+        )
+
+    async def run_signup_sweeper(self, interval: float = SWEEP_INTERVAL) -> None:
+        """Periodically :meth:`sweep_expired_signups` until cancelled — the app
+        lifespan owns this task. No-op (returns immediately) when email-verify isn't
+        configured or ``interval`` is non-positive."""
+        if not self.email_verify_enabled or interval <= 0:
+            return
+        while True:
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                return
+            try:
+                removed = await self.sweep_expired_signups()
+                if removed:
+                    logger.info("room: swept %d expired pending signup(s)", removed)
+            except Exception:
+                logger.exception("room: pending-signup sweep failed")
 
     async def on_verify_sent(self, nonce: str, ok: bool) -> None:
         """Apply a console's ``verify_sent`` ack: mark the outbox row ``sent`` on

@@ -23,10 +23,11 @@ docs/design/console-room-server.md §1/§2/§6.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -282,9 +283,20 @@ def create_app(
         server = None
         if ndjson_addr is not None:
             server = await serve_ndjson(hub, ndjson_addr[0], ndjson_addr[1])
+        # In email-verify mode, periodically drop expired pending signups (no-op
+        # otherwise). Cancelled on shutdown.
+        sweeper = (
+            asyncio.create_task(hub.run_signup_sweeper())
+            if email_verify is not None
+            else None
+        )
         try:
             yield
         finally:
+            if sweeper is not None:
+                sweeper.cancel()
+                with suppress(asyncio.CancelledError):
+                    await sweeper
             if server is not None:
                 server.close()
                 await server.wait_closed()

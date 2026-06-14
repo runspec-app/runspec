@@ -134,6 +134,14 @@ def test_me_reports_auth_enabled():
     assert client.get("/me").json() == {"auth": True, "user": ""}
 
 
+def test_lifespan_starts_and_stops_cleanly():
+    # The context manager runs the app lifespan (which launches the expiry sweeper
+    # in email-verify mode and cancels it on shutdown) — exercise that path.
+    client, *_ = _build()
+    with client:
+        assert client.get("/healthz").json() == {"ok": True}
+
+
 # ── POST /signup: validation + outbox ─────────────────────────────────────────
 
 

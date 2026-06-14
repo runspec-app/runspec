@@ -4,6 +4,17 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.19.0]
+
+### Added
+- **Email-verify outbox: periodic expiry sweep.** The web app now runs a background
+  task (`Hub.run_signup_sweeper`, started by the app lifespan in email-verify mode,
+  cancelled on shutdown) that every 5 minutes drops pending signups older than the
+  verify-token TTL — so an abandoned or never-delivered signup can no longer
+  accumulate in the SQLite outbox. `sent` rows are kept as the audit trail. No-op
+  outside email-verify mode. (The `sweep_expired` store method existed since slice 1
+  but was never driven.)
+
 ## [0.18.0]
 
 ### Added
