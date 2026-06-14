@@ -51,6 +51,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   hosts                      → runspec-chat `jump_hosts.toml` connection file
 #   ssh/refresh                → console `config.toml` ([ssh]/[refresh] tuning)
 #   triggers                   → console `runspec_triggers.toml` ([[triggers]])
+#   mailboxes                  → console `config.toml` email folder-watch list
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
 # would be skipped — none exist in the docs (guarded by check below), and runnable
 # names are author-chosen, so this is acceptable.
@@ -63,6 +64,7 @@ NON_RUNSPEC_SECTIONS = {
     "refresh",
     "triggers",
     "rota",
+    "mailboxes",
 }
 
 

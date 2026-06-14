@@ -8,6 +8,113 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.56.0] — 2026-06-14
+
+Portal requests land in the operator's **Triggers inbox** — the same surface, the
+same Approve/Deny gate and audit drawer (runnables portal, step 4 UI).
+
+### Added
+- **A routed portal `assignment` becomes a Triggers card.** The bridge creates a
+  `source:"portal"` card (`card_id = "portal:<request_id>"`, detail = runnable /
+  args / visitor) the moment the hub assigns a request, and walks it through the
+  request lifecycle (assigned → running → done/failed), writing the enactment
+  output into `detail.result`/`error`. The `card_id` is kept **equal to the
+  autonomy-gate `chat_id`**, so the existing inline **Approve/Deny** prompt and
+  the result render on the portal card with no new approval UI — the drawer is the
+  operator's enact + audit record. New `Bridge._portal_card` / `_portal_card_id`
+  / `_portal_fail`.
+
+### Removed
+- **The Triggers tab's dead claim/email controls.** With chat + email claim
+  retired (0.54.0 / 0.55.0), the operator UI's Claim/Resolve/Reopen/Close buttons,
+  the email reply composer, and the per-card lifecycle chip called bridge methods
+  that no longer exist — all removed. A chat card still opens the live conversation
+  pane (read + reply via `send_room_message`); a portal card opens the detail
+  drawer. (`console-ui`: `TriggersView`, plus the dropped bridge bindings in
+  `bridge/index.ts` + `bridge/mock.ts`.)
+
+## [0.55.0] — 2026-06-14
+
+The email help-desk channel is rebuilt as a **folder watch** — no claim, multi
+mailbox/folder, built for "watch my own mailbox" (docs/design/email-folder-watch.md).
+
+### Added
+- **`[[mailboxes]]` folder-watch list.** `config.read_mailbox_watches()` parses an
+  array of `{mailbox, folder}` watches (blank/`"inbox"` → the Inbox; blank mailbox
+  → the default account; duplicates collapse). The Outlook source binds a
+  `Folder.Items.ItemAdd` sink to each resolved folder (+ a 30 s poll fallback for
+  the bulk moves ItemAdd misses, deduped by EntryID) and tags every `new_mail`
+  event with its `mailbox`/`folder`, so a trigger's `match` can scope to a
+  specific mailbox or folder. A watch that can't resolve logs one line and is
+  skipped. `Reminder` is unchanged.
+
+### Removed
+- **The shared-mailbox claim/queue email channel.** No more `[mailboxes]`
+  address→queue map, `NewMailEx` (primary-inbox-only), `mailbox_claim` markers /
+  the validated fold, `send_claim_marker`, the transport-header recipient/ordering
+  parse (`recipients`/`received_ts`/`message_id`/`claim_marker` and their helpers),
+  the email queue-card synthesis (`_ingest_email`/`_email_queue_for`/the fold/
+  `_email_feed_gate`), or the `claim_email_thread` / `resolve` / `reopen` / `close`
+  / `reply_email_thread` controls. A matched `new_mail` is now just an ordinary
+  trigger card + action via the normal trigger path.
+
+### Note
+- ⚠️ **No claim coordination.** Two consoles watching the same shared folder both
+  react to every mail (duplicate replies/turns). Recommended: watch your own
+  mailbox, or one console per shared folder, or per-operator folders via Outlook
+  rules. The COM sink/poll + folder resolution are verified on Windows only; the
+  pure pieces (config, payload tags, folder path-walk, dedupe) are unit-tested.
+
+## [0.54.0] — 2026-06-14
+
+The chat help-desk becomes the **runnables portal** end to end: claim is gone and
+an assigned request is enacted automatically through the autonomy gate.
+
+### Added
+- **A portal `assignment` is enacted through the autonomy gate.** When the hub
+  routes a request to this console, the bridge resolves the runnable from the
+  per-queue catalog index, runs it via `_gated_run_tool` (autonomy gate unchanged)
+  on a worker thread, delivers the output on the request thread, and reports the
+  request `in_progress` → `done` / `failed` (`request_start` / `request_complete`).
+  `page` events raise a desktop chime; `request_status` events flow to the UI.
+
+### Removed
+- **The chat claim system is retired** (runnables portal, step 7 — console half).
+  Assignment is the gate now, so the claim machinery is gone: `_feed_engine_for`
+  (the claim gate), `_thread_states`, the `conversation` frame handling in
+  `_on_chat_event`, `ChatSource.send_control`, and the `claim_thread` /
+  `resolve_thread` / `reopen_thread` / `close_thread` bridge methods (+ the
+  per-thread state on `get_room_state`). A staffed-queue message now feeds the
+  trigger engine ungated (only a configured chat trigger fires).
+- The **email** help-desk channel still uses mailbox-marker claim (`_email_feed_gate`
+  / `mailbox_claim`) — its retirement is the email folder-watch redesign.
+
+## [0.53.0] — 2026-06-14
+
+The chat source learns the **runnables-portal** wire protocol (the console half of
+the end-to-end path; see `docs/design/runnables-portal.md` §3).
+
+### Added
+- **Agent rota presence is now sent.** An agent (helpdesk/queue) connection used to
+  suppress presence frames; with the portal, an agent's presence *is* its rota
+  (on shift → `available`, off shift → `away`), and the room moves the console's
+  published runnables in/out of the live catalogue on it. `_RotaPresenceWatcher`
+  already drives `set_presence`; it now reaches the hub.
+- **Portal frames are parsed into events.** `parse_inbound` now yields `assignment`
+  (a request routed to this console — runnable + args + thread room), `request_status`
+  (a request's claim-free lifecycle), and `page` (a chime naming an unassigned
+  request's runnable). New `assignment_payload` / `request_status_payload` /
+  `page_payload`; `event_types()` extended.
+- **Request-control senders.** `ChatSource.send_request_start(id)` /
+  `send_request_complete(id, error=)` emit the `request_start` / `request_complete`
+  control frames (agent-only) so the operator console reports a request moving to
+  `in_progress` and `done` / `failed`.
+
+### Note
+- This is the transport layer only. Routing an `assignment` to actually enact the
+  runnable through the autonomy gate and post the result lives in the bridge and is
+  done alongside the claim-flow retirement (portal steps 4/7).
+
 ## [0.52.0] — 2026-06-13
 
 The email help-desk channel becomes **"only triggered mail, forward-only"** — it

@@ -4,6 +4,137 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.12.0]
+
+### Changed
+- **Browser portal: the visitor sees each request's claim-free lifecycle**
+  (runnables portal, step 6). The web frontend drops the removed `conversation`
+  lifecycle chip and instead renders, inline under each request message, its
+  `request_status` (assigned · operator → in progress → done ✓ / failed). When a
+  request is `unassigned` (no operator on shift) it shows **"no operator
+  available"** plus a **Page the team** button that sends a `page` frame
+  (re-chiming every connected console). The catalogue view + schema-generated
+  request form are unchanged. See `docs/design/runnables-portal.md` §3.
+
+## [0.11.0]
+
+### Removed
+- **The conversation claim lifecycle is retired** (runnables portal, step 7 — hub
+  half). The portal's request lifecycle is claim-free, so the parallel
+  `open → assigned → resolved → closed` thread machinery is gone:
+  - Deleted `console_room/lifecycle.py` (`Conversation` / `ConversationRegistry`)
+    and the `conversation` wire frame; removed `Hub.claim` / `resolve` / `reopen` /
+    `close` / `conversation_state`, the `_convs` registry, and the conversation
+    catch-up in `join` / `join_agent` and the open/reopen in `on_message`.
+  - The NDJSON door no longer accepts `claim` / `resolve` / `reopen` / `close`
+    control frames.
+  - `on_message` in a helpdesk room is now just the clarification thread that hangs
+    off a request; the request's own state travels in `request_status`.
+  - The room-naming module (`conversation.py` — `helpdesk/<queue>/<visitor>` +
+    namespace matching) is unchanged; only the claim *state machine* was removed.
+
+## [0.10.0]
+
+### Added
+- **Inbound portal request-control frames (runnables portal, step 4 — transport).**
+  The operator console can now drive a request's claim-free lifecycle over the
+  NDJSON door: a `request_start` frame (`{id}`) calls `Hub.start_request`
+  (→ `in_progress`) and a `request_complete` frame (`{id, error?}`) calls
+  `Hub.complete_request` (→ `done` / `failed`). Both are agent-only and scoped to
+  the assignee. This completes the wire contract the console drives end to end
+  (assignment in → start/complete out).
+
+## [0.9.0]
+
+### Changed
+- **The portal is now the single visitor path** (runnables portal cleanup). With
+  no users of the previous design to preserve, the parallel legacy catalogue cache
+  is gone and the browser door drives the portal directly:
+  - Removed `Hub.set_catalog` / `Hub.catalog_for` (the namespace-level
+    last-writer-wins cache) and `Hub.visitor_request`. The presence-aware live
+    catalogue is the only catalogue; `submit_request` is the only request path.
+  - The NDJSON `catalog` frame feeds the live catalogue only; the web `/catalog`
+    endpoint serves `Hub.live_catalog` (the on-shift union) — same `{queue, tools}`
+    shape.
+  - The browser `request` frame now calls `submit_request` (validate → auto-assign
+    or hold + page); a new inbound `page` frame calls `page_request` (the visitor's
+    "Page the team" action).
+
+### Note
+- The free-chat **conversation claim lifecycle** (`claim` / `resolve` / `reopen` /
+  `close` + the `conversation` frames) still exists — it governs free chat threads,
+  not the portal request flow, and its removal is the dedicated claim-retirement
+  step (§7 steps 5/7). The served frontend ignores the new `request_status` /
+  `page` frames until the browser portal is rebuilt (step 6).
+
+## [0.8.0]
+
+### Added
+- **Page / chime broadcast (runnables portal, step 3).** When a request can't be
+  auto-assigned — no holder is on shift — the hub now **pages the team**: a `page`
+  frame chimes *every connected console of the queue* (on shift and off), naming
+  the runnable and carrying the thread room, so a holder can come on shift to pick
+  it up (the pending request then auto-assigns) or respond out of band (see
+  `docs/design/runnables-portal.md` §3.4). Pages fire automatically when a request
+  becomes `unassigned` — on submit with no on-shift holder, and on the AFK
+  `release` when it can't be re-assigned — and the visitor can re-chime explicitly
+  via `Hub.page_request` ("Page the team"), which is refused once the request is
+  assigned/done (only something actually waiting can be paged).
+  - New `page` wire frame (`console_room/models.py`).
+  - `Hub._page` (broadcast to the queue's connected consoles), `_hold_unassigned`
+    (status + page), and `page_request` (the visitor action).
+
+## [0.7.0]
+
+### Added
+- **Auto-assignment + claim-free request lifecycle (runnables portal, step 2).**
+  A visitor's portal request is now **routed to an operator by the hub**, not
+  claimed by a human (see `docs/design/runnables-portal.md` §3.3 / §3.5). On
+  submit the hub validates the runnable against the live catalogue, then
+  auto-assigns it to an on-shift holder by **plain round-robin** (a single holder
+  always gets it); when no holder is on shift it accepts the request as
+  `unassigned` and drains it the moment an eligible operator comes on shift — no
+  re-submit. The request walks a small claim-free state machine
+  (`unassigned → assigned → in_progress → done` / `failed`, with `release` back to
+  `unassigned` for the AFK timeout).
+  - New pure `console_room/requests.py` (`Request` + `RequestRegistry`): the
+    transition rules and the per-namespace round-robin cursor.
+  - Hub methods: `submit_request` (validate + persist the thread message +
+    auto-assign or hold), `start_request`, `complete_request`, `release_request`,
+    `request_state`; `set_agent_shift` is now async and drains the backlog when an
+    operator comes on shift.
+  - New wire frames (`console_room/models.py`): `assignment` (server → the
+    assigned operator's inbox, carrying the runnable + args + thread room) and
+    `request_status` (server → thread, the lifecycle state + assignee).
+  - Validation tolerates the off-shift race: a runnable some connected console
+    holds is accepted (→ `unassigned` + pageable) even if every holder is
+    momentarily off shift; one no connected console holds is refused.
+
+## [0.6.0]
+
+### Added
+- **Presence-aware live catalogue + affinity (runnables portal, step 1).** The
+  hub now tracks the self-service catalogue **per connected console** and whether
+  that console is **on shift**, instead of one last-writer-wins list per queue.
+  This is the spine of the runnables portal (see
+  `docs/design/runnables-portal.md` §3.2): the catalogue a visitor browses is the
+  **live union** of the on-shift consoles' published runnables, and every runnable
+  carries **affinity** — which consoles hold it — so a request can be routed to a
+  console that can actually serve it. A runnable only one on-shift console holds
+  routes to that console and **vanishes** the moment it goes off shift (or
+  disconnects), reappearing when it returns.
+  - New pure `console_room/catalog.py` (`LiveCatalog`): per-namespace, per-agent
+    publish / presence / withdraw, answering `live(namespace)`,
+    `holders(namespace, tool)` (on-shift routing candidates), and
+    `connected_holders(...)` (the wider on-and-off-shift set a page will target).
+  - Hub methods: `publish_catalog`, `set_agent_shift`, `live_catalog`,
+    `runnable_holders`, `connected_holders`; `join_agent` marks a console on shift
+    by default and `leave_agent` withdraws it.
+  - The NDJSON `catalog` frame now feeds the live catalogue alongside the legacy
+    `set_catalog` cache (the latter still backs the web `/catalog` endpoint and is
+    subsumed in a later step); an agent `presence` frame flips its on-shift state
+    without dropping the connection (off-shift-but-connected).
+
 ## [0.5.3]
 
 ### Changed

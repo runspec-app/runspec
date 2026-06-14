@@ -167,32 +167,45 @@ def read_chat() -> dict[str, Any]:
     return dict(chat) if isinstance(chat, dict) else {}
 
 
-def read_mailboxes() -> dict[str, str]:
-    """The ``[mailboxes]`` shared-mailbox → queue map from config.toml ({} unset).
+def read_mailbox_watches() -> list[dict[str, str]]:
+    """The ``[[mailboxes]]`` email folder-watch list from config.toml (``[]``
+    unset) — the runnables-portal email channel.
 
-    The email channel's queue key is the recipient address: mail to a declared
-    shared mailbox belongs to that mailbox's queue, exactly as ``room_queue``
-    declares a chat queue on a host entry. One ``address = "queue"`` line per
-    shared mailbox::
+    An **array of tables**, one watch per ``mailbox + folder`` combination the
+    Outlook source should watch for new mail::
 
-        [mailboxes]
-        "it-support@corp.com" = "it-support"
+        [[mailboxes]]                 # watch my own Inbox (the default account)
 
-    Addresses are lowercased (matched case-insensitively against an email's
-    recipients); blank addresses/queues are dropped. Personal mail — anything not
-    addressed to a declared mailbox — never maps to a queue (so it never becomes
-    a queue card). This is surface-only config; the room_*/transport keys are
-    untouched. See docs/design/helpdesk-channels.md.
-    """
+        [[mailboxes]]
+        folder = "Tickets"            # a subfolder of my own mailbox
+
+        [[mailboxes]]
+        mailbox = "it-support@corp.com"
+        folder  = "Tickets/Open"      # another account's subfolder (a `/` path)
+
+    Normalisation: ``mailbox`` blank/missing → ``""`` (the default account);
+    ``folder`` blank, missing, or ``"inbox"`` (case-insensitive) → ``"Inbox"``.
+    Exact ``(mailbox, folder)`` duplicates collapse. There is **no claim system** —
+    if two consoles watch the same shared folder, both react to every mail (see
+    docs/design/email-folder-watch.md). Returns ``[]`` when the legacy
+    ``[mailboxes]`` *table* form is present instead (that's the old queue map)."""
     raw = read_config().get("mailboxes")
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, str] = {}
-    for address, queue in raw.items():
-        addr = str(address or "").strip().lower()
-        name = str(queue or "").strip()
-        if addr and name:
-            out[addr] = name
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        mailbox = str(entry.get("mailbox") or "").strip()
+        folder = str(entry.get("folder") or "").strip()
+        if not folder or folder.lower() == "inbox":
+            folder = "Inbox"
+        key = (mailbox.lower(), folder.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"mailbox": mailbox, "folder": folder})
     return out
 
 

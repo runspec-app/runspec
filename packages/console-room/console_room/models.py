@@ -22,15 +22,16 @@ TEXT_CAP = 20_000
 HELLO = "hello"
 MESSAGE = "message"
 PRESENCE = "presence"
-CONVERSATION = "conversation"  # server → client: a conversation's lifecycle state
 CATALOG = "catalog"  # agent → server: the queue's self-service tool schemas
 REQUEST = "request"  # visitor → server: a structured catalog request (tool + args)
+ASSIGNMENT = "assignment"  # server → operator: a portal request routed to you
+REQUEST_STATUS = "request_status"  # server → thread: a request's lifecycle state
+PAGE = "page"  # server → every connected console of a queue: come serve this
 
-# Inbound control-frame tags (agent → server): drive the conversation lifecycle.
-CLAIM = "claim"
-RESOLVE = "resolve"
-REOPEN = "reopen"
-CLOSE = "close"
+# Inbound portal control-frame tags (operator console → server): drive the
+# claim-free request lifecycle for a request assigned to this console.
+REQUEST_START = "request_start"  # the operator began enacting the runnable
+REQUEST_COMPLETE = "request_complete"  # the operator finished (ok, or with error)
 
 # Message kinds — how a transcript entry was produced. "chat" is a typed message;
 # "request" is a structured catalog submission (text = human summary, data = the
@@ -136,19 +137,6 @@ def normalize_status(status: Any) -> str:
     return "available" if _str(status) == "available" else "away"
 
 
-def conversation_frame(
-    room: str, state: str, assignee: str | None = None
-) -> dict[str, Any]:
-    """A server → client ``conversation`` frame: a thread's lifecycle state and
-    its current assignee (``None`` when unassigned)."""
-    return {
-        "type": CONVERSATION,
-        "room": _str(room),
-        "state": _str(state),
-        "assignee": assignee,
-    }
-
-
 @dataclass(frozen=True)
 class Hello:
     """A parsed ``hello`` frame — a console declaring its identity on connect.
@@ -191,6 +179,62 @@ def parse_catalog(obj: Any) -> list[dict[str, Any]] | None:
         if isinstance(entry, dict) and _str(entry.get("name")).strip():
             result.append(entry)
     return result
+
+
+def assignment_frame(
+    request_id: str, room: str, runnable: str, args: dict[str, Any], visitor: str
+) -> dict[str, Any]:
+    """A server → operator ``assignment`` frame: a portal request routed to one
+    operator's console (its inbox item). Carries everything needed to enact it —
+    the runnable, the visitor's args, and the thread ``room`` to reply on."""
+    return {
+        "type": ASSIGNMENT,
+        "id": _str(request_id),
+        "room": _str(room),
+        "runnable": _str(runnable),
+        "args": args,
+        "visitor": _str(visitor),
+    }
+
+
+def request_status_frame(
+    request_id: str,
+    room: str,
+    state: str,
+    assignee: str | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """A server → thread ``request_status`` frame: a portal request's lifecycle
+    state (``unassigned`` / ``assigned`` / ``in_progress`` / ``done`` / ``failed``)
+    and its assignee. ``error`` is included only on a failure."""
+    frame: dict[str, Any] = {
+        "type": REQUEST_STATUS,
+        "id": _str(request_id),
+        "room": _str(room),
+        "state": _str(state),
+        "assignee": assignee,
+    }
+    if error is not None:
+        frame["error"] = _str(error)
+    return frame
+
+
+def page_frame(
+    request_id: str, room: str, runnable: str, queue: str, visitor: str
+) -> dict[str, Any]:
+    """A server → console ``page`` frame: a chime to *every connected* console of a
+    queue (on shift and off), naming the runnable an unassigned request is waiting
+    on. A console that holds it can come on shift to pick it up (the pending
+    request then auto-assigns), or respond out of band. Carries the thread ``room``
+    so a responder can find it. See docs/design/runnables-portal.md §3.4."""
+    return {
+        "type": PAGE,
+        "id": _str(request_id),
+        "room": _str(room),
+        "runnable": _str(runnable),
+        "queue": _str(queue),
+        "visitor": _str(visitor),
+    }
 
 
 def request_text(tool: str, args: dict[str, Any]) -> str:

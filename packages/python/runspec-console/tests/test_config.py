@@ -66,40 +66,78 @@ class TestWindowsPathRoundTrip(unittest.TestCase):
         self.assertEqual(_roundtrip(data), data)
 
 
-class TestReadMailboxes(unittest.TestCase):
-    """The [mailboxes] shared-mailbox → queue map (the email channel's surface)."""
+class TestReadMailboxWatches(unittest.TestCase):
+    """The [[mailboxes]] folder-watch list (the email folder-watch channel)."""
 
-    def _read(self, raw: dict) -> dict:
+    def _read(self, raw: dict) -> list:
         import runspec_console.config as cfg
 
         orig = cfg.read_config
         cfg.read_config = lambda: raw
         try:
-            return cfg.read_mailboxes()
+            return cfg.read_mailbox_watches()
         finally:
             cfg.read_config = orig
 
-    def test_missing_section_is_empty(self) -> None:
-        self.assertEqual(self._read({}), {})
+    def test_missing_is_empty(self) -> None:
+        self.assertEqual(self._read({}), [])
 
-    def test_address_lowercased_queue_preserved(self) -> None:
-        out = self._read({"mailboxes": {"IT-Support@Corp.com": "it-support"}})
-        self.assertEqual(out, {"it-support@corp.com": "it-support"})
+    def test_table_form_is_not_a_watch_list(self) -> None:
+        # The legacy [mailboxes] *table* (address→queue) is not a watch list.
+        self.assertEqual(self._read({"mailboxes": {"a@corp": "q"}}), [])
 
-    def test_blank_address_or_queue_dropped(self) -> None:
+    def test_empty_entry_is_default_inbox(self) -> None:
+        self.assertEqual(
+            self._read({"mailboxes": [{}]}),
+            [{"mailbox": "", "folder": "Inbox"}],
+        )
+
+    def test_inbox_aliases_normalize(self) -> None:
         out = self._read(
             {
-                "mailboxes": {
-                    "  ": "it-support",
-                    "hr@corp.com": "  ",
-                    "ok@corp.com": "ok",
-                }
+                "mailboxes": [
+                    {"mailbox": "me@corp", "folder": "inbox"},
+                    {"mailbox": "you@corp", "folder": "  "},
+                ]
             }
         )
-        self.assertEqual(out, {"ok@corp.com": "ok"})
+        self.assertEqual(
+            out,
+            [
+                {"mailbox": "me@corp", "folder": "Inbox"},
+                {"mailbox": "you@corp", "folder": "Inbox"},
+            ],
+        )
 
-    def test_non_table_section_is_empty(self) -> None:
-        self.assertEqual(self._read({"mailboxes": "nope"}), {})
+    def test_subfolder_and_shared_mailbox(self) -> None:
+        out = self._read(
+            {"mailboxes": [{"mailbox": "it-support@corp", "folder": "Tickets/Open"}]}
+        )
+        self.assertEqual(
+            out, [{"mailbox": "it-support@corp", "folder": "Tickets/Open"}]
+        )
+
+    def test_duplicates_collapse(self) -> None:
+        out = self._read(
+            {
+                "mailboxes": [
+                    {"folder": "Inbox"},
+                    {"folder": "inbox"},  # same watch, different spelling
+                    {"mailbox": "ME@corp", "folder": "Tickets"},
+                    {"mailbox": "me@corp", "folder": "tickets"},  # same again
+                ]
+            }
+        )
+        self.assertEqual(
+            out,
+            [
+                {"mailbox": "", "folder": "Inbox"},
+                {"mailbox": "ME@corp", "folder": "Tickets"},
+            ],
+        )
+
+    def test_non_dict_entries_skipped(self) -> None:
+        self.assertEqual(self._read({"mailboxes": ["nope", {}]})[0]["folder"], "Inbox")
 
 
 class TestTomlStringEscaper(unittest.TestCase):

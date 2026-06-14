@@ -125,10 +125,8 @@ def test_helpdesk_visitor_room_is_derived_server_side():
     with _client(store) as client:
         with client.websocket_connect("/ws?queue=it&user=alice@corp") as alice:
             alice.send_json({"type": "message", "text": "laptop won't boot"})
-            # The first message opens the thread: a conversation frame, then the echo.
-            opened = alice.receive_json()
-            assert opened["type"] == "conversation" and opened["state"] == "open"
-            assert opened["room"] == "helpdesk/it/alice@corp"
+            # The message echoes back stamped with the server-derived room (no
+            # claim-conversation frame — the thread is just the message stream).
             got = alice.receive_json()
             assert got["type"] == "message" and got["text"] == "laptop won't boot"
             assert got["room"] == "helpdesk/it/alice@corp"
@@ -146,17 +144,14 @@ def test_two_helpdesk_visitors_are_isolated():
             with client.websocket_connect("/ws?queue=it&user=bob@corp") as bob:
                 alice.send_json({"type": "message", "text": "alice secret"})
                 bob.send_json({"type": "message", "text": "bob secret"})
-                # Each visitor sees only their own room's frames (open + echo),
-                # never the other's — were they sharing a room a cross frame would
-                # appear here.
-                a_frames = [alice.receive_json(), alice.receive_json()]
-                b_frames = [bob.receive_json(), bob.receive_json()]
-                assert {f["room"] for f in a_frames} == {"helpdesk/it/alice@corp"}
-                assert {f["room"] for f in b_frames} == {"helpdesk/it/bob@corp"}
-                a_msg = [f for f in a_frames if f["type"] == "message"][0]
-                b_msg = [f for f in b_frames if f["type"] == "message"][0]
-                assert a_msg["text"] == "alice secret"
-                assert b_msg["text"] == "bob secret"
+                # Each visitor's first (and only) frame is its own message echo,
+                # stamped with its own room — never the other's.
+                a_msg = alice.receive_json()
+                b_msg = bob.receive_json()
+                assert a_msg["room"] == "helpdesk/it/alice@corp"
+                assert b_msg["room"] == "helpdesk/it/bob@corp"
+                assert a_msg["type"] == "message" and a_msg["text"] == "alice secret"
+                assert b_msg["type"] == "message" and b_msg["text"] == "bob secret"
     # Both threads persisted under distinct, identity-derived rooms.
     rooms = {m.room for m in store.appended}
     assert rooms == {"helpdesk/it/alice@corp", "helpdesk/it/bob@corp"}
@@ -184,9 +179,21 @@ CATALOG = [
 ]
 
 
+class _SeedAgent:
+    """Minimal on-shift agent stand-in to seed the live catalogue —
+    ``publish_catalog`` only reads ``.namespace`` / ``.user``."""
+
+    def __init__(self, user, namespace):
+        self.user = user
+        self.namespace = namespace
+
+    async def send(self, frame):  # pragma: no cover - never delivered to in these tests
+        pass
+
+
 def _client_with_catalog(store=None):
     hub = Hub(store or FakeStore())
-    hub.set_catalog("helpdesk/it", CATALOG)
+    hub.publish_catalog(_SeedAgent("agent@web01", "helpdesk/it"), CATALOG)
     return TestClient(create_app(hub))
 
 
@@ -207,19 +214,22 @@ def test_catalog_endpoint_requires_valid_queue():
         assert client.get("/catalog?queue=a/b").status_code == 400
 
 
-def test_visitor_request_over_ws_lands_as_structured_message():
+def test_visitor_request_over_ws_lands_and_auto_assigns():
     store = FakeStore()
     with _client_with_catalog(store) as client:
         with client.websocket_connect("/ws?queue=it&user=alice@corp") as alice:
             alice.send_json(
                 {"type": "request", "tool": "reset-password", "args": {"user": "alice"}}
             )
-            opened = alice.receive_json()
-            assert opened["type"] == "conversation" and opened["state"] == "open"
+            # The ask lands as a structured request-kind message…
             got = alice.receive_json()
             assert got["type"] == "message" and got["kind"] == "request"
-            assert got["data"] == {"tool": "reset-password", "args": {"user": "alice"}}
+            assert got["data"]["tool"] == "reset-password"
             assert got["text"].startswith("Requested: reset-password")
+            # …and the hub auto-assigns it to the on-shift holder.
+            status = alice.receive_json()
+            assert status["type"] == "request_status" and status["state"] == "assigned"
+            assert status["assignee"] == "agent@web01"
     saved = store.appended[0]
     assert saved.kind == "request" and saved.room == "helpdesk/it/alice@corp"
 
@@ -232,8 +242,6 @@ def test_visitor_request_for_unknown_tool_is_refused():
             # Nothing comes back for the refused request; a normal message after it
             # is the next frame the visitor sees (proving the socket stayed open).
             alice.send_json({"type": "message", "text": "hello?"})
-            opened = alice.receive_json()
-            assert opened["type"] == "conversation"
             got = alice.receive_json()
             assert got["type"] == "message" and got["text"] == "hello?"
     assert all(m.kind == "chat" for m in store.appended)

@@ -4,7 +4,14 @@
 > proposal). This supersedes the **claim** machinery in `helpdesk-channels.md`
 > (email self-addressed markers / first-ack-wins / the validated fold) and the
 > **claim/lifecycle** in `helpdesk-rooms.md`. Status: **design agreed with the
-> user (this note); no code yet.** Build in a fresh session.
+> user; build underway.** §7 step 1 (hub presence-aware live catalogue +
+> affinity) landed in `runspec-room` 0.6.0, step 2 (auto-assignment +
+> claim-free request lifecycle) in 0.7.0, and step 3 (page/chime) in 0.8.0. 0.9.0
+> makes the portal the **single** visitor path (removed the legacy catalogue cache
+> + `visitor_request`; the browser door now drives `submit_request` / `page_request`
+> and `/catalog` serves the live catalogue). Steps 4–7 (console inbox UI +
+> enact-through-gate, email folder-watch, browser portal rebuild, full claim
+> retirement) are queued.
 
 ---
 
@@ -214,20 +221,54 @@ All settled with the user — no open questions remain for the build:
 
 ## 7. Build plan (fresh session, in order)
 
-1. **Hub: presence-aware live catalogue + affinity.** Aggregate connected agents'
-   catalogues by namespace, filtered by on-shift presence; expose `{runnable →
-   [agents]}`. (Pure-testable against fake agents.)
-2. **Hub: auto-assignment + request lifecycle.** Route a `request` to a candidate;
-   `unassigned` when none; auto-assign on the eligible-operator-comes-on event.
-3. **Hub: page/chime broadcast** to connected agents of a queue.
+1. **Hub: presence-aware live catalogue + affinity.** ✅ *Done (runspec-room
+   0.6.0).* Aggregate connected agents' catalogues by namespace, filtered by
+   on-shift presence; expose `{runnable → [agents]}`. (Pure-testable against fake
+   agents.) Shipped as `console_room/catalog.py` (`LiveCatalog`) +
+   `Hub.publish_catalog` / `set_agent_shift` / `live_catalog` /
+   `runnable_holders` / `connected_holders`; NDJSON `catalog` + agent `presence`
+   frames wired in.
+2. **Hub: auto-assignment + request lifecycle.** ✅ *Done (runspec-room 0.7.0).*
+   Route a `request` to a candidate; `unassigned` when none; auto-assign on the
+   eligible-operator-comes-on event. Shipped as `console_room/requests.py`
+   (`Request` + `RequestRegistry`, the claim-free state machine + per-namespace
+   round-robin) + `Hub.submit_request` / `start_request` / `complete_request` /
+   `release_request`; `assignment` + `request_status` wire frames. The AFK
+   *timer* that fires `release_request` is wired with the console in step 4.
+3. **Hub: page/chime broadcast** to connected agents of a queue. ✅ *Done
+   (runspec-room 0.8.0).* `page` wire frame + `Hub._page` / `_hold_unassigned` /
+   `page_request`; auto-pages on `unassigned` (submit + AFK release), explicit
+   visitor re-page guarded to waiting requests.
 4. **Console: portal request inbox** (assigned requests) + enact through the gate +
-   result back on the thread. Repoint the Triggers/Rooms UI to the request model.
+   result back on the thread. ✅ *Done (runspec-console 0.56.0).* Transport
+   contract (0.53.0) + enactment hook (0.54.0) + the **operator UI** (0.56.0): a
+   routed `assignment` becomes a `source:"portal"` Triggers card
+   (`card_id = "portal:<rid>"`) that walks assigned → running → done/failed; the
+   `card_id` equals the autonomy-gate `chat_id`, so the existing inline
+   **Approve/Deny** + the result/timeline render on it (the operator's enact +
+   audit drawer) with no new approval UI. The Triggers tab's dead claim/email
+   controls were removed in the same change. **Remaining:** the AFK release timer.
 5. **Email: folder-watch source** (`ItemAdd`/poll) feeding the trigger engine;
    **remove** the claim machinery (`mailbox_claim.py`, markers, gates, lifecycle).
+   ✅ *Done (runspec-console 0.55.0).* See **`docs/design/email-folder-watch.md`** —
+   a multi `mailbox + folder` watch list (blank/`"inbox"` → the Inbox), `new_mail`
+   tagged with its origin so triggers `match` on `mailbox`/`folder`, built for
+   "watch my own mailbox" with a loud no-claim duplication warning for shared
+   mailboxes. The COM sink/poll is Windows-verified-only; the pure pieces are
+   unit-tested.
 6. **Browser portal**: catalogue view → runnable form → submit → status/thread,
-   with the "no operator / page" affordance.
+   with the "no operator / page" affordance. ✅ *Done (runspec-room 0.12.0).* The
+   `console_room/web/frontend` visitor client renders each request's
+   `request_status` inline (assigned → in progress → done/failed) and shows "no
+   operator available" + a **Page the team** button (→ `page` frame) when
+   unassigned; the catalogue + schema form were already wired (0.9.0). *(The
+   operator-side console-ui React assignment inbox — step 4's UI polish — is still
+   pending; enactment already works through the existing autonomy-gate dialog.)*
 7. **Close PR #226**, retire the claim docs (fold this note's outcome into
    `helpdesk-rooms.md` / `helpdesk-channels.md` as "superseded by the portal").
+   🔶 *Chat-side claim retired* (runspec-room 0.11.0 hub + runspec-console 0.54.0
+   console). Remaining: the email claim system (step 5) and folding the outcome
+   into the helpdesk docs.
 
 Removing claim is a **net deletion** — `mailbox_claim.py`, the marker COM, the
 gates, the chat claim path — offset by the routing/catalogue machinery, most of

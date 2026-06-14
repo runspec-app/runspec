@@ -16,16 +16,19 @@ import json
 import logging
 from typing import Any, Protocol, runtime_checkable
 
+from .catalog import LiveCatalog
 from .conversation import namespace_matches, parse_conversation_room, queue_namespace
-from .lifecycle import Conversation, ConversationRegistry
 from .models import (
     KIND_REQUEST,
     REQUEST_ARGS_CAP,
     Message,
-    conversation_frame,
+    assignment_frame,
+    page_frame,
     presence_frame,
+    request_status_frame,
     request_text,
 )
+from .requests import UNASSIGNED, Request, RequestRegistry
 
 logger = logging.getLogger("console_room.hub")
 
@@ -94,8 +97,8 @@ class Hub:
         self._backscroll = backscroll_limit
         self._rooms: dict[str, set[Participant]] = {}
         self._agents: dict[str, set[Agent]] = {}  # namespace -> subscribed agents
-        self._convs = ConversationRegistry()  # helpdesk thread lifecycle (live)
-        self._catalogs: dict[str, list[dict[str, Any]]] = {}  # namespace -> tools
+        self._live = LiveCatalog()  # presence-aware per-agent catalogue + affinity
+        self._requests = RequestRegistry()  # claim-free portal request lifecycle
         self._lock = asyncio.Lock()  # guards _rooms / _agents membership
 
     def _members_locked(self, room: str) -> set[Recipient]:
@@ -121,40 +124,34 @@ class Hub:
         if p.wants_backscroll:
             for msg in await self._recent(p.room):
                 await _safe_send(p, msg.to_frame())
-        # Catch the newcomer up on the conversation's lifecycle state, if any —
-        # so a visitor reloading sees "assigned to … / resolved", not a blank slate.
-        conv = self._convs.get(p.room)
-        if conv is not None:
-            await _safe_send(p, conversation_frame(*conv.frame_fields()))
         # Announce the newcomer to everyone already in the room (incl. agents).
         await self._broadcast(
             p.room, presence_frame(p.room, p.user, "available"), exclude=p
         )
 
     async def join_agent(self, agent: Agent) -> None:
-        """Subscribe ``agent`` to its namespace: catch it up on every conversation
-        already open under that queue (the visitors present in each), then announce
-        the agent as available in those conversations. No backscroll — an agent is
-        forward-only, like a console."""
+        """Subscribe ``agent`` to its namespace: catch it up on every active
+        conversation under that queue (the visitors present in each), then announce
+        the agent as available there. No backscroll — an agent is forward-only,
+        like a console."""
         ns = agent.namespace
         async with self._lock:
-            # Snapshot the open conversations under this namespace before joining.
+            # Snapshot the active rooms under this namespace before joining.
             active = {
                 room: list(members)
                 for room, members in self._rooms.items()
                 if namespace_matches(ns, room)
             }
             self._agents.setdefault(ns, set()).add(agent)
-        # Catch the agent up: who is in each open conversation (its inbox).
+            # A freshly connected console is on shift by default until its rota
+            # says otherwise (set_agent_shift). It contributes no runnables until
+            # it publishes a catalogue.
+            self._live.set_presence(ns, agent.user, True)
+        # Catch the agent up: who is in each active conversation (its inbox).
         for room, members in active.items():
             for other in members:
                 await _safe_send(agent, presence_frame(room, other.user, "available"))
-        # …and each thread's lifecycle state (open / assigned-to-whom / resolved),
-        # so a console can render its inbox without replaying history. Covers every
-        # known thread under the queue, including dormant ones with no one present.
-        for conv in self._convs.active_under(ns):
-            await _safe_send(agent, conversation_frame(*conv.frame_fields()))
-        # Tell each open conversation a team agent is now available.
+        # Tell each active conversation a team agent is now available.
         for room in active:
             await self._broadcast(
                 room, presence_frame(room, agent.user, "available"), exclude=agent
@@ -171,6 +168,9 @@ class Hub:
                 agents.remove(agent)
                 if not agents:
                     self._agents.pop(ns, None)
+            # The console is gone: drop its runnables from the live catalogue so a
+            # single-holder runnable vanishes the moment its only console leaves.
+            self._live.withdraw(ns, agent.user)
             active = [room for room in self._rooms if namespace_matches(ns, room)]
         if present:
             for room in active:
@@ -195,16 +195,9 @@ class Hub:
     async def on_message(self, p: Participant, text: str) -> None:
         """Stamp, persist, and broadcast a message — echoed to the sender too, so
         every client (including the author's other views) converges on the same
-        server-assigned id/ts.
-
-        In a helpdesk conversation room a visitor message also drives the
-        lifecycle: it opens the thread the first time and reopens it if it had been
-        resolved/closed — the conversation state goes out *before* the message so a
-        reopened thread is live again as the message lands."""
-        if parse_conversation_room(p.room) is not None:
-            conv = self._convs.open_or_reopen(p.room)
-            if conv is not None:
-                await self._broadcast(p.room, conversation_frame(*conv.frame_fields()))
+        server-assigned id/ts. In a helpdesk conversation room this is the small
+        clarification thread that hangs off a request; the request's own lifecycle
+        travels in ``request_status`` frames, not here."""
         msg = Message.new(p.room, p.user, text)
         await asyncio.to_thread(self._store.append, msg)
         await self._broadcast(p.room, msg.to_frame())
@@ -226,108 +219,212 @@ class Hub:
         await asyncio.to_thread(self._store.append, msg)
         await self._broadcast(room, msg.to_frame())
 
-    # ── conversation lifecycle (agent-driven control) ─────────────────────────
-    # claim / resolve / reopen / close move a thread through its states. Each is
-    # refused outside the agent's namespace (the queue boundary) and broadcasts the
-    # new state to the thread (visitor + team) only when something actually changed.
+    # ── presence-aware live catalogue + affinity (the portal spine) ───────────
+    # The catalogue comes FROM the agent consoles (the side that discovers
+    # runnables over SSH+MCP and sees H0's x-discoverable audiences) — the room
+    # just caches what *each* connected console publishes and whether it is on
+    # shift, so the live catalogue a visitor browses is the union of the on-shift
+    # consoles' runnables and every request can be routed to a console that
+    # actually holds it. The room never learns what runspec is and never executes
+    # anything. See docs/design/runnables-portal.md §3.2.
 
-    async def claim(self, agent: Agent, room: str) -> None:
-        """The agent takes ownership of ``room`` → assigned. This is the gate the
-        console uses to release the (deferred) agent turn — spend tracks the claim."""
-        await self._transition(agent, room, self._convs.claim, room, agent.user)
+    def publish_catalog(self, agent: Agent, tools: list[dict[str, Any]]) -> None:
+        """Record the runnables ``agent`` (one console) holds for its queue. ``[]``
+        means it holds nothing right now — it stays connected but drops out of the
+        live catalogue. Presence is preserved across re-publishes."""
+        self._live.publish(agent.namespace, agent.user, tools)
+        logger.info(
+            "room: %r published %d runnable(s) to %r",
+            agent.user,
+            len(tools),
+            agent.namespace,
+        )
 
-    async def resolve(self, agent: Agent, room: str) -> None:
-        """Mark ``room`` resolved (a visitor reply will reopen it)."""
-        await self._transition(agent, room, self._convs.resolve, room)
+    async def set_agent_shift(self, agent: Agent, on_shift: bool) -> None:
+        """Flip ``agent``'s rota presence. Off shift, it stays connected (and
+        pageable) but its runnables leave the live catalogue; back on shift they
+        reappear. Coming *on* shift drains the backlog: any ``unassigned`` request
+        in the queue this operator can now serve auto-assigns to an on-shift
+        holder (so a request that was stranded gets picked up without a re-submit)."""
+        self._live.set_presence(agent.namespace, agent.user, on_shift)
+        if on_shift:
+            for req in self._requests.unassigned_under(agent.namespace):
+                await self._try_assign(req)
 
-    async def reopen(self, agent: Agent, room: str) -> None:
-        """Reopen a resolved/closed ``room`` → open, back to the queue."""
-        await self._transition(agent, room, self._convs.reopen, room)
+    def live_catalog(self, namespace: str) -> list[dict[str, Any]]:
+        """The runnables a visitor of ``namespace`` can request right now — the
+        deduplicated union of the on-shift consoles' published catalogues."""
+        return self._live.live(namespace)
 
-    async def close(self, agent: Agent, room: str) -> None:
-        """Close ``room`` → terminal."""
-        await self._transition(agent, room, self._convs.close, room)
+    def runnable_holders(self, namespace: str, tool: str) -> list[str]:
+        """The on-shift consoles that hold ``tool`` — the routing candidates for a
+        request. Empty when no on-shift console can serve it."""
+        return self._live.holders(namespace, tool)
 
-    async def _transition(self, agent: Agent, room: str, op: Any, *args: Any) -> None:
-        if not namespace_matches(agent.namespace, room):
-            logger.warning(
-                "room: agent %r refused control of %r outside namespace %r",
-                agent.user,
-                room,
-                agent.namespace,
-            )
-            return
-        conv: Conversation | None = op(*args)
-        if conv is not None:
-            await self._broadcast(room, conversation_frame(*conv.frame_fields()))
+    def connected_holders(self, namespace: str, tool: str) -> list[str]:
+        """Every connected console that holds ``tool``, on shift or not — the
+        audience a page targets when no on-shift holder is available."""
+        return self._live.connected_holders(namespace, tool)
 
-    def conversation_state(self, room: str) -> str | None:
-        """The current lifecycle state of ``room`` (for tests), or ``None`` if the
-        hub has no record of it yet."""
-        conv = self._convs.get(room)
-        return conv.state if conv is not None else None
+    # ── portal requests: auto-assignment + claim-free lifecycle ───────────────
+    # A visitor submits a catalog request; the hub routes it to an on-shift holder
+    # (round-robin) and tracks its lifecycle without any claim step. The assigned
+    # operator's console gets an ``assignment`` frame; the request thread (visitor
+    # + team) gets ``request_status`` frames as the state moves. See §3.3 / §3.5.
 
-    # ── self-service catalog ──────────────────────────────────────────────────
-    # The catalog comes FROM the agent consoles (the side that discovers runnables
-    # over SSH+MCP and sees H0's x-discoverable audiences) — the room just caches
-    # the published tool schemas per queue and serves them to visitors. It never
-    # learns what runspec is and never executes anything: a visitor submission is
-    # only ever a structured message an agent console enacts through its own
-    # speak/autonomy gates. See docs/design/helpdesk-rooms.md §5.
+    def _find_agent(self, namespace: str, user: str) -> Agent | None:
+        """The connected agent ``user`` under ``namespace``, or ``None``. Used to
+        deliver an assignment to exactly the operator it routed to."""
+        for agent in self._agents.get(namespace, ()):
+            if agent.user == user:
+                return agent
+        return None
 
-    def set_catalog(self, namespace: str, tools: list[dict[str, Any]]) -> None:
-        """Publish (or clear, with ``[]``) the self-service catalog for a queue
-        namespace. Last writer wins — with multiple consoles on one queue the
-        most recent publish is the truth, which tracks 'what the on-shift fleet
-        can run right now'."""
-        if tools:
-            self._catalogs[namespace] = tools
-        else:
-            self._catalogs.pop(namespace, None)
-        logger.info("room: catalog for %r now has %d tool(s)", namespace, len(tools))
+    async def _try_assign(self, req: Request) -> bool:
+        """Route an ``unassigned`` request to an on-shift holder by round-robin and
+        announce it; ``False`` (left unassigned) when no on-shift holder exists."""
+        candidates = self._live.holders(req.namespace, req.runnable)
+        operator = self._requests.next_assignee(req.namespace, candidates)
+        if operator is None:
+            return False
+        assigned = self._requests.assign(req.id, operator)
+        if assigned is None:  # raced into a non-unassigned state — leave it
+            return False
+        agent = self._find_agent(assigned.namespace, operator)
+        if agent is not None:
+            await _safe_send(agent, assignment_frame(*assigned.assignment_fields()))
+        await self._broadcast(
+            assigned.room, request_status_frame(*assigned.status_fields())
+        )
+        return True
 
-    def catalog_for(self, namespace: str) -> list[dict[str, Any]]:
-        """The published self-service tools for a queue namespace (may be [])."""
-        return list(self._catalogs.get(namespace, ()))
+    async def _hold_unassigned(self, req: Request) -> None:
+        """Announce an ``unassigned`` request to its thread (the visitor sees "no
+        operator available") and **page** every connected console of the queue so a
+        holder can come on shift to pick it up."""
+        await self._broadcast(req.room, request_status_frame(*req.status_fields()))
+        await self._page(req)
 
-    async def visitor_request(
+    async def _page(self, req: Request) -> int:
+        """Chime every *connected* console of ``req``'s queue — on shift and off —
+        naming the runnable. Returns how many consoles were paged (for logging /
+        tests). The frame is informational; coming on shift is what actually picks
+        the request up."""
+        async with self._lock:
+            consoles = list(self._agents.get(req.namespace, ()))
+        frame = page_frame(req.id, req.room, req.runnable, req.queue, req.visitor)
+        for console in consoles:
+            await _safe_send(console, frame)
+        logger.info(
+            "room: paged %d console(s) for %r in %r",
+            len(consoles),
+            req.runnable,
+            req.namespace,
+        )
+        return len(consoles)
+
+    async def page_request(self, p: Participant, request_id: str) -> bool:
+        """The visitor's "Page the team" action: re-chime the queue for a still
+        ``unassigned`` request of their own thread. Refused (``False``) if the
+        request is unknown, not in the visitor's room, or already assigned/done —
+        you can only page something that is actually waiting."""
+        req = self._requests.get(request_id)
+        if req is None or req.room != p.room or req.state != UNASSIGNED:
+            return False
+        await self._page(req)
+        return True
+
+    async def submit_request(
         self, p: Participant, tool: str, args: dict[str, Any]
-    ) -> bool:
-        """A visitor submits a catalog request from their conversation: validate it
-        against the queue's published catalog, then persist + broadcast it as a
-        ``request``-kind message (text = human summary, data = machine payload).
-        Drives the lifecycle like any visitor message (open/reopen). Returns
-        ``False`` when refused — unknown tool, oversized args, or not a
-        conversation room — so the door can tell the client."""
+    ) -> Request | None:
+        """A visitor submits a portal request from their conversation. Validated
+        against the **live catalogue** (some connected console must hold ``tool`` —
+        on shift or, tolerating the off-shift race, at least pageable) and the args
+        budget. Persists the request as a ``request``-kind thread message, then
+        **auto-assigns** to an on-shift holder (round-robin) or holds it
+        ``unassigned`` for a page. Returns the :class:`Request` (with its resolved
+        state), or ``None`` when refused."""
         parsed = parse_conversation_room(p.room)
         if parsed is None:
-            logger.warning("room: request from non-conversation room %r", p.room)
-            return False
-        queue, _visitor = parsed
+            logger.warning("room: portal request from non-conversation room %r", p.room)
+            return None
+        queue, visitor = parsed
         ns = queue_namespace(queue)
-        if not any(t.get("name") == tool for t in self._catalogs.get(ns, ())):
+        if not self._live.connected_holders(ns, tool):
             logger.warning(
-                "room: %r requested %r — not in the %r catalog", p.user, tool, ns
+                "room: %r requested %r — no connected console holds it in %r",
+                p.user,
+                tool,
+                ns,
             )
-            return False
+            return None
         if len(json.dumps(args)) > REQUEST_ARGS_CAP:
             logger.warning(
                 "room: %r request for %r refused — args too large", p.user, tool
             )
-            return False
-        conv = self._convs.open_or_reopen(p.room)
-        if conv is not None:
-            await self._broadcast(p.room, conversation_frame(*conv.frame_fields()))
+            return None
+        req = self._requests.create(p.room, queue, ns, visitor, tool, args)
+        # Record the ask on the thread (links to the lifecycle record via id).
         msg = Message.new(
             p.room,
             p.user,
             request_text(tool, args),
             kind=KIND_REQUEST,
-            data={"tool": tool, "args": args},
+            data={"tool": tool, "args": args, "request_id": req.id},
         )
         await asyncio.to_thread(self._store.append, msg)
         await self._broadcast(p.room, msg.to_frame())
-        return True
+        # Auto-assign, or hold unassigned and page the team so a holder can come on.
+        if not await self._try_assign(req):
+            await self._hold_unassigned(req)
+        return req
+
+    async def start_request(self, agent: Agent, request_id: str) -> None:
+        """The assignee marks a request ``in_progress`` (it began enacting). Scoped
+        to the agent's namespace and to the actual assignee; broadcasts the new
+        state to the thread."""
+        req = self._requests.get(request_id)
+        if req is None or not namespace_matches(agent.namespace, req.room):
+            return
+        updated = self._requests.start(request_id, agent.user)
+        if updated is not None:
+            await self._broadcast(
+                updated.room, request_status_frame(*updated.status_fields())
+            )
+
+    async def complete_request(
+        self, agent: Agent, request_id: str, error: str | None = None
+    ) -> None:
+        """The assignee marks a request ``done`` (or ``failed`` with ``error``).
+        Scoped to the namespace and the assignee; broadcasts the terminal state to
+        the thread."""
+        req = self._requests.get(request_id)
+        if req is None or not namespace_matches(agent.namespace, req.room):
+            return
+        updated = self._requests.complete(request_id, agent.user, error)
+        if updated is not None:
+            await self._broadcast(
+                updated.room, request_status_frame(*updated.status_fields())
+            )
+
+    async def release_request(self, request_id: str) -> None:
+        """Return an assigned-but-untouched request to the queue (the AFK timeout,
+        or an operator dropping off mid-assignment). It re-assigns to another
+        on-shift holder if one exists, else holds ``unassigned`` for a page."""
+        req = self._requests.get(request_id)
+        if req is None:
+            return
+        released = self._requests.release(request_id)
+        if released is None:
+            return
+        if not await self._try_assign(released):
+            await self._hold_unassigned(released)
+
+    def request_state(self, request_id: str) -> str | None:
+        """The current lifecycle state of a request (for tests), or ``None`` if
+        unknown."""
+        req = self._requests.get(request_id)
+        return req.state if req is not None else None
 
     async def on_presence(self, p: Participant, status: str) -> None:
         """Relay a participant's presence change (e.g. a console's rota flip) to

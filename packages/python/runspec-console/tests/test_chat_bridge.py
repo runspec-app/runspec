@@ -163,21 +163,26 @@ class _FakeEngine:
         self.fed.append(event)
 
 
-def _event_stub(engine: Any = None, agent_rooms: dict[str, str] | None = None):
+def _event_stub(engine: Any = None):
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._trigger_engine = engine
-    s._agent_rooms = dict(agent_rooms or {})
-    s._thread_states = {}
     s._trigger_cards = {}
     s.dispatched: list[tuple[str, dict]] = []
+    s.enacted: list[dict] = []
+    s.paged: list[dict] = []
     s._dispatch = lambda ev, detail: s.dispatched.append((ev, detail))
     s._notify_room_message = lambda payload: None  # OS toast tested in test_notify
+    s._notify_page = lambda payload: s.paged.append(payload)
+    s._enact_assignment = lambda payload: s.enacted.append(payload)
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
-    s._feed_engine_for = types.MethodType(Bridge._feed_engine_for, s)
     s._touch_queue_card = types.MethodType(Bridge._touch_queue_card, s)
     s._evict_trigger_cards = types.MethodType(Bridge._evict_trigger_cards, s)
     return s
+
+
+_NS = "helpdesk/it"
+_THREAD = "helpdesk/it/alice@corp"
 
 
 def test_on_chat_event_message_reaches_ui_and_engine():
@@ -204,94 +209,199 @@ def test_on_chat_event_message_with_no_engine_still_fans_to_ui():
     assert s.dispatched == [("runspec:room_message", {"room": "ops", "text": "hi"})]
 
 
-# ── helpdesk: conversation frames + the claim gate ─────────────────────────────
-
-_NS = "helpdesk/it"
-_THREAD = "helpdesk/it/alice@corp"
+# ── runnables portal: assignment / request_status / page routing ───────────────
 
 
-def _conv(state: str, assignee: str | None) -> Event:
-    return Event.new(
-        "chat", "conversation", {"room": _THREAD, "state": state, "assignee": assignee}
-    )
+def test_on_chat_event_assignment_dispatches_and_enacts():
+    s = _event_stub(_FakeEngine())
+    payload = {"id": "r1", "room": _THREAD, "runnable": "reset-password", "args": {}}
+    s._on_chat_event(Event.new("chat", "assignment", payload))
+    assert ("runspec:room_assignment", payload) in s.dispatched
+    assert s.enacted == [payload]  # routed to enactment
 
 
-def test_conversation_frame_is_ui_only_and_tracked():
+def test_on_chat_event_request_status_is_ui_only():
     engine = _FakeEngine()
-    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
-    s._on_chat_event(_conv("open", None))
-    # The conversation frame still fans to the Rooms/UI view…
-    assert (
-        "runspec:room_conversation",
-        {"room": _THREAD, "state": "open", "assignee": None},
-    ) in s.dispatched
-    assert engine.fed == []  # lifecycle never reaches the engine
-    assert s._thread_states[_THREAD] == {"state": "open", "assignee": None}
-    # …and folds onto the conversation's trigger card (lifecycle state on detail).
-    card = s._trigger_cards[f"queue:{_THREAD}"]
-    assert card["source"] == "chat" and card["trigger"] == "queue:it"
-    assert card["detail"]["state"] == "open"
-    assert card["detail"]["visitor"] == "alice@corp"
+    s = _event_stub(engine)
+    payload = {"id": "r1", "room": _THREAD, "state": "done", "assignee": "agent@web01"}
+    s._on_chat_event(Event.new("chat", "request_status", payload))
+    assert s.dispatched == [("runspec:room_request_status", payload)]
+    assert engine.fed == [] and s.enacted == []
 
 
-def test_queue_message_creates_actionable_card():
-    """A staffed-queue message becomes a first-class card (one per conversation),
-    keyed so repeated messages update the same card rather than flooding."""
+def test_on_chat_event_page_dispatches_and_notifies():
+    s = _event_stub(_FakeEngine())
+    payload = {"id": "r1", "room": _THREAD, "runnable": "reset-password"}
+    s._on_chat_event(Event.new("chat", "page", payload))
+    assert ("runspec:room_page", payload) in s.dispatched
+    assert s.paged == [payload]
+
+
+def test_queue_message_feeds_engine_ungated_and_creates_card():
+    """A queue message now feeds the engine with no claim gate (assignment is the
+    gate), and still surfaces a first-class inbox card, updated in place."""
     engine = _FakeEngine()
-    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s = _event_stub(engine)
     s._on_chat_event(Event.new("chat", "message", {"room": _THREAD, "text": "help me"}))
     s._on_chat_event(Event.new("chat", "message", {"room": _THREAD, "text": "anyone?"}))
+    assert len(engine.fed) == 2  # both fed — no claim gate
     cards = [d for ev, d in s.dispatched if ev == "runspec:trigger_card"]
-    assert cards  # the message surfaced a card
     assert len({c["card_id"] for c in cards}) == 1  # one card, updated in place
     card = s._trigger_cards[f"queue:{_THREAD}"]
-    assert card["summary"] == "anyone?"  # latest message
-    assert card["trigger"] == "queue:it" and card["event_type"] == "message"
+    assert card["summary"] == "anyone?" and card["trigger"] == "queue:it"
 
 
 def test_group_chat_message_creates_no_queue_card():
-    engine = _FakeEngine()
-    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
+    s = _event_stub(_FakeEngine())
     s._on_chat_event(Event.new("chat", "message", {"room": "ops", "text": "deploy?"}))
     assert s._trigger_cards == {}  # plain rooms are not queue conversations
 
 
-def test_unclaimed_thread_message_is_ui_only():
-    """The claim gate: no agent turn (engine feed) until a human claims."""
-    engine = _FakeEngine()
-    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
-    s._on_chat_event(_conv("open", None))
-    s._on_chat_event(
-        Event.new("chat", "message", {"room": _THREAD, "text": "help", "kind": "chat"})
+# ── runnables portal: enacting an assigned request ─────────────────────────────
+
+
+class _PortalSource:
+    def __init__(self) -> None:
+        self.starts: list[str] = []
+        self.completes: list[tuple[str, str | None]] = []
+        self.messages: list[tuple[str, str | None]] = []
+
+    def send_request_start(self, request_id: str) -> None:
+        self.starts.append(request_id)
+
+    def send_request_complete(
+        self, request_id: str, *, error: str | None = None
+    ) -> None:
+        self.completes.append((request_id, error))
+
+    def send_message(self, text: str, *, room: str | None = None) -> None:
+        self.messages.append((text, room))
+
+
+_DISC = {"host": "web01", "name": "reset-password"}
+
+
+def _enact_stub(source, index, *, output="done ✓", raises=None):
+    s = types.SimpleNamespace()
+    s._lock = threading.Lock()
+    s._chat_sources = {_NS: source} if source is not None else {}
+    s._catalog_index = index
+    s.gated_calls: list[tuple[str, dict, str]] = []
+
+    def gated(tool_name, args, chat_id):
+        s.gated_calls.append((tool_name, args, chat_id))
+        if raises is not None:
+            raise raises
+        return output
+
+    s._gated_run_tool = gated
+    s._namespace_of = Bridge._namespace_of  # staticmethod
+    s._portal_card_id = Bridge._portal_card_id  # staticmethod
+    s._trigger_cards = {}
+    s.cards: list[dict] = []  # every dispatched trigger-card snapshot
+    s._dispatch = lambda ev, detail: (
+        ev == "runspec:trigger_card" and s.cards.append(detail)
     )
+    s._evict_trigger_cards = types.MethodType(Bridge._evict_trigger_cards, s)
+    s._portal_card = types.MethodType(Bridge._portal_card, s)
+    s._portal_fail = types.MethodType(Bridge._portal_fail, s)
+    s._run_assignment = types.MethodType(Bridge._run_assignment, s)
+    s._enact_assignment = types.MethodType(Bridge._enact_assignment, s)
+    return s
+
+
+def _card(s):
+    """The single portal card's current state (helpers update one card in place)."""
+    return s._trigger_cards.get("portal:r1")
+
+
+def test_run_assignment_happy_path():
+    src = _PortalSource()
+    s = _enact_stub(src, {_NS: {"reset-password": _DISC}}, output="all good")
+    s._run_assignment("r1", _THREAD, "reset-password", {"user": "alice"}, _NS)
+    # Ran the right tool through the gate (chat_id == the portal card id, so the
+    # gate's Approve/Deny attaches to the card), posted the result, marked it done.
+    assert s.gated_calls == [("web01__reset-password", {"user": "alice"}, "portal:r1")]
+    assert src.starts == ["r1"]
+    assert src.messages == [("all good", _THREAD)]
+    assert src.completes == [("r1", None)]
+    # The Triggers card walked running → done and captured the result for audit.
+    card = _card(s)
+    assert card["source"] == "portal" and card["column"] == "done"
+    assert card["detail"]["state"] == "done" and card["detail"]["result"] == "all good"
+    # running came before done.
+    assert [c["column"] for c in s.cards] == ["running", "done"]
+
+
+def test_run_assignment_failure_output_marks_failed():
+    src = _PortalSource()
+    s = _enact_stub(src, {_NS: {"reset-password": _DISC}}, output="[exit 1]\nboom")
+    s._run_assignment("r1", _THREAD, "reset-password", {}, _NS)
+    assert src.messages == [("[exit 1]\nboom", _THREAD)]
+    rid, error = src.completes[0]
+    assert rid == "r1" and error == "[exit 1]\nboom"  # error flags the failure
     assert (
-        "runspec:room_message",
-        {"room": _THREAD, "text": "help", "kind": "chat"},
-    ) in s.dispatched
-    assert engine.fed == []  # visible in the inbox, but no model spend
+        _card(s)["column"] == "failed"
+        and _card(s)["detail"]["error"] == "[exit 1]\nboom"
+    )
 
 
-def test_claimed_by_me_thread_message_feeds_engine():
-    engine = _FakeEngine()
-    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
-    s._on_chat_event(_conv("assigned", "agent@web01"))  # we claimed it
-    s._on_chat_event(Event.new("chat", "message", {"room": _THREAD, "text": "help"}))
-    assert len(engine.fed) == 1 and engine.fed[0].payload["room"] == _THREAD
+def test_run_assignment_unknown_runnable_completes_with_error():
+    src = _PortalSource()
+    s = _enact_stub(src, {_NS: {}})  # the runnable isn't in this queue's index
+    s._run_assignment("r1", _THREAD, "reset-password", {}, _NS)
+    assert s.gated_calls == [] and src.starts == []
+    rid, error = src.completes[0]
+    assert rid == "r1" and "no longer available" in error
+    assert _card(s)["column"] == "failed"
 
 
-def test_claimed_by_teammate_thread_message_is_ui_only():
-    engine = _FakeEngine()
-    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
-    s._on_chat_event(_conv("assigned", "agent2@web02"))  # a teammate owns it
-    s._on_chat_event(Event.new("chat", "message", {"room": _THREAD, "text": "help"}))
-    assert engine.fed == []  # their thread, their console's turn
+def test_run_assignment_gate_exception_completes_with_error():
+    src = _PortalSource()
+    s = _enact_stub(
+        src, {_NS: {"reset-password": _DISC}}, raises=RuntimeError("ssh down")
+    )
+    s._run_assignment("r1", _THREAD, "reset-password", {}, _NS)
+    assert src.starts == ["r1"]
+    assert src.completes == [("r1", "ssh down")]
 
 
-def test_group_chat_message_unaffected_by_agent_mode():
-    engine = _FakeEngine()
-    s = _event_stub(engine, agent_rooms={_NS: "agent@web01"})
-    s._on_chat_event(Event.new("chat", "message", {"room": "ops", "text": "deploy"}))
-    assert len(engine.fed) == 1  # plain rooms keep the original behaviour
+def test_enact_assignment_ignores_malformed_payload():
+    src = _PortalSource()
+    s = _enact_stub(src, {_NS: {"reset-password": _DISC}})
+    s._enact_assignment({"id": "r1", "room": "not-a-helpdesk-room", "runnable": "x"})
+    assert s.gated_calls == [] and src.starts == []
+    assert s._trigger_cards == {}  # no card for a malformed assignment
+
+
+def test_enact_assignment_creates_inbox_card_keyed_to_the_gate():
+    src = _PortalSource()
+    s = _enact_stub(src, {_NS: {"reset-password": _DISC}})
+    s._run_assignment = lambda *a, **k: None  # don't spawn the worker in this test
+    s._enact_assignment(
+        {
+            "id": "r1",
+            "room": _THREAD,
+            "runnable": "reset-password",
+            "args": {"user": "alice"},
+        }
+    )
+    card = _card(s)
+    # The card lands in the Triggers inbox immediately, before the (gated) run.
+    assert card is not None and card["source"] == "portal"
+    # card_id MUST equal the autonomy-gate chat_id so the Approve/Deny prompt
+    # (runspec:tool_confirm id=chat_id) renders on this card.
+    assert card["card_id"] == Bridge._portal_card_id("r1") == "portal:r1"
+    assert card["detail"]["runnable"] == "reset-password"
+    assert card["detail"]["args"] == {"user": "alice"}
+    assert card["detail"]["visitor"] == "alice@corp"
+    assert card["detail"]["state"] == "assigned" and card["column"] == "triggered"
+    assert card["summary"] == "reset-password · alice@corp"
+
+
+def test_namespace_of():
+    assert Bridge._namespace_of("helpdesk/it/alice@corp") == "helpdesk/it"
+    assert Bridge._namespace_of("ops") == ""
 
 
 # ── _RotaPresenceWatcher ──────────────────────────────────────────────────────
@@ -349,7 +459,6 @@ def _supervisor_stub():
     s._chat_stop = threading.Event()
     s._chat_sources = {}
     s._agent_rooms = {}
-    s._thread_states = {}
     s._published_catalogs = {}
     s._trigger_engine = None
     s.dispatched: list[tuple[str, dict]] = []
@@ -358,7 +467,6 @@ def _supervisor_stub():
     s._CHAT_BACKOFF_START = 0.01
     s._CHAT_BACKOFF_MAX = 0.01
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
-    s._feed_engine_for = types.MethodType(Bridge._feed_engine_for, s)
     s._chat_supervise = types.MethodType(Bridge._chat_supervise, s)
     s.published: list[str] = []
     s._publish_catalog = lambda spec, source, *, force=False: s.published.append(
@@ -456,14 +564,10 @@ class _FakeSource:
     def __init__(self) -> None:
         self.sent: list[str] = []
         self.targets: list[str | None] = []
-        self.controls: list[tuple[str, str]] = []
 
     def send_message(self, text: str, *, room: str | None = None) -> None:
         self.sent.append(text)
         self.targets.append(room)
-
-    def send_control(self, kind: str, room: str) -> None:
-        self.controls.append((kind, room))
 
 
 def _send_stub(sources: dict[str, Any], agent_rooms: dict[str, str] | None = None):
@@ -472,11 +576,6 @@ def _send_stub(sources: dict[str, Any], agent_rooms: dict[str, str] | None = Non
     s._chat_sources = sources
     s._agent_rooms = dict(agent_rooms or {})
     s.send_room_message = types.MethodType(Bridge.send_room_message, s)
-    s._thread_control = types.MethodType(Bridge._thread_control, s)
-    s.claim_thread = types.MethodType(Bridge.claim_thread, s)
-    s.resolve_thread = types.MethodType(Bridge.resolve_thread, s)
-    s.reopen_thread = types.MethodType(Bridge.reopen_thread, s)
-    s.close_thread = types.MethodType(Bridge.close_thread, s)
     return s
 
 
@@ -578,50 +677,13 @@ def test_publish_catalog_force_always_sends():
     assert src.sends == [[], []]
 
 
-# ── thread controls (claim / resolve / reopen / close) ─────────────────────────
-
-
-def test_thread_controls_route_via_agent_source():
-    src = _FakeSource()
-    stub = _send_stub({"helpdesk/it": src}, agent_rooms={"helpdesk/it": "agent@web01"})
-    thread = "helpdesk/it/alice@corp"
-    assert stub.claim_thread(thread) == {"ok": True}
-    assert stub.resolve_thread(thread) == {"ok": True}
-    assert stub.reopen_thread(thread) == {"ok": True}
-    assert stub.close_thread(thread) == {"ok": True}
-    assert src.controls == [
-        ("claim", thread),
-        ("resolve", thread),
-        ("reopen", thread),
-        ("close", thread),
-    ]
-
-
-def test_thread_control_refused_outside_staffed_queues():
-    src = _FakeSource()
-    stub = _send_stub({"helpdesk/it": src}, agent_rooms={"helpdesk/it": "agent@web01"})
-    out = stub.claim_thread("helpdesk/hr/carol@corp")
-    assert out["ok"] is False and "not staffing" in out["error"]
-    assert src.controls == []
-
-
-def test_thread_control_requires_a_room():
-    out = _send_stub({}).claim_thread("")
-    assert out["ok"] is False
-
-
 # ── get_room_state ────────────────────────────────────────────────────────────
 
 
-def _state_stub(
-    specs: list[dict[str, Any]],
-    sources: dict[str, Any],
-    thread_states: dict[str, dict[str, Any]] | None = None,
-):
+def _state_stub(specs: list[dict[str, Any]], sources: dict[str, Any]):
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._chat_sources = sources
-    s._thread_states = dict(thread_states or {})
     s._room_specs = lambda: specs
     s.get_room_state = types.MethodType(Bridge.get_room_state, s)
     return s
@@ -657,21 +719,15 @@ def test_get_room_state_lists_rooms_with_connection():
     }
 
 
-def test_get_room_state_queue_entry_carries_its_threads():
+def test_get_room_state_marks_queue_entry():
     specs = [
         {"room": "helpdesk/it", "host": "web01", "user": "agent@web01", "queue": "it"},
     ]
-    threads = {
-        "helpdesk/it/alice@corp": {"state": "open", "assignee": None},
-        "helpdesk/hr/carol@corp": {"state": "open", "assignee": None},  # other queue
-    }
-    out = _state_stub(specs, {}, thread_states=threads).get_room_state()
+    out = _state_stub(specs, {"helpdesk/it": _FakeSource()}).get_room_state()
     entry = out["rooms"][0]
-    assert entry["queue"] == "it"
-    # Only this queue's conversations are exposed on the entry.
-    assert entry["threads"] == {
-        "helpdesk/it/alice@corp": {"state": "open", "assignee": None}
-    }
+    assert entry["queue"] == "it" and entry["connected"] is True
+    # The claim-based per-thread state is gone — request lifecycle rides events.
+    assert "threads" not in entry
 
 
 # ── _room_specs (host entries + legacy [chat] fallback) ───────────────────────

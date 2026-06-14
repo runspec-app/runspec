@@ -350,223 +350,430 @@ def test_agent_namespace_does_not_leak_into_group_chat():
     assert agent.frames == []  # the agent's queue does not cover "ops"
 
 
-# ── conversation lifecycle ────────────────────────────────────────────────────
+# ── presence-aware live catalogue + affinity (the portal spine) ───────────────
 
 
-def _convs(p: Any) -> list[tuple[str, str | None]]:
+def _live_names(hub: Hub, namespace: str) -> list[str]:
+    return [t["name"] for t in hub.live_catalog(namespace)]
+
+
+def test_live_catalog_is_union_of_on_shift_consoles():
+    async def scenario():
+        hub = Hub(FakeStore())
+        a = FakeAgent("a@web01", IT)
+        b = FakeAgent("b@web02", IT)
+        await hub.join_agent(a)
+        await hub.join_agent(b)
+        hub.publish_catalog(a, [{"name": "reset-password"}, {"name": "request-vm"}])
+        hub.publish_catalog(b, [{"name": "unlock-account"}])
+        return hub
+
+    hub = run(scenario())
+    assert _live_names(hub, IT) == ["reset-password", "request-vm", "unlock-account"]
+    assert hub.runnable_holders(IT, "reset-password") == ["a@web01"]
+
+
+def test_single_holder_runnable_vanishes_off_shift_and_on_leave():
+    async def scenario():
+        hub = Hub(FakeStore())
+        a = FakeAgent("a@web01", IT)
+        b = FakeAgent("b@web02", IT)
+        await hub.join_agent(a)
+        await hub.join_agent(b)
+        hub.publish_catalog(a, [{"name": "reset-password"}])
+        hub.publish_catalog(b, [{"name": "request-vm"}])  # only b holds this
+        before = _live_names(hub, IT)
+        await hub.set_agent_shift(b, False)  # b's rota flips off shift
+        off_shift = _live_names(hub, IT)
+        # b is off shift but still connected → still a page target.
+        paged = hub.connected_holders(IT, "request-vm")
+        await hub.set_agent_shift(b, True)
+        back = _live_names(hub, IT)
+        await hub.leave_agent(b)  # b's console disconnects entirely
+        gone = _live_names(hub, IT)
+        return before, off_shift, paged, back, gone
+
+    before, off_shift, paged, back, gone = run(scenario())
+    assert before == ["reset-password", "request-vm"]
+    assert off_shift == ["reset-password"]  # request-vm vanished
+    assert paged == ["b@web02"]  # still reachable by a page
+    assert back == ["reset-password", "request-vm"]  # reappears on shift
+    assert gone == ["reset-password"]  # gone for good once the console leaves
+
+
+def test_leave_agent_withdraws_from_live_catalog():
+    async def scenario():
+        hub = Hub(FakeStore())
+        a = FakeAgent("a@web01", IT)
+        await hub.join_agent(a)
+        hub.publish_catalog(a, [{"name": "reset-password"}])
+        present = _live_names(hub, IT)
+        await hub.leave_agent(a)
+        return present, hub
+
+    present, hub = run(scenario())
+    assert present == ["reset-password"]
+    assert hub.live_catalog(IT) == []
+    assert hub.runnable_holders(IT, "reset-password") == []
+
+
+def test_live_catalog_isolated_per_queue():
+    async def scenario():
+        hub = Hub(FakeStore())
+        it_agent = FakeAgent("a@web01", IT)
+        hr_agent = FakeAgent("c@web03", "helpdesk/hr")
+        await hub.join_agent(it_agent)
+        await hub.join_agent(hr_agent)
+        hub.publish_catalog(it_agent, [{"name": "reset-password"}])
+        hub.publish_catalog(hr_agent, [{"name": "onboard"}])
+        return hub
+
+    hub = run(scenario())
+    assert _live_names(hub, IT) == ["reset-password"]
+    assert _live_names(hub, "helpdesk/hr") == ["onboard"]
+
+
+# ── portal requests: auto-assignment + claim-free lifecycle ───────────────────
+
+
+def _assignments(a: Any) -> list[tuple[str, str]]:
+    return [(f["id"], f["runnable"]) for f in a.frames if f["type"] == "assignment"]
+
+
+def _statuses(p: Any) -> list[tuple[str, str | None]]:
     return [
-        (f["state"], f["assignee"]) for f in p.frames if f["type"] == "conversation"
+        (f["state"], f["assignee"]) for f in p.frames if f["type"] == "request_status"
     ]
 
 
-def test_visitor_message_opens_thread_and_notifies_agent():
+def test_submit_request_auto_assigns_to_on_shift_holder():
     async def scenario():
         hub = Hub(FakeStore())
         agent = FakeAgent("agent@web01", IT)
         alice = FakeP("alice@corp", ALICE)
         await hub.join_agent(agent)
         await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
         agent.frames.clear()
-        await hub.on_message(alice, "help, printer's on fire")
-        return hub, agent
-
-    hub, agent = run(scenario())
-    assert hub.conversation_state(ALICE) == "open"
-    # The agent saw the thread open (state frame) before/with the message.
-    assert ("open", None) in _convs(agent)
-
-
-def test_claim_assigns_and_broadcasts_to_visitor_and_team():
-    async def scenario():
-        hub = Hub(FakeStore())
-        agent = FakeAgent("agent@web01", IT)
-        mate = FakeAgent("agent2@web01", IT)
-        alice = FakeP("alice@corp", ALICE)
-        await hub.join_agent(agent)
-        await hub.join_agent(mate)
-        await hub.join(alice)
-        await hub.on_message(alice, "printer")
-        agent.frames.clear()
-        mate.frames.clear()
         alice.frames.clear()
-        await hub.claim(agent, ALICE)
-        return hub, agent, mate, alice
+        req = await hub.submit_request(alice, "reset-password", {"user": "alice"})
+        return hub, agent, alice, req
 
-    hub, agent, mate, alice = run(scenario())
-    assert hub.conversation_state(ALICE) == "assigned"
-    # Visitor and the whole team see who owns it.
-    assert ("assigned", "agent@web01") in _convs(alice)
-    assert ("assigned", "agent@web01") in _convs(mate)
-    assert ("assigned", "agent@web01") in _convs(agent)  # echo to claimer too
-
-
-def test_resolve_then_visitor_reply_reopens():
-    async def scenario():
-        hub = Hub(FakeStore())
-        agent = FakeAgent("agent@web01", IT)
-        alice = FakeP("alice@corp", ALICE)
-        await hub.join_agent(agent)
-        await hub.join(alice)
-        await hub.on_message(alice, "printer")
-        await hub.claim(agent, ALICE)
-        await hub.resolve(agent, ALICE)
-        resolved_state = hub.conversation_state(ALICE)
-        alice.frames.clear()
-        await hub.on_message(alice, "still broken")  # visitor reply → reopen
-        return hub, resolved_state, alice
-
-    hub, resolved_state, alice = run(scenario())
-    assert resolved_state == "resolved"
-    assert hub.conversation_state(ALICE) == "open"
-    # The reopen state went out before the message landed.
-    assert ("open", None) in _convs(alice)
+    hub, agent, alice, req = run(scenario())
+    assert req is not None and hub.request_state(req.id) == "assigned"
+    # The operator got the assignment in its inbox…
+    assert _assignments(agent) == [(req.id, "reset-password")]
+    # …and the thread (visitor + team) saw it assigned to that operator.
+    assert ("assigned", "agent@web01") in _statuses(alice)
+    assert ("assigned", "agent@web01") in _statuses(agent)
 
 
-def test_agent_cannot_control_conversation_outside_namespace():
-    async def scenario():
-        hub = Hub(FakeStore())
-        it_agent = FakeAgent("agent@web01", IT)
-        carol = FakeP("carol@corp", HR_ROOM)
-        await hub.join_agent(it_agent)
-        await hub.join(carol)
-        await hub.on_message(carol, "hr question")  # opens the HR thread
-        carol.frames.clear()
-        await hub.claim(it_agent, HR_ROOM)  # IT agent reaching into HR — refused
-        return hub, carol
-
-    hub, carol = run(scenario())
-    assert hub.conversation_state(HR_ROOM) == "open"  # unchanged
-    assert _convs(carol) == []  # nothing broadcast
-
-
-def test_visitor_rejoin_is_caught_up_on_state():
-    async def scenario():
-        hub = Hub(FakeStore())
-        agent = FakeAgent("agent@web01", IT)
-        alice = FakeP("alice@corp", ALICE)
-        await hub.join_agent(agent)
-        await hub.join(alice)
-        await hub.on_message(alice, "printer")
-        await hub.claim(agent, ALICE)
-        await hub.leave(alice)
-        # Visitor reloads the page → a fresh connection to the same room.
-        alice2 = FakeP("alice@corp", ALICE)
-        await hub.join(alice2)
-        return alice2
-
-    alice2 = run(scenario())
-    assert ("assigned", "agent@web01") in _convs(alice2)
-
-
-def test_agent_subscribe_is_caught_up_on_open_threads_state():
-    async def scenario():
-        hub = Hub(FakeStore())
-        alice = FakeP("alice@corp", ALICE)
-        await hub.join(alice)
-        await hub.on_message(alice, "printer")  # thread open, no agent yet
-        # A second agent claims via a first agent, then a fresh agent subscribes.
-        first = FakeAgent("a1", IT)
-        await hub.join_agent(first)
-        await hub.claim(first, ALICE)
-        late = FakeAgent("a2", IT)
-        await hub.join_agent(late)
-        return late
-
-    late = run(scenario())
-    # The late-joining agent's inbox shows the assigned thread on subscribe.
-    assert ("assigned", "a1") in _convs(late)
-
-
-# ── self-service catalog + visitor requests ───────────────────────────────────
-
-CATALOG = [
-    {
-        "name": "reset-password",
-        "description": "Reset it",
-        "inputSchema": {"type": "object"},
-    },
-    {"name": "request-vm", "description": "Provision a VM"},
-]
-
-
-def test_catalog_publish_and_clear():
-    hub = Hub(FakeStore())
-    hub.set_catalog(IT, CATALOG)
-    assert [t["name"] for t in hub.catalog_for(IT)] == ["reset-password", "request-vm"]
-    assert hub.catalog_for("helpdesk/hr") == []  # other queues unaffected
-    hub.set_catalog(IT, [])  # last console off shift clears it
-    assert hub.catalog_for(IT) == []
-
-
-def test_visitor_request_persisted_and_fanned_to_agent():
+def test_submit_request_persists_thread_message_and_fans_to_agent():
     async def scenario():
         store = FakeStore()
         hub = Hub(store)
-        hub.set_catalog(IT, CATALOG)
         agent = FakeAgent("agent@web01", IT)
         alice = FakeP("alice@corp", ALICE)
         await hub.join_agent(agent)
         await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
         agent.frames.clear()
         alice.frames.clear()
-        ok = await hub.visitor_request(alice, "reset-password", {"user": "alice"})
-        return store, hub, agent, alice, ok
+        req = await hub.submit_request(alice, "reset-password", {"user": "alice"})
+        return store, agent, alice, req
 
-    store, hub, agent, alice, ok = run(scenario())
-    assert ok
-    # Persisted as a request-kind message with the machine payload.
+    store, agent, alice, req = run(scenario())
+    # Persisted as a request-kind thread message linking to the lifecycle record.
     saved = store.appended[0]
     assert saved.kind == "request"
-    assert saved.data == {"tool": "reset-password", "args": {"user": "alice"}}
+    assert saved.data == {
+        "tool": "reset-password",
+        "args": {"user": "alice"},
+        "request_id": req.id,
+    }
     assert saved.text.startswith("Requested: reset-password")
-    # The submission opened the thread and reached the agent's inbox.
-    assert hub.conversation_state(ALICE) == "open"
+    # The request message reached the agent's inbox and echoed to the visitor.
     agent_msgs = [f for f in agent.frames if f["type"] == "message"]
-    assert agent_msgs and agent_msgs[0]["kind"] == "request"
-    assert agent_msgs[0]["data"]["tool"] == "reset-password"
-    # Echoed to the visitor too.
+    assert agent_msgs and agent_msgs[0]["data"]["tool"] == "reset-password"
     assert any(f.get("kind") == "request" for f in alice.frames)
 
 
-def test_visitor_request_refused_for_unknown_tool():
+def test_submit_request_refused_for_oversized_args():
     async def scenario():
         store = FakeStore()
         hub = Hub(store)
-        hub.set_catalog(IT, CATALOG)
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {"blob": "x" * 10_000})
+        return store, req
+
+    store, req = run(scenario())
+    assert req is None and store.appended == []
+
+
+def test_submit_request_round_robins_across_holders():
+    async def scenario():
+        hub = Hub(FakeStore())
+        a = FakeAgent("a@web01", IT)
+        b = FakeAgent("b@web02", IT)
+        alice = FakeP("alice@corp", ALICE)
+        bob = FakeP("bob@corp", BOB)
+        await hub.join_agent(a)
+        await hub.join_agent(b)
+        await hub.join(alice)
+        await hub.join(bob)
+        hub.publish_catalog(a, [{"name": "reset-password"}])
+        hub.publish_catalog(b, [{"name": "reset-password"}])
+        r1 = await hub.submit_request(alice, "reset-password", {})
+        r2 = await hub.submit_request(bob, "reset-password", {})
+        return hub, r1, r2
+
+    hub, r1, r2 = run(scenario())
+    # Two submits alternate between the two holders (plain round-robin).
+    assignees = {hub._requests.get(r1.id).assignee, hub._requests.get(r2.id).assignee}
+    assert assignees == {"a@web01", "b@web02"}
+
+
+def test_submit_request_unassigned_then_auto_assigns_on_shift():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        await hub.set_agent_shift(agent, False)  # only holder steps off shift
+        agent.frames.clear()
+        alice.frames.clear()
+        # Submit lands with no on-shift holder → accepted but unassigned.
+        req = await hub.submit_request(alice, "reset-password", {})
+        unassigned_state = hub.request_state(req.id)
+        first_status = _statuses(alice)
+        no_assignment_yet = _assignments(agent)
+        # The holder comes back on shift → the backlog drains to it.
+        await hub.set_agent_shift(agent, True)
+        return hub, agent, alice, req, unassigned_state, first_status, no_assignment_yet
+
+    hub, agent, alice, req, unassigned_state, first_status, no_assign = run(scenario())
+    assert unassigned_state == "unassigned"
+    assert first_status == [("unassigned", None)]
+    assert no_assign == []  # nothing routed while no one was on shift
+    # Once on shift, the pending request auto-assigned without a re-submit.
+    assert hub.request_state(req.id) == "assigned"
+    assert _assignments(agent) == [(req.id, "reset-password")]
+    assert ("assigned", "agent@web01") in _statuses(alice)
+
+
+def test_submit_request_refused_when_nobody_holds_it():
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
         alice = FakeP("alice@corp", ALICE)
         await hub.join(alice)
         alice.frames.clear()
-        ok = await hub.visitor_request(alice, "rotate-root-key", {})  # not in catalog
-        return store, alice, ok
+        req = await hub.submit_request(alice, "rotate-root-key", {})  # no holder
+        return store, alice, req
 
-    store, alice, ok = run(scenario())
-    assert not ok
+    store, alice, req = run(scenario())
+    assert req is None
     assert store.appended == [] and alice.frames == []
 
 
-def test_visitor_request_refused_outside_conversation_room():
+def test_submit_request_refused_outside_conversation_room():
     async def scenario():
-        store = FakeStore()
-        hub = Hub(store)
-        hub.set_catalog(IT, CATALOG)
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        await hub.join_agent(agent)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
         chatter = FakeP("oncall", "ops")  # a group-chat room, not a conversation
         await hub.join(chatter)
-        ok = await hub.visitor_request(chatter, "reset-password", {})
-        return store, ok
+        req = await hub.submit_request(chatter, "reset-password", {})
+        return req
 
-    store, ok = run(scenario())
-    assert not ok and store.appended == []
+    req = run(scenario())
+    assert req is None
 
 
-def test_visitor_request_refused_for_oversized_args():
+def test_start_and_complete_request_broadcast_status():
     async def scenario():
-        store = FakeStore()
-        hub = Hub(store)
-        hub.set_catalog(IT, CATALOG)
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
         alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
         await hub.join(alice)
-        ok = await hub.visitor_request(alice, "reset-password", {"blob": "x" * 10_000})
-        return store, ok
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {})
+        alice.frames.clear()
+        await hub.start_request(agent, req.id)
+        await hub.complete_request(agent, req.id)
+        return hub, alice, req
 
-    store, ok = run(scenario())
-    assert not ok and store.appended == []
+    hub, alice, req = run(scenario())
+    assert hub.request_state(req.id) == "done"
+    states = [s for s, _ in _statuses(alice)]
+    assert states == ["in_progress", "done"]
+
+
+def test_request_control_scoped_to_the_assignee():
+    async def scenario():
+        hub = Hub(FakeStore())
+        owner = FakeAgent("owner@web01", IT)
+        mate = FakeAgent("mate@web02", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(owner)
+        await hub.join_agent(mate)
+        await hub.join(alice)
+        # Only owner holds it, so it routes to owner.
+        hub.publish_catalog(owner, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {})
+        await hub.start_request(mate, req.id)  # a different agent — refused
+        return hub, req
+
+    hub, req = run(scenario())
+    assert hub.request_state(req.id) == "assigned"  # mate couldn't start it
+
+
+def test_release_request_returns_to_queue_and_holds_when_alone():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {})
+        await hub.set_agent_shift(agent, False)  # the only holder drops off shift
+        alice.frames.clear()
+        await hub.release_request(req.id)  # AFK timeout fires
+        return hub, alice, req
+
+    hub, alice, req = run(scenario())
+    # No on-shift holder to take it → back in the queue, awaiting a page.
+    assert hub.request_state(req.id) == "unassigned"
+    assert ("unassigned", None) in _statuses(alice)
+
+
+# ── page / chime (no on-shift operator) ───────────────────────────────────────
+
+
+def _pages(a: Any) -> list[tuple[str, str]]:
+    return [(f["runnable"], f["id"]) for f in a.frames if f["type"] == "page"]
+
+
+def test_unassigned_submit_pages_connected_consoles():
+    async def scenario():
+        hub = Hub(FakeStore())
+        holder = FakeAgent("holder@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(holder)
+        await hub.join(alice)
+        hub.publish_catalog(holder, [{"name": "reset-password"}])
+        await hub.set_agent_shift(holder, False)  # the holder is off shift now
+        holder.frames.clear()
+        req = await hub.submit_request(alice, "reset-password", {})
+        return hub, holder, req
+
+    hub, holder, req = run(scenario())
+    assert hub.request_state(req.id) == "unassigned"
+    # The off-shift-but-connected holder was chimed, naming the runnable.
+    assert _pages(holder) == [("reset-password", req.id)]
+
+
+def test_page_reaches_every_connected_console_not_just_holders():
+    async def scenario():
+        hub = Hub(FakeStore())
+        holder = FakeAgent("holder@web01", IT)  # off shift, holds it
+        bystander = FakeAgent("bystander@web02", IT)  # on shift, holds nothing
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(holder)
+        await hub.join_agent(bystander)
+        await hub.join(alice)
+        hub.publish_catalog(holder, [{"name": "reset-password"}])
+        await hub.set_agent_shift(holder, False)
+        holder.frames.clear()
+        bystander.frames.clear()
+        req = await hub.submit_request(alice, "reset-password", {})
+        return hub, holder, bystander, req
+
+    hub, holder, bystander, req = run(scenario())
+    assert hub.request_state(req.id) == "unassigned"
+    # Every connected console of the queue is chimed — including the on-shift
+    # console that doesn't hold it (it might know who can, or come help).
+    assert _pages(holder) == [("reset-password", req.id)]
+    assert _pages(bystander) == [("reset-password", req.id)]
+
+
+def test_assigned_submit_does_not_page():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])  # on shift
+        agent.frames.clear()
+        await hub.submit_request(alice, "reset-password", {})
+        return agent
+
+    agent = run(scenario())
+    assert _pages(agent) == []  # it auto-assigned — no need to page
+
+
+def test_explicit_page_request_rechime_and_guards():
+    async def scenario():
+        hub = Hub(FakeStore())
+        holder = FakeAgent("holder@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(holder)
+        await hub.join(alice)
+        hub.publish_catalog(holder, [{"name": "reset-password"}])
+        await hub.set_agent_shift(holder, False)
+        req = await hub.submit_request(alice, "reset-password", {})  # → unassigned
+        holder.frames.clear()
+        ok = await hub.page_request(alice, req.id)  # visitor clicks "Page the team"
+        unknown = await hub.page_request(alice, "nope")  # unknown request
+        wrong_room = await hub.page_request(FakeP("bob@corp", BOB), req.id)
+        return holder, ok, unknown, wrong_room
+
+    holder, ok, unknown, wrong_room = run(scenario())
+    assert ok is True
+    assert _pages(holder) == [("reset-password", holder.frames[0]["id"])]  # re-chimed
+    assert unknown is False and wrong_room is False
+
+
+def test_page_request_refused_once_assigned():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])  # on shift → assigns
+        req = await hub.submit_request(alice, "reset-password", {})
+        ok = await hub.page_request(alice, req.id)  # already assigned — nothing waiting
+        return ok
+
+    ok = run(scenario())
+    assert ok is False
+
+
+def test_afk_release_pages_the_team():
+    async def scenario():
+        hub = Hub(FakeStore())
+        holder = FakeAgent("holder@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(holder)
+        await hub.join(alice)
+        hub.publish_catalog(holder, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {})  # assigned
+        await hub.set_agent_shift(holder, False)  # the assignee drops off shift
+        holder.frames.clear()
+        await hub.release_request(req.id)  # AFK timeout fires
+        return hub, holder, req
+
+    hub, holder, req = run(scenario())
+    assert hub.request_state(req.id) == "unassigned"
+    assert _pages(holder) == [("reset-password", req.id)]  # team re-chimed

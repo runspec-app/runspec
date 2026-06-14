@@ -134,8 +134,10 @@ class _BridgeTriggerOps:
         )
 
     def queue_mailbox_for(self, payload: dict[str, Any]) -> str:
-        queue = self._bridge._email_queue_for(payload)
-        return self._bridge._email_mailbox_for(queue) if queue else ""
+        # Reply *as* the watched mailbox the mail landed in (a shared mailbox you
+        # have send-as rights on); blank for your own default-account inbox, so a
+        # personal reply goes from your own identity. See email-folder-watch.md.
+        return str(payload.get("mailbox") or "")
 
     def run_rule_tool(
         self, chat_id: str, tool_name: str, tool_input: dict[str, Any]
@@ -308,13 +310,6 @@ class Bridge:
         # missed event while the console was closed is intentionally not replayed.
         self._trigger_engine: Any = None
         self._trigger_cards: dict[str, dict[str, Any]] = {}
-        # Per email conversation (Outlook ConversationID), the ordered fold events
-        # (requester messages + claim/lifecycle markers) behind an email queue
-        # card's state — the mailbox is the source of truth, replayed locally.
-        self._email_threads: dict[str, list[dict[str, Any]]] = {}
-        # Item ids (Message-ID / EntryID) already folded, so the startup backlog
-        # scan and the live NewMailEx source can't double-count an overlapping item.
-        self._email_seen: set[str] = set()
         # Audit feed: every event the engine sees + its disposition (bounded ring).
         self._trigger_events: list[dict[str, Any]] = []
         # Chat rooms are a property of fleet host entries (room + room_port in
@@ -325,14 +320,11 @@ class Bridge:
         self._chat_sources: dict[str, Any] = {}
         self._chat_stop = threading.Event()
         self._chat_supervisors: dict[str, threading.Thread] = {}
-        # Helpdesk agent mode (a host entry with room_queue). Threads the hub has
-        # told us about: conversation room → {state, assignee} from `conversation`
-        # frames (populated by the subscribe catch-up, kept live after). Agent
-        # namespaces we're connected under → our display user there (the identity
-        # the hub records as assignee on our claims). Catalog index: namespace →
-        # bare tool name → the discovered runnable, so a visitor request can be
-        # mapped back to (host, runnable) at enactment time.
-        self._thread_states: dict[str, dict[str, Any]] = {}
+        # Helpdesk agent mode (a host entry with room_queue). Agent namespaces
+        # we're connected under → our display user there (the identity the hub
+        # records as the assignee when it routes a request to us). Catalog index:
+        # namespace → bare tool name → the discovered runnable, so a portal request
+        # the hub assigns us can be mapped back to (host, runnable) and enacted.
         self._agent_rooms: dict[str, str] = {}
         self._catalog_index: dict[str, dict[str, dict[str, Any]]] = {}
         # namespace → last catalog actually published, so the periodic refresh
@@ -5006,7 +4998,7 @@ class Bridge:
                 return
 
         from . import sources  # noqa: F401 — registers built-in event sources
-        from .config import read_triggers, trigger_file_error
+        from .config import read_mailbox_watches, read_triggers, trigger_file_error
         from .trigger_runner import make_handler
         from .triggers import TriggerEngine, load_triggers
 
@@ -5018,10 +5010,11 @@ class Bridge:
         triggers, errors = load_triggers(read_triggers())
         for err in errors:
             logger.warning("trigger config: %s", err)
-        # A mapped shared mailbox still needs the engine running (it owns the
-        # Outlook source + the new_mail → queue-card fold), so don't bail on zero
-        # triggers when a mailbox is configured.
-        if not triggers and not self._mailbox_queues():
+        # A configured email folder-watch needs the Outlook source running even
+        # with zero triggers (new_mail still flows in for any future trigger), so
+        # don't bail on zero triggers when a watch is configured.
+        watches = read_mailbox_watches()
+        if not triggers and not watches:
             return
         handler = make_handler(
             _BridgeTriggerOps(self),
@@ -5032,28 +5025,19 @@ class Bridge:
             draft_available=True,
         )
         # Start the Outlook source even without a mail/reminder trigger when a
-        # shared mailbox is mapped to a queue — new_mail then flows in to surface
-        # email queue cards (the email channel; helpdesk-channels.md).
-        always_start = {"outlook"} if self._mailbox_queues() else set()
+        # folder watch is configured, so its new_mail events flow in (the email
+        # folder-watch channel; docs/design/email-folder-watch.md).
+        always_start = {"outlook"} if watches else set()
         engine = TriggerEngine(
             triggers,
             handler=handler,
             on_card=self._on_trigger_card,
             on_event=self._on_trigger_event,
-            # Fold a shared-mailbox new_mail event onto a queue card, regardless of
-            # whether any trigger matches (the email analog of the chat source).
-            on_source_event=self._on_engine_event,
-            # Claim-gate email agent turns: a help-desk new_mail only routes (and
-            # so can start an agent turn) once this console owns the thread — the
-            # email analog of _feed_engine_for. Non-queue mail routes ungated.
-            feed_gate=self._email_feed_gate,
             clock_ok=self._build_clock_ok(),
             # The chat source is owned by the always-on supervisor (start_chat),
             # not the engine — it pushes messages in via engine.feed(). Marking it
-            # external stops the engine constructing/starting a second one. "email"
-            # is the bridge-synthesised lifecycle channel (the `claimed` event the
-            # bridge feeds on an ownership flip) — likewise fed, never started.
-            external_sources={"chat", "email"},
+            # external stops the engine constructing/starting a second one.
+            external_sources={"chat"},
             always_start=always_start,
         )
         problems = engine.start()
@@ -5348,83 +5332,37 @@ class Bridge:
             if source is not None:
                 self._publish_catalog(spec, source)
 
-    def _feed_engine_for(self, payload: dict[str, Any]) -> bool:
-        """The claim gate for agent (helpdesk) messages. A message in a queue we
-        staff feeds the trigger engine — and so can start an agent LLM turn —
-        only once the thread is **assigned to this console** (someone clicked
-        Claim). Unclaimed-thread messages stay UI-only: the inbox shows them,
-        but no model spend happens until a human claims (helpdesk-rooms.md §4).
-        Group-chat messages (no covering namespace) always feed."""
-        room = str(payload.get("room") or "")
-        with self._lock:
-            agent_rooms = dict(self._agent_rooms)
-            state = self._thread_states.get(room)
-        for namespace, agent_user in agent_rooms.items():
-            if room == namespace or room.startswith(namespace + "/"):
-                return bool(state) and state.get("assignee") == agent_user
-        return True
-
-    def _email_feed_gate(self, event: Any) -> bool:
-        """The claim gate for email agent turns — the email analog of
-        :meth:`_feed_engine_for`. A shared-mailbox (help-desk queue) ``new_mail``
-        reaches the trigger engine — and so can start an agent turn that drafts a
-        reply — only once this console **owns** the folded conversation (someone
-        here clicked Claim and the ack folded back). Until then the mail is
-        UI-only: the queue card surfaces it (``_ingest_email`` runs in the
-        source-event hook, *before* this gate), but no model spend happens —
-        mirroring chat, where an unclaimed thread never feeds the engine.
-
-        Two further suppressions: a claim/lifecycle **marker ack** is internal
-        plumbing, never an agent turn; and non-queue mail (personal / other) feeds
-        normally — there's no claim concept for it, so a user's own Outlook
-        trigger still works ungated."""
-        if event.source != "outlook" or event.type != "new_mail":
-            return True
-        from . import mailbox_claim
-
-        payload = dict(event.payload)
-        if self._email_queue_for(payload) is None:
-            return True  # not a mapped mailbox — not a help-desk email
-        if mailbox_claim.parse_marker(str(payload.get("claim_marker") or "")):
-            return False  # a marker ack — plumbing, never an agent turn
-        conversation = Bridge._email_conversation_key(payload)
-        card_id = f"queue:email:{conversation}"
-        with self._lock:
-            card = self._trigger_cards.get(card_id)
-            detail = card.get("detail") if card else None
-        return bool(detail and detail.get("owned_by_me"))
-
     def _on_chat_event(self, event: Any) -> None:
-        """A chat source's emit: fan every event to the Rooms view, and route
-        *messages* (not presence) to the live trigger engine so a chat trigger can
-        still fire. Presence stays UI-only, out of the trigger audit feed.
-        ``conversation`` frames (helpdesk thread lifecycle) update the thread map
-        and go to the UI only — the claim gate reads the map (_feed_engine_for)."""
+        """A chat source's emit: fan every event to the Rooms view and drive the
+        runnables-portal flow.
+
+        - ``presence`` → UI only (out of the trigger audit feed).
+        - ``assignment`` → the hub routed a portal request to *this* console: surface
+          it and **enact** the runnable through the autonomy gate (claim-free —
+          assignment *is* the gate).
+        - ``request_status`` / ``page`` → UI (a request's claim-free lifecycle / a
+          chime for an unassigned request); a page also raises a desktop notice.
+        - ``message`` → UI + the live trigger engine (a configured chat trigger can
+          still fire) + an inbox card."""
         payload = dict(event.payload)
-        if event.type == "presence":
+        etype = event.type
+        if etype == "presence":
             self._dispatch("runspec:room_presence", payload)
             return
-        if event.type == "conversation":
-            room = str(payload.get("room") or "")
-            if room:
-                with self._lock:
-                    self._thread_states[room] = {
-                        "state": payload.get("state"),
-                        "assignee": payload.get("assignee"),
-                    }
-                self._touch_queue_card(
-                    room,
-                    state=payload.get("state"),
-                    assignee=payload.get("assignee"),
-                    have_state=True,
-                )
-            self._dispatch("runspec:room_conversation", payload)
+        if etype == "assignment":
+            self._dispatch("runspec:room_assignment", payload)
+            self._enact_assignment(payload)
+            return
+        if etype == "request_status":
+            self._dispatch("runspec:room_request_status", payload)
+            return
+        if etype == "page":
+            self._dispatch("runspec:room_page", payload)
+            self._notify_page(payload)
             return
         self._dispatch("runspec:room_message", payload)
         self._notify_room_message(payload)
         self._touch_queue_card(str(payload.get("room") or ""), text=payload.get("text"))
-        if not self._feed_engine_for(payload):
-            return
         with self._lock:
             engine = self._trigger_engine
         if engine is not None:
@@ -5432,6 +5370,217 @@ class Bridge:
                 engine.feed(event)
             except Exception:
                 logger.exception("chat: routing message to the trigger engine failed")
+
+    # ── runnables portal: enact an assigned request ───────────────────────────
+
+    @staticmethod
+    def _namespace_of(room: str) -> str:
+        """The queue namespace (``helpdesk/<queue>``) for a conversation ``room``
+        (``helpdesk/<queue>/<visitor>``), or ``""`` if it isn't one."""
+        parts = room.split("/")
+        if len(parts) >= 2 and parts[0] == "helpdesk" and parts[1]:
+            return f"helpdesk/{parts[1]}"
+        return ""
+
+    def _enact_assignment(self, payload: dict[str, Any]) -> None:
+        """Enact a portal request the hub routed to this console. Runs on a worker
+        thread so a (possibly confirm-gated) run never blocks the chat recv loop;
+        the actual run goes through the autonomy gate, unchanged."""
+        request_id = str(payload.get("id") or "")
+        room = str(payload.get("room") or "")
+        runnable = str(payload.get("runnable") or "")
+        raw_args = payload.get("args")
+        args = dict(raw_args) if isinstance(raw_args, dict) else {}
+        namespace = self._namespace_of(room)
+        if not (request_id and room and runnable and namespace):
+            logger.warning("portal: ignoring malformed assignment %r", payload)
+            return
+        parts = room.split("/")
+        queue = parts[1] if len(parts) > 1 else ""
+        visitor = parts[2] if len(parts) > 2 else ""
+        # Surface the assignment in the Triggers inbox right away (before the
+        # possibly-gated run), so the operator sees it land.
+        self._portal_card(
+            request_id,
+            runnable=runnable,
+            args=args,
+            visitor=visitor,
+            room=room,
+            queue=queue,
+            state="assigned",
+            column="triggered",
+            note=f"assigned · {runnable}",
+        )
+        threading.Thread(
+            target=self._run_assignment,
+            args=(request_id, room, runnable, args, namespace),
+            name="portal-enact",
+            daemon=True,
+        ).start()
+
+    def _run_assignment(
+        self,
+        request_id: str,
+        room: str,
+        runnable: str,
+        args: dict[str, Any],
+        namespace: str,
+    ) -> None:
+        """Worker: resolve the runnable, run it through the autonomy gate, deliver
+        the result on the thread, and report the request done/failed."""
+        with self._lock:
+            source = self._chat_sources.get(namespace)
+            disc = self._catalog_index.get(namespace, {}).get(runnable)
+        if source is None:
+            logger.warning(
+                "portal: no chat source for %r — cannot enact %r", namespace, runnable
+            )
+            self._portal_fail(request_id, None, "operator offline — cannot enact")
+            return
+        if disc is None:
+            self._portal_fail(
+                request_id, source, f"'{runnable}' is no longer available"
+            )
+            return
+        host = str(disc.get("host") or "")
+        name = str(disc.get("name") or runnable)
+        if not host:
+            self._portal_fail(request_id, source, f"'{runnable}' has no host")
+            return
+        tool_name = f"{host}__{name}"
+        source.send_request_start(request_id)
+        self._portal_card(
+            request_id, state="in_progress", column="running", note="enacting…"
+        )
+        try:
+            # chat_id == the card_id, so the autonomy gate's Approve/Deny prompt
+            # (runspec:tool_confirm id=chat_id) renders on this Triggers card.
+            output = self._gated_run_tool(
+                tool_name, args, chat_id=self._portal_card_id(request_id)
+            )
+        except Exception as exc:  # noqa: BLE001 — surface failure to the visitor
+            logger.exception("portal: enacting %r failed", runnable)
+            self._portal_fail(request_id, source, str(exc))
+            return
+        # The gate marks a refusal/non-zero run with a leading ✗ / [exit …].
+        failed = output.startswith("✗ ") or output.startswith("[exit ")
+        try:
+            source.send_message(output, room=room)  # deliver the result on the thread
+        except Exception:
+            logger.exception("portal: posting result for %r failed", runnable)
+        source.send_request_complete(
+            request_id, error=(output[:500] if failed else None)
+        )
+        self._portal_card(
+            request_id,
+            state="failed" if failed else "done",
+            column="failed" if failed else "done",
+            result=output,
+            error=output[:500] if failed else None,
+            note="failed" if failed else "done",
+        )
+
+    @staticmethod
+    def _portal_card_id(request_id: str) -> str:
+        """The Triggers-card id for a portal request — kept equal to the autonomy
+        gate's ``chat_id`` so the gate's Approve/Deny prompt and the run result
+        render on this card (the operator's enact + audit surface)."""
+        return f"portal:{request_id}"
+
+    def _portal_fail(self, request_id: str, source: Any, error: str) -> None:
+        """Mark a portal request failed on both the visitor thread (if reachable)
+        and the operator's Triggers card."""
+        if source is not None:
+            source.send_request_complete(request_id, error=error)
+        self._portal_card(
+            request_id, state="failed", column="failed", error=error, note=error
+        )
+
+    def _portal_card(
+        self,
+        request_id: str,
+        *,
+        runnable: str | None = None,
+        args: dict[str, Any] | None = None,
+        visitor: str | None = None,
+        room: str | None = None,
+        queue: str | None = None,
+        state: str | None = None,
+        column: str | None = None,
+        result: str | None = None,
+        error: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Create or update one portal request's card in the Triggers inbox and
+        dispatch it to the UI. Keyed by ``portal:<request_id>`` so the whole
+        lifecycle (assigned → running → done/failed) updates one card."""
+        card_id = self._portal_card_id(request_id)
+        now = time.time()
+        with self._lock:
+            card = self._trigger_cards.get(card_id)
+            if card is None:
+                card = {
+                    "card_id": card_id,
+                    "trigger": f"portal:{queue}" if queue else "portal",
+                    "source": "portal",
+                    "event_type": "request",
+                    "summary": "",
+                    "column": "triggered",
+                    "detail": {"request_id": request_id},
+                    "created_at": now,
+                    "timeline": [],
+                }
+                self._trigger_cards[card_id] = card
+            detail = card["detail"]
+            for key, val in (
+                ("runnable", runnable),
+                ("args", args),
+                ("visitor", visitor),
+                ("room", room),
+                ("queue", queue),
+                ("state", state),
+                ("result", result),
+                ("error", error),
+            ):
+                if val is not None:
+                    detail[key] = val
+            if column is not None:
+                card["column"] = column
+            if note is not None:
+                card["timeline"].append({"ts": now, "text": note})
+            rn = detail.get("runnable") or "request"
+            vis = detail.get("visitor")
+            card["summary"] = f"{rn} · {vis}" if vis else rn
+            self._evict_trigger_cards(card_id)
+            snapshot = dict(card)
+        self._dispatch("runspec:trigger_card", snapshot)
+
+    def _notify_page(self, payload: dict[str, Any]) -> None:
+        """Best-effort desktop toast for a page — a chime naming a runnable an
+        unassigned request in a queue we staff is waiting on. Same gates as
+        ``_notify_room_message`` (skip when foreground / opted out); always
+        swallowed on error."""
+        try:
+            ok, _ = notify.available()
+            if not ok or self._window_is_foreground():
+                return
+            try:
+                if not room_notifications_enabled():
+                    return
+            except Exception:
+                pass
+            runnable = str(payload.get("runnable") or "a runnable")
+            visitor = str(payload.get("visitor") or "Someone")
+            title = "Runnable requested — no operator on shift"
+            body = f"{visitor} is waiting on {runnable}"
+        except Exception:
+            logger.debug("notify_page setup failed", exc_info=True)
+            return
+        try:
+            notify.notify(title, body, on_click=self._focus_window)
+            self._flash_window()
+        except Exception:
+            logger.debug("desktop page notify failed", exc_info=True)
 
     # State → kanban column for a queue card's StatusBadge fallback (the row's
     # real lifecycle chip is rendered from detail["state"] in the UI).
@@ -5524,368 +5673,6 @@ class Bridge:
             if old["card_id"] != keep_id:
                 self._trigger_cards.pop(old["card_id"], None)
 
-    # ── email channel: a shared mailbox as a second queue channel ────────────────
-    #
-    # The email analog of the chat queue card. A new_mail event addressed to a
-    # mapped shared mailbox folds onto one trigger card per email conversation
-    # (keyed by Outlook ConversationID), so a help-desk mailbox feeds the same
-    # Triggers inbox as a chat room. Claim + lifecycle ride the mailbox itself:
-    # an ack email addressed to the queue carries a marker, every console folds
-    # the thread's markers (mailbox_claim.fold_conversation), and first ack wins —
-    # the email card's state/owner come from that fold. Reply is a later slice
-    # (see docs/design/helpdesk-channels.md).
-
-    def _mailbox_queues(self) -> dict[str, str]:
-        """The ``[mailboxes]`` shared-mailbox → queue map, read fresh from config
-        (lowercased addresses). Empty when no mailbox is mapped — the email
-        channel is then dormant and surfaces no cards."""
-        from . import config
-
-        return config.read_mailboxes()
-
-    def _email_queue_for(self, payload: dict[str, Any]) -> str | None:
-        """The queue a new_mail event belongs to, or ``None`` for personal/other
-        mail (which never becomes a queue card — the email analog of a plain,
-        non-helpdesk chat room).
-
-        Authoritative path: the real SMTP ``recipients`` parsed from the transport
-        headers (To/Cc + the envelope-delivery headers), matched **exactly** against
-        a mapped mailbox address — so a lookalike address can't match, and an alias
-        / distribution-list delivery is still recognised. Falls back to a substring
-        match on the display ``To`` for internal mail that carries no header block.
-        First match wins."""
-        mapping = self._mailbox_queues()
-        if not mapping:
-            return None
-        for address in payload.get("recipients") or []:
-            queue_name = mapping.get(str(address).lower())
-            if queue_name:
-                return queue_name
-        recipients = str(payload.get("to") or "").lower()
-        if recipients:
-            for address, queue_name in mapping.items():
-                if address in recipients:
-                    return queue_name
-        return None
-
-    @staticmethod
-    def _email_conversation_key(payload: dict[str, Any]) -> str:
-        """A stable per-conversation key so an email and its replies fold onto one
-        card. Outlook's ConversationID when present; otherwise the subject with
-        leading reply/forward prefixes stripped (so a ``Re:`` reply still threads)."""
-        cid = str(payload.get("conversation_id") or "").strip()
-        if cid:
-            return cid
-        subject = str(payload.get("subject") or "").strip()
-        lowered = subject.lower()
-        while True:
-            for prefix in ("re:", "fw:", "fwd:"):
-                if lowered.startswith(prefix):
-                    subject = subject[len(prefix) :].strip()
-                    lowered = subject.lower()
-                    break
-            else:
-                break
-        return subject or "(no subject)"
-
-    def _email_mailbox_for(self, queue: str) -> str:
-        """The shared-mailbox address that staffs ``queue`` — the reverse of the
-        ``[mailboxes]`` map, i.e. where a claim/lifecycle ack for this queue is
-        sent. "" if the queue isn't mapped (shouldn't happen for a live card)."""
-        for address, name in self._mailbox_queues().items():
-            if name == queue:
-                return address
-        return ""
-
-    def _email_is_triggered(self, payload: dict[str, Any]) -> bool:
-        """Whether a shared-mailbox email matches a configured trigger — the gate
-        on **opening a ticket**. The operator curates which mail becomes a
-        claimable card via a trigger's ``match`` (so a busy shared mailbox doesn't
-        flood the help-desk inbox — we surface the *triggered* flow, not the whole
-        mailbox). No engine, or no trigger matches → not a ticket."""
-        from .events import Event
-
-        with self._lock:
-            engine = self._trigger_engine
-        if engine is None:
-            return False
-        try:
-            return engine.would_match(Event.new("outlook", "new_mail", payload))
-        except Exception:  # noqa: BLE001 — a match check must never crash ingest
-            logger.exception("email: trigger-match check failed")
-            return False
-
-    def _ingest_email(self, payload: dict[str, Any]) -> None:
-        """Record one shared-mailbox ``new_mail`` and refresh its **ticket** card.
-
-        A ticket is opened only when a requester email **matches a configured
-        trigger** (:meth:`_email_is_triggered`); other mail stays ordinary inbox
-        mail — no card, no state kept. Mail not addressed to a mapped mailbox is
-        never a ticket either. For an existing ticket, an ordinary email bumps the
-        summary and can reopen a resolved/closed thread, and a claim/lifecycle ack
-        (``claim_marker`` set) folds into ownership/state (plumbing, not a requester
-        message — and it never *opens* a ticket).
-
-        When this console **takes ownership** (a claim ack folds us in as owner), a
-        synthetic ``email``/``claimed`` event is fed so an agent trigger
-        (``source = "email"``, ``event = "claimed"``) can draft a reply *on claim*.
-        Forward-only: there is no backlog scan — claim/lifecycle state lives in the
-        mailbox markers and re-coordinates on the next message after a restart."""
-        from . import mailbox_claim
-
-        queue = self._email_queue_for(payload)
-        if queue is None:
-            return  # personal / non-queue mail — never a ticket
-        conversation = Bridge._email_conversation_key(payload)
-        marker = mailbox_claim.parse_marker(str(payload.get("claim_marker") or ""))
-        # A triggered requester email may *open* a ticket; a marker never does
-        # (it's plumbing for a ticket that already exists).
-        triggered = marker is None and self._email_is_triggered(payload)
-        order_key = (
-            float(payload.get("received_ts") or 0.0),
-            str(payload.get("message_id") or ""),
-        )
-        event: dict[str, Any]
-        if marker is not None:
-            event = {"order_key": order_key, "kind": marker.kind, "agent": marker.agent}
-        else:
-            event = {"order_key": order_key, "kind": "message", "from_requester": True}
-
-        card_id = f"queue:email:{conversation}"
-        visitor = str(payload.get("from") or "") or "unknown"
-        subject = str(payload.get("subject") or "").strip()
-        snippet = subject or str(payload.get("body") or "").strip()
-        me = self._agent_identity()  # read config outside the lock
-        dedup_key = str(payload.get("message_id") or payload.get("entry_id") or "")
-        now = time.time()
-        claimed_payload: dict[str, Any] | None = None  # set on the ownership flip
-        with self._lock:
-            if dedup_key and dedup_key in self._email_seen:
-                return  # folded already (the live source can re-deliver an item)
-            card = self._trigger_cards.get(card_id)
-            if card is None and not triggered:
-                # Not a ticket: an email that matched no trigger, or a marker for a
-                # thread we never surfaced. Leave it in the inbox — no card, and no
-                # per-conversation state kept (so non-ticket mail can't grow memory).
-                return
-            if dedup_key:
-                if len(self._email_seen) > 20000:
-                    self._email_seen.clear()  # bound a very long session
-                self._email_seen.add(dedup_key)
-            events = self._email_threads.setdefault(conversation, [])
-            events.append(event)
-            folded = mailbox_claim.fold_conversation(events)
-            state, owner = folded["state"], folded["owner"]
-            if card is None:
-                # Only a triggered requester message reaches here, so the card is
-                # always opened by addressable mail; entry_id is set just below.
-                card = {
-                    "card_id": card_id,
-                    "trigger": f"queue:{queue}",
-                    "source": "email",
-                    "event_type": "new_mail",
-                    "summary": "",
-                    "column": "triggered",
-                    "detail": {
-                        "queue": queue,
-                        "visitor": visitor,
-                        "conversation_id": conversation,
-                        "mailbox": self._email_mailbox_for(queue),
-                        "entry_id": "",
-                    },
-                    "created_at": now,
-                    "timeline": [],
-                }
-                self._trigger_cards[card_id] = card
-            detail = card["detail"]
-            # A marker ack is internal plumbing — never the addressable mail to
-            # reply to, and never a requester message in the summary/timeline.
-            if marker is None:
-                entry_id = str(payload.get("entry_id") or "")
-                if entry_id:
-                    detail["entry_id"] = entry_id
-                # Retain the latest requester message so a draft-on-claim turn has
-                # content to reply to — the claim ack that triggers it carries none.
-                detail["req_subject"] = subject
-                detail["req_body"] = str(payload.get("body") or "")
-                if snippet:
-                    text = snippet if len(snippet) <= 120 else snippet[:117] + "…"
-                    card["summary"] = text
-                    card["timeline"].append({"ts": now, "text": f"{visitor}: {text}"})
-            # Lifecycle/ownership come from the fold; log a transition once.
-            prev_state = detail.get("state")
-            prev_owned = bool(detail.get("owned_by_me"))
-            detail["state"] = state
-            detail["owner"] = owner
-            # Whether *this* console owns it — the reply gate (rule 3) and the
-            # UI's "you can reply" affordance read this, not the raw owner string.
-            detail["owned_by_me"] = bool(owner) and owner == me
-            # Taking ownership (not-ours → ours): build the claimed event so a
-            # configured trigger can draft on claim, with a requester message to
-            # act on. recipients = [mailbox] so queue_mailbox_for resolves the
-            # send-as identity (the agent drafts as the queue).
-            if detail["owned_by_me"] and not prev_owned and detail.get("entry_id"):
-                claimed_payload = {
-                    "queue": queue,
-                    "conversation_id": conversation,
-                    "from": detail.get("visitor", ""),
-                    "subject": detail.get("req_subject", ""),
-                    "entry_id": detail.get("entry_id", ""),
-                    "recipients": [detail.get("mailbox", "")],
-                    "body": detail.get("req_body", ""),
-                }
-            card["column"] = Bridge._QUEUE_STATE_COLUMN.get(state, card["column"])
-            if state != prev_state:
-                who = f" by {owner}" if owner else ""
-                card["timeline"].append(
-                    {"ts": now, "text": f"conversation {state}{who}"}
-                )
-            if not card["summary"]:
-                card["summary"] = f"{visitor} · {queue}"
-            self._evict_trigger_cards(card_id)
-            snapshot = dict(card)
-        self._dispatch("runspec:trigger_card", snapshot)
-        if claimed_payload is not None:
-            self._feed_email_event("claimed", claimed_payload)
-
-    def _feed_email_event(self, kind: str, payload: dict[str, Any]) -> None:
-        """Feed a synthetic ``email`` lifecycle event (e.g. ``claimed``) to the
-        trigger engine — the same external-source path chat uses, so the existing
-        trigger config drives it. Best-effort: no engine, or a feed failure, is
-        logged and never blocks the caller."""
-        from .events import Event
-
-        with self._lock:
-            engine = self._trigger_engine
-        if engine is None:
-            return
-        try:
-            engine.feed(Event.new("email", kind, payload))
-        except Exception:
-            logger.exception("email: feeding %s event failed", kind)
-
-    def _agent_identity(self) -> str:
-        """A stable identity for this console in claim markers — ``[console]
-        agent_id`` when set, else ``<osuser>@<host>``. Distinguishes consoles so
-        first-ack-wins picks a deterministic winner, and stays consistent across a
-        claim and its later lifecycle actions so the owner checks in the fold hold."""
-        from . import config
-
-        console = config.read_config().get("console")
-        if isinstance(console, dict):
-            agent = str(console.get("agent_id") or "").strip()
-            if agent:
-                return agent
-        import getpass
-        import socket
-
-        try:
-            user = getpass.getuser()
-        except Exception:
-            user = "agent"
-        return f"{user}@{socket.gethostname()}"
-
-    def _email_control(self, kind: str, card_id: str) -> dict[str, Any]:
-        """Send one claim/lifecycle marker email (claim/resolve/reopen/close) for
-        an email queue card. The ack is addressed to the shared mailbox itself
-        (not the requester) and threaded on the conversation; ownership/state
-        change only when it lands back and folds (read-after-write — we never
-        optimistically set state here). Returns ``{ok}`` / ``{ok: False, error}``."""
-        from .mailbox_claim import Marker, format_marker
-        from .sources.outlook import send_claim_marker
-
-        with self._lock:
-            card = self._trigger_cards.get(card_id)
-            detail = dict(card["detail"]) if card else {}
-        if not detail:
-            return {"ok": False, "error": "unknown card"}
-        conversation = str(detail.get("conversation_id") or "")
-        queue = str(detail.get("queue") or "")
-        mailbox = str(detail.get("mailbox") or "") or self._email_mailbox_for(queue)
-        entry_id = str(detail.get("entry_id") or "")
-        if not (conversation and queue and mailbox and entry_id):
-            return {"ok": False, "error": "card is missing claim routing info"}
-        marker = Marker(
-            kind=kind,
-            queue=queue,
-            conversation_id=conversation,
-            agent=self._agent_identity(),
-        )
-        try:
-            send_claim_marker(entry_id, format_marker(marker), mailbox)
-        except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
-            logger.exception("email: sending %s marker failed", kind)
-            return {"ok": False, "error": str(exc)}
-        return {"ok": True}
-
-    def claim_email_thread(self, card_id: str) -> dict[str, Any]:
-        """Claim an email queue card (send a self-addressed claim ack)."""
-        return self._email_control("claim", card_id)
-
-    def resolve_email_thread(self, card_id: str) -> dict[str, Any]:
-        return self._email_control("resolve", card_id)
-
-    def reopen_email_thread(self, card_id: str) -> dict[str, Any]:
-        return self._email_control("reopen", card_id)
-
-    def close_email_thread(self, card_id: str) -> dict[str, Any]:
-        return self._email_control("close", card_id)
-
-    def reply_email_thread(self, card_id: str, body: str) -> dict[str, Any]:
-        """Reply to the requester of an email queue card — draft in Outlook and
-        send. **Gated on confirmed ownership** (rule 3): only the console whose
-        claim ack is the earliest in the fold may reply, so a losing claimant can
-        never message the requester. Human-initiated (the operator typed and
-        clicked Send), so it goes straight through ``save_reply_draft`` +
-        ``send_draft`` — no autonomy gate, which is for agent-proposed replies.
-        Returns ``{ok}`` / ``{ok: False, error}``."""
-        from .sources.outlook import save_reply_draft, send_draft
-
-        body = str(body or "").strip()
-        if not body:
-            return {"ok": False, "error": "empty reply"}
-        with self._lock:
-            card = self._trigger_cards.get(card_id)
-            detail = dict(card["detail"]) if card else {}
-        if not detail:
-            return {"ok": False, "error": "unknown card"}
-        if not detail.get("owned_by_me"):
-            return {"ok": False, "error": "claim the conversation before replying"}
-        entry_id = str(detail.get("entry_id") or "")
-        if not entry_id:
-            return {"ok": False, "error": "no requester message to reply to"}
-        # Reply *as the shared mailbox* so the requester sees the queue identity,
-        # not the operator (Q5). The card carries the mailbox address.
-        mailbox = str(detail.get("mailbox") or "") or None
-        try:
-            draft = save_reply_draft(entry_id, body, from_mailbox=mailbox)
-            send_draft(str(draft.get("entry_id") or ""))
-        except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
-            logger.exception("email: reply failed")
-            return {"ok": False, "error": str(exc)}
-        now = time.time()
-        with self._lock:
-            card = self._trigger_cards.get(card_id)
-            if card is None:
-                return {"ok": True}
-            snippet = body if len(body) <= 120 else body[:117] + "…"
-            card["timeline"].append({"ts": now, "text": f"↩ replied: {snippet}"})
-            snapshot = dict(card)
-        self._dispatch("runspec:trigger_card", snapshot)
-        return {"ok": True}
-
-    def _on_engine_event(self, event: Any) -> None:
-        """Raw-event observer the trigger engine calls for every event before
-        routing. Folds a shared-mailbox ``new_mail`` into a queue card (the email
-        analog of ``_on_chat_event``); everything else (reminders, chat feeds,
-        other sources) is left for the normal trigger path. Best-effort — a
-        failure here never blocks trigger routing."""
-        if event.source == "outlook" and event.type == "new_mail":
-            try:
-                self._ingest_email(dict(event.payload))
-            except Exception:
-                logger.exception("email: synthesising a queue card failed")
-
     def send_room_message(self, room: str, text: str) -> dict[str, Any]:
         """Post a human-composed message to ``room`` — the Rooms composer's one
         outbound path. The agent never reaches this: a proposed reply only
@@ -5917,47 +5704,6 @@ class Bridge:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
 
-    def _thread_control(self, kind: str, room: str) -> dict[str, Any]:
-        """Send one conversation-lifecycle control frame (claim/resolve/reopen/
-        close) via the agent source staffing the conversation's namespace. The
-        hub is the authority — it enforces the queue boundary and broadcasts the
-        resulting state, which comes back as a ``conversation`` frame."""
-        room = str(room or "").strip()
-        if not room:
-            return {"ok": False, "error": "no conversation named"}
-        with self._lock:
-            src = None
-            for namespace in self._agent_rooms:
-                if room == namespace or room.startswith(namespace + "/"):
-                    src = self._chat_sources.get(namespace)
-                    break
-        if src is None:
-            return {"ok": False, "error": "not staffing that conversation's queue"}
-        try:
-            src.send_control(kind, room)
-        except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
-            logger.exception("thread %s failed", kind)
-            return {"ok": False, "error": str(exc)}
-        return {"ok": True}
-
-    def claim_thread(self, room: str) -> dict[str, Any]:
-        """Claim a helpdesk conversation for this console (→ assigned). This is
-        also the gate that lets the thread's messages reach the trigger engine —
-        no agent turn runs on an unclaimed thread."""
-        return self._thread_control("claim", room)
-
-    def resolve_thread(self, room: str) -> dict[str, Any]:
-        """Mark a conversation resolved (the visitor can reopen by replying)."""
-        return self._thread_control("resolve", room)
-
-    def reopen_thread(self, room: str) -> dict[str, Any]:
-        """Reopen a resolved/closed conversation (back to the queue)."""
-        return self._thread_control("reopen", room)
-
-    def close_thread(self, room: str) -> dict[str, Any]:
-        """Close a conversation (terminal; a visitor reply still reopens)."""
-        return self._thread_control("close", room)
-
     def get_room_state(self) -> dict[str, Any]:
         """For the Rooms view: every configured room (from the fleet host entries),
         each with its host, this console's display name there, and whether it's
@@ -5966,7 +5712,6 @@ class Bridge:
         specs = self._room_specs()
         with self._lock:
             connected = set(self._chat_sources)
-            thread_states = {k: dict(v) for k, v in self._thread_states.items()}
         rooms = []
         for s in specs:
             entry: dict[str, Any] = {
@@ -5976,16 +5721,6 @@ class Bridge:
                 "connected": s["room"] in connected,
                 "queue": str(s.get("queue") or ""),
             }
-            if entry["queue"]:
-                # The inbox's initial threads — the hub's subscribe catch-up plus
-                # everything since, keyed by conversation room. Live updates ride
-                # runspec:room_conversation.
-                prefix = s["room"] + "/"
-                entry["threads"] = {
-                    room: state
-                    for room, state in thread_states.items()
-                    if room.startswith(prefix)
-                }
             rooms.append(entry)
         return {"rooms": rooms}
 

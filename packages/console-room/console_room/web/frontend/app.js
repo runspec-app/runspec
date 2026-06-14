@@ -1,11 +1,14 @@
 // app.js — the runspec room browser client (vanilla, no build step).
 //
 // Two modes share one client. Group chat: /ws?room=&user= — the original room.
-// Help desk: /ws?queue=&user= — the server derives a private conversation room
-// from the queue + the signed-in identity, and the aside shows the queue's
-// self-service catalog (published by the on-shift agent consoles). Picking a
-// catalog item renders a form generated from its inputSchema; submitting sends a
-// structured "request" frame that lands in the thread for an agent to enact.
+// Runnables portal: /ws?queue=&user= — the server derives a private thread from
+// the queue + the signed-in identity, and the aside shows the queue's live
+// catalogue (the runnables the on-shift operator consoles publish). Picking one
+// renders a form from its inputSchema; submitting sends a "request" frame the hub
+// auto-assigns to an operator. Each request then shows its claim-free lifecycle
+// (assigned → in progress → done/failed) inline; when no operator is on shift it
+// shows "no operator available" with a Page-the-team button. See
+// docs/design/runnables-portal.md §3.
 
 (() => {
   "use strict";
@@ -17,7 +20,6 @@
   const presenceList = $("presence");
   const statusEl = $("status");
   const titleEl = $("title");
-  const convEl = $("convstate");
   const catalogPanel = $("catalog-panel");
   const catalogList = $("catalog");
   const reqForm = $("reqform");
@@ -29,6 +31,7 @@
   let authed = false; // server has OIDC enabled and we're logged in
   let catalog = []; // the queue's published tools
   const present = new Map(); // user -> status
+  const requests = new Map(); // request_id -> { status node } for live lifecycle
 
   // Ask the server who we are. In auth mode the name comes from the session and
   // the field is locked; in dev mode the user types a name.
@@ -105,8 +108,74 @@
     time.className = "time";
     time.textContent = fmtTime(frame.ts);
     li.append(who, body, time);
+    // A portal request carries a lifecycle: attach an (initially empty) status row
+    // keyed by its id, which request_status frames fill in. On a reload from
+    // backscroll there's no live status (it isn't persisted) — the row stays empty.
+    const rid = frame.kind === "request" && frame.data && frame.data.request_id;
+    if (rid) {
+      const status = document.createElement("div");
+      status.className = "reqstatus";
+      li.append(status);
+      requests.set(rid, { el: status });
+    }
     transcript.append(li);
     transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  // Render one request's claim-free lifecycle into its inline status row. When a
+  // request is unassigned (no on-shift operator) it shows "no operator available"
+  // plus a Page-the-team button that re-chimes every connected operator console.
+  function setReqStatus(frame) {
+    const rec = requests.get(frame.id);
+    if (!rec) return; // status for a request not in this view (e.g. pre-reload)
+    rec.el.innerHTML = "";
+    const badge = document.createElement("span");
+    badge.className = "reqbadge " + (frame.state || "");
+    badge.textContent = reqLabel(frame);
+    rec.el.append(badge);
+    if (frame.state === "unassigned") {
+      const note = document.createElement("span");
+      note.className = "reqnote";
+      note.textContent = "No operator on shift — IM/call them, or";
+      const pageBtn = document.createElement("button");
+      pageBtn.type = "button";
+      pageBtn.className = "page-btn";
+      pageBtn.textContent = "Page the team";
+      pageBtn.addEventListener("click", () => {
+        if (ws && ws.readyState === WebSocket.OPEN)
+          ws.send(JSON.stringify({ type: "page", id: frame.id }));
+        pageBtn.textContent = "Paged ✓";
+        pageBtn.disabled = true;
+        setTimeout(() => {
+          pageBtn.textContent = "Page the team";
+          pageBtn.disabled = false;
+        }, 3000);
+      });
+      rec.el.append(note, pageBtn);
+    }
+    if (frame.error) {
+      const err = document.createElement("span");
+      err.className = "reqerr";
+      err.textContent = frame.error;
+      rec.el.append(err);
+    }
+  }
+
+  function reqLabel(frame) {
+    switch (frame.state) {
+      case "unassigned":
+        return "no operator available";
+      case "assigned":
+        return frame.assignee ? `assigned · ${frame.assignee}` : "assigned";
+      case "in_progress":
+        return "in progress…";
+      case "done":
+        return "done ✓";
+      case "failed":
+        return "failed";
+      default:
+        return frame.state || "";
+    }
   }
 
   function renderPresence() {
@@ -119,17 +188,6 @@
     }
   }
 
-  // The thread's lifecycle, as a header chip: open / assigned to X / resolved /
-  // closed. Driven entirely by the server's conversation frames.
-  function renderConversation(frame) {
-    convEl.hidden = false;
-    convEl.className = "convstate " + frame.state;
-    convEl.textContent =
-      frame.state === "assigned" && frame.assignee
-        ? `assigned · ${frame.assignee}`
-        : frame.state;
-  }
-
   function onFrame(frame) {
     if (frame.type === "message") {
       addMessage(frame);
@@ -137,8 +195,8 @@
       if (frame.status === "away") present.delete(frame.user);
       else present.set(frame.user, frame.status);
       renderPresence();
-    } else if (frame.type === "conversation") {
-      renderConversation(frame);
+    } else if (frame.type === "request_status") {
+      setReqStatus(frame);
     }
   }
 
@@ -162,7 +220,7 @@
     if (!catalog.length) {
       const li = document.createElement("li");
       li.className = "cat-empty";
-      li.textContent = "No services published — an agent may not be on shift.";
+      li.textContent = "No runnables available — no operator may be on shift.";
       catalogList.append(li);
       return;
     }

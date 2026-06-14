@@ -6,15 +6,24 @@ org's SSO session, so subscribing to its COM events rides that session and
 sidesteps the Conditional-Access wall that blocks the MSAL device-code flow.
 ``pywin32`` is already a console dependency, so this needs no new package.
 
-Two event types, both **forward-only** (A1) — they fire for occurrences that
-happen while we're running; we never scan the inbox / reminders for backlog:
+Two event types, both **forward-only** — they fire for occurrences that happen
+while we're running; we never scan for backlog:
 
-* ``new_mail`` — ``Application.NewMailEx`` → resolve the EntryID to a MailItem
-* ``reminder`` — ``Application.Reminder``
+* ``new_mail`` — a **folder watch**: per ``[[mailboxes]]`` config entry, bind
+  ``Folder.Items.ItemAdd`` on each watched folder (+ a poll fallback for the bulk
+  moves ItemAdd misses, deduped by EntryID). ``NewMailEx`` is *not* used — it only
+  sees the default account's primary Inbox, not subfolders or other mailboxes.
+* ``reminder`` — ``Application.Reminder``.
 
-COM event sinks need a thread that ``CoInitialize``s, binds the sink with
-``DispatchWithEvents``, and runs a message pump (``PumpMessages``). That all
-lives on this source's own daemon thread; ``stop()`` posts ``WM_QUIT`` to it.
+Each ``new_mail`` is tagged with the ``mailbox``/``folder`` it came from so a
+trigger's ``match`` can scope to it. There is **no claim system** — see
+docs/design/email-folder-watch.md for the shared-mailbox duplication caveat.
+
+COM event sinks need a thread that ``CoInitialize``s and runs a message pump. This
+source owns one daemon thread that binds every sink, then loops:
+``PumpWaitingMessages`` (delivers ItemAdd/Reminder) + the poll fallback, until
+``stop()`` sets a flag. The watched ``Items`` collections are held for the pump's
+lifetime — if one is GC'd its ``ItemAdd`` event silently stops firing.
 
 The sink does **not** call the engine's ``emit`` directly — that would route the
 event (and run the working-hours rota's *calendar* COM read) re-entrantly inside
@@ -22,22 +31,20 @@ the COM callback on the STA pump thread, which breaks the calendar read. Instead
 each event is marshalled onto a queue and a separate dispatcher thread calls
 ``emit`` (and thus any downstream COM read) off the pump thread.
 
-The pure payload-extraction helpers (``_mail_payload`` / ``_reminder_payload``)
-take any duck-typed Outlook item, so they're unit-tested on any platform with
-plain fakes — the win32 imports stay inside the pump thread.
+The pure helpers (``_mail_payload`` / ``_reminder_payload`` / ``_folder_segments``
+/ ``_descend``) take duck-typed objects, so they're unit-tested on any platform
+with plain fakes — the win32 imports stay inside the pump thread.
 
-See docs/design/console-triggers.md (§4.1).
+See docs/design/email-folder-watch.md and docs/design/console-triggers.md (§4.1).
 """
 
 from __future__ import annotations
 
-import email.parser
-import email.utils
 import logging
 import queue
-import re
 import sys
 import threading
+import time
 from datetime import datetime
 from typing import Any
 
@@ -74,153 +81,51 @@ def _split_categories(val: Any) -> list[str]:
     return [c.strip() for c in text.split(",") if c.strip()]
 
 
-# MAPI PR_TRANSPORT_MESSAGE_HEADERS — the raw RFC 5322 header block as delivered
-# by transport. Read via the COM PropertyAccessor; isolated in _transport_headers
-# so the parser below stays a pure, platform-independent function.
-_PR_TRANSPORT_HEADERS = "http://schemas.microsoft.com/mapi/proptag/0x007D001F"
-
-# `Received: … for <addr>` names the envelope recipient that caused delivery —
-# the mailbox address even when an alias / distribution list hides it from To/Cc.
-_RECEIVED_FOR = re.compile(r"\bfor\s+<([^>]+)>")
-
-
-def _transport_headers(mail: Any) -> str:
-    """The raw transport header block via the MAPI ``PropertyAccessor``, or ``""``
-    when unavailable — off-Windows, a COM error, or internal MAPI mail that never
-    traversed SMTP transport (so it carries no header block). Kept duck-typed and
-    failure-swallowing so ``_mail_payload`` stays pure and testable with fakes."""
-    try:
-        return _str(mail.PropertyAccessor.GetProperty(_PR_TRANSPORT_HEADERS))
-    except Exception:
-        return ""
-
-
-def _recipients_from_headers(blob: str) -> list[str]:
-    """Real SMTP recipient addresses parsed from a raw transport-header block,
-    lowercased and de-duplicated (order preserved). Reads ``To``/``Cc`` *and* the
-    envelope-delivery headers (``Delivered-To`` / ``X-Original-To`` / the
-    ``Received: … for <addr>`` trace) so a shared mailbox reached via an alias or
-    distribution list is still named. ``[]`` when there is no header block — the
-    caller then falls back to the display ``To`` string. Pure stdlib; no COM."""
-    if not blob.strip():
+def _folder_segments(folder: str) -> list[str]:
+    """The ``/``-split path segments for a watch's folder, or ``[]`` for the
+    Inbox sentinel (``""`` / ``"inbox"``). Pure; the source descends these from a
+    store root. ``"Tickets/Open"`` → ``["Tickets", "Open"]``."""
+    text = (folder or "").strip()
+    if not text or text.lower() == "inbox":
         return []
-    try:
-        msg = email.parser.Parser().parsestr(blob, headersonly=True)
-    except Exception:
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-
-    def add(addr: str) -> None:
-        normalised = addr.strip().lower()
-        if normalised and normalised not in seen:
-            seen.add(normalised)
-            out.append(normalised)
-
-    for field in ("To", "Cc", "Delivered-To", "X-Original-To"):
-        for _name, addr in email.utils.getaddresses(msg.get_all(field, [])):
-            add(addr)
-    for received in msg.get_all("Received", []):
-        match = _RECEIVED_FOR.search(str(received))
-        if match:
-            add(match.group(1))
-    return out
+    return [seg.strip() for seg in text.split("/") if seg.strip()]
 
 
-def _header_field(blob: str, name: str) -> str:
-    """A single header value from a transport-header block ("" when absent).
-    Case-insensitive per RFC 5322. Pure stdlib."""
-    if not blob.strip():
-        return ""
-    try:
-        msg = email.parser.Parser().parsestr(blob, headersonly=True)
-    except Exception:
-        return ""
-    return _str(msg.get(name)).strip()
+def _descend(root: Any, segments: list[str]) -> Any:
+    """Walk ``root.Folders[seg]`` for each segment (duck-typed, so the path-walk is
+    testable with fakes). Raises if a segment is missing — the caller skips + logs
+    the watch."""
+    node = root
+    for seg in segments:
+        node = node.Folders[seg]
+    return node
 
 
-def _named_header(mail: Any, name: str) -> str:
-    """Read a custom internet header carried as a **PS_INTERNET_HEADERS named
-    property** directly off the MailItem — the same property :func:`send_claim_marker`
-    sets. This is the reliable read for **internal same-org mail**, whose
-    ``PR_TRANSPORT_MESSAGE_HEADERS`` block is empty (it never traversed SMTP
-    transport), so parsing the transport blob can't see the header — the marker on
-    an internal claim ack would otherwise be missed and the ack mistaken for a new
-    requester email. ``name`` is the lowercase header (e.g. ``x-runspec-claim``);
-    ``""`` when absent / off-COM. Duck-typed + failure-swallowing, like
-    :func:`_transport_headers`."""
-    try:
-        return _str(mail.PropertyAccessor.GetProperty(_PS_INTERNET_HEADERS + name))
-    except Exception:
-        return ""
+def _mail_payload(mail: Any, *, mailbox: str = "", folder: str = "") -> dict[str, Any]:
+    """Extract the ``new_mail`` payload from a MailItem-like object.
 
-
-def _received_ts_from_headers(blob: str) -> float:
-    """The originating ``Date`` header as a POSIX timestamp (0.0 when absent /
-    unparseable). Gives the mailbox-claim fold a stable *server-ish* order key —
-    timezone-aware, comparable across senders — rather than a local clock."""
-    date = _header_field(blob, "Date")
-    if not date:
-        return 0.0
-    try:
-        return email.utils.parsedate_to_datetime(date).timestamp()
-    except Exception:
-        return 0.0
-
-
-def _received_ts(mail: Any, headers: str) -> float:
-    """A sortable receive timestamp for the mailbox-claim fold. Prefers the
-    store's ``ReceivedTime`` (≈ the server ``receivedDateTime``, set on every
-    received item — including internal mail that carries no transport headers),
-    falling back to the originating ``Date`` header. 0.0 when neither is usable."""
-    received = _to_dt(_attr(mail, "ReceivedTime", None))
-    if received is not None:
-        try:
-            return received.timestamp()
-        except Exception:
-            pass
-    return _received_ts_from_headers(headers)
-
-
-def _mail_payload(mail: Any) -> dict[str, Any]:
-    """Extract the ``new_mail`` payload from a MailItem-like object."""
+    ``mailbox`` / ``folder`` tag the event with the watch it came from (the source
+    knows which folder's ``ItemAdd`` fired), so a trigger's ``match`` can scope to
+    a specific mailbox/folder. See docs/design/email-folder-watch.md."""
     sender = _attr(mail, "SenderEmailAddress") or _attr(mail, "SenderName")
     body = _str(_attr(mail, "Body"))
     if len(body) > _BODY_CAP:
         body = body[:_BODY_CAP] + "…"
-    # Read the transport header block once (one COM call) and derive every
-    # header-sourced field from it: real recipients, the ordering metadata for the
-    # mailbox-claim fold, and the X-Runspec-Claim marker on an ack email.
-    headers = _transport_headers(mail)
     return {
         "from": _str(sender),
         "to": _str(_attr(mail, "To")),
         "subject": _str(_attr(mail, "Subject")),
         "body": body,
+        # Which watch (mailbox + folder) this item landed in — the routing signal
+        # a trigger's `match` can key on. Set by the source per watched folder.
+        "mailbox": _str(mailbox),
+        "folder": _str(folder),
         "received": _str(_attr(mail, "ReceivedTime")),
         "categories": _split_categories(_attr(mail, "Categories")),
         "entry_id": _str(_attr(mail, "EntryID")),
-        # ConversationID threads a customer email and its replies onto one queue
-        # card (the email analog of a chat conversation room); empty when Outlook
-        # can't supply it, in which case the bridge folds on a normalised subject.
+        # ConversationID threads a customer email and its replies; empty when
+        # Outlook can't supply it. Still handy to a trigger; no longer a fold key.
         "conversation_id": _str(_attr(mail, "ConversationID")),
-        # Real SMTP recipients from the transport headers — the authoritative
-        # signal for which shared mailbox an email belongs to (To shows display
-        # names, not addresses). Empty for internal mail with no header block.
-        "recipients": _recipients_from_headers(headers),
-        # Ordering metadata for the mailbox-claim fold (server order, not local
-        # clocks): the receive time + the Message-ID tiebreak.
-        "received_ts": _received_ts(mail, headers),
-        "message_id": _header_field(headers, "Message-ID"),
-        # The X-Runspec-Claim marker value on a claim/lifecycle ack email (""
-        # for an ordinary message); the bridge parses it via mailbox_claim. Read
-        # the PS_INTERNET_HEADERS named property first (the canonical source we
-        # set — survives internal same-org delivery, where the transport blob is
-        # empty), falling back to the transport header for externally-routed mail.
-        "claim_marker": (
-            _named_header(mail, "x-runspec-claim")
-            or _header_field(headers, "X-Runspec-Claim")
-        ),
     }
 
 
@@ -239,45 +144,30 @@ def _reminder_payload(reminder: Any) -> dict[str, Any]:
     }
 
 
-# ── COM event sink ────────────────────────────────────────────────────────────
+# ── COM event sinks ───────────────────────────────────────────────────────────
 #
-# Used as the user-event class for win32com.client.DispatchWithEvents. pywin32
-# builds a combined object (Outlook Application + this class); its On* methods
-# run with `self` bound to that combined instance, so `self.GetNamespace(...)`
-# reaches the live Application and `self.emit` is the callback we attach after
-# construction. No win32 import is needed *here* — only attribute access.
+# Two sinks, both bound with win32com.client.WithEvents (which keeps `self` as the
+# sink instance). A folder's `Items` collection raises `ItemAdd` for each new item;
+# the Application raises `Reminder`. After binding we attach an `_on_*` callback the
+# source set, so the handlers stay free of source state.
 
 
-class _OutlookEventSink:
-    """Event handlers bound onto the dispatched Outlook Application."""
+class _FolderItemsSink:
+    """`ItemAdd` handler bound onto one watched folder's `Items` collection."""
 
-    def OnNewMailEx(self, entry_id_collection: Any) -> None:  # noqa: N802 — COM name
-        emit = getattr(self, "emit", None)
-        if emit is None:
-            return
-        try:
-            namespace = self.GetNamespace("MAPI")  # type: ignore[attr-defined]
-        except Exception:
-            logger.exception("outlook: GetNamespace failed; dropping new mail")
-            return
-        for entry_id in _str(entry_id_collection).split(","):
-            entry_id = entry_id.strip()
-            if not entry_id:
-                continue
-            try:
-                item = namespace.GetItemFromID(entry_id)
-            except Exception:
-                logger.exception("outlook: could not resolve EntryID %s", entry_id)
-                continue
-            payload = _mail_payload(item)
-            payload["entry_id"] = entry_id  # authoritative id from the event
-            _safe_emit(emit, Event.new("outlook", "new_mail", payload))
+    def OnItemAdd(self, item: Any) -> None:  # noqa: N802 — COM name
+        cb = getattr(self, "_on_add", None)
+        if cb is not None:
+            cb(item)
+
+
+class _AppReminderSink:
+    """`Reminder` handler bound onto the Outlook Application."""
 
     def OnReminder(self, item: Any) -> None:  # noqa: N802 — COM name
-        emit = getattr(self, "emit", None)
-        if emit is None:
-            return
-        _safe_emit(emit, Event.new("outlook", "reminder", _reminder_payload(item)))
+        cb = getattr(self, "_on_reminder", None)
+        if cb is not None:
+            cb(item)
 
 
 def _safe_emit(emit: EmitFn, event: Event) -> None:
@@ -287,22 +177,64 @@ def _safe_emit(emit: EmitFn, event: Event) -> None:
         logger.exception("outlook: emit failed for %s", event.type)
 
 
+def _resolve_watch(namespace: Any, mailbox: str, folder: str) -> Any:
+    """Resolve a ``(mailbox, folder)`` watch to a MAPI folder (COM; Windows-only).
+
+    ``mailbox`` blank → the default account; named → a mounted store (top-level
+    `Folders[mailbox]`), falling back to the shared-mailbox default inbox's store
+    root. ``folder`` blank/`"inbox"` → that store's Inbox; a `/` path descends from
+    the **store root**. Raises if anything can't be resolved — the caller skips and
+    logs the watch."""
+    segments = _folder_segments(folder)
+    if mailbox:
+        try:
+            root = namespace.Folders[mailbox]  # a mounted store is a top-level folder
+        except Exception:
+            recipient = namespace.CreateRecipient(mailbox)
+            recipient.Resolve()
+            root = namespace.GetSharedDefaultFolder(
+                recipient, 6
+            ).Parent  # 6=olFolderInbox
+        if not segments:
+            return root.Folders["Inbox"]
+        return _descend(root, segments)
+    inbox = namespace.GetDefaultFolder(6)  # default account Inbox
+    if not segments:
+        return inbox
+    return _descend(inbox.Parent, segments)  # paths descend from the store root
+
+
 # ── the source ────────────────────────────────────────────────────────────────
 
 
 class OutlookSource:
-    """Forward-only Outlook event source. Satisfies the ``EventSource`` protocol."""
+    """Forward-only Outlook event source (folder-watch). Satisfies ``EventSource``.
+
+    Reads its watch list from ``config.read_mailbox_watches()`` and binds an
+    ``Items.ItemAdd`` sink to each resolved folder (+ a poll fallback for the bulk
+    moves ItemAdd can miss), plus the Application ``Reminder`` handler. Each
+    ``new_mail`` event is tagged with the watch's ``mailbox``/``folder`` so triggers
+    can scope to it. See docs/design/email-folder-watch.md."""
 
     id = "outlook"
+
+    _PUMP_INTERVAL = 0.5  # s between COM message pumps (≈ ItemAdd latency)
+    _POLL_INTERVAL = 30.0  # s between fallback folder polls
+    _SEEN_CAP = 50_000  # bound the EntryID dedupe set over a long session
 
     def __init__(self) -> None:
         self._emit: EmitFn | None = None
         self._thread: threading.Thread | None = None
-        self._thread_id: int | None = None
-        self._app: Any = None  # keep the dispatched sink alive while pumping
-        # Events captured on the COM pump thread are handed to a dispatcher
-        # thread through this queue, so routing/emit never runs re-entrantly
-        # inside a COM callback (see module docstring). A None is the stop sentinel.
+        self._stop = threading.Event()
+        # Hold (sink, items, mailbox, folder) per watch for the pump's lifetime —
+        # if the Items collection is GC'd its ItemAdd event silently stops firing.
+        self._bound: list[tuple[Any, Any, str, str]] = []
+        self._reminder_sink: Any = None
+        self._app: Any = None
+        self._seen: set[str] = set()  # EntryIDs already emitted (ItemAdd ∪ poll)
+        self._poll_high_water: float = 0.0  # only poll items received after start
+        # Events captured on the COM pump thread are handed to a dispatcher thread
+        # so routing/emit never runs re-entrantly inside a COM callback.
         self._queue: queue.Queue[Event | None] = queue.Queue()
         self._dispatch_thread: threading.Thread | None = None
 
@@ -319,6 +251,11 @@ class OutlookSource:
     def event_types(self) -> list[str]:
         return ["new_mail", "reminder"]
 
+    def _watches(self) -> list[dict[str, str]]:
+        from .. import config
+
+        return config.read_mailbox_watches()
+
     def start(self, emit: EmitFn) -> None:
         ok, reason = self.available()
         if not ok:
@@ -327,7 +264,7 @@ class OutlookSource:
         if self._thread is not None:
             return  # already started
         self._emit = emit
-        # Fresh queue per start so a previous run's stop sentinel can't linger.
+        self._stop.clear()
         self._queue = queue.Queue()
         self._dispatch_thread = threading.Thread(
             target=self._dispatch_loop, name="outlook-dispatch", daemon=True
@@ -339,16 +276,7 @@ class OutlookSource:
         self._thread.start()
 
     def stop(self) -> None:
-        tid = self._thread_id
-        if tid is not None:
-            try:
-                import win32api
-                import win32con
-
-                win32api.PostThreadMessage(tid, win32con.WM_QUIT, 0, 0)
-            except Exception:
-                logger.exception("outlook: failed to signal pump thread to quit")
-        self._thread_id = None
+        self._stop.set()  # the pump loop checks this and exits
         self._thread = None
         self._app = None
         if self._dispatch_thread is not None:
@@ -356,12 +284,22 @@ class OutlookSource:
             self._dispatch_thread = None
 
     def _enqueue(self, event: Event) -> None:
-        """Hand an event from the COM pump thread to the dispatcher thread.
-
-        Bound onto the sink as ``app.emit``; the COM handlers call this instead
-        of the engine's emit, so routing happens off the pump thread.
-        """
+        """Hand an event from the COM pump thread to the dispatcher thread."""
         self._queue.put(event)
+
+    def _handle_item(self, item: Any, mailbox: str, folder: str) -> None:
+        """Emit one new mail item, tagged with its watch — deduped by EntryID so an
+        item ItemAdd and the poll both see never fires twice. Runs on the pump
+        thread; emit happens off it via the queue."""
+        entry_id = _str(_attr(item, "EntryID"))
+        if entry_id and entry_id in self._seen:
+            return
+        if entry_id:
+            if len(self._seen) > self._SEEN_CAP:
+                self._seen.clear()
+            self._seen.add(entry_id)
+        payload = _mail_payload(item, mailbox=mailbox, folder=folder)
+        self._enqueue(Event.new("outlook", "new_mail", payload))
 
     def _dispatch_loop(self) -> None:
         """Drain queued events and route them via the real emit, off the pump
@@ -374,32 +312,91 @@ class OutlookSource:
                 _safe_emit(self._emit, event)
 
     def _pump(self) -> None:
-        """Own a COM apartment, bind the Outlook event sink, and pump messages
-        until ``stop()`` posts WM_QUIT. Runs on the source's daemon thread."""
+        """Own a COM apartment, bind a per-folder ItemAdd sink for each watch (+ the
+        Reminder sink), then loop: pump COM messages (delivers ItemAdd) and run the
+        poll fallback on an interval, until ``stop()``. Runs on the daemon thread."""
         import pythoncom
-        import win32api
         import win32com.client
 
         pythoncom.CoInitialize()
         try:
-            self._thread_id = win32api.GetCurrentThreadId()
             try:
-                app = win32com.client.DispatchWithEvents(
-                    "Outlook.Application", _OutlookEventSink
-                )
+                app = win32com.client.Dispatch("Outlook.Application")
+                namespace = app.GetNamespace("MAPI")
             except Exception:
                 logger.exception(
                     "outlook: could not attach to Outlook (is it installed/running?)"
                 )
                 return
-            # Marshal events off this STA pump thread via the queue, never call
-            # the engine emit (and its calendar COM read) directly from here.
-            app.emit = self._enqueue
-            self._app = app  # hold a ref so the sink isn't GC'd mid-pump
-            logger.info("outlook source: listening for new mail and reminders")
-            pythoncom.PumpMessages()
+            self._app = app
+            self._poll_high_water = time.time()
+            self._bind_watches(win32com.client, namespace)
+            self._bind_reminders(win32com.client, app)
+            logger.info(
+                "outlook source: watching %d folder(s) + reminders", len(self._bound)
+            )
+            poll_deadline = time.monotonic() + self._POLL_INTERVAL
+            while not self._stop.is_set():
+                pythoncom.PumpWaitingMessages()  # delivers queued ItemAdd/Reminder
+                if time.monotonic() >= poll_deadline:
+                    self._poll_all()
+                    poll_deadline = time.monotonic() + self._POLL_INTERVAL
+                self._stop.wait(self._PUMP_INTERVAL)
         finally:
+            self._bound = []
+            self._reminder_sink = None
+            self._app = None
             pythoncom.CoUninitialize()
+
+    def _bind_watches(self, win32com_client: Any, namespace: Any) -> None:
+        """Resolve each watch and bind its folder's Items.ItemAdd sink. A watch that
+        can't resolve logs one line and is skipped — never crashing the others."""
+        for watch in self._watches():
+            mailbox, folder = watch["mailbox"], watch["folder"]
+            try:
+                items = _resolve_watch(namespace, mailbox, folder).Items
+                sink = win32com_client.WithEvents(items, _FolderItemsSink)
+            except Exception:
+                logger.warning(
+                    "outlook: cannot watch mailbox=%r folder=%r — skipping",
+                    mailbox or "(default)",
+                    folder,
+                )
+                continue
+            sink._on_add = lambda item, mb=mailbox, fd=folder: self._handle_item(
+                item, mb, fd
+            )
+            self._bound.append((sink, items, mailbox, folder))
+
+    def _bind_reminders(self, win32com_client: Any, app: Any) -> None:
+        try:
+            sink = win32com_client.WithEvents(app, _AppReminderSink)
+            sink._on_reminder = lambda item: self._enqueue(
+                Event.new("outlook", "reminder", _reminder_payload(item))
+            )
+            self._reminder_sink = sink
+        except Exception:
+            logger.warning("outlook: could not bind reminders")
+
+    def _poll_all(self) -> None:
+        """Fallback for bulk moves ItemAdd misses: scan each watched folder for
+        items received since the high-water mark, hand them to the deduped handler,
+        and advance the mark. Best-effort; a per-folder failure is logged, not fatal."""
+        stamp = time.strftime(
+            "%m/%d/%Y %I:%M %p", time.localtime(self._poll_high_water)
+        )
+        newest = self._poll_high_water
+        for _sink, items, mailbox, folder in self._bound:
+            try:
+                recent = items.Restrict(f"[ReceivedTime] > '{stamp}'")
+                for item in recent:
+                    self._handle_item(item, mailbox, folder)
+                    ts = _to_dt(_attr(item, "ReceivedTime", None))
+                    if ts is not None:
+                        newest = max(newest, ts.timestamp())
+            except Exception:
+                logger.debug("outlook: poll of %r failed", folder, exc_info=True)
+        self._poll_high_water = max(self._poll_high_water, newest)
 
 
 def save_reply_draft(
@@ -477,68 +474,6 @@ def send_draft(entry_id: str) -> dict[str, str]:
         }
         draft.Send()
         return summary
-    finally:
-        pythoncom.CoUninitialize()
-
-
-# ── mailbox-claim marker send ─────────────────────────────────────────────────
-#
-# Claiming a shared-mailbox conversation (or changing its lifecycle) sends a tiny
-# marker email *to the shared mailbox itself*, threaded on the conversation, with
-# the marker as an X-Runspec-Claim internet header. Every staffing console sees it
-# land and folds it (mailbox_claim.fold_conversation); first ack wins. The marker
-# rides a PS_INTERNET_HEADERS named property, the documented way to add a custom
-# internet header to outbound Outlook mail so Exchange transport emits it.
-
-# PS_INTERNET_HEADERS namespace — a string named property under this GUID becomes
-# the internet header of the same name on the sent message.
-_PS_INTERNET_HEADERS = (
-    "http://schemas.microsoft.com/mapi/string/{00020386-0000-0000-C000-000000000046}/"
-)
-
-
-def send_claim_marker(
-    entry_id: str, marker_value: str, queue_address: str
-) -> dict[str, str]:
-    """Send a claim/lifecycle marker email: a reply **threaded** on the
-    conversation (so it inherits the ConversationID) but re-addressed to the
-    shared mailbox ``queue_address`` only — never the requester, who must not see
-    an internal ack (helpdesk-channels.md, rule 3). The marker rides the
-    ``X-Runspec-Claim`` header set via the PS_INTERNET_HEADERS named property.
-
-    Ownership is *not* asserted here — it changes only when this ack lands back in
-    the mailbox and folds (read-after-write). Returns a small summary; raises on
-    failure so the caller can report it on the card. Windows-only; COM stays here.
-    """
-    if sys.platform != "win32":
-        raise RuntimeError("claim requires Windows (Outlook COM)")
-    if not entry_id:
-        raise RuntimeError("claim has no source message to thread on")
-    if not queue_address:
-        raise RuntimeError("claim has no shared-mailbox address to send to")
-
-    import pythoncom
-    import win32com.client
-
-    pythoncom.CoInitialize()
-    try:
-        app = win32com.client.Dispatch("Outlook.Application")
-        namespace = app.GetNamespace("MAPI")
-        original = namespace.GetItemFromID(entry_id)
-        reply = original.Reply()  # inherits the ConversationID → stays threaded
-        # Re-address to the shared mailbox alone — drop the requester Reply() added.
-        while reply.Recipients.Count > 0:
-            reply.Recipients.Remove(1)
-        reply.Recipients.Add(queue_address)
-        reply.Recipients.ResolveAll()
-        reply.Body = (
-            "runspec claim marker (automated) — see the X-Runspec-Claim header."
-        )
-        reply.PropertyAccessor.SetProperty(
-            _PS_INTERNET_HEADERS + "x-runspec-claim", marker_value
-        )
-        reply.Send()
-        return {"to": queue_address, "marker": marker_value}
     finally:
         pythoncom.CoUninitialize()
 

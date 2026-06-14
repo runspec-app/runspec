@@ -109,13 +109,43 @@ def presence_payload(obj: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def conversation_payload(obj: dict[str, Any]) -> dict[str, Any]:
-    """Extract a ``conversation`` lifecycle payload (helpdesk thread state)."""
-    assignee = obj.get("assignee")
+def assignment_payload(obj: dict[str, Any]) -> dict[str, Any]:
+    """Extract an ``assignment`` payload — a portal request routed to *this*
+    console. Carries everything needed to enact it: the runnable, the visitor's
+    args, and the thread ``room`` to deliver the result on."""
+    args = obj.get("args")
     return {
+        "id": _str(obj.get("id")),
+        "room": _str(obj.get("room")),
+        "runnable": _str(obj.get("runnable")),
+        "args": args if isinstance(args, dict) else {},
+        "visitor": _str(obj.get("visitor")),
+    }
+
+
+def request_status_payload(obj: dict[str, Any]) -> dict[str, Any]:
+    """Extract a ``request_status`` payload — a portal request's lifecycle state
+    (``unassigned`` / ``assigned`` / ``in_progress`` / ``done`` / ``failed``)."""
+    assignee = obj.get("assignee")
+    error = obj.get("error")
+    return {
+        "id": _str(obj.get("id")),
         "room": _str(obj.get("room")),
         "state": _str(obj.get("state")),
         "assignee": _str(assignee) if assignee is not None else None,
+        "error": _str(error) if error is not None else None,
+    }
+
+
+def page_payload(obj: dict[str, Any]) -> dict[str, Any]:
+    """Extract a ``page`` payload — a chime naming a runnable an unassigned request
+    in this queue is waiting on (sent to every connected console, on shift or off)."""
+    return {
+        "id": _str(obj.get("id")),
+        "room": _str(obj.get("room")),
+        "runnable": _str(obj.get("runnable")),
+        "queue": _str(obj.get("queue")),
+        "visitor": _str(obj.get("visitor")),
     }
 
 
@@ -125,9 +155,11 @@ def parse_inbound(obj: Any, self_user: str) -> Event | None:
     Drops anything that isn't a dict, unknown ``type`` values, and — crucially —
     a ``message`` whose ``sender`` is this console (``self_user``): the server
     echoes our own sent messages back, and a console must never react to its own
-    acks. A console's own ``presence`` echo is dropped for the same reason.
-    ``conversation`` frames (helpdesk thread lifecycle) always pass — state is
-    server-authoritative, even when this console's claim caused it.
+    acks. A console's own ``presence`` echo is dropped for the same reason. The
+    portal frames — ``assignment`` (a request routed to this console),
+    ``request_status`` (a request's claim-free lifecycle), and ``page`` (a chime
+    for an unassigned request) — always pass; they have no ``sender`` to
+    self-filter.
     """
     if not isinstance(obj, dict):
         return None
@@ -140,8 +172,12 @@ def parse_inbound(obj: Any, self_user: str) -> Event | None:
         if self_user and _str(obj.get("user")) == self_user:
             return None
         return Event.new("chat", "presence", presence_payload(obj))
-    if kind == "conversation":
-        return Event.new("chat", "conversation", conversation_payload(obj))
+    if kind == "assignment":
+        return Event.new("chat", "assignment", assignment_payload(obj))
+    if kind == "request_status":
+        return Event.new("chat", "request_status", request_status_payload(obj))
+    if kind == "page":
+        return Event.new("chat", "page", page_payload(obj))
     return None
 
 
@@ -206,7 +242,7 @@ class ChatSource:
         return (True, "")
 
     def event_types(self) -> list[str]:
-        return ["message", "presence", "conversation"]
+        return ["message", "presence", "assignment", "request_status", "page"]
 
     def start(self, emit: EmitFn) -> None:
         ok, reason = self.available()
@@ -278,20 +314,6 @@ class ChatSource:
         except Exception:
             logger.exception("chat: catalog send failed")
 
-    _CONTROL_KINDS = ("claim", "resolve", "reopen", "close")
-
-    def send_control(self, kind: str, room: str) -> None:
-        """Send a conversation-lifecycle control frame (agent mode only):
-        claim / resolve / reopen / close on one conversation. The hub enforces
-        the namespace boundary and broadcasts the state change."""
-        transport = self._transport
-        if transport is None or not self.is_agent or kind not in self._CONTROL_KINDS:
-            return
-        try:
-            transport.send({"type": kind, "room": room})
-        except Exception:
-            logger.exception("chat: control %r send failed", kind)
-
     def _send_hello(self) -> None:
         """Announce identity on connect — the first frame the room server expects.
         It binds ``user`` to this connection and stamps it onto every later
@@ -313,15 +335,44 @@ class ChatSource:
             logger.exception("chat: hello send failed")
 
     def _send_presence(self, status: str) -> None:
-        # Agent presence is server-side (join/leave of the namespace) — the hub
-        # ignores agent presence frames, so don't send them.
+        # An agent's presence is its **rota** (on shift = available / off shift =
+        # away): the hub moves the console's runnables in/out of the live catalogue
+        # accordingly, so — unlike before the portal — agents *do* send it. A member
+        # names its room; an agent's presence is namespace-wide (no room).
         transport = self._transport
-        if transport is None or self.is_agent:
+        if transport is None:
             return
+        frame: dict[str, Any] = {"type": "presence", "status": status}
+        if not self.is_agent:
+            frame["room"] = self._room
         try:
-            transport.send({"type": "presence", "room": self._room, "status": status})
+            transport.send(frame)
         except Exception:
             logger.exception("chat: presence send failed")
+
+    def send_request_start(self, request_id: str) -> None:
+        """Tell the hub this console began enacting an assigned request → the thread
+        shows ``in_progress`` (agent mode only)."""
+        self._send_request_control({"type": "request_start", "id": request_id})
+
+    def send_request_complete(
+        self, request_id: str, *, error: str | None = None
+    ) -> None:
+        """Tell the hub this console finished an assigned request → the thread shows
+        ``done`` (or ``failed`` when ``error`` is set; agent mode only)."""
+        frame: dict[str, Any] = {"type": "request_complete", "id": request_id}
+        if error:
+            frame["error"] = error
+        self._send_request_control(frame)
+
+    def _send_request_control(self, frame: dict[str, Any]) -> None:
+        transport = self._transport
+        if transport is None or not self.is_agent:
+            return
+        try:
+            transport.send(frame)
+        except Exception:
+            logger.exception("chat: request control %r send failed", frame.get("type"))
 
     def _handle(self, obj: Any) -> None:
         """Route one inbound wire dict (split out so routing is tested without

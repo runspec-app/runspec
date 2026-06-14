@@ -178,15 +178,16 @@ def create_app(
         return JSONResponse({"auth": auth is not None, "user": session_user(request)})
 
     async def catalog(request: Any) -> JSONResponse:
-        """The self-service catalog for a queue — what the on-shift agent consoles
-        have published. Gated like the WS: in auth mode you must be signed in."""
+        """The live self-service catalogue for a queue — the union of the runnables
+        the *on-shift* agent consoles have published. Gated like the WS: in auth
+        mode you must be signed in."""
         if auth is not None and not session_user(request):
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         queue = (request.query_params.get("queue") or "").strip()
         if not valid_token(queue):
             return JSONResponse({"error": "queue required"}, status_code=400)
         return JSONResponse(
-            {"queue": queue, "tools": hub.catalog_for(queue_namespace(queue))}
+            {"queue": queue, "tools": hub.live_catalog(queue_namespace(queue))}
         )
 
     async def healthz(_request: Any) -> JSONResponse:

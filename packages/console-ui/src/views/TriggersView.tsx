@@ -1,21 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input, Drawer } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined, SendOutlined, FlagOutlined, UndoOutlined } from '@ant-design/icons'
+import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined, SendOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
-// A queue card is a helpdesk conversation surfaced in the Triggers inbox, fed by
-// one of two channels: chat (a runspec-room thread, source === 'chat') or email
-// (a shared mailbox, source === 'email'). Both render the lifecycle chip. Only
-// chat is hub-backed, so claim/lifecycle + the live conversation pane (which read
-// the room hub) are gated to chat for now — email claim/reply is a later slice
-// (see docs/design/helpdesk-channels.md).
+// A chat card is a helpdesk-room thread surfaced in the Triggers inbox (source
+// === 'chat'); clicking it opens the live conversation pane. A portal card
+// (source === 'portal') is a runnables-portal request the hub routed to this
+// console — it opens the detail drawer, where the autonomy-gate Approve/Deny and
+// the enactment result render (the claim-free request lifecycle, no claim
+// controls). See docs/design/runnables-portal.md.
 type QueueMsg = { sender?: string; text?: string; id?: string; ts?: number; kind?: string }
-const STATE_COLORS: Record<string, string> = {
-  open: 'gold', assigned: 'blue', resolved: 'green', closed: 'default',
-}
-const isQueueCard = (c: TriggerCard) => c.source === 'chat' || c.source === 'email'
-const isChatQueue = (c: TriggerCard) => c.source === 'chat'
+const isChatCard = (c: TriggerCard) => c.source === 'chat'
 const visitorOf = (room: string) => room.split('/').slice(2).join('/') || room
 
 const DAYS: [string, string][] = [
@@ -205,11 +201,7 @@ export function TriggersView() {
   // Live transcript per conversation room, and the composer draft per room.
   const [messages, setMessages] = useState<Record<string, QueueMsg[]>>({})
   const [convoDraft, setConvoDraft] = useState<Record<string, string>>({})
-  const [acting, setActing] = useState(false)
   const [sending, setSending] = useState(false)
-  // Reply composer per email queue card (the detail drawer), and its in-flight flag.
-  const [emailReply, setEmailReply] = useState<Record<string, string>>({})
-  const [replying, setReplying] = useState(false)
   // Event-audit feed: every event seen + its disposition (newest first).
   const [events, setEvents] = useState<TriggerEvent[]>([])
   // Draft replies an agent-mode trigger saved, keyed by card id — drives the
@@ -337,43 +329,6 @@ export function TriggersView() {
     setPending(prev => { const next = { ...prev }; delete next[cardId]; return next })
   }
 
-  // Queue-conversation lifecycle (Claim/Resolve/Reopen/Close) — the same controls
-  // the Rooms inbox had; the new state comes back as a folded trigger card.
-  const control = async (kind: 'claim' | 'resolve' | 'reopen' | 'close', room: string) => {
-    setActing(true)
-    try {
-      const fn = { claim: bridge.claim_thread, resolve: bridge.resolve_thread, reopen: bridge.reopen_thread, close: bridge.close_thread }[kind]
-      await fn(room)
-    } catch (err) { console.error(err) }
-    finally { setActing(false) }
-  }
-
-  // Email queue-card lifecycle — keyed by card_id (the shared-mailbox channel has
-  // no room). The action sends a marker email; the new state arrives as a folded
-  // trigger card once the ack lands back in the mailbox (mailbox_claim).
-  const controlEmail = async (kind: 'claim' | 'resolve' | 'reopen' | 'close', cardId: string) => {
-    setActing(true)
-    try {
-      const fn = { claim: bridge.claim_email_thread, resolve: bridge.resolve_email_thread, reopen: bridge.reopen_email_thread, close: bridge.close_email_thread }[kind]
-      await fn(cardId)
-    } catch (err) { console.error(err) }
-    finally { setActing(false) }
-  }
-
-  // Reply to an email queue card's requester (drafts in Outlook + sends). The
-  // bridge gates this on ownership; we only show the box when this console owns it.
-  const sendEmailReply = async (cardId: string) => {
-    const body = (emailReply[cardId] || '').trim()
-    if (!body) return
-    setReplying(true)
-    try {
-      const res = await bridge.reply_email_thread(cardId, body)
-      if (res.ok) setEmailReply(prev => ({ ...prev, [cardId]: '' }))
-      else console.error(res.error)
-    } catch (err) { console.error(err) }
-    finally { setReplying(false) }
-  }
-
   const sendReply = async (room: string) => {
     const text = (convoDraft[room] || '').trim()
     if (!text) return
@@ -400,7 +355,6 @@ export function TriggersView() {
   const selectedCard = selected ? cards[selected] : undefined
   const convoCard = convo ? cards[convo] : undefined
   const convoRoom = (convoCard?.detail?.room as string | undefined) || ''
-  const convoState = (convoCard?.detail?.state as string | undefined) || 'open'
 
   const dim = isDark ? '#888' : '#999'
   const cardBg = isDark ? '#1f1f1f' : '#fafafa'
@@ -550,15 +504,10 @@ export function TriggersView() {
       ) : (
         <div style={{ border: `1px solid ${border}`, borderRadius: 6 }}>
           {runs.map((card, i) => {
-            const q = isQueueCard(card)
-            // Only chat queue cards open the live conversation pane (it reads the
-            // room hub); an email card opens the detail drawer. Both channels get
-            // the lifecycle buttons — chat routes by room, email by card_id.
-            const chat = isChatQueue(card)
-            const st = (card.detail?.state as string | undefined) || 'open'
-            const room = (card.detail?.room as string | undefined) || ''
-            const act = (kind: 'claim' | 'resolve' | 'reopen' | 'close') =>
-              chat ? control(kind, room) : controlEmail(kind, card.card_id)
+            // A chat card opens the live conversation pane (it reads the room hub);
+            // everything else (portal requests, matched triggers, reminders) opens
+            // the detail drawer, where the Approve/Deny gate + result render.
+            const chat = isChatCard(card)
             return (
             <div
               key={card.card_id}
@@ -570,28 +519,14 @@ export function TriggersView() {
                 background: selected === card.card_id || convo === card.card_id ? colBg : undefined,
               }}
             >
-              {q
-                ? <Tag color={STATE_COLORS[st] || 'default'} style={{ marginInlineEnd: 0, flexShrink: 0 }}>{st}</Tag>
-                : <StatusBadge status={statusOf(card)} />}
+              <StatusBadge status={statusOf(card)} />
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>
                 {card.summary}
               </span>
               <span style={{ color: dim, flexShrink: 0 }}>{card.trigger}</span>
-              {q && st === 'open' && (
-                <Button size="small" type="primary" icon={<FlagOutlined />} loading={acting}
-                  onClick={e => { e.stopPropagation(); act('claim') }}>Claim</Button>
-              )}
-              {q && st === 'assigned' && (
-                <Button size="small" icon={<CheckOutlined />} loading={acting}
-                  onClick={e => { e.stopPropagation(); act('resolve') }}>Resolve</Button>
-              )}
-              {q && (st === 'resolved' || st === 'closed') && (
-                <Button size="small" icon={<UndoOutlined />} loading={acting}
-                  onClick={e => { e.stopPropagation(); act('reopen') }}>Reopen</Button>
-              )}
               {pending[card.card_id] && (
                 <Button
-                  size="small" type="primary" danger={q}
+                  size="small" type="primary"
                   onClick={e => { e.stopPropagation(); setSelected(card.card_id) }}
                 >
                   Review
@@ -628,22 +563,22 @@ export function TriggersView() {
                 <span style={{ color: dim, fontFamily: 'monospace', marginLeft: 'auto' }}>{fmtTime(card.created_at)}</span>
               </div>
 
-              {/* Reply to the requester — only when this console owns the email
-                  conversation (the bridge enforces the same gate server-side). */}
-              {card.source === 'email' && card.detail?.owned_by_me ? (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>Reply to {String(card.detail?.visitor ?? 'requester')}</div>
-                  <Input.TextArea
-                    value={emailReply[card.card_id] || ''}
-                    onChange={e => setEmailReply(prev => ({ ...prev, [card.card_id]: e.target.value }))}
-                    placeholder="Your reply — drafted in Outlook and sent…"
-                    autoSize={{ minRows: 2, maxRows: 6 }}
-                  />
-                  <div style={{ marginTop: 8, textAlign: 'right' }}>
-                    <Button type="primary" icon={<SendOutlined />} loading={replying}
-                      disabled={!(emailReply[card.card_id] || '').trim()}
-                      onClick={() => sendEmailReply(card.card_id)}>Send reply</Button>
+              {/* A portal request the hub routed here: what the visitor asked for.
+                  Approve/Deny below enacts it through the autonomy gate; the result
+                  + timeline land in this same drawer as the audit record. */}
+              {card.source === 'portal' ? (
+                <div style={{ marginBottom: 16, border: `1px solid ${border}`, borderRadius: 6, padding: 12 }}>
+                  <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>
+                    {String(card.detail?.visitor ?? 'A visitor')} requested
                   </div>
+                  <div style={{ fontFamily: 'monospace', marginBottom: 6 }}>{String(card.detail?.runnable ?? '')}</div>
+                  {!!card.detail?.args && Object.keys(card.detail.args as object).length > 0 && (
+                    <div style={{ whiteSpace: 'pre-wrap', fontSize: 12, color: dim }}>
+                      {Object.entries(card.detail.args as Record<string, unknown>)
+                        .map(([k, v]) => `${k} = ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+                        .join('\n')}
+                    </div>
+                  )}
                 </div>
               ) : null}
 
@@ -735,22 +670,9 @@ export function TriggersView() {
       {convoCard && (
         <div style={{ marginTop: 16, border: `1px solid ${border}`, borderRadius: 6, display: 'flex', flexDirection: 'column', maxHeight: 440 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: `1px solid ${border}` }}>
-            <Tag color={STATE_COLORS[convoState] || 'default'} style={{ marginInlineEnd: 0 }}>{convoState}</Tag>
             <span style={{ fontWeight: 600 }}>{visitorOf(convoRoom)}</span>
             <span style={{ color: dim }}>· {convoCard.detail?.queue as string}</span>
             <Space style={{ marginLeft: 'auto' }}>
-              {convoState === 'open' && (
-                <Button size="small" type="primary" icon={<FlagOutlined />} loading={acting} onClick={() => control('claim', convoRoom)}>Claim</Button>
-              )}
-              {convoState === 'assigned' && (
-                <Button size="small" icon={<CheckOutlined />} loading={acting} onClick={() => control('resolve', convoRoom)}>Resolve</Button>
-              )}
-              {(convoState === 'resolved' || convoState === 'closed') && (
-                <Button size="small" icon={<UndoOutlined />} loading={acting} onClick={() => control('reopen', convoRoom)}>Reopen</Button>
-              )}
-              {convoState !== 'closed' && (
-                <Button size="small" danger icon={<CloseOutlined />} loading={acting} onClick={() => control('close', convoRoom)}>Close</Button>
-              )}
               <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setConvo(null)} title="Hide conversation" />
             </Space>
           </div>

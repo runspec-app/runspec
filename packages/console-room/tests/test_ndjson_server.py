@@ -259,39 +259,65 @@ def test_agent_is_caught_up_on_open_conversations_on_subscribe():
     assert ("helpdesk/it/alice@corp", "alice@corp", "available") in presences
 
 
-def test_agent_claim_and_resolve_control_frames_drive_lifecycle():
+def test_agent_request_start_complete_frames_drive_lifecycle():
     async def scenario():
         hub = Hub(FakeStore())
+        conn = NdjsonConsoleConnection(_reader(), FakeWriter())
+        conn.user, conn.namespace, conn.is_agent = "agent@web01", "helpdesk/it", True
+        await hub.join_agent(conn)
+        await conn._dispatch(
+            hub, {"type": "catalog", "tools": [{"name": "reset-password"}]}
+        )
         alice = FakeP("alice@corp", "helpdesk/it/alice@corp")
         await hub.join(alice)
-        await hub.on_message(alice, "printer down")  # opens the thread
-        reader = _reader(
-            {"type": "hello", "namespace": "helpdesk/it", "user": "agent@web01"},
-            {"type": "claim", "room": "helpdesk/it/alice@corp"},
-            {"type": "resolve", "room": "helpdesk/it/alice@corp"},
-        )
-        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
-        return hub
+        req = await hub.submit_request(alice, "reset-password", {})  # → assigns to conn
+        await conn._dispatch(hub, {"type": "request_start", "id": req.id})
+        started = hub.request_state(req.id)
+        await conn._dispatch(hub, {"type": "request_complete", "id": req.id})
+        return started, hub.request_state(req.id)
 
-    hub = run(scenario())
-    assert hub.conversation_state("helpdesk/it/alice@corp") == "resolved"
+    started, done = run(scenario())
+    assert started == "in_progress" and done == "done"
 
 
-def test_agent_catalog_frame_publishes_to_queue():
+def test_agent_request_complete_with_error_fails():
     async def scenario():
         hub = Hub(FakeStore())
-        reader = _reader(
-            {"type": "hello", "namespace": "helpdesk/it", "user": "agent@web01"},
-            {
-                "type": "catalog",
-                "tools": [{"name": "reset-password", "description": "Reset it"}],
-            },
+        conn = NdjsonConsoleConnection(_reader(), FakeWriter())
+        conn.user, conn.namespace, conn.is_agent = "agent@web01", "helpdesk/it", True
+        await hub.join_agent(conn)
+        await conn._dispatch(
+            hub, {"type": "catalog", "tools": [{"name": "reset-password"}]}
         )
-        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
-        return hub
+        alice = FakeP("alice@corp", "helpdesk/it/alice@corp")
+        await hub.join(alice)
+        req = await hub.submit_request(alice, "reset-password", {})
+        await conn._dispatch(
+            hub, {"type": "request_complete", "id": req.id, "error": "boom"}
+        )
+        return hub._requests.get(req.id)
 
-    hub = run(scenario())
-    assert [t["name"] for t in hub.catalog_for("helpdesk/it")] == ["reset-password"]
+    failed = run(scenario())
+    assert failed.state == "failed" and failed.error == "boom"
+
+
+def test_agent_catalog_frame_publishes_to_live_catalogue():
+    async def scenario():
+        hub = Hub(FakeStore())
+        conn = NdjsonConsoleConnection(_reader(), FakeWriter())
+        conn.user, conn.namespace, conn.is_agent = "agent@web01", "helpdesk/it", True
+        await hub.join_agent(conn)
+        await conn._dispatch(
+            hub, {"type": "catalog", "tools": [{"name": "reset-password"}]}
+        )
+        published = [t["name"] for t in hub.live_catalog("helpdesk/it")]
+        await hub.leave_agent(conn)  # the console disconnects
+        return published, hub.live_catalog("helpdesk/it")
+
+    published, withdrawn = run(scenario())
+    assert published == ["reset-password"]
+    # A runnable no longer backed by a connected console vanishes from the catalogue.
+    assert withdrawn == []
 
 
 def test_member_catalog_frame_is_ignored():
@@ -306,20 +332,23 @@ def test_member_catalog_frame_is_ignored():
         return hub
 
     hub = run(scenario())
-    assert hub.catalog_for("ops") == []
+    assert hub.live_catalog("ops") == []  # nothing published from a member frame
 
 
-def test_member_control_frames_are_ignored():
-    # A plain room member (visitor / group-chat console) can't drive the lifecycle.
+def test_member_message_persists_and_unknown_control_ignored():
+    # A plain room member's message persists; an unknown control frame is dropped
+    # (there is no agent-driven thread lifecycle any more — the request lifecycle
+    # is claim-free and travels in request_status).
     async def scenario():
-        hub = Hub(FakeStore())
+        store = FakeStore()
+        hub = Hub(store)
         reader = _reader(
             {"type": "hello", "room": "helpdesk/it/alice@corp", "user": "alice@corp"},
-            {"type": "message", "text": "printer down"},  # opens (visitor path)
-            {"type": "close", "room": "helpdesk/it/alice@corp"},  # must be ignored
+            {"type": "message", "text": "printer down"},
+            {"type": "close", "room": "helpdesk/it/alice@corp"},  # unknown → dropped
         )
         await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
-        return hub
+        return store
 
-    hub = run(scenario())
-    assert hub.conversation_state("helpdesk/it/alice@corp") == "open"  # not closed
+    store = run(scenario())
+    assert [m.text for m in store.appended] == ["printer down"]

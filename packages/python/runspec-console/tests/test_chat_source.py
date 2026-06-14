@@ -15,9 +15,12 @@ from runspec_console import config
 from runspec_console.events import Event, EventSource, available_sources, create_source
 from runspec_console.sources.chat import (
     ChatSource,
+    assignment_payload,
     message_payload,
+    page_payload,
     parse_inbound,
     presence_payload,
+    request_status_payload,
 )
 
 
@@ -322,7 +325,9 @@ def test_event_types():
     assert ChatSource(room="ops", transport=FakeTransport()).event_types() == [
         "message",
         "presence",
-        "conversation",
+        "assignment",
+        "request_status",
+        "page",
     ]
 
 
@@ -345,8 +350,12 @@ def test_agent_hello_declares_namespace():
         "namespace": "helpdesk/it",
         "user": "agent@web01",
     }
-    # Agent presence is server-side (namespace join/leave) — never sent.
-    assert [m for m in transport.sent if m["type"] == "presence"] == []
+    # An agent's presence is its rota (available on start, away on stop) — sent
+    # without a room, since it's namespace-wide. The hub moves the console's
+    # runnables in/out of the live catalogue on it.
+    presence = [m for m in transport.sent if m["type"] == "presence"]
+    assert presence[0] == {"type": "presence", "status": "available"}
+    assert presence[-1] == {"type": "presence", "status": "away"}
 
 
 def test_agent_send_message_names_the_conversation():
@@ -370,46 +379,127 @@ def test_agent_send_message_without_conversation_is_dropped():
     assert [m for m in transport.sent if m["type"] == "message"] == []
 
 
-def test_send_catalog_and_controls_are_agent_only():
+def test_send_catalog_is_agent_only():
     member_t = FakeTransport()
     member = ChatSource(room="ops", user="c", transport=member_t)
     member.start(lambda ev: None)
     member.send_catalog([{"name": "x"}])
-    member.send_control("claim", "helpdesk/it/alice@corp")
     member.stop()
-    assert [m for m in member_t.sent if m["type"] in ("catalog", "claim")] == []
+    assert [m for m in member_t.sent if m["type"] == "catalog"] == []
 
     agent_t = FakeTransport()
     agent = _agent(agent_t)
     agent.start(lambda ev: None)
     agent.send_catalog([{"name": "reset-password"}])
-    agent.send_control("claim", "helpdesk/it/alice@corp")
-    agent.send_control("resolve", "helpdesk/it/alice@corp")
-    agent.send_control("drop-tables", "helpdesk/it/alice@corp")  # unknown → dropped
     agent.stop()
-    kinds = [m["type"] for m in agent_t.sent]
-    assert "catalog" in kinds and "claim" in kinds and "resolve" in kinds
-    assert "drop-tables" not in kinds
     cat = next(m for m in agent_t.sent if m["type"] == "catalog")
     assert cat["tools"] == [{"name": "reset-password"}]
 
 
-def test_parse_inbound_conversation_frame():
+# ── portal frames: assignment / request_status / page ──────────────────────────
+
+
+def test_parse_inbound_assignment_frame():
     ev = parse_inbound(
         {
-            "type": "conversation",
+            "type": "assignment",
+            "id": "req1",
             "room": "helpdesk/it/alice@corp",
-            "state": "assigned",
-            "assignee": "agent@web01",
+            "runnable": "reset-password",
+            "args": {"user": "alice"},
+            "visitor": "alice@corp",
         },
         "agent@web01",
     )
-    assert ev is not None and ev.type == "conversation"
+    assert ev is not None and ev.type == "assignment"
     assert ev.payload == {
+        "id": "req1",
         "room": "helpdesk/it/alice@corp",
-        "state": "assigned",
-        "assignee": "agent@web01",
+        "runnable": "reset-password",
+        "args": {"user": "alice"},
+        "visitor": "alice@corp",
     }
+
+
+def test_assignment_payload_tolerates_bad_args():
+    assert assignment_payload({"id": "r", "args": "not-a-dict"})["args"] == {}
+
+
+def test_parse_inbound_request_status_frame():
+    ev = parse_inbound(
+        {
+            "type": "request_status",
+            "id": "req1",
+            "room": "helpdesk/it/alice@corp",
+            "state": "failed",
+            "assignee": "agent@web01",
+            "error": "boom",
+        },
+        "agent@web01",
+    )
+    assert ev is not None and ev.type == "request_status"
+    assert ev.payload == {
+        "id": "req1",
+        "room": "helpdesk/it/alice@corp",
+        "state": "failed",
+        "assignee": "agent@web01",
+        "error": "boom",
+    }
+    # No error key → error is None (a clean done).
+    assert request_status_payload({"id": "r", "state": "done"})["error"] is None
+
+
+def test_parse_inbound_page_frame():
+    ev = parse_inbound(
+        {
+            "type": "page",
+            "id": "req1",
+            "room": "helpdesk/it/alice@corp",
+            "runnable": "reset-password",
+            "queue": "it",
+            "visitor": "alice@corp",
+        },
+        "agent@web01",
+    )
+    assert ev is not None and ev.type == "page"
+    assert ev.payload == page_payload(
+        {
+            "id": "req1",
+            "room": "helpdesk/it/alice@corp",
+            "runnable": "reset-password",
+            "queue": "it",
+            "visitor": "alice@corp",
+        }
+    )
+
+
+def test_send_request_controls_are_agent_only():
+    member_t = FakeTransport()
+    member = ChatSource(room="ops", user="c", transport=member_t)
+    member.start(lambda ev: None)
+    member.send_request_start("req1")
+    member.send_request_complete("req1")
+    member.stop()
+    assert [m for m in member_t.sent if m["type"].startswith("request_")] == []
+
+    agent_t = FakeTransport()
+    agent = _agent(agent_t)
+    agent.start(lambda ev: None)
+    agent.send_request_start("req1")
+    agent.send_request_complete("req1")
+    agent.send_request_complete("req2", error="boom")
+    agent.stop()
+    controls = [m for m in agent_t.sent if m["type"].startswith("request_")]
+    assert controls == [
+        {"type": "request_start", "id": "req1"},
+        {"type": "request_complete", "id": "req1"},
+        {"type": "request_complete", "id": "req2", "error": "boom"},
+    ]
+
+
+def test_parse_inbound_drops_conversation_frame():
+    # The claim-based conversation lifecycle is gone — its frame is now unknown.
+    assert parse_inbound({"type": "conversation", "state": "assigned"}, "me") is None
 
 
 def test_message_payload_carries_request_kind_and_data():

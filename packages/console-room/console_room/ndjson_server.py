@@ -23,12 +23,10 @@ from typing import Any
 from .hub import Hub
 from .models import (
     CATALOG,
-    CLAIM,
-    CLOSE,
     MESSAGE,
     PRESENCE,
-    REOPEN,
-    RESOLVE,
+    REQUEST_COMPLETE,
+    REQUEST_START,
     normalize_status,
     parse_catalog,
     parse_hello,
@@ -110,10 +108,6 @@ class NdjsonConsoleConnection:
                 break  # EOF / channel closed
             await self._dispatch(hub, frame)
 
-    #: Agent control-frame type → the hub coroutine it drives. Each takes
-    #: ``(self, room)`` and moves the named conversation through its lifecycle.
-    _CONTROLS = {CLAIM: "claim", RESOLVE: "resolve", REOPEN: "reopen", CLOSE: "close"}
-
     async def _dispatch(self, hub: Hub, frame: dict[str, Any]) -> None:
         kind = frame.get("type")
         if kind == MESSAGE:
@@ -130,18 +124,34 @@ class NdjsonConsoleConnection:
                 await hub.on_message(self, text)
         elif kind == PRESENCE and not self.is_agent:
             await hub.on_presence(self, normalize_status(frame.get("status")))
-        elif self.is_agent and kind in self._CONTROLS:
-            # Lifecycle control (claim/resolve/reopen/close) — agents only, scoped
-            # to a named conversation in the agent's namespace.
-            room = str(frame.get("room") or "").strip()
-            if room:
-                await getattr(hub, self._CONTROLS[kind])(self, room)
+        elif kind == PRESENCE and self.is_agent:
+            # An agent's rota flip (on/off shift). It stays connected either way;
+            # this moves its runnables in/out of the live catalogue and, coming on
+            # shift, drains any backlog it can now serve.
+            await hub.set_agent_shift(
+                self, normalize_status(frame.get("status")) == "available"
+            )
+        elif self.is_agent and kind == REQUEST_START:
+            # The assigned operator began enacting a portal request.
+            request_id = str(frame.get("id") or "").strip()
+            if request_id:
+                await hub.start_request(self, request_id)
+        elif self.is_agent and kind == REQUEST_COMPLETE:
+            # The assigned operator finished — ``error`` (if any) marks a failure.
+            request_id = str(frame.get("id") or "").strip()
+            error = frame.get("error")
+            if request_id:
+                await hub.complete_request(
+                    self, request_id, str(error) if error else None
+                )
         elif self.is_agent and kind == CATALOG:
             # The console publishing its queue's self-service catalog (filtered to
             # x-discoverable ∋ "self-service" on its side). [] clears it.
             tools = parse_catalog(frame)
             if tools is not None:
-                hub.set_catalog(self.namespace, tools)
+                # Record this console's runnables in the presence-aware live
+                # catalogue (portal routing + affinity). [] clears its contribution.
+                hub.publish_catalog(self, tools)
         # hello-after-hello, agent presence, and unknown types are ignored.
 
     async def _read_frame(self) -> dict[str, Any] | None:

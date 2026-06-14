@@ -8,6 +8,7 @@
   --accent: #4f9cf9;
   --ok: #3fb950;
   --warn: #d29922;
+  --err: #e06c75;
 }
 * { box-sizing: border-box; }
 /* `.join` / `#app` set display:flex, which beats the UA [hidden] rule — so the
@@ -99,27 +100,49 @@ header .spacer { flex: 1; }
 .composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--panel); }
 .composer input { flex: 1; }
 
-/* ── help desk ── */
-/* Conversation lifecycle chip in the header (driven by conversation frames). */
-.convstate {
-  font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-}
-.convstate.open { color: var(--warn); border-color: var(--warn); }
-.convstate.assigned { color: var(--accent); border-color: var(--accent); }
-.convstate.resolved { color: var(--ok); border-color: var(--ok); }
-.convstate.closed { color: var(--muted); }
-
-/* A structured catalog request in the transcript. */
+/* ── runnables portal ── */
+/* A structured catalogue request in the transcript. */
 .msg.req .text {
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 6px 10px;
   background: #101a28;
 }
+
+/* A request's claim-free lifecycle, rendered inline under its request message. */
+.reqstatus {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.reqstatus:empty { display: none; }
+.reqbadge {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.reqbadge.unassigned { color: var(--warn); border-color: var(--warn); }
+.reqbadge.assigned,
+.reqbadge.in_progress { color: var(--accent); border-color: var(--accent); }
+.reqbadge.done { color: var(--ok); border-color: var(--ok); }
+.reqbadge.failed { color: var(--err, #e06c75); border-color: var(--err, #e06c75); }
+.reqnote { font-size: 12px; color: var(--muted); }
+.reqerr { font-size: 12px; color: var(--err, #e06c75); }
+.page-btn {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--warn);
+  background: transparent;
+  color: var(--warn);
+  cursor: pointer;
+}
+.page-btn:disabled { color: var(--ok); border-color: var(--ok); cursor: default; }
 
 /* The self-service catalog panel (helpdesk mode). */
 #catalog-panel { margin-bottom: 16px; }

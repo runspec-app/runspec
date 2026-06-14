@@ -17,39 +17,17 @@ import pytest
 
 from runspec_console.sources.outlook import (
     OutlookSource,
-    _PR_TRANSPORT_HEADERS,
-    _PS_INTERNET_HEADERS,
+    _descend,
+    _folder_segments,
     _mail_payload,
-    _named_header,
-    _received_ts_from_headers,
-    _recipients_from_headers,
     _reminder_payload,
     _split_categories,
     save_reply_draft,
-    send_claim_marker,
     send_draft,
 )
 
 
 # ── payload extraction ────────────────────────────────────────────────────────
-
-
-def _prop_accessor(*, transport: str = "", named: dict[str, str] | None = None):
-    """A fake COM PropertyAccessor: the transport-header blob for
-    PR_TRANSPORT_MESSAGE_HEADERS, a value per PS_INTERNET_HEADERS named property,
-    and "" otherwise — so a test can carry a header on either path independently
-    (real mail has the marker on one or the other, not "blob for every property")."""
-    named = named or {}
-
-    def get(prop):
-        if prop == _PR_TRANSPORT_HEADERS:
-            return transport
-        for n, v in named.items():
-            if prop == _PS_INTERNET_HEADERS + n:
-                return v
-        return ""
-
-    return SimpleNamespace(GetProperty=get)
 
 
 def test_mail_payload_basic():
@@ -70,16 +48,23 @@ def test_mail_payload_basic():
         "to": "ops@us.com",
         "subject": "Outage on web01",
         "body": "the site is down",
+        "mailbox": "",  # no watch tag passed → empty
+        "folder": "",
         "received": "2026-06-09 10:00",
         "categories": ["Red Category", "Blue Category"],
         "entry_id": "ENT123",
         "conversation_id": "CONV789",
-        # No PropertyAccessor on the fake → no transport headers → no header fields.
-        "recipients": [],
-        "received_ts": 0.0,
-        "message_id": "",
-        "claim_marker": "",
     }
+
+
+def test_mail_payload_carries_watch_tags():
+    # The source tags each event with the mailbox + folder it watched.
+    p = _mail_payload(
+        SimpleNamespace(Subject="hi"),
+        mailbox="it-support@corp.com",
+        folder="Tickets/Open",
+    )
+    assert p["mailbox"] == "it-support@corp.com" and p["folder"] == "Tickets/Open"
 
 
 def test_mail_payload_conversation_id_empty_when_missing():
@@ -88,119 +73,45 @@ def test_mail_payload_conversation_id_empty_when_missing():
     assert _mail_payload(SimpleNamespace(Subject="hi"))["conversation_id"] == ""
 
 
-def test_mail_payload_recipients_from_transport_headers():
-    # The real SMTP address comes from the transport header block, not the To
-    # display name — read via the COM PropertyAccessor (faked here).
-    blob = "To: IT Support <it-support@corp.com>\r\nSubject: hi\r\n"
-    mail = SimpleNamespace(
-        Subject="hi",
-        To="IT Support",  # display name only — no address here
-        PropertyAccessor=_prop_accessor(transport=blob),
-    )
-    assert _mail_payload(mail)["recipients"] == ["it-support@corp.com"]
+# ── folder-watch helpers (pure) ───────────────────────────────────────────────
 
 
-# ── transport-header recipient parsing (pure) ─────────────────────────────────
+def test_folder_segments():
+    assert _folder_segments("") == []  # → Inbox
+    assert _folder_segments("Inbox") == []  # sentinel
+    assert _folder_segments("inbox") == []  # case-insensitive
+    assert _folder_segments("Tickets") == ["Tickets"]
+    assert _folder_segments("Tickets/Open") == ["Tickets", "Open"]
+    assert _folder_segments(" Tickets / Open ") == ["Tickets", "Open"]  # trimmed
 
 
-def test_recipients_from_headers_to_and_cc():
-    blob = (
-        "To: IT Support <it-support@corp.com>, other@x.com\r\n"
-        "Cc: Boss <boss@corp.com>\r\nSubject: x\r\n"
-    )
-    assert _recipients_from_headers(blob) == [
-        "it-support@corp.com",
-        "other@x.com",
-        "boss@corp.com",
-    ]
+def test_descend_walks_subfolders():
+    # A fake folder tree: each node exposes .Folders[name].
+    class _Folder:
+        def __init__(self, name, children=None):
+            self.name = name
+            self.Folders = children or {}
+
+    leaf = _Folder("Open")
+    root = _Folder("root", {"Tickets": _Folder("Tickets", {"Open": leaf})})
+    assert _descend(root, ["Tickets", "Open"]) is leaf
+    assert _descend(root, []) is root  # no segments → the root itself
 
 
-def test_recipients_from_headers_envelope_delivery_for_alias():
-    # An alias hides the mailbox from To; Delivered-To and the Received `for`
-    # clause still name the real envelope recipient.
-    blob = (
-        "To: help@corp.com\r\n"
-        "Delivered-To: it-support@corp.com\r\n"
-        "Received: from mx.corp.com by store.corp.com for <it-support@corp.com>;"
-        " Tue, 9 Jun 2026 10:00:00 +0000\r\n"
-        "Subject: x\r\n"
-    )
-    got = _recipients_from_headers(blob)
-    assert "help@corp.com" in got and "it-support@corp.com" in got
-
-
-def test_recipients_from_headers_dedupes_and_lowercases():
-    blob = "To: IT-Support@Corp.com\r\nCc: it-support@corp.com\r\nSubject: x\r\n"
-    assert _recipients_from_headers(blob) == ["it-support@corp.com"]
-
-
-def test_recipients_from_headers_empty_blob():
-    assert _recipients_from_headers("") == []
-    assert _recipients_from_headers("   ") == []
-
-
-def test_received_ts_from_headers_parses_date():
-    blob = "Date: Tue, 09 Jun 2026 10:00:00 +0000\r\nSubject: x\r\n"
-    assert _received_ts_from_headers(blob) == 1780999200.0  # 2026-06-09T10:00:00Z
-
-
-def test_received_ts_from_headers_absent_or_bad():
-    assert _received_ts_from_headers("Subject: x\r\n") == 0.0
-    assert _received_ts_from_headers("Date: not-a-date\r\n") == 0.0
-
-
-def test_mail_payload_marker_and_ordering_from_headers():
-    blob = (
-        "To: it-support@corp.com\r\n"
-        "Date: Tue, 09 Jun 2026 10:00:00 +0000\r\n"
-        "Message-ID: <ack-1@corp.com>\r\n"
-        "X-Runspec-Claim: it-support/CONV1/ana@web01/claim\r\n"
-        "Subject: RE: help\r\n"
-    )
-    mail = SimpleNamespace(
-        Subject="RE: help",
-        PropertyAccessor=_prop_accessor(transport=blob),
-    )
-    p = _mail_payload(mail)
-    assert p["claim_marker"] == "it-support/CONV1/ana@web01/claim"
-    assert p["message_id"] == "<ack-1@corp.com>"
-    assert p["received_ts"] == 1780999200.0
-
-
-def test_named_header_reads_ps_internet_property():
-    mail = SimpleNamespace(
-        PropertyAccessor=_prop_accessor(
-            named={"x-runspec-claim": "it-support/CONV1/me/claim"}
-        )
-    )
-    assert _named_header(mail, "x-runspec-claim") == "it-support/CONV1/me/claim"
-    assert _named_header(SimpleNamespace(), "x-runspec-claim") == ""  # no accessor → ""
-
-
-def test_mail_payload_marker_from_named_property_for_internal_mail():
-    # Internal same-org mail: PR_TRANSPORT_MESSAGE_HEADERS is empty, but the marker
-    # rides the named property — it must still be detected, else the ack loops as a
-    # fresh requester email.
-    mail = SimpleNamespace(
-        Subject="RE: help",
-        PropertyAccessor=_prop_accessor(
-            named={"x-runspec-claim": "it-support/CONV1/ana@web01/claim"}
-        ),
-    )
-    assert _mail_payload(mail)["claim_marker"] == "it-support/CONV1/ana@web01/claim"
-
-
-def test_mail_payload_marker_prefers_named_property_over_transport_blob():
-    # When both carry it (externally-routed mail), the named property wins — the
-    # canonical source we set.
-    mail = SimpleNamespace(
-        Subject="RE: help",
-        PropertyAccessor=_prop_accessor(
-            transport="X-Runspec-Claim: from-blob\r\nSubject: x\r\n",
-            named={"x-runspec-claim": "from-named"},
-        ),
-    )
-    assert _mail_payload(mail)["claim_marker"] == "from-named"
+def test_handle_item_dedupes_by_entry_id():
+    # _handle_item tags + enqueues a new_mail, but never twice for one EntryID.
+    src = OutlookSource()
+    item = SimpleNamespace(EntryID="E1", Subject="hi")
+    src._handle_item(item, "it-support@corp.com", "Tickets")
+    src._handle_item(item, "it-support@corp.com", "Tickets")  # same id → ignored
+    events = []
+    while not src._queue.empty():
+        events.append(src._queue.get_nowait())
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.source == "outlook" and ev.type == "new_mail"
+    assert ev.payload["mailbox"] == "it-support@corp.com"
+    assert ev.payload["folder"] == "Tickets"
 
 
 def test_mail_payload_sender_fallback_to_name():
@@ -351,28 +262,6 @@ def test_send_draft_off_windows():
         return
     with pytest.raises(RuntimeError, match="Windows"):
         send_draft("ENT1")
-
-
-# ── claim marker send guards ──────────────────────────────────────────────────
-
-
-def test_send_claim_marker_requires_entry_id(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")  # past the platform guard
-    with pytest.raises(RuntimeError, match="no source message"):
-        send_claim_marker("", "it-support/CONV1/ana/claim", "it-support@corp.com")
-
-
-def test_send_claim_marker_requires_queue_address(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
-    with pytest.raises(RuntimeError, match="shared-mailbox address"):
-        send_claim_marker("ENT1", "it-support/CONV1/ana/claim", "")
-
-
-def test_send_claim_marker_off_windows():
-    if sys.platform == "win32":
-        return
-    with pytest.raises(RuntimeError, match="Windows"):
-        send_claim_marker("ENT1", "m", "it-support@corp.com")
 
 
 # ── calendar rota decision ────────────────────────────────────────────────────
