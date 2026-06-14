@@ -4,6 +4,28 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.13.0]
+
+### Added
+- **AFK release timer.** An assigned request whose console never sends
+  `request_start` within `Hub(assignment_timeout=…)` seconds (default **300**) is
+  auto-released back to the queue: re-paged, and re-assigned to a **different**
+  holder (the AFK console is excluded so a stranded request isn't handed straight
+  back). Cancelled the moment the request starts / completes / is released. Set
+  `assignment_timeout=0` to disable. (Runnables portal §3.5 / §6.2.)
+
+### Changed
+- **Browser portal layout: catalogue cards on top, thread below.** The
+  self-service catalogue is now a responsive **card grid across the top** of the
+  page (≤ half the height, scrolls if long), like the console Forms tab, with the
+  request thread filling the space beneath and the on-shift operators shown as a
+  compact list in the header — replacing the cramped 180px side rail. The request
+  form still opens as a centered modal (now overlaying the grid without a reflow).
+- **Browser portal is help-desk-only by default.** The join form's group-chat
+  **Room** field is hidden — a bare visit shows just the Help desk queue. Group
+  chat isn't removed, only hidden: a legacy `?room=` deep-link still works (and
+  re-reveals the Room field for that visit), so the change is reversible.
+
 ## [0.12.0]
 
 ### Changed

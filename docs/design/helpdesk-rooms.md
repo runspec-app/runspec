@@ -1,5 +1,13 @@
 # Design: helpdesk rooms — private conversations + a runspec self-service catalog
 
+> ⚠️ **Superseded — historical.** The **claim machinery** described here
+> (claim/resolve/reopen/close, the namespace-subscribed claim gate) was removed.
+> The shipped model is the claim-free **runnables portal** — see
+> **`docs/design/runnables-portal.md`** (hub-routed auto-assignment, the page/chime,
+> the per-request thread) and **`docs/design/email-folder-watch.md`** for the email
+> channel. Implemented in `runspec-room` 0.6.0–0.13.0 + `runspec-console`
+> 0.53.0–0.57.0. Kept for the catalogue / private-conversation rationale only.
+
 **Status:** Design agreed (this note). No code yet. Supersedes the "helpdesk on
 rooms" open idea in `console-room-next-session.md` §1 — the decisions below are
 the resolution of that "discuss, don't build yet" item.

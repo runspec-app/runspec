@@ -777,3 +777,85 @@ def test_afk_release_pages_the_team():
     hub, holder, req = run(scenario())
     assert hub.request_state(req.id) == "unassigned"
     assert _pages(holder) == [("reset-password", req.id)]  # team re-chimed
+
+
+# ── AFK release timer ─────────────────────────────────────────────────────────
+
+
+def test_afk_timer_releases_stranded_request_and_pages():
+    async def scenario():
+        hub = Hub(FakeStore(), assignment_timeout=0.05)
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {})  # → assigned
+        assigned = hub.request_state(req.id)
+        agent.frames.clear()
+        alice.frames.clear()
+        await asyncio.sleep(0.15)  # let the AFK timer fire (console never started it)
+        return hub, agent, alice, req, assigned
+
+    hub, agent, alice, req, assigned = run(scenario())
+    assert assigned == "assigned"
+    # Released back to the queue (the one stuck holder is excluded → unassigned),
+    # and the team is re-paged.
+    assert hub.request_state(req.id) == "unassigned"
+    assert _pages(agent) == [("reset-password", req.id)]
+    assert ("unassigned", None) in _statuses(alice)
+
+
+def test_start_cancels_the_afk_timer():
+    async def scenario():
+        hub = Hub(FakeStore(), assignment_timeout=0.05)
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {})
+        await hub.start_request(agent, req.id)  # the console picked it up
+        await asyncio.sleep(0.12)  # past the timeout — must NOT release
+        return hub, req
+
+    hub, req = run(scenario())
+    assert hub.request_state(req.id) == "in_progress"
+
+
+def test_afk_reassigns_to_a_different_holder():
+    async def scenario():
+        hub = Hub(FakeStore(), assignment_timeout=0.05)
+        a = FakeAgent("a@web01", IT)
+        b = FakeAgent("b@web02", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(a)
+        await hub.join_agent(b)
+        await hub.join(alice)
+        hub.publish_catalog(a, [{"name": "reset-password"}])
+        hub.publish_catalog(b, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {})
+        first = hub._requests.get(req.id).assignee  # round-robin → a@web01
+        await asyncio.sleep(0.15)  # a never starts → AFK → re-assign excluding a
+        return hub, req, first
+
+    hub, req, first = run(scenario())
+    assert first == "a@web01"
+    assert hub.request_state(req.id) == "assigned"  # reassigned, not stranded
+    assert hub._requests.get(req.id).assignee == "b@web02"  # to the OTHER holder
+
+
+def test_afk_timer_disabled_when_timeout_zero():
+    async def scenario():
+        hub = Hub(FakeStore(), assignment_timeout=0)
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        req = await hub.submit_request(alice, "reset-password", {})
+        await asyncio.sleep(0.08)
+        return hub, req
+
+    hub, req = run(scenario())
+    assert hub.request_state(req.id) == "assigned"  # timer disabled → never released

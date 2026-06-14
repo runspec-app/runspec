@@ -28,7 +28,7 @@ from .models import (
     request_status_frame,
     request_text,
 )
-from .requests import UNASSIGNED, Request, RequestRegistry
+from .requests import ASSIGNED, UNASSIGNED, Request, RequestRegistry
 
 logger = logging.getLogger("console_room.hub")
 
@@ -92,9 +92,20 @@ class Hub:
     group-chat path is unchanged — a room with no agents behaves exactly as before.
     """
 
-    def __init__(self, store: Store, *, backscroll_limit: int = 50) -> None:
+    def __init__(
+        self,
+        store: Store,
+        *,
+        backscroll_limit: int = 50,
+        assignment_timeout: float = 300.0,
+    ) -> None:
         self._store = store
         self._backscroll = backscroll_limit
+        # An assigned request whose console never picks it up (no request_start)
+        # within this many seconds is auto-released back to the queue + re-paged.
+        # 0/negative disables the timer.
+        self._assignment_timeout = assignment_timeout
+        self._afk_timers: dict[str, asyncio.Task[None]] = {}
         self._rooms: dict[str, set[Participant]] = {}
         self._agents: dict[str, set[Agent]] = {}  # namespace -> subscribed agents
         self._live = LiveCatalog()  # presence-aware per-agent catalogue + affinity
@@ -280,10 +291,17 @@ class Hub:
                 return agent
         return None
 
-    async def _try_assign(self, req: Request) -> bool:
+    async def _try_assign(
+        self, req: Request, *, exclude: set[str] | None = None
+    ) -> bool:
         """Route an ``unassigned`` request to an on-shift holder by round-robin and
-        announce it; ``False`` (left unassigned) when no on-shift holder exists."""
+        announce it; ``False`` (left unassigned) when no on-shift holder exists.
+        ``exclude`` drops operators from the candidate pool — used on an AFK release
+        so a stranded request isn't handed straight back to the console that
+        ignored it."""
         candidates = self._live.holders(req.namespace, req.runnable)
+        if exclude:
+            candidates = [c for c in candidates if c not in exclude]
         operator = self._requests.next_assignee(req.namespace, candidates)
         if operator is None:
             return False
@@ -296,7 +314,40 @@ class Hub:
         await self._broadcast(
             assigned.room, request_status_frame(*assigned.status_fields())
         )
+        self._schedule_afk(assigned.id)  # auto-release if the console never picks it up
         return True
+
+    # ── AFK release timer ─────────────────────────────────────────────────────
+    # An assigned request whose console never sends request_start is a stranded
+    # visitor. After ``assignment_timeout`` we release it back to the queue (which
+    # re-pages / re-assigns). The timer is cancelled the moment the request moves
+    # off ``assigned`` (start / complete / a manual release). See §3.5 / §6.2.
+
+    def _schedule_afk(self, request_id: str) -> None:
+        if self._assignment_timeout <= 0:
+            return
+        self._cancel_afk(request_id)
+        self._afk_timers[request_id] = asyncio.create_task(
+            self._afk_countdown(request_id)
+        )
+
+    def _cancel_afk(self, request_id: str) -> None:
+        task = self._afk_timers.pop(request_id, None)
+        if task is not None:
+            task.cancel()
+
+    async def _afk_countdown(self, request_id: str) -> None:
+        try:
+            await asyncio.sleep(self._assignment_timeout)
+        except asyncio.CancelledError:
+            return
+        # We're firing — drop our own handle first so release_request's cancel is a
+        # no-op (we must not cancel the running task).
+        self._afk_timers.pop(request_id, None)
+        req = self._requests.get(request_id)
+        if req is not None and req.state == ASSIGNED:
+            logger.info("room: request %s AFK — releasing to the queue", request_id)
+            await self.release_request(request_id)
 
     async def _hold_unassigned(self, req: Request) -> None:
         """Announce an ``unassigned`` request to its thread (the visitor sees "no
@@ -388,6 +439,7 @@ class Hub:
             return
         updated = self._requests.start(request_id, agent.user)
         if updated is not None:
+            self._cancel_afk(request_id)  # the console picked it up — not AFK
             await self._broadcast(
                 updated.room, request_status_frame(*updated.status_fields())
             )
@@ -403,6 +455,7 @@ class Hub:
             return
         updated = self._requests.complete(request_id, agent.user, error)
         if updated is not None:
+            self._cancel_afk(request_id)  # terminal — no AFK release
             await self._broadcast(
                 updated.room, request_status_frame(*updated.status_fields())
             )
@@ -414,10 +467,13 @@ class Hub:
         req = self._requests.get(request_id)
         if req is None:
             return
+        prev = req.assignee  # don't immediately re-hand it to the AFK console
+        self._cancel_afk(request_id)  # no-op when the AFK timer itself called us
         released = self._requests.release(request_id)
         if released is None:
             return
-        if not await self._try_assign(released):
+        exclude = {prev} if prev else None
+        if not await self._try_assign(released, exclude=exclude):
             await self._hold_unassigned(released)
 
     def request_state(self, request_id: str) -> str | None:

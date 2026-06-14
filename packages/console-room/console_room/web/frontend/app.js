@@ -53,9 +53,10 @@
   }
   whoami();
 
-  // Adapt the join form to the link. A ?queue= visitor is a help-desk caller —
-  // hide the Room field entirely; a ?room= visitor is group chat — hide Queue.
-  // With neither (a bare URL) show both, with a hint that they're alternatives.
+  // Adapt the join form to the link. The product is the help desk, so the Room
+  // (group-chat) field is hidden by default. A ?queue= visitor is the normal
+  // path; a ?room= deep-link still works (group chat is hidden, not removed) and
+  // re-reveals the Room field for that one visit.
   const params = new URLSearchParams(location.search);
   const urlQueue = (params.get("queue") || "").trim();
   const urlRoom = (params.get("room") || "").trim();
@@ -65,9 +66,9 @@
   if (urlUser) $("user").value = urlUser;
   if (urlQueue) {
     $("queue").value = urlQueue;
-    $("room-label").hidden = true;
   } else if (urlRoom) {
     $("room").value = urlRoom;
+    $("room-label").hidden = false; // legacy group-chat deep-link
     $("queue-label").hidden = true;
   } else {
     $("mode-hint").hidden = false;
@@ -244,7 +245,8 @@
   // This is UX-level validation only — runspec itself validates authoritatively
   // when the agent console enacts the request.
   function renderForm(tool) {
-    catalogList.hidden = true;
+    // The form is a centered modal over a dimmed backdrop, so the catalogue grid
+    // stays in place behind it (no reflow) — just reveal the form.
     reqForm.hidden = false;
     reqForm.innerHTML = "";
 

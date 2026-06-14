@@ -8,6 +8,14 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.57.0] — 2026-06-14
+
+### Changed
+- **The host editor's "Group chat room" field is hidden** (portal-focused build —
+  the help desk is the product). The field is kept but hidden, so an existing
+  `room` value on a host still round-trips on save; remove `hidden` in
+  `SettingsDrawer` to re-expose it. Use **Queue** (`room_queue`) for the help desk.
+
 ## [0.56.0] — 2026-06-14
 
 Portal requests land in the operator's **Triggers inbox** — the same surface, the

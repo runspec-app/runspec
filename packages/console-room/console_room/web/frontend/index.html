@@ -15,8 +15,8 @@
       <h1>runspec room</h1>
       <label id="user-label">Your name <input id="user" autocomplete="off" placeholder="alice" /></label>
       <label id="queue-label">Help desk queue <input id="queue" autocomplete="off" placeholder="it-support" /></label>
-      <label id="room-label">Room <input id="room" autocomplete="off" placeholder="ops" /></label>
-      <p id="mode-hint" class="hint" hidden>Fill a <b>queue</b> for a private support thread, or a <b>room</b> for group chat — not both.</p>
+      <label id="room-label" hidden>Room <input id="room" autocomplete="off" placeholder="ops" /></label>
+      <p id="mode-hint" class="hint" hidden>Enter your help desk queue to start a request.</p>
       <button type="submit">Join</button>
       <p id="join-hint" class="hint">Dev login — single sign-on is used when configured.</p>
     </form>
@@ -24,25 +24,23 @@
     <main id="app" hidden>
       <header>
         <span id="title"></span>
+        <ul id="presence" class="presence-inline"></ul>
         <span class="spacer"></span>
         <span id="status" class="status"></span>
         <a id="logout" class="logout" href="/logout" hidden>Sign out</a>
       </header>
-      <div class="body">
-        <ul id="transcript" class="transcript"></ul>
-        <aside class="presence">
-          <!-- Self-service catalog: helpdesk mode only. Items come from
-               /catalog?queue= (published by the on-shift agent consoles); picking
-               one renders a form generated from its inputSchema. -->
-          <section id="catalog-panel" hidden>
-            <h2>Catalog</h2>
-            <ul id="catalog"></ul>
-            <form id="reqform" hidden></form>
-          </section>
-          <h2>Present</h2>
-          <ul id="presence"></ul>
-        </aside>
-      </div>
+      <!-- Self-service catalogue (helpdesk mode): a card grid across the top.
+           Items come from /catalog?queue= (the on-shift consoles' published
+           runnables); picking one opens a request form (modal) from its
+           inputSchema. Hidden in group-chat mode. -->
+      <section id="catalog-panel" class="catalog" hidden>
+        <h2>Catalogue</h2>
+        <ul id="catalog" class="catalog-grid"></ul>
+      </section>
+      <form id="reqform" hidden></form>
+      <!-- The request thread: the visitor's messages, requests + their live
+           status, and the operator's replies. -->
+      <ul id="transcript" class="transcript"></ul>
       <form id="composer" class="composer">
         <input id="text" autocomplete="off" placeholder="Message…" />
         <button type="submit">Send</button>

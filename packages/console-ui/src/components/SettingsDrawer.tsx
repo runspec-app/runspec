@@ -851,8 +851,11 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <Form.Item name="room_exec_command" label="Relay command" help="Optional override run on the host when via=exec, e.g. socat - TCP:127.0.0.1:8765. Defaults to console-room connect.">
                 <Input placeholder="defaults to console-room connect" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
-              <Form.Item name="room" label="Group chat room" help="Optional non-helpdesk group chat on this host's queue server. For a help desk, set Queue above instead.">
-                <Input placeholder="e.g. ops (optional)" style={{ fontFamily: 'monospace' }} />
+              {/* Group-chat room is hidden in the portal-focused build (the help
+                  desk is the product). The field is kept (hidden) so an existing
+                  `room` config still round-trips; remove `hidden` to re-expose it. */}
+              <Form.Item name="room" hidden>
+                <Input />
               </Form.Item>
               <Form.Item name="room_catalog" label="Catalog allowlist" help="Optional: limit the queue's self-service catalog to these runnables. Empty = every self-service-marked runnable.">
                 <Select

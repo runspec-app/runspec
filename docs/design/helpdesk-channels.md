@@ -1,5 +1,12 @@
 # Help desk channels — one queue, many channels
 
+> ⚠️ **Superseded — historical.** The **claim** model here (shared-mailbox queue
+> map, `X-Runspec-Claim` markers, the first-ack-wins fold) was removed. Email is
+> now a **folder watch with no claim** — see **`docs/design/email-folder-watch.md`**
+> — and the chat side is the claim-free **runnables portal**
+> (**`docs/design/runnables-portal.md`**). Shipped in `runspec-console` 0.54.0
+> (chat claim retired) + 0.55.0 (email folder-watch). Kept for background only.
+
 > **Model update (0.52.0): email is "only triggered mail, forward-only."** A
 > shared-mailbox email opens a claimable **ticket** only when it matches a
 > configured `outlook`/`new_mail` trigger's `match` — the operator curates which

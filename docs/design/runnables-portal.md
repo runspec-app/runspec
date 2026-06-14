@@ -247,7 +247,11 @@ All settled with the user — no open questions remain for the build:
    `card_id` equals the autonomy-gate `chat_id`, so the existing inline
    **Approve/Deny** + the result/timeline render on it (the operator's enact +
    audit drawer) with no new approval UI. The Triggers tab's dead claim/email
-   controls were removed in the same change. **Remaining:** the AFK release timer.
+   controls were removed in the same change. The **AFK release timer** landed in
+   runspec-room 0.13.0 (`Hub` `assignment_timeout`, default 300s): an assigned
+   request whose console never sends `request_start` is auto-released back to the
+   queue — re-paged, and re-assigned to a *different* holder (the AFK console is
+   excluded so it isn't handed straight back).
 5. **Email: folder-watch source** (`ItemAdd`/poll) feeding the trigger engine;
    **remove** the claim machinery (`mailbox_claim.py`, markers, gates, lifecycle).
    ✅ *Done (runspec-console 0.55.0).* See **`docs/design/email-folder-watch.md`** —
@@ -266,9 +270,10 @@ All settled with the user — no open questions remain for the build:
    pending; enactment already works through the existing autonomy-gate dialog.)*
 7. **Close PR #226**, retire the claim docs (fold this note's outcome into
    `helpdesk-rooms.md` / `helpdesk-channels.md` as "superseded by the portal").
-   🔶 *Chat-side claim retired* (runspec-room 0.11.0 hub + runspec-console 0.54.0
-   console). Remaining: the email claim system (step 5) and folding the outcome
-   into the helpdesk docs.
+   ✅ *Done.* Claim is fully retired — chat (runspec-room 0.11.0 hub + runspec-console
+   0.54.0) and email (runspec-console 0.55.0 folder-watch). `helpdesk-rooms.md` and
+   `helpdesk-channels.md` now carry a "superseded — historical" banner pointing
+   here + at `email-folder-watch.md`; PR #226 (history-on-claim) is moot and closed.
 
 Removing claim is a **net deletion** — `mailbox_claim.py`, the marker COM, the
 gates, the chat claim path — offset by the routing/catalogue machinery, most of
