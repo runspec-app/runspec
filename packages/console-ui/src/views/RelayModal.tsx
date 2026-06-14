@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Modal, Segmented, Select, Button, Progress, Typography, Tag, Input, message } from 'antd'
 import { NodeIndexOutlined, PlusOutlined, FolderOpenOutlined } from '@ant-design/icons'
-import type { Host, TransferProgress, TransferEnd, RelaySource } from '../bridge'
+import type { Host, TransferProgress, TransferEnd, RelaySource, Credential } from '../bridge'
 import { bridge } from '../bridge'
 import { PathInput, BrowseModal } from './PathInput'
 import { FilterPicker, humanBytes } from './FilterPicker'
@@ -19,6 +19,8 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
   const [target, setTarget] = useState('')
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
+  const [credentialId, setCredentialId] = useState('')
+  const [creds, setCreds] = useState<Credential[]>([])
   const [configuredSource, setConfiguredSource] = useState('')
   const [destHost, setDestHost] = useState('')
   const [destDir, setDestDir] = useState('')
@@ -38,6 +40,7 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
     setJump(prev => prev || first)
     setDestHost(prev => prev || first)
     setConfiguredSource(prev => prev || first)
+    bridge.list_credentials().then(setCreds).catch(() => { /* feature optional */ })
   }, [open, hosts])  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -78,7 +81,7 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
     setProgress(null)
     setResult(null)
     const source: RelaySource = mode === 'adhoc'
-      ? { kind: 'adhoc', host: target.trim(), user: user.trim() || undefined, jump, password: password || undefined }
+      ? { kind: 'adhoc', host: target.trim(), user: user.trim() || undefined, jump, password: password || undefined, credential_id: credentialId || undefined }
       : { kind: 'host', host: configuredSource }
     const res = await bridge.start_relay(source, sourcePaths, destHost, destDir, filterName || undefined, filterArg || undefined)
     setPassword('')  // don't retain the password after handing it off
@@ -91,7 +94,7 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
 
   // Closing the dialog tears down any cached ad-hoc browse connection and drops
   // the in-memory password.
-  const handleClose = () => { bridge.close_adhoc().catch(() => {}); setPassword(''); onClose() }
+  const handleClose = () => { bridge.close_adhoc().catch(() => {}); setPassword(''); setCredentialId(''); onClose() }
 
   const hostOptions = remoteHosts.map(h => ({ label: h.name, value: h.name, disabled: !h.connected }))
 
@@ -130,7 +133,18 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
                 <Select size="small" value={jump || undefined} onChange={setJump} placeholder="Jump host" style={{ minWidth: 140 }} options={hostOptions} />
                 <Input size="small" value={target} onChange={e => setTarget(e.target.value)} placeholder="target hostname" style={{ width: 200, fontFamily: 'monospace' }} />
                 <Input size="small" value={user} onChange={e => setUser(e.target.value)} placeholder="user (optional)" style={{ width: 130 }} />
-                <Input.Password size="small" value={password} onChange={e => setPassword(e.target.value)} placeholder="password — only if your key fails" autoComplete="new-password" style={{ width: 250 }} />
+                {creds.length > 0 && (
+                  <Select
+                    size="small"
+                    value={credentialId || undefined}
+                    onChange={v => { setCredentialId(v ?? ''); if (v) setPassword('') }}
+                    placeholder="saved credential"
+                    style={{ width: 180 }}
+                    allowClear
+                    options={creds.map(c => ({ label: c.label, value: c.id }))}
+                  />
+                )}
+                <Input.Password size="small" value={password} onChange={e => setPassword(e.target.value)} placeholder={credentialId ? 'using saved credential' : 'password — only if your key fails'} disabled={!!credentialId} autoComplete="new-password" style={{ width: 250 }} />
               </div>
             ) : (
               <Select size="small" value={configuredSource || undefined} onChange={setConfiguredSource} placeholder="Source host" style={{ minWidth: 180 }} options={hostOptions} />
@@ -162,7 +176,7 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
               host={mode === 'adhoc' ? (target.trim() || 'source') : configuredSource}
               multiSelect
               lister={mode === 'adhoc'
-                ? (path, dirsOnly) => bridge.list_dir_adhoc(jump, target.trim(), path, user.trim() || undefined, password || undefined, undefined, dirsOnly)
+                ? (path, dirsOnly) => bridge.list_dir_adhoc(jump, target.trim(), path, user.trim() || undefined, password || undefined, undefined, dirsOnly, credentialId || undefined)
                 : undefined}
               onPickMany={paths => setSourcePaths(prev => Array.from(new Set([...prev, ...paths])))}
               onClose={() => setBrowseOpen(false)}

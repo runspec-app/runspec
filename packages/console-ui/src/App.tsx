@@ -164,13 +164,13 @@ export default function App() {
     setPendingChat(text)
   }
 
-  const handleRunRunnable = (runnable: Runnable, args: Record<string, unknown>, commandPath: string[] = []) => {
+  const handleRunRunnable = (runnable: Runnable, args: Record<string, unknown>, commandPath: string[] = [], credentialId?: string) => {
     const cmd = commandPath.length > 0 ? `${runnable.name} ${commandPath.join(' ')}` : runnable.name
     const argStr = Object.entries(args).map(([k, v]) => v === true ? `--${k}` : `--${k}=${v}`).join(' ')
     const label = argStr ? `/${cmd} ${argStr}` : `/${cmd}`
     setInputHistory(h => [...h, label])
     setView('console')
-    window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args, commandPath } }))
+    window.dispatchEvent(new CustomEvent('runspec:invoke_runnable', { detail: { runnable, args, commandPath, credentialId } }))
   }
 
   const handleOpenForm = (runnable: Runnable, commandPath: string[] = []) => {

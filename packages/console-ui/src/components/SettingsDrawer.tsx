@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter } from '../bridge'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 
@@ -1084,6 +1084,159 @@ function FiltersTab() {
   )
 }
 
+// ── Credentials tab ─────────────────────────────────────────────────────────
+
+const KIND_OPTIONS = [
+  { value: 'userpass', label: 'Username + password' },
+  { value: 'password', label: 'Password / passphrase' },
+  { value: 'token', label: 'Token / API key' },
+]
+
+interface CredFormValues {
+  label: string
+  kind: Credential['kind']
+  username?: string
+  username_arg?: string
+  secret_arg?: string
+  scope_hosts?: string[]
+  scope_runnables?: string[]
+  secret?: string
+}
+
+function CredentialsTab() {
+  const [creds, setCreds] = useState<Credential[]>([])
+  const [backend, setBackend] = useState<{ available: boolean; backend: string } | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)  // '' = new, id = edit
+  const [form] = Form.useForm<CredFormValues>()
+
+  const reload = useCallback(() => { bridge.list_credentials().then(setCreds) }, [])
+  useEffect(() => { reload() }, [reload])
+  useEffect(() => { bridge.credentials_backend().then(setBackend) }, [])
+
+  const startAdd = () => { form.resetFields(); form.setFieldValue('kind', 'userpass'); setEditingId('') }
+  const startEdit = (c: Credential) => {
+    form.setFieldsValue({
+      label: c.label, kind: c.kind, username: c.username,
+      username_arg: c.username_arg, secret_arg: c.secret_arg,
+      scope_hosts: c.scope_hosts ?? [], scope_runnables: c.scope_runnables ?? [],
+      secret: '',  // write-only: blank means "keep the stored value"
+    })
+    setEditingId(c.id)
+  }
+  const cancel = () => { setEditingId(null); form.resetFields() }
+
+  const save = async () => {
+    const v = await form.validateFields()
+    const entry: Credential = {
+      id: editingId || '',
+      label: v.label.trim(),
+      kind: v.kind,
+      username: v.username?.trim() || undefined,
+      username_arg: v.username_arg?.trim() || undefined,
+      secret_arg: v.secret_arg?.trim() || undefined,
+      scope_hosts: v.scope_hosts ?? [],
+      scope_runnables: v.scope_runnables ?? [],
+      ...(v.secret ? { secret: v.secret } : {}),  // only send when set
+    }
+    const res = await bridge.save_credential(entry)
+    if (res.error) { message.error(res.error); return }
+    setEditingId(null); form.resetFields(); reload()
+    message.success('Credential saved')
+  }
+
+  const remove = async (id: string) => {
+    await bridge.delete_credential(id)
+    if (editingId === id) setEditingId(null)
+    reload()
+  }
+
+  const isEditing = editingId !== null
+  const editingCred = editingId ? creds.find(c => c.id === editingId) : undefined
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Secrets are stored in the OS keychain{backend?.backend ? <> (<code>{backend.backend}</code>)</> : null}; only metadata is saved to <code>runspec_credentials.toml</code>.
+        </Text>
+        <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add</Button>
+      </div>
+
+      {backend && !backend.available && (
+        <Text type="warning" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+          No OS keychain is available, so secret values can't be stored. Install the <code>credentials</code> extra (<code>pip install runspec-console[credentials]</code>) on a desktop session. Metadata-only entries still save.
+        </Text>
+      )}
+
+      {editingId !== null && (
+        <div style={{ border: '1px solid #333', borderRadius: 8, padding: '14px 14px 6px', marginBottom: 12, background: 'rgba(255,255,255,0.02)' }}>
+          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+            {editingId === '' ? 'New credential' : `Edit — ${editingCred?.label ?? editingId}`}
+          </Text>
+          <Form form={form} layout="vertical" size="small">
+            <Form.Item name="label" label="Label" rules={[{ required: true, message: 'Required' }]}>
+              <Input placeholder="Service account (prod)" />
+            </Form.Item>
+            <Form.Item name="kind" label="Kind">
+              <Select options={KIND_OPTIONS} />
+            </Form.Item>
+            <Form.Item name="username" label="Username" tooltip="The non-secret identity (for username + password kinds).">
+              <Input placeholder="svc_runner" autoComplete="off" />
+            </Form.Item>
+            <Form.Item name="secret" label="Secret" tooltip={editingId !== '' ? 'Leave blank to keep the stored secret.' : undefined}>
+              <Input.Password placeholder={editingId !== '' && editingCred?.has_secret ? '•••••••• (unchanged)' : 'password / token'} autoComplete="new-password" disabled={!backend?.available} />
+            </Form.Item>
+            <Divider style={{ margin: '4px 0 12px' }} />
+            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+              Binding — which runnable arguments these values fill, and where the credential may be applied (glob patterns; blank = any).
+            </Text>
+            <Form.Item name="username_arg" label="Username → argument" tooltip="Runnable arg name that receives the username (passed normally).">
+              <Input placeholder="service-username" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+            </Form.Item>
+            <Form.Item name="secret_arg" label="Secret → argument" tooltip="Runnable arg name that receives the secret (passed via env, never argv).">
+              <Input placeholder="user-password" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+            </Form.Item>
+            <Form.Item name="scope_hosts" label="Host scope">
+              <Select mode="tags" placeholder="prod-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
+            </Form.Item>
+            <Form.Item name="scope_runnables" label="Runnable scope">
+              <Select mode="tags" placeholder="deploy, db-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
+            </Form.Item>
+            <Space style={{ marginTop: 2, marginBottom: 8 }}>
+              <Button size="small" type="primary" icon={<CheckOutlined />} onClick={save}>Save</Button>
+              <Button size="small" icon={<CloseOutlined />} onClick={cancel}>Cancel</Button>
+            </Space>
+          </Form>
+        </div>
+      )}
+
+      {creds.length === 0 && editingId === null && (
+        <Text type="secondary" style={{ fontSize: 12 }}>No credentials yet. Add one to let a runnable or relay use a stored identity.</Text>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {creds.map(c => (
+          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingId === c.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+            <KeyOutlined style={{ color: '#666', fontSize: 12, flexShrink: 0 }} />
+            <Text style={{ fontSize: 12, minWidth: 110, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</Text>
+            <Tag style={{ margin: 0, fontSize: 10 }}>{c.kind}</Tag>
+            {c.has_secret
+              ? <Tag color="green" style={{ margin: 0, fontSize: 10 }}>secret set</Tag>
+              : <Tag style={{ margin: 0, fontSize: 10 }}>no secret</Tag>}
+            <Text type="secondary" title={c.username} style={{ fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {c.username}
+            </Text>
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(c)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+            <Popconfirm title={`Remove ${c.label}?`} onConfirm={() => remove(c.id)} okText="Remove" cancelText="Cancel" placement="left">
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
@@ -1096,6 +1249,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'llm',       label: 'LLM / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
+          { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
         ]}
       />
     </Drawer>

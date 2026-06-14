@@ -8,6 +8,68 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.62.0] — 2026-06-14
+
+### Added
+- **Credentials management (Settings → Credentials) — storage layer.** A new tab
+  to save named credentials (username + password / password / token). **Secret
+  values are stored in the OS keychain** — Windows Credential Manager, macOS
+  Keychain, or Secret Service / KWallet on Linux — via the optional `keyring`
+  dependency (`pip install runspec-console[credentials]`); only metadata (label,
+  kind, username, the runnable args each value binds to, and host/runnable scope
+  globs) is written to `runspec_credentials.toml`. New bridge API:
+  `list_credentials` (metadata + a `has_secret` flag, never the value),
+  `save_credential` (upsert; the write-only `secret` field rides to the keyring
+  and a blank one leaves the stored value untouched), `delete_credential`, and
+  `credentials_backend` (so the UI warns when no keychain is available).
+- **Credentials apply to runnable invocations.** A credential's `username_arg` /
+  `secret_arg` bind its values to a runnable's arguments — the username is passed
+  normally, the secret rides the `RUNSPEC_*_ARG_*` env channel (never argv). They
+  apply on **both** the manual (`invoke_runnable`) and agent (`_run_tool_sync`)
+  paths: every **in-scope** credential (host- and runnable-glob match) auto-applies,
+  and a caller can override with an explicit `credential_id` (the agent's
+  per-runnable tool gains a `credential_id` enum of in-scope ids — the model picks
+  an id, never sees the secret). A value the caller already supplied is never
+  overwritten; two in-scope credentials binding the same arg is ambiguous and
+  skipped; auto-injection only fills args the runnable declares (an explicit id
+  still applies). Applied credential ids are recorded on the run for the audit
+  trail.
+- **Credentials apply to relays.** An ad-hoc relay source (and its directory
+  browser) can reference a saved credential by id instead of a typed password:
+  the stored secret becomes the SSH password and the credential's username fills
+  an empty user, resolved from the keyring at connect time and never left on the
+  source dict / in_flight / logs. The Relay dialog gains a credential picker
+  (when credentials exist) alongside the password field. `start_relay` and
+  `list_dir_adhoc` accept a `credential_id`; a typed password still wins.
+- **Forms run dialog — credential override picker.** When in-scope credentials
+  exist for a runnable, its run dialog shows a credential picker (default "auto
+  (by scope)"); choosing one pins it as the `credential_id` override threaded to
+  `invoke_runnable`. New `credentials_for_runnable(host, runnable)` bridge method
+  returns the in-scope id+label list.
+- **Agent `relay_file` can relay from an ad-hoc source.** The tool gains optional
+  `source_via` (jump) + `source_target` (ad-hoc hostname) + `source_credential`
+  (a saved credential id for password auth); `source_host` is now optional
+  (provide it *or* the ad-hoc trio). This lets the agent pull a file from a host
+  outside the fleet — including a password-only host — via a stored credential,
+  the secret read from the keyring at connect time and never seen by the model.
+
+### Fixed
+- **Downloading a `/proc` (or `/sys`) file no longer fails with "size mismatch".**
+  procfs/sysfs files report `st_size` 0 but stream real bytes, and paramiko's
+  `sftp.get` asserts the downloaded size equals the remote `stat()` size — so a
+  pull of e.g. `/proc/cpuinfo` always failed (and the agent's repeated retries of
+  the impossible transfer were a plausible trigger for remote fail2ban bans). The
+  download path now streams via `getfo` (no size assertion) for regular files and
+  a bounded raw read (capped at 256 MiB) for size-0 special files; pulling a
+  streaming/special file past the cap surfaces a clear "use a filter" error.
+
+### Security
+- **The agent (LLM) runnable path now keeps `password`-typed args off argv.**
+  `_run_tool_sync` splits `password`-typed arguments out of the command line and
+  into the `RUNSPEC_*_ARG_*` env channel, exactly as the manual `invoke_runnable`
+  path already did — previously an agent-supplied secret would have been passed as
+  a CLI flag, leaking into the remote's `ps` table and shell history.
+
 ## [0.61.0] — 2026-06-14
 
 ### Added

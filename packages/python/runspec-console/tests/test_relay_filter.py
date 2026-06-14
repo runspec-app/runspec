@@ -407,12 +407,16 @@ class _ToolBridge:
     _emit_transfer_end = Bridge._emit_transfer_end
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
 
-    def __init__(self, hosts, filters):
+    def __init__(self, hosts, filters, credentials=None):
         self._hosts = hosts
         self._filters = filters
+        self._credentials = credentials or []
         self._lock = threading.Lock()
         self._recent_transfer_results: dict = {}
         self.calls: list = []
+
+    def _reload_credentials(self):
+        pass
 
     def _dispatch(self, *a, **k):
         pass
@@ -488,6 +492,64 @@ def test_run_relay_tool_success():
     )
     assert out.startswith("✓ Completed relay of x.log from a to b")
     assert b.calls[0][0] == "relay"
+
+
+def test_relay_schema_offers_adhoc_source_and_credentials():
+    b = _ToolBridge(
+        hosts=[{"name": "jump", "ssh": "x"}],
+        filters=[],
+        credentials=[{"id": "svc", "label": "Svc"}],
+    )
+    relay = next(t for t in b._custom_agent_tools() if t["name"] == "relay_file")
+    props = relay["input_schema"]["properties"]
+    assert props["source_via"]["enum"] == ["jump"]
+    assert "source_target" in props
+    assert props["source_credential"]["enum"] == ["svc"]
+    # source_host is no longer required (ad-hoc source is an alternative).
+    assert relay["input_schema"]["required"] == ["path", "dest_host", "dest_dir"]
+
+
+def test_relay_schema_omits_credential_enum_when_none():
+    b = _ToolBridge(hosts=[{"name": "jump", "ssh": "x"}], filters=[])
+    relay = next(t for t in b._custom_agent_tools() if t["name"] == "relay_file")
+    assert "source_credential" not in relay["input_schema"]["properties"]
+
+
+def test_run_relay_tool_adhoc_builds_credentialed_source():
+    b = _ToolBridge(
+        hosts=[{"name": "jump", "ssh": "x"}, {"name": "dest", "ssh": "y"}],
+        filters=[],
+        credentials=[{"id": "svc", "label": "Svc"}],
+    )
+    out = b._run_custom_tool(
+        "relay_file",
+        {
+            "source_via": "jump",
+            "source_target": "10.0.0.9",
+            "source_credential": "svc",
+            "path": "/v/x.log",
+            "dest_host": "dest",
+            "dest_dir": "/in",
+        },
+    )
+    assert out.startswith("✓ Completed relay of x.log from 10.0.0.9 via jump to dest")
+    kind, args, _ = b.calls[0]
+    assert kind == "relay"
+    source = args[0]
+    assert source == {
+        "kind": "adhoc",
+        "host": "10.0.0.9",
+        "jump": "jump",
+        "credential_id": "svc",
+    }
+
+
+def test_run_relay_tool_requires_a_source():
+    b = _ToolBridge(hosts=[{"name": "dest", "ssh": "y"}], filters=[])
+    out = b._run_custom_tool(
+        "relay_file", {"path": "/v/x.log", "dest_host": "dest", "dest_dir": "/in"}
+    )
+    assert "provide source_host" in out
 
 
 def test_run_download_tool_missing_args():

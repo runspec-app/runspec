@@ -78,6 +78,7 @@ export interface RelaySource {
   port?: number
   jump?: string       // configured host to tunnel through (ad-hoc)
   password?: string   // optional, used only if key/agent auth fails
+  credential_id?: string  // optional, a saved credential whose secret is the password
 }
 
 // A named, reusable source-side stream filter (Settings → Filters). The pipeline
@@ -89,6 +90,30 @@ export interface Filter {
   pipeline: string
   description?: string
   param_label?: string
+}
+
+// A named credential (Settings → Credentials). Metadata only on the wire — the
+// secret value lives in the OS keyring and is never read back; `has_secret` says
+// whether one is stored. `secret` is write-only: send it to save/update a value,
+// omit/blank it to leave the stored value untouched. `username_arg`/`secret_arg`
+// bind the values to a runnable's flags; the scopes (fnmatch patterns) limit
+// where the credential may be applied.
+export interface Credential {
+  id: string
+  label: string
+  kind: 'userpass' | 'password' | 'token'
+  username?: string
+  username_arg?: string
+  secret_arg?: string
+  scope_hosts?: string[]
+  scope_runnables?: string[]
+  has_secret?: boolean
+  secret?: string   // write-only; never returned by list_credentials
+}
+
+export interface CredentialBackend {
+  available: boolean
+  backend: string
 }
 
 // runspec:transfer_end event detail — fired once when a transfer finishes.
@@ -515,8 +540,21 @@ export interface BridgeApi {
   get_filters: () => Promise<Filter[]>
   save_filters: (filters: Filter[]) => Promise<void>
   import_filters: (tomlContent: string) => Promise<Filter[]>
+  // Named credentials (Settings → Credentials). Metadata is returned by
+  // list_credentials; the secret value rides only on save (write-only) and is
+  // stored in the OS keyring, never read back.
+  list_credentials: () => Promise<Credential[]>
+  // In-scope credentials for a runnable (id + label) — for the Forms run dialog's
+  // optional credential override. In-scope credentials auto-apply on run anyway.
+  credentials_for_runnable: (host: string, runnable: string) => Promise<{ id: string; label: string; has_secret: boolean }[]>
+  save_credential: (entry: Credential) => Promise<{ id?: string; error?: string }>
+  delete_credential: (id: string) => Promise<void>
+  credentials_backend: () => Promise<CredentialBackend>
   test_host: (name: string) => Promise<TestResult>
-  invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string) => Promise<string>
+  // `credentialId` (optional) applies a saved credential by id, overriding any
+  // in-scope credential that would auto-apply. In-scope credentials fill their
+  // bound args automatically even without it.
+  invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string, credentialId?: string) => Promise<string>
   // List a directory on a host for the Forms path-picker. With asServiceAccount +
   // a runnable, the remote listing runs as that runnable's run_as (sudo/become).
   list_dir: (host: string, path?: string, group?: string, dirsOnly?: boolean, runnable?: string, asServiceAccount?: boolean) => Promise<DirListing>
@@ -537,7 +575,7 @@ export interface BridgeApi {
   start_relay: (source: RelaySource, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string) => Promise<{ id?: string; error?: string }>
   // Browse a directory on an ad-hoc relay source (reached via a jump). Password
   // is used only for this listing connection, never stored.
-  list_dir_adhoc: (jump: string, host: string, path?: string, user?: string, password?: string, port?: number, dirsOnly?: boolean) => Promise<DirListing>
+  list_dir_adhoc: (jump: string, host: string, path?: string, user?: string, password?: string, port?: number, dirsOnly?: boolean, credentialId?: string) => Promise<DirListing>
   // Browse a directory on a host that isn't saved yet (Settings → Jump Hosts add/
   // edit form) so the runspec-path picker can pick where runspec lives. Connects
   // straight to the host from the form's connection details (no jump).

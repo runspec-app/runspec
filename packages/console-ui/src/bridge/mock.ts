@@ -646,6 +646,14 @@ export const mockApi: BridgeApi = {
 
   import_filters: async (toml) => { console.log('[mock] import_filters', toml); return [] },
 
+  list_credentials: async () => [
+    { id: 'svc-prod', label: 'Service account (prod)', kind: 'userpass', username: 'svc_runner', username_arg: 'service-username', secret_arg: 'user-password', scope_hosts: ['prod-*'], scope_runnables: ['deploy'], has_secret: true },
+  ],
+  credentials_for_runnable: async (host, runnable) => { console.log('[mock] credentials_for_runnable', host, runnable); return [{ id: 'svc-prod', label: 'Service account (prod)', has_secret: true }] },
+  save_credential: async (entry) => { console.log('[mock] save_credential', { ...entry, secret: entry.secret ? '***' : undefined }); return { id: entry.id || 'mock-' + Date.now() } },
+  delete_credential: async (id) => { console.log('[mock] delete_credential', id) },
+  credentials_backend: async () => ({ available: true, backend: 'WinVaultKeyring' }),
+
   test_host: async (name): Promise<TestResult> => {
     await new Promise(r => setTimeout(r, 1200))
     if (name === 'prod-2') {
@@ -780,7 +788,7 @@ export const mockApi: BridgeApi = {
     setTimeout(tick, 200)
     return { id }
   },
-  list_dir_adhoc: async (jump, host, path = '', _user, _password, _port, dirsOnly = false) => {
+  list_dir_adhoc: async (jump, host, path = '', _user, _password, _port, dirsOnly = false, _credentialId?) => {
     console.log('[mock] list_dir_adhoc', { jump, host, path, dirsOnly })
     const cwd = path && path !== '/' ? path.replace(/\/$/, '') : '/var/log/app'
     const entries = [

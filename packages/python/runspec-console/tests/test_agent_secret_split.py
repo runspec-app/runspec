@@ -1,0 +1,110 @@
+"""
+test_agent_secret_split.py — the agent (LLM) runnable path must keep secrets off argv.
+
+``_run_tool_sync`` is what the agentic loop calls for a runnable tool. Like the
+manual ``invoke_runnable`` path, it must split ``password``-typed args out of the
+argv args and hand them to the executor as ``secrets=`` (which become
+``RUNSPEC_*_ARG_*`` env vars) — otherwise a secret would land in the remote's
+``ps`` / shell history. These tests bind the real method onto a light harness and
+capture what reaches ``run_local`` / ``run_remote``.
+"""
+
+from __future__ import annotations
+
+import threading
+
+import runspec_console.bridge as bridge_mod
+from runspec_console.bridge import Bridge
+
+
+class _AgentBridge:
+    _run_tool_sync = Bridge._run_tool_sync
+    # These are @staticmethod on Bridge; re-wrap so binding onto the harness
+    # doesn't turn them into instance methods (which would inject ``self``).
+    _secret_arg_names = staticmethod(Bridge._secret_arg_names)
+    _positionals_for = staticmethod(Bridge._positionals_for)
+    # Credential resolution is a no-op here (no credentials configured).
+    _apply_credentials = Bridge._apply_credentials
+    _scoped_credentials = Bridge._scoped_credentials
+    _scope_matches = staticmethod(Bridge._scope_matches)
+    _credential_entry = Bridge._credential_entry
+    _declared_arg_names = staticmethod(Bridge._declared_arg_names)
+
+    # Stubbed: the real _become_params imports the runspec core package, which
+    # the console test suite runs without. Escalation isn't under test here.
+    def _become_params(self, cached, hostname):
+        return "", "sudo", None
+
+    def __init__(self, entry, cached):
+        self._entry = entry
+        self._runnables_cache = [cached]
+        self._lock = threading.Lock()
+        self._credentials: list = []
+
+    def _host_entry(self, _host):
+        return self._entry
+
+    def get_config(self):
+        return {"ssh": {}}
+
+    def _reload_credentials(self):
+        pass
+
+
+def _cached(host: str) -> dict:
+    # The runnables cache is matched by (host, name) in _run_tool_sync, so the
+    # record's host must equal the tool's host for its args to be found.
+    return {
+        "host": host,
+        "name": "deploy",
+        "group": None,
+        "args": [
+            {"name": "service-username", "type": "str"},
+            {"name": "user-password", "type": "password"},
+        ],
+    }
+
+
+def test_run_tool_sync_local_splits_password(monkeypatch):
+    captured: dict = {}
+
+    def fake_run_local(rp, runnable, args, command_path, on_line, on_done, **kw):
+        captured["args"] = args
+        captured["secrets"] = kw.get("secrets")
+
+    monkeypatch.setattr(bridge_mod, "run_local", fake_run_local)
+    monkeypatch.setattr(bridge_mod, "_paths", lambda _e: ["/opt/app/runspec"])
+
+    b = _AgentBridge(
+        entry={"name": "local"}, cached=_cached("local")
+    )  # no "ssh" → local
+    b._run_tool_sync(
+        "local__deploy",
+        {"service-username": "svc", "user-password": "s3cret"},
+    )
+
+    assert captured["args"] == {"service-username": "svc"}
+    assert captured["secrets"] == {"user-password": "s3cret"}
+
+
+def test_run_tool_sync_remote_splits_password(monkeypatch):
+    captured: dict = {}
+
+    def fake_run_remote(
+        ssh, rp, runnable, args, command_path, on_line, on_done, idf, **kw
+    ):
+        captured["args"] = args
+        captured["secrets"] = kw.get("secrets")
+
+    monkeypatch.setattr(bridge_mod, "run_remote", fake_run_remote)
+    monkeypatch.setattr(bridge_mod, "_paths", lambda _e: ["/opt/app/runspec"])
+
+    entry = {"name": "prod", "ssh": "deploy@prod", "identityFile": "/k"}
+    b = _AgentBridge(entry=entry, cached=_cached("prod"))
+    b._run_tool_sync(
+        "prod__deploy",
+        {"service-username": "svc", "user-password": "s3cret"},
+    )
+
+    assert captured["args"] == {"service-username": "svc"}
+    assert captured["secrets"] == {"user-password": "s3cret"}

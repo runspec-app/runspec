@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable } from '../bridge'
+import { bridge } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { PathInput } from './PathInput'
 
@@ -293,12 +294,14 @@ interface ModalState {
 interface RunModalProps {
   state: ModalState | null
   onClose: () => void
-  onSubmit: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[]) => void
+  onSubmit: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[], credentialId?: string) => void
 }
 
 function RunModal({ state, onClose, onSubmit }: RunModalProps) {
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [credentialId, setCredentialId] = useState('')
+  const [creds, setCreds] = useState<{ id: string; label: string }[]>([])
 
   // Reset form when the modal or node changes
   useEffect(() => {
@@ -311,7 +314,11 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     }
     setValues(defaults)
     setErrors({})
-  }, [state?.rootRunnable.name, state?.commandPath.join('/')])
+    setCredentialId('')
+    // Offer any in-scope credentials for this runnable as an optional override.
+    bridge.credentials_for_runnable(state.rootRunnable.host, state.rootRunnable.name)
+      .then(setCreds).catch(() => setCreds([]))
+  }, [state?.rootRunnable.name, state?.rootRunnable.host, state?.commandPath.join('/')])
 
   if (!state) return null
 
@@ -339,7 +346,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
       }
     }
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
-    onSubmit(rootRunnable, values, commandPath)
+    onSubmit(rootRunnable, values, commandPath, credentialId || undefined)
     onClose()
     message.success(`/${[rootRunnable.name, ...commandPath].join(' ')} submitted`)
   }
@@ -431,6 +438,22 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
             </Text>
           )}
           <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} />
+          {creds.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <Text style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                Credential <Text type="secondary" style={{ fontSize: 11 }}>(in-scope ones apply automatically — pick to override)</Text>
+              </Text>
+              <Select
+                size="small"
+                value={credentialId || undefined}
+                onChange={v => setCredentialId(v ?? '')}
+                placeholder="auto (by scope)"
+                style={{ width: '100%' }}
+                allowClear
+                options={creds.map(c => ({ label: c.label, value: c.id }))}
+              />
+            </div>
+          )}
         </div>
       )}
     </Modal>
@@ -530,7 +553,7 @@ interface FormsViewProps {
   hosts: Host[]
   selectedHost: string
   activeScope: string[]
-  onRunRunnable: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[]) => void
+  onRunRunnable: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[], credentialId?: string) => void
   pendingForm?: PendingForm | null
   onPendingFormClear?: () => void
 }

@@ -1,0 +1,165 @@
+"""
+credentials.py — named credentials: metadata in TOML, secret values in the OS keyring.
+
+A credential is a saved identity the console can apply to a runnable invocation
+or a relay connection. Its **secret value never touches disk** in the console's
+own files: the metadata (label, kind, which args it binds, where it's allowed)
+lives in ``runspec_credentials.toml`` next to the hosts/filters files, while the
+secret is stored in the OS keychain via ``keyring`` — Windows Credential Manager,
+macOS Keychain, or the Secret Service / KWallet on Linux — keyed by the
+credential's stable ``id``.
+
+A credential entry (metadata)::
+
+  [[credential]]
+  id              = "svc-prod"
+  label           = "Service account (prod)"
+  kind            = "userpass"          # userpass | password | token
+  username        = "svc_runner"        # non-secret; applied to username_arg
+  username_arg    = "service-username"  # runnable arg that gets the username (plain)
+  secret_arg      = "user-password"     # runnable arg that gets the secret (env channel)
+  scope_hosts     = ["prod-*"]          # fnmatch patterns; empty = any host
+  scope_runnables = ["deploy", "db-*"]  # fnmatch patterns; empty = any runnable
+
+The secret for ``id = "svc-prod"`` is stored under keyring service
+``runspec-console``. ``secret_arg`` / ``username_arg`` are how a credential binds
+to a runnable's flags (resolved in the invocation path); a relay-only credential
+leaves them empty and is referenced by ``id``. The flat shape (single
+username/secret arg, string-array scopes) keeps the TOML writer trivial — mirrors
+``filters_store`` — while still expressing the ``--service-username`` /
+``--user-password`` case.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
+# Keyring service namespace; every credential's secret is stored under (SERVICE, id).
+KEYRING_SERVICE = "runspec-console"
+
+# Metadata fields persisted to runspec_credentials.toml, in write order. The
+# secret value is deliberately absent — it only ever lives in the keyring.
+_STR_FIELDS = ("id", "label", "kind", "username", "username_arg", "secret_arg")
+_LIST_FIELDS = ("scope_hosts", "scope_runnables")
+
+VALID_KINDS = ("userpass", "password", "token")
+
+
+# ── metadata store (TOML) ──────────────────────────────────────────────────────
+
+
+def load_credentials(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with open(path, "rb") as fh:
+        data = tomllib.load(fh)
+    return data.get("credential", [])
+
+
+def save_credentials(path: Path, entries: list[dict[str, Any]]) -> None:
+    lines: list[str] = []
+    for c in entries:
+        lines.append("[[credential]]")
+        for k in _STR_FIELDS:
+            v = c.get(k)
+            if v is None or (v == "" and k not in ("id", "label")):
+                continue  # id + label always written; other strings only if set
+            lines.append(f"{k} = {_toml_str(str(v))}")
+        for k in _LIST_FIELDS:
+            vals = [str(x) for x in (c.get(k) or []) if str(x).strip()]
+            if vals:
+                inner = ", ".join(_toml_str(x) for x in vals)
+                lines.append(f"{k} = [{inner}]")
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _toml_str(v: str) -> str:
+    """Escape a string as a TOML basic string literal (mirrors filters_store)."""
+    escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+# ── keyring (secret values) ────────────────────────────────────────────────────
+
+
+def _keyring() -> Any | None:
+    """The ``keyring`` module, or None when the optional extra isn't installed.
+
+    Credentials are an opt-in feature (``pip install runspec-console[credentials]``);
+    importing lazily keeps the core install dependency-free and lets the rest of
+    the app run when keyring is absent.
+    """
+    try:
+        import keyring
+
+        return keyring
+    except Exception:
+        return None
+
+
+def available() -> bool:
+    """True if a usable keyring backend is present (the feature can store secrets)."""
+    return backend_name() is not None
+
+
+def backend_name() -> str | None:
+    """The active keyring backend's class name (e.g. ``WinVaultKeyring``), or None.
+
+    Returns None when keyring isn't installed *or* resolves to the fail backend
+    (no usable OS store) — the UI uses this to warn that secrets can't be saved.
+    """
+    kr = _keyring()
+    if kr is None:
+        return None
+    try:
+        backend = kr.get_keyring()
+        name = type(backend).__name__
+        # keyring's "fail" backend raises on use — treat it as unavailable.
+        if name == "Keyring" and type(backend).__module__.endswith("fail"):
+            return None
+        return name
+    except Exception:
+        return None
+
+
+def set_secret(cred_id: str, value: str) -> None:
+    kr = _keyring()
+    if kr is None:
+        raise RuntimeError(
+            "credential storage unavailable — install the 'credentials' extra "
+            "(pip install runspec-console[credentials])"
+        )
+    kr.set_password(KEYRING_SERVICE, cred_id, value)
+
+
+def get_secret(cred_id: str) -> str | None:
+    kr = _keyring()
+    if kr is None:
+        return None
+    try:
+        return kr.get_password(KEYRING_SERVICE, cred_id)
+    except Exception:
+        return None
+
+
+def has_secret(cred_id: str) -> bool:
+    return bool(get_secret(cred_id))
+
+
+def delete_secret(cred_id: str) -> None:
+    kr = _keyring()
+    if kr is None:
+        return
+    try:
+        kr.delete_password(KEYRING_SERVICE, cred_id)
+    except Exception:
+        # Already absent (or backend hiccup) — deletion is best-effort.
+        pass

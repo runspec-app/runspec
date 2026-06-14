@@ -22,6 +22,7 @@ import logging
 import os
 import queue
 import random
+import stat
 import sys
 import threading
 import time
@@ -39,6 +40,7 @@ else:
 from . import notify
 from .config import (
     confirm_notifications_enabled,
+    credentials_path,
     filters_path,
     hosts_path,
     read_config,
@@ -336,6 +338,10 @@ class Bridge:
         # startup and reloaded on save; resolved by name when a relay/download
         # selects one. See filters_store.py for the schema.
         self._filters: list[dict[str, Any]] = []
+        # Named credentials (runspec_credentials.toml — metadata only; secret
+        # values live in the OS keyring). Loaded at startup and on save; resolved
+        # by id when a runnable/relay applies one. See credentials.py.
+        self._credentials: list[dict[str, Any]] = []
         # tid → final transfer_end detail, so a synchronous caller (the agent tool)
         # can await a transfer's outcome. Bounded; oldest entries are evicted.
         self._recent_transfer_results: dict[str, dict[str, Any]] = {}
@@ -377,6 +383,7 @@ class Bridge:
         self._install_ssh_log_forwarder()
         self._reload_hosts()
         self._reload_filters()
+        self._reload_credentials()
         import atexit
 
         atexit.register(self._close_ssh_pool)
@@ -893,7 +900,9 @@ class Bridge:
 
         def cb(transferred: int, total: int) -> None:
             now = time.monotonic()
-            if now - last[0] >= 0.15 or transferred >= total:
+            # ``total`` is 0 for a special file (size unknown) — throttle on time
+            # alone then; otherwise also flush the final chunk (transferred==total).
+            if now - last[0] >= 0.15 or (total and transferred >= total):
                 last[0] = now
                 detail: dict[str, Any] = {
                     "id": tid,
@@ -914,7 +923,57 @@ class Bridge:
                 )
             sftp.put(item.src, item.dst, callback=cb)
         else:
-            sftp.get(item.src, item.dst, callback=cb)
+            self._sftp_download(sftp, item, cb)
+
+    # Cap for raw reads of special (size-0) files so an unbounded stream
+    # (e.g. /proc/kcore) can't fill the disk — large/streaming files should be
+    # captured through a filter instead.
+    _SPECIAL_FILE_CAP = 256 * 1024 * 1024  # 256 MiB
+
+    def _sftp_download(
+        self, sftp: Any, item: Any, cb: Callable[[int, int], None]
+    ) -> None:
+        """Pull one remote file, tolerant of special (size-0) files.
+
+        ``sftp.get`` can't be used here: it asserts the downloaded size equals
+        the remote ``stat()`` size, which is always 0 for procfs/sysfs even
+        though the file streams real bytes — so a ``/proc/cpuinfo`` pull always
+        fails with "size mismatch in get". We stat for a directory guard, then
+        stream via ``getfo`` (same progress callback, no size assertion). A
+        special file (stat size 0) takes a bounded raw read instead.
+        """
+        st = sftp.stat(item.src)
+        if stat.S_ISDIR(st.st_mode):
+            raise IsADirectoryError(
+                f"{item.name} is a directory — directory transfer isn't supported yet"
+            )
+        if st.st_size == 0:
+            self._download_special(sftp, item, cb)
+            return
+        with open(item.dst, "wb") as fdst:
+            sftp.getfo(item.src, fdst, callback=cb)
+
+    def _download_special(
+        self, sftp: Any, item: Any, cb: Callable[[int, int], None]
+    ) -> None:
+        """Stream a size-0 special file to ``item.dst`` until EOF, capped at
+        ``_SPECIAL_FILE_CAP`` bytes. The total is unknown, so progress reports
+        bytes-so-far with a ``total`` of 0 (the UI treats that as indeterminate)."""
+        transferred = 0
+        with sftp.open(item.src, "rb") as fsrc, open(item.dst, "wb") as fdst:
+            while True:
+                chunk = fsrc.read(32768)
+                if not chunk:
+                    break
+                transferred += len(chunk)
+                if transferred > self._SPECIAL_FILE_CAP:
+                    raise OSError(
+                        f"{item.name} exceeds "
+                        f"{self._SPECIAL_FILE_CAP // (1024 * 1024)} MiB as a "
+                        "streaming/special file — use a filter to capture it"
+                    )
+                fdst.write(chunk)
+                cb(transferred, 0)
 
     def _emit_transfer_end(self, tid: str, detail: dict[str, Any]) -> None:
         """Dispatch the ``runspec:transfer_end`` UI event and record the result so
@@ -1709,8 +1768,16 @@ class Bridge:
             except ValueError as e:
                 return {"error": str(e)}
 
-        # Pull the password out so it never lands in _in_flight / logs.
+        # Pull the password / credential id out so neither lands in _in_flight /
+        # logs. A credential_id (ad-hoc source) resolves to the stored secret —
+        # and its username when none was given — at connect time.
         password = source.pop("password", None)
+        credential_id = source.pop("credential_id", None)
+        resolved_user, password = self._resolve_adhoc_credential(
+            credential_id, source.get("user"), password
+        )
+        if resolved_user:
+            source["user"] = resolved_user
         cfg = self.get_config().get("ssh")
 
         tid = uuid.uuid4().hex[:12]
@@ -1811,18 +1878,20 @@ class Bridge:
         password: str | None = None,
         port: int | None = None,
         dirs_only: bool = False,
+        credential_id: str | None = None,
     ) -> dict[str, Any]:
         """List a directory on an ad-hoc host (reached via ``jump``) for the relay
         source browser. Same return shape as :meth:`list_dir`.
 
         The target connection is cached for the browse session (keyed by jump /
         host / user / port) so navigation on a slow link only handshakes the
-        target once. The password is used only when (re)establishing and is never
-        stored or logged."""
+        target once. The password (or a ``credential_id``'s stored secret) is used
+        only when (re)establishing and is never stored or logged."""
         if not host:
             return {"error": "no source host specified"}
         if not jump:
             return {"error": "no jump host selected"}
+        user, password = self._resolve_adhoc_credential(credential_id, user, password)
         key = (jump, host, user or "", int(port or 22))
         cfg = self.get_config().get("ssh")
         for attempt in (1, 2):
@@ -3483,6 +3552,121 @@ class Bridge:
             self._reload_filters()
         return new
 
+    # ── credentials ─────────────────────────────────────────────────────────────
+
+    def credentials_backend(self) -> dict[str, Any]:
+        """Whether secrets can be stored, and which OS keyring backs them.
+
+        ``available`` False means the ``credentials`` extra isn't installed or no
+        usable OS store resolved — the UI warns and disables saving secrets.
+        """
+        from . import credentials as cred
+
+        name = cred.backend_name()
+        return {"available": name is not None, "backend": name or ""}
+
+    def list_credentials(self) -> list[dict[str, Any]]:
+        """Saved credentials' **metadata** for the Settings tab — never the secret.
+
+        Each entry carries ``has_secret`` (whether a value is stored in the
+        keyring) so the UI can show set/not-set without revealing anything."""
+        from . import credentials as cred
+
+        self._reload_credentials()
+        result: list[dict[str, Any]] = []
+        for c in self._credentials:
+            cid = str(c.get("id", ""))
+            entry: dict[str, Any] = {
+                "id": cid,
+                "label": c.get("label", ""),
+                "kind": c.get("kind", "userpass"),
+                "username": c.get("username", ""),
+                "username_arg": c.get("username_arg", ""),
+                "secret_arg": c.get("secret_arg", ""),
+                "scope_hosts": list(c.get("scope_hosts", []) or []),
+                "scope_runnables": list(c.get("scope_runnables", []) or []),
+                "has_secret": cred.has_secret(cid) if cid else False,
+            }
+            result.append(entry)
+        return result
+
+    def credentials_for_runnable(
+        self, host: str, runnable: str
+    ) -> list[dict[str, Any]]:
+        """In-scope credentials for ``(host, runnable)`` — id + label only — so the
+        Forms run dialog can offer them as a pick/override. (In-scope credentials
+        auto-apply on run; choosing one here pins it.)"""
+        from . import credentials as cred
+
+        self._reload_credentials()
+        return [
+            {
+                "id": str(c.get("id", "")),
+                "label": c.get("label", ""),
+                "has_secret": cred.has_secret(str(c.get("id", ""))),
+            }
+            for c in self._scoped_credentials(host, runnable)
+        ]
+
+    def save_credential(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """Create or update one credential (upsert by ``id``).
+
+        Metadata is written to ``runspec_credentials.toml``; a non-empty
+        ``secret`` is stored in the OS keyring (and stripped from metadata). A
+        blank/absent ``secret`` leaves any existing stored secret untouched —
+        the field is write-only, so editing other metadata never clears it.
+        Returns ``{"id": ...}`` or ``{"error": ...}``.
+        """
+        from . import credentials as cred
+        from .credentials import VALID_KINDS, save_credentials
+
+        label = str(entry.get("label", "")).strip()
+        if not label:
+            return {"error": "a label is required"}
+        kind = str(entry.get("kind", "userpass")).strip() or "userpass"
+        if kind not in VALID_KINDS:
+            return {"error": f"unknown kind: {kind}"}
+
+        secret = entry.get("secret")
+        has_new_secret = isinstance(secret, str) and secret != ""
+        if has_new_secret and not cred.available():
+            return {"error": "credential storage unavailable on this system"}
+
+        self._reload_credentials()
+        cid = str(entry.get("id", "")).strip() or uuid.uuid4().hex[:12]
+
+        meta: dict[str, Any] = {
+            "id": cid,
+            "label": label,
+            "kind": kind,
+            "username": str(entry.get("username", "")).strip(),
+            "username_arg": str(entry.get("username_arg", "")).strip(),
+            "secret_arg": str(entry.get("secret_arg", "")).strip(),
+            "scope_hosts": _clean_str_list(entry.get("scope_hosts")),
+            "scope_runnables": _clean_str_list(entry.get("scope_runnables")),
+        }
+        others = [c for c in self._credentials if str(c.get("id")) != cid]
+        save_credentials(credentials_path(), [*others, meta])
+        if has_new_secret:
+            try:
+                cred.set_secret(cid, str(secret))  # has_new_secret ⇒ non-empty str
+            except Exception as exc:
+                return {"error": f"could not store secret: {exc}"}
+        self._reload_credentials()
+        return {"id": cid}
+
+    def delete_credential(self, cred_id: str) -> None:
+        """Remove a credential's metadata and its stored secret."""
+        from . import credentials as cred
+        from .credentials import save_credentials
+
+        cid = str(cred_id or "")
+        self._reload_credentials()
+        remaining = [c for c in self._credentials if str(c.get("id")) != cid]
+        save_credentials(credentials_path(), remaining)
+        cred.delete_secret(cid)
+        self._reload_credentials()
+
     def import_jump_hosts(self, toml_content: str) -> list[dict[str, Any]]:
         try:
             data = tomllib.loads(toml_content)
@@ -3556,6 +3740,7 @@ class Bridge:
         args: dict[str, Any],
         command_path: list[str] | None = None,
         group: str | None = None,
+        credential_id: str = "",
     ) -> str:
         inv_id = uuid.uuid4().hex[:12]
         cp = command_path or []
@@ -3593,6 +3778,18 @@ class Bridge:
         }
         exec_args = {k: v for k, v in args.items() if k not in secret_names}
 
+        # Fill any bound credential's values (username into argv, secret into the
+        # env channel) from secure storage — in-scope ones auto-apply, an explicit
+        # credential_id overrides. Returns the ids applied, for the audit record.
+        applied_creds = self._apply_credentials(
+            host,
+            runnable,
+            exec_args,
+            secrets,
+            explicit_id=credential_id,
+            valid_args=self._declared_arg_names(cached, cp),
+        )
+
         with self._lock:
             self._in_flight[inv_id] = {
                 "id": inv_id,
@@ -3603,6 +3800,7 @@ class Bridge:
                 "runAs": run_as,
                 "startedAt": _iso_now(),
                 "args": exec_args,
+                **({"credentials": applied_creds} if applied_creds else {}),
                 _CANCEL_KEY: cancel_event,
             }
 
@@ -3946,6 +4144,7 @@ class Bridge:
         import re
 
         allowset = {str(a).strip() for a in allow} if allow else None
+        self._reload_credentials()  # so per-runnable credential_id enums are current
         with self._lock:
             runnables = list(self._runnables_cache)
         tools: list[dict[str, Any]] = []
@@ -4051,6 +4250,25 @@ class Bridge:
                             continue
                         add_arg(arg, note=f"(for the '{cn}' command)")
 
+            # Offer any in-scope credentials by id (override only — in-scope ones
+            # apply automatically). The agent picks an *id*, never sees the secret.
+            scoped_creds = self._scoped_credentials(host, name)
+            if scoped_creds:
+                cred_summary = "; ".join(
+                    f"'{c['id']}'" + (f" — {c['label']}" if c.get("label") else "")
+                    for c in scoped_creds
+                )
+                properties["credential_id"] = {
+                    "type": "string",
+                    "enum": [c["id"] for c in scoped_creds],
+                    "description": (
+                        "Optional: apply a saved credential by id to fill its bound "
+                        "arguments from secure storage. The matching credential(s) "
+                        "already apply automatically — set this only to choose a "
+                        f"specific one. Options: {cred_summary}."
+                    ),
+                }
+
             schema: dict[str, Any] = {"type": "object", "properties": properties}
             if required:
                 schema["required"] = required
@@ -4073,6 +4291,7 @@ class Bridge:
         remote = [h["name"] for h in self._hosts if h.get("ssh")]
         if not remote:
             return []  # nothing to transfer to/from
+        self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
         filter_names = [f["name"] for f in filters if f.get("name")]
 
@@ -4134,20 +4353,56 @@ class Bridge:
                 "required": ["host", "path", "dest_dir"],
             },
         }
+        cred_ids = [str(c.get("id")) for c in self._credentials if c.get("id")]
+        relay_source_props: dict[str, Any] = {
+            "source_host": {
+                "type": "string",
+                "enum": remote,
+                "description": (
+                    "Configured fleet host to read from. Omit when reading from an "
+                    "ad-hoc host via source_via + source_target instead."
+                ),
+            },
+            "source_via": {
+                "type": "string",
+                "enum": remote,
+                "description": (
+                    "To read from a host that is NOT in the fleet, the configured "
+                    "jump host to tunnel through. Use with source_target (and "
+                    "source_credential if the ad-hoc host needs a password)."
+                ),
+            },
+            "source_target": {
+                "type": "string",
+                "description": (
+                    "Hostname of the ad-hoc source reached through source_via."
+                ),
+            },
+        }
+        if cred_ids:
+            relay_source_props["source_credential"] = {
+                "type": "string",
+                "enum": cred_ids,
+                "description": (
+                    "Saved credential id providing the SSH password for the ad-hoc "
+                    "source (source_via + source_target). Its secret is read from "
+                    "secure storage at connect time — you never see the value. "
+                    f"Available: {', '.join(cred_ids)}."
+                ),
+            }
         relay = {
             "name": "relay_file",
             "description": (
-                "Relay a file from one remote host to another through the console, "
-                "optionally filtering it on the source host first."
+                "Relay a file from one host to another through the console, "
+                "optionally filtering it on the source host first. The source is "
+                "either a configured fleet host (source_host) or an ad-hoc host "
+                "reached via a jump (source_via + source_target, with an optional "
+                "source_credential for password auth)."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "source_host": {
-                        "type": "string",
-                        "enum": remote,
-                        "description": "Host to read the file from.",
-                    },
+                    **relay_source_props,
                     "path": {
                         "type": "string",
                         "description": "Absolute path of the file on the source host.",
@@ -4163,7 +4418,7 @@ class Bridge:
                     },
                     **filter_props(),
                 },
-                "required": ["source_host", "path", "dest_host", "dest_dir"],
+                "required": ["path", "dest_host", "dest_dir"],
             },
         }
         return [download, relay]
@@ -4185,18 +4440,31 @@ class Bridge:
             )
             label = f"download of {os.path.basename(path)} from {host}"
         elif name == "relay_file":
-            sh, path, dh = ti.get("source_host"), ti.get("path"), ti.get("dest_host")
-            if not sh or not path or not dh or not dest_dir:
-                return "Error: source_host, path, dest_host and dest_dir are required."
+            path, dh = ti.get("path"), ti.get("dest_host")
+            if not path or not dh or not dest_dir:
+                return "Error: path, dest_host and dest_dir are required."
+            sh = ti.get("source_host")
+            via, target = ti.get("source_via"), ti.get("source_target")
+            if via and target:
+                source: dict[str, Any] = {
+                    "kind": "adhoc",
+                    "host": target,
+                    "jump": via,
+                    "credential_id": ti.get("source_credential"),
+                }
+                src_label = f"{target} via {via}"
+            elif sh:
+                source = {"kind": "host", "host": sh}
+                src_label = str(sh)
+            else:
+                return (
+                    "Error: provide source_host (a fleet host), or source_via + "
+                    "source_target for an ad-hoc source."
+                )
             res = self.start_relay(
-                {"kind": "host", "host": sh},
-                [path],
-                dh,
-                dest_dir,
-                filter_name,
-                filter_value,
+                source, [path], dh, dest_dir, filter_name, filter_value
             )
-            label = f"relay of {os.path.basename(path)} from {sh} to {dh}"
+            label = f"relay of {os.path.basename(path)} from {src_label} to {dh}"
         else:
             return f"Error: unknown tool '{name}'"
 
@@ -4555,6 +4823,9 @@ class Bridge:
         # "Available commands: …" error the agent can read and retry from.
         tool_input = dict(tool_input or {})
         chosen_command = tool_input.pop("command", None)
+        # An explicit credential the agent chose to apply (in-scope ones apply
+        # automatically regardless). Pulled out so it isn't treated as a runnable arg.
+        credential_id = str(tool_input.pop("credential_id", "") or "")
         command_path = (
             [chosen_command]
             if isinstance(chosen_command, str) and chosen_command
@@ -4585,13 +4856,34 @@ class Bridge:
             tool_paths[0] if tool_paths else "",
         )
         run_as, become_method, become_flags = self._become_params(cached_r, host)
+        # password-typed args must never become argv — on the remote they'd leak
+        # into ps / shell history. Split them into the secret env channel exactly
+        # as the manual path (invoke_runnable) does; the executor injects them as
+        # RUNSPEC_*_ARG_* env vars instead.
+        secret_names = self._secret_arg_names(cached_r, command_path)
+        secrets = {
+            k: v
+            for k, v in tool_input.items()
+            if k in secret_names and v not in (None, "")
+        }
+        exec_args = {k: v for k, v in tool_input.items() if k not in secret_names}
+        # Fill bound credential values from secure storage (same resolver as the
+        # manual path): in-scope credentials auto-apply, credential_id overrides.
+        self._apply_credentials(
+            host,
+            runnable,
+            exec_args,
+            secrets,
+            explicit_id=credential_id,
+            valid_args=self._declared_arg_names(cached_r, command_path),
+        )
         ssh = entry.get("ssh")
         if ssh:
             run_remote(
                 ssh,
                 rp,
                 runnable,
-                tool_input,
+                exec_args,
                 command_path,
                 on_line,
                 on_done,
@@ -4603,12 +4895,13 @@ class Bridge:
                 become_method=become_method,
                 become_flags=become_flags,
                 positionals=self._positionals_for(cached_r, command_path),
+                secrets=secrets,
             )
         else:
             run_local(
                 rp,
                 runnable,
-                tool_input,
+                exec_args,
                 command_path,
                 on_line,
                 on_done,
@@ -4618,6 +4911,7 @@ class Bridge:
                 become_method=become_method,
                 become_flags=become_flags,
                 positionals=self._positionals_for(cached_r, command_path),
+                secrets=secrets,
             )
 
         output = "\n".join(output_lines)
@@ -4712,6 +5006,162 @@ class Bridge:
     def _filter_entry(self, name: str) -> dict[str, Any] | None:
         """The saved filter named ``name`` (case-sensitive), or None."""
         return next((f for f in self._filters if f.get("name") == name), None)
+
+    def _reload_credentials(self) -> None:
+        from .credentials import load_credentials
+
+        self._credentials = load_credentials(credentials_path())
+
+    def _credential_entry(self, cred_id: str) -> dict[str, Any] | None:
+        """The saved credential metadata for ``cred_id``, or None."""
+        return next(
+            (c for c in self._credentials if str(c.get("id")) == str(cred_id)), None
+        )
+
+    def _resolve_adhoc_credential(
+        self, credential_id: Any, user: str | None, password: str | None
+    ) -> tuple[str | None, str | None]:
+        """Fill an ad-hoc relay's ``(user, password)`` from a saved credential.
+
+        When a ``credential_id`` is given and no explicit ``password`` was typed,
+        the credential's stored secret becomes the password and its ``username``
+        fills an empty ``user``. A typed password always wins; an unknown id or no
+        id leaves the inputs unchanged. The secret is read from the keyring at
+        connect time and never stored on the source dict / in_flight / logs.
+        """
+        if password or not credential_id:
+            return user, password
+        from . import credentials as cred
+
+        self._reload_credentials()
+        entry = self._credential_entry(str(credential_id))
+        if entry is None:
+            logger.warning("relay credential_id %r not found; ignoring", credential_id)
+            return user, password
+        if not user and entry.get("username"):
+            user = str(entry["username"])
+        return user, cred.get_secret(str(credential_id))
+
+    @staticmethod
+    def _scope_matches(patterns: Any, value: str) -> bool:
+        """True if ``value`` matches any fnmatch pattern (empty list = matches all)."""
+        import fnmatch
+
+        pats = [str(p).strip() for p in (patterns or []) if str(p).strip()]
+        if not pats:
+            return True
+        return any(fnmatch.fnmatchcase(value, p) for p in pats)
+
+    def _scoped_credentials(self, host: str, runnable: str) -> list[dict[str, Any]]:
+        """In-scope credentials for ``(host, runnable)`` — both scope lists must
+        match (an empty scope list matches anything). Reads the cache as-is."""
+        return [
+            c
+            for c in self._credentials
+            if self._scope_matches(c.get("scope_hosts"), host)
+            and self._scope_matches(c.get("scope_runnables"), runnable)
+        ]
+
+    @staticmethod
+    def _declared_arg_names(
+        cached: dict[str, Any] | None, command_path: list[str]
+    ) -> set[str]:
+        """All arg names declared at the node reached by ``command_path`` (plus the
+        top-level args) — used to avoid injecting a credential into an arg the
+        runnable doesn't have."""
+        node = cached or {}
+        names: set[str] = set()
+
+        def collect(n: dict[str, Any]) -> None:
+            for a in n.get("args", []) or []:
+                if isinstance(a, dict) and a.get("name"):
+                    names.add(a["name"])
+
+        collect(node)
+        for seg in command_path:
+            node = (node.get("commands") or {}).get(seg) or {}
+            collect(node)
+        return names
+
+    def _apply_credentials(
+        self,
+        host: str,
+        runnable: str,
+        exec_args: dict[str, Any],
+        secrets: dict[str, Any],
+        explicit_id: str = "",
+        valid_args: set[str] | None = None,
+    ) -> list[str]:
+        """Inject bound credential values into ``exec_args`` (username, plain) and
+        ``secrets`` (the secret, via the env channel), returning the ids applied.
+
+        Every in-scope credential auto-applies; an explicit ``explicit_id`` also
+        applies (even out of scope) and wins any per-arg conflict. A value the
+        caller already supplied is never overwritten, and when two in-scope
+        credentials bind the same arg with no explicit winner it's ambiguous and
+        skipped. ``valid_args`` (when given) limits *auto* injection to args the
+        runnable actually declares — an explicitly named credential still applies.
+        """
+        from . import credentials as cred
+
+        self._reload_credentials()
+        explicit = self._credential_entry(explicit_id) if explicit_id else None
+        if explicit_id and explicit is None:
+            logger.warning("credential_id %r not found; ignoring", explicit_id)
+        candidates = list(self._scoped_credentials(host, runnable))
+        if explicit is not None and explicit not in candidates:
+            candidates.append(explicit)  # named explicitly → applies out of scope
+        if not candidates:
+            return []
+
+        applied: set[str] = set()
+
+        def inject(arg_field: str, is_secret: bool) -> None:
+            # Group the binding credentials by the runnable arg they target.
+            by_arg: dict[str, list[dict[str, Any]]] = {}
+            for c in candidates:
+                arg_name = str(c.get(arg_field, "")).strip()
+                if arg_name:
+                    by_arg.setdefault(arg_name, []).append(c)
+            for arg_name, cs in by_arg.items():
+                target = secrets if is_secret else exec_args
+                if target.get(arg_name) not in (None, ""):
+                    continue  # caller-supplied value wins
+                if explicit is not None and explicit in cs:
+                    chosen: dict[str, Any] | None = explicit
+                elif len(cs) == 1:
+                    chosen = cs[0]
+                    if valid_args is not None and arg_name not in valid_args:
+                        continue  # auto-apply only into a declared arg
+                else:
+                    logger.warning(
+                        "ambiguous credential binding for arg %r on %s/%s; skipping",
+                        arg_name,
+                        host,
+                        runnable,
+                    )
+                    continue
+                cid = str(chosen.get("id", ""))
+                if is_secret:
+                    val = cred.get_secret(cid)
+                    if not val:
+                        logger.warning(
+                            "credential %r has no stored secret; skipping %r",
+                            cid,
+                            arg_name,
+                        )
+                        continue
+                    secrets[arg_name] = val
+                else:
+                    uname = str(chosen.get("username", "")).strip()
+                    if not uname:
+                        continue
+                    exec_args[arg_name] = uname
+                applied.add(cid)
+
+        inject("username_arg", is_secret=False)
+        inject("secret_arg", is_secret=True)
+        return sorted(applied)
 
     def _local_host_entry(self) -> dict[str, Any]:
         """Synthetic entry for the venv runspec-console itself runs in."""
@@ -6538,6 +6988,13 @@ def _find_putty_exe(name: str = "putty.exe") -> Path | None:
     if found:
         return Path(found)
     return None
+
+
+def _clean_str_list(value: Any) -> list[str]:
+    """Coerce ``value`` to a list of non-empty trimmed strings (or [])."""
+    if not isinstance(value, list):
+        return []
+    return [s for s in (str(v).strip() for v in value) if s]
 
 
 def _paths(entry: dict[str, Any]) -> list[str]:

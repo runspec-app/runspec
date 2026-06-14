@@ -61,8 +61,37 @@ class _ToolBridge:
     def __init__(self, runnables: list[dict[str, Any]]):
         self._lock = threading.Lock()
         self._runnables_cache = runnables
+        self._credentials: list = []
 
     _runnables_to_tools = Bridge._runnables_to_tools
+    _scoped_credentials = Bridge._scoped_credentials
+    _scope_matches = staticmethod(Bridge._scope_matches)
+
+    def _reload_credentials(self):
+        pass
+
+
+def test_tool_exposes_credential_id_when_in_scope():
+    runnables = _spec_to_runnables(
+        "deploy", {"args": {"u": {"type": "str"}}}, "local", "grp"
+    )
+    b = _ToolBridge(runnables)
+    b._credentials = [
+        {"id": "svc", "label": "Svc", "scope_hosts": [], "scope_runnables": ["deploy"]}
+    ]
+    props = b._runnables_to_tools()[0]["input_schema"]["properties"]
+    assert props["credential_id"]["enum"] == ["svc"]
+
+
+def test_tool_no_credential_id_when_out_of_scope():
+    runnables = _spec_to_runnables(
+        "deploy", {"args": {"u": {"type": "str"}}}, "local", "grp"
+    )
+    b = _ToolBridge(runnables)
+    b._credentials = [{"id": "svc", "scope_runnables": ["something-else"]}]
+    assert (
+        "credential_id" not in b._runnables_to_tools()[0]["input_schema"]["properties"]
+    )
 
 
 def _tool_for(spec: dict[str, Any]) -> dict[str, Any]:
@@ -183,7 +212,18 @@ def test_run_tool_sync_threads_command(monkeypatch):
             return "", "sudo", None
 
         _positionals_for = staticmethod(Bridge._positionals_for)
+        _secret_arg_names = staticmethod(Bridge._secret_arg_names)
         _run_tool_sync = Bridge._run_tool_sync
+        # Credential resolution is a no-op here (no credentials configured).
+        _credentials: list = []
+        _apply_credentials = Bridge._apply_credentials
+        _scoped_credentials = Bridge._scoped_credentials
+        _scope_matches = staticmethod(Bridge._scope_matches)
+        _credential_entry = Bridge._credential_entry
+        _declared_arg_names = staticmethod(Bridge._declared_arg_names)
+
+        def _reload_credentials(self):
+            pass
 
     _B()._run_tool_sync(
         "local__cluster", {"command": "drain", "node": "n1", "region": "us"}
@@ -223,7 +263,18 @@ def test_run_tool_sync_no_command_is_top_level(monkeypatch):
             return "", "sudo", None
 
         _positionals_for = staticmethod(Bridge._positionals_for)
+        _secret_arg_names = staticmethod(Bridge._secret_arg_names)
         _run_tool_sync = Bridge._run_tool_sync
+        # Credential resolution is a no-op here (no credentials configured).
+        _credentials: list = []
+        _apply_credentials = Bridge._apply_credentials
+        _scoped_credentials = Bridge._scoped_credentials
+        _scope_matches = staticmethod(Bridge._scope_matches)
+        _credential_entry = Bridge._credential_entry
+        _declared_arg_names = staticmethod(Bridge._declared_arg_names)
+
+        def _reload_credentials(self):
+            pass
 
     _B()._run_tool_sync("local__flush", {})
     assert captured["command_path"] == []

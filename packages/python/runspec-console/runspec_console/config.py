@@ -37,6 +37,10 @@ def filters_path() -> Path:
     return app_dir() / "runspec_filters.toml"
 
 
+def credentials_path() -> Path:
+    return app_dir() / "runspec_credentials.toml"
+
+
 def config_path() -> Path:
     return app_dir() / "config.toml"
 
