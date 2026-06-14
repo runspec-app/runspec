@@ -4,6 +4,32 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.15.0]
+
+### Added
+- **Email-verified queue signup — storage + token helpers (slice 1 of 5).** The
+  pure, platform-agnostic foundation of the new `email-verify` auth mode (see
+  `docs/design/email-queue-signup.md`): an internal employee signs up for a queue
+  with their company email + name, proves the address by clicking a verify link,
+  and is enrolled — no IdP. This release lands the I/O-free pieces only; the web
+  routes, wire frames, and Outlook send come in later slices.
+  - `console_room/signup.py` — the pure half: `EmailVerifyConfig` +
+    `read_auth_mode()` / `email_verify_from_env()` (the third `CONSOLE_ROOM_AUTH =
+    email-verify | oidc | dev` startup mode, inferred for back-compat when unset);
+    the automatic domain allowlist (`email_domain` / `domain_allowed` — a signup
+    may only ever verify a *same-domain* address as the queue's own mailbox); and
+    the `itsdangerous`-signed verify token (`sign_verify_token` /
+    `read_verify_token`, TTL-checked, single-use via a burned nonce) plus the
+    `PendingSignup` / `Member` dataclasses.
+  - `console_room/enrollment_store.py` — `EnrollmentStore`, a SQLite store
+    mirroring `TranscriptStore` (one connection, lock, `to_thread`-safe) with two
+    tables: `members` (verified enrollments, upsert on `(email, queue)`) and
+    `pending_signups` (the durable verify **outbox** + single-use nonce). Outbox
+    lifecycle — `add_pending` → `claim_pending_sends(queue, console)` (atomic
+    flush-on-connect, exclusive between consoles) → `mark_sent` / `release_claim`;
+    `consume_pending` burns the nonce on verify; `sweep_expired` drops stale
+    pendings (keeping `sent` rows as the audit trail).
+
 ## [0.14.0]
 
 ### Added
