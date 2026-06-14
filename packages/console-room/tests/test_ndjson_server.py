@@ -352,3 +352,103 @@ def test_member_message_persists_and_unknown_control_ignored():
 
     store = run(scenario())
     assert [m.text for m in store.appended] == ["printer down"]
+
+
+# ── email-verify frames (advertise + verify_sent) ─────────────────────────────
+
+
+def _ev_hub():
+    from console_room.enrollment_store import EnrollmentStore
+    from console_room.signup import EmailVerifyConfig
+
+    cfg = EmailVerifyConfig(
+        session_secret="ndjson-secret", public_url="https://room.test"
+    )
+    return Hub(FakeStore(), enrollment=EnrollmentStore(":memory:"), email_verify=cfg)
+
+
+def test_agent_advertise_frame_registers_queue():
+    async def scenario():
+        hub = _ev_hub()
+        reader = _reader(
+            {
+                "type": "hello",
+                "namespace": "helpdesk/it-support",
+                "user": "agent@web01",
+            },
+            {
+                "type": "advertise",
+                "queue": "it-support",
+                "queue_email": "it-support@corp.com",
+                "display_name": "IT Support",
+            },
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        # The console has disconnected (EOF) → its advertisement is withdrawn.
+        return hub
+
+    hub = run(scenario())
+    assert hub.advertised_queues() == []  # withdrawn on disconnect
+
+
+def test_agent_advertise_flushes_pending_send():
+    async def scenario():
+        hub = _ev_hub()
+        # A signup is waiting in the outbox with no console yet.
+        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        reader = _reader(
+            {
+                "type": "hello",
+                "namespace": "helpdesk/it-support",
+                "user": "agent@web01",
+            },
+            {
+                "type": "advertise",
+                "queue": "it-support",
+                "queue_email": "it-support@corp.com",
+                "display_name": "IT Support",
+            },
+        )
+        writer = FakeWriter()
+        await NdjsonConsoleConnection(reader, writer).run(hub)
+        return writer
+
+    writer = run(scenario())
+    sends = [f for f in writer.frames() if f["type"] == "send_verify"]
+    assert [f["to"] for f in sends] == ["jane@corp.com"]
+
+
+def test_agent_verify_sent_ack_marks_sent():
+    async def scenario():
+        hub = _ev_hub()
+        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        # Connect, advertise (flush → send_verify), capture the nonce, then ack.
+        reader = _reader(
+            {
+                "type": "hello",
+                "namespace": "helpdesk/it-support",
+                "user": "agent@web01",
+            },
+            {
+                "type": "advertise",
+                "queue": "it-support",
+                "queue_email": "it-support@corp.com",
+            },
+        )
+        writer = FakeWriter()
+        await NdjsonConsoleConnection(reader, writer).run(hub)
+        nonce = [f for f in writer.frames() if f["type"] == "send_verify"][0]["nonce"]
+        # A fresh connection delivers the ack (the first one EOF'd).
+        ack = _reader(
+            {
+                "type": "hello",
+                "namespace": "helpdesk/it-support",
+                "user": "agent@web01",
+            },
+            {"type": "verify_sent", "nonce": nonce, "ok": True},
+        )
+        await NdjsonConsoleConnection(ack, FakeWriter()).run(hub)
+        return hub, nonce
+
+    hub, nonce = run(scenario())
+    assert hub._enrollment.get_pending(nonce).send_state == "sent"  # noqa: SLF001

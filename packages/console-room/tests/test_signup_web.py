@@ -2,10 +2,12 @@
 test_signup_web.py — the email-verify sign-up door end to end via TestClient.
 
 Exercises /queues, /signup (GET form + POST), and /verify against a real
-SessionMiddleware + routing: the domain allowlist, the durable outbox row, the
+SessionMiddleware + routing: the domain allowlist, the construction guards, the
 signed single-use verify token, the session it establishes, and that the verified
-session then unlocks the gated /catalog + /me. The verify mail "send" is a captured
-stub (the real Outlook send is slice 4). Skipped if the web stack isn't installed.
+session then unlocks the gated /catalog + /me. The dispatch of verify mail to a
+console (the outbox flush + send_verify frame) is covered in test_signup_dispatch;
+here a pending row is seeded directly so /verify can be driven without a console.
+Skipped if the web stack isn't installed.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ from console_room.signup import (  # noqa: E402
 )
 from console_room.web.app import create_app  # noqa: E402
 
+SECRET = "unit-test-session-secret-0123456789"
+
 
 class FakeStore:
     def append(self, msg):
@@ -36,60 +40,62 @@ class FakeStore:
         return []
 
 
-def _config():
+def _config(public_url="http://room.test"):
+    # http (not https) so SessionMiddleware doesn't mark the cookie Secure — the
+    # TestClient speaks plain http and a Secure cookie wouldn't round-trip.
     return EmailVerifyConfig(
-        session_secret="unit-test-session-secret-0123456789",
-        public_url="",
-        token_ttl=1800,
+        session_secret=SECRET, public_url=public_url, token_ttl=1800
     )
 
 
-def _build(*, advertise=True, capture=True):
-    """An email-verify app with an it-support queue advertised and (optionally) a
-    capturing verify sender. Returns (client, hub, enrollment, sent)."""
-    hub = Hub(FakeStore())
+def _build(*, advertise=True):
+    """An email-verify app whose hub has an it-support queue advertised. Returns
+    (client, hub, enrollment)."""
+    enrollment = EnrollmentStore(":memory:")
+    hub = Hub(FakeStore(), enrollment=enrollment, email_verify=_config())
     if advertise:
         hub.advertise_queue(
             "agent@web01", "it-support", "it-support@corp.com", "IT Support"
         )
-    enrollment = EnrollmentStore(":memory:")
-    sent: list = []
+    app = create_app(hub, email_verify=_config())
+    return TestClient(app), hub, enrollment
 
-    async def sender(send):
-        sent.append(send)
-        return True
 
-    app = create_app(
-        hub,
-        auth=None,
-        email_verify=_config(),
-        enrollment=enrollment,
-        verify_sender=sender if capture else None,
+def _seed_pending(enrollment, nonce="n1", email="jane@corp.com", queue="it-support"):
+    enrollment.add_pending(
+        PendingSignup(
+            nonce=nonce, email=email, name="Jane Doe", queue=queue, created_at=0.0
+        )
     )
-    return TestClient(app), hub, enrollment, sent
+    return sign_verify_token(SECRET, {"nonce": nonce})
 
 
 # ── construction guards ───────────────────────────────────────────────────────
 
 
-def test_email_verify_requires_enrollment_store():
+def test_email_verify_requires_enabled_hub():
+    # A hub without the enrollment store / config can't serve email-verify.
     with pytest.raises(ValueError):
         create_app(Hub(FakeStore()), email_verify=_config())
+
+
+def test_email_verify_requires_public_url():
+    enrollment = EnrollmentStore(":memory:")
+    hub = Hub(FakeStore(), enrollment=enrollment, email_verify=_config(public_url=""))
+    with pytest.raises(ValueError):
+        create_app(hub, email_verify=_config(public_url=""))
 
 
 def test_oidc_and_email_verify_are_mutually_exclusive():
     from console_room.web.auth import AuthConfig
 
+    enrollment = EnrollmentStore(":memory:")
+    hub = Hub(FakeStore(), enrollment=enrollment, email_verify=_config())
     auth = AuthConfig(
         "c", "s", "secret", "https://idp/.well-known/openid-configuration"
     )
     with pytest.raises(ValueError):
-        create_app(
-            Hub(FakeStore()),
-            auth=auth,
-            email_verify=_config(),
-            enrollment=EnrollmentStore(":memory:"),
-        )
+        create_app(hub, auth=auth, email_verify=_config())
 
 
 # ── /queues + /signup form ────────────────────────────────────────────────────
@@ -132,14 +138,15 @@ def test_me_reports_auth_enabled():
 
 
 def test_signup_rejects_foreign_domain():
-    client, _hub, enrollment, sent = _build()
+    client, _hub, enrollment = _build()
     r = client.post(
         "/signup",
         data={"queue": "it-support", "name": "Jane", "email": "jane@evil.com"},
     )
     assert r.status_code == 400
     assert "corp.com" in r.text  # tells them which domain to use
-    assert sent == []  # nothing emailed
+    # Nothing written to the outbox.
+    assert enrollment.claim_pending_sends("it-support", "x") == []
 
 
 def test_signup_rejects_unknown_queue():
@@ -160,52 +167,27 @@ def test_signup_rejects_blank_name():
     assert r.status_code == 400
 
 
-def test_signup_accepts_and_sends_verify():
-    client, _hub, enrollment, sent = _build()
+def test_signup_accepts_and_writes_outbox():
+    client, _hub, enrollment = _build()
     r = client.post(
         "/signup",
         data={"queue": "it-support", "name": "Jane Doe", "email": "Jane@Corp.com"},
     )
     assert r.status_code == 200 and "Check your email" in r.text
-    assert len(sent) == 1
-    send = sent[0]
-    assert send.to == "jane@corp.com"  # normalised lower-case
-    assert send.queue_email == "it-support@corp.com"
-    assert "/verify?token=" in send.verify_url
-
-
-def test_signup_without_sender_leaves_pending_in_outbox():
-    # No console send wired (slice 2 default) → the row waits in the outbox.
-    client, _hub, enrollment, _sent = _build(capture=False)
-    r = client.post(
-        "/signup",
-        data={"queue": "it-support", "name": "Jane", "email": "jane@corp.com"},
-    )
-    assert r.status_code == 200
-    pending = enrollment.claim_pending_sends("it-support", "console-x")
+    # A pending row is in the outbox, email normalised to lower-case.
+    pending = enrollment.claim_pending_sends("it-support", "probe")
     assert [p.email for p in pending] == ["jane@corp.com"]
-    assert pending[0].send_state == "claimed"
 
 
 # ── /verify: token, single-use, session ───────────────────────────────────────
 
 
-def _token_from_signup(client, sent):
-    client.post(
-        "/signup",
-        data={"queue": "it-support", "name": "Jane Doe", "email": "jane@corp.com"},
-    )
-    url = sent[-1].verify_url
-    return url.split("token=", 1)[1]
-
-
 def test_verify_enrolls_and_sets_session():
-    client, _hub, enrollment, sent = _build()
-    token = _token_from_signup(client, sent)
+    client, _hub, enrollment = _build()
+    token = _seed_pending(enrollment)
 
     r = client.get(f"/verify?token={token}", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/?queue=it-support"
-    # Persisted member.
     assert enrollment.is_member("jane@corp.com", "it-support")
     # The session now identifies the verified email — the gate unlocks.
     assert client.get("/me").json() == {"auth": True, "user": "jane@corp.com"}
@@ -213,8 +195,8 @@ def test_verify_enrolls_and_sets_session():
 
 
 def test_verify_is_single_use():
-    client, _hub, _enrollment, sent = _build()
-    token = _token_from_signup(client, sent)
+    client, _hub, enrollment = _build()
+    token = _seed_pending(enrollment)
     assert (
         client.get(f"/verify?token={token}", follow_redirects=False).status_code == 303
     )
@@ -230,8 +212,7 @@ def test_verify_rejects_garbage_token():
 
 
 def test_verify_rejects_foreign_secret_token():
-    client, _hub, enrollment, _sent = _build()
-    # A token signed with the wrong secret must not verify even if a row exists.
+    client, _hub, enrollment = _build()
     enrollment.add_pending(
         PendingSignup(
             nonce="n1",
@@ -248,12 +229,12 @@ def test_verify_rejects_foreign_secret_token():
 
 
 def test_verified_session_unlocks_catalog():
-    client, hub, _enrollment, sent = _build()
-    token = _token_from_signup(client, sent)
-    # Before verify, the gated catalog is 401.
-    fresh = TestClient(
-        create_app(hub, email_verify=_config(), enrollment=EnrollmentStore(":memory:"))
-    )
+    client, hub, enrollment = _build()
+    token = _seed_pending(enrollment)
+    # A fresh (unverified) client is 401 on the gated catalog.
+    fresh_enroll = EnrollmentStore(":memory:")
+    fresh_hub = Hub(FakeStore(), enrollment=fresh_enroll, email_verify=_config())
+    fresh = TestClient(create_app(fresh_hub, email_verify=_config()))
     assert fresh.get("/catalog?queue=it-support").status_code == 401
     # After verify, this client's session passes the gate.
     client.get(f"/verify?token={token}")

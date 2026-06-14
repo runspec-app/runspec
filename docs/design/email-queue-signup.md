@@ -221,11 +221,18 @@ Outlook only, like the rest of the email channel.
    advertisements), the domain check, the signed-token issue/verify, the session —
    plugged into the existing `session_user` gate so `/ws` + `/catalog` need no
    change. The durable-outbox row lifecycle.
-3. **Wire frames + advertisement.** `room_queue_email` host field → advertise
-   `queue_email`/`display_name`; the `send-verify` / `verify-sent` frames; the
-   room's flush-on-connect.
-4. **Console: send the verify email** via Outlook send-as the queue mailbox (new
-   helper) + handle the `send-verify` frame + ack. (COM — Windows-verified.)
+3. **Wire frames + advertisement — *room side*.** The `advertise` / `send-verify` /
+   `verify-sent` frames, the hub-owned outbox dispatch (claim → send-verify frame →
+   `sent` on ack, `pending` on failure or disconnect), and the flush-on-connect. The
+   verify URL becomes a hard requirement (`CONSOLE_ROOM_PUBLIC_URL` / `--public-url`):
+   the emailed link is clicked later, so it can't be a per-request guess. *(Re-sliced
+   from the original plan so each PR stays within one package: the console-side
+   advertisement-send moves into slice 4 with the Outlook send, since both are
+   `runspec-console` changes.)*
+4. **Console: advertise + send the verify email** — read `room_queue_email` from the
+   host config and send the `advertise` frame on connect; handle `send-verify` by
+   composing a mail via Outlook send-as the queue mailbox + reply `verify-sent`. (COM
+   — Windows-verified.)
 5. **Identity on requests.** Carry `name` alongside the verified email into the
    request payload → render on the operator card.
 

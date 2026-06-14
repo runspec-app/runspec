@@ -4,6 +4,35 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.17.0]
+
+### Added
+- **Email-verified queue signup — the room-side wire + outbox dispatch (slice 3 of
+  5).** The hub now actually *delivers* verify mail: it dispatches each pending
+  signup to a connected console of the queue (which sends it as the queue mailbox —
+  the Outlook send is slice 4) and verifies the clicked link, with the durable
+  outbox surviving a no-console gap. (`docs/design/email-queue-signup.md` §3.3/§7.)
+  - **Three new console↔room frames** (`models.py`): `advertise` (console → room: a
+    queue it staffs — mailbox + label), `send_verify` (room → console: "send this
+    verify mail as the queue mailbox"), and `verify_sent` (console → room: ack). The
+    NDJSON door dispatches the two inbound ones for agent connections.
+  - **The outbox + verify now live on the `Hub`** (built with `enrollment=` +
+    `email_verify=`): `submit_signup` writes a pending row and dispatches it;
+    `on_advertise` registers a queue **and flushes its backlog** to the newly
+    connected console (one console claims each send, so two can't double-fire);
+    `on_verify_sent` flips the row to `sent` (or back to `pending` to retry);
+    `verify_token` validates the signed single-use token and enrols the member. A
+    console disconnecting **releases** its claimed-but-unacked sends and re-flushes
+    them to a remaining console (`EnrollmentStore.release_console_claims`).
+  - **The web door is now thin** — `/signup` and `/verify` delegate to the hub
+    (`create_app` no longer takes `enrollment` / `verify_sender`; the slice-2
+    placeholder seam is replaced by real dispatch).
+- **Verify URL is now required in email-verify mode.** `CONSOLE_ROOM_PUBLIC_URL`
+  (new `--public-url` flag) must be set — the verify link is emailed and clicked
+  later, so it can't be derived from a request. The server **hard-fails at boot** if
+  it's missing, and `create_app` rejects an email-verify app without it. (Used as the
+  OIDC redirect base too.)
+
 ## [0.16.0]
 
 ### Added

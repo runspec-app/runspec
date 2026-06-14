@@ -18,18 +18,29 @@ from typing import Any, Protocol, runtime_checkable
 
 from .catalog import LiveCatalog
 from .conversation import namespace_matches, parse_conversation_room, queue_namespace
+from .enrollment_store import EnrollmentStore
 from .queues import QueueDescriptor, QueueDirectory
 from .models import (
     KIND_REQUEST,
     REQUEST_ARGS_CAP,
     Message,
     assignment_frame,
+    now_ts,
     page_frame,
     presence_frame,
     request_status_frame,
     request_text,
+    send_verify_frame,
 )
 from .requests import ASSIGNED, UNASSIGNED, Request, RequestRegistry
+from .signup import (
+    EmailVerifyConfig,
+    Member,
+    PendingSignup,
+    make_nonce,
+    read_verify_token,
+    sign_verify_token,
+)
 
 logger = logging.getLogger("console_room.hub")
 
@@ -99,9 +110,16 @@ class Hub:
         *,
         backscroll_limit: int = 50,
         assignment_timeout: float = 300.0,
+        enrollment: EnrollmentStore | None = None,
+        email_verify: EmailVerifyConfig | None = None,
     ) -> None:
         self._store = store
         self._backscroll = backscroll_limit
+        # Email-verify queue signup (optional): the durable members/outbox store and
+        # the signing config. Both present → the hub dispatches verify mail to a
+        # console of the queue and verifies the clicked link. Absent → no-op.
+        self._enrollment = enrollment
+        self._email_verify = email_verify
         # An assigned request whose console never picks it up (no request_start)
         # within this many seconds is auto-released back to the queue + re-paged.
         # 0/negative disables the timer.
@@ -184,7 +202,14 @@ class Hub:
             # The console is gone: drop its runnables from the live catalogue so a
             # single-holder runnable vanishes the moment its only console leaves.
             self._live.withdraw(ns, agent.user)
+            # …and drop the queues it advertised from the sign-up directory.
+            self._queues.withdraw(agent.user)
             active = [room for room in self._rooms if namespace_matches(ns, room)]
+        # Return any verify sends this console claimed-but-never-acked to the outbox,
+        # then re-flush those queues so a remaining console picks them up.
+        if self._enrollment is not None:
+            for queue in self._enrollment.release_console_claims(agent.user):
+                await self._flush_queue(queue)
         if present:
             for room in active:
                 await self._broadcast(
@@ -307,6 +332,127 @@ class Hub:
         """The advertised descriptor for ``queue`` (mailbox + domain), or ``None``
         when no connected console staffs it."""
         return self._queues.get(queue)
+
+    # ── email-verify signup: outbox dispatch + verify ─────────────────────────
+    # The web sign-up door writes a pending row then asks the hub to dispatch the
+    # verify mail; the hub claims the queue's pending sends for a connected console
+    # and pushes a send_verify frame (the console sends it as the queue mailbox).
+    # The console acks with verify_sent → the row flips to sent (or back to pending
+    # to retry). A console that advertises a queue (re)connecting flushes its
+    # backlog. See docs/design/email-queue-signup.md §3.3 / §7.
+
+    @property
+    def email_verify_enabled(self) -> bool:
+        """Whether the hub can dispatch + verify (store and config both present)."""
+        return self._enrollment is not None and self._email_verify is not None
+
+    async def on_advertise(
+        self, agent: Agent, queue: str, queue_email: str, display_name: str
+    ) -> None:
+        """Record a queue ``agent`` staffs and flush any pending verify mail for it
+        to this console. Refuses an advertisement whose queue doesn't match the
+        agent's namespace — a console can only advertise the queue it subscribes to."""
+        if queue_namespace(queue) != agent.namespace:
+            logger.warning(
+                "room: agent %r advertised %r outside its namespace %r — ignored",
+                agent.user,
+                queue,
+                agent.namespace,
+            )
+            return
+        self.advertise_queue(agent.user, queue, queue_email, display_name)
+        await self._flush_queue(queue)
+
+    async def submit_signup(self, email: str, name: str, queue: str) -> None:
+        """Record a pending signup and dispatch its verify mail (now if a console
+        staffs the queue, else left in the outbox for the next console). No-op when
+        email-verify isn't configured."""
+        if self._enrollment is None:
+            return
+        self._enrollment.add_pending(
+            PendingSignup(
+                nonce=make_nonce(),
+                email=email,
+                name=name,
+                queue=queue,
+                created_at=now_ts(),
+            )
+        )
+        await self._flush_queue(queue)
+
+    def verify_token(self, token: str) -> Member | None:
+        """Validate a clicked verify link and enrol the member: check the signed,
+        in-TTL token, **burn** its single-use nonce, and persist the member. Returns
+        the :class:`Member` on success, or ``None`` for a bad / expired / already-used
+        link. No-op (``None``) when email-verify isn't configured."""
+        if self._enrollment is None or self._email_verify is None:
+            return None
+        payload = read_verify_token(
+            self._email_verify.session_secret, token, self._email_verify.token_ttl
+        )
+        nonce = payload.get("nonce", "") if isinstance(payload, dict) else ""
+        pending = self._enrollment.consume_pending(nonce) if nonce else None
+        if pending is None:
+            return None
+        member = Member(
+            email=pending.email,
+            queue=pending.queue,
+            name=pending.name,
+            verified_at=now_ts(),
+        )
+        self._enrollment.add_member(member)
+        logger.info("room: %r verified into %r", member.email, member.queue)
+        return member
+
+    async def on_verify_sent(self, nonce: str, ok: bool) -> None:
+        """Apply a console's ``verify_sent`` ack: mark the outbox row ``sent`` on
+        success, or return it to ``pending`` to retry elsewhere on failure."""
+        if self._enrollment is None:
+            return
+        if ok:
+            self._enrollment.mark_sent(nonce)
+        else:
+            self._enrollment.release_claim(nonce)
+
+    async def _flush_queue(self, queue: str) -> None:
+        """Claim every pending verify send for ``queue`` for one connected console of
+        it and push a ``send_verify`` frame for each. No console / no advertised
+        mailbox → the rows stay pending for a later flush."""
+        if self._enrollment is None or self._email_verify is None:
+            return
+        descriptor = self._queues.get(queue)
+        if descriptor is None:  # nobody advertises this queue right now
+            return
+        async with self._lock:
+            agents = list(self._agents.get(queue_namespace(queue), ()))
+        if not agents:
+            return
+        agent = agents[0]  # any connected console of the queue can send the mail
+        claimed = self._enrollment.claim_pending_sends(queue, agent.user)
+        for row in claimed:
+            token = sign_verify_token(
+                self._email_verify.session_secret,
+                {
+                    "nonce": row.nonce,
+                    "email": row.email,
+                    "name": row.name,
+                    "queue": row.queue,
+                },
+            )
+            verify_url = (
+                self._email_verify.public_url.rstrip("/") + f"/verify?token={token}"
+            )
+            await _safe_send(
+                agent,
+                send_verify_frame(
+                    row.nonce,
+                    row.email,
+                    row.name,
+                    queue,
+                    descriptor.queue_email,
+                    verify_url,
+                ),
+            )
 
     # ── portal requests: auto-assignment + claim-free lifecycle ───────────────
     # A visitor submits a catalog request; the hub routes it to an on-shift holder

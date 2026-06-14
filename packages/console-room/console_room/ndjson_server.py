@@ -22,14 +22,18 @@ from typing import Any
 
 from .hub import Hub
 from .models import (
+    ADVERTISE,
     CATALOG,
     MESSAGE,
     PRESENCE,
     REQUEST_COMPLETE,
     REQUEST_START,
+    VERIFY_SENT,
     normalize_status,
+    parse_advertise,
     parse_catalog,
     parse_hello,
+    parse_verify_sent,
 )
 
 logger = logging.getLogger("console_room.ndjson")
@@ -152,6 +156,19 @@ class NdjsonConsoleConnection:
                 # Record this console's runnables in the presence-aware live
                 # catalogue (portal routing + affinity). [] clears its contribution.
                 hub.publish_catalog(self, tools)
+        elif self.is_agent and kind == ADVERTISE:
+            # The console advertising a queue it staffs (mailbox + label) for the
+            # email-verify sign-up dropdown; this also flushes any pending verify
+            # mail for that queue to this console.
+            ad = parse_advertise(frame)
+            if ad is not None:
+                await hub.on_advertise(self, ad.queue, ad.queue_email, ad.display_name)
+        elif self.is_agent and kind == VERIFY_SENT:
+            # The console acking a send_verify: ok → the outbox row is sent; a
+            # failure returns it to pending to retry on another console.
+            parsed = parse_verify_sent(frame)
+            if parsed is not None:
+                await hub.on_verify_sent(*parsed)
         # hello-after-hello, agent presence, and unknown types are ignored.
 
     async def _read_frame(self) -> dict[str, Any] | None:

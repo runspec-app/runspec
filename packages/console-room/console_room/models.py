@@ -33,6 +33,13 @@ PAGE = "page"  # server → every connected console of a queue: come serve this
 REQUEST_START = "request_start"  # the operator began enacting the runnable
 REQUEST_COMPLETE = "request_complete"  # the operator finished (ok, or with error)
 
+# Email-verify queue-signup frames (see docs/design/email-queue-signup.md §7).
+ADVERTISE = "advertise"  # agent → server: a queue this console staffs (mailbox + label)
+SEND_VERIFY = (
+    "send_verify"  # server → agent: send this verify mail as the queue mailbox
+)
+VERIFY_SENT = "verify_sent"  # agent → server: ack a send_verify (ok, or with error)
+
 # Message kinds — how a transcript entry was produced. "chat" is a typed message;
 # "request" is a structured catalog submission (text = human summary, data = the
 # machine payload the agent console enacts).
@@ -235,6 +242,67 @@ def page_frame(
         "queue": _str(queue),
         "visitor": _str(visitor),
     }
+
+
+@dataclass(frozen=True)
+class Advertise:
+    """A parsed ``advertise`` frame — a console declaring a queue it staffs, with
+    the mailbox that is both the verify-from address and the allowlist domain."""
+
+    queue: str
+    queue_email: str
+    display_name: str = ""
+
+
+def parse_advertise(obj: Any) -> Advertise | None:
+    """Parse an ``advertise`` frame, or ``None`` if it isn't a valid one. Requires
+    a non-empty ``queue`` and ``queue_email``; ``display_name`` is optional."""
+    if not isinstance(obj, dict) or _str(obj.get("type")) != ADVERTISE:
+        return None
+    queue = _str(obj.get("queue")).strip()
+    queue_email = _str(obj.get("queue_email")).strip()
+    if not queue or not queue_email:
+        return None
+    return Advertise(
+        queue=queue,
+        queue_email=queue_email,
+        display_name=_str(obj.get("display_name")).strip(),
+    )
+
+
+def send_verify_frame(
+    nonce: str,
+    to: str,
+    name: str,
+    queue: str,
+    queue_email: str,
+    verify_url: str,
+) -> dict[str, Any]:
+    """A server → agent ``send_verify`` frame: "send this verify mail *as the queue
+    mailbox*." The console composes a fresh message from ``queue_email`` to ``to``
+    with a link to ``verify_url`` and replies with a ``verify_sent`` ack carrying
+    the same ``nonce`` (which correlates it to the outbox row)."""
+    return {
+        "type": SEND_VERIFY,
+        "nonce": _str(nonce),
+        "to": _str(to),
+        "name": _str(name),
+        "queue": _str(queue),
+        "queue_email": _str(queue_email),
+        "verify_url": _str(verify_url),
+    }
+
+
+def parse_verify_sent(obj: Any) -> tuple[str, bool] | None:
+    """Parse a ``verify_sent`` ack into ``(nonce, ok)``, or ``None`` if it isn't a
+    valid one (no ``nonce``). ``ok`` is the truthiness of the frame's ``ok`` field —
+    a failed send (``ok`` false / absent) returns the row to the outbox to retry."""
+    if not isinstance(obj, dict) or _str(obj.get("type")) != VERIFY_SENT:
+        return None
+    nonce = _str(obj.get("nonce")).strip()
+    if not nonce:
+        return None
+    return nonce, bool(obj.get("ok"))
 
 
 def request_text(tool: str, args: dict[str, Any]) -> str:

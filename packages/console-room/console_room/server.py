@@ -94,17 +94,25 @@ def run_web(
     elif mode == "email-verify":
         email_verify = email_verify_from_env()
         if email_verify is None:
-            logger.error(
-                "room: CONSOLE_ROOM_AUTH=email-verify but CONSOLE_ROOM_SESSION_SECRET "
-                "is unset — falling back to DEV mode with NO login."
+            raise SystemExit(
+                "CONSOLE_ROOM_AUTH=email-verify requires CONSOLE_ROOM_SESSION_SECRET."
             )
-        else:
-            enrollment = EnrollmentStore(_enroll_db_path(db_path))
-            logger.info(
-                "room: email-verify sign-up enabled — verify mail is sent by a "
-                "connected console (the send lands in a later release; signups "
-                "queue in the outbox until then)."
+        if not email_verify.public_url:
+            # The verify link is emailed and clicked later, so it can't be guessed
+            # from a request — it must be a stable, externally-reachable URL.
+            raise SystemExit(
+                "CONSOLE_ROOM_AUTH=email-verify requires a public URL — set "
+                "CONSOLE_ROOM_PUBLIC_URL (or --public-url) to the room's "
+                "externally-reachable base, e.g. https://rooms.corp.com. Verify "
+                "links point there."
             )
+        enrollment = EnrollmentStore(_enroll_db_path(db_path))
+        logger.info(
+            "room: email-verify sign-up enabled — verify mail is sent by a connected "
+            "console as the queue mailbox (signups queue in the outbox until one "
+            "connects). Verify links use %s.",
+            email_verify.public_url,
+        )
     if auth is None and email_verify is None:
         logger.warning(
             "room: no auth configured — running the browser door in DEV mode with "
@@ -112,13 +120,17 @@ def run_web(
         )
 
     store = TranscriptStore(db_path)
-    hub = Hub(store, assignment_timeout=assignment_timeout)
+    hub = Hub(
+        store,
+        assignment_timeout=assignment_timeout,
+        enrollment=enrollment,
+        email_verify=email_verify,
+    )
     app = create_app(
         hub,
         ndjson_addr=(ndjson_host, ndjson_port),
         auth=auth,
         email_verify=email_verify,
-        enrollment=enrollment,
     )
     try:
         uvicorn.run(
@@ -185,6 +197,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         f"0 disables. (default: {DEFAULT_ASSIGNMENT_TIMEOUT:g})",
     )
     parser.add_argument(
+        "--public-url",
+        default=_env("CONSOLE_ROOM_PUBLIC_URL", ""),
+        help="the room's externally-reachable base URL (e.g. https://rooms.corp.com)"
+        " — required for CONSOLE_ROOM_AUTH=email-verify, where the emailed verify "
+        "links must point at it. Also used as the OIDC redirect base.",
+    )
+    parser.add_argument(
         "--tls-cert",
         default=_env("CONSOLE_ROOM_TLS_CERT", "") or None,
         help="path to the TLS certificate (PEM) — enables https/wss. Omit if a "
@@ -216,6 +235,10 @@ def main(argv: list[str] | None = None) -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     args = _parse_args(raw)
+    # --public-url is surfaced via the same env var the auth configs read, so the
+    # flag and CONSOLE_ROOM_PUBLIC_URL stay a single source of truth.
+    if args.public_url:
+        os.environ["CONSOLE_ROOM_PUBLIC_URL"] = args.public_url
     try:
         if args.ndjson_only:
             asyncio.run(

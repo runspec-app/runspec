@@ -165,6 +165,24 @@ class EnrollmentStore:
             )
             self._conn.commit()
 
+    def release_console_claims(self, console: str) -> list[str]:
+        """Return every send ``console`` claimed-but-never-acked to ``pending`` (its
+        link dropped before it could send / ack), so another console can pick them
+        up. Returns the distinct queues affected (the caller re-flushes them)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT queue FROM pending_signups "
+                "WHERE send_state = 'claimed' AND claimed_by = ?",
+                (console,),
+            ).fetchall()
+            self._conn.execute(
+                "UPDATE pending_signups SET send_state = 'pending', claimed_by = '' "
+                "WHERE send_state = 'claimed' AND claimed_by = ?",
+                (console,),
+            )
+            self._conn.commit()
+        return [r[0] for r in rows]
+
     def sweep_expired(self, max_age: float, now: float | None = None) -> int:
         """Drop pending signups older than ``max_age`` seconds (their verify link
         has expired; the user re-signs). Returns the number removed. ``sent`` rows

@@ -45,13 +45,12 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from ..conversation import conversation_room, queue_namespace, valid_token
-from ..enrollment_store import EnrollmentStore
 from ..hub import Hub
 from ..ndjson_server import serve_ndjson
 from ..signup import EmailVerifyConfig
 from .auth import AuthConfig, build_oauth, identity_from_userinfo, session_user
 from .connection import BrowserConnection
-from .signup_routes import VerifySender, signup_routes
+from .signup_routes import signup_routes
 
 logger = logging.getLogger("console_room.web")
 
@@ -118,22 +117,29 @@ def create_app(
     ndjson_addr: tuple[str, int] | None = None,
     auth: AuthConfig | None = None,
     email_verify: EmailVerifyConfig | None = None,
-    enrollment: EnrollmentStore | None = None,
-    verify_sender: VerifySender | None = None,
 ) -> Starlette:
     """Build the Starlette app around ``hub``. With ``ndjson_addr=(host, port)``
     the lifespan also serves the console NDJSON door on the same loop.
 
     Identity comes from one of three modes (mutually exclusive): ``auth`` →
-    OIDC login; ``email_verify`` (+ ``enrollment``) → the email-verify sign-up
-    door (``/signup`` / ``/verify``); neither → dev mode (``?user=`` query param,
-    nothing gated). Both authenticated modes set a signed session cookie and gate
-    the app shell + WebSocket on it identically."""
+    OIDC login; ``email_verify`` → the email-verify sign-up door (``/signup`` /
+    ``/verify``), which requires ``hub`` to have been built with its enrollment
+    store + config (``hub.email_verify_enabled``) and a ``public_url`` (the verify
+    links must point somewhere reachable); neither → dev mode (``?user=`` query
+    param, nothing gated). Both authenticated modes set a signed session cookie and
+    gate the app shell + WebSocket on it identically."""
     if email_verify is not None:
         if auth is not None:
             raise ValueError("auth (OIDC) and email_verify are mutually exclusive")
-        if enrollment is None:
-            raise ValueError("email_verify mode requires an EnrollmentStore")
+        if not hub.email_verify_enabled:
+            raise ValueError(
+                "email_verify mode requires a Hub built with enrollment + email_verify"
+            )
+        if not email_verify.public_url:
+            raise ValueError(
+                "email_verify mode requires public_url — the verify links emailed to "
+                "users must point at the room's externally-reachable base URL"
+            )
 
     oauth = build_oauth(auth) if auth is not None else None
     # One gate covers both authenticated modes; the secret/cookie flags come from
@@ -287,10 +293,7 @@ def create_app(
             Route("/logout", logout, name="logout"),
         ]
     if email_verify is not None:
-        assert enrollment is not None  # checked above
-        routes += signup_routes(
-            hub, enrollment, email_verify, verify_sender=verify_sender
-        )
+        routes += signup_routes(hub)
     if FRONTEND_DIR.is_dir():
         # Static assets (app.js / style.css) — public so the shell can style the
         # login redirect. The app shell itself ("/") is gated above.

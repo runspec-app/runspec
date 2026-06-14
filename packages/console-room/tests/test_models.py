@@ -144,3 +144,61 @@ def test_request_text_renders_args():
         == "Requested: request-vm — size=large, region=eu"
     )
     assert request_text("reset-password", {}) == "Requested: reset-password"
+
+
+# ── email-verify frames ───────────────────────────────────────────────────────
+
+
+def test_parse_advertise_valid():
+    from console_room.models import parse_advertise
+
+    ad = parse_advertise(
+        {
+            "type": "advertise",
+            "queue": "it-support",
+            "queue_email": "it-support@corp.com",
+            "display_name": "IT Support",
+        }
+    )
+    assert ad is not None
+    assert ad.queue == "it-support"
+    assert ad.queue_email == "it-support@corp.com"
+    assert ad.display_name == "IT Support"
+
+
+def test_parse_advertise_rejects_incomplete():
+    from console_room.models import parse_advertise
+
+    assert parse_advertise({"type": "advertise", "queue": "it"}) is None  # no email
+    assert parse_advertise({"type": "advertise", "queue_email": "x@y"}) is None
+    assert parse_advertise({"type": "message"}) is None
+    assert parse_advertise("nope") is None
+
+
+def test_send_verify_frame_shape():
+    from console_room.models import SEND_VERIFY, send_verify_frame
+
+    f = send_verify_frame(
+        "n1",
+        "jane@corp.com",
+        "Jane",
+        "it-support",
+        "it@corp.com",
+        "https://r/verify?token=t",
+    )
+    assert f["type"] == SEND_VERIFY
+    assert f["nonce"] == "n1" and f["to"] == "jane@corp.com"
+    assert f["queue_email"] == "it@corp.com"
+    assert f["verify_url"].endswith("token=t")
+
+
+def test_parse_verify_sent():
+    from console_room.models import parse_verify_sent
+
+    assert parse_verify_sent({"type": "verify_sent", "nonce": "n1", "ok": True}) == (
+        "n1",
+        True,
+    )
+    assert parse_verify_sent({"type": "verify_sent", "nonce": "n1"}) == ("n1", False)
+    assert parse_verify_sent({"type": "verify_sent", "ok": True}) is None  # no nonce
+    assert parse_verify_sent({"type": "message"}) is None
