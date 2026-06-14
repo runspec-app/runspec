@@ -189,11 +189,18 @@ def parse_catalog(obj: Any) -> list[dict[str, Any]] | None:
 
 
 def assignment_frame(
-    request_id: str, room: str, runnable: str, args: dict[str, Any], visitor: str
+    request_id: str,
+    room: str,
+    runnable: str,
+    args: dict[str, Any],
+    visitor: str,
+    visitor_name: str = "",
 ) -> dict[str, Any]:
     """A server → operator ``assignment`` frame: a portal request routed to one
     operator's console (its inbox item). Carries everything needed to enact it —
-    the runnable, the visitor's args, and the thread ``room`` to reply on."""
+    the runnable, the visitor's args, and the thread ``room`` to reply on.
+    ``visitor_name`` is the requester's display name (email-verify signup), shown on
+    the operator card beside the verified ``visitor`` email; absent → just the email."""
     return {
         "type": ASSIGNMENT,
         "id": _str(request_id),
@@ -201,6 +208,7 @@ def assignment_frame(
         "runnable": _str(runnable),
         "args": args,
         "visitor": _str(visitor),
+        "visitor_name": _str(visitor_name),
     }
 
 
@@ -227,13 +235,19 @@ def request_status_frame(
 
 
 def page_frame(
-    request_id: str, room: str, runnable: str, queue: str, visitor: str
+    request_id: str,
+    room: str,
+    runnable: str,
+    queue: str,
+    visitor: str,
+    visitor_name: str = "",
 ) -> dict[str, Any]:
     """A server → console ``page`` frame: a chime to *every connected* console of a
     queue (on shift and off), naming the runnable an unassigned request is waiting
     on. A console that holds it can come on shift to pick it up (the pending
     request then auto-assigns), or respond out of band. Carries the thread ``room``
-    so a responder can find it. See docs/design/runnables-portal.md §3.4."""
+    so a responder can find it, and the requester's display name (``visitor_name``)
+    beside the verified email. See docs/design/runnables-portal.md §3.4."""
     return {
         "type": PAGE,
         "id": _str(request_id),
@@ -241,6 +255,7 @@ def page_frame(
         "runnable": _str(runnable),
         "queue": _str(queue),
         "visitor": _str(visitor),
+        "visitor_name": _str(visitor_name),
     }
 
 

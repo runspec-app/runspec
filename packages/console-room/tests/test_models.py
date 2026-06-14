@@ -202,3 +202,25 @@ def test_parse_verify_sent():
     assert parse_verify_sent({"type": "verify_sent", "nonce": "n1"}) == ("n1", False)
     assert parse_verify_sent({"type": "verify_sent", "ok": True}) is None  # no nonce
     assert parse_verify_sent({"type": "message"}) is None
+
+
+# ── portal frames carry the visitor display name (email-verify) ───────────────
+
+
+def test_assignment_frame_carries_visitor_name():
+    from console_room.models import assignment_frame
+
+    f = assignment_frame(
+        "r1", "helpdesk/it/a", "reset", {"u": "a"}, "a@corp", "Alice A"
+    )
+    assert f["visitor"] == "a@corp" and f["visitor_name"] == "Alice A"
+    # Optional — omitted defaults to blank (OIDC / dev).
+    assert assignment_frame("r1", "room", "reset", {}, "a@corp")["visitor_name"] == ""
+
+
+def test_page_frame_carries_visitor_name():
+    from console_room.models import page_frame
+
+    f = page_frame("r1", "helpdesk/it/a", "reset", "it", "a@corp", "Alice A")
+    assert f["visitor_name"] == "Alice A"
+    assert page_frame("r1", "room", "reset", "it", "a@corp")["visitor_name"] == ""

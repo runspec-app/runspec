@@ -57,13 +57,23 @@ class Request:
     visitor: str
     runnable: str
     args: dict[str, Any] = field(default_factory=dict)
+    # The visitor's self-asserted full name (email-verify signup). Display-only —
+    # the verified ``visitor`` email stays the trust anchor. Empty in OIDC / dev mode.
+    visitor_name: str = ""
     state: str = UNASSIGNED
     assignee: str | None = None
     error: str | None = None
 
-    def assignment_fields(self) -> tuple[str, str, str, dict[str, Any], str]:
+    def assignment_fields(self) -> tuple[str, str, str, dict[str, Any], str, str]:
         """The payload an assigned operator's console needs to enact the request."""
-        return self.id, self.room, self.runnable, self.args, self.visitor
+        return (
+            self.id,
+            self.room,
+            self.runnable,
+            self.args,
+            self.visitor,
+            self.visitor_name,
+        )
 
     def status_fields(self) -> tuple[str, str, str, str | None, str | None]:
         """The lifecycle fields broadcast to the request thread (visitor + team)."""
@@ -94,6 +104,7 @@ class RequestRegistry:
         visitor: str,
         runnable: str,
         args: dict[str, Any],
+        visitor_name: str = "",
     ) -> Request:
         """Record a fresh request (``unassigned``) and return it. The id is
         server-assigned so the thread message and the lifecycle record agree."""
@@ -105,6 +116,7 @@ class RequestRegistry:
             visitor=visitor,
             runnable=runnable,
             args=dict(args),
+            visitor_name=visitor_name,
         )
         self._requests[req.id] = req
         return req

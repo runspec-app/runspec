@@ -5415,6 +5415,9 @@ class Bridge:
         parts = room.split("/")
         queue = parts[1] if len(parts) > 1 else ""
         visitor = parts[2] if len(parts) > 2 else ""
+        # The requester's verified display name (email-verify signup), shown on the
+        # card beside the email; blank in OIDC / dev mode.
+        visitor_name = str(payload.get("visitor_name") or "")
         # Surface the assignment in the Triggers inbox right away (before the
         # possibly-gated run), so the operator sees it land.
         self._portal_card(
@@ -5422,6 +5425,7 @@ class Bridge:
             runnable=runnable,
             args=args,
             visitor=visitor,
+            visitor_name=visitor_name,
             room=room,
             queue=queue,
             state="assigned",
@@ -5520,6 +5524,7 @@ class Bridge:
         runnable: str | None = None,
         args: dict[str, Any] | None = None,
         visitor: str | None = None,
+        visitor_name: str | None = None,
         room: str | None = None,
         queue: str | None = None,
         state: str | None = None,
@@ -5553,6 +5558,7 @@ class Bridge:
                 ("runnable", runnable),
                 ("args", args),
                 ("visitor", visitor),
+                ("visitor_name", visitor_name),
                 ("room", room),
                 ("queue", queue),
                 ("state", state),
@@ -5566,7 +5572,9 @@ class Bridge:
             if note is not None:
                 card["timeline"].append({"ts": now, "text": note})
             rn = detail.get("runnable") or "request"
-            vis = detail.get("visitor")
+            # Prefer the display name on the summary line; the email stays in detail
+            # (the UI shows "Name <email>"). Falls back to the email when unnamed.
+            vis = detail.get("visitor_name") or detail.get("visitor")
             card["summary"] = f"{rn} · {vis}" if vis else rn
             self._evict_trigger_cards(card_id)
             snapshot = dict(card)
@@ -5587,7 +5595,9 @@ class Bridge:
             except Exception:
                 pass
             runnable = str(payload.get("runnable") or "a runnable")
-            visitor = str(payload.get("visitor") or "Someone")
+            visitor = str(
+                payload.get("visitor_name") or payload.get("visitor") or "Someone"
+            )
             title = "Runnable requested — no operator on shift"
             body = f"{visitor} is waiting on {runnable}"
         except Exception:

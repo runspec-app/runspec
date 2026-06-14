@@ -4,6 +4,20 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.18.0]
+
+### Added
+- **Email-verified queue signup — visitor name on the operator card (slice 5 of
+  5, final).** A request now carries the requester's verified **display name**
+  alongside the email, so the operator sees `Alice Smith <alice@corp.com>` instead
+  of a bare id (`docs/design/email-queue-signup.md` §5). The email-verify door
+  already stored the self-asserted name in the session at verify time; this threads
+  it through: `session_name()` → `BrowserConnection(display_name=…)` →
+  `Request.visitor_name` → the `assignment` **and** `page` frames (new optional
+  `visitor_name` field). Display-only — the verified email stays the trust anchor;
+  blank (and the card falls back to the id) in OIDC / dev mode and for console
+  participants.
+
 ## [0.17.0]
 
 ### Added

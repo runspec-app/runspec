@@ -108,6 +108,21 @@ def session_user(conn: Any) -> str:
     return user if isinstance(user, str) else ""
 
 
+def session_name(conn: Any) -> str:
+    """The signed-in user's display name (``conn.session['name']``), or ``""``. Set
+    by the email-verify door at verify time (the self-asserted full name); absent in
+    OIDC / dev mode. Guarded like :func:`session_user` for connections with no
+    session."""
+    try:
+        session = getattr(conn, "session", None)
+    except Exception:
+        return ""
+    if not isinstance(session, dict):
+        return ""
+    name = session.get("name")
+    return name if isinstance(name, str) else ""
+
+
 def build_oauth(cfg: AuthConfig) -> Any:
     """Construct an authlib Starlette ``OAuth`` registry with one ``oidc`` client
     from ``cfg``. Imported lazily so the web app loads without authlib in dev."""

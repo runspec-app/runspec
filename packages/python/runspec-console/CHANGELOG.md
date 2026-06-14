@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.60.0] — 2026-06-14
+
+### Added
+- **Email-verified queue signup — visitor name on the operator card (slice 5 of 5,
+  final).** Completes the feature: the `assignment` and `page` payloads now carry
+  the requester's verified **display name** (`visitor_name`), and the portal card
+  shows `Alice Smith <alice@corp.com>` (summary prefers the name; the drawer shows
+  `Name <email>`) instead of a bare id — so the operator knows exactly who they're
+  enacting for. The "no operator on shift" page toast names them too. Display-only;
+  the verified email stays the trust anchor, and the card falls back to the id when
+  there's no name (OIDC / dev mode). See `docs/design/email-queue-signup.md` §5.
+
 ## [0.59.0] — 2026-06-14
 
 ### Added

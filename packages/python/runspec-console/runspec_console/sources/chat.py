@@ -130,6 +130,9 @@ def assignment_payload(obj: dict[str, Any]) -> dict[str, Any]:
         "runnable": _str(obj.get("runnable")),
         "args": args if isinstance(args, dict) else {},
         "visitor": _str(obj.get("visitor")),
+        # The requester's display name (email-verify signup), shown on the operator
+        # card beside the verified email; blank in OIDC / dev mode.
+        "visitor_name": _str(obj.get("visitor_name")),
     }
 
 
@@ -156,6 +159,7 @@ def page_payload(obj: dict[str, Any]) -> dict[str, Any]:
         "runnable": _str(obj.get("runnable")),
         "queue": _str(obj.get("queue")),
         "visitor": _str(obj.get("visitor")),
+        "visitor_name": _str(obj.get("visitor_name")),
     }
 
 

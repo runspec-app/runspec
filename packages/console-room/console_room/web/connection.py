@@ -43,10 +43,15 @@ class BrowserConnection:
 
     wants_backscroll = True
 
-    def __init__(self, ws: WebSocketLike, *, user: str, room: str) -> None:
+    def __init__(
+        self, ws: WebSocketLike, *, user: str, room: str, display_name: str = ""
+    ) -> None:
         self._ws = ws
         self.user = user
         self.room = room
+        # The verified visitor's full name (email-verify signup), for the operator
+        # card. Display-only; ``user`` (the email) stays the identity. Empty otherwise.
+        self.display_name = display_name
 
     async def send(self, frame: dict[str, Any]) -> None:
         await self._ws.send_json(frame)

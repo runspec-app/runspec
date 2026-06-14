@@ -418,6 +418,28 @@ def test_enact_assignment_creates_inbox_card_keyed_to_the_gate():
     assert card["summary"] == "reset-password · alice@corp"
 
 
+def test_enact_assignment_card_shows_verified_visitor_name():
+    src = _PortalSource()
+    s = _enact_stub(src, {_NS: {"reset-password": _DISC}})
+    s._run_assignment = lambda *a, **k: None
+    s._enact_assignment(
+        {
+            "id": "r1",
+            "room": _THREAD,
+            "runnable": "reset-password",
+            "args": {"user": "alice"},
+            "visitor": "alice@corp",
+            "visitor_name": "Alice Smith",
+        }
+    )
+    card = _card(s)
+    # Both the verified email (the anchor) and the display name reach the card…
+    assert card["detail"]["visitor"] == "alice@corp"
+    assert card["detail"]["visitor_name"] == "Alice Smith"
+    # …and the summary line prefers the human name.
+    assert card["summary"] == "reset-password · Alice Smith"
+
+
 def test_namespace_of():
     assert Bridge._namespace_of("helpdesk/it/alice@corp") == "helpdesk/it"
     assert Bridge._namespace_of("ops") == ""

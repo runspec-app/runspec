@@ -129,6 +129,14 @@ def test_session_user_reads_session():
     assert session_user(_Conn({"user": "ana@b.com"})) == "ana@b.com"
 
 
+def test_session_name_reads_session():
+    from console_room.web.auth import session_name
+
+    assert session_name(_Conn({"name": "Ana B"})) == "Ana B"
+    assert session_name(_Conn({})) == ""  # no name claim
+    assert session_name(object()) == ""  # no session at all
+
+
 def test_session_user_safe_without_session():
     assert session_user(_Conn(None)) == ""
     assert session_user(object()) == ""  # no .session attr at all

@@ -540,7 +540,9 @@ class Hub:
         the request up."""
         async with self._lock:
             consoles = list(self._agents.get(req.namespace, ()))
-        frame = page_frame(req.id, req.room, req.runnable, req.queue, req.visitor)
+        frame = page_frame(
+            req.id, req.room, req.runnable, req.queue, req.visitor, req.visitor_name
+        )
         for console in consoles:
             await _safe_send(console, frame)
         logger.info(
@@ -591,7 +593,12 @@ class Hub:
                 "room: %r request for %r refused — args too large", p.user, tool
             )
             return None
-        req = self._requests.create(p.room, queue, ns, visitor, tool, args)
+        # The visitor's display name (email-verify signup) rides onto the operator
+        # card; a connection without one (OIDC / dev / console) just shows the id.
+        visitor_name = str(getattr(p, "display_name", "") or "")
+        req = self._requests.create(
+            p.room, queue, ns, visitor, tool, args, visitor_name=visitor_name
+        )
         # Record the ask on the thread (links to the lifecycle record via id).
         msg = Message.new(
             p.room,

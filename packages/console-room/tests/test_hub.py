@@ -468,6 +468,42 @@ def test_submit_request_auto_assigns_to_on_shift_holder():
     assert ("assigned", "agent@web01") in _statuses(agent)
 
 
+def test_submit_request_carries_visitor_name_to_operator_card():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        alice.display_name = "Alice Smith"  # set by the email-verify session
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        agent.frames.clear()
+        await hub.submit_request(alice, "reset-password", {"user": "alice"})
+        return agent
+
+    agent = run(scenario())
+    assignment = next(f for f in agent.frames if f["type"] == "assignment")
+    assert assignment["visitor"] == "alice@corp"
+    assert assignment["visitor_name"] == "Alice Smith"
+
+
+def test_submit_request_blank_visitor_name_without_session_name():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)  # no display_name (OIDC / dev / console)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(agent, [{"name": "reset-password"}])
+        agent.frames.clear()
+        await hub.submit_request(alice, "reset-password", {})
+        return agent
+
+    agent = run(scenario())
+    assignment = next(f for f in agent.frames if f["type"] == "assignment")
+    assert assignment["visitor_name"] == ""
+
+
 def test_submit_request_persists_thread_message_and_fans_to_agent():
     async def scenario():
         store = FakeStore()

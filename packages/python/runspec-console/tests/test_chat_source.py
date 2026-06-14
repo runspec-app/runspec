@@ -408,6 +408,7 @@ def test_parse_inbound_assignment_frame():
             "runnable": "reset-password",
             "args": {"user": "alice"},
             "visitor": "alice@corp",
+            "visitor_name": "Alice Smith",
         },
         "agent@web01",
     )
@@ -418,11 +419,18 @@ def test_parse_inbound_assignment_frame():
         "runnable": "reset-password",
         "args": {"user": "alice"},
         "visitor": "alice@corp",
+        "visitor_name": "Alice Smith",
     }
 
 
 def test_assignment_payload_tolerates_bad_args():
     assert assignment_payload({"id": "r", "args": "not-a-dict"})["args"] == {}
+
+
+def test_assignment_and_page_visitor_name_defaults_blank():
+    # Absent in OIDC / dev mode → blank (the card falls back to the email).
+    assert assignment_payload({"id": "r", "visitor": "a@corp"})["visitor_name"] == ""
+    assert page_payload({"id": "r", "visitor": "a@corp"})["visitor_name"] == ""
 
 
 def test_parse_inbound_request_status_frame():

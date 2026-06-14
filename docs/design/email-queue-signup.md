@@ -1,6 +1,7 @@
 # Email-verified queue signup — internal self-service enrollment
 
-> **Design.** Settled with the user (this note); no code yet. A new **auth mode**
+> **Status: shipped** (all 5 slices) — `runspec-room` 0.18.0 + `runspec-console`
+> 0.60.0. A new **auth mode**
 > for `runspec-room`: instead of OIDC, an internal employee signs up for a queue
 > with their email + name, proves the email by clicking a verify link, and is
 > then a member of that queue. The verify email is sent **by a connected console,

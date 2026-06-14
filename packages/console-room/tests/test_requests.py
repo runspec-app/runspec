@@ -41,6 +41,23 @@ def test_create_starts_unassigned():
     assert req.args == {"user": "alice"}
 
 
+def test_visitor_name_defaults_empty_and_is_stored():
+    reg = RequestRegistry()
+    assert _new(reg).visitor_name == ""  # absent → blank (OIDC / dev)
+    named = reg.create(
+        room="helpdesk/it/alice",
+        queue="it",
+        namespace=IT,
+        visitor="alice@corp",
+        runnable="reset-password",
+        args={},
+        visitor_name="Alice Smith",
+    )
+    assert named.visitor_name == "Alice Smith"
+    # …and it rides the assignment payload (last field) for the operator card.
+    assert named.assignment_fields()[-1] == "Alice Smith"
+
+
 # ── round-robin assignment ────────────────────────────────────────────────────
 
 
