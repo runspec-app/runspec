@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 
 from .hub import Hub
 from .ndjson_server import serve_ndjson
@@ -46,6 +47,19 @@ async def run_ndjson_only(
         store.close()
 
 
+def _enroll_db_path(db_path: str) -> str:
+    """Where the email-verify members/outbox live — a sibling of the transcript DB
+    (``…/console_room.db`` → ``…/console_room.enrollment.db``), or ``:memory:`` when
+    the transcript is in memory."""
+    override = os.environ.get("CONSOLE_ROOM_ENROLL_DB")
+    if override:
+        return override
+    if db_path == ":memory:":
+        return ":memory:"
+    p = Path(db_path)
+    return str(p.with_name(f"{p.stem}.enrollment{p.suffix or '.db'}"))
+
+
 def run_web(
     host: str,
     port: int,
@@ -59,23 +73,53 @@ def run_web(
 ) -> None:
     """Serve the browser WebSocket door (and, via the app lifespan, the console
     NDJSON door) under uvicorn. Imports the web stack lazily so ``--ndjson-only``
-    works without it installed. OIDC login is enabled when ``CONSOLE_ROOM_OIDC_*``
-    is set; TLS when a cert + key are given (uvicorn is proxy-header-aware either
-    way, so it also works behind a TLS-terminating reverse proxy)."""
+    works without it installed. The auth mode is ``CONSOLE_ROOM_AUTH`` (``oidc`` /
+    ``email-verify`` / ``dev``), inferred for back-compat when unset — OIDC if
+    ``CONSOLE_ROOM_OIDC_*`` is set, else dev. TLS when a cert + key are given
+    (uvicorn is proxy-header-aware, so it also works behind a TLS-terminating
+    reverse proxy)."""
     import uvicorn
 
+    from .enrollment_store import EnrollmentStore
+    from .signup import email_verify_from_env, read_auth_mode
     from .web.app import create_app
     from .web.auth import auth_from_env
 
-    auth = auth_from_env()
-    if auth is None:
+    mode = read_auth_mode()
+    auth = None
+    email_verify = None
+    enrollment: EnrollmentStore | None = None
+    if mode == "oidc":
+        auth = auth_from_env()
+    elif mode == "email-verify":
+        email_verify = email_verify_from_env()
+        if email_verify is None:
+            logger.error(
+                "room: CONSOLE_ROOM_AUTH=email-verify but CONSOLE_ROOM_SESSION_SECRET "
+                "is unset — falling back to DEV mode with NO login."
+            )
+        else:
+            enrollment = EnrollmentStore(_enroll_db_path(db_path))
+            logger.info(
+                "room: email-verify sign-up enabled — verify mail is sent by a "
+                "connected console (the send lands in a later release; signups "
+                "queue in the outbox until then)."
+            )
+    if auth is None and email_verify is None:
         logger.warning(
-            "room: OIDC not configured (CONSOLE_ROOM_OIDC_*) — running the browser "
-            "door in DEV mode with NO login. Do not expose this publicly."
+            "room: no auth configured — running the browser door in DEV mode with "
+            "NO login. Do not expose this publicly."
         )
+
     store = TranscriptStore(db_path)
     hub = Hub(store, assignment_timeout=assignment_timeout)
-    app = create_app(hub, ndjson_addr=(ndjson_host, ndjson_port), auth=auth)
+    app = create_app(
+        hub,
+        ndjson_addr=(ndjson_host, ndjson_port),
+        auth=auth,
+        email_verify=email_verify,
+        enrollment=enrollment,
+    )
     try:
         uvicorn.run(
             app,
@@ -89,6 +133,8 @@ def run_web(
         )
     finally:
         store.close()
+        if enrollment is not None:
+            enrollment.close()
 
 
 def _env(name: str, default: str) -> str:

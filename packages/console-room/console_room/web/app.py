@@ -8,13 +8,17 @@ health check. When an ``ndjson_addr`` is given, the app's lifespan also runs the
 console NDJSON listener on the same event loop, so one process serves both front
 doors.
 
-**Auth (S3).** With an :class:`AuthConfig`, the app mounts ``SessionMiddleware``
-and the OIDC routes (``/login`` → IdP, ``/auth/callback`` → session, ``/logout``),
-and gates the app shell + the WebSocket on the session identity — the browser no
-longer declares who it is. Without one, the app runs in **dev mode**: identity
-comes from the ``?user=`` query param and nothing is gated (what keeps local dev
-and the tests runnable without an IdP). See docs/design/console-room-server.md
-§1/§2/§6.
+**Auth.** Three mutually-exclusive identity modes, all sharing one
+``session_user`` gate on the app shell + WebSocket. With an :class:`AuthConfig`
+the app mounts the OIDC routes (``/login`` → IdP, ``/auth/callback`` → session,
+``/logout``). With an :class:`EmailVerifyConfig` (+ an
+:class:`~console_room.enrollment_store.EnrollmentStore`) it mounts the email-verify
+sign-up door (``/signup`` / ``/queues`` / ``/verify``) — an internal employee
+verifies a company email to join a queue (docs/design/email-queue-signup.md).
+Either way ``SessionMiddleware`` holds the signed identity. With neither, the app
+runs in **dev mode**: identity comes from the ``?user=`` query param and nothing is
+gated (what keeps local dev and the tests runnable without an IdP). See
+docs/design/console-room-server.md §1/§2/§6.
 """
 
 from __future__ import annotations
@@ -41,10 +45,13 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from ..conversation import conversation_room, queue_namespace, valid_token
+from ..enrollment_store import EnrollmentStore
 from ..hub import Hub
 from ..ndjson_server import serve_ndjson
+from ..signup import EmailVerifyConfig
 from .auth import AuthConfig, build_oauth, identity_from_userinfo, session_user
 from .connection import BrowserConnection
+from .signup_routes import VerifySender, signup_routes
 
 logger = logging.getLogger("console_room.web")
 
@@ -110,16 +117,48 @@ def create_app(
     *,
     ndjson_addr: tuple[str, int] | None = None,
     auth: AuthConfig | None = None,
+    email_verify: EmailVerifyConfig | None = None,
+    enrollment: EnrollmentStore | None = None,
+    verify_sender: VerifySender | None = None,
 ) -> Starlette:
     """Build the Starlette app around ``hub``. With ``ndjson_addr=(host, port)``
-    the lifespan also serves the console NDJSON door on the same loop. With
-    ``auth`` the browser door requires an OIDC login; without it, dev mode."""
+    the lifespan also serves the console NDJSON door on the same loop.
+
+    Identity comes from one of three modes (mutually exclusive): ``auth`` →
+    OIDC login; ``email_verify`` (+ ``enrollment``) → the email-verify sign-up
+    door (``/signup`` / ``/verify``); neither → dev mode (``?user=`` query param,
+    nothing gated). Both authenticated modes set a signed session cookie and gate
+    the app shell + WebSocket on it identically."""
+    if email_verify is not None:
+        if auth is not None:
+            raise ValueError("auth (OIDC) and email_verify are mutually exclusive")
+        if enrollment is None:
+            raise ValueError("email_verify mode requires an EnrollmentStore")
 
     oauth = build_oauth(auth) if auth is not None else None
+    # One gate covers both authenticated modes; the secret/cookie flags come from
+    # whichever config is active.
+    gated = auth is not None or email_verify is not None
+    session_secret = (
+        auth.session_secret
+        if auth is not None
+        else email_verify.session_secret
+        if email_verify is not None
+        else ""
+    )
+    secure_cookies = (
+        auth.secure_cookies
+        if auth is not None
+        else email_verify.secure_cookies
+        if email_verify is not None
+        else False
+    )
+    # Where an unauthenticated visitor is sent: the IdP (OIDC) or the sign-up page.
+    login_path = "/login" if auth is not None else "/signup"
 
     # ── WebSocket door ────────────────────────────────────────────────────────
     async def ws_room(websocket: WebSocket) -> None:
-        if auth is not None:
+        if gated:
             user = session_user(websocket)
             if not user:
                 logger.warning(
@@ -170,18 +209,18 @@ def create_app(
 
     # ── app shell + identity ──────────────────────────────────────────────────
     async def index(request: Any) -> Any:
-        if auth is not None and not session_user(request):
-            return RedirectResponse(url="/login", status_code=307)
+        if gated and not session_user(request):
+            return RedirectResponse(url=login_path, status_code=307)
         return FileResponse(INDEX_HTML)
 
     async def me(request: Any) -> JSONResponse:
-        return JSONResponse({"auth": auth is not None, "user": session_user(request)})
+        return JSONResponse({"auth": gated, "user": session_user(request)})
 
     async def catalog(request: Any) -> JSONResponse:
         """The live self-service catalogue for a queue — the union of the runnables
-        the *on-shift* agent consoles have published. Gated like the WS: in auth
-        mode you must be signed in."""
-        if auth is not None and not session_user(request):
+        the *on-shift* agent consoles have published. Gated like the WS: in an
+        authenticated mode you must be signed in."""
+        if gated and not session_user(request):
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         queue = (request.query_params.get("queue") or "").strip()
         if not valid_token(queue):
@@ -247,6 +286,11 @@ def create_app(
             Route("/auth/callback", auth_callback, name="auth_callback"),
             Route("/logout", logout, name="logout"),
         ]
+    if email_verify is not None:
+        assert enrollment is not None  # checked above
+        routes += signup_routes(
+            hub, enrollment, email_verify, verify_sender=verify_sender
+        )
     if FRONTEND_DIR.is_dir():
         # Static assets (app.js / style.css) — public so the shell can style the
         # login redirect. The app shell itself ("/") is gated above.
@@ -257,12 +301,12 @@ def create_app(
         )
 
     middleware = []
-    if auth is not None:
+    if gated:
         middleware.append(
             Middleware(
                 SessionMiddleware,
-                secret_key=auth.session_secret,
-                https_only=auth.secure_cookies,
+                secret_key=session_secret,
+                https_only=secure_cookies,
                 same_site="lax",
             )
         )

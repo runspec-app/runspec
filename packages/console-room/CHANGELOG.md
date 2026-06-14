@@ -4,6 +4,39 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.16.0]
+
+### Added
+- **Email-verified queue signup — the web sign-up door (slice 2 of 5).** The
+  browser half of the `email-verify` auth mode (`docs/design/email-queue-signup.md`
+  §3): an internal employee picks an advertised queue, gives their company email +
+  full name, verifies the address, and is enrolled. Built on slice 1's storage +
+  token helpers; platform-agnostic and exercised end-to-end by the TestClient.
+  - **`email-verify` is now a real mode in `create_app`.** New
+    `email_verify=` / `enrollment=` / `verify_sender=` parameters; OIDC and
+    email-verify are mutually exclusive. Both authenticated modes now share **one**
+    `session_user` gate (the app shell, `/ws`, and `/catalog` are gated whenever
+    *either* is configured) and one `SessionMiddleware`, so a verified email-verify
+    session unlocks the portal exactly as an OIDC login does. An unauthenticated
+    visitor is redirected to `/signup` (vs `/login` for OIDC).
+  - **Routes `GET /queues`, `GET|POST /signup`, `GET /verify`** (`web/signup_routes.py`).
+    `/queues` returns the live advertised-queue list; `/signup` is a server-rendered,
+    JS-free, self-contained HTML form (so it works without a build step and is
+    testable); `POST` enforces the **domain allowlist** (email domain must equal the
+    chosen queue's mailbox domain), writes the durable **outbox** row, and dispatches
+    the verify mail via the `verify_sender` seam (the real Outlook send lands in
+    slice 4 — until then signups queue in the outbox). `/verify` validates the signed,
+    single-use token, burns the nonce, persists the `Member`, and sets the signed
+    session cookie (email as identity, name carried for slice 5).
+  - **Queue directory** (`queues.py` — `QueueDescriptor` / `QueueDirectory`): the
+    live union of the queues connected consoles advertise (deduplicated, usable-domain
+    only), wrapped by new `Hub.advertise_queue()` / `withdraw_queues()` /
+    `advertised_queues()` / `queue_descriptor()`. The wire frame that feeds it from
+    consoles arrives in slice 3; the web door reads it now.
+  - **Server.** `run_web` selects the mode via `CONSOLE_ROOM_AUTH` (inferred for
+    back-compat), constructing the `EnrollmentStore` (a sibling `…​.enrollment.db`,
+    overridable with `CONSOLE_ROOM_ENROLL_DB`) for email-verify mode.
+
 ## [0.15.0]
 
 ### Added

@@ -18,6 +18,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from .catalog import LiveCatalog
 from .conversation import namespace_matches, parse_conversation_room, queue_namespace
+from .queues import QueueDescriptor, QueueDirectory
 from .models import (
     KIND_REQUEST,
     REQUEST_ARGS_CAP,
@@ -109,6 +110,7 @@ class Hub:
         self._rooms: dict[str, set[Participant]] = {}
         self._agents: dict[str, set[Agent]] = {}  # namespace -> subscribed agents
         self._live = LiveCatalog()  # presence-aware per-agent catalogue + affinity
+        self._queues = QueueDirectory()  # advertised queues → email-verify sign-up
         self._requests = RequestRegistry()  # claim-free portal request lifecycle
         self._lock = asyncio.Lock()  # guards _rooms / _agents membership
 
@@ -276,6 +278,35 @@ class Hub:
         """Every connected console that holds ``tool``, on shift or not — the
         audience a page targets when no on-shift holder is available."""
         return self._live.connected_holders(namespace, tool)
+
+    # ── advertised queues (email-verify sign-up directory) ────────────────────
+    # A console advertises, per queue it staffs, the mailbox + display name that
+    # populate the email-verify sign-up dropdown. The room aggregates the live
+    # advertisements; the wire frame that drives this lands in slice 3, and the
+    # withdraw is tied to the console's disconnect. See email-queue-signup.md §4.
+
+    def advertise_queue(
+        self, console: str, queue: str, queue_email: str, display_name: str = ""
+    ) -> None:
+        """Record that ``console`` staffs ``queue`` (mailbox + label) — a row in the
+        sign-up dropdown for as long as the console is connected."""
+        self._queues.advertise(
+            console, QueueDescriptor(queue, queue_email, display_name)
+        )
+
+    def withdraw_queues(self, console: str) -> None:
+        """Drop every queue ``console`` advertised (its console disconnected)."""
+        self._queues.withdraw(console)
+
+    def advertised_queues(self) -> list[QueueDescriptor]:
+        """The live sign-up list — the advertised queues with a usable mailbox
+        domain, deduplicated by queue name."""
+        return self._queues.queues()
+
+    def queue_descriptor(self, queue: str) -> QueueDescriptor | None:
+        """The advertised descriptor for ``queue`` (mailbox + domain), or ``None``
+        when no connected console staffs it."""
+        return self._queues.get(queue)
 
     # ── portal requests: auto-assignment + claim-free lifecycle ───────────────
     # A visitor submits a catalog request; the hub routes it to an on-shift holder
