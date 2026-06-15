@@ -1,9 +1,10 @@
 # Email helpdesk — single queue, email sign-up only (v1)
 
-> **Status: design locked, building.** Supersedes the multi-queue / teams-as-queues
-> idea, the `room_queue*`-on-host model (`helpdesk-rooms.md` / `email-queue-signup.md`),
-> and the OIDC auth path. The single-mailbox slice (below, §2) is **done**; the
-> rest is the v1 build.
+> **Status: design locked; v1 build essentially complete.** Supersedes the
+> multi-queue / teams-as-queues idea, the `room_queue*`-on-host model
+> (`helpdesk-rooms.md` / `email-queue-signup.md`), and the OIDC auth path.
+> **For the completed state of truth (modules, versions, invariants, backlog)
+> see `console-room-handover.md`** — this doc is the locked plan it was built to.
 
 ---
 
@@ -117,21 +118,15 @@ security-review cost — a future OIDC need is built separately):
   - ✅ Triggers editor (Settings → Triggers): mailbox config + full
     `runspec_triggers.toml` editor — `save_trigger`/`delete_trigger`/`_clean_trigger`
     (console 0.69.0) + the editor form (console 0.70.0).
-  - ⬜ **Teams-management UI (NEXT).** Three steps, on this branch:
-    1. **Room protocol** — console→room frames `team_list` / `team_add` /
-       `team_remove`, handled in `NdjsonConsoleConnection` → `hub.list_teams` /
-       `add_team` / `remove_team`; the room pushes the team list back (a `teams`
-       frame). Authorized by the existing SSH-tunnel trust (any connected agent
-       console may manage teams in v1). `make_team_slug` on add. Tested with the
-       fake-socket harness.
-    2. **Console bridge** — `list_teams()` / `add_team(name)` / `remove_team(slug)`
-       sent over the live chat transport for the staffed room; a `runspec:teams`
-       event when the room pushes an updated list; index types + mock.
-    3. **Console UI** — a **new "Teams" settings tab** (don't crowd Triggers): list
-       teams with add (name → slug) / remove (Default protected), reflecting the
-       room's list. Drawer already 760px.
-- **F. Docs** — reconcile `helpdesk-rooms.md` + `email-queue-signup.md` to single
-  queue + email-only + team-as-tag.
+  - ✅ **Teams-management UI** (room 0.25.0 protocol / console 0.71.0 bridge + tab):
+    console→room `team_list`/`team_add`/`team_remove` frames → `hub.*`, answered
+    with a `teams` frame; bridge `list_teams/add_team/remove_team` + `runspec:teams`
+    event; **Settings → Teams** tab (add name→slug / remove, Default protected).
+- **F. Docs** — ⬜ reconcile `helpdesk-rooms.md` + `email-queue-signup.md` to single
+  queue + email-only + team-as-tag (still open). The visitor frontend was caught up
+  to single-queue + teams + verified auto-join (room 0.26.0).
+- **G. Reply suppression** — ✅ per-trigger `once_per_thread` over a `[mailbox]`
+  default, durable across restarts (console 0.72.0; see `console-triggers.md` §5).
 
 **v2 backlog:** reassign a visitor's team; reassign/escalate a ticket (L1→L2);
 per-team catalogues / skill-based routing.
