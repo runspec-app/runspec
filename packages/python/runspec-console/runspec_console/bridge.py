@@ -5860,6 +5860,11 @@ class Bridge:
             self._dispatch("runspec:room_page", payload)
             self._notify_page(payload)
             return
+        if etype == "teams":
+            # The room's reply to a team_list / team_add / team_remove — the Teams
+            # settings tab refreshes from this.
+            self._dispatch("runspec:teams", payload)
+            return
         self._dispatch("runspec:room_message", payload)
         self._notify_room_message(payload)
         self._touch_queue_card(str(payload.get("room") or ""), text=payload.get("text"))
@@ -6228,6 +6233,52 @@ class Bridge:
         except Exception as exc:  # noqa: BLE001 — report to the UI, don't crash
             logger.exception("send_room_message failed")
             return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    # ── teams management (Settings → Teams) ──────────────────────────────────────
+    # The customer-team list lives in the room DB; the console manages it over its
+    # live helpdesk agent connection. Each call is fire-and-forget — the room's
+    # reply arrives as a runspec:teams event the Teams tab listens for.
+
+    def _helpdesk_source(self) -> Any:
+        """The live agent ChatSource staffing a helpdesk namespace (teams ride this
+        connection). The first one — there's a single helpdesk per room."""
+        with self._lock:
+            for namespace in self._agent_rooms:
+                src = self._chat_sources.get(namespace)
+                if src is not None:
+                    return src
+        return None
+
+    def list_teams(self) -> dict[str, Any]:
+        """Ask the connected helpdesk room for its team list (reply: runspec:teams).
+        ``{ok: False, error}`` when no helpdesk room is connected."""
+        src = self._helpdesk_source()
+        if src is None:
+            return {"ok": False, "error": "Not connected to a helpdesk room."}
+        src.send_team_list()
+        return {"ok": True}
+
+    def add_team(self, name: str) -> dict[str, Any]:
+        """Create/rename a team by display name (the room derives the slug + replies
+        with the updated list)."""
+        name = str(name or "").strip()
+        if not name:
+            return {"ok": False, "error": "A team needs a name."}
+        src = self._helpdesk_source()
+        if src is None:
+            return {"ok": False, "error": "Not connected to a helpdesk room."}
+        src.send_team_add(name)
+        return {"ok": True}
+
+    def remove_team(self, slug: str) -> dict[str, Any]:
+        """Remove a team by slug (the room refuses the protected Default + replies
+        with the updated list)."""
+        slug = str(slug or "").strip()
+        src = self._helpdesk_source()
+        if src is None:
+            return {"ok": False, "error": "Not connected to a helpdesk room."}
+        src.send_team_remove(slug)
         return {"ok": True}
 
     def get_room_state(self) -> dict[str, Any]:

@@ -508,3 +508,30 @@ def test_agent_verify_sent_ack_marks_sent():
 
     hub, nonce = run(scenario())
     assert hub._enrollment.get_pending(nonce).send_state == "sent"  # noqa: SLF001
+
+
+def test_agent_team_list_add_remove():
+    # The console manages the customer-team list over the connection; each frame is
+    # answered with the current list (Default is seeded + protected).
+    async def scenario():
+        hub = _ev_hub()
+        reader = _reader(
+            {"type": "hello", "namespace": "helpdesk/helpdesk", "user": "agent@web01"},
+            {"type": "team_list"},
+            {"type": "team_add", "name": "IT Support"},
+            {"type": "team_remove", "slug": "it-support"},
+            {"type": "team_remove", "slug": "default"},  # refused (protected)
+        )
+        writer = FakeWriter()
+        await NdjsonConsoleConnection(reader, writer).run(hub)
+        return [f for f in writer.frames() if f["type"] == "teams"]
+
+    frames = run(scenario())
+    assert [[t["slug"] for t in f["teams"]] for f in frames] == [
+        ["default"],  # team_list
+        ["default", "it-support"],  # team_add "IT Support" → slug it-support
+        ["default"],  # team_remove it-support
+        ["default"],  # team_remove default → refused, still there
+    ]
+    # The added team's display name round-trips.
+    assert frames[1]["teams"][1] == {"slug": "it-support", "name": "IT Support"}

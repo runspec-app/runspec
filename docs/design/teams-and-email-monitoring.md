@@ -100,20 +100,37 @@ security-review cost — a future OIDC need is built separately):
 ## 7. Build plan (v1)
 
 - **A. Plan doc** — this. ✅
-- **B. Single-mailbox monitoring** — ✅ (§2).
-- **C. Email-only room** — remove OIDC (§6); email-verify is the sole auth door.
-  Tests + docs.
-- **D. Single-queue helpdesk + team tag**
-  - Room DB: `teams` table (slug, name), seeded with `Default`; CRUD helpers.
-  - Sign-up: team dropdown from the DB; the visitor's `team` rides onto the request
-    / operator card / thread; operator **Accept** per sign-up.
-  - Collapse the room to **one helpdesk queue** (drop the multi-queue
-    `QueueDirectory`/advertise-per-host-`room_queue` machinery); host carries only
-    `room_port` + transport.
-  - Console: connect to the one room (derived from the `[mailbox]` / a `[room]`
-    config); the operator inbox shows each visitor's team; a Teams-management UI
-    (the small department list).
-- **E. Docs** — reconcile `helpdesk-rooms.md` + `email-queue-signup.md` to single
+- **B. Single-mailbox monitoring** — ✅ (§2; console 0.63.0).
+- **C. Email-only room** — ✅ OIDC removed (§6; room 0.20.0).
+- **D. Single-queue helpdesk + team tag** — ✅ (mostly)
+  - ✅ Room DB `teams` table (slug, name) + CRUD, `Default`-seeded (room 0.22.0).
+  - ✅ Mailbox-driven connection: a host's `room_port` staffs the helpdesk; queue
+    defaults to `helpdesk`; no `room_queue` needed (console 0.66.0).
+  - ✅ Sign-up by team: `/teams` + team dropdown; domain/verify-from from the room's
+    `--mailbox`; the visitor's `team` rides sign-up → member → session (room 0.23.0 /
+    console 0.67.0).
+  - ✅ Team on the operator card: `Request`/`assignment`/`page` carry it (room
+    0.24.0 / console 0.68.0).
+  - ⬜ *Deferred:* operator **Accept** per sign-up is still the existing flow;
+    truly dropping `QueueDirectory`/advertise (it still works single-queue).
+- **E. Settings panel**
+  - ✅ Triggers editor (Settings → Triggers): mailbox config + full
+    `runspec_triggers.toml` editor — `save_trigger`/`delete_trigger`/`_clean_trigger`
+    (console 0.69.0) + the editor form (console 0.70.0).
+  - ⬜ **Teams-management UI (NEXT).** Three steps, on this branch:
+    1. **Room protocol** — console→room frames `team_list` / `team_add` /
+       `team_remove`, handled in `NdjsonConsoleConnection` → `hub.list_teams` /
+       `add_team` / `remove_team`; the room pushes the team list back (a `teams`
+       frame). Authorized by the existing SSH-tunnel trust (any connected agent
+       console may manage teams in v1). `make_team_slug` on add. Tested with the
+       fake-socket harness.
+    2. **Console bridge** — `list_teams()` / `add_team(name)` / `remove_team(slug)`
+       sent over the live chat transport for the staffed room; a `runspec:teams`
+       event when the room pushes an updated list; index types + mock.
+    3. **Console UI** — a **new "Teams" settings tab** (don't crowd Triggers): list
+       teams with add (name → slug) / remove (Default protected), reflecting the
+       room's list. Drawer already 760px.
+- **F. Docs** — reconcile `helpdesk-rooms.md` + `email-queue-signup.md` to single
   queue + email-only + team-as-tag.
 
 **v2 backlog:** reassign a visitor's team; reassign/escalate a ticket (L1→L2);

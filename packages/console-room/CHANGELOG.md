@@ -4,6 +4,36 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.26.0]
+
+### Changed
+- **Visitor browser frontend caught up to the single-queue + teams model.** The
+  join page no longer asks for a help desk queue (one room = one helpdesk = one
+  queue — the server names it) and no longer mentions OIDC / single sign-on (the
+  email-verify door is the only auth mode). It now asks for the visitor's **team**
+  alongside their name, mirroring the verified sign-up form. `/me` returns the
+  signed-in `name` + `team` (verified mode) and the single `queue` so the client
+  needs no queue input. Removed the stale `/logout` link (route gone with OIDC).
+- **Verified visitors auto-join — no second gate.** After the verify link the
+  client reads the confirmed name/team/queue from `/me` and enters the help desk
+  straight away; the join form is for dev mode only (where the visitor declares
+  their own name + team).
+- **Dev mode looks like the verified experience.** The browser declares both the
+  name (`?user=`) and the team (`?team=`) on the link (or types them); the team
+  rides onto the operator card the same way the verified session's team does (a
+  verified server ignores the query `?team=` and uses the session's, so it can't
+  be spoofed).
+
+## [0.25.0]
+
+### Added
+- **Teams-management protocol (Teams UI, step 1).** New agent→server frames
+  `team_list` / `team_add` (by display name → slug) / `team_remove` (by slug),
+  handled in `NdjsonConsoleConnection` and answered with a `teams` frame (the
+  current list). Backed by `Hub.add_team` / `remove_team` (Default stays
+  protected). Authorized by the SSH-tunnel door (any connected agent console may
+  manage teams in v1). The console bridge + Teams settings tab follow.
+
 ## [0.24.0]
 
 ### Added

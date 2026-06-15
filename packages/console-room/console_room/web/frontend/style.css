@@ -68,8 +68,6 @@ header .spacer { flex: 1; }
 .status { font-size: 12px; color: var(--muted); }
 .status.ok { color: var(--ok); }
 .status.warn { color: var(--warn); }
-.logout { color: var(--muted); font-size: 12px; text-decoration: none; }
-.logout:hover { color: var(--text); }
 
 /* The request thread fills the space below the catalogue (full height in group
    chat, where the catalogue is hidden). */

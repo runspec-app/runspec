@@ -1,14 +1,20 @@
 // app.js — the runspec room browser client (vanilla, no build step).
 //
-// Two modes share one client. Group chat: /ws?room=&user= — the original room.
-// Runnables portal: /ws?queue=&user= — the server derives a private thread from
-// the queue + the signed-in identity, and the aside shows the queue's live
-// catalogue (the runnables the on-shift operator consoles publish). Picking one
-// renders a form from its inputSchema; submitting sends a "request" frame the hub
-// auto-assigns to an operator. Each request then shows its claim-free lifecycle
-// (assigned → in progress → done/failed) inline; when no operator is on shift it
-// shows "no operator available" with a Page-the-team button. See
-// docs/design/runnables-portal.md §3.
+// The product is the help desk. One room = one helpdesk = one queue, so the
+// visitor never picks a queue — the server tells us the single queue at /me and
+// derives a private thread from it + the visitor's identity (/ws?queue=&user=).
+// The aside shows the queue's live catalogue (the runnables the on-shift operator
+// consoles publish); picking one renders a form from its inputSchema, and
+// submitting sends a "request" frame the hub auto-assigns to an operator. Each
+// request shows its claim-free lifecycle (assigned → in progress → done/failed)
+// inline; when no operator is on shift it shows "no operator available" with a
+// Page-the-team button.
+//
+// Identity. A verified server (email-verify sign-up) supplies the name + team in
+// the session — /me returns them and the join fields lock. In dev mode the browser
+// declares both (?user= / ?team= on the link, or typed in the form), the same way
+// dev mode has always declared the name. A ?room= deep-link still opens a legacy
+// group-chat room. See docs/design/runnables-portal.md §3.
 
 (() => {
   "use strict";
@@ -26,59 +32,63 @@
 
   let ws = null;
   let me = "";
-  let room = ""; // group-chat room (mode 1)
-  let queue = ""; // helpdesk queue (mode 2; wins when set)
-  let authed = false; // server has OIDC enabled and we're logged in
+  let team = ""; // the visitor's team (department)
+  let room = ""; // legacy group-chat room (?room= deep-link)
+  let queue = ""; // the single helpdesk queue this room serves (from /me)
+  let authed = false; // verified server (email-verify) — name + team are locked
   let catalog = []; // the queue's published tools
   const present = new Map(); // user -> status
   const requests = new Map(); // request_id -> { status node } for live lifecycle
 
-  // Ask the server who we are. In auth mode the name comes from the session and
-  // the field is locked; in dev mode the user types a name.
+  // Ask the server who we are and which queue this room serves. In a verified
+  // server the name + team come from the session, so there's nothing for the
+  // visitor to fill in — we join straight away (no gate). In dev mode the visitor
+  // declares them in the form (or on the link) and clicks Join.
   async function whoami() {
     try {
       const info = await (await fetch("/me")).json();
       authed = !!info.auth;
-      if (info.user) {
-        $("user").value = info.user;
-        if (authed) $("user").readOnly = true;
-      }
+      if (info.queue) queue = info.queue; // the single helpdesk queue
       if (authed) {
-        $("user-label").hidden = true;
-        $("join-hint").textContent = "Signed in via single sign-on.";
+        if (info.name || info.user) $("user").value = info.name || info.user;
+        if (info.team) $("team").value = info.team;
+        doJoin(); // verified — skip the join form entirely
       }
     } catch (_e) {
-      /* dev fallback: leave the name field editable */
+      /* dev fallback: leave the name + team fields editable */
     }
   }
   whoami();
 
-  // Adapt the join form to the link. The product is the help desk, so the Room
-  // (group-chat) field is hidden by default. A ?queue= visitor is the normal
-  // path; a ?room= deep-link still works (group chat is hidden, not removed) and
-  // re-reveals the Room field for that one visit.
+  // Adapt the join form to the link. The help desk is the product, so by default
+  // the visitor just joins the single queue. Dev-mode identity rides the link
+  // (?user=alice&team=sales); a ?room= deep-link still opens a legacy group-chat
+  // room (and re-reveals the Room field for that one visit).
   const params = new URLSearchParams(location.search);
-  const urlQueue = (params.get("queue") || "").trim();
   const urlRoom = (params.get("room") || "").trim();
-  // Dev-mode identity from the link (?user=alice). In auth mode whoami() fills
-  // the name from the OIDC session and locks the field, overriding this.
   const urlUser = (params.get("user") || "").trim();
+  const urlTeam = (params.get("team") || "").trim();
   if (urlUser) $("user").value = urlUser;
-  if (urlQueue) {
-    $("queue").value = urlQueue;
-  } else if (urlRoom) {
+  if (urlTeam) $("team").value = urlTeam;
+  if (urlRoom) {
     $("room").value = urlRoom;
     $("room-label").hidden = false; // legacy group-chat deep-link
-    $("queue-label").hidden = true;
-  } else {
-    $("mode-hint").hidden = false;
+    $("team-label").hidden = true;
+    $("mode-hint").hidden = true;
   }
 
   function wsUrl() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const q = queue
-      ? new URLSearchParams({ queue, user: me })
-      : new URLSearchParams({ room, user: me });
+    let q;
+    if (room) {
+      q = new URLSearchParams({ room, user: me });
+    } else {
+      // Helpdesk: the server derives the thread from queue + user. The team is a
+      // dev-mode declaration here; a verified server ignores it and uses the
+      // session's team (so it can't be spoofed).
+      q = new URLSearchParams({ queue, user: me });
+      if (team) q.set("team", team);
+    }
     return `${proto}//${location.host}/ws?${q.toString()}`;
   }
 
@@ -366,17 +376,28 @@
     ws.onerror = () => ws && ws.close();
   }
 
-  join.addEventListener("submit", (e) => {
-    e.preventDefault();
+  // Enter the room. Called on Join (dev mode) and straight from whoami() once a
+  // verified session is confirmed (no gate). A function declaration so whoami(),
+  // which runs earlier, can call it.
+  function doJoin() {
     me = ($("user").value || "guest").trim() || "guest";
-    queue = ($("queue").value || "").trim();
-    room = ($("room").value || "ops").trim() || "ops";
-    titleEl.textContent = queue ? `help desk · ${queue} · ${me}` : `#${room} · ${me}`;
+    team = ($("team").value || "").trim();
+    room = ($("room").value || "").trim();
+    if (room) {
+      titleEl.textContent = `#${room} · ${me}`;
+    } else {
+      // Helpdesk: join the single queue from /me. Show the team alongside the name.
+      titleEl.textContent = `help desk · ${team ? `${me} · ${team}` : me}`;
+    }
     join.hidden = true;
     app.hidden = false;
-    if (authed) $("logout").hidden = false;
-    if (queue) loadCatalog();
+    if (!room) loadCatalog();
     connect();
+  }
+
+  join.addEventListener("submit", (e) => {
+    e.preventDefault();
+    doJoin();
   });
 
   $("composer").addEventListener("submit", (e) => {

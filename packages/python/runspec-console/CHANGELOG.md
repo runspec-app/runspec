@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.71.0] — 2026-06-15
+
+### Added
+- **Teams-management UI (Settings → Teams).** A new tab to manage the customer
+  teams a visitor picks at sign-up — stored in the helpdesk room DB, shared across
+  operators. List teams, add (name → slug), remove (Default protected). Backed by
+  new bridge `list_teams` / `add_team` / `remove_team` that ride the live helpdesk
+  agent connection (chat source `send_team_*` frames); the room's reply arrives as
+  a `runspec:teams` event the tab refreshes from. Shows a "not connected" hint when
+  no helpdesk room is up. Pairs with runspec-room 0.25.0.
+
+
 ## [0.70.0] — 2026-06-15
 
 ### Added

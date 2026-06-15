@@ -42,7 +42,12 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from ..conversation import conversation_room, queue_namespace, valid_token
+from ..conversation import (
+    DEFAULT_QUEUE,
+    conversation_room,
+    queue_namespace,
+    valid_token,
+)
 from ..hub import Hub
 from ..ndjson_server import serve_ndjson
 from ..signup import EmailVerifyConfig
@@ -190,10 +195,16 @@ def create_app(
                 return
         logger.debug("room: WS accepted — user=%r room=%r", user, room)
         await websocket.accept()
-        # The verified display name + team (email-verify) ride onto the operator
-        # card; blank in dev mode — the card falls back to the id.
+        # The display name + team ride onto the operator card. In a verified server
+        # they come from the signed session (authoritative — a query param can't
+        # spoof them); in dev mode the browser declares the team via ?team= (the
+        # name is the ?user= id), mirroring the verified experience.
         display_name = session_name(websocket) if gated else ""
-        team = session_team(websocket) if gated else ""
+        team = (
+            session_team(websocket)
+            if gated
+            else (websocket.query_params.get("team") or "").strip()
+        )
         await BrowserConnection(
             _StarletteWS(websocket),
             user=user,
@@ -209,7 +220,19 @@ def create_app(
         return FileResponse(INDEX_HTML)
 
     async def me(request: Any) -> JSONResponse:
-        return JSONResponse({"auth": gated, "user": session_user(request)})
+        """Who the frontend is and where it joins. In a verified (email-verify)
+        server the name + team come from the signed session; in dev mode they're
+        blank here and the browser declares them (``?user=`` / ``?team=``). ``queue``
+        is the single helpdesk queue this room serves — there's nothing to pick."""
+        return JSONResponse(
+            {
+                "auth": gated,
+                "user": session_user(request),
+                "name": session_name(request) if gated else "",
+                "team": session_team(request) if gated else "",
+                "queue": DEFAULT_QUEUE,
+            }
+        )
 
     async def catalog(request: Any) -> JSONResponse:
         """The live self-service catalogue for a queue — the union of the runnables

@@ -7,18 +7,20 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
-    <!-- Join gate. In dev mode the browser declares its name; when the server has
-         OIDC enabled the name comes from the session (and the field is locked).
-         Fill a Room for group chat, or a Help desk queue for a private support
-         thread — the queue wins if both are set. -->
+    <!-- Join gate. One room = one helpdesk = one queue, so there's no queue to
+         pick — the visitor declares who they are and which team they're in. In a
+         verified server (email-verify sign-up) the name + team come from the
+         session and the fields are locked; in dev mode the browser declares both
+         (?user= / ?team= on the link, or typed here). A ?room= deep-link still
+         opens a legacy group-chat room. -->
     <form id="join" class="join">
       <h1>runspec room</h1>
       <label id="user-label">Your name <input id="user" autocomplete="off" placeholder="alice" /></label>
-      <label id="queue-label">Help desk queue <input id="queue" autocomplete="off" placeholder="it-support" /></label>
+      <label id="team-label">Your team <input id="team" autocomplete="off" placeholder="sales" /></label>
       <label id="room-label" hidden>Room <input id="room" autocomplete="off" placeholder="ops" /></label>
-      <p id="mode-hint" class="hint" hidden>Enter your help desk queue to start a request.</p>
-      <button type="submit">Join</button>
-      <p id="join-hint" class="hint">Dev login — single sign-on is used when configured.</p>
+      <p id="mode-hint" class="hint">Start a help desk request — an operator picks it up.</p>
+      <button type="submit">Join the help desk</button>
+      <p id="join-hint" class="hint">Dev mode — you're declaring your own name and team.</p>
     </form>
 
     <main id="app" hidden>
@@ -27,7 +29,6 @@
         <ul id="presence" class="presence-inline"></ul>
         <span class="spacer"></span>
         <span id="status" class="status"></span>
-        <a id="logout" class="logout" href="/logout" hidden>Sign out</a>
       </header>
       <!-- Self-service catalogue (helpdesk mode): a card grid across the top.
            Items come from /catalog?queue= (the on-shift consoles' published

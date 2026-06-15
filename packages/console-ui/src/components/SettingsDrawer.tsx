@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Alert, Segmented, AutoComplete, Empty } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult } from '../bridge'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined } from '@ant-design/icons'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 
@@ -1594,6 +1594,84 @@ function TriggersTab() {
   )
 }
 
+// ── Teams tab (customer departments, managed in the helpdesk room) ──────────
+
+function TeamsTab() {
+  const [teams, setTeams] = useState<Team[]>([])
+  const [name, setName] = useState('')
+  const [err, setErr] = useState('')
+  const [notConnected, setNotConnected] = useState(false)
+  const [adding, setAdding] = useState(false)
+
+  useEffect(() => {
+    const onTeams = (e: Event) => { setTeams(((e as CustomEvent).detail as TeamsEvent).teams ?? []); setNotConnected(false) }
+    window.addEventListener('runspec:teams', onTeams)
+    bridge.list_teams().then(r => { if (!r.ok) { setNotConnected(true); setErr(r.error || '') } })
+    return () => window.removeEventListener('runspec:teams', onTeams)
+  }, [])
+
+  const add = async () => {
+    const n = name.trim()
+    if (!n) return
+    setAdding(true)
+    try {
+      const r = await bridge.add_team(n)
+      if (!r.ok) setErr(r.error || 'Could not add the team.')
+      else { setName(''); setErr('') }
+    } finally { setAdding(false) }
+  }
+  const remove = async (slug: string) => {
+    const r = await bridge.remove_team(slug)
+    if (!r.ok && r.error) setErr(r.error)
+  }
+
+  return (
+    <div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+        The customer teams a visitor picks at sign-up — stored in the helpdesk room and shared across operators. <code>Default</code> is always present.
+      </Text>
+
+      {notConnected && (
+        <Alert type="warning" showIcon style={{ marginBottom: 10 }}
+          message="Not connected to a helpdesk room"
+          description={<span style={{ fontSize: 12 }}>Connect a host with a room port + a matching <code>[mailbox]</code> (Settings → Jump Hosts + Triggers) to manage teams.</span>} />
+      )}
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+        <Input size="small" value={name} onChange={e => setName(e.target.value)} onPressEnter={add}
+          placeholder="New team name (e.g. HR)" disabled={notConnected} />
+        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={add} loading={adding} disabled={notConnected || !name.trim()}>Add</Button>
+      </div>
+
+      {err && <Alert type="error" showIcon style={{ marginBottom: 10 }} message={err} />}
+
+      {teams.length === 0 && !notConnected ? (
+        <Text type="secondary" style={{ fontSize: 12 }}>No teams yet — add one above.</Text>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {teams.map(t => (
+            <div key={t.slug} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
+              <TeamOutlined style={{ color: '#666', flexShrink: 0 }} />
+              <Text style={{ fontSize: 13, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</Text>
+              <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: 11, flexShrink: 0 }}>{t.slug}</Text>
+              {t.slug === 'default' ? (
+                <Tag style={{ margin: 0, fontSize: 10 }}>protected</Tag>
+              ) : (
+                <Popconfirm title={`Remove team ${t.name}?`} onConfirm={() => remove(t.slug)} okText="Remove" cancelText="Cancel" placement="left">
+                  <Button type="text" size="small" icon={<DeleteOutlined />} danger style={{ padding: '0 4px', color: '#666' }} />
+                </Popconfirm>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+        Teams live in the helpdesk room database — not a local file. Changes are shared with every operator on the same room.
+      </Text>
+    </div>
+  )
+}
+
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
@@ -1608,6 +1686,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
           { key: 'triggers',  label: 'Triggers',   children: <TriggersTab /> },
+          { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },
         ]}
       />
     </Drawer>

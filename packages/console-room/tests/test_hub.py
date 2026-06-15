@@ -491,7 +491,7 @@ def test_submit_request_blank_visitor_name_without_session_name():
     async def scenario():
         hub = Hub(FakeStore())
         agent = FakeAgent("agent@web01", IT)
-        alice = FakeP("alice@corp", ALICE)  # no display_name (OIDC / dev / console)
+        alice = FakeP("alice@corp", ALICE)  # no display_name (dev mode / console)
         await hub.join_agent(agent)
         await hub.join(alice)
         hub.publish_catalog(agent, [{"name": "reset-password"}])

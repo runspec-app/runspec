@@ -1185,4 +1185,26 @@ export const mockApi: BridgeApi = {
     }, 80)
     return { ok: true }
   },
+
+  // Interactive teams mock: the in-memory list drives the Teams tab in the browser
+  // (the real bridge round-trips this through the helpdesk room).
+  list_teams: async () => { setTimeout(emitMockTeams, 50); return { ok: true } },
+  add_team: async (name: string) => {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    if (slug && !MOCK_TEAMS.some(t => t.slug === slug)) MOCK_TEAMS = [...MOCK_TEAMS, { slug, name: name.trim() }]
+    setTimeout(emitMockTeams, 50)
+    return { ok: true }
+  },
+  remove_team: async (slug: string) => {
+    if (slug !== 'default') MOCK_TEAMS = MOCK_TEAMS.filter(t => t.slug !== slug)
+    setTimeout(emitMockTeams, 50)
+    return { ok: true }
+  },
 }
+
+let MOCK_TEAMS: { slug: string; name: string }[] = [
+  { slug: 'default', name: 'Default' },
+  { slug: 'it-support', name: 'IT Support' },
+]
+const emitMockTeams = () =>
+  window.dispatchEvent(new CustomEvent('runspec:teams', { detail: { teams: MOCK_TEAMS } }))

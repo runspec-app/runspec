@@ -56,7 +56,15 @@ def test_me_in_dev_mode_has_no_session_error():
     with _client() as client:
         r = client.get("/me")
         assert r.status_code == 200
-        assert r.json() == {"auth": False, "user": ""}
+        # Dev mode: name + team are blank (the browser declares them); queue is the
+        # single helpdesk queue this room serves.
+        assert r.json() == {
+            "auth": False,
+            "user": "",
+            "name": "",
+            "team": "",
+            "queue": "helpdesk",
+        }
 
 
 def test_favicon_returns_no_content():
@@ -162,6 +170,30 @@ def test_helpdesk_visitor_rejects_bad_queue_token():
         with pytest.raises(Exception):
             with client.websocket_connect("/ws?queue=a/b&user=ana"):
                 pass
+
+
+def test_dev_visitor_team_param_rides_onto_the_card(monkeypatch):
+    # In dev mode the browser declares its team via ?team= (no session to read it
+    # from); it must reach the operator card the same way the verified session's
+    # team does. Spy on the connection to capture the team ws_room resolved.
+    from console_room.web import app as app_mod
+
+    captured: dict[str, str] = {}
+    real_init = app_mod.BrowserConnection.__init__
+
+    def spy(self, ws, *, user, room, display_name="", team=""):
+        captured["user"] = user
+        captured["team"] = team
+        real_init(self, ws, user=user, room=room, display_name=display_name, team=team)
+
+    monkeypatch.setattr(app_mod.BrowserConnection, "__init__", spy)
+    with _client() as client:
+        with client.websocket_connect(
+            "/ws?queue=it&user=alice@corp&team=sales"
+        ) as alice:
+            alice.send_json({"type": "message", "text": "hi"})
+            alice.receive_json()
+    assert captured == {"user": "alice@corp", "team": "sales"}
 
 
 # ── catalog endpoint + request flow ────────────────────────────────────────────

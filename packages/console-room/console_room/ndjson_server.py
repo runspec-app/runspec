@@ -28,12 +28,16 @@ from .models import (
     PRESENCE,
     REQUEST_COMPLETE,
     REQUEST_START,
+    TEAM_ADD,
+    TEAM_LIST,
+    TEAM_REMOVE,
     VERIFY_SENT,
     normalize_status,
     parse_advertise,
     parse_catalog,
     parse_hello,
     parse_verify_sent,
+    teams_frame,
 )
 
 logger = logging.getLogger("console_room.ndjson")
@@ -182,6 +186,20 @@ class NdjsonConsoleConnection:
             parsed = parse_verify_sent(frame)
             if parsed is not None:
                 await hub.on_verify_sent(*parsed)
+        elif self.is_agent and kind == TEAM_LIST:
+            # The console managing the customer-team list (the sign-up dropdown):
+            # request it, add one (by display name), or remove one (by slug). Each
+            # is answered with the current list. Trusted by the SSH-tunnel door.
+            await self.send(teams_frame(hub.list_teams()))
+        elif self.is_agent and kind == TEAM_ADD:
+            name = str(frame.get("name") or "").strip()
+            await self.send(
+                teams_frame(hub.add_team(name) if name else hub.list_teams())
+            )
+        elif self.is_agent and kind == TEAM_REMOVE:
+            slug = str(frame.get("slug") or "").strip()
+            teams = hub.remove_team(slug) if slug else hub.list_teams()
+            await self.send(teams_frame(teams))
         # hello-after-hello, agent presence, and unknown types are ignored.
 
     async def _read_frame(self) -> dict[str, Any] | None:

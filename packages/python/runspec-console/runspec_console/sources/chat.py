@@ -194,6 +194,11 @@ def parse_inbound(obj: Any, self_user: str) -> Event | None:
         return Event.new("chat", "request_status", request_status_payload(obj))
     if kind == "page":
         return Event.new("chat", "page", page_payload(obj))
+    if kind == "teams":
+        teams = obj.get("teams")
+        return Event.new(
+            "chat", "teams", {"teams": teams if isinstance(teams, list) else []}
+        )
     return None
 
 
@@ -277,7 +282,19 @@ class ChatSource:
         return (True, "")
 
     def event_types(self) -> list[str]:
-        return ["message", "presence", "assignment", "request_status", "page"]
+        return ["message", "presence", "assignment", "request_status", "page", "teams"]
+
+    def send_team_list(self) -> None:
+        """Ask the room for its current customer-team list (reply: a ``teams`` event)."""
+        self._send_request_control({"type": "team_list"})
+
+    def send_team_add(self, name: str) -> None:
+        """Create/rename a team by display name (the room derives the slug)."""
+        self._send_request_control({"type": "team_add", "name": name})
+
+    def send_team_remove(self, slug: str) -> None:
+        """Remove a team by slug (the room refuses the protected Default)."""
+        self._send_request_control({"type": "team_remove", "slug": slug})
 
     def start(self, emit: EmitFn) -> None:
         ok, reason = self.available()

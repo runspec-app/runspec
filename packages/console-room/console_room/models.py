@@ -40,6 +40,13 @@ SEND_VERIFY = (
 )
 VERIFY_SENT = "verify_sent"  # agent → server: ack a send_verify (ok, or with error)
 
+# Teams management frames (operator console ↔ server): the customer-team list a
+# visitor picks at sign-up. See docs/design/teams-and-email-monitoring.md §7E.
+TEAM_LIST = "team_list"  # agent → server: send me the current team list
+TEAM_ADD = "team_add"  # agent → server: create/rename a team from a display name
+TEAM_REMOVE = "team_remove"  # agent → server: remove a team by slug
+TEAMS = "teams"  # server → agent: the current team list (reply to the above)
+
 # Message kinds — how a transcript entry was produced. "chat" is a typed message;
 # "request" is a structured catalog submission (text = human summary, data = the
 # machine payload the agent console enacts).
@@ -328,6 +335,17 @@ def parse_verify_sent(obj: Any) -> tuple[str, bool] | None:
     if not nonce:
         return None
     return nonce, bool(obj.get("ok"))
+
+
+def teams_frame(teams: list[Any]) -> dict[str, Any]:
+    """A server → agent ``teams`` frame: the current customer-team list (slug +
+    name), sent in reply to ``team_list`` / ``team_add`` / ``team_remove``. Takes
+    anything with ``.slug`` / ``.name`` (a ``Team``) — duck-typed to avoid importing
+    the dataclass here."""
+    return {
+        "type": TEAMS,
+        "teams": [{"slug": _str(t.slug), "name": _str(t.name)} for t in teams],
+    }
 
 
 def request_text(tool: str, args: dict[str, Any]) -> str:

@@ -44,6 +44,7 @@ from .signup import (
     PendingSignup,
     Team,
     make_nonce,
+    make_team_slug,
     read_verify_token,
     sign_verify_token,
 )
@@ -368,6 +369,25 @@ class Hub:
         """The customer teams a visitor may pick at sign-up (Default-seeded). Empty
         when email-verify isn't configured (no enrollment store)."""
         return self._enrollment.list_teams() if self._enrollment is not None else []
+
+    def add_team(self, name: str) -> list[Team]:
+        """Create (or rename, if the slug collides) a team from a display ``name``;
+        the slug is derived. A name with no usable slug is ignored. Returns the full
+        list. No-op (``[]``) when email-verify isn't configured."""
+        if self._enrollment is None:
+            return []
+        slug = make_team_slug(name)
+        if slug:
+            self._enrollment.add_team(Team(slug=slug, name=name.strip()))
+        return self._enrollment.list_teams()
+
+    def remove_team(self, slug: str) -> list[Team]:
+        """Remove a team by slug (the protected ``Default`` refuses) and return the
+        full list. No-op (``[]``) when email-verify isn't configured."""
+        if self._enrollment is None:
+            return []
+        self._enrollment.remove_team(slug)
+        return self._enrollment.list_teams()
 
     async def on_advertise(
         self, agent: Agent, queue: str, queue_email: str, display_name: str

@@ -126,6 +126,18 @@ export interface Mailbox {
   label: string
 }
 
+// A customer team (department) a visitor picks at sign-up. Lives in the helpdesk
+// room DB, managed from the console (Settings → Teams). `slug` is the stable id.
+export interface Team {
+  slug: string
+  name: string
+}
+
+// runspec:teams event detail — the room's reply to list/add/remove_team.
+export interface TeamsEvent {
+  teams: Team[]
+}
+
 // runspec:transfer_end event detail — fired once when a transfer finishes.
 export interface TransferEnd {
   id: string
@@ -630,6 +642,12 @@ export interface BridgeApi {
   // For a helpdesk thread, pass the conversation room (helpdesk/<queue>/<visitor>);
   // the bridge routes it via the agent connection staffing that queue.
   send_room_message: (room: string, text: string) => Promise<{ ok: boolean; error?: string }>
+  // Customer teams (Settings → Teams) — managed over the live helpdesk room
+  // connection. Fire-and-forget: the room's reply arrives as a runspec:teams event
+  // (TeamsEvent). ok=false (with a reason) when no helpdesk room is connected.
+  list_teams: () => Promise<{ ok: boolean; error?: string }>
+  add_team: (name: string) => Promise<{ ok: boolean; error?: string }>
+  remove_team: (slug: string) => Promise<{ ok: boolean; error?: string }>
   get_in_flight: () => Promise<InFlightRecord[]>
   get_today: (host: string, group: string) => Promise<TodaySummary | null>
   get_analytics: (hosts: string[], sinceDays?: number, runnable?: string) => Promise<AnalyticsData>

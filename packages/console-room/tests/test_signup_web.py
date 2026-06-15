@@ -126,7 +126,13 @@ def test_index_redirects_to_signup_when_unauthenticated():
 
 def test_me_reports_auth_enabled():
     client, *_ = _build()
-    assert client.get("/me").json() == {"auth": True, "user": ""}
+    assert client.get("/me").json() == {
+        "auth": True,
+        "user": "",
+        "name": "",
+        "team": "",
+        "queue": "helpdesk",
+    }
 
 
 def test_lifespan_starts_and_stops_cleanly():
@@ -193,7 +199,13 @@ def test_verify_enrolls_and_sets_session():
     assert r.status_code == 303 and r.headers["location"] == "/?queue=helpdesk"
     assert enrollment.is_member("jane@corp.com", "helpdesk")
     # The session now identifies the verified email — the gate unlocks.
-    assert client.get("/me").json() == {"auth": True, "user": "jane@corp.com"}
+    assert client.get("/me").json() == {
+        "auth": True,
+        "user": "jane@corp.com",
+        "name": "Jane Doe",
+        "team": "",
+        "queue": "helpdesk",
+    }
     assert client.get("/", follow_redirects=False).status_code == 200
 
 

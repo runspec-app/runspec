@@ -351,6 +351,36 @@ def test_event_types():
         "assignment",
         "request_status",
         "page",
+        "teams",
+    ]
+
+
+def test_parse_inbound_teams_frame():
+    ev = parse_inbound(
+        {"type": "teams", "teams": [{"slug": "default", "name": "Default"}]}, "agent"
+    )
+    assert ev is not None and ev.type == "teams"
+    assert ev.payload == {"teams": [{"slug": "default", "name": "Default"}]}
+    # A malformed teams list → empty.
+    assert parse_inbound({"type": "teams"}, "agent").payload == {"teams": []}
+
+
+def test_team_management_frames_sent():
+    transport = FakeTransport()
+    src = ChatSource(
+        namespace="helpdesk/helpdesk",
+        user="agent@web01",
+        queue="helpdesk",
+        transport=transport,
+    )
+    src.send_team_list()
+    src.send_team_add("IT Support")
+    src.send_team_remove("it-support")
+    sent = [m for m in transport.sent if m["type"].startswith("team")]
+    assert sent == [
+        {"type": "team_list"},
+        {"type": "team_add", "name": "IT Support"},
+        {"type": "team_remove", "slug": "it-support"},
     ]
 
 
