@@ -298,6 +298,24 @@ def test_host_rooms_queue_without_catalog_means_all_marked():
     assert host_rooms(hosts)[0]["catalog_allowlist"] is None
 
 
+def test_host_rooms_room_port_alone_defaults_to_helpdesk_queue():
+    # The mailbox-driven model: a host that runs the room (room_port) staffs the
+    # helpdesk queue with no room_queue needed — it defaults to "helpdesk".
+    hosts = [{"name": "w", "ssh": "a@b", "room_port": 8765}]
+    specs = host_rooms(hosts)
+    assert len(specs) == 1
+    assert specs[0]["room"] == "helpdesk/helpdesk" and specs[0]["queue"] == "helpdesk"
+
+
+def test_host_rooms_group_chat_only_host_stays_group_chat():
+    # A host with only a group-chat `room` (no queue, no room_port helpdesk intent)
+    # does NOT also become a helpdesk agent.
+    hosts = [{"name": "w", "ssh": "a@b", "room": "ops", "room_port": 8765}]
+    specs = host_rooms(hosts)
+    assert len(specs) == 1
+    assert specs[0]["room"] == "ops" and specs[0]["queue"] == ""
+
+
 def test_host_rooms_queue_carries_email_verify_fields():
     hosts = [
         {

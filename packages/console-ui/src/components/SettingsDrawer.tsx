@@ -672,9 +672,10 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     v.room_catalog = Array.isArray(v.room_catalog)
       ? v.room_catalog.map(s => s.toString().trim()).filter(Boolean)
       : undefined
-    // The room port is shared: a host can host a group-chat room, staff a
-    // helpdesk queue, or both — all over the one server on this port.
-    if ((v.room || v.room_queue) && v.room_port != null && `${v.room_port}` !== '') {
+    // A host with a room_port runs the room — that alone staffs the helpdesk (the
+    // queue name defaults server-side; no room_queue needed). A group-chat room is
+    // optional. room_port alone is enough.
+    if (v.room_port != null && `${v.room_port}` !== '') {
       v.room_port = Number(v.room_port)
     } else {
       delete v.room
@@ -684,8 +685,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
       delete v.room_via
       delete v.room_exec_command
     }
-    // The catalog allowlist only means anything alongside a staffed queue.
-    if (!v.room_queue || !v.room_catalog?.length) delete v.room_catalog
+    // The catalog allowlist only means anything on a host that runs the room.
+    if (!v.room_port || !v.room_catalog?.length) delete v.room_catalog
     if (editingKey === '') {
       await persist([...hosts, v as JumpHost])
     } else {
@@ -825,17 +826,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
             </Form.Item>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
               <Form.Item
-                name="room_queue"
-                label="Queue"
-                help="Staff a help-desk queue on this host's queue server (agent mode). Uses Queue port below. No slashes or spaces."
-                rules={[{ pattern: /^[^\s/]+$/, message: 'No slashes or spaces' }]}
+                name="room_port"
+                label="Room port"
+                help="The room server's localhost port on this host. Setting it staffs the helpdesk over this host's SSH tunnel — no queue name needed."
               >
-                <Input placeholder="e.g. it-support" style={{ fontFamily: 'monospace' }} />
-              </Form.Item>
-              <Form.Item name="room_port" label="Queue port">
                 <Input placeholder="8765" type="number" />
               </Form.Item>
-              <Form.Item name="room_user" label="Display name" help="Your name in the queue. Defaults to the SSH login.">
+              <Form.Item name="room_user" label="Display name" help="Your name in the helpdesk. Defaults to the SSH login.">
                 <Input placeholder="defaults to SSH login" />
               </Form.Item>
               <Form.Item name="room_via" label="Connect via" help="Tunnel forwards a port; exec runs a relay command (for networks that block forwarding).">
@@ -851,13 +848,17 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <Form.Item name="room_exec_command" label="Relay command" help="Optional override run on the host when via=exec, e.g. socat - TCP:127.0.0.1:8765. Defaults to console-room connect.">
                 <Input placeholder="defaults to console-room connect" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
-              {/* Group-chat room is hidden in the portal-focused build (the help
-                  desk is the product). The field is kept (hidden) so an existing
-                  `room` config still round-trips; remove `hidden` to re-expose it. */}
+              {/* Group-chat `room` and an explicit `room_queue` override are hidden
+                  in the helpdesk-focused build (the queue defaults to "helpdesk").
+                  Kept hidden so an existing config still round-trips; remove
+                  `hidden` to re-expose. */}
               <Form.Item name="room" hidden>
                 <Input />
               </Form.Item>
-              <Form.Item name="room_catalog" label="Catalog allowlist" help="Optional: limit the queue's self-service catalog to these runnables. Empty = every self-service-marked runnable.">
+              <Form.Item name="room_queue" hidden>
+                <Input />
+              </Form.Item>
+              <Form.Item name="room_catalog" label="Catalogue allowlist" help="Optional: limit the helpdesk's self-service catalogue to these runnables. Empty = every self-service-marked runnable.">
                 <Select
                   mode="tags"
                   tokenSeparators={[',', ' ']}

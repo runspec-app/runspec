@@ -569,11 +569,15 @@ export function TriggersView() {
               {card.source === 'portal' ? (
                 <div style={{ marginBottom: 16, border: `1px solid ${border}`, borderRadius: 6, padding: 12 }}>
                   <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>
-                    {/* email-verify signup carries a display name; show "Name <email>"
-                        when present, else just the verified id. */}
+                    {/* email-verify signup carries a display name + team; show
+                        "Name <email>" when present, else just the verified id, with
+                        the visitor's team as a tag. */}
                     {card.detail?.visitor_name
                       ? `${String(card.detail.visitor_name)} <${String(card.detail?.visitor ?? '')}>`
-                      : String(card.detail?.visitor ?? 'A visitor')}{' '}
+                      : String(card.detail?.visitor ?? 'A visitor')}
+                    {card.detail?.team ? (
+                      <Tag color="geekblue" style={{ margin: '0 0 0 6px', fontSize: 10 }}>{String(card.detail.team)}</Tag>
+                    ) : null}{' '}
                     requested
                   </div>
                   <div style={{ fontFamily: 'monospace', marginBottom: 6 }}>{String(card.detail?.runnable ?? '')}</div>

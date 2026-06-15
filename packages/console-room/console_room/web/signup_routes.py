@@ -1,21 +1,20 @@
 """
-web/signup_routes.py — the email-verify sign-up door (``/queues``, ``/signup``,
+web/signup_routes.py — the email-verify sign-up door (``/teams``, ``/signup``,
 ``/verify``).
 
 The browser half of the email-verify auth mode (docs/design/email-queue-signup.md
-§3): an internal employee picks an advertised queue, gives their company email +
-full name, and the hub writes a **pending signup** row and dispatches a verify mail
-*via a connected console* (`Hub.submit_signup`; left in the durable outbox when no
-console for the queue is connected). Clicking the signed, single-use verify link
-enrolls them: `Hub.verify_token` burns the nonce + persists the member, and this
-route sets the signed session cookie the app gates on — so the existing
-``session_user`` gate on ``/ws`` and ``/catalog`` needs no change.
++ teams-and-email-monitoring.md). One room = one helpdesk = one queue (its identity
+is the room's ``--mailbox``), so the visitor doesn't pick a queue — they pick their
+**team** (department) and give their company email + full name. The hub writes a
+**pending signup** for the single queue (tagged with the team) and dispatches a
+verify mail *via a connected console* (sent as the room mailbox; left in the durable
+outbox when no console is connected). Clicking the signed, single-use verify link
+enrols them: ``Hub.verify_token`` burns the nonce + persists the member, and this
+route sets the signed session cookie the app gates on.
 
-The routes are thin: identity + the outbox state machine live on the hub (so the
-flush-on-connect and the console ack share them); this module is just the HTTP
-surface + the server-rendered HTML. Server-rendered (no build step, no external
-assets) so the page works without JavaScript and is exercised end-to-end by the
-TestClient. The actual Outlook mail send is the console's job (slice 4).
+The page is server-rendered (no build step, no external assets) so it works without
+JavaScript and is exercised end-to-end by the TestClient. The actual Outlook mail
+send is the console's job.
 """
 
 from __future__ import annotations
@@ -28,22 +27,23 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Route
 
 from ..hub import Hub
-from ..queues import QueueDescriptor
-from ..signup import domain_allowed, email_domain
+from ..signup import Team, domain_allowed, email_domain
 
 
 def _validate(
-    email: str, name: str, queue: str, descriptor: QueueDescriptor | None
+    email: str, name: str, team: str, mailbox: str, team_slugs: set[str]
 ) -> str:
     """The first human-readable problem with a signup, or ``""`` if it's good."""
+    if not mailbox:
+        return "Sign-up isn't configured for this helpdesk yet."
     if not name:
         return "Enter your full name."
+    if team not in team_slugs:
+        return "Choose your team."
     if not email_domain(email):
         return "Enter a valid email address."
-    if descriptor is None:
-        return "That queue isn't available right now — try again shortly."
-    if not domain_allowed(email, descriptor.queue_email):
-        return f"Use your {descriptor.domain} email address to join this queue."
+    if not domain_allowed(email, mailbox):
+        return f"Use your {email_domain(mailbox)} email address to sign up."
     return ""
 
 
@@ -57,58 +57,51 @@ async def _form(request: Any) -> dict[str, str]:
 
 
 def signup_routes(hub: Hub) -> list[Route]:
-    """Build the email-verify routes bound to ``hub`` (which owns the queue
-    directory, the outbox, and the verify/enrol logic)."""
+    """Build the email-verify routes bound to ``hub`` (which owns the team list,
+    the room mailbox identity, the outbox, and the verify/enrol logic)."""
 
-    async def queues(_request: Any) -> JSONResponse:
-        """The live sign-up list — the advertised queues a visitor may join."""
+    async def teams(_request: Any) -> JSONResponse:
+        """The customer teams a visitor may pick at sign-up."""
         return JSONResponse(
-            {
-                "queues": [
-                    {"queue": d.queue, "label": d.label, "domain": d.domain}
-                    for d in hub.advertised_queues()
-                ]
-            }
+            {"teams": [{"slug": t.slug, "name": t.name} for t in hub.list_teams()]}
         )
 
     async def signup(request: Any) -> Any:
+        team_list = hub.list_teams()
+        domain = email_domain(hub.mailbox)
         if request.method != "POST":
-            return HTMLResponse(_render_signup(hub.advertised_queues()))
+            return HTMLResponse(_render_signup(team_list, domain))
         form = await _form(request)
         email = (form.get("email") or "").strip().lower()
         name = (form.get("name") or "").strip()
-        queue = (form.get("queue") or "").strip()
-        descriptor = hub.queue_descriptor(queue)
-        problem = _validate(email, name, queue, descriptor)
+        team = (form.get("team") or "").strip()
+        slugs = {t.slug for t in team_list}
+        problem = _validate(email, name, team, hub.mailbox, slugs)
         if problem:
             return HTMLResponse(
                 _render_signup(
-                    hub.advertised_queues(),
-                    error=problem,
-                    email=email,
-                    name=name,
-                    queue=queue,
+                    team_list, domain, error=problem, email=email, name=name, team=team
                 ),
                 status_code=400,
             )
-        assert descriptor is not None  # _validate guarantees it
         # The hub records the pending row + dispatches (or queues) the verify mail.
-        await hub.submit_signup(email, name, queue)
-        return HTMLResponse(_render_sent(email, descriptor.label))
+        await hub.submit_signup(email, name, team)
+        return HTMLResponse(_render_sent(email))
 
     async def verify(request: Any) -> Any:
         token = (request.query_params.get("token") or "").strip()
         member = hub.verify_token(token) if token else None
         if member is None:
             return HTMLResponse(_render_verify_failed(), status_code=400)
-        # The verified email is the session identity the WS/catalog gate reads;
-        # the name rides along for the operator card (slice 5).
+        # The verified email is the session identity the WS/catalog gate reads; the
+        # name + team ride along for the operator card.
         request.session["user"] = member.email
         request.session["name"] = member.name
+        request.session["team"] = member.team
         return RedirectResponse(url=f"/?queue={member.queue}", status_code=303)
 
     return [
-        Route("/queues", queues, name="queues"),
+        Route("/teams", teams, name="teams"),
         Route("/signup", signup, methods=["GET", "POST"], name="signup"),
         Route("/verify", verify, name="verify"),
     ]
@@ -139,50 +132,48 @@ _PAGE = """<!doctype html>
 
 
 def _render_signup(
-    queues: list[QueueDescriptor],
+    teams: list[Team],
+    domain: str,
     *,
     error: str = "",
     email: str = "",
     name: str = "",
-    queue: str = "",
+    team: str = "",
 ) -> str:
     err = f'<div class="err">{html.escape(error)}</div>' if error else ""
-    if queues:
-        options = "".join(
-            f'<option value="{html.escape(d.queue)}"'
-            f"{' selected' if d.queue == queue else ''}>"
-            f"{html.escape(d.label)} ({html.escape(d.domain)})</option>"
-            for d in queues
-        )
-        select = f'<select name="queue" required><option value="">Choose a queue…</option>{options}</select>'
-        disabled = ""
-    else:
-        # No console is advertising a queue right now — nothing to join.
-        select = '<select name="queue" disabled><option>No queues available</option></select>'
-        disabled = " disabled"
+    options = "".join(
+        f'<option value="{html.escape(t.slug)}"'
+        f"{' selected' if t.slug == team else ''}>"
+        f"{html.escape(t.name)}</option>"
+        for t in teams
+    )
+    select = (
+        f'<select name="team" required><option value="">Choose your team…</option>'
+        f"{options}</select>"
+    )
+    hint = f" with your {html.escape(domain)} email" if domain else ""
     body = (
-        f"<h1>Join a request queue</h1>{err}"
-        '<p class="muted">Sign up with your company email to request actions a '
-        "team operator runs for you.</p>"
+        f"<h1>Sign up to the helpdesk</h1>{err}"
+        f'<p class="muted">Sign up{hint} to request actions a team operator runs '
+        "for you.</p>"
         '<form method="post" action="/signup">'
-        "<label>Queue</label>" + select + "<label>Full name</label>"
+        "<label>Team</label>" + select + "<label>Full name</label>"
         f'<input name="name" value="{html.escape(name)}" '
         'placeholder="Jane Doe" required>'
         "<label>Company email</label>"
         f'<input name="email" type="email" value="{html.escape(email)}" '
         'placeholder="jane@corp.com" required>'
-        f'<button type="submit"{disabled}>Send verification link</button>'
+        '<button type="submit">Send verification link</button>'
         "</form>"
     )
-    return _PAGE.format(title="Join a queue", body=body)
+    return _PAGE.format(title="Sign up to the helpdesk", body=body)
 
 
-def _render_sent(email: str, label: str) -> str:
+def _render_sent(email: str) -> str:
     body = (
         "<h1>Check your email</h1>"
-        f"<p>If <strong>{html.escape(email)}</strong> can join "
-        f"<strong>{html.escape(label)}</strong>, we've sent a verification link to "
-        "that address. Click it to finish joining.</p>"
+        f"<p>If <strong>{html.escape(email)}</strong> can sign up, we've sent a "
+        "verification link to that address. Click it to finish.</p>"
         '<p class="muted">The link expires shortly and can be used once.</p>'
     )
     return _PAGE.format(title="Check your email", body=body)

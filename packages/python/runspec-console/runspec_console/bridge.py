@@ -3496,15 +3496,16 @@ class Bridge:
                 entry["identityFile"] = _normalize_path(h["identityFile"])
             if h.get("group"):
                 entry["group"] = h["group"]
-            # Chat room hosted on this fleet host: a group-chat ``room`` and/or a
-            # helpdesk ``room_queue``, plus the server's localhost port on it. Both
-            # ride this host's ssh target + key (see _room_specs / host_rooms); the
-            # transport keys (user/via/exec command) are shared between them.
+            # The room server on this fleet host: ``room_port`` alone is enough to
+            # staff the helpdesk (the queue defaults server-side; no ``room_queue``
+            # needed). A group-chat ``room`` and/or an explicit ``room_queue`` are
+            # optional. All ride this host's ssh target + key (see _room_specs /
+            # host_rooms); the transport keys (user/via/exec command) are shared.
             room = str(h.get("room") or "").strip()
             queue = str(h.get("room_queue") or "").strip()
             room_port = h.get("room_port")
             has_port = isinstance(room_port, int) and not isinstance(room_port, bool)
-            if (room or queue) and has_port:
+            if has_port:
                 entry["room_port"] = room_port
                 if room:
                     entry["room"] = room
@@ -5909,9 +5910,10 @@ class Bridge:
         parts = room.split("/")
         queue = parts[1] if len(parts) > 1 else ""
         visitor = parts[2] if len(parts) > 2 else ""
-        # The requester's verified display name (email-verify signup), shown on the
-        # card beside the email; blank in OIDC / dev mode.
+        # The requester's verified display name + team (email-verify signup), shown
+        # on the card beside the email; blank in dev mode.
         visitor_name = str(payload.get("visitor_name") or "")
+        team = str(payload.get("team") or "")
         # Surface the assignment in the Triggers inbox right away (before the
         # possibly-gated run), so the operator sees it land.
         self._portal_card(
@@ -5920,6 +5922,7 @@ class Bridge:
             args=args,
             visitor=visitor,
             visitor_name=visitor_name,
+            team=team,
             room=room,
             queue=queue,
             state="assigned",
@@ -6019,6 +6022,7 @@ class Bridge:
         args: dict[str, Any] | None = None,
         visitor: str | None = None,
         visitor_name: str | None = None,
+        team: str | None = None,
         room: str | None = None,
         queue: str | None = None,
         state: str | None = None,
@@ -6053,6 +6057,7 @@ class Bridge:
                 ("args", args),
                 ("visitor", visitor),
                 ("visitor_name", visitor_name),
+                ("team", team),
                 ("room", room),
                 ("queue", queue),
                 ("state", state),

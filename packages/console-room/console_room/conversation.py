@@ -20,6 +20,12 @@ from __future__ import annotations
 #: Top-level prefix marking a room as a helpdesk conversation (vs a group-chat room).
 HELPDESK_PREFIX = "helpdesk"
 
+#: The single-queue default. One room = one helpdesk = one queue (its identity is
+#: the room's ``--mailbox``); this is the internal queue name visitors enrol into
+#: and consoles subscribe to. Must match the console's
+#: ``chat_transport.DEFAULT_QUEUE``.
+DEFAULT_QUEUE = "helpdesk"
+
 #: The room-name path separator.
 SEP = "/"
 

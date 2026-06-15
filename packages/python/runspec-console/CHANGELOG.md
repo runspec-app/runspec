@@ -8,6 +8,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.68.0] — 2026-06-15
+
+### Added
+- **Visitor's team on the operator card (D2, slice 2c).** The `assignment` / `page`
+  payloads now carry the visitor's `team`; it's threaded onto the portal trigger
+  card (`_portal_card`) and shown as a tag beside the requester's name in the
+  Triggers detail. Pairs with runspec-room 0.24.0.
+
+
+## [0.67.0] — 2026-06-15
+
+### Changed
+- **Console advertises its `[mailbox]` as the sign-up verify-from (D2, slice 2).**
+  The helpdesk's verify-from / domain is the console's configured `[mailbox]`
+  (the room identity), so the email-verify `advertise` now sends that address as
+  `queue_email` — preferred over a legacy `room_queue_email`. Pairs with
+  runspec-room 0.23.0 (sign-up by team).
+
+
+## [0.66.0] — 2026-06-15
+
+### Changed
+- **Helpdesk connection is mailbox-driven — no `room_queue` needed (D2, slice 1).**
+  A fleet host with a `room_port` now staffs the helpdesk on its own; `host_rooms`
+  defaults the queue to `helpdesk` when no `room_queue` is set (an explicit
+  `room_queue` still overrides the name). The Settings → Jump Hosts form drops the
+  **Queue** field and relabels **Queue port → Room port**; `save_jump_hosts` writes
+  `room_port` on its own. A host with only a group-chat `room` stays group-chat-only.
+  The room's `--mailbox` is the identity (one email = one room). Existing
+  `room_queue` configs still round-trip (kept hidden). See
+  docs/design/teams-and-email-monitoring.md.
+
+
 ## [0.65.0] — 2026-06-15
 
 ### Fixed

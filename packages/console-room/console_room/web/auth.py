@@ -43,3 +43,16 @@ def session_name(conn: Any) -> str:
         return ""
     name = session.get("name")
     return name if isinstance(name, str) else ""
+
+
+def session_team(conn: Any) -> str:
+    """The signed-in visitor's chosen team (``conn.session['team']``), or ``""``. Set
+    by the email-verify door at verify time; absent in dev mode."""
+    try:
+        session = getattr(conn, "session", None)
+    except Exception:
+        return ""
+    if not isinstance(session, dict):
+        return ""
+    team = session.get("team")
+    return team if isinstance(team, str) else ""

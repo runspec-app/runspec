@@ -17,7 +17,12 @@ import logging
 from typing import Any, Protocol, runtime_checkable
 
 from .catalog import LiveCatalog
-from .conversation import namespace_matches, parse_conversation_room, queue_namespace
+from .conversation import (
+    DEFAULT_QUEUE,
+    namespace_matches,
+    parse_conversation_room,
+    queue_namespace,
+)
 from .enrollment_store import EnrollmentStore
 from .queues import QueueDescriptor, QueueDirectory
 from .models import (
@@ -37,6 +42,7 @@ from .signup import (
     EmailVerifyConfig,
     Member,
     PendingSignup,
+    Team,
     make_nonce,
     read_verify_token,
     sign_verify_token,
@@ -358,6 +364,11 @@ class Hub:
         """Whether the hub can dispatch + verify (store and config both present)."""
         return self._enrollment is not None and self._email_verify is not None
 
+    def list_teams(self) -> list[Team]:
+        """The customer teams a visitor may pick at sign-up (Default-seeded). Empty
+        when email-verify isn't configured (no enrollment store)."""
+        return self._enrollment.list_teams() if self._enrollment is not None else []
+
     async def on_advertise(
         self, agent: Agent, queue: str, queue_email: str, display_name: str
     ) -> None:
@@ -375,10 +386,11 @@ class Hub:
         self.advertise_queue(agent.user, queue, queue_email, display_name)
         await self._flush_queue(queue)
 
-    async def submit_signup(self, email: str, name: str, queue: str) -> None:
-        """Record a pending signup and dispatch its verify mail (now if a console
-        staffs the queue, else left in the outbox for the next console). No-op when
-        email-verify isn't configured."""
+    async def submit_signup(self, email: str, name: str, team: str = "") -> None:
+        """Record a pending signup for the room's single queue (``DEFAULT_QUEUE``)
+        and dispatch its verify mail (now if a console staffs it, else left in the
+        outbox for the next console). ``team`` is the visitor's chosen department,
+        carried through to the member. No-op when email-verify isn't configured."""
         if self._enrollment is None:
             return
         self._enrollment.add_pending(
@@ -386,11 +398,12 @@ class Hub:
                 nonce=make_nonce(),
                 email=email,
                 name=name,
-                queue=queue,
+                queue=DEFAULT_QUEUE,
                 created_at=now_ts(),
+                team=team,
             )
         )
-        await self._flush_queue(queue)
+        await self._flush_queue(DEFAULT_QUEUE)
 
     def verify_token(self, token: str) -> Member | None:
         """Validate a clicked verify link and enrol the member: check the signed,
@@ -411,6 +424,7 @@ class Hub:
             queue=pending.queue,
             name=pending.name,
             verified_at=now_ts(),
+            team=pending.team,
         )
         self._enrollment.add_member(member)
         logger.info("room: %r verified into %r", member.email, member.queue)
@@ -582,7 +596,13 @@ class Hub:
         async with self._lock:
             consoles = list(self._agents.get(req.namespace, ()))
         frame = page_frame(
-            req.id, req.room, req.runnable, req.queue, req.visitor, req.visitor_name
+            req.id,
+            req.room,
+            req.runnable,
+            req.queue,
+            req.visitor,
+            req.visitor_name,
+            req.team,
         )
         for console in consoles:
             await _safe_send(console, frame)
@@ -634,11 +654,12 @@ class Hub:
                 "room: %r request for %r refused — args too large", p.user, tool
             )
             return None
-        # The visitor's display name (email-verify signup) rides onto the operator
-        # card; a connection without one (dev / console) just shows the id.
+        # The visitor's display name + team (email-verify signup) ride onto the
+        # operator card; a connection without them (dev / console) just shows the id.
         visitor_name = str(getattr(p, "display_name", "") or "")
+        team = str(getattr(p, "team", "") or "")
         req = self._requests.create(
-            p.room, queue, ns, visitor, tool, args, visitor_name=visitor_name
+            p.room, queue, ns, visitor, tool, args, visitor_name=visitor_name, team=team
         )
         # Record the ask on the thread (links to the lifecycle record via id).
         msg = Message.new(

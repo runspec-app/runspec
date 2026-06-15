@@ -168,6 +168,7 @@ class PendingSignup:
     created_at: float
     send_state: str = "pending"
     claimed_by: str = ""
+    team: str = ""  # the visitor's chosen team (department); display-only routing tag
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,7 @@ class Member:
     queue: str
     name: str
     verified_at: float
+    team: str = ""  # the visitor's team (department), carried from sign-up
 
 
 @dataclass(frozen=True)

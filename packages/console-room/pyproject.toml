@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-room"
-version = "0.22.0"
-description = "The runspec console chat-room server — a dumb message pipe with presence: console SSH-tunnel door + OIDC-authenticated browser web door"
+version = "0.24.0"
+description = "The runspec console chat-room server — a dumb message pipe with presence: console SSH-tunnel door + email-verify browser web door"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

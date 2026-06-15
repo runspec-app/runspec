@@ -221,6 +221,12 @@ def default_room_user(ssh_target: str, ssh_user: str = "") -> str:
 #: console_room.conversation.HELPDESK_PREFIX.
 HELPDESK_PREFIX = "helpdesk"
 
+#: The single-queue default. A fleet host that runs the room (``room_port`` set)
+#: staffs this queue unless an explicit ``room_queue`` overrides it — the
+#: mailbox-driven model needs no per-host queue name (the room's ``--mailbox`` is
+#: the identity; see docs/design/teams-and-email-monitoring.md).
+DEFAULT_QUEUE = "helpdesk"
+
 
 def _valid_queue(queue: str) -> bool:
     """A queue token must not contain the namespace separator or whitespace —
@@ -233,33 +239,33 @@ def host_rooms(
     hosts: list[dict[str, Any]], *, ssh_user: str = ""
 ) -> list[dict[str, Any]]:
     """Extract the room specs declared on fleet host entries — those with a
-    ``room`` name (group chat) and/or a ``room_queue`` (helpdesk agent mode),
-    plus a ``room_port`` (the server's localhost port on that host) and an
-    ``ssh`` target. Each spec carries everything the tunnel needs, *inherited
-    from the host*: its ssh target + identityFile (so the tunnel reuses the pooled
+    ``room_port`` (the room server's localhost port on that host) and an ``ssh``
+    target. Each spec carries everything the tunnel needs, *inherited from the
+    host*: its ssh target + identityFile (so the tunnel reuses the pooled
     connection), the room, the port, and a display user (``room_user`` override,
     else the SSH login — ``ssh_user`` is the configured ``[ssh]`` default username,
     preferred over the local OS user).
 
-    **Helpdesk agent mode:** ``room_queue = "it-support"`` declares this console
-    an agent of that queue on the host's room server. The spec's ``room`` key is
-    the queue *namespace* (``helpdesk/it-support``) — unique alongside any plain
-    ``room`` the same host also declares — with ``queue`` carrying the bare name
-    and ``catalog_allowlist`` the optional ``room_catalog`` narrowing list (bare
-    runnable names; absent = publish every self-service-marked runnable)."""
+    **Helpdesk agent mode (the default):** a host with a ``room_port`` staffs the
+    helpdesk queue — **no ``room_queue`` is needed** (the room's ``--mailbox`` is
+    the identity; the queue name defaults to ``DEFAULT_QUEUE``). An explicit
+    ``room_queue`` still overrides the name. The spec's ``room`` key is the queue
+    *namespace* (``helpdesk/<queue>``) — unique alongside any plain ``room`` the
+    same host also declares — with ``queue`` carrying the bare name and
+    ``catalog_allowlist`` the optional ``room_catalog`` narrowing list (bare
+    runnable names; absent = publish every self-service-marked runnable). A host
+    with only a group-chat ``room`` (no queue) stays group-chat-only."""
     specs: list[dict[str, Any]] = []
     for h in hosts:
         ssh_target = str(h.get("ssh") or "").strip()
         room = str(h.get("room") or "").strip()
         queue = str(h.get("room_queue") or "").strip()
         port = h.get("room_port")
-        # bool is an int subclass — a TOML true/false is not a valid port.
-        if (
-            not ssh_target
-            or not (room or queue)
-            or not isinstance(port, int)
-            or isinstance(port, bool)
-        ):
+        # bool is an int subclass — a TOML true/false is not a valid port. A host
+        # with a ``room_port`` runs the room; that alone is enough to connect
+        # (the helpdesk queue defaults to DEFAULT_QUEUE), so no ``room_queue`` is
+        # required any more.
+        if not ssh_target or not isinstance(port, int) or isinstance(port, bool):
             continue
         user = str(h.get("room_user") or "").strip() or default_room_user(
             ssh_target, ssh_user
@@ -302,13 +308,17 @@ def host_rooms(
         }
         if room:
             specs.append({**base, "room": room, "queue": ""})
-        if _valid_queue(queue):
+        # A host runs the helpdesk when it has an explicit ``room_queue`` or simply
+        # isn't a group-chat-only host (``room_port`` with no ``room``). The queue
+        # name defaults to DEFAULT_QUEUE so ``room_port`` alone is sufficient.
+        qname = queue or DEFAULT_QUEUE
+        if (queue or not room) and _valid_queue(qname):
             allowlist = h.get("room_catalog")
             specs.append(
                 {
                     **base,
-                    "room": f"{HELPDESK_PREFIX}/{queue}",
-                    "queue": queue,
+                    "room": f"{HELPDESK_PREFIX}/{qname}",
+                    "queue": qname,
                     "catalog_allowlist": [str(n) for n in allowlist]
                     if isinstance(allowlist, list)
                     else None,

@@ -52,6 +52,7 @@ class EnrollmentStore:
                     queue       TEXT NOT NULL,
                     name        TEXT NOT NULL,
                     verified_at REAL NOT NULL,
+                    team        TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (email, queue)
                 )
                 """
@@ -65,10 +66,14 @@ class EnrollmentStore:
                     queue      TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     send_state TEXT NOT NULL DEFAULT 'pending',
-                    claimed_by TEXT NOT NULL DEFAULT ''
+                    claimed_by TEXT NOT NULL DEFAULT '',
+                    team       TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
+            # Migrate older DBs that pre-date the team column (the visitor's team).
+            self._add_column_if_missing("members", "team")
+            self._add_column_if_missing("pending_signups", "team")
             # The outbox flush queries by (queue, send_state) — index it.
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_pending_queue_state "
@@ -91,6 +96,15 @@ class EnrollmentStore:
                 (DEFAULT_TEAM.slug, DEFAULT_TEAM.name, time.time()),
             )
             self._conn.commit()
+
+    def _add_column_if_missing(self, table: str, column: str) -> None:
+        """Idempotent ``ALTER TABLE … ADD COLUMN`` (table/column names are internal
+        literals, never user input). No-op when the column already exists."""
+        cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            self._conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+            )
 
     # ── teams (customer departments; the sign-up dropdown) ─────────────────────
 
@@ -141,8 +155,8 @@ class EnrollmentStore:
         with self._lock:
             self._conn.execute(
                 "INSERT OR IGNORE INTO pending_signups "
-                "(nonce, email, name, queue, created_at, send_state, claimed_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(nonce, email, name, queue, created_at, send_state, claimed_by, team) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     signup.nonce,
                     signup.email,
@@ -151,6 +165,7 @@ class EnrollmentStore:
                     signup.created_at,
                     signup.send_state,
                     signup.claimed_by,
+                    signup.team,
                 ),
             )
             self._conn.commit()
@@ -160,7 +175,7 @@ class EnrollmentStore:
         swept, or never existed)."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT nonce, email, name, queue, created_at, send_state, claimed_by "
+                "SELECT nonce, email, name, queue, created_at, send_state, claimed_by, team "
                 "FROM pending_signups WHERE nonce = ?",
                 (nonce,),
             ).fetchone()
@@ -172,7 +187,7 @@ class EnrollmentStore:
         even if two clicks race — exactly one caller gets the row back."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT nonce, email, name, queue, created_at, send_state, claimed_by "
+                "SELECT nonce, email, name, queue, created_at, send_state, claimed_by, team "
                 "FROM pending_signups WHERE nonce = ?",
                 (nonce,),
             ).fetchone()
@@ -199,7 +214,7 @@ class EnrollmentStore:
             )
             self._conn.commit()
             rows = self._conn.execute(
-                "SELECT nonce, email, name, queue, created_at, send_state, claimed_by "
+                "SELECT nonce, email, name, queue, created_at, send_state, claimed_by, team "
                 "FROM pending_signups "
                 "WHERE queue = ? AND send_state = 'claimed' AND claimed_by = ?",
                 (queue, console),
@@ -265,11 +280,18 @@ class EnrollmentStore:
         name + timestamp for the same ``(email, queue)``."""
         with self._lock:
             self._conn.execute(
-                "INSERT INTO members (email, queue, name, verified_at) "
-                "VALUES (?, ?, ?, ?) "
+                "INSERT INTO members (email, queue, name, verified_at, team) "
+                "VALUES (?, ?, ?, ?, ?) "
                 "ON CONFLICT (email, queue) DO UPDATE SET "
-                "name = excluded.name, verified_at = excluded.verified_at",
-                (member.email, member.queue, member.name, member.verified_at),
+                "name = excluded.name, verified_at = excluded.verified_at, "
+                "team = excluded.team",
+                (
+                    member.email,
+                    member.queue,
+                    member.name,
+                    member.verified_at,
+                    member.team,
+                ),
             )
             self._conn.commit()
 
@@ -277,13 +299,19 @@ class EnrollmentStore:
         """The verified member for ``(email, queue)``, or ``None``."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT email, queue, name, verified_at FROM members "
+                "SELECT email, queue, name, verified_at, team FROM members "
                 "WHERE email = ? AND queue = ?",
                 (email, queue),
             ).fetchone()
         if row is None:
             return None
-        return Member(email=row[0], queue=row[1], name=row[2], verified_at=row[3])
+        return Member(
+            email=row[0],
+            queue=row[1],
+            name=row[2],
+            verified_at=row[3],
+            team=row[4] if len(row) > 4 else "",
+        )
 
     def is_member(self, email: str, queue: str) -> bool:
         """Whether ``email`` is a verified member of ``queue``."""
@@ -303,4 +331,5 @@ def _pending_from_row(row: tuple) -> PendingSignup:
         created_at=row[4],
         send_state=row[5],
         claimed_by=row[6],
+        team=row[7] if len(row) > 7 else "",
     )

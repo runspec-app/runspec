@@ -200,12 +200,14 @@ def assignment_frame(
     args: dict[str, Any],
     visitor: str,
     visitor_name: str = "",
+    team: str = "",
 ) -> dict[str, Any]:
     """A server → operator ``assignment`` frame: a portal request routed to one
     operator's console (its inbox item). Carries everything needed to enact it —
     the runnable, the visitor's args, and the thread ``room`` to reply on.
-    ``visitor_name`` is the requester's display name (email-verify signup), shown on
-    the operator card beside the verified ``visitor`` email; absent → just the email."""
+    ``visitor_name`` is the requester's display name (email-verify signup) and
+    ``team`` their chosen department, both shown on the operator card beside the
+    verified ``visitor`` email; absent → just the email."""
     return {
         "type": ASSIGNMENT,
         "id": _str(request_id),
@@ -214,6 +216,7 @@ def assignment_frame(
         "args": args,
         "visitor": _str(visitor),
         "visitor_name": _str(visitor_name),
+        "team": _str(team),
     }
 
 
@@ -246,6 +249,7 @@ def page_frame(
     queue: str,
     visitor: str,
     visitor_name: str = "",
+    team: str = "",
 ) -> dict[str, Any]:
     """A server → console ``page`` frame: a chime to *every connected* console of a
     queue (on shift and off), naming the runnable an unassigned request is waiting
@@ -261,6 +265,7 @@ def page_frame(
         "queue": _str(queue),
         "visitor": _str(visitor),
         "visitor_name": _str(visitor_name),
+        "team": _str(team),
     }
 
 

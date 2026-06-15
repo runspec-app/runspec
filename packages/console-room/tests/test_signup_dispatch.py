@@ -58,17 +58,17 @@ def test_email_verify_enabled_flag():
 def test_submit_signup_dispatches_to_connected_console():
     async def scenario():
         hub = _hub()
-        agent = FakeAgent("agent@web01", "helpdesk/it-support")
+        agent = FakeAgent("agent@web01", "helpdesk/helpdesk")
         await hub.join_agent(agent)
-        await hub.on_advertise(agent, "it-support", "it-support@corp.com", "IT Support")
-        await hub.submit_signup("jane@corp.com", "Jane Doe", "it-support")
+        await hub.on_advertise(agent, "helpdesk", "helpdesk@corp.com", "Helpdesk")
+        await hub.submit_signup("jane@corp.com", "Jane Doe", "sales")
         return _verifies(agent)
 
     frames = asyncio.run(scenario())
     assert len(frames) == 1
     f = frames[0]
     assert f["to"] == "jane@corp.com"
-    assert f["queue_email"] == "it-support@corp.com"
+    assert f["queue_email"] == "helpdesk@corp.com"
     assert f["verify_url"].startswith("https://room.test/verify?token=")
     assert f["nonce"]
 
@@ -77,12 +77,12 @@ def test_submit_signup_without_console_stays_in_outbox():
     async def scenario():
         hub = _hub()
         # Advertised (so the queue is known) but no console connected.
-        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        await hub.submit_signup("jane@corp.com", "Jane", "sales")
         return hub
 
     hub = asyncio.run(scenario())
     # The row waits, claimable by a console that later connects.
-    pending = hub._enrollment.claim_pending_sends("it-support", "later")  # noqa: SLF001
+    pending = hub._enrollment.claim_pending_sends("helpdesk", "later")  # noqa: SLF001
     assert [p.email for p in pending] == ["jane@corp.com"]
 
 
@@ -90,11 +90,11 @@ def test_advertise_flushes_backlog_on_connect():
     async def scenario():
         hub = _hub()
         # A signup arrives with no console for the queue → stays pending.
-        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        await hub.submit_signup("jane@corp.com", "Jane", "sales")
         # Now a console connects and advertises the queue → its backlog flushes.
-        agent = FakeAgent("agent@web01", "helpdesk/it-support")
+        agent = FakeAgent("agent@web01", "helpdesk/helpdesk")
         await hub.join_agent(agent)
-        await hub.on_advertise(agent, "it-support", "it-support@corp.com", "IT Support")
+        await hub.on_advertise(agent, "helpdesk", "helpdesk@corp.com", "Helpdesk")
         return _verifies(agent)
 
     frames = asyncio.run(scenario())
@@ -104,7 +104,7 @@ def test_advertise_flushes_backlog_on_connect():
 def test_advertise_outside_namespace_is_refused():
     async def scenario():
         hub = _hub()
-        agent = FakeAgent("agent@web01", "helpdesk/it-support")
+        agent = FakeAgent("agent@web01", "helpdesk/helpdesk")
         await hub.join_agent(agent)
         # Advertises a queue whose namespace != the agent's → ignored.
         await hub.on_advertise(agent, "payroll", "payroll@corp.com", "Payroll")
@@ -116,10 +116,10 @@ def test_advertise_outside_namespace_is_refused():
 def test_verify_sent_ok_marks_sent():
     async def scenario():
         hub = _hub()
-        agent = FakeAgent("agent@web01", "helpdesk/it-support")
+        agent = FakeAgent("agent@web01", "helpdesk/helpdesk")
         await hub.join_agent(agent)
-        await hub.on_advertise(agent, "it-support", "it-support@corp.com", "IT Support")
-        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        await hub.on_advertise(agent, "helpdesk", "helpdesk@corp.com", "Helpdesk")
+        await hub.submit_signup("jane@corp.com", "Jane", "sales")
         nonce = _verifies(agent)[0]["nonce"]
         await hub.on_verify_sent(nonce, True)
         return hub._enrollment.get_pending(nonce)  # noqa: SLF001
@@ -131,10 +131,10 @@ def test_verify_sent_ok_marks_sent():
 def test_verify_sent_failure_returns_to_pending():
     async def scenario():
         hub = _hub()
-        agent = FakeAgent("agent@web01", "helpdesk/it-support")
+        agent = FakeAgent("agent@web01", "helpdesk/helpdesk")
         await hub.join_agent(agent)
-        await hub.on_advertise(agent, "it-support", "it-support@corp.com", "IT Support")
-        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        await hub.on_advertise(agent, "helpdesk", "helpdesk@corp.com", "Helpdesk")
+        await hub.submit_signup("jane@corp.com", "Jane", "sales")
         nonce = _verifies(agent)[0]["nonce"]
         await hub.on_verify_sent(nonce, False)
         return hub._enrollment.get_pending(nonce)  # noqa: SLF001
@@ -146,14 +146,14 @@ def test_verify_sent_failure_returns_to_pending():
 def test_disconnect_releases_and_reflows_to_other_console():
     async def scenario():
         hub = _hub()
-        a = FakeAgent("agent-a@web01", "helpdesk/it-support")
-        b = FakeAgent("agent-b@web02", "helpdesk/it-support")
+        a = FakeAgent("agent-a@web01", "helpdesk/helpdesk")
+        b = FakeAgent("agent-b@web02", "helpdesk/helpdesk")
         await hub.join_agent(a)
-        await hub.on_advertise(a, "it-support", "it-support@corp.com", "IT Support")
+        await hub.on_advertise(a, "helpdesk", "helpdesk@corp.com", "Helpdesk")
         await hub.join_agent(b)
-        await hub.on_advertise(b, "it-support", "it-support@corp.com", "IT Support")
+        await hub.on_advertise(b, "helpdesk", "helpdesk@corp.com", "Helpdesk")
         # The signup claims for whichever console flushes first (a).
-        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        await hub.submit_signup("jane@corp.com", "Jane", "sales")
         # a drops before acking → its claim is released and re-flushed to b.
         await hub.leave_agent(a)
         return _verifies(b)
@@ -171,14 +171,14 @@ def test_verify_token_enrols_and_is_single_use():
             nonce="n1",
             email="jane@corp.com",
             name="Jane",
-            queue="it-support",
+            queue="helpdesk",
             created_at=0.0,
         )
     )
     token = sign_verify_token(SECRET, {"nonce": "n1"})
     member = hub.verify_token(token)
     assert member is not None and member.email == "jane@corp.com"
-    assert hub._enrollment.is_member("jane@corp.com", "it-support")  # noqa: SLF001
+    assert hub._enrollment.is_member("jane@corp.com", "helpdesk")  # noqa: SLF001
     # Burned — a second click fails.
     assert hub.verify_token(token) is None
 
@@ -186,6 +186,24 @@ def test_verify_token_enrols_and_is_single_use():
 def test_verify_token_rejects_bad_token():
     hub = _hub()
     assert hub.verify_token("garbage") is None
+
+
+def test_signup_team_survives_to_member():
+    # The visitor's chosen team rides signup → pending → verified member, and the
+    # queue is forced to the single DEFAULT_QUEUE regardless of the team.
+    from console_room.conversation import DEFAULT_QUEUE
+
+    async def scenario():
+        hub = _hub()
+        await hub.submit_signup("jane@corp.com", "Jane", "sales")
+        pending = hub._enrollment.claim_pending_sends(DEFAULT_QUEUE, "x")  # noqa: SLF001
+        token = sign_verify_token(SECRET, {"nonce": pending[0].nonce})
+        return pending[0], hub.verify_token(token)
+
+    pending, member = asyncio.run(scenario())
+    assert pending.queue == DEFAULT_QUEUE and pending.team == "sales"
+    assert member is not None
+    assert member.team == "sales" and member.queue == DEFAULT_QUEUE
 
 
 # ── expiry sweep ──────────────────────────────────────────────────────────────
@@ -198,14 +216,14 @@ def test_sweep_expired_signups_drops_lapsed_pending():
         hub = _hub()  # token_ttl defaults to 1800
         # An old pending (created at epoch 0 → well past the TTL) and a fresh one.
         hub._enrollment.add_pending(  # noqa: SLF001
-            PendingSignup("old", "a@corp.com", "A", "it-support", created_at=0.0)
+            PendingSignup("old", "a@corp.com", "A", "helpdesk", created_at=0.0)
         )
         hub._enrollment.add_pending(  # noqa: SLF001
             PendingSignup(
                 "fresh",
                 "b@corp.com",
                 "B",
-                "it-support",
+                "helpdesk",
                 created_at=__import__("time").time(),
             )
         )
@@ -243,7 +261,7 @@ def test_run_sweeper_ticks_and_sweeps_then_cancels():
     async def scenario():
         hub = _hub()
         hub._enrollment.add_pending(  # noqa: SLF001
-            PendingSignup("old", "a@corp.com", "A", "it-support", created_at=0.0)
+            PendingSignup("old", "a@corp.com", "A", "helpdesk", created_at=0.0)
         )
         task = asyncio.create_task(hub.run_signup_sweeper(interval=0.01))
         for _ in range(100):  # poll up to ~1s for the first tick to sweep

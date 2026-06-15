@@ -52,10 +52,11 @@ def test_visitor_name_defaults_empty_and_is_stored():
         runnable="reset-password",
         args={},
         visitor_name="Alice Smith",
+        team="sales",
     )
-    assert named.visitor_name == "Alice Smith"
-    # …and it rides the assignment payload (last field) for the operator card.
-    assert named.assignment_fields()[-1] == "Alice Smith"
+    assert named.visitor_name == "Alice Smith" and named.team == "sales"
+    # …and both ride the assignment payload (visitor_name, then team) for the card.
+    assert named.assignment_fields()[-2:] == ("Alice Smith", "sales")
 
 
 # ── round-robin assignment ────────────────────────────────────────────────────

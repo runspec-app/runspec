@@ -4,6 +4,32 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.24.0]
+
+### Added
+- **Visitor's team on the operator card (D2, slice 2c).** The team a visitor picks
+  at sign-up now rides onto the request: stored on the `Request`, included in the
+  `assignment` + `page` frames (`team`), and carried from the verified session onto
+  the `BrowserConnection`. The operator's console shows it beside the visitor's
+  name/email. New `session_team()` helper; `assignment_fields()` gains the team as
+  its trailing field.
+
+### Fixed
+- Package description no longer references the removed OIDC door (email-verify).
+
+## [0.23.0]
+
+### Changed
+- **Sign-up picks a team, not a queue (D2, slice 2).** One room = one helpdesk =
+  one queue (`DEFAULT_QUEUE`, identity = the room's `--mailbox`), so `/signup` now
+  shows a **team** (department) dropdown from the DB teams table (Default-seeded)
+  instead of a queue list, and the domain allowlist / verify-from comes from the
+  room's `--mailbox` (no longer per-advertised-queue). `/queues` → `/teams`. The
+  visitor's chosen **team** rides signup → pending → verified member (new `team`
+  column on `pending_signups` + `members`, migrated in place) and onto the session.
+  `Hub.submit_signup(email, name, team)` enrols into the single queue;
+  `Hub.list_teams()` backs the dropdown.
+
 ## [0.22.0]
 
 ### Added

@@ -130,9 +130,10 @@ def assignment_payload(obj: dict[str, Any]) -> dict[str, Any]:
         "runnable": _str(obj.get("runnable")),
         "args": args if isinstance(args, dict) else {},
         "visitor": _str(obj.get("visitor")),
-        # The requester's display name (email-verify signup), shown on the operator
-        # card beside the verified email; blank in OIDC / dev mode.
+        # The requester's display name + team (email-verify signup), shown on the
+        # operator card beside the verified email; blank in dev mode.
         "visitor_name": _str(obj.get("visitor_name")),
+        "team": _str(obj.get("team")),
     }
 
 
@@ -160,6 +161,7 @@ def page_payload(obj: dict[str, Any]) -> dict[str, Any]:
         "queue": _str(obj.get("queue")),
         "visitor": _str(obj.get("visitor")),
         "visitor_name": _str(obj.get("visitor_name")),
+        "team": _str(obj.get("team")),
     }
 
 
@@ -351,18 +353,21 @@ class ChatSource:
             logger.exception("chat: catalog send failed")
 
     def _send_advertise(self) -> None:
-        """Advertise this console's queue for email-verify sign-up. Agent mode only,
-        and only when a queue mailbox is configured (no mailbox → the queue still
-        takes requests, it just isn't offered as a self-service sign-up target)."""
+        """Advertise this console's queue mailbox for email-verify sign-up (the
+        verify-from / domain). Agent mode only, and only when a mailbox is known —
+        the console's ``[mailbox]`` (the helpdesk identity) wins, falling back to a
+        legacy ``room_queue_email``. No mailbox → the queue still takes requests, it
+        just isn't a self-service sign-up target."""
         transport = self._transport
-        if transport is None or not self.is_agent or not self._queue_email:
+        email = self._mailbox or self._queue_email
+        if transport is None or not self.is_agent or not email:
             return
         try:
             transport.send(
                 {
                     "type": "advertise",
                     "queue": self._queue,
-                    "queue_email": self._queue_email,
+                    "queue_email": email,
                     "display_name": self._queue_label or self._queue,
                 }
             )

@@ -24,6 +24,7 @@ from console_room.enrollment_store import EnrollmentStore  # noqa: E402
 from console_room.hub import Hub  # noqa: E402
 from console_room.signup import (  # noqa: E402
     EmailVerifyConfig,
+    Team,
     PendingSignup,
     sign_verify_token,
 )
@@ -48,20 +49,23 @@ def _config(public_url="http://room.test"):
     )
 
 
-def _build(*, advertise=True):
-    """An email-verify app whose hub has an it-support queue advertised. Returns
-    (client, hub, enrollment)."""
+def _build():
+    """An email-verify app whose hub serves the ``helpdesk@corp.com`` mailbox (the
+    sign-up domain) and an extra ``IT Support`` team beside the seeded Default.
+    Returns (client, hub, enrollment)."""
     enrollment = EnrollmentStore(":memory:")
-    hub = Hub(FakeStore(), enrollment=enrollment, email_verify=_config())
-    if advertise:
-        hub.advertise_queue(
-            "agent@web01", "it-support", "it-support@corp.com", "IT Support"
-        )
+    enrollment.add_team(Team(slug="it-support", name="IT Support"))
+    hub = Hub(
+        FakeStore(),
+        enrollment=enrollment,
+        email_verify=_config(),
+        mailbox="helpdesk@corp.com",
+    )
     app = create_app(hub, email_verify=_config())
     return TestClient(app), hub, enrollment
 
 
-def _seed_pending(enrollment, nonce="n1", email="jane@corp.com", queue="it-support"):
+def _seed_pending(enrollment, nonce="n1", email="jane@corp.com", queue="helpdesk"):
     enrollment.add_pending(
         PendingSignup(
             nonce=nonce, email=email, name="Jane Doe", queue=queue, created_at=0.0
@@ -93,29 +97,25 @@ def test_email_verify_requires_enrollment_hub():
         create_app(hub, email_verify=_config())
 
 
-# ── /queues + /signup form ────────────────────────────────────────────────────
+# ── /teams + /signup form ─────────────────────────────────────────────────────
 
 
-def test_queues_lists_advertised():
+def test_teams_lists_default_and_added():
     client, *_ = _build()
-    body = client.get("/queues").json()
-    assert body["queues"] == [
-        {"queue": "it-support", "label": "IT Support", "domain": "corp.com"}
+    body = client.get("/teams").json()
+    assert body["teams"] == [
+        {"slug": "default", "name": "Default"},
+        {"slug": "it-support", "name": "IT Support"},
     ]
 
 
-def test_signup_form_renders_with_options():
+def test_signup_form_renders_team_options():
     client, *_ = _build()
     r = client.get("/signup")
     assert r.status_code == 200
-    assert "IT Support" in r.text and "it-support" in r.text
-
-
-def test_signup_form_when_no_queues():
-    client, *_ = _build(advertise=False)
-    r = client.get("/signup")
-    assert r.status_code == 200
-    assert "No queues available" in r.text
+    # The team dropdown + the mailbox domain hint render.
+    assert "IT Support" in r.text and 'value="it-support"' in r.text
+    assert "Default" in r.text and "corp.com" in r.text
 
 
 def test_index_redirects_to_signup_when_unauthenticated():
@@ -144,19 +144,19 @@ def test_signup_rejects_foreign_domain():
     client, _hub, enrollment = _build()
     r = client.post(
         "/signup",
-        data={"queue": "it-support", "name": "Jane", "email": "jane@evil.com"},
+        data={"team": "it-support", "name": "Jane", "email": "jane@evil.com"},
     )
     assert r.status_code == 400
     assert "corp.com" in r.text  # tells them which domain to use
     # Nothing written to the outbox.
-    assert enrollment.claim_pending_sends("it-support", "x") == []
+    assert enrollment.claim_pending_sends("helpdesk", "x") == []
 
 
 def test_signup_rejects_unknown_queue():
     client, *_ = _build()
     r = client.post(
         "/signup",
-        data={"queue": "ghost", "name": "Jane", "email": "jane@corp.com"},
+        data={"team": "ghost", "name": "Jane", "email": "jane@corp.com"},
     )
     assert r.status_code == 400
 
@@ -165,7 +165,7 @@ def test_signup_rejects_blank_name():
     client, *_ = _build()
     r = client.post(
         "/signup",
-        data={"queue": "it-support", "name": "  ", "email": "jane@corp.com"},
+        data={"team": "it-support", "name": "  ", "email": "jane@corp.com"},
     )
     assert r.status_code == 400
 
@@ -174,11 +174,11 @@ def test_signup_accepts_and_writes_outbox():
     client, _hub, enrollment = _build()
     r = client.post(
         "/signup",
-        data={"queue": "it-support", "name": "Jane Doe", "email": "Jane@Corp.com"},
+        data={"team": "it-support", "name": "Jane Doe", "email": "Jane@Corp.com"},
     )
     assert r.status_code == 200 and "Check your email" in r.text
     # A pending row is in the outbox, email normalised to lower-case.
-    pending = enrollment.claim_pending_sends("it-support", "probe")
+    pending = enrollment.claim_pending_sends("helpdesk", "probe")
     assert [p.email for p in pending] == ["jane@corp.com"]
 
 
@@ -190,8 +190,8 @@ def test_verify_enrolls_and_sets_session():
     token = _seed_pending(enrollment)
 
     r = client.get(f"/verify?token={token}", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/?queue=it-support"
-    assert enrollment.is_member("jane@corp.com", "it-support")
+    assert r.status_code == 303 and r.headers["location"] == "/?queue=helpdesk"
+    assert enrollment.is_member("jane@corp.com", "helpdesk")
     # The session now identifies the verified email — the gate unlocks.
     assert client.get("/me").json() == {"auth": True, "user": "jane@corp.com"}
     assert client.get("/", follow_redirects=False).status_code == 200

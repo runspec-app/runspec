@@ -432,6 +432,7 @@ def test_parse_inbound_assignment_frame():
             "args": {"user": "alice"},
             "visitor": "alice@corp",
             "visitor_name": "Alice Smith",
+            "team": "sales",
         },
         "agent@web01",
     )
@@ -443,6 +444,7 @@ def test_parse_inbound_assignment_frame():
         "args": {"user": "alice"},
         "visitor": "alice@corp",
         "visitor_name": "Alice Smith",
+        "team": "sales",
     }
 
 
@@ -593,10 +595,23 @@ def test_advertise_display_name_defaults_to_queue():
 
 def test_no_advertise_without_mailbox():
     transport = FakeTransport()
-    src = _ev_agent(transport)  # no queue_email
+    src = _ev_agent(transport)  # no queue_email, no mailbox
     src.start(lambda ev: None)
     src.stop()
     assert [m for m in transport.sent if m["type"] == "advertise"] == []
+
+
+def test_advertise_uses_configured_mailbox_as_verify_from():
+    # The console's [mailbox] is the helpdesk identity / verify-from; it wins over a
+    # legacy room_queue_email.
+    transport = FakeTransport()
+    src = _ev_agent(
+        transport, mailbox="helpdesk@corp.com", queue_email="legacy@corp.com"
+    )
+    src.start(lambda ev: None)
+    src.stop()
+    ad = next(m for m in transport.sent if m["type"] == "advertise")
+    assert ad["queue_email"] == "helpdesk@corp.com"
 
 
 def test_no_advertise_in_room_mode():

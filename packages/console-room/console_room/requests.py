@@ -60,11 +60,15 @@ class Request:
     # The visitor's self-asserted full name (email-verify signup). Display-only —
     # the verified ``visitor`` email stays the trust anchor. Empty in dev mode.
     visitor_name: str = ""
+    # The visitor's chosen team/department (email-verify signup). Display-only.
+    team: str = ""
     state: str = UNASSIGNED
     assignee: str | None = None
     error: str | None = None
 
-    def assignment_fields(self) -> tuple[str, str, str, dict[str, Any], str, str]:
+    def assignment_fields(
+        self,
+    ) -> tuple[str, str, str, dict[str, Any], str, str, str]:
         """The payload an assigned operator's console needs to enact the request."""
         return (
             self.id,
@@ -73,6 +77,7 @@ class Request:
             self.args,
             self.visitor,
             self.visitor_name,
+            self.team,
         )
 
     def status_fields(self) -> tuple[str, str, str, str | None, str | None]:
@@ -105,6 +110,7 @@ class RequestRegistry:
         runnable: str,
         args: dict[str, Any],
         visitor_name: str = "",
+        team: str = "",
     ) -> Request:
         """Record a fresh request (``unassigned``) and return it. The id is
         server-assigned so the thread message and the lifecycle record agree."""
@@ -117,6 +123,7 @@ class RequestRegistry:
             runnable=runnable,
             args=dict(args),
             visitor_name=visitor_name,
+            team=team,
         )
         self._requests[req.id] = req
         return req

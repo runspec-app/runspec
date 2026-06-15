@@ -429,13 +429,13 @@ def test_agent_advertise_frame_registers_queue():
         reader = _reader(
             {
                 "type": "hello",
-                "namespace": "helpdesk/it-support",
+                "namespace": "helpdesk/helpdesk",
                 "user": "agent@web01",
             },
             {
                 "type": "advertise",
-                "queue": "it-support",
-                "queue_email": "it-support@corp.com",
+                "queue": "helpdesk",
+                "queue_email": "helpdesk@corp.com",
                 "display_name": "IT Support",
             },
         )
@@ -451,17 +451,17 @@ def test_agent_advertise_flushes_pending_send():
     async def scenario():
         hub = _ev_hub()
         # A signup is waiting in the outbox with no console yet.
-        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        await hub.submit_signup("jane@corp.com", "Jane", "sales")
         reader = _reader(
             {
                 "type": "hello",
-                "namespace": "helpdesk/it-support",
+                "namespace": "helpdesk/helpdesk",
                 "user": "agent@web01",
             },
             {
                 "type": "advertise",
-                "queue": "it-support",
-                "queue_email": "it-support@corp.com",
+                "queue": "helpdesk",
+                "queue_email": "helpdesk@corp.com",
                 "display_name": "IT Support",
             },
         )
@@ -477,18 +477,18 @@ def test_agent_advertise_flushes_pending_send():
 def test_agent_verify_sent_ack_marks_sent():
     async def scenario():
         hub = _ev_hub()
-        await hub.submit_signup("jane@corp.com", "Jane", "it-support")
+        await hub.submit_signup("jane@corp.com", "Jane", "sales")
         # Connect, advertise (flush → send_verify), capture the nonce, then ack.
         reader = _reader(
             {
                 "type": "hello",
-                "namespace": "helpdesk/it-support",
+                "namespace": "helpdesk/helpdesk",
                 "user": "agent@web01",
             },
             {
                 "type": "advertise",
-                "queue": "it-support",
-                "queue_email": "it-support@corp.com",
+                "queue": "helpdesk",
+                "queue_email": "helpdesk@corp.com",
             },
         )
         writer = FakeWriter()
@@ -498,7 +498,7 @@ def test_agent_verify_sent_ack_marks_sent():
         ack = _reader(
             {
                 "type": "hello",
-                "namespace": "helpdesk/it-support",
+                "namespace": "helpdesk/helpdesk",
                 "user": "agent@web01",
             },
             {"type": "verify_sent", "nonce": nonce, "ok": True},

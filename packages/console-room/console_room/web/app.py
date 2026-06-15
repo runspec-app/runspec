@@ -46,7 +46,7 @@ from ..conversation import conversation_room, queue_namespace, valid_token
 from ..hub import Hub
 from ..ndjson_server import serve_ndjson
 from ..signup import EmailVerifyConfig
-from .auth import session_name, session_user
+from .auth import session_name, session_team, session_user
 from .connection import BrowserConnection
 from .signup_routes import signup_routes
 
@@ -190,11 +190,16 @@ def create_app(
                 return
         logger.debug("room: WS accepted — user=%r room=%r", user, room)
         await websocket.accept()
-        # The verified display name (email-verify) rides onto the operator card;
-        # blank in dev mode (no session name) — the card falls back to the id.
+        # The verified display name + team (email-verify) ride onto the operator
+        # card; blank in dev mode — the card falls back to the id.
         display_name = session_name(websocket) if gated else ""
+        team = session_team(websocket) if gated else ""
         await BrowserConnection(
-            _StarletteWS(websocket), user=user, room=room, display_name=display_name
+            _StarletteWS(websocket),
+            user=user,
+            room=room,
+            display_name=display_name,
+            team=team,
         ).run(hub)
 
     # ── app shell + identity ──────────────────────────────────────────────────
