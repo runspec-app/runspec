@@ -50,6 +50,8 @@ _TRIGGER_KEYS = frozenset(
         "enabled",
         "autonomy",
         "post_to_chat",
+        "ignore_rota",
+        "once_per_thread",
         "rules",
         "run",
         "runnables",
@@ -140,6 +142,14 @@ class Trigger:
     autonomy: str = "confirm"
     post_to_chat: bool = False
     ignore_rota: bool = False  # fire even outside working hours (escape hatch)
+    # Fire only for the FIRST matching event in a conversation/thread, then skip
+    # later messages in it (e.g. don't re-run on every email reply). Keyed on the
+    # event's thread id (conversation_id / thread_id); fail-open when the payload
+    # carries no thread id (fires, since we can't tell it's a reply). Tri-state:
+    # ``None`` inherits the engine default (the ``[mailbox]`` setting); ``True`` /
+    # ``False`` override it for this trigger. Resolution: trigger → mailbox default
+    # → library default (False) — the same shape as ``autonomy``.
+    once_per_thread: bool | None = None
     match: dict[str, str] = field(default_factory=dict)
     rules: str = ""  # agent mode: the LLM's per-trigger system prompt
     run: str = ""  # rule mode: "host__runnable"
@@ -234,6 +244,11 @@ class Trigger:
                 "'agent'); rule mode runs the single runnable named by 'run'."
             )
 
+        # Tri-state: absent → None (inherit the mailbox default); present → an
+        # explicit per-trigger override.
+        opt_raw = data.get("once_per_thread")
+        once_per_thread = bool(opt_raw) if opt_raw is not None else None
+
         reply_raw = data.get("reply") or {}
         reply = ReplySettings(
             draft=bool(reply_raw.get("draft", False)),
@@ -249,6 +264,7 @@ class Trigger:
             autonomy=autonomy,
             post_to_chat=bool(data.get("post_to_chat", False)),
             ignore_rota=bool(data.get("ignore_rota", False)),
+            once_per_thread=once_per_thread,
             match=match,
             rules=str(data.get("rules") or ""),
             run=run,
@@ -358,6 +374,51 @@ def _summarize(event: Event) -> str:
     return f"{event.source}:{event.type}"
 
 
+# ── once-per-thread dedup ─────────────────────────────────────────────────────
+
+# Payload keys that identify a conversation/thread, tried in order. `outlook`
+# supplies `conversation_id`; a chat-style source may supply `thread_id`.
+_THREAD_KEYS = ("conversation_id", "thread_id")
+
+
+def thread_key(payload: dict[str, Any]) -> str:
+    """The conversation/thread id from an event payload (``""`` when none).
+
+    A trigger with ``once_per_thread`` keys its dedup on this. Empty means the
+    source can't thread the event, so the engine fails open (fires) rather than
+    guessing it's a reply."""
+    for key in _THREAD_KEYS:
+        val = payload.get(key)
+        if val:
+            return str(val)
+    return ""
+
+
+class _MemoryThreadStore:
+    """In-memory ``ThreadDedupLike``: remembers thread ids per trigger for one
+    process. Bounded per trigger (oldest dropped). The bridge injects a durable
+    store; this default keeps the engine correct (and testable) without one."""
+
+    def __init__(self, cap: int = 5000) -> None:
+        self._cap = cap
+        self._seen: dict[str, dict[str, None]] = {}  # trigger → insertion-ordered ids
+        self._lock = threading.Lock()
+
+    def already_fired(self, trigger: str, key: str) -> bool:
+        """True if ``trigger`` already fired for thread ``key`` (recording it as
+        seen if not). The check + record is atomic so two near-simultaneous
+        replies can't both slip through."""
+        with self._lock:
+            ids = self._seen.setdefault(trigger, {})
+            if key in ids:
+                return True
+            ids[key] = None
+            if len(ids) > self._cap:
+                for old in list(ids)[: len(ids) - self._cap]:
+                    del ids[old]
+            return False
+
+
 # ── the engine ──────────────────────────────────────────────────────────────
 
 # handler(card, trigger, event) performs the action (rule/agent) through the
@@ -384,6 +445,8 @@ class TriggerEngine:
         clock_ok: Callable[[], bool] = lambda: True,
         external_sources: set[str] | None = None,
         always_start: set[str] | None = None,
+        thread_store: Any | None = None,
+        default_once_per_thread: bool = False,
     ) -> None:
         self._triggers = list(triggers)
         self._handler = handler
@@ -416,6 +479,13 @@ class TriggerEngine:
         # Returns True when triggers may fire now (the working-hours rota gate).
         # Default always-True = no gating.
         self._clock_ok = clock_ok
+        # Remembers which threads a once_per_thread trigger already fired for. The
+        # default is process-local; the bridge injects a durable store so the dedup
+        # survives a restart. Only needs ``already_fired(trigger, key) -> bool``.
+        self._thread_store = thread_store or _MemoryThreadStore()
+        # The reply-suppression default a trigger inherits when its own
+        # once_per_thread is unset — sourced from the ``[mailbox]`` config.
+        self._default_once_per_thread = default_once_per_thread
         self._executor = executor or ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="trigger"
         )
@@ -522,6 +592,7 @@ class TriggerEngine:
         clock_ok = self._clock_ok()
         matched: list[str] = []
         skipped: list[str] = []
+        deduped: list[str] = []
         for trigger in self._triggers:
             if not trigger.matches(event):
                 continue
@@ -529,15 +600,37 @@ class TriggerEngine:
                 skipped.append(trigger.name)
                 logger.info("trigger '%s' skipped: outside working hours", trigger.name)
                 continue
+            # once_per_thread: fire for the first message in a thread, skip later
+            # replies. Resolve the trigger's tri-state against the mailbox default;
+            # fail open when the event carries no thread id.
+            once = (
+                trigger.once_per_thread
+                if trigger.once_per_thread is not None
+                else self._default_once_per_thread
+            )
+            if once:
+                key = thread_key(event.payload)
+                if key and self._thread_store.already_fired(trigger.name, key):
+                    deduped.append(trigger.name)
+                    logger.info(
+                        "trigger '%s' skipped: already fired for thread %s",
+                        trigger.name,
+                        key,
+                    )
+                    continue
             matched.append(trigger.name)
             last = self._dispatch(trigger, event)
-        if not matched and not skipped:
+        if not matched and not skipped and not deduped:
             logger.info("event %s:%s matched no triggers", event.source, event.type)
-        self._record_event(event, matched, skipped)
+        self._record_event(event, matched, skipped, deduped)
         return last
 
     def _record_event(
-        self, event: Event, matched: list[str], skipped: list[str]
+        self,
+        event: Event,
+        matched: list[str],
+        skipped: list[str],
+        deduped: list[str],
     ) -> None:
         """Emit the per-event audit record (every event, with its disposition)."""
         if self._on_event is None:
@@ -551,6 +644,7 @@ class TriggerEngine:
                     "summary": _summarize(event),
                     "matched": matched,
                     "skipped": skipped,  # matched but gated by the rota
+                    "deduped": deduped,  # matched but a once_per_thread repeat
                     "ts": event.received_at or time.time(),
                 }
             )

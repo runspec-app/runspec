@@ -2636,14 +2636,15 @@ class Bridge:
 
         return _normalize_path(str(config_path().parent))
 
-    def get_mailbox(self) -> dict[str, str] | None:
+    def get_mailbox(self) -> dict[str, Any] | None:
         """The single ``[mailbox]`` the Outlook source monitors (Settings →
-        Triggers): ``{address, folder, label}``, or ``None`` when unconfigured."""
+        Triggers): ``{address, folder, label, once_per_thread}``, or ``None`` when
+        unconfigured."""
         from .config import read_mailbox
 
         return read_mailbox()
 
-    def save_mailbox(self, mailbox: dict[str, str] | None) -> None:
+    def save_mailbox(self, mailbox: dict[str, Any] | None) -> None:
         """Replace (or clear, when ``mailbox`` is falsy) the ``[mailbox]`` table and
         restart the trigger engine so the Outlook source re-resolves the watched
         folder. Persisting always succeeds; a restart failure (e.g. no Outlook on
@@ -5486,8 +5487,14 @@ class Bridge:
                 return
 
         from . import sources  # noqa: F401 — registers built-in event sources
-        from .config import read_mailbox, read_triggers, trigger_file_error
+        from .config import (
+            read_mailbox,
+            read_triggers,
+            trigger_file_error,
+            trigger_state_path,
+        )
         from .trigger_runner import make_handler
+        from .trigger_state import ThreadDedupStore
         from .triggers import TriggerEngine, load_triggers
 
         file_error = trigger_file_error()
@@ -5527,6 +5534,14 @@ class Bridge:
             # external stops the engine constructing/starting a second one.
             external_sources={"chat"},
             always_start=always_start,
+            # Durable once_per_thread dedup — so a trigger that fired on a thread's
+            # opening message doesn't re-fire on replies after a console restart.
+            thread_store=ThreadDedupStore(trigger_state_path()),
+            # The mailbox-wide reply-suppression default a trigger inherits when it
+            # doesn't set its own once_per_thread.
+            default_once_per_thread=bool(mailbox.get("once_per_thread"))
+            if mailbox
+            else False,
         )
         problems = engine.start()
         with self._lock:
@@ -6589,6 +6604,10 @@ class Bridge:
         for key in ("enabled", "post_to_chat", "ignore_rota"):
             if key in trigger:
                 out[key] = bool(trigger[key])
+        # Tri-state: only an explicit per-trigger override is written; "inherit the
+        # mailbox default" (anything non-bool, e.g. omitted/null) leaves it unset.
+        if isinstance(trigger.get("once_per_thread"), bool):
+            out["once_per_thread"] = trigger["once_per_thread"]
         runnables = trigger.get("runnables")
         if isinstance(runnables, list):
             names = [str(r).strip() for r in runnables if str(r).strip()]

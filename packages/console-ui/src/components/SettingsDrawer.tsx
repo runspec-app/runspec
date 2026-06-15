@@ -1258,6 +1258,7 @@ function MailboxesTab() {
         address: mb?.address ?? '',
         folder: mb?.folder ?? '',
         label: mb?.label ?? '',
+        once_per_thread: !!mb?.once_per_thread,
       })
     }).catch(console.error)
   }, [form])
@@ -1274,6 +1275,7 @@ function MailboxesTab() {
           address: (v.address ?? '').trim(),
           folder: (v.folder ?? '').trim() || 'Inbox',
           label: (v.label ?? '').trim(),
+          once_per_thread: !!v.once_per_thread,
         })
       }
       setSaved(true)
@@ -1314,6 +1316,10 @@ function MailboxesTab() {
           </Form.Item>
           <Form.Item name="label" label="Label (optional)" help="A display name for this inbox.">
             <Input placeholder="e.g. Helpdesk" />
+          </Form.Item>
+          <Form.Item name="once_per_thread" valuePropName="checked"
+            help="Default for this mailbox: triggers fire on the first message in a conversation and ignore later replies. Each trigger can override this.">
+            <Switch size="small" /> <span style={{ fontSize: 12, color: '#888', marginLeft: 6 }}>Suppress replies by default (once per thread)</span>
           </Form.Item>
           {!!(address ?? '').trim() && (
             <Alert
@@ -1357,6 +1363,8 @@ interface TriggerForm {
   autonomy: string
   enabled: boolean
   match: { field: string; pattern: string }[]
+  // Tri-state override of the mailbox's reply-suppression default.
+  once_per_thread: 'default' | 'on' | 'off'
   rules?: string
   runnables?: string[]
   run?: string
@@ -1377,6 +1385,8 @@ const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
     autonomy: t.autonomy ? String(t.autonomy) : 'confirm',
     enabled: t.enabled !== false,
     match: Object.entries(match).map(([field, pattern]) => ({ field, pattern: String(pattern) })),
+    // Absent → inherit the mailbox default; an explicit bool → on/off override.
+    once_per_thread: typeof t.once_per_thread === 'boolean' ? (t.once_per_thread ? 'on' : 'off') : 'default',
     rules: t.rules ? String(t.rules) : '',
     runnables: Array.isArray(t.runnables) ? (t.runnables as unknown[]).map(String) : [],
     run: t.run ? String(t.run) : '',
@@ -1399,6 +1409,10 @@ const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
     match: matchObj,
     reply: { draft: !!v.reply_draft, style: (v.reply_style ?? '').trim() },
   }
+  // Only an explicit override crosses the bridge; 'default' omits the key so the
+  // trigger inherits the mailbox default.
+  if (v.once_per_thread === 'on') base.once_per_thread = true
+  else if (v.once_per_thread === 'off') base.once_per_thread = false
   if (v.mode === 'rule') {
     const mapObj: Record<string, string> = {}
     for (const m of v.map || []) if (m?.arg?.trim()) mapObj[m.arg.trim()] = (m.template ?? '').trim()
@@ -1433,7 +1447,7 @@ function TriggersEditor() {
   const startAdd = () => {
     setEditName(null); setErr('')
     form.resetFields()
-    form.setFieldsValue({ mode: 'agent', autonomy: 'confirm', enabled: true, match: [], runnables: [], map: [], reply_draft: false })
+    form.setFieldsValue({ mode: 'agent', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default', runnables: [], map: [], reply_draft: false })
     setEditing(true)
   }
   const startEdit = (t: Record<string, unknown>) => {
@@ -1516,6 +1530,11 @@ function TriggersEditor() {
 
             <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>Match — every field's regex must match the event payload (empty = any event of that source/type)</label>
             {pairRow('match', 'field', 'pattern', 'subject', '(?i)password', 'Add match')}
+
+            <Form.Item name="once_per_thread" label="Replies" style={{ marginBottom: 10 }}
+              help="Fire on the first message in a conversation, then ignore replies in that thread (keyed on the email/chat thread id, survives restarts). Default follows the mailbox setting.">
+              <Segmented options={[{ label: 'Mailbox default', value: 'default' }, { label: 'Once per thread', value: 'on' }, { label: 'Every message', value: 'off' }]} />
+            </Form.Item>
 
             {mode === 'rule' ? (
               <>

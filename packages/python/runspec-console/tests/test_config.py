@@ -92,7 +92,7 @@ class TestReadMailbox(unittest.TestCase):
         # Present-but-empty [mailbox] means "watch my default account's Inbox".
         self.assertEqual(
             self._read({"mailbox": {}}),
-            {"address": "", "folder": "Inbox", "label": ""},
+            {"address": "", "folder": "Inbox", "label": "", "once_per_thread": False},
         )
 
     def test_all_fields(self) -> None:
@@ -106,7 +106,13 @@ class TestReadMailbox(unittest.TestCase):
             }
         )
         self.assertEqual(
-            out, {"address": "it@corp", "folder": "Tickets/Open", "label": "IT"}
+            out,
+            {
+                "address": "it@corp",
+                "folder": "Tickets/Open",
+                "label": "IT",
+                "once_per_thread": False,
+            },
         )
 
     def test_inbox_aliases_normalize(self) -> None:
@@ -114,6 +120,13 @@ class TestReadMailbox(unittest.TestCase):
             self._read({"mailbox": {"folder": "inbox"}})["folder"], "Inbox"
         )
         self.assertEqual(self._read({"mailbox": {"folder": "  "}})["folder"], "Inbox")
+
+    def test_once_per_thread_default_and_set(self) -> None:
+        # Default off; honoured when set (the mailbox-wide reply-suppression default).
+        self.assertIs(self._read({"mailbox": {}})["once_per_thread"], False)
+        self.assertIs(
+            self._read({"mailbox": {"once_per_thread": True}})["once_per_thread"], True
+        )
 
 
 class TestWriteMailbox(unittest.TestCase):
@@ -143,6 +156,17 @@ class TestWriteMailbox(unittest.TestCase):
         )
         # folder "inbox" is the default → dropped; address/label trimmed + kept.
         self.assertEqual(out["mailbox"], {"address": "it@corp", "label": "IT"})
+
+    def test_once_per_thread_only_emitted_when_true(self) -> None:
+        # Off → omitted (keeps "watch my own Inbox" a clean empty table); on → kept.
+        off = self._roundtrip(
+            {"address": "", "folder": "Inbox", "label": "", "once_per_thread": False}
+        )
+        self.assertEqual(off["mailbox"], {})
+        on = self._roundtrip(
+            {"address": "", "folder": "Inbox", "label": "", "once_per_thread": True}
+        )
+        self.assertEqual(on["mailbox"], {"once_per_thread": True})
 
     def test_none_drops_the_section(self) -> None:
         out = self._roundtrip(None, existing={"mailbox": {"address": "old@corp"}})

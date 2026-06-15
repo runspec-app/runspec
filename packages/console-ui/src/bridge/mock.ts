@@ -633,7 +633,7 @@ export const mockApi: BridgeApi = {
 
   save_config: async (data) => { console.log('[mock] save_config', data) },
 
-  get_mailbox: async () => ({ address: 'helpdesk@corp.com', folder: 'Tickets/Open', label: 'Helpdesk' }),
+  get_mailbox: async () => ({ address: 'helpdesk@corp.com', folder: 'Tickets/Open', label: 'Helpdesk', once_per_thread: true }),
 
   save_mailbox: async (mailbox) => { console.log('[mock] save_mailbox', mailbox) },
 
@@ -1062,6 +1062,7 @@ export const mockApi: BridgeApi = {
         autonomy: 'confirm',
         rules: 'If this reports an outage, run diagnostics and draft a reply.',
         match: { from: '.*@bigcustomer\\.com' },
+        once_per_thread: true,
         reply: { draft: true, style: 'Concise, professional.' },
       },
       {

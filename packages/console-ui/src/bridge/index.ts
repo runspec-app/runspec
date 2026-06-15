@@ -124,6 +124,9 @@ export interface Mailbox {
   address: string
   folder: string
   label: string
+  // Mailbox-wide default for suppressing replies (once per thread). A trigger
+  // inherits this unless it sets its own override. Default false.
+  once_per_thread?: boolean
 }
 
 // A customer team (department) a visitor picks at sign-up. Lives in the helpdesk

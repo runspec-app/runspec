@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.72.0] — 2026-06-15
+
+### Added
+- **Reply suppression for triggers (`once_per_thread`).** A trigger can fire on the
+  **first** message in a conversation and ignore later replies, so an email
+  back-and-forth doesn't re-run the rule on every reply. Keyed on the event's thread
+  id (`conversation_id` / `thread_id`); **fail-open** when the payload has no thread
+  id. The dedup is **durable** (a small JSON state file under the app dir), so a
+  reply after a console restart is still recognised. Tri-state, resolving like
+  `autonomy`: a per-trigger override beats the mailbox-wide default
+  (`[mailbox] once_per_thread`) beats the library default (`false`). Settings →
+  Triggers gains a **Suppress replies by default** switch on the mailbox and a
+  **Mailbox default / Once per thread / Every message** selector per trigger.
+
 ## [0.71.0] — 2026-06-15
 
 ### Added

@@ -192,6 +192,8 @@ source = "outlook"          # EventSource.id
 event  = "new_mail"         # one of source.event_types()
 autonomy = "confirm"        # gate level for runnables this trigger drives (default: confirm)
 post_to_chat = false        # (A2) also surface this trigger's run in the main chat tab
+once_per_thread = true      # fire on the first message in a conversation, ignore replies
+                            # (omit to inherit the [mailbox] default)
 
 # Cheap declarative pre-filter on the payload (regex). No LLM, fully auditable.
 # Works for any event type — especially useful for `reminder`, which fires for
@@ -250,6 +252,16 @@ style = "Concise, professional. Acknowledge, state next step, no commitments."
   (most restrictive wins), so a `manual` runnable is still refused to the agent.
 - `post_to_chat` (default `false`) mirrors the trigger's run into the main chat
   tab for visibility; otherwise the run lives only on its kanban card (§6, A2).
+- `once_per_thread` suppresses replies: the trigger fires for the **first** matching
+  event in a conversation, then skips later messages in the same thread — so an
+  email back-and-forth doesn't re-run the rule on every reply. Keyed on the event's
+  thread id (`conversation_id` / `thread_id`); **fail-open** when the payload carries
+  no thread id (it fires, since we can't tell it's a reply). The dedup is **durable**
+  (a small JSON state file), so a reply after a console restart is still recognised.
+  It's **tri-state**, resolving like `autonomy`: a per-trigger `once_per_thread`
+  overrides the mailbox-wide default (`[mailbox] once_per_thread`), which overrides
+  the library default (`false`). Omit it on the trigger to inherit the mailbox
+  default; set `true`/`false` to override for that one trigger.
 - `[triggers.reply] draft` (default `false`) turns on the built-in `draft_reply`
   tool. The draft is **saved, never sent** — the human reviews and sends (A5).
 
@@ -323,6 +335,37 @@ I recommend keeping Outlook/notification-driven triggers at `confirm` (not
   could create many cards. Simple per-trigger debounce is a fast follow.
 - **Windows only.** The `EventSource` abstraction is cross-platform-ready, but no
   Linux/macOS sources ship in v1.
+
+### 8.1 Queued — tag trigger-sent mail by category (the loop guard)
+
+**Idea.** Stamp every reply the console sends from a trigger with an Outlook
+**category** (e.g. `runspec`), and have `OutlookSource` skip any item that carries
+it. The `categories` field is already in the `new_mail` payload, so the source
+already sees it.
+
+**What it buys us.** Two things:
+1. **A hard loop guard.** Today self-send loops are prevented only by the *default*
+   folder layout (sent mail → Sent, you watch the Inbox) and, for a `once_per_thread`
+   trigger, by the thread already being marked. The category skip closes the
+   remaining gap *regardless of folder config* — even if a trigger watches the Sent
+   folder, or an Outlook rule copies the reply back into the watched folder, the
+   marker stops it re-firing. It's the protection for a deliberately
+   **"Every message"** (`once_per_thread = false`) trigger, which by design reacts to
+   each reply and so can't lean on thread-dedup.
+2. **Provenance.** A durable "this mail was automated" tag is useful on its own —
+   operators (and Outlook rules / searches) can tell a trigger-drafted reply from a
+   hand-written one.
+
+**Why it isn't in the `once_per_thread` change.** It's **Windows/Outlook-COM only**
+(stamping the category on the reply object in `save_reply_draft()`/`send_draft()`,
+and the skip in `OutlookSource`), so unlike `once_per_thread` it can't be exercised
+in the cross-platform unit suite — only the `windows-smoke` CI job and a real Outlook
+box can confirm the tag rides onto the *sent* item and that the skip sees it. Keeping
+it out of the well-tested routing change preserves that confidence. Two details to
+settle against real Outlook when we build it: the category **name** (and whether it's
+configurable, to avoid colliding with a user's existing category taxonomy), and that
+the tag **persists** onto the sent copy. Build it alongside the next Outlook-validated
+change.
 
 ---
 

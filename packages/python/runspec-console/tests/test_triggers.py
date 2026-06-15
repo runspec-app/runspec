@@ -67,6 +67,7 @@ def test_from_config_minimal_defaults():
     assert t.post_to_chat is False
     assert t.match == {}
     assert t.reply.draft is False
+    assert t.once_per_thread is None  # tri-state: inherit the mailbox default
 
 
 def test_from_config_full():
@@ -418,6 +419,126 @@ def test_engine_routes_matching_event_to_handler():
     # one card created, ending DONE
     assert len(cards) >= 1
     assert any(c.column == Column.DONE for c in cards)
+
+
+def test_once_per_thread_fires_only_for_first_message_in_conversation():
+    # A once_per_thread trigger reacts to the opening message of a conversation and
+    # skips later replies (keyed on conversation_id) — the "don't re-run on every
+    # reply" guarantee.
+    fired: list[str] = []
+    recs: list[dict] = []
+
+    def handler(card, trigger, event):
+        fired.append(event.payload.get("subject", ""))
+        card.move(Column.DONE)
+
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "once_per_thread": True,
+        }
+    )
+    engine, fake, _ = _engine([t], handler, on_event=recs.append)
+    engine.start()
+    fake.fire("new_mail", {"subject": "ticket", "conversation_id": "C1"})  # fires
+    fake.fire("new_mail", {"subject": "re: ticket", "conversation_id": "C1"})  # skip
+    fake.fire("new_mail", {"subject": "other", "conversation_id": "C2"})  # new thread
+
+    assert fired == ["ticket", "other"]
+    # The reply is audited as deduped (matched but a once_per_thread repeat), not
+    # as a non-match — so the feed still shows it was seen and why it didn't run.
+    deduped = [r["summary"] for r in recs if r["deduped"]]
+    assert deduped == ["re: ticket"]
+
+
+def test_once_per_thread_falls_open_without_a_thread_id():
+    # No conversation/thread id in the payload → we can't tell a reply from a new
+    # message, so the trigger fires every time (fail open, not silently dead).
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(event.payload.get("subject", ""))
+        card.move(Column.DONE)
+
+    t = Trigger.from_config(
+        {"name": "t", "source": "outlook", "event": "new_mail", "once_per_thread": True}
+    )
+    engine, fake, _ = _engine([t], handler)
+    engine.start()
+    fake.fire("new_mail", {"subject": "a"})
+    fake.fire("new_mail", {"subject": "b"})
+
+    assert fired == ["a", "b"]
+
+
+def test_once_per_thread_inherits_mailbox_default():
+    # A trigger that doesn't set once_per_thread inherits the engine default (the
+    # [mailbox] setting). With the default on, replies in a thread are suppressed.
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(event.payload.get("subject", ""))
+        card.move(Column.DONE)
+
+    t = Trigger.from_config({"name": "t", "source": "outlook", "event": "new_mail"})
+    assert t.once_per_thread is None  # unset → inherits
+    engine, fake, _ = _engine([t], handler, default_once_per_thread=True)
+    engine.start()
+    fake.fire("new_mail", {"subject": "open", "conversation_id": "C1"})
+    fake.fire("new_mail", {"subject": "reply", "conversation_id": "C1"})
+
+    assert fired == ["open"]
+
+
+def test_per_trigger_false_overrides_mailbox_default():
+    # An explicit once_per_thread=false overrides a mailbox default of on, so the
+    # trigger fires on every message in a thread (the per-trigger escape hatch).
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(event.payload.get("subject", ""))
+        card.move(Column.DONE)
+
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "once_per_thread": False,
+        }
+    )
+    assert t.once_per_thread is False
+    engine, fake, _ = _engine([t], handler, default_once_per_thread=True)
+    engine.start()
+    fake.fire("new_mail", {"subject": "open", "conversation_id": "C1"})
+    fake.fire("new_mail", {"subject": "reply", "conversation_id": "C1"})
+
+    assert fired == ["open", "reply"]
+
+
+def test_once_per_thread_is_per_trigger():
+    # Two once_per_thread triggers on the same event each track their own threads,
+    # so both fire for a conversation's opening message.
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    a = Trigger.from_config(
+        {"name": "a", "source": "outlook", "event": "new_mail", "once_per_thread": True}
+    )
+    b = Trigger.from_config(
+        {"name": "b", "source": "outlook", "event": "new_mail", "once_per_thread": True}
+    )
+    engine, fake, _ = _engine([a, b], handler)
+    engine.start()
+    fake.fire("new_mail", {"conversation_id": "C1"})
+    fake.fire("new_mail", {"conversation_id": "C1"})  # both skip the reply
+
+    assert sorted(fired) == ["a", "b"]
 
 
 def test_engine_feed_gate_suppresses_routing_and_audit():

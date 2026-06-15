@@ -62,6 +62,12 @@ def triggers_path() -> Path:
     return app_dir() / "runspec_triggers.toml"
 
 
+def trigger_state_path() -> Path:
+    """Durable per-trigger thread dedup state for ``once_per_thread`` (internal —
+    not user-edited config). JSON, since it's just an id→bag map."""
+    return app_dir() / "runspec_trigger_state.json"
+
+
 def _read_trigger_file() -> dict[str, Any]:
     """Full parse of ``runspec_triggers.toml`` ({} on missing/unreadable)."""
     path = triggers_path()
@@ -245,7 +251,7 @@ def read_chat() -> dict[str, Any]:
     return dict(chat) if isinstance(chat, dict) else {}
 
 
-def read_mailbox() -> dict[str, str] | None:
+def read_mailbox() -> dict[str, Any] | None:
     """The single ``[mailbox]`` the Outlook source monitors, or ``None`` when no
     ``[mailbox]`` table is configured (email monitoring off).
 
@@ -255,12 +261,15 @@ def read_mailbox() -> dict[str, str] | None:
         address = "helpdesk@corp.com"   # blank/absent → the default account
         folder  = "Tickets/Open"        # blank/absent/"inbox" → the Inbox
         label   = "Helpdesk"            # optional display label
+        once_per_thread = true          # default reply-suppression for triggers
 
     A present-but-empty ``[mailbox]`` means "watch my default account's Inbox".
     Normalisation: ``address`` blank/missing → ``""`` (the default account);
     ``folder`` blank, missing, or ``"inbox"`` (case-insensitive) → ``"Inbox"``.
-    There is no queue here — queues are teams, managed in the room DB (see
-    docs/design/teams-and-email-monitoring.md)."""
+    ``once_per_thread`` (default ``False``) is the mailbox-wide default for
+    suppressing replies — a trigger inherits it unless it sets its own
+    ``once_per_thread`` (see triggers.py). There is no queue here — queues are
+    teams, managed in the room DB (see docs/design/teams-and-email-monitoring.md)."""
     raw = read_config().get("mailbox")
     if not isinstance(raw, dict):
         return None
@@ -269,10 +278,15 @@ def read_mailbox() -> dict[str, str] | None:
     label = str(raw.get("label") or "").strip()
     if not folder or folder.lower() == "inbox":
         folder = "Inbox"
-    return {"address": address, "folder": folder, "label": label}
+    return {
+        "address": address,
+        "folder": folder,
+        "label": label,
+        "once_per_thread": bool(raw.get("once_per_thread", False)),
+    }
 
 
-def write_mailbox(mailbox: dict[str, str] | None) -> None:
+def write_mailbox(mailbox: dict[str, Any] | None) -> None:
     """Replace the ``[mailbox]`` table in config.toml (or drop it when ``mailbox``
     is ``None``), preserving every other section. Only set fields are emitted, so
     "watch my own Inbox" round-trips to an empty ``[mailbox]`` table."""
@@ -284,13 +298,15 @@ def write_mailbox(mailbox: dict[str, str] | None) -> None:
         address = str(mailbox.get("address") or "").strip()
         folder = str(mailbox.get("folder") or "").strip()
         label = str(mailbox.get("label") or "").strip()
-        entry: dict[str, str] = {}
+        entry: dict[str, Any] = {}
         if address:
             entry["address"] = address
         if folder and folder.lower() != "inbox":
             entry["folder"] = folder
         if label:
             entry["label"] = label
+        if mailbox.get("once_per_thread"):
+            entry["once_per_thread"] = True
         cfg["mailbox"] = entry
 
     update_config(mutate)

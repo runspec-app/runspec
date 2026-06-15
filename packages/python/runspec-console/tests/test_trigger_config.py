@@ -244,6 +244,29 @@ def test_clean_trigger_normalises_and_round_trips(monkeypatch, tmp_path):
     assert trig.reply.draft is True
 
 
+def test_clean_trigger_once_per_thread_is_tri_state():
+    # An explicit bool override is written; "inherit" (omitted / non-bool) is left
+    # out so the trigger falls back to the mailbox default.
+    from runspec_console.bridge import Bridge
+
+    base = {"name": "t", "source": "outlook", "event": "new_mail"}
+    assert "once_per_thread" not in Bridge._clean_trigger(base, "t")  # omitted
+    assert (
+        Bridge._clean_trigger({**base, "once_per_thread": True}, "t")["once_per_thread"]
+        is True
+    )
+    assert (
+        Bridge._clean_trigger({**base, "once_per_thread": False}, "t")[
+            "once_per_thread"
+        ]
+        is False
+    )
+    # A null/non-bool (the UI's "inherit") is not written.
+    assert "once_per_thread" not in Bridge._clean_trigger(
+        {**base, "once_per_thread": None}, "t"
+    )
+
+
 def test_clean_trigger_requires_name_via_bridge_guard():
     # save_trigger guards an empty name; _clean_trigger itself just trusts the arg.
     from runspec_console.bridge import Bridge
