@@ -8,7 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.64.0] — 2026-06-15
+## [0.65.0] — 2026-06-15
+
+### Fixed
+- **config.toml no longer corrupts/loses settings (incl. the SSH key).** The
+  hand-rolled `_dict_to_toml` serialiser emitted **invalid TOML** for anything
+  beyond one-level-flat sections — an array-of-tables or a nested table was
+  written as a Python `repr` (`[{'a': 'b'}]`), which then failed to re-parse.
+  Worse, `read_config()` **silently swallowed the parse error and returned `{}`**,
+  so the next Save overwrote the file with near-empty config — wiping `[ssh]
+  identityFile`, after which the console had no key (and no password), so SSH
+  auth failed both ways and the host sat in connect-backoff. Now:
+  - **Correct serialiser** — config is written with `tomli-w` (valid TOML for
+    nested tables, arrays-of-tables, and string escaping).
+  - **No silent wipe** — an unparseable config.toml is moved aside to
+    `config.toml.corrupt-<ts>` and logged, instead of being treated as empty and
+    clobbered by the next write.
+  - **Atomic writes** — config is written to a temp file and `os.replace`d, so a
+    concurrent/partial write can't leave a half-file.
+  - **Consolidated, locked writers** — all read-modify-write of config.toml goes
+    through one re-entrant lock (`update_config`), and the SSH key generate/rotate
+    commits now merge `[ssh]` atomically, so two Settings-tab saves can't lose
+    each other's sections.
 
 ### Added
 - **Console advertises its mailbox to the room.** The chat source now sends its
@@ -34,7 +55,6 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   Outlook source reads it via `read_mailbox()`. **The queue/team concept is no
   longer tied to a mailbox or a host** — teams move to the runspec-room database,
   managed from the consoles (see `docs/design/teams-and-email-monitoring.md`).
-
 
 ## [0.62.0] — 2026-06-14
 
@@ -97,7 +117,6 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   into the `RUNSPEC_*_ARG_*` env channel, exactly as the manual `invoke_runnable`
   path already did — previously an agent-supplied secret would have been passed as
   a CLI flag, leaking into the remote's `ps` table and shell history.
-
 
 ## [0.61.0] — 2026-06-14
 

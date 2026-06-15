@@ -1,10 +1,9 @@
 """
 test_config.py — Unit tests for config TOML serialisation.
 
-Focus on round-tripping through tomllib. The custom `_dict_to_toml`
-serialiser must produce valid TOML for every value it writes — in
-particular Windows paths, which contain backslashes that TOML treats
-as escape-sequence starters in basic strings.
+Focus on round-tripping through tomllib. The serialiser must produce valid TOML
+for every value it writes — in particular Windows paths, which contain
+backslashes that TOML treats as escape-sequence starters in basic strings.
 """
 
 from __future__ import annotations
@@ -13,17 +12,20 @@ import io
 import sys
 import unittest
 
+import tomli_w
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
 
-from runspec_console.config import _dict_to_toml, _toml_str
+import runspec_console.config as c
+from runspec_console.config import _toml_str
 
 
 def _roundtrip(data: dict) -> dict:
     """Serialise + parse with tomllib, exactly as write_config / read_config do."""
-    text = _dict_to_toml(data)
+    text = tomli_w.dumps(c._strip_none(data))
     return tomllib.load(io.BytesIO(text.encode("utf-8")))
 
 

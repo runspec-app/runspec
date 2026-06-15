@@ -6,15 +6,28 @@ All persistent state lives under %APPDATA%\runspec-console\ on Windows.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+import tomli_w
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
+
+logger = logging.getLogger(__name__)
+
+# Serialises every read-modify-write of config.toml so concurrent Settings-tab
+# saves can't interleave and clobber each other's sections. Re-entrant so
+# update_config() can call read_config()/write_config() while holding it.
+_CONFIG_LOCK = threading.RLock()
 
 # Where the in-app "Documentation" icon points. Overridable per-install via
 # `[console] docs_url` in config.toml so a fork / internal mirror can retarget it.
@@ -136,18 +149,79 @@ def write_rota(rota: dict[str, Any]) -> None:
 
 
 def read_config() -> dict[str, Any]:
-    path = config_path()
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "rb") as f:
-            return dict(tomllib.load(f))
-    except Exception:
-        return {}
+    """Parse config.toml, or ``{}`` when it's missing.
+
+    An **unparseable** file is moved aside to ``config.toml.corrupt-<ts>`` (and
+    logged) rather than silently treated as empty — otherwise the next write
+    would overwrite the only copy, turning a transient corruption into permanent
+    data loss. The app then starts from empty config; the operator can merge the
+    backup back in.
+    """
+    with _CONFIG_LOCK:
+        path = config_path()
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "rb") as f:
+                return dict(tomllib.load(f))
+        except Exception:
+            _backup_corrupt(path)
+            return {}
 
 
 def write_config(data: dict[str, Any]) -> None:
-    config_path().write_text(_dict_to_toml(data), encoding="utf-8")
+    """Serialise ``data`` to config.toml atomically (temp file + os.replace).
+
+    Uses ``tomli_w`` so nested tables, arrays-of-tables, and string escaping are
+    all emitted as valid TOML (the old hand-rolled serialiser produced invalid
+    output for anything beyond one-level-flat sections, which then failed to
+    re-parse and wiped the file). ``None`` values are dropped — TOML has no null.
+    """
+    with _CONFIG_LOCK:
+        text = tomli_w.dumps(_strip_none(data))
+        path = config_path()
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+
+
+def update_config(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
+    """Atomically read-modify-write config.toml under the lock.
+
+    ``mutate`` is called with the current config dict and edits it in place; the
+    result is written back. The whole read→edit→write runs while holding
+    ``_CONFIG_LOCK``, so two concurrent updates can't lose each other's changes.
+    Returns the new config.
+    """
+    with _CONFIG_LOCK:
+        cfg = read_config()
+        mutate(cfg)
+        write_config(cfg)
+        return cfg
+
+
+def _strip_none(value: Any) -> Any:
+    """Recursively drop ``None`` values (TOML can't represent null)."""
+    if isinstance(value, dict):
+        return {k: _strip_none(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_strip_none(v) for v in value]
+    return value
+
+
+def _backup_corrupt(path: Path) -> None:
+    """Move an unparseable config.toml aside so it isn't clobbered by the next
+    write; best-effort and never raises into the caller."""
+    try:
+        backup = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+        path.replace(backup)
+        logger.error(
+            "config.toml was unparseable; backed it up to %s and starting from "
+            "empty config. Merge any settings back from that file.",
+            backup,
+        )
+    except Exception:
+        logger.exception("config.toml is unparseable and could not be backed up")
 
 
 def docs_url() -> str:
@@ -202,23 +276,24 @@ def write_mailbox(mailbox: dict[str, str] | None) -> None:
     """Replace the ``[mailbox]`` table in config.toml (or drop it when ``mailbox``
     is ``None``), preserving every other section. Only set fields are emitted, so
     "watch my own Inbox" round-trips to an empty ``[mailbox]`` table."""
-    cfg = read_config()
-    if not mailbox:
-        cfg.pop("mailbox", None)
-        write_config(cfg)
-        return
-    address = str(mailbox.get("address") or "").strip()
-    folder = str(mailbox.get("folder") or "").strip()
-    label = str(mailbox.get("label") or "").strip()
-    entry: dict[str, str] = {}
-    if address:
-        entry["address"] = address
-    if folder and folder.lower() != "inbox":
-        entry["folder"] = folder
-    if label:
-        entry["label"] = label
-    cfg["mailbox"] = entry
-    write_config(cfg)
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        if not mailbox:
+            cfg.pop("mailbox", None)
+            return
+        address = str(mailbox.get("address") or "").strip()
+        folder = str(mailbox.get("folder") or "").strip()
+        label = str(mailbox.get("label") or "").strip()
+        entry: dict[str, str] = {}
+        if address:
+            entry["address"] = address
+        if folder and folder.lower() != "inbox":
+            entry["folder"] = folder
+        if label:
+            entry["label"] = label
+        cfg["mailbox"] = entry
+
+    update_config(mutate)
 
 
 def confirm_notifications_enabled() -> bool:
@@ -326,31 +401,4 @@ def _rota_to_toml(rota: dict[str, Any]) -> str:
         for kk, vv in sub.items():
             if vv is not None:
                 lines.append(f"{kk} = {_toml_scalar(vv)}")
-    return "\n".join(lines) + "\n"
-
-
-def _dict_to_toml(data: dict[str, Any]) -> str:
-    """Minimal TOML serialiser for flat and one-level-nested dicts."""
-    lines: list[str] = []
-    nested: list[tuple[str, dict[str, Any]]] = []
-    for k, v in data.items():
-        if isinstance(v, dict):
-            nested.append((k, v))
-        elif isinstance(v, str):
-            lines.append(f"{k} = {_toml_str(v)}")
-        elif isinstance(v, bool):
-            lines.append(f"{k} = {'true' if v else 'false'}")
-        elif v is None:
-            pass
-        else:
-            lines.append(f"{k} = {v}")
-    for section, sub in nested:
-        lines.append(f"\n[{section}]")
-        for k, v in sub.items():
-            if isinstance(v, str):
-                lines.append(f"{k} = {_toml_str(v)}")
-            elif isinstance(v, bool):
-                lines.append(f"{k} = {'true' if v else 'false'}")
-            elif v is not None:
-                lines.append(f"{k} = {v}")
     return "\n".join(lines) + "\n"

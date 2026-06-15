@@ -56,6 +56,7 @@ class _SaveStub:
         self.chat_restarted = getattr(self, "chat_restarted", 0) + 1
 
     save_config = Bridge.save_config
+    _after_config_change = Bridge._after_config_change
     _apply_ssh_config = Bridge._apply_ssh_config
 
 

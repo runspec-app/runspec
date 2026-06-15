@@ -37,6 +37,12 @@ class _StubBridge:
     def save_config(self, data: dict) -> None:
         self._cfg = data
 
+    def _commit_ssh_fields(self, **fields) -> None:
+        # Mirror Bridge._commit_ssh_fields' merge into [ssh], capturing in memory
+        # (the real one writes config.toml atomically + re-applies the pool).
+        ssh = {**self._cfg.get("ssh", {}), **fields}
+        self._cfg = {**self._cfg, "ssh": ssh}
+
     def _reload_hosts(self) -> None:  # hosts are injected directly in tests
         pass
 

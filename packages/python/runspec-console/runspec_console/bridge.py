@@ -45,6 +45,7 @@ from .config import (
     hosts_path,
     read_config,
     room_notifications_enabled,
+    update_config,
     write_config,
 )
 from .discovery import discover_local, discover_remote
@@ -2711,13 +2712,30 @@ class Bridge:
         if isinstance(ssh, dict):
             data = {**data, "ssh": _normalize_ssh_section(ssh)}
         write_config(data)
+        self._after_config_change(old, data)
+
+    def _after_config_change(self, old: dict[str, Any], new: dict[str, Any]) -> None:
+        """React to a persisted config change (shared by save_config and the
+        atomic SSH-key commits): rebuild the adapter, re-apply the SSH pool, and
+        re-join the room when [chat] changed or the pool was rebuilt."""
         self._adapter = None
         pool_before = self._ssh_pool
-        self._apply_ssh_config(old.get("ssh"), data.get("ssh"))
-        # Re-join the room if its [chat] config changed, or the SSH pool was
-        # rebuilt (the supervisor's tunnel factory is bound to the pool instance).
-        if old.get("chat") != data.get("chat") or self._ssh_pool is not pool_before:
+        self._apply_ssh_config(old.get("ssh"), new.get("ssh"))
+        if old.get("chat") != new.get("chat") or self._ssh_pool is not pool_before:
             self.restart_chat()
+
+    def _commit_ssh_fields(self, **fields: Any) -> None:
+        """Atomically merge ``fields`` into the ``[ssh]`` section under the config
+        lock (read-modify-write can't race another Settings save), then re-apply.
+        Used by the key generate/rotate paths instead of a get_config + save_config
+        round-trip that could clobber a concurrent edit."""
+        old = self.get_config()
+
+        def mutate(cfg: dict[str, Any]) -> None:
+            cfg["ssh"] = _normalize_ssh_section({**cfg.get("ssh", {}), **fields})
+
+        new = update_config(mutate)
+        self._after_config_change(old, new)
 
     def _apply_ssh_config(
         self, old_ssh: dict[str, Any] | None, new_ssh: dict[str, Any] | None
@@ -2830,11 +2848,10 @@ class Bridge:
         if not result["ok"]:
             return {**result, "committed": False, "per_host": []}
 
-        cfg = self.get_config()
-        ssh_section = dict(cfg.get("ssh", {}))
-        ssh_section["identityFile"] = _normalize_path(str(canonical))
-        ssh_section["key_created_at"] = datetime.now(timezone.utc).isoformat()
-        self.save_config({**cfg, "ssh": ssh_section})
+        self._commit_ssh_fields(
+            identityFile=_normalize_path(str(canonical)),
+            key_created_at=datetime.now(timezone.utc).isoformat(),
+        )
 
         return {
             "ok": True,
@@ -3251,10 +3268,10 @@ class Bridge:
         if new_pub.exists():
             new_pub.rename(canonical_pub)
 
-        ssh_section = dict(global_ssh)
-        ssh_section["identityFile"] = _normalize_path(str(canonical))
-        ssh_section["key_created_at"] = datetime.now(timezone.utc).isoformat()
-        self.save_config({**cfg, "ssh": ssh_section})
+        self._commit_ssh_fields(
+            identityFile=_normalize_path(str(canonical)),
+            key_created_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     # ── PuTTY integration ─────────────────────────────────────────────────────
 

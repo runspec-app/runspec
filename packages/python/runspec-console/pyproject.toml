@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.64.0"
+version = "0.65.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -12,6 +12,7 @@ dependencies = [
     "pywin32>=306 ; sys_platform == 'win32'",
     "cryptography>=42.0",
     "paramiko>=3.0",
+    "tomli-w>=1.0",  # config.toml serialisation (valid TOML for nested/array tables)
     # Surfaces the Windows system-admin + Microsoft 365 runnables in the console
     # UI automatically (discovered via `runspec local`). Windows-only — the
     # marker keeps it off non-Windows installs and CI.
