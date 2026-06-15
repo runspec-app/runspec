@@ -204,3 +204,49 @@ def test_trigger_file_error_reports_bad_toml(monkeypatch, tmp_path):
     err = config.trigger_file_error()
     assert err is not None and "not valid TOML" in err
     assert config.read_triggers() == []  # whole file unreadable → no triggers
+
+
+# ── Bridge._clean_trigger (UI dict → on-disk shape) ───────────────────────────
+
+
+def test_clean_trigger_normalises_and_round_trips(monkeypatch, tmp_path):
+    from runspec_console.bridge import Bridge
+
+    _use_tmp(monkeypatch, tmp_path)
+    ui = {
+        "name": "  password-reset  ",  # the name arg is authoritative + trimmed
+        "source": "outlook",
+        "event": "new_mail",
+        "mode": "agent",
+        "enabled": True,
+        "autonomy": "confirm",
+        "run": "   ",  # blank scalar → dropped
+        "rules": "Reset the password.",
+        "runnables": ["reset-password", "  ", "request-vm"],
+        "match": {"subject": "(?i)password", "from": "  ", "  ": "x"},
+        "map": {},  # empty sub-table → dropped
+        "reply": {"draft": True, "style": "formal"},
+    }
+    clean = Bridge._clean_trigger(ui, "password-reset")
+    assert clean["name"] == "password-reset"
+    assert "run" not in clean  # blank dropped
+    assert clean["runnables"] == ["reset-password", "request-vm"]  # blanks dropped
+    assert clean["match"] == {"subject": "(?i)password"}  # blank value/key dropped
+    assert "map" not in clean  # empty dropped
+    assert clean["reply"] == {"draft": True, "style": "formal"}
+
+    # …and it persists + parses back as a valid Trigger.
+    config.write_triggers([clean])
+    raw = config.read_triggers()
+    assert len(raw) == 1
+    trig = Trigger.from_config(raw[0])
+    assert trig.name == "password-reset" and trig.match == {"subject": "(?i)password"}
+    assert trig.reply.draft is True
+
+
+def test_clean_trigger_requires_name_via_bridge_guard():
+    # save_trigger guards an empty name; _clean_trigger itself just trusts the arg.
+    from runspec_console.bridge import Bridge
+
+    out = Bridge._clean_trigger({"source": "outlook"}, "x")
+    assert out["name"] == "x" and out["source"] == "outlook"

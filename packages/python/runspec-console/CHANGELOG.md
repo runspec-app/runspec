@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.70.0] — 2026-06-15
+
+### Added
+- **Triggers editor — UI (Settings → Triggers).** The Triggers tab now has a full
+  trigger editor below the monitored-mailbox config: list existing triggers with an
+  enable toggle + edit/delete, and an add/edit form covering name, source (dropdown),
+  event (autocomplete from the source's event types), mode (agent/rule), autonomy,
+  `match` (field→regex pairs), the mode-specific fields (agent: instructions +
+  runnable allowlist; rule: `run` + arg `map` pairs), and `reply` (draft + style).
+  Saving calls `save_trigger` and restarts the engine; parse errors surface inline.
+  The Settings drawer widened (640 → 760px) for the six tabs + the wider form.
+
+
+## [0.69.0] — 2026-06-15
+
+### Added
+- **Triggers editor — backend.** New bridge `save_trigger` (upsert one
+  `[triggers.<name>]` table by name) and `delete_trigger`, both restarting the
+  engine. `Bridge._clean_trigger` normalises a UI trigger dict into the on-disk
+  shape (drops blank scalars / empty `match`/`map`/`reply` sub-tables, coerces the
+  `runnables` list) so the written `runspec_triggers.toml` stays clean. The
+  Settings → Triggers tab editor (UI) lands next.
+
+
 ## [0.68.0] — 2026-06-15
 
 ### Added

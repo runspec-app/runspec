@@ -607,6 +607,10 @@ export interface BridgeApi {
   // ── event triggers ─────────────────────────────────────────────────────────
   list_triggers: () => Promise<TriggerListResult>
   set_trigger_enabled: (name: string, enabled: boolean) => Promise<{ ok: boolean }>
+  // Add/update one [triggers.<name>] table (upsert by name) or remove it; both
+  // restart the trigger engine. Re-read list_triggers after to refresh the view.
+  save_trigger: (trigger: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
+  delete_trigger: (name: string) => Promise<{ ok: boolean }>
   save_rota: (rota: Rota) => Promise<{ ok: boolean }>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>

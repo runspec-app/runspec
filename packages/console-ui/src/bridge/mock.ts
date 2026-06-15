@@ -1097,6 +1097,14 @@ export const mockApi: BridgeApi = {
     console.log('mock: set_trigger_enabled', name, enabled)
     return { ok: true }
   },
+  save_trigger: async (trigger) => {
+    console.log('mock: save_trigger', trigger)
+    return { ok: true }
+  },
+  delete_trigger: async (name: string) => {
+    console.log('mock: delete_trigger', name)
+    return { ok: true }
+  },
   save_rota: async (rota) => {
     console.log('mock: save_rota', rota)
     return { ok: true }

@@ -6496,6 +6496,72 @@ class Bridge:
             self.restart_triggers()
         return {"ok": found}
 
+    def save_trigger(self, trigger: dict[str, Any]) -> dict[str, Any]:
+        """Add or update one ``[triggers.<name>]`` table (upsert by name) in
+        runspec_triggers.toml, then restart the engine so it takes effect. The
+        ``name`` is required and identifies the table. Empty sub-tables (``match`` /
+        ``map`` / ``reply``) and blank scalars are dropped so the written TOML stays
+        clean. Returns ``{ok, error?}``; the UI re-reads ``list_triggers`` after."""
+        from .config import read_triggers, write_triggers
+
+        name = str(trigger.get("name") or "").strip()
+        if not name:
+            return {"ok": False, "error": "A trigger needs a name."}
+        clean = self._clean_trigger(trigger, name)
+        raw = [t for t in read_triggers() if t.get("name") != name]
+        raw.append(clean)
+        write_triggers(raw)
+        self.restart_triggers()
+        return {"ok": True}
+
+    def delete_trigger(self, name: str) -> dict[str, Any]:
+        """Remove the ``[triggers.<name>]`` table and restart the engine."""
+        from .config import read_triggers, write_triggers
+
+        raw = read_triggers()
+        kept = [t for t in raw if t.get("name") != name]
+        if len(kept) != len(raw):
+            write_triggers(kept)
+            self.restart_triggers()
+        return {"ok": len(kept) != len(raw)}
+
+    @staticmethod
+    def _clean_trigger(trigger: dict[str, Any], name: str) -> dict[str, Any]:
+        """Normalise a trigger dict from the UI into the on-disk shape: keep ``name``,
+        drop blank scalars / empty sub-tables, coerce the sub-tables (``match`` / ``map``
+        / ``reply``) and the ``runnables`` list."""
+        out: dict[str, Any] = {"name": name}
+        for key in ("source", "event", "mode", "autonomy", "run", "rules"):
+            val = str(trigger.get(key) or "").strip()
+            if val:
+                out[key] = val
+        for key in ("enabled", "post_to_chat", "ignore_rota"):
+            if key in trigger:
+                out[key] = bool(trigger[key])
+        runnables = trigger.get("runnables")
+        if isinstance(runnables, list):
+            names = [str(r).strip() for r in runnables if str(r).strip()]
+            if names:
+                out["runnables"] = names
+        for sub in ("match", "map"):
+            raw = trigger.get(sub)
+            if isinstance(raw, dict):
+                pairs = {
+                    str(k).strip(): str(v).strip()
+                    for k, v in raw.items()
+                    if str(k).strip() and str(v).strip()
+                }
+                if pairs:
+                    out[sub] = pairs
+        reply = trigger.get("reply")
+        if isinstance(reply, dict) and (reply.get("draft") or reply.get("style")):
+            rep: dict[str, Any] = {"draft": bool(reply.get("draft"))}
+            style = str(reply.get("style") or "").strip()
+            if style:
+                rep["style"] = style
+            out["reply"] = rep
+        return out
+
     def save_rota(self, rota: dict[str, Any]) -> dict[str, Any]:
         """Save the working-hours rota and restart the engine so it takes effect.
         Also re-join the room so chat presence follows the new schedule."""
