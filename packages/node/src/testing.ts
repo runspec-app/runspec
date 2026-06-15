@@ -26,6 +26,7 @@ import { parse } from './parser';
 import { loadRaw } from './loader';
 import { inferScript } from './inference';
 import { RunSpecError } from './errors';
+import * as become from './become';
 import type { ParsedArgs, ScriptSpec, ArgSpec } from './models';
 
 export interface ParseHarnessOptions {
@@ -331,4 +332,35 @@ export class ParseHarness {
 
 export function harness(scriptName: string, opts: Omit<ParseHarnessOptions, 'scriptName'> = {}): ParseHarness {
   return new ParseHarness({ scriptName, ...opts });
+}
+
+/**
+ * Run `fn` with the `enforceRunAs` identity gate disabled, then restore it.
+ *
+ * `ParseHarness` already skips the gate, but only for parses it makes itself. A
+ * test that drives a runnable's `main()` directly is different: `main()` calls
+ * `parse()` *itself*, which is the real parse, so the gate fires there and a
+ * `run_as` runnable throws `RunAsMismatch` on a developer's machine. Wrap the
+ * `main()` call:
+ *
+ *     import { withoutRunAsCheck } from 'runspec-node/testing';
+ *
+ *     const code = withoutRunAsCheck(() => myPkg.main());
+ *
+ * This lives in `runspec-node/testing` (a test-only import) and swaps the
+ * parser's view of the identity check for the duration of the callback, so no
+ * production code path can bypass the gate — only code run inside `fn`.
+ * Everything else about the parse (validation, coercion, require-command) is
+ * unchanged. To *run* (not test) a `run_as` runnable by hand, set
+ * `enforce_run_as = "warn"` / `"off"` in the spec instead.
+ */
+export function withoutRunAsCheck<T>(fn: () => T): T {
+  const mutable = become as { verifyRunAsIdentity: typeof become.verifyRunAsIdentity };
+  const original = mutable.verifyRunAsIdentity;
+  mutable.verifyRunAsIdentity = () => null;
+  try {
+    return fn();
+  } finally {
+    mutable.verifyRunAsIdentity = original;
+  }
 }

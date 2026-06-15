@@ -135,6 +135,40 @@ the contract lives, not through the wiring harness. To **run** (not unit-test) a
 `"off"`) in `[config]` or on the runnable, or invoke it through the executor that
 escalates (`runspec serve` / `jump`, or `sudo -u <user>`).
 
+### Driving `main()` directly: `no_run_as_check()`
+
+The harness skips the gate only for parses it makes itself. A test that drives a
+runnable's `main()` directly (the [worked example](#worked-example-testing-a-main-with-real-branching-logic)
+below) is different: `main()` calls `runspec.parse()` *itself*, which is the real
+parse, so the gate fires there and a `run_as` runnable exits non-zero on your
+machine. Wrap the `main()` call in `no_run_as_check()` (Node:
+`withoutRunAsCheck(fn)`):
+
+```python
+from runspec.testing import no_run_as_check
+
+with no_run_as_check():
+    exit_code = my_pkg.main()
+```
+
+Or disable it for a whole module with an autouse fixture in `conftest.py`:
+
+```python
+import pytest
+from runspec.testing import no_run_as_check
+
+@pytest.fixture(autouse=True)
+def _no_run_as():
+    with no_run_as_check():
+        yield
+```
+
+It lives in `runspec.testing` (a test-only import) and patches only the parser's
+view of the identity check for the duration of the block — no production code
+path can bypass the gate. Importing a runnable's module and calling its plain
+functions directly (Layer 2 above) never touches `parse()`, so it needs none of
+this.
+
 ## Layer 2 — the work, mocking only the boundary
 
 Test the plain logic function directly and patch its single external call. The
@@ -259,6 +293,7 @@ from types import SimpleNamespace
 import pytest
 
 from runspec import errors
+from runspec.testing import no_run_as_check
 import static_data.main as main_mod        # <-- adjust to your module path
 
 SPEC = Path(main_mod.__file__).resolve().parent / "runspec.toml"   # or import from conftest
@@ -288,7 +323,11 @@ def drive_main(monkeypatch, argv, *, username="svc", password="pw", multi_return
         return multi_return
 
     monkeypatch.setattr(main_mod.actions, "multi", fake_multi)
-    return main_mod.main(), calls
+    # main() calls parse() itself, so if this runnable declared `run_as` the
+    # identity gate would fire here — wrap it so the test runs as you. (Harmless
+    # when there is no run_as; see "Driving main() directly" above.)
+    with no_run_as_check():
+        return main_mod.main(), calls
 
 
 def test_missing_credentials_raises(monkeypatch):
@@ -373,4 +412,14 @@ The API mirrors Python — `expectOk` / `expectExit({ code, contains })`,
 `process.exit(0)` on `--help` and *throws* on validation errors; the harness
 intercepts both so a `--help` check never kills your test runner. `runspec test`
 works the same in the Node pack, scoped to the venv-shaped folder's runnables.
+
+Like Python, the harness skips the `enforce_run_as` identity gate, and the
+`main()`-driven case has the same escape hatch — `withoutRunAsCheck(fn)` runs
+`fn` (your `main()` call) with the gate disabled, then restores it:
+
+```ts
+import { withoutRunAsCheck } from 'runspec-node/testing';
+
+const code = withoutRunAsCheck(() => myPkg.main());
+```
 

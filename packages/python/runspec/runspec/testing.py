@@ -38,7 +38,7 @@ from typing import Any
 import runspec
 from runspec.loader import load_raw
 
-__all__ = ["ParseHarness", "harness"]
+__all__ = ["ParseHarness", "harness", "no_run_as_check"]
 
 
 class ParseHarness:
@@ -331,6 +331,50 @@ class ParseHarness:
         the audit record is written to the log file only — never the console.
         """
         yield
+
+
+@contextlib.contextmanager
+def no_run_as_check() -> Iterator[None]:
+    """Disable the ``enforce_run_as`` identity gate for the duration of the block.
+
+    :class:`ParseHarness` already skips the gate, but only for parses it makes
+    itself. A test that drives a runnable's ``main()`` directly is different:
+    ``main()`` calls ``runspec.parse()`` *itself*, which is the real parse, so
+    the gate fires there and a ``run_as`` runnable exits non-zero on a
+    developer's machine. Wrap the ``main()`` call to skip it::
+
+        from runspec.testing import no_run_as_check
+
+        with no_run_as_check():
+            exit_code = my_pkg.main()
+
+    Or apply it to a whole module via an autouse fixture in ``conftest.py``::
+
+        @pytest.fixture(autouse=True)
+        def _no_run_as():
+            with no_run_as_check():
+                yield
+
+    This lives in ``runspec.testing`` (a test-only import) and patches the
+    parser's view of the identity check, so no production code path can bypass
+    the gate — only code run inside the ``with`` block. Everything else about
+    the parse (arg validation, coercion, ``require-command``) is unchanged. To
+    *run* (not test) a ``run_as`` runnable by hand, set ``enforce_run_as =
+    "warn"`` / ``"off"`` in the spec instead.
+    """
+    from runspec import parser
+
+    # parser binds `verify_run_as_identity` as its own module global (imported
+    # from runspec.become) and calls it by that name, so patching parser's
+    # namespace is what the gate actually reads. Going through __dict__ keeps the
+    # rebinding off the typed attribute surface.
+    ns = parser.__dict__
+    original = ns["verify_run_as_identity"]
+    ns["verify_run_as_identity"] = lambda _run_as_user: None
+    try:
+        yield
+    finally:
+        ns["verify_run_as_identity"] = original
 
 
 def harness(

@@ -1,4 +1,9 @@
-import { ParseHarness, harness } from '../src/testing';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { ParseHarness, harness, withoutRunAsCheck } from '../src/testing';
+import { parse } from '../src/parser';
+import { RunAsMismatch } from '../src/errors';
 
 // A spec with a required subcommand, a leaf with a required arg + a flag, and a
 // leaf with only optional args — enough to exercise the whole smoke() walk.
@@ -149,6 +154,32 @@ posixOnly('validation still runs even though run_as is skipped', () => {
   const harn = new ParseHarness({ scriptName: 'greet', toml: RUN_AS_SPEC });
   harn.expectExit([], { contains: 'name' }); // missing required
   harn.close();
+});
+
+// ── withoutRunAsCheck: for main()-driven tests ──────────────────────────────
+
+function writeRunAsSpec(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runspec-runas-'));
+  const cfg = path.join(dir, 'runspec.toml');
+  fs.writeFileSync(cfg, RUN_AS_SPEC, 'utf-8');
+  return cfg;
+}
+
+posixOnly('a real parse() trips the gate without the helper (the drive-main case)', () => {
+  const cfg = writeRunAsSpec();
+  expect(() => parse({ scriptName: 'greet', argv: ['--name', 'Ada'], configPath: cfg })).toThrow(RunAsMismatch);
+});
+
+posixOnly('withoutRunAsCheck lets the real parse through', () => {
+  const cfg = writeRunAsSpec();
+  const parsed = withoutRunAsCheck(() => parse({ scriptName: 'greet', argv: ['--name', 'Ada'], configPath: cfg }));
+  expect(String(parsed.name)).toBe('Ada');
+});
+
+posixOnly('the gate is restored after withoutRunAsCheck returns', () => {
+  const cfg = writeRunAsSpec();
+  withoutRunAsCheck(() => parse({ scriptName: 'greet', argv: ['--name', 'Ada'], configPath: cfg }));
+  expect(() => parse({ scriptName: 'greet', argv: ['--name', 'Ada'], configPath: cfg })).toThrow(RunAsMismatch);
 });
 
 // ── interception is fully restored ──────────────────────────────────────────

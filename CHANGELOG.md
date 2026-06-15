@@ -7,6 +7,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.37.2] / [node-0.33.2] — 2026-06-15
+
+### Added
+
+- **`runspec.testing.no_run_as_check()`** (Node: `withoutRunAsCheck(fn)`) — a
+  test-only escape hatch for the `enforce_run_as` identity gate, for tests that
+  drive a runnable's `main()` directly. `ParseHarness` (0.37.1) skips the gate,
+  but only for parses it makes itself; a `main()`-driven test calls
+  `runspec.parse()` *inside* `main()` — the real parse — so the gate still fired
+  there and a `run_as` runnable exited non-zero on a developer's machine. Wrap
+  the `main()` call in `no_run_as_check()` (or drop it in an autouse
+  `conftest.py` fixture) to skip the gate for that block. It lives in the
+  test-only `runspec.testing` module and patches only the parser's view of the
+  check, so no production code path can bypass the gate. Importing a runnable's
+  module and calling its plain functions directly never touches `parse()`, so it
+  needs none of this. See `docs/testing.md`.
+
 ## [0.37.1] / [node-0.33.1] — 2026-06-15
 
 ### Fixed

@@ -16,12 +16,16 @@ Two layers are demonstrated:
 
 from __future__ import annotations
 
+import os
 import textwrap
 from pathlib import Path
 
 import pytest
 
-from runspec.testing import ParseHarness, harness
+import runspec
+from runspec.testing import ParseHarness, harness, no_run_as_check
+
+posix_only = pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX uid model required")
 
 FIXTURES = Path(__file__).parent / "fixtures"
 STATIC_DATA = FIXTURES / "static_data.toml"
@@ -228,3 +232,38 @@ class TestRunAsIsNotEnforced:
         # Skipping the identity gate must not skip ordinary arg validation.
         with harness("greet", toml=RUN_AS_SPEC) as g:
             g.expect_exit([], contains="name")  # missing required
+
+
+class TestNoRunAsCheck:
+    """no_run_as_check() lets a main()-driven test — one that calls the real
+    runspec.parse() inside main() — skip the identity gate the harness can't
+    reach."""
+
+    def _spec(self, tmp_path: Path) -> Path:
+        cfg = tmp_path / "runspec.toml"
+        cfg.write_text(RUN_AS_SPEC, encoding="utf-8")
+        return cfg
+
+    @posix_only
+    def test_real_parse_trips_the_gate_without_the_helper(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        # This is what a drive_main() test hits: parse() run for real, gate live.
+        cfg = self._spec(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse("greet", argv=["--name", "Ada"], config_path=cfg)
+        assert exc.value.code == 1
+        assert "Refusing to run 'greet'" in capsys.readouterr().out
+
+    @posix_only
+    def test_helper_lets_the_real_parse_through(self, tmp_path: Path) -> None:
+        cfg = self._spec(tmp_path)
+        with no_run_as_check():
+            spec = runspec.parse("greet", argv=["--name", "Ada"], config_path=cfg)
+        assert str(spec.name) == "Ada"
+
+    def test_helper_restores_the_original_after_the_block(self) -> None:
+        from runspec import parser
+
+        original = parser.verify_run_as_identity
+        with no_run_as_check():
+            assert parser.verify_run_as_identity is not original  # patched inside
+        assert parser.verify_run_as_identity is original  # restored after
