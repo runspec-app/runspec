@@ -20,16 +20,16 @@ from typing import Any
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 # Salt namespaces the verify token so it can't be confused with another use of the
-# same session secret (e.g. the OIDC session cookie).
+# same session secret (the signed session cookie).
 _TOKEN_SALT = "console-room-email-verify"
 
 #: Default verify-link lifetime (seconds). The link only confirms an address, so a
 #: generous-but-bounded window is fine; single use is enforced by the DB nonce.
 DEFAULT_TOKEN_TTL = 1800  # 30 minutes
 
-#: Auth modes the web door supports. ``email-verify`` is this feature; ``oidc`` and
-#: ``dev`` are unchanged.
-AUTH_MODES = ("oidc", "email-verify", "dev")
+#: Auth modes the web door supports. ``email-verify`` is the authenticated door;
+#: ``dev`` is the unauthenticated local/test fallback (``?user=``).
+AUTH_MODES = ("email-verify", "dev")
 
 
 @dataclass(frozen=True)
@@ -53,18 +53,18 @@ def _env(name: str) -> str:
 
 
 def read_auth_mode() -> str:
-    """The web door's auth mode: ``"oidc"`` / ``"email-verify"`` / ``"dev"``.
+    """The web door's auth mode: ``"email-verify"`` (the authenticated door) or
+    ``"dev"`` (the unauthenticated local/test fallback).
 
-    Explicit via ``CONSOLE_ROOM_AUTH`` (``email_verify`` is accepted as an alias);
-    otherwise inferred for back-compat — ``oidc`` when ``CONSOLE_ROOM_OIDC_*`` is
-    configured, else ``dev``."""
+    Explicit via ``CONSOLE_ROOM_AUTH`` (``email_verify`` is accepted as an alias).
+    When the session secret is set we default to **email-verify** — email sign-up
+    is the only authenticated mode; otherwise ``dev``."""
     mode = _env("CONSOLE_ROOM_AUTH").lower().replace("_", "-")
     if mode in AUTH_MODES:
         return mode
-    # Back-compat: no explicit mode → infer from whether OIDC is configured.
-    from .web.auth import auth_from_env
-
-    return "oidc" if auth_from_env() is not None else "dev"
+    # No explicit mode → email-verify when it can run (a session secret is set),
+    # else dev. Email sign-up is the default authenticated door.
+    return "email-verify" if _env("CONSOLE_ROOM_SESSION_SECRET") else "dev"
 
 
 def email_verify_from_env() -> EmailVerifyConfig | None:
@@ -107,6 +107,22 @@ def domain_allowed(email: str, queue_email: str) -> bool:
 
 
 # ── verify token (signed, TTL; single use is DB-enforced via the nonce) ───────
+
+
+def make_team_slug(name: str) -> str:
+    """A stable, URL-safe slug for a team ``name``: lowercased, non-alphanumerics
+    collapsed to single hyphens, trimmed. ``""`` if nothing usable remains (the
+    caller rejects an empty slug). E.g. ``"Team One!"`` → ``"team-one"``."""
+    out: list[str] = []
+    prev_hyphen = False
+    for ch in (name or "").strip().lower():
+        if ch.isascii() and ch.isalnum():
+            out.append(ch)
+            prev_hyphen = False
+        elif not prev_hyphen and out:
+            out.append("-")
+            prev_hyphen = True
+    return "".join(out).strip("-")
 
 
 def make_nonce() -> str:
@@ -162,3 +178,14 @@ class Member:
     queue: str
     name: str
     verified_at: float
+
+
+@dataclass(frozen=True)
+class Team:
+    """A customer team/department a visitor belongs to — chosen at sign-up and shown
+    to the operator. ``slug`` is the stable id (used in URLs / storage); ``name`` is
+    the human label. Not a queue or an operator partition — just a tag on the visitor
+    (see docs/design/teams-and-email-monitoring.md §3)."""
+
+    slug: str
+    name: str

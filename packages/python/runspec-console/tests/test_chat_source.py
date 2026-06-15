@@ -172,6 +172,29 @@ def test_start_sends_hello_first_with_identity():
     assert first_presence > 0
 
 
+def test_hello_carries_mailbox_when_configured():
+    transport = FakeTransport()
+    src = ChatSource(
+        room="ops", user="console-1", mailbox="helpdesk@corp.com", transport=transport
+    )
+    src.start(lambda ev: None)
+    src.stop()
+    assert transport.sent[0] == {
+        "type": "hello",
+        "room": "ops",
+        "user": "console-1",
+        "mailbox": "helpdesk@corp.com",
+    }
+
+
+def test_hello_omits_mailbox_when_blank():
+    transport = FakeTransport()
+    src = ChatSource(room="ops", user="console-1", transport=transport)
+    src.start(lambda ev: None)
+    src.stop()
+    assert "mailbox" not in transport.sent[0]
+
+
 class _BlockingTransport:
     """recv() blocks until close() — to exercise a clean stop() (no on_closed)."""
 

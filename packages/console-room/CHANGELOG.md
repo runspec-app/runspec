@@ -4,7 +4,40 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
-## [0.19.0]
+## [0.22.0]
+
+### Added
+- **Teams (customer departments) in the enrollment DB.** New `teams` table
+  (`slug`, `name`) + CRUD on `EnrollmentStore` (`list_teams` / `get_team` /
+  `add_team` upsert / `remove_team`), **seeded with a protected `Default`** so the
+  sign-up team list is never empty (Default can't be removed). A `Team` dataclass
+  and a pure `make_team_slug()` helper land in `signup.py`. This is the foundation
+  for the single-queue collapse: a visitor picks a **team** (not a queue) at
+  sign-up, and the team rides onto the operator's view. Not yet wired into the
+  sign-up flow — that's the next slice. See docs/design/teams-and-email-monitoring.md.
+
+## [0.21.0]
+
+### Added
+- **Mailbox tie — one email = one room.** New `--mailbox` arg (and
+  `CONSOLE_ROOM_MAILBOX`) names the helpdesk mailbox a room serves. When set, the
+  console NDJSON door **only accepts consoles configured for the same mailbox**: the
+  `hello` handshake now carries the console's `[mailbox]` address (`Hello.mailbox`),
+  and a connection whose mailbox doesn't match (or that sent none) is refused.
+  Matching is case-insensitive; an empty room mailbox keeps the door open (dev).
+
+## [0.20.0]
+
+### Removed
+- **OIDC auth — removed entirely.** Email sign-up (`CONSOLE_ROOM_AUTH=email-verify`)
+  is now the **only** authenticated browser door; `dev` mode (`?user=`) remains as
+  the unauthenticated local/test fallback. Dropped `web/auth.py`'s `AuthConfig` /
+  `auth_from_env` / `identity_from_userinfo` / `build_oauth`, the `/login` +
+  `/auth/callback` + `/logout` routes and the `auth=` parameter to `create_app`,
+  the `oidc` auth mode, and the `authlib` dependency. The shared session helpers
+  (`session_user` / `session_name`) stay. `read_auth_mode()` now **defaults to
+  email-verify** when a session secret is set (else `dev`) — no OIDC inference. A
+  future OIDC need is a separate build, not carried as parity here.
 
 ### Added
 - **Email-verify outbox: periodic expiry sweep.** The web app now runs a background

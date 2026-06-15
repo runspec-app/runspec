@@ -1,0 +1,135 @@
+# Email helpdesk — single queue, email sign-up only (v1)
+
+> **Status: design locked, building.** Supersedes the multi-queue / teams-as-queues
+> idea, the `room_queue*`-on-host model (`helpdesk-rooms.md` / `email-queue-signup.md`),
+> and the OIDC auth path. The single-mailbox slice (below, §2) is **done**; the
+> rest is the v1 build.
+
+---
+
+## 1. The shape — one helpdesk per room
+
+One console family = **one email = one runspec-room instance = one helpdesk = one
+queue.** A different email means a different room instance. Several **operator
+consoles** (a shared pool) connect to the one room; **L1/L2 is a skill tier within
+that pool**, relevant only to *who takes/escalates a ticket* — not a queue split.
+
+The earlier "teams = queues" idea is dropped: operators all support every customer
+team, so team never partitions operators or the catalogue. **A team is a property
+of the *visitor*** (their department), not a queue.
+
+---
+
+## 2. Email monitoring — single mailbox (**done**)
+
+One `[mailbox]` the Outlook source monitors — `address` (blank = default account),
+optional `folder`, optional `label`. A new item → a `new_mail` event → the trigger
+engine. The mailbox address doubles as the **helpdesk identity / sign-up
+verify-from**.
+
+```toml
+[mailbox]
+address = "helpdesk@corp.com"   # blank/absent → the default account
+folder  = "Tickets/Open"        # blank/absent/"inbox" → the Inbox
+label   = "Helpdesk"            # optional display label
+```
+
+Implemented: `config.read_mailbox()` / `write_mailbox()`, bridge `get_mailbox` /
+`save_mailbox`, the Settings → Triggers tab, Outlook source wired to the one mailbox.
+
+---
+
+## 3. Teams = a visitor attribute (v1-with-tag)
+
+- A **team** is the customer group/department a visitor belongs to (e.g. Team1,
+  Team2, Team3). **Knowing a visitor's team is mandatory** — it rides on every
+  operator view (card, inbox, thread).
+- The **team list** lives in the runspec-room DB (so `/signup` can serve it),
+  managed from the operator consoles, **seeded with a `Default` team** so the list
+  is never empty.
+- A team is just `{ slug, name }` — **no per-team catalogue, no per-team operators**
+  in v1. (Per-team catalogues / routing are a *maybe later*.)
+- **v2:** an operator can **reassign a visitor's team** (fix a mis-tag). The user
+  record already carries `team`, so reassign just edits it.
+
+---
+
+## 4. Sign-up — email-verify only
+
+- **runspec-room is email-verify only. OIDC is removed** (see §6). Email-verify is
+  *the* authenticated door; the unauthenticated **dev mode** (`?user=`) stays only
+  as the no-IdP local/test affordance.
+- Flow: `/signup` → company email (domain-gated by the mailbox's domain) + full
+  name + **team** (dropdown from the DB list) → verify link → joins the one queue.
+- **Operator approves each sign-up** (per-request Accept). The domain allowlist
+  gates *who may ask*; the operator Accept *authorizes each one*. v1 is "open to all
+  on the domain" — the operator is the gate.
+
+---
+
+## 5. Catalogue + assignment
+
+- **One shared catalogue** for the helpdesk (the union of on-shift operators'
+  self-service runnables — the existing `discoverable`/LiveCatalog over the single
+  namespace). Not per-team in v1.
+- **Auto-assign = round-robin** across on-shift operators. v1 includes
+  **return-to-queue** (an operator releases a ticket back to the pool → re-page) as
+  a crude escalation.
+- **v2:** reassign/escalate a ticket to a specific operator or tier (the request
+  already carries an `assignee`); skill-based routing later still.
+
+---
+
+## 6. Email-only room — remove OIDC
+
+Delete the OIDC path wholesale (no users yet; parity isn't worth the maintenance /
+security-review cost — a future OIDC need is built separately):
+
+- `web/auth.py`: drop `AuthConfig`, `auth_from_env`, `build_oauth`, `pick_identity`
+  (OIDC client). **Keep** the shared session helpers (`session_user`,
+  `verified_name`, cookie/session plumbing) — both email-verify and dev use them.
+- `web/app.py`: drop the `auth` param to `create_app`, the `oauth` registry, and
+  the `/login` + `/auth/callback` routes. Modes collapse to **email-verify** (gated)
+  or **dev** (ungated).
+- `server.py` / `signup.py`: `read_auth_mode` returns `email-verify` / `dev` only;
+  drop the `oidc` branch + inference.
+- Remove OIDC env docs (`CONSOLE_ROOM_OIDC_*`), tests, and references.
+
+---
+
+## 7. Build plan (v1)
+
+- **A. Plan doc** — this. ✅
+- **B. Single-mailbox monitoring** — ✅ (§2).
+- **C. Email-only room** — remove OIDC (§6); email-verify is the sole auth door.
+  Tests + docs.
+- **D. Single-queue helpdesk + team tag**
+  - Room DB: `teams` table (slug, name), seeded with `Default`; CRUD helpers.
+  - Sign-up: team dropdown from the DB; the visitor's `team` rides onto the request
+    / operator card / thread; operator **Accept** per sign-up.
+  - Collapse the room to **one helpdesk queue** (drop the multi-queue
+    `QueueDirectory`/advertise-per-host-`room_queue` machinery); host carries only
+    `room_port` + transport.
+  - Console: connect to the one room (derived from the `[mailbox]` / a `[room]`
+    config); the operator inbox shows each visitor's team; a Teams-management UI
+    (the small department list).
+- **E. Docs** — reconcile `helpdesk-rooms.md` + `email-queue-signup.md` to single
+  queue + email-only + team-as-tag.
+
+**v2 backlog:** reassign a visitor's team; reassign/escalate a ticket (L1→L2);
+per-team catalogues / skill-based routing.
+
+---
+
+## 8. Open questions (for step D)
+
+1. **Team list management UI** — where in the console (a small Settings list?), and
+   what authorizes a team add/remove frame over the room transport (any connected
+   operator, gated by the SSH-tunnel trust)?
+2. **Where the room learns its single-queue identity** — *resolved:* the room takes
+   a `--mailbox` / `CONSOLE_ROOM_MAILBOX` and only accepts consoles whose `[mailbox]`
+   address matches (the `hello` handshake carries it). One email = one room. (room
+   0.21.0 / console 0.64.0.)
+3. **Team on the email channel** — a `new_mail`-originated request has no signed-up
+   visitor team; does it default to `Default`, or stay untagged until an operator
+   sets it?

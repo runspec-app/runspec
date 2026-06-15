@@ -86,16 +86,11 @@ def test_email_verify_requires_public_url():
         create_app(hub, email_verify=_config(public_url=""))
 
 
-def test_oidc_and_email_verify_are_mutually_exclusive():
-    from console_room.web.auth import AuthConfig
-
-    enrollment = EnrollmentStore(":memory:")
-    hub = Hub(FakeStore(), enrollment=enrollment, email_verify=_config())
-    auth = AuthConfig(
-        "c", "s", "secret", "https://idp/.well-known/openid-configuration"
-    )
+def test_email_verify_requires_enrollment_hub():
+    # email_verify mode needs a Hub built with the enrollment store + config.
+    hub = Hub(FakeStore())  # no enrollment → not email_verify_enabled
     with pytest.raises(ValueError):
-        create_app(hub, auth=auth, email_verify=_config())
+        create_app(hub, email_verify=_config())
 
 
 # ── /queues + /signup form ────────────────────────────────────────────────────

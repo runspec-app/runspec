@@ -2635,6 +2635,26 @@ class Bridge:
 
         return _normalize_path(str(config_path().parent))
 
+    def get_mailbox(self) -> dict[str, str] | None:
+        """The single ``[mailbox]`` the Outlook source monitors (Settings →
+        Triggers): ``{address, folder, label}``, or ``None`` when unconfigured."""
+        from .config import read_mailbox
+
+        return read_mailbox()
+
+    def save_mailbox(self, mailbox: dict[str, str] | None) -> None:
+        """Replace (or clear, when ``mailbox`` is falsy) the ``[mailbox]`` table and
+        restart the trigger engine so the Outlook source re-resolves the watched
+        folder. Persisting always succeeds; a restart failure (e.g. no Outlook on
+        this machine) is logged, not surfaced, so the config still saves."""
+        from .config import write_mailbox
+
+        write_mailbox(mailbox or None)
+        try:
+            self.restart_triggers()
+        except Exception:
+            logger.debug("restart_triggers after mailbox save failed", exc_info=True)
+
     # ── version / docs ─────────────────────────────────────────────────────────
 
     def app_version(self) -> str:
@@ -5448,7 +5468,7 @@ class Bridge:
                 return
 
         from . import sources  # noqa: F401 — registers built-in event sources
-        from .config import read_mailbox_watches, read_triggers, trigger_file_error
+        from .config import read_mailbox, read_triggers, trigger_file_error
         from .trigger_runner import make_handler
         from .triggers import TriggerEngine, load_triggers
 
@@ -5460,11 +5480,11 @@ class Bridge:
         triggers, errors = load_triggers(read_triggers())
         for err in errors:
             logger.warning("trigger config: %s", err)
-        # A configured email folder-watch needs the Outlook source running even
-        # with zero triggers (new_mail still flows in for any future trigger), so
-        # don't bail on zero triggers when a watch is configured.
-        watches = read_mailbox_watches()
-        if not triggers and not watches:
+        # A configured mailbox needs the Outlook source running even with zero
+        # triggers (new_mail still flows in for any future trigger), so don't bail
+        # on zero triggers when a mailbox is configured.
+        mailbox = read_mailbox()
+        if not triggers and mailbox is None:
             return
         handler = make_handler(
             _BridgeTriggerOps(self),
@@ -5475,9 +5495,9 @@ class Bridge:
             draft_available=True,
         )
         # Start the Outlook source even without a mail/reminder trigger when a
-        # folder watch is configured, so its new_mail events flow in (the email
-        # folder-watch channel; docs/design/email-folder-watch.md).
-        always_start = {"outlook"} if watches else set()
+        # mailbox is configured, so its new_mail events flow in (the email channel;
+        # docs/design/teams-and-email-monitoring.md).
+        always_start = {"outlook"} if mailbox is not None else set()
         engine = TriggerEngine(
             triggers,
             handler=handler,
@@ -5676,6 +5696,12 @@ class Bridge:
         # A spec with a queue is helpdesk agent mode: subscribe to the queue
         # namespace (the spec's room key IS the namespace) instead of one room.
         queue = str(spec.get("queue") or "")
+        # This console's helpdesk identity — the configured [mailbox] address. The
+        # room ties one mailbox to one room and refuses a console that doesn't match.
+        from .config import read_mailbox
+
+        mb = read_mailbox()
+        mailbox = mb["address"] if mb else ""
         backoff = self._CHAT_BACKOFF_START
         while not self._chat_stop.is_set():
             closed = threading.Event()
@@ -5686,6 +5712,7 @@ class Bridge:
                 queue=queue,
                 queue_email=str(spec.get("queue_email") or ""),
                 queue_label=str(spec.get("queue_label") or ""),
+                mailbox=mailbox,
                 transport_factory=factory,
                 on_closed=closed.set,
             )

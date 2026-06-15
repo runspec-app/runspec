@@ -7,7 +7,7 @@ its own localhost port, so one process serves both. ``--ndjson-only`` runs just
 the S1 console door on the stdlib asyncio path (no web dependencies) — handy for a
 minimal deploy or an environment without Starlette/uvicorn.
 
-OIDC + TLS (S3) layer onto the web mode later. Config is env-first with CLI
+TLS layers onto the web mode later. Config is env-first with CLI
 overrides. See docs/design/console-room-server.md §5/§6.
 """
 
@@ -34,11 +34,16 @@ DEFAULT_ASSIGNMENT_TIMEOUT = 300.0
 
 
 async def run_ndjson_only(
-    host: str, port: int, db_path: str, *, assignment_timeout: float = 300.0
+    host: str,
+    port: int,
+    db_path: str,
+    *,
+    assignment_timeout: float = 300.0,
+    mailbox: str = "",
 ) -> None:
     """Serve only the console NDJSON door (S1 path, stdlib only)."""
     store = TranscriptStore(db_path)
-    hub = Hub(store, assignment_timeout=assignment_timeout)
+    hub = Hub(store, assignment_timeout=assignment_timeout, mailbox=mailbox)
     server = await serve_ndjson(hub, host, port)
     try:
         async with server:
@@ -70,28 +75,25 @@ def run_web(
     tls_cert: str | None = None,
     tls_key: str | None = None,
     assignment_timeout: float = 300.0,
+    mailbox: str = "",
 ) -> None:
     """Serve the browser WebSocket door (and, via the app lifespan, the console
     NDJSON door) under uvicorn. Imports the web stack lazily so ``--ndjson-only``
-    works without it installed. The auth mode is ``CONSOLE_ROOM_AUTH`` (``oidc`` /
-    ``email-verify`` / ``dev``), inferred for back-compat when unset — OIDC if
-    ``CONSOLE_ROOM_OIDC_*`` is set, else dev. TLS when a cert + key are given
-    (uvicorn is proxy-header-aware, so it also works behind a TLS-terminating
-    reverse proxy)."""
+    works without it installed. The auth mode is ``CONSOLE_ROOM_AUTH``
+    (``email-verify`` / ``dev``); it defaults to **email-verify** when a session
+    secret is set, else dev — email sign-up is the only authenticated door. TLS when
+    a cert + key are given (uvicorn is proxy-header-aware, so it also works behind a
+    TLS-terminating reverse proxy)."""
     import uvicorn
 
     from .enrollment_store import EnrollmentStore
     from .signup import email_verify_from_env, read_auth_mode
     from .web.app import create_app
-    from .web.auth import auth_from_env
 
     mode = read_auth_mode()
-    auth = None
     email_verify = None
     enrollment: EnrollmentStore | None = None
-    if mode == "oidc":
-        auth = auth_from_env()
-    elif mode == "email-verify":
+    if mode == "email-verify":
         email_verify = email_verify_from_env()
         if email_verify is None:
             raise SystemExit(
@@ -113,7 +115,7 @@ def run_web(
             "connects). Verify links use %s.",
             email_verify.public_url,
         )
-    if auth is None and email_verify is None:
+    if email_verify is None:
         logger.warning(
             "room: no auth configured — running the browser door in DEV mode with "
             "NO login. Do not expose this publicly."
@@ -125,11 +127,11 @@ def run_web(
         assignment_timeout=assignment_timeout,
         enrollment=enrollment,
         email_verify=email_verify,
+        mailbox=mailbox,
     )
     app = create_app(
         hub,
         ndjson_addr=(ndjson_host, ndjson_port),
-        auth=auth,
         email_verify=email_verify,
     )
     try:
@@ -201,7 +203,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=_env("CONSOLE_ROOM_PUBLIC_URL", ""),
         help="the room's externally-reachable base URL (e.g. https://rooms.corp.com)"
         " — required for CONSOLE_ROOM_AUTH=email-verify, where the emailed verify "
-        "links must point at it. Also used as the OIDC redirect base.",
+        "links must point at it.",
     )
     parser.add_argument(
         "--tls-cert",
@@ -213,6 +215,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--tls-key",
         default=_env("CONSOLE_ROOM_TLS_KEY", "") or None,
         help="path to the TLS private key (PEM)",
+    )
+    parser.add_argument(
+        "--mailbox",
+        default=_env("CONSOLE_ROOM_MAILBOX", ""),
+        help="the helpdesk mailbox this room serves (e.g. helpdesk@corp.com). When "
+        "set, only consoles configured for the same [mailbox] may connect — one "
+        "email = one room. Leave empty to accept any console (dev).",
     )
     parser.add_argument(
         "--ndjson-only",
@@ -247,6 +256,7 @@ def main(argv: list[str] | None = None) -> None:
                     args.ndjson_port,
                     args.db,
                     assignment_timeout=args.assignment_timeout,
+                    mailbox=args.mailbox,
                 )
             )
         else:
@@ -259,6 +269,7 @@ def main(argv: list[str] | None = None) -> None:
                 tls_cert=args.tls_cert,
                 tls_key=args.tls_key,
                 assignment_timeout=args.assignment_timeout,
+                mailbox=args.mailbox,
             )
     except KeyboardInterrupt:
         logger.info("room: shutting down")

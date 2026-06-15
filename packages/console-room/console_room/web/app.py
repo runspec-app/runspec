@@ -1,6 +1,6 @@
 """
 web/app.py — the Starlette app: the browser WebSocket door + the static frontend,
-optionally gated by OIDC login.
+optionally gated by the email-verify sign-up door.
 
 Thin by design. It adapts a Starlette ``WebSocket`` to the ``WebSocketLike`` seam
 ``BrowserConnection`` expects, serves the vanilla static frontend, and exposes a
@@ -8,16 +8,14 @@ health check. When an ``ndjson_addr`` is given, the app's lifespan also runs the
 console NDJSON listener on the same event loop, so one process serves both front
 doors.
 
-**Auth.** Three mutually-exclusive identity modes, all sharing one
-``session_user`` gate on the app shell + WebSocket. With an :class:`AuthConfig`
-the app mounts the OIDC routes (``/login`` → IdP, ``/auth/callback`` → session,
-``/logout``). With an :class:`EmailVerifyConfig` (+ an
-:class:`~console_room.enrollment_store.EnrollmentStore`) it mounts the email-verify
-sign-up door (``/signup`` / ``/queues`` / ``/verify``) — an internal employee
-verifies a company email to join a queue (docs/design/email-queue-signup.md).
-Either way ``SessionMiddleware`` holds the signed identity. With neither, the app
-runs in **dev mode**: identity comes from the ``?user=`` query param and nothing is
-gated (what keeps local dev and the tests runnable without an IdP). See
+**Auth.** Two identity modes, sharing one ``session_user`` gate on the app shell +
+WebSocket. With an :class:`EmailVerifyConfig` (+ an
+:class:`~console_room.enrollment_store.EnrollmentStore`) the app mounts the
+email-verify sign-up door (``/signup`` / ``/queues`` / ``/verify``) — an internal
+employee verifies a company email to join a queue (docs/design/email-queue-signup.md);
+``SessionMiddleware`` then holds the signed identity. With neither, the app runs in
+**dev mode**: identity comes from the ``?user=`` query param and nothing is gated
+(what keeps local dev and the tests runnable). See
 docs/design/console-room-server.md §1/§2/§6.
 """
 
@@ -37,7 +35,6 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import (
     FileResponse,
     JSONResponse,
-    PlainTextResponse,
     RedirectResponse,
     Response,
 )
@@ -49,13 +46,7 @@ from ..conversation import conversation_room, queue_namespace, valid_token
 from ..hub import Hub
 from ..ndjson_server import serve_ndjson
 from ..signup import EmailVerifyConfig
-from .auth import (
-    AuthConfig,
-    build_oauth,
-    identity_from_userinfo,
-    session_name,
-    session_user,
-)
+from .auth import session_name, session_user
 from .connection import BrowserConnection
 from .signup_routes import signup_routes
 
@@ -122,22 +113,18 @@ def create_app(
     hub: Hub,
     *,
     ndjson_addr: tuple[str, int] | None = None,
-    auth: AuthConfig | None = None,
     email_verify: EmailVerifyConfig | None = None,
 ) -> Starlette:
     """Build the Starlette app around ``hub``. With ``ndjson_addr=(host, port)``
     the lifespan also serves the console NDJSON door on the same loop.
 
-    Identity comes from one of three modes (mutually exclusive): ``auth`` →
-    OIDC login; ``email_verify`` → the email-verify sign-up door (``/signup`` /
-    ``/verify``), which requires ``hub`` to have been built with its enrollment
-    store + config (``hub.email_verify_enabled``) and a ``public_url`` (the verify
-    links must point somewhere reachable); neither → dev mode (``?user=`` query
-    param, nothing gated). Both authenticated modes set a signed session cookie and
-    gate the app shell + WebSocket on it identically."""
+    Identity comes from one of two modes: ``email_verify`` → the email-verify
+    sign-up door (``/signup`` / ``/verify``), which requires ``hub`` to have been
+    built with its enrollment store + config (``hub.email_verify_enabled``) and a
+    ``public_url`` (the verify links must point somewhere reachable); neither → dev
+    mode (``?user=`` query param, nothing gated). The authenticated mode sets a
+    signed session cookie and gates the app shell + WebSocket on it."""
     if email_verify is not None:
-        if auth is not None:
-            raise ValueError("auth (OIDC) and email_verify are mutually exclusive")
         if not hub.email_verify_enabled:
             raise ValueError(
                 "email_verify mode requires a Hub built with enrollment + email_verify"
@@ -148,26 +135,11 @@ def create_app(
                 "users must point at the room's externally-reachable base URL"
             )
 
-    oauth = build_oauth(auth) if auth is not None else None
-    # One gate covers both authenticated modes; the secret/cookie flags come from
-    # whichever config is active.
-    gated = auth is not None or email_verify is not None
-    session_secret = (
-        auth.session_secret
-        if auth is not None
-        else email_verify.session_secret
-        if email_verify is not None
-        else ""
-    )
-    secure_cookies = (
-        auth.secure_cookies
-        if auth is not None
-        else email_verify.secure_cookies
-        if email_verify is not None
-        else False
-    )
-    # Where an unauthenticated visitor is sent: the IdP (OIDC) or the sign-up page.
-    login_path = "/login" if auth is not None else "/signup"
+    gated = email_verify is not None
+    session_secret = email_verify.session_secret if email_verify is not None else ""
+    secure_cookies = email_verify.secure_cookies if email_verify is not None else False
+    # Where an unauthenticated visitor is sent (email-verify mode).
+    login_path = "/signup"
 
     # ── WebSocket door ────────────────────────────────────────────────────────
     async def ws_room(websocket: WebSocket) -> None:
@@ -219,7 +191,7 @@ def create_app(
         logger.debug("room: WS accepted — user=%r room=%r", user, room)
         await websocket.accept()
         # The verified display name (email-verify) rides onto the operator card;
-        # blank in dev/OIDC mode (no session name) — the card falls back to the id.
+        # blank in dev mode (no session name) — the card falls back to the id.
         display_name = session_name(websocket) if gated else ""
         await BrowserConnection(
             _StarletteWS(websocket), user=user, room=room, display_name=display_name
@@ -253,30 +225,6 @@ def create_app(
     async def favicon(_request: Any) -> Response:
         return Response(status_code=204)  # no icon — silence the browser's 404
 
-    # ── OIDC routes (auth mode only) ──────────────────────────────────────────
-    async def login(request: Any) -> Any:
-        assert auth is not None and oauth is not None
-        redirect_uri = auth.redirect_uri(str(request.base_url))
-        return await oauth.oidc.authorize_redirect(request, redirect_uri)
-
-    async def auth_callback(request: Any) -> Any:
-        assert oauth is not None
-        try:
-            token = await oauth.oidc.authorize_access_token(request)
-        except Exception as exc:  # noqa: BLE001 — surface a clean 401, don't 500
-            logger.warning("room: OIDC callback failed: %s", exc)
-            return PlainTextResponse("login failed", status_code=401)
-        user = identity_from_userinfo(token.get("userinfo"))
-        if not user:
-            return PlainTextResponse("login failed: no identity claim", status_code=401)
-        request.session["user"] = user
-        logger.info("room: %r logged in", user)
-        return RedirectResponse(url="/", status_code=303)
-
-    async def logout(request: Any) -> Any:
-        request.session.pop("user", None)
-        return RedirectResponse(url="/", status_code=303)
-
     # ── lifespan: also run the console NDJSON door ────────────────────────────
     @asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
@@ -309,12 +257,6 @@ def create_app(
         Route("/catalog", catalog, name="catalog"),
         Route("/", index, name="index"),
     ]
-    if auth is not None:
-        routes += [
-            Route("/login", login, name="login"),
-            Route("/auth/callback", auth_callback, name="auth_callback"),
-            Route("/logout", logout, name="logout"),
-        ]
     if email_verify is not None:
         routes += signup_routes(hub)
     if FRONTEND_DIR.is_dir():
@@ -337,6 +279,4 @@ def create_app(
             )
         )
 
-    app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
-    app.state.oauth = oauth  # exposed so tests can stub the token exchange
-    return app
+    return Starlette(routes=routes, middleware=middleware, lifespan=lifespan)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential } from '../bridge'
+import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Alert } from 'antd'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined } from '@ant-design/icons'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 
@@ -1237,11 +1237,118 @@ function CredentialsTab() {
   )
 }
 
+// ── Triggers tab (monitored mailbox) ────────────────────────────────────────
+
+function MailboxesTab() {
+  const [form] = Form.useForm<Mailbox>()
+  // Whether a [mailbox] is configured at all (the master switch). Off → save null.
+  const [enabled, setEnabled] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [configDir, setConfigDir] = useState<string>('')
+
+  // Live address — drives the shared-mailbox warning (a non-default address).
+  const address = Form.useWatch('address', form)
+
+  useEffect(() => {
+    bridge.get_mailbox().then(mb => {
+      setEnabled(mb !== null)
+      form.setFieldsValue({
+        address: mb?.address ?? '',
+        folder: mb?.folder ?? '',
+        label: mb?.label ?? '',
+      })
+    }).catch(console.error)
+  }, [form])
+  useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      if (!enabled) {
+        await bridge.save_mailbox(null)
+      } else {
+        const v = form.getFieldsValue()
+        await bridge.save_mailbox({
+          address: (v.address ?? '').trim(),
+          folder: (v.folder ?? '').trim() || 'Inbox',
+          label: (v.label ?? '').trim(),
+        })
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+        Monitor one Outlook inbox for the <code>new_mail</code> trigger source. Trigger
+        rules &mdash; what to do with matched mail &mdash; live in <code>runspec_triggers.toml</code>.
+      </Text>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <Switch size="small" checked={enabled} onChange={setEnabled} />
+        <MailOutlined style={{ color: '#666' }} />
+        <span style={{ fontSize: 13 }}>Monitor a mailbox</span>
+      </div>
+
+      {enabled && (
+        <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
+          <Form.Item
+            name="address"
+            label="Mailbox email address"
+            help="The account or shared mailbox to monitor. Leave blank for your own default account."
+          >
+            <Input placeholder="helpdesk@corp.com (blank = my mailbox)" style={{ fontFamily: 'monospace' }} />
+          </Form.Item>
+          <Form.Item
+            name="folder"
+            label="Folder (optional)"
+            help={'A folder path under that mailbox, /-separated. Blank or "Inbox" monitors the Inbox.'}
+          >
+            <Input placeholder="Inbox, or e.g. Tickets/Open" style={{ fontFamily: 'monospace' }} />
+          </Form.Item>
+          <Form.Item name="label" label="Label (optional)" help="A display name for this inbox.">
+            <Input placeholder="e.g. Helpdesk" />
+          </Form.Item>
+          {!!(address ?? '').trim() && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 10 }}
+              message="Shared mailbox: no cross-console coordination"
+              description={
+                <span style={{ fontSize: 12 }}>
+                  If another console monitors this same mailbox + folder, both react to
+                  every new mail (duplicate replies / runs). Monitor one folder from one
+                  console, or let Outlook rules sort each operator's mail into a personal
+                  folder.
+                </span>
+              }
+            />
+          )}
+        </Form>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+        <Button type="primary" size="small" loading={saving} onClick={save}>Save</Button>
+        {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
+      </div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+        Saved to <code>config.toml</code> in <code>{configDir || '%APPDATA%/runspec-console'}</code>. Changes restart the trigger engine.
+      </Text>
+    </div>
+  )
+}
+
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
   return (
-    <Drawer title="Settings" placement="right" width={480} open={open} onClose={onClose}>
+    <Drawer title="Settings" placement="right" width={640} open={open} onClose={onClose}>
       <Tabs
         size="small"
         items={[
@@ -1250,6 +1357,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
+          { key: 'triggers',  label: 'Triggers',   children: <MailboxesTab /> },
         ]}
       />
     </Drawer>

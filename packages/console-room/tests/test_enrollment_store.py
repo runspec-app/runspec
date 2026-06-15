@@ -7,7 +7,7 @@ acks/release, expiry sweep, member upsert, and on-disk durability.
 from __future__ import annotations
 
 from console_room.enrollment_store import EnrollmentStore
-from console_room.signup import Member, PendingSignup
+from console_room.signup import Member, PendingSignup, Team
 
 
 def _pending(nonce="n1", email="jane@corp.com", queue="it-support", created_at=100.0):
@@ -177,4 +177,54 @@ def test_durable_across_reopen(tmp_path):
     s2 = EnrollmentStore(db)
     assert s2.is_member("jane@corp.com", "it-support") is True
     assert s2.get_pending("p1") is not None
+    s2.close()
+
+
+# ── teams (customer departments) ──────────────────────────────────────────────
+
+
+def test_default_team_seeded():
+    s = EnrollmentStore(":memory:")
+    teams = s.list_teams()
+    assert [t.slug for t in teams] == ["default"]
+    assert teams[0].name == "Default"
+
+
+def test_add_list_and_order():
+    s = EnrollmentStore(":memory:")
+    s.add_team(Team(slug="team-one", name="Team One"))
+    s.add_team(Team(slug="team-two", name="Team Two"))
+    # Default (seeded first) sorts first, then by creation order.
+    assert [t.slug for t in s.list_teams()] == ["default", "team-one", "team-two"]
+
+
+def test_add_team_upsert_renames():
+    s = EnrollmentStore(":memory:")
+    s.add_team(Team(slug="hr", name="HR"))
+    s.add_team(Team(slug="hr", name="Human Resources"))
+    assert s.get_team("hr") == Team(slug="hr", name="Human Resources")
+    assert [t.slug for t in s.list_teams()] == ["default", "hr"]  # no duplicate
+
+
+def test_remove_team():
+    s = EnrollmentStore(":memory:")
+    s.add_team(Team(slug="hr", name="HR"))
+    assert s.remove_team("hr") is True
+    assert s.get_team("hr") is None
+    assert s.remove_team("nope") is False  # nonexistent
+
+
+def test_default_team_is_protected():
+    s = EnrollmentStore(":memory:")
+    assert s.remove_team("default") is False
+    assert [t.slug for t in s.list_teams()] == ["default"]  # still there
+
+
+def test_teams_persist_on_disk(tmp_path):
+    db = str(tmp_path / "enroll.db")
+    s1 = EnrollmentStore(db)
+    s1.add_team(Team(slug="ops", name="Ops"))
+    s1.close()
+    s2 = EnrollmentStore(db)
+    assert [t.slug for t in s2.list_teams()] == ["default", "ops"]
     s2.close()

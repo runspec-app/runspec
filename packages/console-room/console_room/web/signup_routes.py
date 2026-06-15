@@ -8,7 +8,7 @@ full name, and the hub writes a **pending signup** row and dispatches a verify m
 *via a connected console* (`Hub.submit_signup`; left in the durable outbox when no
 console for the queue is connected). Clicking the signed, single-use verify link
 enrolls them: `Hub.verify_token` burns the nonce + persists the member, and this
-route sets the same signed session cookie the OIDC door uses — so the existing
+route sets the signed session cookie the app gates on — so the existing
 ``session_user`` gate on ``/ws`` and ``/catalog`` needs no change.
 
 The routes are thin: identity + the outbox state machine live on the hub (so the

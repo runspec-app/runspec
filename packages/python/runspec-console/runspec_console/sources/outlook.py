@@ -210,11 +210,11 @@ def _resolve_watch(namespace: Any, mailbox: str, folder: str) -> Any:
 class OutlookSource:
     """Forward-only Outlook event source (folder-watch). Satisfies ``EventSource``.
 
-    Reads its watch list from ``config.read_mailbox_watches()`` and binds an
-    ``Items.ItemAdd`` sink to each resolved folder (+ a poll fallback for the bulk
-    moves ItemAdd can miss), plus the Application ``Reminder`` handler. Each
-    ``new_mail`` event is tagged with the watch's ``mailbox``/``folder`` so triggers
-    can scope to it. See docs/design/email-folder-watch.md."""
+    Reads the single configured ``[mailbox]`` from ``config.read_mailbox()`` and
+    binds an ``Items.ItemAdd`` sink to its resolved folder (+ a poll fallback for
+    the bulk moves ItemAdd can miss), plus the Application ``Reminder`` handler.
+    Each ``new_mail`` event is tagged with the ``mailbox``/``folder`` it came from
+    so triggers can scope to it. See docs/design/teams-and-email-monitoring.md."""
 
     id = "outlook"
 
@@ -254,7 +254,13 @@ class OutlookSource:
     def _watches(self) -> list[dict[str, str]]:
         from .. import config
 
-        return config.read_mailbox_watches()
+        mailbox = config.read_mailbox()
+        if mailbox is None:
+            return []
+        # One configured inbox → one folder watch. The payload tags keep the
+        # ``mailbox``/``folder`` keys the bind/poll loops and trigger ``match``
+        # already use (mailbox = the configured address).
+        return [{"mailbox": mailbox["address"], "folder": mailbox["folder"]}]
 
     def start(self, emit: EmitFn) -> None:
         ok, reason = self.available()

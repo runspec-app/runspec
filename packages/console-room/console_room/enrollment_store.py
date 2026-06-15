@@ -24,7 +24,11 @@ import threading
 import time
 from pathlib import Path
 
-from .signup import Member, PendingSignup
+from .signup import Member, PendingSignup, Team
+
+#: The always-present fallback team — seeded so the sign-up team list is never
+#: empty, and protected from removal so it stays the safety net.
+DEFAULT_TEAM = Team(slug="default", name="Default")
 
 
 class EnrollmentStore:
@@ -70,7 +74,64 @@ class EnrollmentStore:
                 "CREATE INDEX IF NOT EXISTS idx_pending_queue_state "
                 "ON pending_signups (queue, send_state)"
             )
+            # Customer teams (departments) a visitor picks at sign-up — slug + name,
+            # ordered by creation so the seeded Default sorts first.
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS teams (
+                    slug       TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            # Seed Default once, so the team list is never empty.
+            self._conn.execute(
+                "INSERT OR IGNORE INTO teams (slug, name, created_at) VALUES (?, ?, ?)",
+                (DEFAULT_TEAM.slug, DEFAULT_TEAM.name, time.time()),
+            )
             self._conn.commit()
+
+    # ── teams (customer departments; the sign-up dropdown) ─────────────────────
+
+    def list_teams(self) -> list[Team]:
+        """Every team, the seeded Default first (oldest), then by creation order."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT slug, name FROM teams ORDER BY created_at, slug"
+            ).fetchall()
+        return [Team(slug=r[0], name=r[1]) for r in rows]
+
+    def get_team(self, slug: str) -> Team | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT slug, name FROM teams WHERE slug = ?", (slug,)
+            ).fetchone()
+        return Team(slug=row[0], name=row[1]) if row else None
+
+    def add_team(self, team: Team) -> None:
+        """Create or rename a team (upsert by slug)."""
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO teams (slug, name, created_at) VALUES (?, ?, ?)
+                ON CONFLICT(slug) DO UPDATE SET name = excluded.name
+                """,
+                (team.slug, team.name, time.time()),
+            )
+            self._conn.commit()
+
+    def remove_team(self, slug: str) -> bool:
+        """Delete a team. Refuses to remove the protected ``Default`` (so the list
+        is never empty). Returns True when a row was deleted."""
+        if slug == DEFAULT_TEAM.slug:
+            return False
+        with self._lock:
+            deleted = self._conn.execute(
+                "DELETE FROM teams WHERE slug = ?", (slug,)
+            ).rowcount
+            self._conn.commit()
+        return deleted > 0
 
     # ── pending signups (the verify outbox) ───────────────────────────────────
 

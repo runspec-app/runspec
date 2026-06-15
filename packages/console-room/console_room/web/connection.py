@@ -1,7 +1,7 @@
 """
 web/connection.py — the browser front door's per-connection logic.
 
-A person in a browser reaches the room over a WebSocket (later wss + OIDC). This
+A person in a browser reaches the room over a WebSocket (wss when TLS is configured). This
 is the browser counterpart of ndjson_server.NdjsonConsoleConnection, and like it,
 it satisfies the hub's ``Participant`` protocol. The one behavioural difference is
 ``wants_backscroll = True``: a person loading the page sees recent history, where
@@ -13,7 +13,7 @@ and this logic is unit-tested with a fake socket — the same split that keeps t
 hub transport-agnostic. See docs/design/console-room-server.md §2/§6.
 
 Identity is connection-scoped: ``user`` / ``room`` are fixed at construction (from
-the WS query params in S2, from the OIDC session in S3), so inbound frames never
+the WS query params in dev mode, from the email-verify session otherwise), so inbound frames never
 carry — and can never spoof — a sender.
 """
 

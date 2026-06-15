@@ -72,6 +72,19 @@ class NdjsonConsoleConnection:
             logger.info("room: connection sent no/invalid hello; closing")
             await self._close()
             return
+        # One email = one room: when the room is tied to a mailbox, only consoles
+        # configured for that same mailbox may connect. A mismatch (or a console
+        # that sent no mailbox) is refused so a console can't join the wrong
+        # helpdesk's room.
+        if hub.mailbox and hello.mailbox.strip().lower() != hub.mailbox:
+            logger.warning(
+                "room: console %r refused — mailbox %r does not match this room's %r",
+                hello.user,
+                hello.mailbox or "(none)",
+                hub.mailbox,
+            )
+            await self._close()
+            return
         self.user = hello.user
         if hello.is_agent:
             await self._run_agent(hub, hello.namespace)

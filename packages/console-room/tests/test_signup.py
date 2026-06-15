@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import pytest
 
-from console_room import signup
 from console_room.signup import (
     DEFAULT_TOKEN_TTL,
     EmailVerifyConfig,
@@ -15,6 +14,7 @@ from console_room.signup import (
     email_domain,
     email_verify_from_env,
     make_nonce,
+    make_team_slug,
     read_auth_mode,
     read_verify_token,
     sign_verify_token,
@@ -36,29 +36,26 @@ def test_read_auth_mode_explicit(monkeypatch):
     # underscore alias normalises to the hyphen form
     monkeypatch.setenv("CONSOLE_ROOM_AUTH", "email_verify")
     assert read_auth_mode() == "email-verify"
-    monkeypatch.setenv("CONSOLE_ROOM_AUTH", "OIDC")
-    assert read_auth_mode() == "oidc"
-
-
-def test_read_auth_mode_infers_when_unset(monkeypatch):
-    monkeypatch.delenv("CONSOLE_ROOM_AUTH", raising=False)
-    # No OIDC configured → dev.
-    monkeypatch.setattr(signup, "_env", lambda name: "")
-
-    def _no_oidc():
-        return None
-
-    import console_room.web.auth as auth
-
-    monkeypatch.setattr(auth, "auth_from_env", _no_oidc)
+    monkeypatch.setenv("CONSOLE_ROOM_AUTH", "dev")
     assert read_auth_mode() == "dev"
 
 
-def test_read_auth_mode_unknown_value_infers(monkeypatch):
-    monkeypatch.setenv("CONSOLE_ROOM_AUTH", "nonsense")
-    import console_room.web.auth as auth
+def test_read_auth_mode_defaults_to_email_verify_with_secret(monkeypatch):
+    # No explicit mode but a session secret is set → email-verify is the default.
+    monkeypatch.delenv("CONSOLE_ROOM_AUTH", raising=False)
+    monkeypatch.setenv("CONSOLE_ROOM_SESSION_SECRET", "s3cr3t")
+    assert read_auth_mode() == "email-verify"
 
-    monkeypatch.setattr(auth, "auth_from_env", lambda: None)
+
+def test_read_auth_mode_dev_when_no_secret(monkeypatch):
+    monkeypatch.delenv("CONSOLE_ROOM_AUTH", raising=False)
+    monkeypatch.delenv("CONSOLE_ROOM_SESSION_SECRET", raising=False)
+    assert read_auth_mode() == "dev"
+
+
+def test_read_auth_mode_unknown_value_falls_back(monkeypatch):
+    monkeypatch.setenv("CONSOLE_ROOM_AUTH", "nonsense")
+    monkeypatch.delenv("CONSOLE_ROOM_SESSION_SECRET", raising=False)
     assert read_auth_mode() == "dev"
 
 
@@ -158,3 +155,11 @@ def test_token_rejected_when_garbage():
 def test_make_nonce_is_unique():
     assert make_nonce() != make_nonce()
     assert len(make_nonce()) == 32  # uuid4 hex
+
+
+def test_make_team_slug():
+    assert make_team_slug("Team One") == "team-one"
+    assert make_team_slug("  HR / Payroll!  ") == "hr-payroll"
+    assert make_team_slug("Café 42") == "caf-42"  # non-ascii dropped
+    assert make_team_slug("---") == ""  # nothing usable
+    assert make_team_slug("Already-Slug") == "already-slug"

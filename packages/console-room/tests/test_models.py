@@ -97,6 +97,25 @@ def test_parse_hello_namespace_means_agent():
     assert member is not None and not member.is_agent
 
 
+def test_parse_hello_carries_mailbox():
+    h = parse_hello(
+        {
+            "type": "hello",
+            "namespace": "helpdesk/it",
+            "user": "a",
+            "mailbox": "hd@corp.com",
+        }
+    )
+    assert h is not None and h.mailbox == "hd@corp.com"
+    member = parse_hello(
+        {"type": "hello", "room": "ops", "user": "a", "mailbox": "hd@corp.com"}
+    )
+    assert member is not None and member.mailbox == "hd@corp.com"
+    # Absent mailbox → empty (back-compat / dev rooms).
+    bare = parse_hello({"type": "hello", "room": "ops", "user": "a"})
+    assert bare is not None and bare.mailbox == ""
+
+
 # ── catalog parsing ────────────────────────────────────────────────────────────
 
 

@@ -7,7 +7,7 @@ and broadcasts every message / presence change. All intelligence stays in the
 consoles. See docs/design/console-room-server.md.
 
 S1 (this release) serves the console NDJSON-localhost door; the browser door and
-OIDC/TLS land in later slices.
+TLS lands in a later slice.
 """
 
 from __future__ import annotations

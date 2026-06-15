@@ -118,6 +118,7 @@ class Hub:
         assignment_timeout: float = 300.0,
         enrollment: EnrollmentStore | None = None,
         email_verify: EmailVerifyConfig | None = None,
+        mailbox: str = "",
     ) -> None:
         self._store = store
         self._backscroll = backscroll_limit
@@ -126,6 +127,11 @@ class Hub:
         # console of the queue and verifies the clicked link. Absent → no-op.
         self._enrollment = enrollment
         self._email_verify = email_verify
+        # The helpdesk identity this room serves (a ``[mailbox]`` address). When
+        # set, the console NDJSON door only accepts consoles configured for the
+        # same mailbox — one email = one room. Lowercased for case-insensitive
+        # matching; empty = no tie (dev / open).
+        self.mailbox = mailbox.strip().lower()
         # An assigned request whose console never picks it up (no request_start)
         # within this many seconds is auto-released back to the queue + re-paged.
         # 0/negative disables the timer.
@@ -629,7 +635,7 @@ class Hub:
             )
             return None
         # The visitor's display name (email-verify signup) rides onto the operator
-        # card; a connection without one (OIDC / dev / console) just shows the id.
+        # card; a connection without one (dev / console) just shows the id.
         visitor_name = str(getattr(p, "display_name", "") or "")
         req = self._requests.create(
             p.room, queue, ns, visitor, tool, args, visitor_name=visitor_name

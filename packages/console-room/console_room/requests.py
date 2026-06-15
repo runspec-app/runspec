@@ -58,7 +58,7 @@ class Request:
     runnable: str
     args: dict[str, Any] = field(default_factory=dict)
     # The visitor's self-asserted full name (email-verify signup). Display-only —
-    # the verified ``visitor`` email stays the trust anchor. Empty in OIDC / dev mode.
+    # the verified ``visitor`` email stays the trust anchor. Empty in dev mode.
     visitor_name: str = ""
     state: str = UNASSIGNED
     assignee: str | None = None

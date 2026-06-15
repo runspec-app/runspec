@@ -66,78 +66,103 @@ class TestWindowsPathRoundTrip(unittest.TestCase):
         self.assertEqual(_roundtrip(data), data)
 
 
-class TestReadMailboxWatches(unittest.TestCase):
-    """The [[mailboxes]] folder-watch list (the email folder-watch channel)."""
+class TestReadMailbox(unittest.TestCase):
+    """The single [mailbox] the Outlook source monitors."""
 
-    def _read(self, raw: dict) -> list:
+    def _read(self, raw: dict):
         import runspec_console.config as cfg
 
         orig = cfg.read_config
         cfg.read_config = lambda: raw
         try:
-            return cfg.read_mailbox_watches()
+            return cfg.read_mailbox()
         finally:
             cfg.read_config = orig
 
-    def test_missing_is_empty(self) -> None:
-        self.assertEqual(self._read({}), [])
+    def test_absent_is_none(self) -> None:
+        # No [mailbox] table → email monitoring off.
+        self.assertIsNone(self._read({}))
 
-    def test_table_form_is_not_a_watch_list(self) -> None:
-        # The legacy [mailboxes] *table* (address→queue) is not a watch list.
-        self.assertEqual(self._read({"mailboxes": {"a@corp": "q"}}), [])
+    def test_non_dict_is_none(self) -> None:
+        self.assertIsNone(self._read({"mailbox": "nope"}))
 
-    def test_empty_entry_is_default_inbox(self) -> None:
+    def test_empty_table_is_default_inbox(self) -> None:
+        # Present-but-empty [mailbox] means "watch my default account's Inbox".
         self.assertEqual(
-            self._read({"mailboxes": [{}]}),
-            [{"mailbox": "", "folder": "Inbox"}],
+            self._read({"mailbox": {}}),
+            {"address": "", "folder": "Inbox", "label": ""},
+        )
+
+    def test_all_fields(self) -> None:
+        out = self._read(
+            {
+                "mailbox": {
+                    "address": " it@corp ",
+                    "folder": "Tickets/Open",
+                    "label": " IT ",
+                }
+            }
+        )
+        self.assertEqual(
+            out, {"address": "it@corp", "folder": "Tickets/Open", "label": "IT"}
         )
 
     def test_inbox_aliases_normalize(self) -> None:
-        out = self._read(
-            {
-                "mailboxes": [
-                    {"mailbox": "me@corp", "folder": "inbox"},
-                    {"mailbox": "you@corp", "folder": "  "},
-                ]
-            }
-        )
         self.assertEqual(
-            out,
-            [
-                {"mailbox": "me@corp", "folder": "Inbox"},
-                {"mailbox": "you@corp", "folder": "Inbox"},
-            ],
+            self._read({"mailbox": {"folder": "inbox"}})["folder"], "Inbox"
         )
+        self.assertEqual(self._read({"mailbox": {"folder": "  "}})["folder"], "Inbox")
 
-    def test_subfolder_and_shared_mailbox(self) -> None:
-        out = self._read(
-            {"mailboxes": [{"mailbox": "it-support@corp", "folder": "Tickets/Open"}]}
+
+class TestWriteMailbox(unittest.TestCase):
+    """write_mailbox replaces [mailbox] (or drops it), preserving the rest."""
+
+    def _roundtrip(self, mailbox, existing: dict | None = None) -> dict:
+        import runspec_console.config as cfg
+
+        captured: dict = {}
+        orig_read, orig_write = cfg.read_config, cfg.write_config
+        cfg.read_config = lambda: dict(existing or {})
+        cfg.write_config = lambda data: captured.update(data)
+        try:
+            cfg.write_mailbox(mailbox)
+        finally:
+            cfg.read_config, cfg.write_config = orig_read, orig_write
+        return captured
+
+    def test_default_inbox_is_empty_table(self) -> None:
+        # "Watch my own Inbox" → a present-but-empty [mailbox].
+        out = self._roundtrip({"address": "", "folder": "Inbox", "label": ""})
+        self.assertEqual(out["mailbox"], {})
+
+    def test_fields_emitted_and_normalised(self) -> None:
+        out = self._roundtrip(
+            {"address": " it@corp ", "folder": "inbox", "label": " IT "}
         )
+        # folder "inbox" is the default → dropped; address/label trimmed + kept.
+        self.assertEqual(out["mailbox"], {"address": "it@corp", "label": "IT"})
+
+    def test_none_drops_the_section(self) -> None:
+        out = self._roundtrip(None, existing={"mailbox": {"address": "old@corp"}})
+        self.assertNotIn("mailbox", out)
+
+    def test_other_sections_preserved(self) -> None:
+        out = self._roundtrip(
+            {"address": "a@corp", "folder": "Inbox"},
+            existing={"ssh": {"user": "jason"}, "mailbox": {"address": "old@corp"}},
+        )
+        self.assertEqual(out["ssh"], {"user": "jason"})
+        self.assertEqual(out["mailbox"], {"address": "a@corp"})
+
+    def test_round_trips_through_toml(self) -> None:
+        out = self._roundtrip(
+            {"address": "it@corp", "folder": "Tickets/Open", "label": "IT"}
+        )
+        parsed = _roundtrip(out)
         self.assertEqual(
-            out, [{"mailbox": "it-support@corp", "folder": "Tickets/Open"}]
+            parsed["mailbox"],
+            {"address": "it@corp", "folder": "Tickets/Open", "label": "IT"},
         )
-
-    def test_duplicates_collapse(self) -> None:
-        out = self._read(
-            {
-                "mailboxes": [
-                    {"folder": "Inbox"},
-                    {"folder": "inbox"},  # same watch, different spelling
-                    {"mailbox": "ME@corp", "folder": "Tickets"},
-                    {"mailbox": "me@corp", "folder": "tickets"},  # same again
-                ]
-            }
-        )
-        self.assertEqual(
-            out,
-            [
-                {"mailbox": "", "folder": "Inbox"},
-                {"mailbox": "ME@corp", "folder": "Tickets"},
-            ],
-        )
-
-    def test_non_dict_entries_skipped(self) -> None:
-        self.assertEqual(self._read({"mailboxes": ["nope", {}]})[0]["folder"], "Inbox")
 
 
 class TestTomlStringEscaper(unittest.TestCase):

@@ -633,6 +633,10 @@ export const mockApi: BridgeApi = {
 
   save_config: async (data) => { console.log('[mock] save_config', data) },
 
+  get_mailbox: async () => ({ address: 'helpdesk@corp.com', folder: 'Tickets/Open', label: 'Helpdesk' }),
+
+  save_mailbox: async (mailbox) => { console.log('[mock] save_mailbox', mailbox) },
+
   get_jump_hosts: async () => MOCK_JUMP_HOSTS,
 
   save_jump_hosts: async (hosts) => { console.log('[mock] save_jump_hosts', hosts) },

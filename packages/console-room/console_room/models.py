@@ -155,11 +155,16 @@ class Hello:
     - **agent** (helpdesk console): ``namespace`` set, ``room`` blank — the
       connection subscribes to a whole queue namespace and the hub fans every
       conversation under it to that connection.
+
+    ``mailbox`` is the helpdesk identity the console is configured for (its
+    ``[mailbox]`` address). The server ties a room to one mailbox: when the room is
+    started with a mailbox, it only accepts consoles whose ``mailbox`` matches.
     """
 
     user: str
     room: str
     namespace: str = ""
+    mailbox: str = ""
 
     @property
     def is_agent(self) -> bool:
@@ -338,10 +343,11 @@ def parse_hello(obj: Any) -> Hello | None:
     if not isinstance(obj, dict) or _str(obj.get("type")) != HELLO:
         return None
     user = _str(obj.get("user")).strip() or "unknown"
+    mailbox = _str(obj.get("mailbox")).strip()
     namespace = _str(obj.get("namespace")).strip()
     if namespace:
-        return Hello(user=user, room="", namespace=namespace)
+        return Hello(user=user, room="", namespace=namespace, mailbox=mailbox)
     room = _str(obj.get("room")).strip()
     if not room:
         return None
-    return Hello(user=user, room=room)
+    return Hello(user=user, room=room, mailbox=mailbox)

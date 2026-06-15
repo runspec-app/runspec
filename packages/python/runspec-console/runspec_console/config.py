@@ -171,46 +171,54 @@ def read_chat() -> dict[str, Any]:
     return dict(chat) if isinstance(chat, dict) else {}
 
 
-def read_mailbox_watches() -> list[dict[str, str]]:
-    """The ``[[mailboxes]]`` email folder-watch list from config.toml (``[]``
-    unset) — the runnables-portal email channel.
+def read_mailbox() -> dict[str, str] | None:
+    """The single ``[mailbox]`` the Outlook source monitors, or ``None`` when no
+    ``[mailbox]`` table is configured (email monitoring off).
 
-    An **array of tables**, one watch per ``mailbox + folder`` combination the
-    Outlook source should watch for new mail::
+    One inbox, with an optional folder inside it::
 
-        [[mailboxes]]                 # watch my own Inbox (the default account)
+        [mailbox]
+        address = "helpdesk@corp.com"   # blank/absent → the default account
+        folder  = "Tickets/Open"        # blank/absent/"inbox" → the Inbox
+        label   = "Helpdesk"            # optional display label
 
-        [[mailboxes]]
-        folder = "Tickets"            # a subfolder of my own mailbox
-
-        [[mailboxes]]
-        mailbox = "it-support@corp.com"
-        folder  = "Tickets/Open"      # another account's subfolder (a `/` path)
-
-    Normalisation: ``mailbox`` blank/missing → ``""`` (the default account);
+    A present-but-empty ``[mailbox]`` means "watch my default account's Inbox".
+    Normalisation: ``address`` blank/missing → ``""`` (the default account);
     ``folder`` blank, missing, or ``"inbox"`` (case-insensitive) → ``"Inbox"``.
-    Exact ``(mailbox, folder)`` duplicates collapse. There is **no claim system** —
-    if two consoles watch the same shared folder, both react to every mail (see
-    docs/design/email-folder-watch.md). Returns ``[]`` when the legacy
-    ``[mailboxes]`` *table* form is present instead (that's the old queue map)."""
-    raw = read_config().get("mailboxes")
-    if not isinstance(raw, list):
-        return []
-    out: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        mailbox = str(entry.get("mailbox") or "").strip()
-        folder = str(entry.get("folder") or "").strip()
-        if not folder or folder.lower() == "inbox":
-            folder = "Inbox"
-        key = (mailbox.lower(), folder.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append({"mailbox": mailbox, "folder": folder})
-    return out
+    There is no queue here — queues are teams, managed in the room DB (see
+    docs/design/teams-and-email-monitoring.md)."""
+    raw = read_config().get("mailbox")
+    if not isinstance(raw, dict):
+        return None
+    address = str(raw.get("address") or "").strip()
+    folder = str(raw.get("folder") or "").strip()
+    label = str(raw.get("label") or "").strip()
+    if not folder or folder.lower() == "inbox":
+        folder = "Inbox"
+    return {"address": address, "folder": folder, "label": label}
+
+
+def write_mailbox(mailbox: dict[str, str] | None) -> None:
+    """Replace the ``[mailbox]`` table in config.toml (or drop it when ``mailbox``
+    is ``None``), preserving every other section. Only set fields are emitted, so
+    "watch my own Inbox" round-trips to an empty ``[mailbox]`` table."""
+    cfg = read_config()
+    if not mailbox:
+        cfg.pop("mailbox", None)
+        write_config(cfg)
+        return
+    address = str(mailbox.get("address") or "").strip()
+    folder = str(mailbox.get("folder") or "").strip()
+    label = str(mailbox.get("label") or "").strip()
+    entry: dict[str, str] = {}
+    if address:
+        entry["address"] = address
+    if folder and folder.lower() != "inbox":
+        entry["folder"] = folder
+    if label:
+        entry["label"] = label
+    cfg["mailbox"] = entry
+    write_config(cfg)
 
 
 def confirm_notifications_enabled() -> bool:

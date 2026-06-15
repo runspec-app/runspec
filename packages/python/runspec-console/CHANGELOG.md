@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.64.0] — 2026-06-15
+
+### Added
+- **Console advertises its mailbox to the room.** The chat source now sends its
+  configured `[mailbox]` address in the `hello` handshake, so a room started with
+  `--mailbox` only accepts this console when the two match (one email = one room;
+  see runspec-room 0.21.0). Omitted when no mailbox is configured.
+
+
+## [0.63.0] — 2026-06-15
+
+### Added
+- **Settings → Triggers tab: monitored-mailbox editor.** A new tab in the Settings
+  drawer to set up the email trigger source without hand-editing TOML. Toggle
+  **Monitor a mailbox** and fill the **email address** (blank = your own default
+  account), an **optional folder** (blank/`Inbox` = the Inbox), and an optional
+  **label** — Save writes `[mailbox]` to `config.toml` and restarts the trigger
+  engine so the Outlook source re-resolves the watched folder. Entering a shared
+  address surfaces the no-cross-console-coordination warning inline. Trigger
+  *rules* (what to do with matched mail) live in `runspec_triggers.toml`. The
+  Settings drawer widened (480 → 640px) so the six tabs sit comfortably.
+- `config.read_mailbox()` / `write_mailbox()` + bridge `get_mailbox` /
+  `save_mailbox` back the tab. One inbox is monitored (the `[mailbox]` table); the
+  Outlook source reads it via `read_mailbox()`. **The queue/team concept is no
+  longer tied to a mailbox or a host** — teams move to the runspec-room database,
+  managed from the consoles (see `docs/design/teams-and-email-monitoring.md`).
+
+
 ## [0.62.0] — 2026-06-14
 
 ### Added
@@ -69,6 +97,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   into the `RUNSPEC_*_ARG_*` env channel, exactly as the manual `invoke_runnable`
   path already did — previously an agent-supplied secret would have been passed as
   a CLI flag, leaking into the remote's `ps` table and shell history.
+
 
 ## [0.61.0] — 2026-06-14
 

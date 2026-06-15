@@ -225,6 +225,7 @@ class ChatSource:
         queue: str = "",
         queue_email: str = "",
         queue_label: str = "",
+        mailbox: str = "",
         verify_sender: VerifySender | None = None,
         transport: ChatTransport | None = None,
         transport_factory: TransportFactory | None = None,
@@ -245,6 +246,9 @@ class ChatSource:
         self._queue = _str(queue)
         self._queue_email = _str(queue_email)
         self._queue_label = _str(queue_label)
+        # The helpdesk identity (this console's ``[mailbox]`` address) sent in the
+        # hello — the room ties one mailbox to one room and refuses a mismatch.
+        self._mailbox = _str(mailbox)
         # The verify-mail sender (Outlook send-as by default; a fake in tests).
         # Resolved lazily so importing chat.py never imports win32.
         self._verify_sender = verify_sender
@@ -413,6 +417,10 @@ class ChatSource:
             if self.is_agent
             else {"type": "hello", "room": self._room, "user": self._user}
         )
+        # The helpdesk identity, when configured — the room matches it to tie one
+        # mailbox to one room (omitted when blank so dev rooms stay open).
+        if self._mailbox:
+            frame["mailbox"] = self._mailbox
         try:
             transport.send(frame)
         except Exception:

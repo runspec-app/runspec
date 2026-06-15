@@ -131,11 +131,26 @@ chimed), so a stuck assignment never strands a visitor.
 ## 4. Channel 2 — email (folder watch, Outlook-routed)
 
 ### 4.1 Config
-A `[mailboxes]`-style entry becomes **`mailbox address + folder`** — one watched
-folder per console, e.g. the operator's own folder inside the shared mailbox, or a
-folder in their own mailbox. **Outlook puts mail there** (a server-side rule, a
-shared-mailbox assignment, or a manual drag) — *that* is the "assignment", and it's
-entirely Outlook's job.
+> **Superseded:** the queue is **not** a property of the mailbox (nor the host) —
+> queues are **teams** in the runspec-room DB. See
+> `docs/design/teams-and-email-monitoring.md`. The email channel below is just a
+> single monitored inbox; it has no `queue`.
+
+A single `[mailbox]` table names the one inbox the Outlook source monitors —
+`address` (blank = the default account), an optional `folder` within it, and an
+optional display `label`:
+
+```toml
+# config.toml — one monitored inbox (no queue)
+[mailbox]
+address = "helpdesk@corp.com"   # blank/absent → the default account
+folder  = "Tickets/Open"        # blank/absent/"inbox" → the Inbox
+label   = "Helpdesk"            # optional display label
+```
+
+**Outlook puts mail in the watched folder** (a server-side rule, a shared-mailbox
+assignment, or a manual drag) — *that* is the "assignment", and it's entirely
+Outlook's job. A new item → a `new_mail` event → the trigger engine.
 
 ### 4.2 Mechanism
 - Monitor **that folder** via **`Folder.Items.ItemAdd`** (with a periodic poll
@@ -212,10 +227,16 @@ All settled with the user — no open questions remain for the build:
 4. **Catalogue-only.** A visitor can only request a **listed** runnable; there is
    **no** freeform / "something else" escape hatch. The **page** covers "I need X
    that isn't currently staffed."
-5. **Email folder: any folder path.** Config carries `mailbox + folder`; don't
-   constrain whether it's a shared-mailbox subfolder or the operator's own mailbox.
-6. **Queue = the host's `room_queue`.** An operator console staffs a queue; the
-   catalogue + routing key off that same namespace (reuse, no new concept).
+5. **Email folder: any folder path.** The single `[mailbox]` carries `address +
+   folder`; don't constrain whether it's a shared-mailbox subfolder or the
+   operator's own mailbox.
+6. **Queue = a team (not the host, not the mailbox).** *Superseded — see
+   `docs/design/teams-and-email-monitoring.md`.* A queue is a **team** stored in
+   the runspec-room DB and managed from the consoles; visitors pick their team at
+   sign-up. The catalogue, routing, and sign-up key off the team namespace. A
+   **host** carries only *where runspec-room runs* (its `room_port` + ssh
+   transport) and has **no** queue; the monitored mailbox (§4.1) is a separate
+   channel with **no** queue either.
 
 ---
 

@@ -93,6 +93,62 @@ def test_no_hello_closes_without_joining():
     assert writer.closed and writer.frames() == []
 
 
+def test_mailbox_mismatch_refused():
+    # A room tied to a mailbox refuses a console configured for a different one
+    # (and one that sent no mailbox) — one email = one room.
+    async def scenario(hello):
+        hub = Hub(FakeStore(), mailbox="HelpDesk@corp.com")  # stored lowercased
+        reader = _reader(hello, {"type": "message", "room": "ops", "text": "x"})
+        writer = FakeWriter()
+        await NdjsonConsoleConnection(reader, writer).run(hub)
+        return hub, writer
+
+    # wrong mailbox
+    hub, writer = run(
+        scenario(
+            {"type": "hello", "room": "ops", "user": "a", "mailbox": "other@corp.com"}
+        )
+    )
+    assert hub.room_size("ops") == 0 and writer.closed
+    # no mailbox at all
+    hub, writer = run(scenario({"type": "hello", "room": "ops", "user": "a"}))
+    assert hub.room_size("ops") == 0 and writer.closed
+
+
+def test_mailbox_match_accepted_case_insensitive():
+    async def scenario():
+        hub = Hub(FakeStore(), mailbox="helpdesk@corp.com")
+        reader = _reader(
+            {
+                "type": "hello",
+                "room": "ops",
+                "user": "a",
+                "mailbox": "HelpDesk@CORP.com",
+            },
+            {"type": "message", "room": "ops", "text": "hi"},
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+
+    # No exception + the message path ran (it left cleanly via EOF). A matching
+    # mailbox is accepted regardless of case.
+    run(scenario())
+
+
+def test_no_room_mailbox_accepts_any_console():
+    async def scenario():
+        hub = Hub(FakeStore())  # no mailbox tie (dev)
+        reader = _reader(
+            {"type": "hello", "room": "ops", "user": "a"},  # no mailbox sent
+            {"type": "message", "room": "ops", "text": "hi"},
+        )
+        store = hub._store
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return store
+
+    store = run(scenario())
+    assert len(store.appended) == 1  # joined + message persisted
+
+
 def test_hello_then_message_is_stamped_and_broadcast():
     async def scenario():
         store = FakeStore()

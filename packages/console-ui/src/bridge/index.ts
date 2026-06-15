@@ -116,6 +116,16 @@ export interface CredentialBackend {
   backend: string
 }
 
+// The single [mailbox] the Outlook source monitors (Settings → Triggers).
+// `address` blank = the default account; `folder` blank = the Inbox; `label` is
+// an optional display name. null = no mailbox configured (monitoring off).
+// See docs/design/teams-and-email-monitoring.md.
+export interface Mailbox {
+  address: string
+  folder: string
+  label: string
+}
+
 // runspec:transfer_end event detail — fired once when a transfer finishes.
 export interface TransferEnd {
   id: string
@@ -523,6 +533,11 @@ export interface BridgeApi {
   get_schedules: () => Promise<Schedule[]>
   get_config: () => Promise<Record<string, unknown>>
   config_dir: () => Promise<string>
+  // The single monitored mailbox (Settings → Triggers), or null when unset.
+  // Saving restarts the trigger engine so the Outlook source re-resolves the
+  // watched folder; pass null to stop monitoring.
+  get_mailbox: () => Promise<Mailbox | null>
+  save_mailbox: (mailbox: Mailbox | null) => Promise<void>
   // ── version / docs ─────────────────────────────────────────────────────────
   app_version: () => Promise<string>
   check_for_update: () => Promise<{ ok: boolean; current: string; latest: string | null; update_available: boolean }>
