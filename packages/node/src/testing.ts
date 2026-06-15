@@ -258,6 +258,12 @@ export class ParseHarness {
           argv,
           configPath: this.configPath,
           _promptSecrets: false,
+          // The run_as identity gate (enforceRunAs) is an execution-time
+          // concern, not a wiring one. A test asserting that a runnable's args
+          // parse must not depend on *who* runs the suite, so a runnable that
+          // declares `runAs = "svc"` stays testable as your own user. Mirrors
+          // _promptSecrets above and Python's ParseHarness.
+          _checkRunAs: false,
         });
         return { code: null, output: captured, parsed };
       } catch (e) {

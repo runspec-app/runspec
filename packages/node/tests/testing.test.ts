@@ -114,6 +114,43 @@ test('unknown runnable throws with the available names', () => {
   expect(() => new ParseHarness({ scriptName: 'ghost', toml: SPEC })).toThrow(/ghost/);
 });
 
+// ── run_as is not enforced by the harness ───────────────────────────────────
+
+// A runnable that declares runAs for a user the suite is never running as. A
+// nonexistent name is a deterministic mismatch on any POSIX host (the gate
+// reports "does not exist"), standing in for the real "run as the service
+// account" case without depending on which accounts exist on the runner.
+const RUN_AS_SPEC = `
+[greet]
+run_as = "nope-user-xyz"
+[greet.args]
+name = {type = "str", required = true}
+[greet.commands.hi]
+description = "say hi"
+`;
+
+const posixOnly = process.geteuid ? test : test.skip;
+
+posixOnly('expectOk ignores the run_as identity gate', () => {
+  const harn = new ParseHarness({ scriptName: 'greet', toml: RUN_AS_SPEC });
+  const parsed = harn.expectOk(['--name', 'Ada']);
+  expect(String(parsed.name)).toBe('Ada');
+  harn.close();
+});
+
+posixOnly('smoke ignores the run_as identity gate', () => {
+  const harn = new ParseHarness({ scriptName: 'greet', toml: RUN_AS_SPEC });
+  const performed = harn.smoke({ values: { name: 'Ada' } });
+  expect(performed.some((l) => l.includes('(valid)'))).toBe(true);
+  harn.close();
+});
+
+posixOnly('validation still runs even though run_as is skipped', () => {
+  const harn = new ParseHarness({ scriptName: 'greet', toml: RUN_AS_SPEC });
+  harn.expectExit([], { contains: 'name' }); // missing required
+  harn.close();
+});
+
 // ── interception is fully restored ──────────────────────────────────────────
 
 test('process.exit / stdout.write / console.log are restored after a run', () => {

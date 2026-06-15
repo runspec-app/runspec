@@ -193,3 +193,38 @@ class TestHarnessApi:
             with pytest.raises(AssertionError) as exc:
                 g.expect_exit(["--name", "Ada"])  # this parses fine
             assert "expected" in str(exc.value).lower()
+
+
+# A runnable that declares run_as for a user the test suite is never running as.
+# A nonexistent name is a deterministic mismatch on any POSIX host (the gate
+# reports "does not exist"), so this stands in for the real "run as the service
+# account" case without depending on which accounts exist on the runner.
+RUN_AS_SPEC = """
+[greet]
+run_as = "nope-user-xyz"
+[greet.args]
+name = {type = "str", required = true}
+[greet.commands.hi]
+description = "say hi"
+"""
+
+
+class TestRunAsIsNotEnforced:
+    """The harness must not apply the run_as identity gate — testing a
+    runnable's wiring cannot depend on *who* runs the suite (mirrors how
+    secret prompting is disabled)."""
+
+    def test_expect_ok_ignores_run_as(self) -> None:
+        with harness("greet", toml=RUN_AS_SPEC) as g:
+            spec = g.expect_ok(["--name", "Ada"])
+            assert str(spec.name) == "Ada"
+
+    def test_smoke_ignores_run_as(self) -> None:
+        with harness("greet", toml=RUN_AS_SPEC) as g:
+            performed = g.smoke(values={"name": "Ada"})
+            assert any("(valid)" in label for label in performed)
+
+    def test_validation_still_runs_under_run_as(self) -> None:
+        # Skipping the identity gate must not skip ordinary arg validation.
+        with harness("greet", toml=RUN_AS_SPEC) as g:
+            g.expect_exit([], contains="name")  # missing required

@@ -112,6 +112,29 @@ check; its missing-required check still runs.
 Spec introspection is available directly too: `command_paths()`,
 `required_args(path)`, `requires_command(path)`, and `args_for(path)`.
 
+## `run_as` is not enforced under the harness
+
+A runnable can declare `run_as` with `enforce_run_as = "error"` (the default), so
+running its entry point directly as the wrong user is refused. That gate is an
+*execution-time* concern — it asserts who the process is — and the harness
+deliberately skips it, exactly as it skips interactive secret prompts. Testing a
+runnable's wiring must not depend on *who* runs the suite, so a runnable that
+declares `run_as = "svc"` stays fully testable as your own user: `expect_ok`,
+`expect_exit`, and `smoke()` all behave as if `enforce_run_as = "off"`. Ordinary
+arg validation, type coercion, and `require-command` still run — only the
+identity comparison is skipped. The same is true of [`runspec
+test`](cli.md#runspec-test): its in-process smoke uses the harness, and its
+subprocess phase only runs `--help` (which short-circuits before the gate), so a
+`run_as` runnable never trips it.
+
+To exercise the gate *itself*, call `runspec.parse()` directly (Node:
+`parse()`) and assert on `RunAsMismatch` / the `"warn"` stderr line, as
+`test_run_as_enforce.py` does — it is the gate's contract, so it is tested where
+the contract lives, not through the wiring harness. To **run** (not unit-test) a
+`run_as` runnable by hand on your own machine, set `enforce_run_as = "warn"` (or
+`"off"`) in `[config]` or on the runnable, or invoke it through the executor that
+escalates (`runspec serve` / `jump`, or `sudo -u <user>`).
+
 ## Layer 2 — the work, mocking only the boundary
 
 Test the plain logic function directly and patch its single external call. The

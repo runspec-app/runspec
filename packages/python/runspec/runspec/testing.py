@@ -111,9 +111,16 @@ class ParseHarness:
     def parse(self, argv: Iterable[str]) -> runspec.RunSpec:
         """Parse ``argv`` and return the ``RunSpec``.
 
-        Behaves exactly like a real invocation: on a bad spec/argv it prints the
-        human error and raises ``SystemExit``. Use :meth:`expect_ok` /
-        :meth:`expect_exit` for assertions.
+        Behaves like a real invocation for everything wiring-related: on a bad
+        spec/argv it prints the human error and raises ``SystemExit``. Use
+        :meth:`expect_ok` / :meth:`expect_exit` for assertions.
+
+        The ``run_as`` identity gate (``enforce_run_as``) is **not** applied —
+        like secret prompting, it is an execution-time concern, not a wiring
+        one. A test asserting that a runnable's args parse must not depend on
+        *who* runs the suite, so a runnable that declares ``run_as = "svc"``
+        stays testable as your own user. (Exercise the gate itself by calling
+        ``runspec.parse()`` directly, as ``test_run_as_enforce.py`` does.)
         """
         with self._env():
             return runspec.parse(
@@ -121,6 +128,7 @@ class ParseHarness:
                 argv=list(argv),
                 config_path=self.config_path,
                 _prompt_secrets=False,
+                _check_run_as=False,
             )
 
     def expect_ok(self, argv: Iterable[str]) -> runspec.RunSpec:
@@ -134,6 +142,7 @@ class ParseHarness:
                     argv=argv,
                     config_path=self.config_path,
                     _prompt_secrets=False,
+                    _check_run_as=False,
                 )
             except SystemExit as e:
                 raise AssertionError(f"expected `{self.script_name} {' '.join(argv)}` to parse, but it exited {e.code}:\n{out.getvalue()}") from None
@@ -161,6 +170,7 @@ class ParseHarness:
                     argv=argv,
                     config_path=self.config_path,
                     _prompt_secrets=False,
+                    _check_run_as=False,
                 )
             except SystemExit as e:
                 text = out.getvalue()

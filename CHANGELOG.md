@@ -7,6 +7,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.37.1] / [node-0.33.1] — 2026-06-15
+
+### Fixed
+
+- **Testing a `run_as` runnable no longer trips `enforce_run_as`.** The
+  `enforce_run_as` identity gate (added in 0.37.0 / node-0.33.0) refuses to run a
+  `run_as` runnable as the wrong user — correct for real execution, but it also
+  fired inside `ParseHarness` (`expect_ok` / `expect_exit` / `smoke`) and the
+  in-process phase of `runspec test`, so a runnable declaring `run_as = "svc"`
+  failed its own parse/wiring tests on a developer's machine. The harness now
+  skips the gate, exactly as it already skips interactive secret prompts and as
+  `load_spec` skips it for introspection — wiring tests must not depend on *who*
+  runs the suite. Arg validation, type coercion, and `require-command` still run;
+  only the identity comparison is skipped. The gate's own behaviour is unchanged
+  on the real `parse()` path and is covered directly by `test_run_as_enforce.py`.
+
 ## [0.37.0] — 2026-06-14
 
 ### Added
