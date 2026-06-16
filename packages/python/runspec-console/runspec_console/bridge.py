@@ -185,6 +185,42 @@ def _chat_connect_hint(exc: BaseException, *, via: str) -> str | None:
     return None
 
 
+def _chat_connect_summary(exc: BaseException, *, via: str) -> tuple[str, bool]:
+    """A one-line, human-readable summary of a chat room-connect failure, plus
+    whether logging a full traceback is worthwhile.
+
+    Returns ``(message, want_traceback)``. The common operational failures — the
+    room server being stopped, port-forwarding blocked, a slow proxied connect —
+    are *expected states*, not bugs, so they get a concise line and
+    ``want_traceback=False``: a 20-line paramiko stack on every backoff is pure
+    noise (the symptom this addresses). The biggest one is the **room server being
+    down**: the tunnel reaches the host fine, but opening the direct-tcpip channel
+    to the room port fails with ``ChannelException(2, 'Connect failed')`` (or, on
+    the exec relay, a connection-refused) — transient, the reconnect loop picks it
+    up the moment the server is back. Anything unrecognised returns
+    ``want_traceback=True`` so genuinely unexpected errors keep their stack."""
+    hint = _chat_connect_hint(exc, via=via)
+    if hint:
+        return (hint, False)
+    text = str(exc) or type(exc).__name__
+    low = text.lower()
+    if "connect failed" in low or "connection refused" in low or "open failed" in low:
+        return (
+            "room server isn't reachable on the host — is the room process "
+            "running on its port? The reconnect loop will keep retrying.",
+            False,
+        )
+    if isinstance(exc, TimeoutError) or "timed out" in low or "timeout" in low:
+        return (
+            "timed out reaching the host (SSH, through the proxy if configured) — "
+            "retrying. Usually transient startup concurrency.",
+            False,
+        )
+    if "in connect-backoff" in low:
+        return ("host is in connect-backoff after recent failures — retrying.", False)
+    return (text, True)
+
+
 def _classify_room_connection(exc: BaseException | None, *, via: str) -> dict[str, Any]:
     """Turn a room-connect attempt's outcome into a structured, human-readable
     result for the UI's connection tester: ``{ok, stage, message, hint}``.
@@ -327,6 +363,10 @@ class Bridge:
         self._chat_sources: dict[str, Any] = {}
         self._chat_stop = threading.Event()
         self._chat_supervisors: dict[str, threading.Thread] = {}
+        # Per-room last logged connect-failure summary, so the reconnect loop logs a
+        # stopped/unreachable room server once — not a fresh line (or traceback)
+        # every backoff. Cleared on a successful connect so a later failure re-logs.
+        self._chat_connect_log: dict[str, str] = {}
         # Helpdesk agent mode (a host entry with room_queue). Agent namespaces
         # we're connected under → our display user there (the identity the hub
         # records as the assignee when it routes a request to us). Catalog index:
@@ -6021,6 +6061,13 @@ class Bridge:
     # Backoff bounds for the reconnect loop (seconds); attributes so tests shrink them.
     _CHAT_BACKOFF_START = 2.0
     _CHAT_BACKOFF_MAX = 60.0
+    # A connection must stay up at least this long to count as "healthy" and reset
+    # the backoff. A room that opens the channel then drops it almost immediately is
+    # *flapping* — usually the room rejecting this console after the hello (the queue
+    # mailbox can't be watched, or an identity/mailbox mismatch). Treating that as a
+    # failure keeps the backoff growing instead of spinning a tight reconnect +
+    # catalog-republish loop.
+    _CHAT_MIN_HEALTHY = 10.0
 
     def _chat_supervise(self, spec: dict[str, Any], factory: Any) -> None:
         """Own one room's connection: connect, run until it drops, then reconnect
@@ -6056,14 +6103,22 @@ class Bridge:
             try:
                 source.start(self._on_chat_event)
             except Exception as exc:
-                # A blocked-forwarding failure is permanent — log one actionable
-                # line, not a fresh traceback every backoff. Genuinely unexpected
-                # errors still get the full traceback.
-                hint = _chat_connect_hint(exc, via=str(spec.get("via") or "tunnel"))
-                if hint:
-                    logger.error("chat: room %r — %s", room, hint)
-                else:
-                    logger.exception("chat: connect to room %r failed", room)
+                # Connect failed (the common one: the room server is stopped, or
+                # forwarding is blocked). Log a concise summary, and only when it
+                # *changes* for this room — so a stopped server logs one line, not a
+                # fresh line (or a 20-line traceback) every backoff. Unrecognised
+                # failures keep their full traceback, deduped the same way.
+                message, want_traceback = _chat_connect_summary(
+                    exc, via=str(spec.get("via") or "tunnel")
+                )
+                with self._lock:
+                    already = self._chat_connect_log.get(room) == message
+                    self._chat_connect_log[room] = message
+                if not already:
+                    if want_traceback:
+                        logger.exception("chat: connect to room %r failed", room)
+                    else:
+                        logger.warning("chat: room %r — %s", room, message)
                 if self._chat_stop.wait(backoff):
                     break
                 backoff = min(backoff * 2, self._CHAT_BACKOFF_MAX)
@@ -6072,7 +6127,7 @@ class Bridge:
                 self._chat_sources[room] = source
                 if queue:
                     self._agent_rooms[room] = user
-            backoff = self._CHAT_BACKOFF_START
+            connected_at = time.monotonic()
             if queue:
                 # Publish the queue's self-service catalog right after subscribing
                 # (forced — a fresh connection's hub has no catalog yet; later
@@ -6102,6 +6157,27 @@ class Bridge:
             )
             if self._chat_stop.is_set():
                 break
+            # Reset the backoff only if the connection proved *healthy* (stayed up
+            # past the min-healthy window). A connection the room opens then drops
+            # almost immediately is flapping — typically the room rejecting this
+            # console after the hello (the queue mailbox can't be watched, or an
+            # identity/mailbox mismatch). Keep backing off so we don't spin a tight
+            # reconnect + catalog-republish loop, and log the reason once.
+            if time.monotonic() - connected_at >= self._CHAT_MIN_HEALTHY:
+                backoff = self._CHAT_BACKOFF_START
+                with self._lock:
+                    self._chat_connect_log.pop(room, None)  # a later drop re-logs
+            else:
+                message = (
+                    "room closed the connection right after it opened — it may be "
+                    "rejecting this console (the queue mailbox can't be watched, or "
+                    "an identity/mailbox mismatch). Backing off."
+                )
+                with self._lock:
+                    already = self._chat_connect_log.get(room) == message
+                    self._chat_connect_log[room] = message
+                if not already:
+                    logger.warning("chat: room %r — %s", room, message)
             # Unexpected drop → back off, then reconnect.
             if self._chat_stop.wait(backoff):
                 break

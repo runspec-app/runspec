@@ -8,6 +8,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.76.0] — 2026-06-16
+
+### Fixed
+- **Quiet room reconnects when the room server is stopped.** With a fleet host
+  whose room server (`runspec-room`) is down, the SSH tunnel still reaches the
+  host, but opening the direct-tcpip channel to the room port fails with
+  paramiko's `ChannelException(2, 'Connect failed')`. The reconnect supervisor
+  didn't recognise it, so it logged a full ~20-line traceback on *every* backoff
+  cycle — flooding the launching terminal. The supervisor now summarises known
+  connect failures (room server down, forwarding blocked, slow/again proxied
+  connect, timeout) to a single concise line and logs it **once per failure
+  state** per room (deduped until the connection succeeds or the error changes);
+  only genuinely unexpected errors keep a traceback. The final `"away"` presence
+  sent on a dropped channel during teardown is also no longer logged as an
+  `ERROR` traceback (it's expected) — it drops to `DEBUG` (visible under `--dev`).
+- **Stop the tight reconnect + catalog-republish loop on a rejected room
+  connection.** When the room server is up but *rejects* an agent console right
+  after its `hello` (e.g. the queue mailbox can't be watched, or an
+  identity/mailbox mismatch), the channel opens and immediately closes. The
+  supervisor used to treat the open as a success and reset its backoff every time,
+  so it spun a ~2s reconnect loop — re-publishing the catalog onto the dying
+  socket each pass (the `chat: channel send failed` traceback). The backoff is now
+  reset only when a connection stays up past a min-healthy window
+  (`_CHAT_MIN_HEALTHY`, 10s); a connection that flaps (opens then drops almost
+  immediately) keeps backing off (up to 60s) and logs one concise line naming the
+  likely cause, instead of looping. Combined with the `channel send failed`
+  → `DEBUG` change above, a misconfigured queue mailbox no longer floods the
+  terminal.
+
 ## [0.75.1] — 2026-06-16
 
 ### Fixed

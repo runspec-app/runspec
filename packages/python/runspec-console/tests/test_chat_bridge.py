@@ -499,6 +499,7 @@ def _supervisor_stub():
     s._lock = threading.Lock()
     s._chat_stop = threading.Event()
     s._chat_sources = {}
+    s._chat_connect_log = {}
     s._agent_rooms = {}
     s._published_catalogs = {}
     s._trigger_engine = None
@@ -507,6 +508,9 @@ def _supervisor_stub():
     s._build_clock_ok = lambda: lambda: True
     s._CHAT_BACKOFF_START = 0.01
     s._CHAT_BACKOFF_MAX = 0.01
+    s._CHAT_MIN_HEALTHY = (
+        0.0  # any uptime counts as healthy (keep reconnect tests tight)
+    )
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
     s._chat_supervise = types.MethodType(Bridge._chat_supervise, s)
     s.published: list[str] = []
@@ -585,6 +589,39 @@ def test_chat_supervisor_agent_mode_publishes_catalog_and_registers():
         "connected": True,
         "queue": "it",
     } in conns
+
+
+def test_chat_supervisor_flapping_connection_backs_off_and_logs_once(caplog):
+    """A room that opens the channel then drops it immediately (e.g. it rejects the
+    console because the queue mailbox can't be watched) is flapping: the supervisor
+    must NOT reset the backoff on every open (which would spin a tight reconnect +
+    catalog-republish loop), and must log the reason once — no traceback."""
+    import logging
+    import time
+
+    s = _supervisor_stub()
+    s._CHAT_MIN_HEALTHY = 100.0  # nothing stays up this long → every drop is a flap
+
+    def factory():
+        return _OneShotTransport()  # opens, then recv → None (immediate drop)
+
+    s._chat_stop.clear()
+    with caplog.at_level(logging.WARNING, logger="runspec.console.triggers.chat"):
+        th = threading.Thread(
+            target=s._chat_supervise, args=(_SPEC, factory), daemon=True
+        )
+        th.start()
+        time.sleep(0.3)  # several flap cycles at the 0.01s backoff
+        s._chat_stop.set()
+        th.join(timeout=2)
+
+    flaps = [
+        r
+        for r in caplog.records
+        if "closed the connection right after it opened" in r.getMessage()
+    ]
+    assert len(flaps) == 1  # logged once despite repeated flapping reconnects
+    assert all(r.exc_info is None for r in flaps)  # no traceback
 
 
 def test_start_chat_noop_without_pool():
@@ -874,6 +911,65 @@ def test_chat_connect_hint_none_for_other_errors():
     from runspec_console.bridge import _chat_connect_hint
 
     assert _chat_connect_hint(TimeoutError("timed out"), via="tunnel") is None
+
+
+def test_chat_connect_summary_room_server_down_is_quiet():
+    from runspec_console.bridge import _chat_connect_summary
+
+    # paramiko's ChannelException(2, 'Connect failed') when the room port isn't
+    # listening (the room server is stopped) → concise, no traceback.
+    exc = Exception("ChannelException(2, 'Connect failed')")
+    message, want_traceback = _chat_connect_summary(exc, via="tunnel")
+    assert want_traceback is False
+    assert "room server isn't reachable" in message
+
+
+def test_chat_connect_summary_blocked_forwarding_reuses_hint():
+    from runspec_console.bridge import _chat_connect_summary
+
+    exc = Exception("ChannelException(1, 'Administratively prohibited')")
+    message, want_traceback = _chat_connect_summary(exc, via="tunnel")
+    assert want_traceback is False
+    assert 'room_via = "exec"' in message
+
+
+def test_chat_connect_summary_unknown_keeps_traceback():
+    from runspec_console.bridge import _chat_connect_summary
+
+    message, want_traceback = _chat_connect_summary(
+        Exception("totally unexpected boom"), via="tunnel"
+    )
+    assert want_traceback is True
+    assert "boom" in message
+
+
+def test_chat_supervisor_logs_room_down_once_no_traceback(caplog):
+    """A stopped room server (connect raises Connect failed) logs a single concise
+    WARNING across many backoff retries — not a traceback every cycle."""
+    import logging
+    import time
+
+    s = _supervisor_stub()
+
+    def factory():
+        raise Exception("ChannelException(2, 'Connect failed')")
+
+    s._chat_stop.clear()
+    with caplog.at_level(logging.WARNING, logger="runspec.console.triggers.chat"):
+        th = threading.Thread(
+            target=s._chat_supervise, args=(_SPEC, factory), daemon=True
+        )
+        th.start()
+        # Let it churn through several backoff cycles (start/max are 0.01s).
+        time.sleep(0.3)
+        s._chat_stop.set()
+        th.join(timeout=2)
+
+    room_down = [
+        r for r in caplog.records if "room server isn't reachable" in r.getMessage()
+    ]
+    assert len(room_down) == 1  # logged once, despite many reconnect attempts
+    assert all(r.exc_info is None for r in room_down)  # no traceback spilled
 
 
 # ── room connection tester (classifier) ────────────────────────────────────────

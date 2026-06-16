@@ -108,7 +108,11 @@ class ChannelChatTransport:
             with self._lock:
                 self._chan.sendall(frame)
         except Exception:
-            logger.exception("chat: channel send failed")
+            # A send on a dropped channel is expected, not a bug: e.g. the room
+            # server stopped, or our own teardown sends a final "away" on the way
+            # down. Keep the detail for the Dev tab (--dev) without spilling a
+            # paramiko stack to the launching terminal on every reconnect.
+            logger.debug("chat: channel send failed (channel closed?)", exc_info=True)
 
     def _fill(self) -> bool:
         """Read one chunk into the buffer. ``False`` on EOF / closed / error."""
