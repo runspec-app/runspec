@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Alert, Segmented, AutoComplete, Empty } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent } from '../bridge'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 
@@ -1691,6 +1691,156 @@ function TeamsTab() {
   )
 }
 
+// ── Config Sync tab (pull config files from a git repo, by tag) ─────────────────
+
+interface SyncFormValues {
+  url: string
+  ref: string
+  credential_id?: string
+  subpath?: string
+  files: string[]
+}
+
+function ConfigSyncTab() {
+  const [form] = Form.useForm<SyncFormValues>()
+  const [cfg, setCfg] = useState<SyncConfig | null>(null)
+  const [creds, setCreds] = useState<Credential[]>([])
+  const [tags, setTags] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [pulling, setPulling] = useState(false)
+  const [result, setResult] = useState<SyncPullResult | null>(null)
+
+  const load = useCallback(() => {
+    bridge.get_sync_config().then(c => {
+      setCfg(c)
+      form.setFieldsValue({
+        url: c.url, ref: c.ref, credential_id: c.credential_id || undefined,
+        subpath: c.subpath, files: c.files?.length ? c.files : c.files_default,
+      })
+    })
+  }, [form])
+  useEffect(() => { load() }, [load])
+  useEffect(() => { bridge.list_credentials().then(setCreds) }, [])
+
+  const persist = async (): Promise<boolean> => {
+    const v = await form.validateFields()
+    await bridge.save_sync_config({
+      url: v.url.trim(), ref: v.ref.trim(),
+      credential_id: v.credential_id || '', subpath: v.subpath?.trim() || '',
+      files: v.files ?? [],
+    })
+    return true
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      if (!(await persist())) return
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+      load()
+    } catch { /* validation surfaced inline */ } finally { setSaving(false) }
+  }
+
+  const loadTags = async () => {
+    try {
+      if (!(await persist())) return  // tags need the saved URL + credential
+    } catch { return }
+    const r = await bridge.list_sync_tags()
+    if (r.error) { message.error(r.error); setTags([]) }
+    else { setTags(r.tags ?? []); if (!r.tags?.length) message.info('No tags found in the repo.') }
+  }
+
+  const pull = async () => {
+    setPulling(true); setResult(null)
+    try {
+      if (!(await persist())) return
+      const r = await bridge.sync_pull()
+      setResult(r)
+      if (r.ok) message.success(`Pulled ${r.written?.length ?? 0} file(s) at ${r.ref}`)
+      else message.error(r.error || 'Pull failed')
+      load()
+    } finally { setPulling(false) }
+  }
+
+  const engineMissing = cfg !== null && !cfg.engine
+  const fileOptions = (cfg?.files_default ?? []).map(f => ({ value: f, label: f }))
+
+  return (
+    <div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+        Pull this console's config files from a git repository at a tag, so a fresh install can be fully configured from one source. Authentication uses a saved <a onClick={e => e.preventDefault()} style={{ cursor: 'default' }}>credential</a> (Credentials tab). Pulling overwrites the local files (backing up the previous copy first).
+      </Text>
+
+      {engineMissing && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+          message="Git engine not installed"
+          description={<span style={{ fontSize: 12 }}>Install the <code>git-sync</code> extra (<code>pip install runspec-console[git-sync]</code>) to enable pulling.</span>} />
+      )}
+
+      <Form form={form} layout="vertical" size="small">
+        <Form.Item name="url" label="Repository URL" rules={[{ required: true, message: 'Required' }]}
+          tooltip="HTTPS (https://…) or SSH (git@host:org/repo.git). HTTPS uses the credential's token; SSH uses your console SSH key.">
+          <Input placeholder="https://github.com/acme/runspec-config.git" autoComplete="off" />
+        </Form.Item>
+        <Form.Item name="ref" label="Tag / ref" rules={[{ required: true, message: 'Required' }]}
+          tooltip="A tag (recommended, for versioned rollouts) or a branch name.">
+          <AutoComplete
+            options={tags.map(t => ({ value: t }))}
+            onFocus={() => { if (!tags.length) loadTags() }}
+            placeholder="v1.4.0"
+          >
+            <Input addonAfter={<a onClick={loadTags}>refresh tags</a>} />
+          </AutoComplete>
+        </Form.Item>
+        <Form.Item name="credential_id" label="Credential"
+          tooltip="A Credentials-tab entry. For HTTPS use a token/userpass credential (username + token). For SSH, the username (default git) plus your console SSH key.">
+          <Select allowClear placeholder="None (public / anonymous)"
+            options={creds.map(c => ({ value: c.id, label: `${c.label}${c.username ? ` (${c.username})` : ''}` }))} />
+        </Form.Item>
+        <Form.Item name="files" label="Files to pull"
+          tooltip="Files missing from the repo at that ref are skipped, not an error.">
+          <Select mode="multiple" options={fileOptions} placeholder="config files to sync" />
+        </Form.Item>
+        <Form.Item name="subpath" label="Subdirectory (optional)"
+          tooltip="A directory within the repo that holds the config files (blank = repo root).">
+          <Input placeholder="" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+        </Form.Item>
+
+        <Space>
+          <Button size="small" onClick={handleSave} loading={saving}>{saved ? 'Saved' : 'Save settings'}</Button>
+          <Popconfirm
+            title="Pull config from the repo?"
+            description={<span style={{ fontSize: 12 }}>Overwrites local config files at the chosen tag.<br />Previous versions are backed up first.</span>}
+            onConfirm={pull} okText="Pull" cancelText="Cancel" placement="topLeft">
+            <Button size="small" type="primary" icon={<DownloadOutlined />} loading={pulling} disabled={engineMissing}>Pull now</Button>
+          </Popconfirm>
+        </Space>
+      </Form>
+
+      {cfg?.last_synced && (
+        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 12 }}>
+          Last synced <code>{cfg.last_ref}</code> ({cfg.last_commit?.slice(0, 8)}) at {cfg.last_synced}
+        </Text>
+      )}
+
+      {result && result.ok && (
+        <Alert type="success" showIcon style={{ marginTop: 12 }}
+          message={`Pulled at ${result.ref}`}
+          description={<span style={{ fontSize: 12 }}>
+            Wrote: {result.written?.length ? <code>{result.written.join(', ')}</code> : 'nothing'}.
+            {result.skipped?.length ? <> Skipped (not in repo): <code>{result.skipped.join(', ')}</code>.</> : null}
+            {result.backups?.length ? <> Backed up {result.backups.length} file(s).</> : null}
+            {' '}Hosts and triggers reloaded — no restart needed.
+          </span>} />
+      )}
+      {result && !result.ok && (
+        <Alert type="error" showIcon style={{ marginTop: 12 }} message="Pull failed" description={<span style={{ fontSize: 12 }}>{result.error}</span>} />
+      )}
+    </div>
+  )
+}
+
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
@@ -1704,6 +1854,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
+          { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
           { key: 'triggers',  label: 'Triggers',   children: <TriggersTab /> },
           { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },
         ]}

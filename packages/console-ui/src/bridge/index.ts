@@ -116,6 +116,34 @@ export interface CredentialBackend {
   backend: string
 }
 
+// Settings → Config Sync. Where to pull the console's config files from (a git
+// repo, at a tag/ref), which credential authenticates, and the last successful
+// pull. The secret is never here — it lives in the keyring under credential_id.
+// `engine` is the active git engine (null = the `git-sync` extra isn't installed);
+// `files_default` is the file set the UI offers when none are chosen.
+export interface SyncConfig {
+  url: string
+  ref: string
+  credential_id: string
+  subpath: string
+  files: string[]
+  last_ref: string
+  last_commit: string
+  last_synced: string
+  engine: string | null
+  files_default: string[]
+}
+
+export interface SyncPullResult {
+  ok: boolean
+  ref?: string
+  commit?: string
+  written?: string[]
+  skipped?: string[]
+  backups?: string[]
+  error?: string
+}
+
 // The single [mailbox] the Outlook source monitors (Settings → Triggers).
 // `address` blank = the default account; `folder` blank = the Inbox; `label` is
 // an optional display name. null = no mailbox configured (monitoring off).
@@ -580,6 +608,13 @@ export interface BridgeApi {
   save_credential: (entry: Credential) => Promise<{ id?: string; error?: string }>
   delete_credential: (id: string) => Promise<void>
   credentials_backend: () => Promise<CredentialBackend>
+  // Config Sync (Settings → Config Sync): pull config files from a git repo by
+  // tag. get/save the settings, list the repo's tags for the ref dropdown, and
+  // run a pull (overwrites local config, backing up first; hot-reloads after).
+  get_sync_config: () => Promise<SyncConfig>
+  save_sync_config: (data: Partial<SyncConfig>) => Promise<void>
+  list_sync_tags: () => Promise<{ tags?: string[]; error?: string }>
+  sync_pull: () => Promise<SyncPullResult>
   test_host: (name: string) => Promise<TestResult>
   // `credentialId` (optional) applies a saved credential by id, overriding any
   // in-scope credential that would auto-apply. In-scope credentials fill their

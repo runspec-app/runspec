@@ -22,6 +22,7 @@ import logging
 import os
 import queue
 import random
+import shutil
 import stat
 import sys
 import threading
@@ -39,14 +40,17 @@ else:
 
 from . import notify
 from .config import (
+    app_dir,
     confirm_notifications_enabled,
     credentials_path,
     filters_path,
     hosts_path,
     read_config,
+    read_sync,
     room_notifications_enabled,
     update_config,
     write_config,
+    write_sync,
 )
 from .discovery import discover_local, discover_remote
 from .executor import run_local, run_remote
@@ -3705,6 +3709,228 @@ class Bridge:
         save_credentials(credentials_path(), remaining)
         cred.delete_secret(cid)
         self._reload_credentials()
+
+    # ── config sync (pull config files from a git repo, by tag) ─────────────────
+
+    def get_sync_config(self) -> dict[str, Any]:
+        """The ``[config_sync]`` settings for the Settings → Config Sync tab.
+
+        Never includes the secret (that lives in the keyring under
+        ``credential_id``). Adds ``engine`` (the active git engine, or None when
+        the ``git-sync`` extra isn't installed) and ``files_default`` (the file
+        set the UI offers) so the tab can render in one round-trip."""
+        from . import gitsync
+
+        sync = read_sync()
+        return {
+            "url": sync.get("url", ""),
+            "ref": sync.get("ref", ""),
+            "credential_id": sync.get("credential_id", ""),
+            "subpath": sync.get("subpath", ""),
+            "files": list(sync.get("files") or gitsync.KNOWN_FILES),
+            "last_ref": sync.get("last_ref", ""),
+            "last_commit": sync.get("last_commit", ""),
+            "last_synced": sync.get("last_synced", ""),
+            "engine": gitsync.engine_name(),
+            "files_default": list(gitsync.KNOWN_FILES),
+        }
+
+    def save_sync_config(self, data: dict[str, Any]) -> None:
+        """Persist the Config Sync settings, preserving the ``last_*`` stamps."""
+        sync = read_sync()
+        sync.update(
+            {
+                "url": str(data.get("url", "")).strip(),
+                "ref": str(data.get("ref", "")).strip(),
+                "credential_id": str(data.get("credential_id", "")).strip(),
+                "subpath": str(data.get("subpath", "")).strip(),
+                "files": [
+                    str(f).strip() for f in (data.get("files") or []) if str(f).strip()
+                ],
+            }
+        )
+        write_sync(sync)
+
+    def list_sync_tags(self) -> dict[str, Any]:
+        """Tags advertised by the configured repo, for the ref dropdown. Best
+        effort: returns ``{"error": ...}`` (the UI falls back to a free-text ref)
+        rather than raising."""
+        from . import gitsync
+
+        sync = read_sync()
+        url = str(sync.get("url", "")).strip()
+        if not url:
+            return {"error": "set a repository URL first"}
+        try:
+            auth = self._sync_auth(url, str(sync.get("credential_id", "")))
+            return {"tags": gitsync.list_tags(url, auth)}
+        except gitsync.GitSyncError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"could not list tags: {exc}"}
+
+    def _sync_auth(self, url: str, credential_id: str) -> Any:
+        """Build a ``GitAuth`` for ``url`` from a saved credential.
+
+        HTTPS uses the credential's username + keyring secret (token). SSH uses
+        the credential's username (default ``git``) and the console's configured
+        SSH key (``[ssh] identityFile``) — credentials don't store key paths."""
+        from . import credentials as cred
+        from . import gitsync
+
+        entry = self._credential_entry(credential_id) if credential_id else None
+        username = str((entry or {}).get("username", "")).strip()
+        if gitsync._is_ssh_url(url):
+            cfg_ssh = self.get_config().get("ssh") or {}
+            key_path = str(cfg_ssh.get("identityFile", "") or "")
+            return gitsync.GitAuth(
+                scheme="ssh", username=username or "git", key_path=key_path
+            )
+        secret = cred.get_secret(credential_id) if credential_id else None
+        return gitsync.GitAuth(scheme="https", username=username, secret=secret or "")
+
+    def sync_pull(self) -> dict[str, Any]:
+        """Pull the configured files from the repo at the configured ref.
+
+        Validates every fetched ``.toml`` before touching disk (a broken pull
+        writes nothing), backs up each existing file, then replaces it — except
+        ``runspec_credentials.toml``, which is *merged by id* so the credential
+        used for the pull (and any other local-only entry) survives. The local
+        ``[config_sync]`` is re-injected into the new ``config.toml`` and stamped
+        with ``last_*``. Finally the running app hot-reloads hosts / filters /
+        credentials / SSH / triggers, so no restart is needed.
+
+        Returns ``{ok, ref, commit, written, skipped, backups}`` or
+        ``{ok: False, error}``."""
+        from . import gitsync
+
+        sync = read_sync()
+        url = str(sync.get("url", "")).strip()
+        ref = str(sync.get("ref", "")).strip()
+        if not url or not ref:
+            return {"ok": False, "error": "set a repository URL and a ref/tag first"}
+
+        requested = [
+            str(f).strip()
+            for f in (sync.get("files") or gitsync.KNOWN_FILES)
+            if str(f).strip()
+        ]
+        # Filename allowlist: bare names only — each is written into the app dir,
+        # so a name with a path separator (or "..") could escape it.
+        safe = [
+            f
+            for f in requested
+            if "/" not in f and "\\" not in f and f not in ("", "..")
+        ]
+        subpath = str(sync.get("subpath", "")).strip()
+        cred_id = str(sync.get("credential_id", "")).strip()
+
+        try:
+            auth = self._sync_auth(url, cred_id)
+            result = gitsync.fetch_files(url, ref, safe, auth, subpath)
+        except gitsync.GitSyncError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"pull failed: {exc}"}
+
+        fetched = result.files
+        if not fetched:
+            return {
+                "ok": False,
+                "error": f"none of the configured files were found at {ref} in the repo",
+            }
+
+        # Validate-before-replace: any unparseable TOML aborts the whole pull.
+        for name, data in fetched.items():
+            if name.endswith(".toml"):
+                try:
+                    tomllib.loads(data.decode("utf-8"))
+                except Exception as exc:  # noqa: BLE001
+                    return {
+                        "ok": False,
+                        "error": f"{name} at {ref} is not valid TOML — nothing was written: {exc}",
+                    }
+
+        old_cfg = self.get_config()
+        app = app_dir()
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        written: list[str] = []
+        skipped: list[str] = []
+        backups: list[str] = []
+
+        for name in safe:
+            if name not in fetched:
+                skipped.append(name)
+                continue
+            dest = app / name
+            if dest.exists():
+                backup = dest.with_name(f"{name}.bak-{ts}")
+                try:
+                    shutil.copy2(dest, backup)
+                    backups.append(backup.name)
+                except Exception:
+                    logger.warning(
+                        "could not back up %s before pull", name, exc_info=True
+                    )
+            if name == "runspec_credentials.toml":
+                self._merge_synced_credentials(fetched[name])
+            else:
+                self._atomic_write_bytes(dest, fetched[name])
+            written.append(name)
+
+        # Re-inject the local [config_sync] into the freshly-written config.toml
+        # (so the repo pointer survives the overwrite) and stamp last_*.
+        sync["last_ref"] = ref
+        sync["last_commit"] = result.commit
+        sync["last_synced"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        write_sync(sync)
+
+        # Hot-reload so the running app picks up the new config without a restart.
+        self._reload_hosts()
+        self._reload_filters()
+        self._reload_credentials()
+        self._after_config_change(old_cfg, self.get_config())
+        try:
+            self.restart_triggers()
+        except Exception:
+            logger.debug("restart_triggers after sync_pull failed", exc_info=True)
+
+        return {
+            "ok": True,
+            "ref": ref,
+            "commit": result.commit,
+            "written": written,
+            "skipped": skipped,
+            "backups": backups,
+        }
+
+    def _atomic_write_bytes(self, dest: Path, data: bytes) -> None:
+        """Write ``data`` to ``dest`` atomically (temp + os.replace), mirroring
+        ``config.write_config``."""
+        tmp = dest.with_name(f"{dest.name}.tmp.{os.getpid()}")
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+
+    def _merge_synced_credentials(self, data: bytes) -> None:
+        """Merge pulled credential metadata into the local store, keyed by id.
+
+        Repo entries win per id; local-only entries (e.g. the credential used to
+        authenticate the pull itself) are kept — so a pull can never lock the
+        operator out of the repo. Secrets aren't in the file, so a synced entry
+        shows "no secret" until set locally; an id that already has a secret in
+        this machine's keyring keeps it."""
+        from .credentials import save_credentials
+
+        repo_entries = tomllib.loads(data.decode("utf-8")).get("credential", [])
+        self._reload_credentials()
+        by_id: dict[str, dict[str, Any]] = {
+            str(c.get("id")): c for c in self._credentials if c.get("id")
+        }
+        for c in repo_entries:
+            cid = str(c.get("id", "")).strip()
+            if cid:
+                by_id[cid] = c  # repo wins per id; local-only entries remain
+        save_credentials(credentials_path(), list(by_id.values()))
 
     def import_jump_hosts(self, toml_content: str) -> list[dict[str, Any]]:
         try:

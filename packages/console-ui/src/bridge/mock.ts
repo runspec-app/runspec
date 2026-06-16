@@ -658,6 +658,17 @@ export const mockApi: BridgeApi = {
   delete_credential: async (id) => { console.log('[mock] delete_credential', id) },
   credentials_backend: async () => ({ available: true, backend: 'WinVaultKeyring' }),
 
+  get_sync_config: async () => ({
+    url: '', ref: '', credential_id: '', subpath: '',
+    files: ['config.toml', 'runspec_hosts.toml', 'runspec_triggers.toml', 'runspec_filters.toml', 'runspec_credentials.toml'],
+    last_ref: '', last_commit: '', last_synced: '',
+    engine: 'dulwich',
+    files_default: ['config.toml', 'runspec_hosts.toml', 'runspec_triggers.toml', 'runspec_filters.toml', 'runspec_credentials.toml'],
+  }),
+  save_sync_config: async (data) => { console.log('[mock] save_sync_config', data) },
+  list_sync_tags: async () => ({ tags: ['v1.2.0', 'v1.1.0', 'v1.0.0'] }),
+  sync_pull: async () => { console.log('[mock] sync_pull'); return { ok: true, ref: 'v1.2.0', commit: 'a1b2c3d4e5f6', written: ['config.toml', 'runspec_hosts.toml'], skipped: [], backups: ['config.toml.bak-20260616-043000'] } },
+
   test_host: async (name): Promise<TestResult> => {
     await new Promise(r => setTimeout(r, 1200))
     if (name === 'prod-2') {

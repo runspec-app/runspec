@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.72.0"
+version = "0.73.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -42,6 +42,11 @@ langserve = ["httpx>=0.27"]
 # stays in runspec_credentials.toml. The feature reports itself unavailable
 # until installed.
 credentials = ["keyring>=24"]
+# Config Sync: pull config.toml / runspec_hosts.toml / … from a git repo by tag
+# (Settings → Config Sync). dulwich is a pure-Python git client, so a fresh
+# install needs no system `git` binary; SSH repos go over the already-bundled
+# paramiko. The feature reports itself unavailable until installed.
+git-sync = ["dulwich>=0.22"]
 # PyWinRT projection for two notification surfaces: *reading* system toasts (the
 # listener trigger source — Teams / Slack / any toast, needs the `.Management`
 # namespace + a user consent grant) and *sending* confirm toasts (notify.py —
@@ -62,6 +67,7 @@ dev = [
     "mypy",
     "pytest>=8.0",
     "httpx>=0.27",
+    "dulwich>=0.22",
 ]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,374 @@
+"""
+gitsync.py — pull config files from an external git repo, by tag.
+
+This is the git layer behind Settings → Config Sync. It fetches a handful of
+named files (``config.toml``, ``runspec_hosts.toml`` …) from a remote repo at a
+specific **ref** (a tag, for versioned rollouts) and hands the raw bytes back to
+the bridge, which validates and writes them into the app dir. It never touches
+the filesystem itself and imports nothing from the bridge/UI.
+
+**Engine: dulwich** (pure-Python), so a fresh desktop/Windows install needs no
+system ``git`` binary. dulwich is an optional extra
+(``pip install runspec-console[git-sync]``) and is imported lazily — the rest of
+the console runs fine without it (mirrors ``credentials._keyring()``).
+
+Two transports:
+  * **HTTPS** — username + secret (a token / password) passed in-process to
+    dulwich's HTTP client, so the secret never lands on a command line or in a
+    log.
+  * **SSH** — over paramiko (already a core dependency) via a small vendor below,
+    so SSH repos work without a system ``ssh`` client either. The key file
+    defaults to the console's configured SSH key.
+
+No working tree is checked out: we fetch the ref, peel it to its commit, and read
+the wanted files straight out of the commit's tree.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+from urllib.parse import urlsplit
+
+logger = logging.getLogger(__name__)
+
+# The config files Config Sync knows how to pull, in a stable order. The
+# configured ``files`` list defaults to these; new files added here (or to a
+# user's list) sync with no other code change. Only bare filenames are allowed —
+# the bridge writes each into the app dir, so a name with a path separator is
+# rejected upstream (no writing outside the config dir).
+KNOWN_FILES: tuple[str, ...] = (
+    "config.toml",
+    "runspec_hosts.toml",
+    "runspec_triggers.toml",
+    "runspec_filters.toml",
+    "runspec_credentials.toml",
+)
+
+
+class GitSyncError(Exception):
+    """A pull/list failed — carries a human-readable message for the UI."""
+
+
+@dataclass
+class GitAuth:
+    """How to authenticate to the repo.
+
+    HTTPS uses ``username`` + ``secret`` (a token or password). SSH uses
+    ``key_path`` (and optional ``username``, default ``git``). ``scheme`` is
+    informational — the actual transport is derived from the URL.
+    """
+
+    scheme: str = "https"  # "https" | "ssh" | "local"
+    username: str = ""
+    secret: str = ""  # token / password — never logged
+    key_path: str = ""  # SSH private key file
+
+
+@dataclass
+class FetchResult:
+    ref: str
+    commit: str
+    files: dict[str, bytes] = field(default_factory=dict)
+
+
+# ── engine availability ─────────────────────────────────────────────────────────
+
+
+def _dulwich() -> Any | None:
+    """The ``dulwich.client`` module, or None when the extra isn't installed."""
+    try:
+        import dulwich.client  # noqa: F401
+
+        return __import__("dulwich.client", fromlist=["client"])
+    except Exception:
+        return None
+
+
+def available() -> bool:
+    """True when the git engine (dulwich) can be imported."""
+    return _dulwich() is not None
+
+
+def engine_name() -> str | None:
+    """The active engine name for the UI, or None when unavailable."""
+    return "dulwich" if available() else None
+
+
+# ── transport ───────────────────────────────────────────────────────────────────
+
+
+def _is_ssh_url(url: str) -> bool:
+    """True for ``ssh://…`` and the scp-like ``git@host:path`` form."""
+    u = url.strip()
+    if u.startswith("ssh://"):
+        return True
+    # scp-like: user@host:path with no scheme and a colon before any slash.
+    if "://" not in u and "@" in u and ":" in u.split("@", 1)[1]:
+        return True
+    return False
+
+
+def _transport_kwargs(url: str, auth: GitAuth) -> dict[str, Any]:
+    """dulwich ``get_transport_and_path`` kwargs for this URL + auth.
+
+    For SSH we also install a paramiko vendor (below) so no system ``ssh`` is
+    needed. HTTPS passes username/password in-process. Local/``file://`` URLs
+    need nothing.
+    """
+    if _is_ssh_url(url):
+        _install_paramiko_vendor()
+        kwargs: dict[str, Any] = {}
+        if auth.key_path:
+            kwargs["key_filename"] = auth.key_path
+        if auth.username:
+            kwargs["username"] = auth.username
+        return kwargs
+    scheme = urlsplit(url).scheme
+    if scheme in ("http", "https"):
+        kwargs = {}
+        if auth.username:
+            kwargs["username"] = auth.username
+        if auth.secret:
+            kwargs["password"] = auth.secret
+        return kwargs
+    return {}  # local path / file://
+
+
+def _install_paramiko_vendor() -> None:
+    """Point dulwich's SSH transport at our paramiko vendor.
+
+    dulwich 1.x defaults to a subprocess vendor that shells out to the system
+    ``ssh``. We override it with a paramiko-backed vendor so SSH repos work with
+    no external ``ssh`` client (paramiko is already a core dependency). Best
+    effort: if paramiko is missing, leave dulwich's default in place.
+    """
+    try:
+        import dulwich.client as client
+    except Exception:
+        return
+    try:
+        import paramiko  # noqa: F401
+    except Exception:
+        return
+    client.get_ssh_vendor = _ParamikoSSHVendor
+
+
+class _ParamikoChannel:
+    """File-like adapter over a paramiko exec channel for dulwich's Protocol."""
+
+    def __init__(self, ssh: Any, channel: Any) -> None:
+        self._ssh = ssh
+        self._channel = channel
+        self.channel = channel
+
+    def can_read(self) -> bool:
+        return self._channel.recv_ready()
+
+    def write(self, data: bytes) -> None:
+        self._channel.sendall(data)
+
+    def read(self, n: int | None = None) -> bytes:
+        return self._channel.recv(n or 4096)
+
+    @property
+    def stderr(self) -> Any:
+        return self._channel.makefile_stderr()
+
+    def close(self) -> None:
+        try:
+            self._channel.close()
+        finally:
+            self._ssh.close()
+
+
+def _ParamikoSSHVendor() -> Any:  # noqa: N802 — used as a vendor factory
+    """A dulwich SSHVendor backed by paramiko (constructed lazily)."""
+    import paramiko
+    from dulwich.client import SSHVendor
+
+    class _Vendor(SSHVendor):
+        def run_command(
+            self,
+            host: str,
+            command: bytes,
+            username: str | None = None,
+            port: int | None = None,
+            password: str | None = None,
+            key_filename: str | None = None,
+            ssh_command: str | None = None,
+            protocol_version: int | None = None,
+        ) -> _ParamikoChannel:
+            ssh = paramiko.SSHClient()
+            ssh.load_system_host_keys()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            connect: dict[str, Any] = {"hostname": host, "username": username or "git"}
+            if port:
+                connect["port"] = port
+            if password:
+                connect["password"] = password
+            if key_filename:
+                connect["key_filename"] = key_filename
+            ssh.connect(**connect)
+            transport = ssh.get_transport()
+            if transport is None:
+                ssh.close()
+                raise GitSyncError(f"could not open an SSH transport to {host}")
+            channel = transport.open_session()
+            cmd = command.decode() if isinstance(command, bytes) else command
+            channel.exec_command(cmd)
+            return _ParamikoChannel(ssh, channel)
+
+    return _Vendor()
+
+
+# ── public API ──────────────────────────────────────────────────────────────────
+
+
+def list_tags(url: str, auth: GitAuth) -> list[str]:
+    """Tag names advertised by the remote (newest-ish first), for the UI dropdown.
+
+    Uses an ``ls-remote``-style ref listing — no objects are downloaded. Raises
+    ``GitSyncError`` on connection/auth failure.
+    """
+    if not available():
+        raise GitSyncError(
+            "git engine unavailable — install the 'git-sync' extra "
+            "(pip install runspec-console[git-sync])"
+        )
+    from dulwich.client import get_transport_and_path
+
+    try:
+        client, path = get_transport_and_path(url, **_transport_kwargs(url, auth))
+        result = client.get_refs(path)
+        # Newer dulwich returns an LsRemoteResult (use .refs); older returns a dict.
+        refs = getattr(result, "refs", result)
+    except GitSyncError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise GitSyncError(_human_error(exc)) from exc
+
+    seen: set[str] = set()
+    tags: list[str] = []
+    prefix = b"refs/tags/"
+    for ref in refs:
+        if not ref.startswith(prefix):
+            continue
+        name = ref[len(prefix) :].decode("utf-8", "replace")
+        if name.endswith("^{}"):  # peeled annotated tag — same name
+            name = name[:-3]
+        if name not in seen:
+            seen.add(name)
+            tags.append(name)
+    tags.sort(reverse=True)
+    return tags
+
+
+def fetch_files(
+    url: str,
+    ref: str,
+    files: list[str] | tuple[str, ...],
+    auth: GitAuth,
+    subpath: str = "",
+) -> FetchResult:
+    """Fetch ``ref`` and read ``files`` out of its commit tree.
+
+    ``ref`` may be a tag (preferred), a branch, or a full ref name. Each file is
+    looked up under ``subpath`` within the repo; a file that doesn't exist at
+    that ref is simply omitted from the result (not an error) so a repo needn't
+    carry every file. Raises ``GitSyncError`` on connection/auth failure or when
+    ``ref`` can't be resolved.
+    """
+    if not available():
+        raise GitSyncError(
+            "git engine unavailable — install the 'git-sync' extra "
+            "(pip install runspec-console[git-sync])"
+        )
+    from dulwich.client import get_transport_and_path
+    from dulwich.object_store import tree_lookup_path
+    from dulwich.repo import MemoryRepo
+
+    repo = MemoryRepo()
+    try:
+        client, path = get_transport_and_path(url, **_transport_kwargs(url, auth))
+        result = client.fetch(path, repo)
+        refs = result.refs or {}
+    except GitSyncError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise GitSyncError(_human_error(exc)) from exc
+
+    sha = _resolve_ref(refs, ref)
+    if sha is None:
+        raise GitSyncError(
+            f"ref {ref!r} not found in {url} — check the tag/branch name"
+        )
+
+    try:
+        commit_sha = _peel_to_commit(repo, sha)
+        commit = repo.object_store[commit_sha]
+        tree_sha = commit.tree
+    except Exception as exc:  # noqa: BLE001
+        raise GitSyncError(f"could not read commit for ref {ref!r}: {exc}") from exc
+
+    out: dict[str, bytes] = {}
+    base = subpath.strip("/")
+    for name in files:
+        rel = f"{base}/{name}" if base else name
+        try:
+            _mode, blob_sha = tree_lookup_path(
+                repo.object_store.__getitem__, tree_sha, rel.encode("utf-8")
+            )
+            out[name] = repo.object_store[blob_sha].data
+        except KeyError:
+            continue  # absent at this ref — fine
+
+    return FetchResult(ref=ref, commit=commit_sha.decode("ascii"), files=out)
+
+
+# ── helpers ─────────────────────────────────────────────────────────────────────
+
+
+def _resolve_ref(refs: dict[bytes, bytes], ref: str) -> bytes | None:
+    """Find the object sha for ``ref`` among advertised refs.
+
+    Tries tag, then branch, then the literal ref / a raw 40-char sha.
+    """
+    r = ref.encode("utf-8")
+    for cand in (
+        b"refs/tags/" + r,
+        b"refs/heads/" + r,
+        b"refs/remotes/origin/" + r,
+        r,
+    ):
+        sha = refs.get(cand)
+        if sha:
+            return sha
+    # a raw sha that was advertised under some ref
+    if len(ref) == 40 and all(c in "0123456789abcdef" for c in ref.lower()):
+        return r
+    return None
+
+
+def _peel_to_commit(repo: Any, sha: bytes) -> bytes:
+    """Follow annotated tag objects down to the commit they point at."""
+    obj = repo.object_store[sha]
+    while getattr(obj, "type_name", b"") == b"tag":
+        sha = obj.object[1]
+        obj = repo.object_store[sha]
+    return sha
+
+
+def _human_error(exc: Exception) -> str:
+    """A friendlier message for the common dulwich failures."""
+    text = str(exc) or exc.__class__.__name__
+    low = text.lower()
+    if "401" in text or "unauthorized" in low or "authentication" in low:
+        return (
+            "authentication failed — check the credential (username + token) and "
+            f"that it can read this repo. ({text})"
+        )
+    if "404" in text or "not found" in low or "not a git repository" in low:
+        return f"repository not found — check the URL. ({text})"
+    return f"git operation failed: {text}"

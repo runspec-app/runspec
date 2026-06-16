@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.73.0] — 2026-06-16
+
+### Added
+- **Config Sync (Settings → Config Sync).** Pull this console's config files from
+  an external git repository **at a tag**, so a fresh install can be fully
+  configured from one versioned source (and rolled forward/back by re-pulling a
+  different tag). Syncs `config.toml`, `runspec_hosts.toml`,
+  `runspec_triggers.toml`, `runspec_filters.toml`, and `runspec_credentials.toml`
+  (metadata only — secrets stay in each machine's keyring); the file list is
+  data-driven, so files added later sync with no code change. Authentication
+  reuses a saved **credential** (Credentials tab): HTTPS uses its username + token,
+  SSH repos use the console's SSH key. A pull **validates every fetched TOML before
+  touching disk** (a broken pull writes nothing), **backs up** each existing file
+  first, then replaces it — except `runspec_credentials.toml`, which is **merged by
+  id** so the credential used for the pull (and any other local-only entry) can't
+  be deleted. The local `[config_sync]` settings are preserved across the
+  `config.toml` overwrite and stamped with `last_ref`/`last_commit`/`last_synced`.
+  After a successful pull the running app **hot-reloads** hosts / filters /
+  credentials / SSH / triggers — no restart needed. New bridge methods
+  `get_sync_config` / `save_sync_config` / `list_sync_tags` / `sync_pull`; git is
+  handled by **dulwich** (pure-Python — no system `git` binary required) behind the
+  new `git-sync` optional extra (`pip install runspec-console[git-sync]`), with SSH
+  over the already-bundled paramiko. See `docs/design/config-git-sync.md`.
+
 ## [0.72.0] — 2026-06-15
 
 ### Added

@@ -312,6 +312,60 @@ def write_mailbox(mailbox: dict[str, Any] | None) -> None:
     update_config(mutate)
 
 
+def read_sync() -> dict[str, Any]:
+    """The ``[config_sync]`` table from config.toml ({} when unset).
+
+    Config Sync's settings: which repo to pull config from, at what ref, with
+    which credential. Shape::
+
+        [config_sync]
+        url           = "https://github.com/acme/runspec-config.git"
+        ref           = "v1.4.0"          # tag (preferred) or branch
+        credential_id = "config-repo"     # a Credentials-tab entry
+        subpath       = ""                # optional dir within the repo
+        files         = ["config.toml", "runspec_hosts.toml", ...]
+        last_ref      = "v1.4.0"          # stamped by a successful pull
+        last_commit   = "a1b2c3d…"
+        last_synced   = "2026-06-16T04:30:00Z"
+
+    The secret is never here — it lives in the keyring under ``credential_id``.
+    """
+    raw = read_config().get("config_sync")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def write_sync(sync: dict[str, Any]) -> None:
+    """Replace the ``[config_sync]`` table, preserving every other section.
+
+    Used both when the operator saves the Config Sync settings and to stamp
+    ``last_*`` after a pull. Empty/blank scalars are dropped; ``files`` is kept
+    only when non-empty (an empty list means "use the default set")."""
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        entry: dict[str, Any] = {}
+        for key in (
+            "url",
+            "ref",
+            "credential_id",
+            "subpath",
+            "last_ref",
+            "last_commit",
+            "last_synced",
+        ):
+            val = str(sync.get(key) or "").strip()
+            if val:
+                entry[key] = val
+        files = [str(f).strip() for f in (sync.get("files") or []) if str(f).strip()]
+        if files:
+            entry["files"] = files
+        if entry:
+            cfg["config_sync"] = entry
+        else:
+            cfg.pop("config_sync", None)
+
+    update_config(mutate)
+
+
 def confirm_notifications_enabled() -> bool:
     """`[console] confirm_notifications` — raise a desktop toast when an agent
     tool call hits the autonomy gate. Defaults to True; set false to silence the
