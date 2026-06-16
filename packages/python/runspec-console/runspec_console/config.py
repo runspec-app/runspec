@@ -149,6 +149,12 @@ def write_triggers(triggers: list[dict[str, Any]]) -> None:
     _write_trigger_file(read_rota(), triggers)
 
 
+def write_triggers_file(rota: dict[str, Any], triggers: list[dict[str, Any]]) -> None:
+    """Write both the ``[rota]`` and the ``[triggers.<name>]`` tables in one pass
+    (used by Config Sync, which merges both before writing)."""
+    _write_trigger_file(rota, triggers)
+
+
 def write_rota(rota: dict[str, Any]) -> None:
     """Save the ``[rota]`` working-hours table, preserving the existing triggers."""
     _write_trigger_file(rota, read_triggers())
@@ -324,6 +330,7 @@ def read_sync() -> dict[str, Any]:
         credential_id = "config-repo"     # a Credentials-tab entry
         subpath       = ""                # optional dir within the repo
         files         = ["config.toml", "runspec_hosts.toml", ...]
+        preserve      = ["config.toml:mailbox.folder", ...]  # keep local on pull
         last_ref      = "v1.4.0"          # stamped by a successful pull
         last_commit   = "a1b2c3d…"
         last_synced   = "2026-06-16T04:30:00Z"
@@ -358,6 +365,11 @@ def write_sync(sync: dict[str, Any]) -> None:
         files = [str(f).strip() for f in (sync.get("files") or []) if str(f).strip()]
         if files:
             entry["files"] = files
+        preserve = [
+            str(p).strip() for p in (sync.get("preserve") or []) if str(p).strip()
+        ]
+        if preserve:
+            entry["preserve"] = preserve
         if entry:
             cfg["config_sync"] = entry
         else:

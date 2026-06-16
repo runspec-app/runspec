@@ -1699,6 +1699,7 @@ interface SyncFormValues {
   credential_id?: string
   subpath?: string
   files: string[]
+  preserve?: string[]
 }
 
 function ConfigSyncTab() {
@@ -1717,6 +1718,7 @@ function ConfigSyncTab() {
       form.setFieldsValue({
         url: c.url, ref: c.ref, credential_id: c.credential_id || undefined,
         subpath: c.subpath, files: c.files?.length ? c.files : c.files_default,
+        preserve: c.preserve ?? [],
       })
     })
   }, [form])
@@ -1728,7 +1730,7 @@ function ConfigSyncTab() {
     await bridge.save_sync_config({
       url: v.url.trim(), ref: v.ref.trim(),
       credential_id: v.credential_id || '', subpath: v.subpath?.trim() || '',
-      files: v.files ?? [],
+      files: v.files ?? [], preserve: v.preserve ?? [],
     })
     return true
   }
@@ -1769,7 +1771,7 @@ function ConfigSyncTab() {
   return (
     <div>
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
-        Pull this console's config files from a git repository at a tag, so a fresh install can be fully configured from one source. Authentication uses a saved <a onClick={e => e.preventDefault()} style={{ cursor: 'default' }}>credential</a> (Credentials tab). Pulling overwrites the local files (backing up the previous copy first).
+        Pull this console's config files from a git repository at a tag, so a fresh install can be fully configured from one source. Authentication uses a saved credential (Credentials tab). A pull is <strong>non-destructive</strong>: it adds and updates from the repo but keeps your own hosts/triggers/filters/credentials and the keys you protect below (each file is backed up first).
       </Text>
 
       {engineMissing && (
@@ -1802,6 +1804,15 @@ function ConfigSyncTab() {
           tooltip="Files missing from the repo at that ref are skipped, not an error.">
           <Select mode="multiple" options={fileOptions} placeholder="config files to sync" />
         </Form.Item>
+        <Form.Item
+          name="preserve"
+          label="Preserve (keep local on pull)"
+          tooltip={'Keys whose local value a pull must never overwrite. Format: "<file>:<dotted.path>", with * matching any host/entry. e.g. config.toml:mailbox.folder or runspec_hosts.toml:*.room_user'}
+          help={cfg?.preserve_default?.length ? <span style={{ fontSize: 11 }}>Always protected: {cfg.preserve_default.map(p => <code key={p} style={{ marginRight: 6 }}>{p}</code>)}</span> : undefined}
+        >
+          <Select mode="tags" tokenSeparators={[',', ' ']} open={false} suffixIcon={null}
+            placeholder="config.toml:mailbox.folder  (Enter to add)" />
+        </Form.Item>
         <Form.Item name="subpath" label="Subdirectory (optional)"
           tooltip="A directory within the repo that holds the config files (blank = repo root).">
           <Input placeholder="" style={{ fontFamily: 'monospace' }} autoComplete="off" />
@@ -1811,7 +1822,7 @@ function ConfigSyncTab() {
           <Button size="small" onClick={handleSave} loading={saving}>{saved ? 'Saved' : 'Save settings'}</Button>
           <Popconfirm
             title="Pull config from the repo?"
-            description={<span style={{ fontSize: 12 }}>Overwrites local config files at the chosen tag.<br />Previous versions are backed up first.</span>}
+            description={<span style={{ fontSize: 12 }}>Merges config from the chosen tag (adds/updates, keeps your own).<br />Each file is backed up first.</span>}
             onConfirm={pull} okText="Pull" cancelText="Cancel" placement="topLeft">
             <Button size="small" type="primary" icon={<DownloadOutlined />} loading={pulling} disabled={engineMissing}>Pull now</Button>
           </Popconfirm>

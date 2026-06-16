@@ -1,9 +1,10 @@
 # Config Sync — pull console config from a git repo, by tag
 
-> **Status: shipped** — `runspec-console` 0.73.0. A new **Settings → Config Sync**
-> tab that pulls the console's config files from an external git repository at a
-> tag, authenticating with a saved credential. Pairs with the Credentials feature
-> (Settings → Credentials) for auth and the existing config I/O in `config.py`.
+> **Status: shipped** — `runspec-console` 0.73.0; **non-destructive merge +
+> `preserve` in 0.74.0** (§5). A new **Settings → Config Sync** tab that pulls the
+> console's config files from an external git repository at a tag, authenticating
+> with a saved credential. Pairs with the Credentials feature (Settings →
+> Credentials) for auth and the existing config I/O in `config.py`.
 >
 > **Scope:** versioned, repeatable provisioning of a console install from one
 > source of truth — a fresh machine enters a repo URL + tag + credential, clicks
@@ -32,9 +33,9 @@ Credentials tab — no second secret store.
 | 2 | Git engine | **dulwich** (pure-Python), behind a swappable boundary in `gitsync.py`. No system `git` needed on fresh/Windows installs. Optional `git-sync` extra. |
 | 3 | Transports | HTTPS (token passed in-process — never on argv/log) **and** SSH (over the already-bundled paramiko via a small vendor, so no system `ssh` either). |
 | 4 | Versioning | Pull by **ref** — a tag (recommended) or a branch. The UI offers a tag dropdown (`ls-remote`) with a free-text fallback. |
-| 5 | Overwrite | **Replace, with backup.** Each existing file is copied to `<name>.bak-<ts>` before being replaced. |
+| 5 | Merge (0.74.0) | **Non-destructive merge, with backup** (was replace). Collections merge by identity; mappings deep-overlay; a `preserve` list keeps machine-local keys local. Each existing file is still backed up to `<name>.bak-<ts>` first. See §6. |
 | 6 | Validation | Every fetched `.toml` is parsed **before** anything is written. A single broken file aborts the whole pull — never clobber good config with a broken pull. |
-| 7 | Credentials file | **Merged by id**, not replaced — so the credential used to authenticate the pull (and any other local-only entry) survives. Secrets are never in the file; an id with a local keyring secret keeps it. |
+| 7 | Credentials file | **Merged by id** (a special case of the collection merge) — so the credential used to authenticate the pull (and any other local-only entry) survives. Secrets are never in the file; an id with a local keyring secret keeps it. |
 | 8 | Scope | `config.toml`, `runspec_hosts.toml`, `runspec_triggers.toml`, `runspec_filters.toml`, `runspec_credentials.toml`. The list is **data-driven** (`gitsync.KNOWN_FILES` + the configured `files`), so new files sync with no code change. Bare filenames only (no path traversal out of the app dir). |
 | 9 | No restart | After a successful pull the running app hot-reloads hosts / filters / credentials / SSH / triggers. |
 
@@ -83,45 +84,85 @@ credential_id = "config-repo"     # a Credentials-tab entry
 subpath       = ""                # optional dir within the repo
 files         = ["config.toml", "runspec_hosts.toml", "runspec_triggers.toml",
                  "runspec_filters.toml", "runspec_credentials.toml"]
+preserve      = ["config.toml:mailbox.folder", "runspec_hosts.toml:*.room_user"]
 last_ref      = "v1.4.0"          # stamped by a successful pull
 last_commit   = "a1b2c3d…"
 last_synced   = "2026-06-16T04:30:00Z"
 ```
 
-**Chicken-and-egg / preserve-across-pull.** A pull overwrites `config.toml`,
-which would wipe these very settings. The pull writes the repo's `config.toml`,
-then re-injects the **local** `[config_sync]` via `config.write_sync()` (local
-url/ref/credential_id/subpath/files win over anything in the repo's file) and
-stamps `last_*`. So the operator's repo pointer always survives a pull, and a
-fresh install's typed settings persist through the first pull. The secret is never
-in this section — it lives in the keyring under `credential_id`.
+**Chicken-and-egg / preserve-across-pull.** A pull rewrites `config.toml`, which
+would wipe these very settings. After merging `config.toml` the pull re-injects
+the **local** `[config_sync]` via `config.write_sync()` (local
+url/ref/credential_id/subpath/files/preserve win over anything in the repo's
+file) and stamps `last_*`. So the operator's repo pointer always survives a pull,
+and a fresh install's typed settings persist through the first pull. The secret is
+never in this section — it lives in the keyring under `credential_id`.
 
-## 5. Reused vs. new
+## 5. Merge semantics (non-destructive, 0.74.0)
+
+A pull **tops up** local config; it never deletes the operator's own entries. The
+strategy is inferred per file by its known structure (in the pure `configmerge`
+module), with a `preserve` list that pins specific keys to the local value.
+
+**Collection files** — merge by each entry's natural identity:
+
+| File | Identity key |
+|---|---|
+| `runspec_hosts.toml` | host `name` |
+| `runspec_triggers.toml` | trigger name (`[triggers.<name>]`) |
+| `runspec_filters.toml` | filter `name` |
+| `runspec_credentials.toml` | credential `id` |
+
+Repo entries **add** (new key) or **update** (matching key); entries whose key
+isn't in the repo are **kept**. On a matched entry, a per-entry `preserve` field
+restores the local value.
+
+**Mapping files** — `config.toml` deep-overlays: repo values win on conflicts,
+**local-only keys survive** (e.g. an `[llm] api_key` the repo doesn't carry), and
+`preserve` paths keep the local value.
+
+**The triggers `[rota]` is never synced.** Working hours are per-person, so a pull
+keeps the local `[rota]` untouched and ignores any `[rota]` in the repo file —
+operators manage their own in Settings → Triggers. (Only the `[triggers.<name>]`
+tables merge.)
+
+**Preserve paths** — `"<file>:<dotted.path>"`. For a mapping file the path is the
+nested key (`config.toml:mailbox.folder`); for a collection file the first segment
+is the entry's key — or `*` for every entry — and the rest is the field
+(`runspec_hosts.toml:*.room_user`). The user's list is layered on top of
+`configmerge.DEFAULT_PRESERVE` (`mailbox.folder`, every host's `room_user`), so the
+common machine-local keys are protected with no configuration. A preserved key the
+repo tries to introduce but that's absent locally is dropped (the repo can't set
+it). (The triggers `[rota]` needs no preserve entry — it's never synced at all.)
+
+## 6. Reused vs. new
 
 **Reused:** `config.py` atomic write + `_CONFIG_LOCK` (the new `read_sync` /
 `write_sync` mirror `read_mailbox` / `write_mailbox`); `credentials.get_secret` +
 `Bridge._credential_entry` for auth; `Bridge._reload_hosts` / `_reload_filters` /
 `_reload_credentials` / `_after_config_change` / `restart_triggers` for the
-hot-reload; `credentials.save_credentials` for the merge; paramiko (already a
-core dep) for SSH.
+hot-reload; `load_hosts`/`save_hosts`, `load_filters`/`save_filters`,
+`load_credentials`/`save_credentials`, `read_triggers`/`read_rota` for the merge;
+paramiko (already a core dep) for SSH.
 
 **New:** `runspec_console/gitsync.py` (the dulwich layer + paramiko SSH vendor);
-`config.read_sync` / `write_sync`; bridge methods `get_sync_config` /
-`save_sync_config` / `list_sync_tags` / `sync_pull` (+ helpers `_sync_auth`,
-`_atomic_write_bytes`, `_merge_synced_credentials`); the `ConfigSyncTab` in
-`SettingsDrawer.tsx`; the `git-sync` extra.
+`runspec_console/configmerge.py` (deep overlay, merge-by-key, preserve paths);
+`config.read_sync` / `write_sync` / `write_triggers_file`; bridge methods
+`get_sync_config` / `save_sync_config` / `list_sync_tags` / `sync_pull` (+ helpers
+`_sync_auth`, `_atomic_write_bytes`, `_merge_synced_file`, `_merge_synced_triggers`);
+the `ConfigSyncTab` in `SettingsDrawer.tsx`; the `git-sync` extra.
 
-## 6. Safety
+## 7. Safety
 
 - The token rides in-process to dulwich's HTTP client — never on a command line
   or in a log. SSH uses paramiko with the key file.
-- **Validate-before-replace** + **backup-before-write** make a failed pull
+- **Validate-before-write** + **backup-before-write** make a failed pull
   non-destructive.
-- **Credentials merge-by-id** means a pull can never lock the operator out of the
-  repo by deleting the auth credential.
+- The **non-destructive merge** (and credential merge-by-id) means a pull can
+  never delete the operator's own entries — including the auth credential.
 - A **filename allowlist** (bare names only) blocks writing outside the app dir.
 
-## 7. Slices
+## 8. Slices
 
 | # | Slice | Status |
 |---|-------|--------|
@@ -130,15 +171,22 @@ core dep) for SSH.
 | C3 | Bridge `get/save_sync_config`, `list_sync_tags`, `sync_pull` + hot-reload | ✅ 0.73.0 |
 | C4 | `ConfigSyncTab` (Settings) + bridge interface | ✅ 0.73.0 |
 | C5 | Tests (`test_gitsync.py`, `test_sync_pull.py`) | ✅ 0.73.0 |
+| C6 | Non-destructive merge + `preserve` (`configmerge`, `test_configmerge.py`) | ✅ 0.74.0 |
 
-## 8. Testing
+## 9. Testing
 
+- `tests/test_configmerge.py` unit-tests the pure merge helpers: deep overlay
+  (repo wins, local-only survives), mapping preserve (local wins / repo can't
+  introduce), collection merge (add/update/keep-local-only) and per-entry preserve
+  (`*` and named).
 - `tests/test_gitsync.py` builds a throwaway local repo with two tags and checks
   tag listing, per-tag file bytes, missing-file skip, and unknown-ref error
   (skipped when dulwich or git is absent).
 - `tests/test_sync_pull.py` mocks `gitsync.fetch_files` and checks the
-  orchestration: `[config_sync]` preserved + `last_*` stamped across a
-  `config.toml` overwrite; invalid TOML aborts the whole pull; backups created;
+  orchestration: `[config_sync]` preserved + `last_*` stamped across the
+  `config.toml` merge; `config.toml` deep-overlay keeps local-only + default
+  preserve; hosts merge keeps local-only + preserves `room_user`; filters /
+  triggers merge by name; invalid TOML aborts the whole pull; backups created;
   credentials merged by id (local-only survives); hot-reload + trigger restart
   fired; missing URL errors.
 

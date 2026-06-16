@@ -120,18 +120,22 @@ export interface CredentialBackend {
 // repo, at a tag/ref), which credential authenticates, and the last successful
 // pull. The secret is never here — it lives in the keyring under credential_id.
 // `engine` is the active git engine (null = the `git-sync` extra isn't installed);
-// `files_default` is the file set the UI offers when none are chosen.
+// `files_default` is the file set the UI offers when none are chosen. `preserve`
+// is the user's keep-local paths ("<file>:<dotted.path>"); `preserve_default` is
+// the built-in set always applied on top (mailbox.folder, *.room_user).
 export interface SyncConfig {
   url: string
   ref: string
   credential_id: string
   subpath: string
   files: string[]
+  preserve: string[]
   last_ref: string
   last_commit: string
   last_synced: string
   engine: string | null
   files_default: string[]
+  preserve_default: string[]
 }
 
 export interface SyncPullResult {

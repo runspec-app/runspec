@@ -3717,9 +3717,11 @@ class Bridge:
 
         Never includes the secret (that lives in the keyring under
         ``credential_id``). Adds ``engine`` (the active git engine, or None when
-        the ``git-sync`` extra isn't installed) and ``files_default`` (the file
-        set the UI offers) so the tab can render in one round-trip."""
-        from . import gitsync
+        the ``git-sync`` extra isn't installed), ``files_default`` (the file set
+        the UI offers), and ``preserve_default`` (the built-in keep-local paths
+        always applied on top of the user's list) so the tab can render in one
+        round-trip."""
+        from . import configmerge, gitsync
 
         sync = read_sync()
         return {
@@ -3728,11 +3730,13 @@ class Bridge:
             "credential_id": sync.get("credential_id", ""),
             "subpath": sync.get("subpath", ""),
             "files": list(sync.get("files") or gitsync.KNOWN_FILES),
+            "preserve": list(sync.get("preserve") or []),
             "last_ref": sync.get("last_ref", ""),
             "last_commit": sync.get("last_commit", ""),
             "last_synced": sync.get("last_synced", ""),
             "engine": gitsync.engine_name(),
             "files_default": list(gitsync.KNOWN_FILES),
+            "preserve_default": list(configmerge.DEFAULT_PRESERVE),
         }
 
     def save_sync_config(self, data: dict[str, Any]) -> None:
@@ -3746,6 +3750,11 @@ class Bridge:
                 "subpath": str(data.get("subpath", "")).strip(),
                 "files": [
                     str(f).strip() for f in (data.get("files") or []) if str(f).strip()
+                ],
+                "preserve": [
+                    str(p).strip()
+                    for p in (data.get("preserve") or [])
+                    if str(p).strip()
                 ],
             }
         )
@@ -3793,16 +3802,21 @@ class Bridge:
         """Pull the configured files from the repo at the configured ref.
 
         Validates every fetched ``.toml`` before touching disk (a broken pull
-        writes nothing), backs up each existing file, then replaces it — except
-        ``runspec_credentials.toml``, which is *merged by id* so the credential
-        used for the pull (and any other local-only entry) survives. The local
-        ``[config_sync]`` is re-injected into the new ``config.toml`` and stamped
-        with ``last_*``. Finally the running app hot-reloads hosts / filters /
-        credentials / SSH / triggers, so no restart is needed.
+        writes nothing) and backs up each existing file. The merge is
+        **non-destructive**: collection files (hosts / triggers / filters /
+        credentials) merge by each entry's identity (name / id) — adding new
+        entries, updating matching ones, and keeping the operator's own; mapping
+        files (``config.toml``, the ``[rota]``) deep-overlay the repo on top of
+        local. A ``preserve`` list (built-in defaults + the user's, e.g.
+        ``config.toml:mailbox.folder`` / ``runspec_hosts.toml:*.room_user``) keeps
+        machine-local keys local. The local ``[config_sync]`` is re-injected into
+        ``config.toml`` and stamped with ``last_*``. Finally the running app
+        hot-reloads hosts / filters / credentials / SSH / triggers, so no restart
+        is needed.
 
         Returns ``{ok, ref, commit, written, skipped, backups}`` or
         ``{ok: False, error}``."""
-        from . import gitsync
+        from . import configmerge, gitsync
 
         sync = read_sync()
         url = str(sync.get("url", "")).strip()
@@ -3851,6 +3865,10 @@ class Bridge:
                         "error": f"{name} at {ref} is not valid TOML — nothing was written: {exc}",
                     }
 
+        preserve = configmerge.parse_preserve(
+            [*configmerge.DEFAULT_PRESERVE, *(sync.get("preserve") or [])]
+        )
+
         old_cfg = self.get_config()
         app = app_dir()
         ts = time.strftime("%Y%m%d-%H%M%S")
@@ -3872,10 +3890,7 @@ class Bridge:
                     logger.warning(
                         "could not back up %s before pull", name, exc_info=True
                     )
-            if name == "runspec_credentials.toml":
-                self._merge_synced_credentials(fetched[name])
-            else:
-                self._atomic_write_bytes(dest, fetched[name])
+            self._merge_synced_file(name, fetched[name], preserve.get(name, []))
             written.append(name)
 
         # Re-inject the local [config_sync] into the freshly-written config.toml
@@ -3911,26 +3926,75 @@ class Bridge:
         tmp.write_bytes(data)
         os.replace(tmp, dest)
 
-    def _merge_synced_credentials(self, data: bytes) -> None:
-        """Merge pulled credential metadata into the local store, keyed by id.
+    def _merge_synced_file(
+        self, name: str, data: bytes, preserve: list[list[str]]
+    ) -> None:
+        """Merge one pulled file's bytes into the local config, non-destructively.
 
-        Repo entries win per id; local-only entries (e.g. the credential used to
-        authenticate the pull itself) are kept — so a pull can never lock the
-        operator out of the repo. Secrets aren't in the file, so a synced entry
-        shows "no secret" until set locally; an id that already has a secret in
-        this machine's keyring keeps it."""
-        from .credentials import save_credentials
+        Collection files merge by identity (``name``/``id``); mapping files
+        deep-overlay; ``preserve`` paths keep machine-local keys local. An
+        unrecognised file (a future addition) is written verbatim."""
+        from . import configmerge
 
-        repo_entries = tomllib.loads(data.decode("utf-8")).get("credential", [])
-        self._reload_credentials()
-        by_id: dict[str, dict[str, Any]] = {
-            str(c.get("id")): c for c in self._credentials if c.get("id")
-        }
-        for c in repo_entries:
-            cid = str(c.get("id", "")).strip()
-            if cid:
-                by_id[cid] = c  # repo wins per id; local-only entries remain
-        save_credentials(credentials_path(), list(by_id.values()))
+        text = data.decode("utf-8")
+        if name == "config.toml":
+            merged = configmerge.merge_mapping(
+                self.get_config(), tomllib.loads(text), preserve
+            )
+            write_config(merged)
+        elif name == "runspec_hosts.toml":
+            incoming = tomllib.loads(text).get("host", [])
+            merged = configmerge.merge_collection(
+                load_hosts(hosts_path()), incoming, "name", preserve
+            )
+            save_hosts(hosts_path(), merged)
+        elif name == "runspec_filters.toml":
+            from .filters_store import load_filters, save_filters
+
+            incoming = tomllib.loads(text).get("filter", [])
+            merged = configmerge.merge_collection(
+                load_filters(filters_path()), incoming, "name", preserve
+            )
+            save_filters(filters_path(), merged)
+        elif name == "runspec_credentials.toml":
+            from .credentials import load_credentials, save_credentials
+
+            incoming = tomllib.loads(text).get("credential", [])
+            merged = configmerge.merge_collection(
+                load_credentials(credentials_path()), incoming, "id", preserve
+            )
+            save_credentials(credentials_path(), merged)
+        elif name == "runspec_triggers.toml":
+            self._merge_synced_triggers(tomllib.loads(text), preserve)
+        else:
+            self._atomic_write_bytes(app_dir() / name, data)
+
+    def _merge_synced_triggers(
+        self, parsed: dict[str, Any], preserve: list[list[str]]
+    ) -> None:
+        """Merge pulled triggers by name (collection), preserving the operator's
+        own triggers (names not in the repo).
+
+        The ``[rota]`` (working hours) is **never synced** — it's per-person, so a
+        pull keeps the local rota untouched and ignores any ``[rota]`` in the repo
+        file. Operators manage their own rota in Settings → Triggers."""
+        from . import configmerge
+        from .config import read_rota, read_triggers, write_triggers_file
+
+        raw = parsed.get("triggers")
+        incoming: list[dict[str, Any]] = []
+        if isinstance(raw, dict):
+            for key, val in raw.items():
+                if isinstance(val, dict):
+                    trig = dict(val)
+                    trig["name"] = key
+                    incoming.append(trig)
+        merged_triggers = configmerge.merge_collection(
+            read_triggers(), incoming, "name", preserve
+        )
+        # Keep the local rota as-is; the repo's [rota] (if any) is intentionally
+        # ignored — working hours are machine/person-specific.
+        write_triggers_file(read_rota(), merged_triggers)
 
     def import_jump_hosts(self, toml_content: str) -> list[dict[str, Any]]:
         try:

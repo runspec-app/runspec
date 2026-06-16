@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.74.0] — 2026-06-16
+
+### Changed
+- **Config Sync is now a non-destructive merge.** A pull no longer overwrites
+  config files wholesale — it tops up from the repo and keeps your own settings:
+  - **Collection files** (`runspec_hosts.toml`, `runspec_triggers.toml`,
+    `runspec_filters.toml`, `runspec_credentials.toml`) merge by each entry's
+    natural identity (host/trigger/filter `name`, credential `id`): repo entries
+    are added or update the matching local entry, and **your own entries (keys not
+    in the repo) are left alone**. (Credentials already worked this way; hosts /
+    triggers / filters now do too.) The triggers `[rota]` (working hours) is
+    **never synced** — it's per-person, so a pull keeps the local rota and ignores
+    any `[rota]` in the repo.
+  - **`config.toml`** is a **deep overlay**: repo values land on top, but your
+    local-only keys (e.g. an `[llm] api_key`) survive.
+  - A new **`preserve`** list in `[config_sync]` (Settings → Config Sync → "Preserve
+    (keep local)") pins specific keys to your local value, written
+    `"<file>:<dotted.path>"` with `*` matching any entry — e.g.
+    `config.toml:mailbox.folder`, `runspec_hosts.toml:*.room_user`. Built-in
+    defaults (`mailbox.folder`, every host's `room_user`) are always applied, so
+    the common machine-local keys are protected with no configuration.
+  Implemented in the new pure `configmerge` module (deep overlay, merge-by-key,
+  preserve-path application). See `docs/design/config-git-sync.md` §6.
+
 ## [0.73.0] — 2026-06-16
 
 ### Added

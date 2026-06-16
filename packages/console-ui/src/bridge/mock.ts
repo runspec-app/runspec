@@ -661,9 +661,11 @@ export const mockApi: BridgeApi = {
   get_sync_config: async () => ({
     url: '', ref: '', credential_id: '', subpath: '',
     files: ['config.toml', 'runspec_hosts.toml', 'runspec_triggers.toml', 'runspec_filters.toml', 'runspec_credentials.toml'],
+    preserve: [],
     last_ref: '', last_commit: '', last_synced: '',
     engine: 'dulwich',
     files_default: ['config.toml', 'runspec_hosts.toml', 'runspec_triggers.toml', 'runspec_filters.toml', 'runspec_credentials.toml'],
+    preserve_default: ['config.toml:mailbox.folder', 'runspec_hosts.toml:*.room_user'],
   }),
   save_sync_config: async (data) => { console.log('[mock] save_sync_config', data) },
   list_sync_tags: async () => ({ tags: ['v1.2.0', 'v1.1.0', 'v1.0.0'] }),
