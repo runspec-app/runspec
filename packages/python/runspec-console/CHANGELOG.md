@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.78.0] — 2026-06-16
+
+### Added
+- **White-labeling from package metadata.** When the console is wrapped in a
+  downstream distribution that ships a custom LLM adapter (depends on
+  `runspec-console`, advertises a `runspec_console.adapters` provider), the app
+  now brands itself to **that** package — no config file or deployment model
+  required. Derived from the distribution that supplies the **active** `[llm]
+  provider`: the window/page **title** comes from the prettified distribution
+  name (`mycorp-console` → "Mycorp Console"), the **documentation** link from a
+  `Documentation` (then `Homepage`/`Home-page`) `Project-URL` in its metadata, and
+  the **update check** targets that package (`pip index versions <dist>` against
+  the venv's configured index). A built-in provider (anthropic/openai/bedrock/
+  langserve) or no provider keeps runspec's own identity. Resolution is in a new
+  `branding.py` module (`resolve_branding`), is best-effort (any metadata failure
+  falls back per-field), and is memoised on the bridge (re-derived on a Settings
+  provider change). New `app_title()` bridge method. The existing `[console]
+  docs_url` override still wins for the docs link. A wrapper package can also add
+  its own `[project.scripts]` for a branded launcher command — see the
+  console-adapter-plugin example. (`version.installed_version` / `latest_version`
+  now take an optional `package` argument; defaults unchanged.)
+
+---
+
 ## [0.77.0] — 2026-06-16
 
 ### Added

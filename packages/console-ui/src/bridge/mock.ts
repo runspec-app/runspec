@@ -612,6 +612,7 @@ export const mockApi: BridgeApi = {
   get_schedules: async () => MOCK_SCHEDULES,
 
   config_dir: async () => 'C:/Users/jason/AppData/Roaming/runspec-console',
+  app_title: async () => 'runspec console',
   app_version: async () => '0.19.0',
   check_for_update: async () => {
     await new Promise(r => setTimeout(r, 400))

@@ -348,6 +348,12 @@ class Bridge:
         # by close_adhoc() (relay dialog close) and on shutdown.
         self._adhoc_conns: dict[tuple[Any, ...], dict[str, Any]] = {}
         self._adapter: Any = None  # ModelAdapter, loaded on demand
+        # White-label identity derived from the active LLM plugin's distribution
+        # (see branding.py). Memoised; invalidated in _after_config_change since a
+        # provider switch in Settings changes the brand. The native window title
+        # is set by app.py via set_window_title once branding is resolved there.
+        self._branding: Any = None  # Branding | None
+        self._window_title: str = "runspec console"
         # Event-trigger engine (built lazily in start_triggers) and the in-memory
         # kanban board: card_id → card.to_dict(). Cards are not persisted — a
         # missed event while the console was closed is intentionally not replayed.
@@ -2701,18 +2707,39 @@ class Bridge:
         except Exception:
             logger.debug("restart_triggers after mailbox save failed", exc_info=True)
 
-    # ── version / docs ─────────────────────────────────────────────────────────
+    # ── version / docs / branding ────────────────────────────────────────────
+
+    def _get_branding(self) -> Any:
+        """The app's white-label identity, memoised (invalidated on config save).
+
+        Derived from the active LLM plugin's distribution metadata — title, docs
+        URL, and the package the update check targets all follow whichever package
+        supplies the configured provider. See branding.py.
+        """
+        if self._branding is None:
+            from .branding import resolve_branding
+
+            self._branding = resolve_branding(self.get_config())
+        return self._branding
+
+    def app_title(self) -> str:
+        """The window/app title — branded to the active LLM plugin, else default."""
+        return self._get_branding().title
 
     def app_version(self) -> str:
-        """The installed runspec-console version, for display in the UI."""
+        """The installed version of the branded package, for display in the UI."""
         from .version import installed_version
 
-        return installed_version()
+        return installed_version(self._get_branding().version_package)
 
     def check_for_update(self) -> dict[str, Any]:
         """Compare the installed version against the newest one the venv's
         configured package index offers (PyPI, or an internal proxy/mirror if
         this venv's pip points at one). Best-effort.
+
+        Targets the branded package (the distribution supplying the active LLM
+        provider), so a white-labelled install checks for *its* updates, not
+        runspec-console's.
 
         ``ok`` is False when the latest version couldn't be reached (offline /
         blocked network policy) — the UI then shows just the version with no
@@ -2722,8 +2749,9 @@ class Bridge:
         """
         from .version import installed_version, is_newer, latest_version
 
-        current = installed_version()
-        latest = latest_version()
+        package = self._get_branding().version_package
+        current = installed_version(package)
+        latest = latest_version(package=package)
         if latest is None:
             return {
                 "ok": False,
@@ -2739,10 +2767,12 @@ class Bridge:
         }
 
     def docs_url(self) -> str:
-        """The documentation URL the docs icon opens (config-overridable)."""
-        from .config import docs_url
+        """The documentation URL the docs icon opens.
 
-        return docs_url()
+        ``[console] docs_url`` wins; otherwise the active LLM plugin's package
+        metadata (Documentation/Homepage URL); otherwise the runspec default.
+        """
+        return self._get_branding().docs_url
 
     def open_docs(self) -> None:
         """Open the documentation site in the user's default browser."""
@@ -2764,6 +2794,7 @@ class Bridge:
         atomic SSH-key commits): rebuild the adapter, re-apply the SSH pool, and
         re-join the room when [chat] changed or the pool was rebuilt."""
         self._adapter = None
+        self._branding = None  # provider may have changed → rederive the brand
         pool_before = self._ssh_pool
         self._apply_ssh_config(old.get("ssh"), new.get("ssh"))
         if old.get("chat") != new.get("chat") or self._ssh_pool is not pool_before:
@@ -4955,8 +4986,14 @@ class Bridge:
     # deny after _CONFIRM_TIMEOUT_S). Sending a toast is independent of the
     # "read notifications" consent the listener source needs — see notify.py.
 
-    # The native window title, matching app.py's create_window / FindWindow.
-    _WINDOW_TITLE = "runspec console"
+    def set_window_title(self, title: str) -> None:
+        """Record the native window title app.py gave ``create_window``.
+
+        The taskbar flash / focus helpers below locate the window by title
+        (``FindWindow``), so this must stay byte-identical to what app.py passed —
+        both come from the same ``resolve_branding().title`` call in main()."""
+        if isinstance(title, str) and title.strip():
+            self._window_title = title
 
     def _confirm_notifications_enabled(self) -> bool:
         try:
@@ -5002,7 +5039,7 @@ class Bridge:
         try:
             import win32gui
 
-            hwnd = win32gui.FindWindow(None, self._WINDOW_TITLE)
+            hwnd = win32gui.FindWindow(None, self._window_title)
             if not hwnd:
                 return
             # FLASHW_ALL (0x3) | FLASHW_TIMERNOFG (0xC): flash until foreground.
@@ -5019,7 +5056,7 @@ class Bridge:
             import win32con
             import win32gui
 
-            hwnd = win32gui.FindWindow(None, self._WINDOW_TITLE)
+            hwnd = win32gui.FindWindow(None, self._window_title)
             if not hwnd:
                 return
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
@@ -5037,7 +5074,7 @@ class Bridge:
         try:
             import win32gui
 
-            hwnd = win32gui.FindWindow(None, self._WINDOW_TITLE)
+            hwnd = win32gui.FindWindow(None, self._window_title)
             return bool(hwnd) and win32gui.GetForegroundWindow() == hwnd
         except Exception:
             logger.debug("foreground check failed", exc_info=True)

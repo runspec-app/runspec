@@ -36,17 +36,25 @@ _AVAILABLE_RE = re.compile(r"Available versions:\s*(.+)")
 _PAREN_RE = re.compile(r"\(([^)]+)\)\s*$")
 
 
-def installed_version() -> str:
-    """The version pip installed, or the in-tree ``__version__`` as a fallback."""
+def installed_version(package: str = PACKAGE_NAME) -> str:
+    """The version pip installed for ``package``.
+
+    For runspec-console itself, falls back to the in-tree ``__version__`` when the
+    package isn't installed (running from a source checkout). For a branded
+    wrapper package there is no in-tree version to borrow, so an uninstalled one
+    yields ``""``.
+    """
     try:
-        return metadata.version(PACKAGE_NAME)
+        return metadata.version(package)
     except metadata.PackageNotFoundError:
-        from runspec_console import __version__
+        if package == PACKAGE_NAME:
+            from runspec_console import __version__
 
-        return __version__
+            return __version__
+        return ""
 
 
-def latest_version(timeout: float = 8.0) -> str | None:
+def latest_version(timeout: float = 8.0, package: str = PACKAGE_NAME) -> str | None:
     """Latest version available from the venv's configured package index.
 
     Shells out to ``pip`` from ``sys.executable`` (the interpreter
@@ -56,7 +64,7 @@ def latest_version(timeout: float = 8.0) -> str | None:
     """
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "pip", "index", "versions", PACKAGE_NAME],
+            [sys.executable, "-m", "pip", "index", "versions", package],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -68,10 +76,10 @@ def latest_version(timeout: float = 8.0) -> str | None:
         return None
     if proc.returncode != 0:
         return None
-    return _parse_pip_index(proc.stdout)
+    return _parse_pip_index(proc.stdout, package)
 
 
-def _parse_pip_index(output: str) -> str | None:
+def _parse_pip_index(output: str, package: str = PACKAGE_NAME) -> str | None:
     """Pull the newest version out of ``pip index versions`` stdout."""
     m = _LATEST_RE.search(output)
     if m:
@@ -81,7 +89,7 @@ def _parse_pip_index(output: str) -> str | None:
         first = m.group(1).split(",")[0].strip()
         return first or None
     for line in output.splitlines():
-        if line.strip().startswith(PACKAGE_NAME):
+        if line.strip().startswith(package):
             m = _PAREN_RE.search(line)
             if m:
                 return m.group(1).strip()

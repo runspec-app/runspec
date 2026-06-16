@@ -191,7 +191,13 @@ def main() -> None:
             print(f"✗  {exc}", file=sys.stderr)
             sys.exit(1)
 
-    window_title = "runspec console"
+    # White-label the native window title to the active LLM plugin's package
+    # (see branding.py). Resolve once and share it with the Bridge so its
+    # FindWindow-based taskbar flash / focus helpers match exactly.
+    from .branding import resolve_branding
+
+    window_title = resolve_branding().title
+    bridge.set_window_title(window_title)
     window = webview.create_window(
         window_title,
         url,

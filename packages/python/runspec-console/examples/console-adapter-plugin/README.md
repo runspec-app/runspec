@@ -74,3 +74,43 @@ api_key_ttl_ms  = 300000
 
 > This example is **not** built, installed, or tested as part of runspec-console
 > — it's a template to copy into your own repo.
+
+## White-labeling the console
+
+When the console runs with **your** provider active, it presents **your**
+package's identity instead of runspec's — derived automatically from the
+installed distribution that supplies the provider. No config file or deployment
+model required:
+
+| Surface | Derived from |
+|---|---|
+| **Window / page title** | your distribution name, prettified — `mycorp-console` → "Mycorp Console" |
+| **Documentation link** | a `Documentation` (then `Homepage`) `[project.urls]` entry in your `pyproject.toml` |
+| **Update check** | your package — `pip index versions <your-dist>` against the venv's configured index, so it tracks *your* releases |
+
+This keys off the **active** `[llm] provider`: an entry-point provider resolves to
+the distribution advertising it; a dotted-path provider to the distribution owning
+that module. A built-in provider (anthropic/openai/bedrock/langserve) or no
+provider leaves the runspec defaults in place.
+
+Add these to your `pyproject.toml` so the metadata is present to read:
+
+```toml
+[project.urls]
+Documentation = "https://docs.mycorp.com/console"
+Homepage = "https://mycorp.com"
+
+# Optional: a branded launcher alongside the `runspec-console` one. Entry points
+# are static per-distribution, so the branded command comes from YOUR package —
+# it runs the same console.
+[project.scripts]
+mycorp-console = "runspec_console.app:main"
+```
+
+To override the docs link explicitly (e.g. an internal mirror) regardless of
+metadata, set it in `%APPDATA%\runspec-console\config.toml`:
+
+```toml
+[console]
+docs_url = "https://docs.internal.corp/console"
+```

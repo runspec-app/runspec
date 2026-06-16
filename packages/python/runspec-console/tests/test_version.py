@@ -50,6 +50,20 @@ class TestInstalledVersion(unittest.TestCase):
         self.assertIsInstance(v, str)
         self.assertTrue(v)
 
+    def test_passes_package_to_metadata(self) -> None:
+        with mock.patch.object(version.metadata, "version", return_value="1.2.3") as m:
+            self.assertEqual(version.installed_version("mycorp-console"), "1.2.3")
+        m.assert_called_once_with("mycorp-console")
+
+    def test_absent_branded_package_returns_empty(self) -> None:
+        # A branded wrapper that isn't installed has no in-tree version to borrow.
+        with mock.patch.object(
+            version.metadata,
+            "version",
+            side_effect=version.metadata.PackageNotFoundError(),
+        ):
+            self.assertEqual(version.installed_version("mycorp-console"), "")
+
 
 def _completed(returncode: int, stdout: str = "") -> mock.Mock:
     proc = mock.Mock()
@@ -73,6 +87,18 @@ class TestLatestVersion(unittest.TestCase):
             version.latest_version()
         self.assertEqual(captured["cmd"][:3], [version.sys.executable, "-m", "pip"])
         self.assertIn("runspec-console", captured["cmd"])
+
+    def test_package_argument_threaded_into_argv(self) -> None:
+        captured: dict[str, list[str]] = {}
+
+        def fake_run(cmd, **_kwargs):
+            captured["cmd"] = cmd
+            return _completed(0, "mycorp-console (1.0.0)\n")
+
+        with mock.patch("runspec_console.version.subprocess.run", fake_run):
+            version.latest_version(package="mycorp-console")
+        self.assertIn("mycorp-console", captured["cmd"])
+        self.assertNotIn("runspec-console", captured["cmd"])
 
     def test_subprocess_failure_returns_none(self) -> None:
         with mock.patch(
@@ -109,6 +135,12 @@ class TestParsePipIndex(unittest.TestCase):
 
     def test_unrecognised_output_returns_none(self) -> None:
         self.assertIsNone(version._parse_pip_index("nothing useful here\n"))
+
+    def test_paren_fallback_matches_branded_package(self) -> None:
+        out = "mycorp-console (1.4.0)\n"
+        self.assertEqual(
+            version._parse_pip_index(out, package="mycorp-console"), "1.4.0"
+        )
 
 
 class TestDocsUrl(unittest.TestCase):

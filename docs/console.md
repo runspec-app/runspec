@@ -134,6 +134,49 @@ pip install "runspec-console[bedrock]"     # Claude via AWS Bedrock
 
 ---
 
+## White-labeling
+
+If you wrap the console in your own distribution — a package that ships a custom
+LLM adapter (see the
+[provider-plugin example](https://github.com/jasonfinestone/runspec/tree/main/packages/python/runspec-console/examples/console-adapter-plugin))
+and depends on `runspec-console` — the app brands itself to **your** package when
+your provider is active. It's **derived from the installed package's metadata**;
+no config file or deployment step is required.
+
+| Surface | Derived from |
+|---|---|
+| Window / page title | your distribution name, prettified (`mycorp-console` → "Mycorp Console") |
+| Documentation link | a `Documentation` (then `Homepage`) URL in your package metadata |
+| Update check | your package — so the "update available" badge tracks *your* releases against the venv's configured index |
+
+The branding follows the **active** `[llm] provider`: an entry-point provider
+resolves to the distribution advertising it; a dotted-path provider to the
+distribution owning that module. A built-in provider (anthropic/openai/bedrock/
+langserve) or no provider leaves runspec's own identity in place.
+
+Declare the URLs in your wrapper package's `pyproject.toml`:
+
+```toml
+[project.urls]
+Documentation = "https://docs.mycorp.com/console"
+Homepage = "https://mycorp.com"
+
+# Optional: a branded launcher alongside `runspec-console`, created by your
+# package (entry points are static per-distribution). It runs the same console.
+[project.scripts]
+mycorp-console = "runspec_console.app:main"
+```
+
+To override the documentation link explicitly (e.g. an internal mirror),
+regardless of package metadata, set it in `config.toml`:
+
+```toml
+[console]
+docs_url = "https://docs.internal.corp/console"
+```
+
+---
+
 ## Event triggers (Windows)
 
 Triggers let the console **react to things that happen on the machine** and run

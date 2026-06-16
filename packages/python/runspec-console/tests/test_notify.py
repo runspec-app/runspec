@@ -149,7 +149,7 @@ def test_set_app_id_safe_off_windows():
 class _StubBridge:
     """Binds the real notify path onto a light stub (no Bridge.__init__)."""
 
-    _WINDOW_TITLE = "runspec console"
+    _window_title = "runspec console"
 
     def __init__(self, enabled=True):
         self._lock = threading.Lock()
@@ -233,7 +233,7 @@ def test_notify_confirm_never_raises(monkeypatch):
 class _RoomStubBridge:
     """Binds the room-notify path onto a light stub (no Bridge.__init__)."""
 
-    _WINDOW_TITLE = "runspec console"
+    _window_title = "runspec console"
 
     def __init__(self, *, foreground=False):
         self._foreground = foreground

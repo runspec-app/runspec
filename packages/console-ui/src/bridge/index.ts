@@ -588,6 +588,7 @@ export interface BridgeApi {
   get_mailbox: () => Promise<Mailbox | null>
   save_mailbox: (mailbox: Mailbox | null) => Promise<void>
   // ── version / docs ─────────────────────────────────────────────────────────
+  app_title: () => Promise<string>
   app_version: () => Promise<string>
   check_for_update: () => Promise<{ ok: boolean; current: string; latest: string | null; update_available: boolean }>
   docs_url: () => Promise<string>

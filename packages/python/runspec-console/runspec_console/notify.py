@@ -60,7 +60,7 @@ def _short_val(value: Any) -> str:
 def summarize_args(tool_input: dict[str, Any] | None) -> str:
     """A compact, truncated one-line ``k=v`` summary of the tool input."""
     if not tool_input:
-        return "Open runspec console to approve or deny."
+        return "Open the console to approve or deny."
     summary = ", ".join(f"{k}={_short_val(v)}" for k, v in tool_input.items())
     if len(summary) > _MAX_BODY:
         summary = summary[: _MAX_BODY - 1].rstrip() + "…"
@@ -101,7 +101,7 @@ def build_room_message(payload: dict[str, Any]) -> tuple[str, str]:
     else:
         who = sender or room or "Someone"
     verb = "sent a request" if is_request else "messaged you"
-    body = str(payload.get("text") or "").strip() or "Open runspec console to reply."
+    body = str(payload.get("text") or "").strip() or "Open the console to reply."
     if len(body) > _MAX_BODY:
         body = body[: _MAX_BODY - 1].rstrip() + "…"
     return (f"{who} {verb}", body)

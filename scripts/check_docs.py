@@ -67,6 +67,8 @@ NON_RUNSPEC_SECTIONS = {
     "rota",
     "mailboxes",
     "config_sync",
+    "console",
+    "llm",
 }
 
 

@@ -172,6 +172,17 @@ register_adapter("openai", _openai_factory)
 register_adapter("bedrock", _bedrock_factory)
 register_adapter("langserve", _langserve_factory)
 
+# runspec-console's own providers. A provider outside this set means an external
+# distribution supplies it — the signal branding.py uses to white-label the app
+# to that package. Kept as a static constant (not ``set(_REGISTRY)``) so a plugin
+# that self-registers via register_adapter is still treated as brandable.
+_BUILTIN_NAMES = frozenset({"anthropic", "openai", "bedrock", "langserve"})
+
+
+def builtin_provider_names() -> frozenset[str]:
+    """The provider names that ship with runspec-console itself."""
+    return _BUILTIN_NAMES
+
 
 def _entry_point_factories() -> dict[str, AdapterFactory]:
     """Adapter factories advertised by installed distributions, by provider name."""

@@ -87,6 +87,16 @@ The factory (your adapter class) receives the kwargs the console threads from
 `[llm]`: `api_key`, `model`, `system`, `base_url`, `api_key_command`,
 `api_key_ttl_ms`, and any custom keys you read yourself.
 
+## White-labeling (free, from your metadata)
+
+When your provider is the active one, the console brands itself to **your**
+package automatically — window title from the distribution name (`mycorp-console`
+→ "Mycorp Console"), docs link from a `[project.urls]` `Documentation` (or
+`Homepage`) entry, and the update check against your package. Add those URLs to
+`pyproject.toml`, and optionally a `[project.scripts] mycorp-console =
+"runspec_console.app:main"` for a branded launcher. No runspec-console change and
+no config file — see README → "White-labeling the console".
+
 ## Before you finish — validate the contract
 
 Use the shipped conformance helpers (no live gateway needed; drive the adapter

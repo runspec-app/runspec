@@ -110,6 +110,10 @@ export default function App() {
     // background and quietly stays hidden when the network is unreachable.
     bridge.app_version().then(setVersion).catch(() => {})
     bridge.docs_url().then(setDocsUrl).catch(() => {})
+    // White-label title (branded to the active LLM plugin's package). The native
+    // window title is set by the Python side; mirror it onto the document so the
+    // page title matches too.
+    bridge.app_title().then(t => { document.title = t }).catch(() => {})
     bridge.check_for_update()
       .then(r => { if (r.ok) setUpdateInfo({ latest: r.latest, updateAvailable: r.update_available }) })
       .catch(() => {})

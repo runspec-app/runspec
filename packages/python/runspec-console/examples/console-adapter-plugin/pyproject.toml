@@ -27,5 +27,18 @@ dependencies = [
 [project.entry-points."runspec_console.adapters"]
 mycorp = "console_adapter_plugin.adapter:MyCorpAdapter"
 
+# ── White-labeling (optional). When this provider is active, the console brands
+# the window title (from the distribution name), the docs link (from the
+# Documentation/Homepage URL below), and the update check (this package). See
+# README → "White-labeling the console".
+# [project.urls]
+# Documentation = "https://docs.mycorp.com/console"
+# Homepage = "https://mycorp.com"
+
+# A branded launcher alongside `runspec-console`, created by THIS distribution
+# (entry points are static per-package); it runs the same console entry point.
+# [project.scripts]
+# mycorp-console = "runspec_console.app:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["console_adapter_plugin"]
