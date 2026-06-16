@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.77.0] — 2026-06-16
+
+### Added
+- **`all` extra.** `pip install runspec-console[all]` (or depending on
+  `runspec-console[all]`) pulls every runtime feature extra — `anthropic`,
+  `openai`, `bedrock`, `langserve`, `credentials`, `git-sync`, `notifications` —
+  in one name, so a downstream internal project doesn't have to enumerate them or
+  track new ones. Implemented as a recursive self-referencing extra; excludes
+  `dev`. The Windows-only deps inside `notifications` keep their markers, so
+  `[all]` installs cleanly on any OS.
+
 ## [0.76.0] — 2026-06-16
 
 ### Fixed

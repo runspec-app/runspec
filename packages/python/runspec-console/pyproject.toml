@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.76.0"
+version = "0.77.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -61,6 +61,13 @@ notifications = [
     "winrt-Windows.UI.Notifications>=2.0 ; sys_platform == 'win32'",
     "winrt-Windows.UI.Notifications.Management>=2.0 ; sys_platform == 'win32'",
     "winrt-Windows.ApplicationModel>=2.0 ; sys_platform == 'win32'",
+]
+# Convenience aggregate: every runtime feature extra in one name, so a downstream
+# project can depend on `runspec-console[all]` and not track new extras itself.
+# Recursive self-reference (resolved by pip/poetry); excludes `dev`. Win32-only
+# deps inside `notifications` keep their markers, so `[all]` is safe on any OS.
+all = [
+    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications]",
 ]
 dev = [
     "ruff",
