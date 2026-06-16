@@ -1142,6 +1142,8 @@ function CredentialsTab() {
     const res = await bridge.save_credential(entry)
     if (res.error) { message.error(res.error); return }
     setEditingId(null); form.resetFields(); reload()
+    // Let other tabs (e.g. Config Sync's credential dropdown) refresh live.
+    window.dispatchEvent(new CustomEvent('runspec:credentials-changed'))
     message.success('Credential saved')
   }
 
@@ -1149,6 +1151,7 @@ function CredentialsTab() {
     await bridge.delete_credential(id)
     if (editingId === id) setEditingId(null)
     reload()
+    window.dispatchEvent(new CustomEvent('runspec:credentials-changed'))
   }
 
   const isEditing = editingId !== null
@@ -1726,7 +1729,15 @@ function ConfigSyncTab() {
     })
   }, [form])
   useEffect(() => { load() }, [load])
-  useEffect(() => { bridge.list_credentials().then(setCreds) }, [])
+  // Load the credential dropdown, and refresh it when a credential is added or
+  // removed on the Credentials tab — so a new deploy token shows up without a
+  // console restart (the drawer keeps tab panes mounted).
+  useEffect(() => {
+    const reloadCreds = () => { bridge.list_credentials().then(setCreds) }
+    reloadCreds()
+    window.addEventListener('runspec:credentials-changed', reloadCreds)
+    return () => window.removeEventListener('runspec:credentials-changed', reloadCreds)
+  }, [])
 
   const persist = async (): Promise<boolean> => {
     const v = await form.validateFields()

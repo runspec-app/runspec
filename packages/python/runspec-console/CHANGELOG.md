@@ -8,6 +8,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.75.1] — 2026-06-16
+
+### Fixed
+- **Credential dropdowns refresh live.** Adding (or removing) a credential on
+  Settings → Credentials now updates the Config Sync credential picker
+  immediately, instead of requiring a console restart. The Settings drawer keeps
+  its tab panes mounted, so the Config Sync tab's one-time credential load went
+  stale; the Credentials tab now broadcasts a `runspec:credentials-changed` event
+  that the Config Sync tab listens for and reloads.
+
 ## [0.75.0] — 2026-06-16
 
 ### Added
