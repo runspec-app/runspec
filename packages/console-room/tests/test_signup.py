@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from console_room.signup import (
+    DEFAULT_SESSION_TTL,
     DEFAULT_TOKEN_TTL,
     EmailVerifyConfig,
     domain_allowed,
@@ -68,11 +69,27 @@ def test_email_verify_from_env_reads_values(monkeypatch):
     monkeypatch.setenv("CONSOLE_ROOM_SESSION_SECRET", "shh")
     monkeypatch.setenv("CONSOLE_ROOM_PUBLIC_URL", "https://room.corp.com")
     monkeypatch.setenv("CONSOLE_ROOM_VERIFY_TTL", "600")
+    monkeypatch.setenv("CONSOLE_ROOM_SESSION_TTL", "3600")
     cfg = email_verify_from_env()
     assert cfg is not None
     assert cfg.session_secret == "shh"
     assert cfg.public_url == "https://room.corp.com"
     assert cfg.token_ttl == 600
+    assert cfg.session_ttl == 3600
+
+
+def test_email_verify_from_env_session_ttl_defaults(monkeypatch):
+    monkeypatch.setenv("CONSOLE_ROOM_SESSION_SECRET", "shh")
+    monkeypatch.delenv("CONSOLE_ROOM_SESSION_TTL", raising=False)
+    cfg = email_verify_from_env()
+    assert cfg is not None and cfg.session_ttl == DEFAULT_SESSION_TTL
+
+
+def test_email_verify_from_env_bad_session_ttl_falls_back(monkeypatch):
+    monkeypatch.setenv("CONSOLE_ROOM_SESSION_SECRET", "shh")
+    monkeypatch.setenv("CONSOLE_ROOM_SESSION_TTL", "-5")
+    cfg = email_verify_from_env()
+    assert cfg is not None and cfg.session_ttl == DEFAULT_SESSION_TTL
 
 
 def test_email_verify_from_env_bad_ttl_falls_back(monkeypatch):

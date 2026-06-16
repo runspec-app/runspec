@@ -2,6 +2,8 @@
 
 > **Status: shipped** (all 5 slices + the outbox expiry sweep) — `runspec-room`
 > 0.19.0 + `runspec-console` 0.61.0. See §11 for the operating & testing reference.
+> **Updated in `runspec-room` 0.27.0:** sign-up became **login with expiring
+> access** + a TOML config file — see §12.
 > A new **auth mode**
 > for `runspec-room`: instead of OIDC, an internal employee signs up for a queue
 > with their email + name, proves the email by clicking a verify link, and is
@@ -297,3 +299,49 @@ Outlook COM, so the console must run on Windows; everything else runs anywhere.
 ### Not built yet (deferred)
 - **Gated membership (v2)** — a per-queue opt-in where an operator approves *who joins* a sensitive queue (the handshake mirrors the verify outbox).
 - **The `/run` natural-language path** — already logged as a `chat`/`run` event; awaits the LLM derivation.
+
+---
+
+## 12. Email *login* with expiring access + a config file (`runspec-room` 0.27.0)
+
+The sign-up reframes to a **login**: same email-verify mechanism, but access is no
+longer permanent. The intent is to make standing up *many* room instances normal —
+if users are used to logging in via an email link regularly, swapping to another
+host that asks them to log in again isn't a new experience.
+
+### 12.1 Access expires
+The signed session that the verify step establishes now carries a **`session_ttl`**
+(`CONSOLE_ROOM_SESSION_TTL`, default **24h**), applied as the `SessionMiddleware`
+cookie's signed `max_age`. `itsdangerous` enforces it server-side, so an expired
+cookie makes `session_user()` empty and the existing gate redirects to `/login` —
+no new gate logic. Renewal is the same flow: get a fresh link, click, new session.
+(This realises the "an expired session re-signs" note left open in §6.)
+
+### 12.2 Remembered email + one-click return
+`/verify` sets a long-lived, non-secret **`room_email`** cookie with the proven
+address (the signed session cookie is still the sole credential). On the next
+`/login` GET, a known member (the cookie email maps to a `members` row whose team
+still exists) is offered a one-click **"Welcome back — send a login link"** that
+reuses their stored name + team; a `?switch=1` / "use a different email" link drops
+back to the full form. An unknown email just pre-fills the form. So the steady-state
+return is: open the room → one click → click the email link → in.
+
+### 12.3 Config file (Ansible-friendly)
+The server gains an optional **TOML config file** (`--config` /
+`CONSOLE_ROOM_CONFIG` / `./console_room.toml`) so an instance deploys from one
+templated file. Precedence is **defaults < config file < env var < CLI flag**: the
+loader (`console_room/config.py`) writes each `[server]`/`[auth]` value into the
+matching `CONSOLE_ROOM_*` env var *only when it isn't already set*, so the existing
+env reads and argparse defaults are untouched and a real env var / flag always wins.
+Two things don't round-trip as plain env strings:
+
+- **`session_secret_command`** — its stdout is the session secret, so the secret
+  never sits in the committed file (a literal `session_secret` is also accepted; the
+  literal wins). A failing command aborts the boot rather than starting with no auth.
+- **`[[teams]]`** — the **authoritative** team list, synced into the enrollment
+  store on every boot (`EnrollmentStore.sync_teams`: upsert the listed teams, delete
+  the rest, always keep the protected `Default`). A fleet deploying the same file
+  converges on one team list; runtime `team_add`/`team_remove` edits between boots
+  are re-reconciled to the config. (An empty/absent `[[teams]]` leaves the DB as-is.)
+
+See the README "Config file" section for the annotated schema.

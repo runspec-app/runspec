@@ -37,20 +37,22 @@ console-room --ndjson-only --ndjson-port 8765 --db ./console_room.db
 The console door stays on localhost — consoles tunnel in. Open the browser door
 at the web port.
 
-### Enabling login (OIDC) + TLS
+### Enabling login (email link) + TLS
 
-Without OIDC config the browser door runs in **dev mode** — unauthenticated,
-identity from a `?user=` join form (a warning is logged; don't expose it). Set the
-OIDC env vars to require single sign-on:
+Without a session secret the browser door runs in **dev mode** — unauthenticated,
+identity from a `?user=` join form (a warning is logged; don't expose it). With one,
+the door runs **email-verify login**: an internal employee verifies a company email
+(the link is sent by a connected console as the queue mailbox), and the signed
+session that grants access **expires** after `session_ttl` (default 24h) — they log
+back in the same way (the email is remembered in a cookie, so a return visit is one
+click). See [`docs/design/email-queue-signup.md`](../../docs/design/email-queue-signup.md).
 
 ```bash
-export CONSOLE_ROOM_OIDC_ISSUER="https://login.microsoftonline.com/<tenant>/v2.0"
-# or CONSOLE_ROOM_OIDC_METADATA_URL=<discovery doc URL>
-export CONSOLE_ROOM_OIDC_CLIENT_ID="…"
-export CONSOLE_ROOM_OIDC_CLIENT_SECRET="…"
-export CONSOLE_ROOM_SESSION_SECRET="$(openssl rand -hex 32)"
-export CONSOLE_ROOM_PUBLIC_URL="https://room.example.com"   # for the redirect_uri
-# register  $CONSOLE_ROOM_PUBLIC_URL/auth/callback  as the redirect URI at your IdP
+export CONSOLE_ROOM_SESSION_SECRET="$(openssl rand -hex 32)"  # signs cookie + token
+export CONSOLE_ROOM_PUBLIC_URL="https://room.example.com"     # login links point here
+export CONSOLE_ROOM_MAILBOX="helpdesk@corp.com"               # one email = one room
+# export CONSOLE_ROOM_SESSION_TTL=86400   # access lifetime before re-login (s)
+# export CONSOLE_ROOM_VERIFY_TTL=1800     # login-link lifetime (s)
 
 console-room --host 0.0.0.0 --port 443 \
   --tls-cert /etc/ssl/room.crt --tls-key /etc/ssl/room.key
@@ -58,6 +60,46 @@ console-room --host 0.0.0.0 --port 443 \
 
 uvicorn is proxy-header-aware (`X-Forwarded-Proto`), so you can drop `--tls-*` and
 let nginx/Caddy terminate TLS instead.
+
+### Config file (deploy from one file)
+
+Everything above can live in a TOML file instead — handy for Ansible. Point at it
+with `--config` (or `CONSOLE_ROOM_CONFIG`, or drop a `console_room.toml` in the
+working dir). Precedence is **defaults < config file < env var < CLI flag**, so a
+flag or env var always overrides the file. The session secret can be a **command**
+(its stdout is the secret) so it never sits in the committed file, and `[[teams]]`
+is the **authoritative** team list, synced into the room on every boot — a fleet of
+rooms deploying the same file converges on the same teams.
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 443
+ndjson_host = "127.0.0.1"
+ndjson_port = 8765
+public_url = "https://room.example.com"   # required for email login
+mailbox = "helpdesk@corp.com"             # one email = one room
+db = "/var/lib/runspec-room/console_room.db"
+tls_cert = "/etc/ssl/room/fullchain.pem"  # omit if a proxy terminates TLS
+tls_key  = "/etc/ssl/room/privkey.pem"
+assignment_timeout = 300
+
+[auth]
+# Either a literal secret, or a command whose stdout is the secret (preferred):
+session_secret_command = "cat /run/secrets/room_session_secret"
+# session_secret = "…"
+verify_ttl  = 1800     # login-link lifetime (s)
+session_ttl = 86400    # access lifetime before re-login (s) — 24h
+
+[[teams]]
+name = "Engineering"
+[[teams]]
+name = "Finance"
+```
+
+```bash
+console-room --config /etc/runspec-room/console_room.toml
+```
 
 ## Run it as a service (no root)
 
@@ -70,13 +112,14 @@ pip install --user runspec-room          # or into a venv (then fix ExecStart)
 mkdir -p ~/.config/systemd/user
 cp deploy/console-room.service ~/.config/systemd/user/
 
-# config (optional) — the server reads CONSOLE_ROOM_* env:
+# config (optional) — the server reads CONSOLE_ROOM_* env (or a --config TOML):
 mkdir -p ~/.config/console-room
 cat > ~/.config/console-room/console-room.env <<'EOF'
 CONSOLE_ROOM_NDJSON_PORT=8765
 CONSOLE_ROOM_PORT=8090
-# CONSOLE_ROOM_HOST=0.0.0.0          # expose the browser door (then set OIDC!)
-# CONSOLE_ROOM_OIDC_ISSUER=...
+# CONSOLE_ROOM_HOST=0.0.0.0          # expose the browser door (then set a session secret!)
+# CONSOLE_ROOM_SESSION_SECRET=...    # enables email login
+# CONSOLE_ROOM_CONFIG=/etc/runspec-room/console_room.toml   # or a config file
 EOF
 
 systemctl --user daemon-reload

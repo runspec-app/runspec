@@ -27,6 +27,12 @@ _TOKEN_SALT = "console-room-email-verify"
 #: generous-but-bounded window is fine; single use is enforced by the DB nonce.
 DEFAULT_TOKEN_TTL = 1800  # 30 minutes
 
+#: Default access lifetime (seconds) before a member must log in again. The login
+#: session is deliberately *not* permanent: access expires and is renewed via the
+#: same email-link mechanism, so a fleet of rooms (each its own login) feels normal.
+#: Enforced server-side as the session cookie's signed ``max_age``.
+DEFAULT_SESSION_TTL = 86400  # 24 hours
+
 #: Auth modes the web door supports. ``email-verify`` is the authenticated door;
 #: ``dev`` is the unauthenticated local/test fallback (``?user=``).
 AUTH_MODES = ("email-verify", "dev")
@@ -41,6 +47,7 @@ class EmailVerifyConfig:
     session_secret: str
     public_url: str = ""  # external base URL; used to build the verify link
     token_ttl: int = DEFAULT_TOKEN_TTL
+    session_ttl: int = DEFAULT_SESSION_TTL  # access lifetime before re-login
 
     @property
     def secure_cookies(self) -> bool:
@@ -73,16 +80,25 @@ def email_verify_from_env() -> EmailVerifyConfig | None:
     secret = _env("CONSOLE_ROOM_SESSION_SECRET")
     if not secret:
         return None
-    ttl_raw = _env("CONSOLE_ROOM_VERIFY_TTL")
-    try:
-        ttl = int(ttl_raw) if ttl_raw else DEFAULT_TOKEN_TTL
-    except ValueError:
-        ttl = DEFAULT_TOKEN_TTL
+    ttl = _positive_int_env("CONSOLE_ROOM_VERIFY_TTL", DEFAULT_TOKEN_TTL)
+    session_ttl = _positive_int_env("CONSOLE_ROOM_SESSION_TTL", DEFAULT_SESSION_TTL)
     return EmailVerifyConfig(
         session_secret=secret,
         public_url=_env("CONSOLE_ROOM_PUBLIC_URL"),
-        token_ttl=ttl if ttl > 0 else DEFAULT_TOKEN_TTL,
+        token_ttl=ttl,
+        session_ttl=session_ttl,
     )
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """A positive integer from env ``name``, or ``default`` (blank / unparseable /
+    non-positive all fall back — a TTL must be a real, positive window)."""
+    raw = _env(name)
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 # ── domain allowlist (the queue mailbox's domain) ─────────────────────────────

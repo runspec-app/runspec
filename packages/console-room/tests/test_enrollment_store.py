@@ -220,6 +220,36 @@ def test_default_team_is_protected():
     assert [t.slug for t in s.list_teams()] == ["default"]  # still there
 
 
+def test_sync_teams_is_authoritative():
+    s = EnrollmentStore(":memory:")
+    s.add_team(Team(slug="stale", name="Stale"))  # a runtime-added team
+    s.sync_teams(
+        [Team(slug="eng", name="Engineering"), Team(slug="fin", name="Finance")]
+    )
+    # The config list wins: stale removed, config teams present, Default kept.
+    assert [t.slug for t in s.list_teams()] == ["default", "eng", "fin"]
+
+
+def test_sync_teams_keeps_default():
+    s = EnrollmentStore(":memory:")
+    s.sync_teams([Team(slug="eng", name="Engineering")])
+    assert s.get_team("default") is not None
+
+
+def test_sync_teams_upserts_name():
+    s = EnrollmentStore(":memory:")
+    s.add_team(Team(slug="eng", name="Eng"))
+    s.sync_teams([Team(slug="eng", name="Engineering")])
+    assert s.get_team("eng").name == "Engineering"
+
+
+def test_sync_teams_empty_is_noop():
+    s = EnrollmentStore(":memory:")
+    s.add_team(Team(slug="keep", name="Keep"))
+    s.sync_teams([])  # no config teams → leave the DB as-is
+    assert [t.slug for t in s.list_teams()] == ["default", "keep"]
+
+
 def test_teams_persist_on_disk(tmp_path):
     db = str(tmp_path / "enroll.db")
     s1 = EnrollmentStore(db)

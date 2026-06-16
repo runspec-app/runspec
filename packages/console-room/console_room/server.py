@@ -20,8 +20,15 @@ import os
 import sys
 from pathlib import Path
 
+from .config import (
+    apply_config_to_env,
+    config_teams,
+    find_config_path,
+    load_config,
+)
 from .hub import Hub
 from .ndjson_server import serve_ndjson
+from .signup import Team
 from .store import TranscriptStore
 
 logger = logging.getLogger("console_room.server")
@@ -76,6 +83,7 @@ def run_web(
     tls_key: str | None = None,
     assignment_timeout: float = 300.0,
     mailbox: str = "",
+    teams: list[Team] | None = None,
 ) -> None:
     """Serve the browser WebSocket door (and, via the app lifespan, the console
     NDJSON door) under uvicorn. Imports the web stack lazily so ``--ndjson-only``
@@ -109,10 +117,16 @@ def run_web(
                 "links point there."
             )
         enrollment = EnrollmentStore(_enroll_db_path(db_path))
+        if teams:
+            # Config is the authoritative team list (synced on every boot) so a
+            # fleet of rooms deploying the same file converges on one list.
+            enrollment.sync_teams(teams)
+            logger.info("room: synced %d team(s) from config", len(teams))
         logger.info(
-            "room: email-verify sign-up enabled — verify mail is sent by a connected "
-            "console as the queue mailbox (signups queue in the outbox until one "
-            "connects). Verify links use %s.",
+            "room: email-verify login enabled (access expires after %ds) — the login "
+            "mail is sent by a connected console as the queue mailbox (logins queue in "
+            "the outbox until one connects). Login links use %s.",
+            email_verify.session_ttl,
             email_verify.public_url,
         )
     if email_verify is None:
@@ -224,11 +238,33 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "email = one room. Leave empty to accept any console (dev).",
     )
     parser.add_argument(
+        "--config",
+        default=os.environ.get("CONSOLE_ROOM_CONFIG", ""),
+        help="path to a TOML config file (see docs) — also CONSOLE_ROOM_CONFIG. "
+        "Settings load with precedence defaults < config < env var < CLI flag.",
+    )
+    parser.add_argument(
         "--ndjson-only",
         action="store_true",
         help="serve only the console NDJSON door (no web deps required)",
     )
     return parser.parse_args(argv)
+
+
+def _load_config(argv: list[str]) -> list[Team]:
+    """Find + load the TOML config (``--config`` / ``CONSOLE_ROOM_CONFIG`` /
+    ``./console_room.toml``), apply its scalars to the environment (only where not
+    already set, so env/CLI still win), and return its ``[[teams]]``. Run before
+    arg parsing so the argparse env-defaults see the config-injected values."""
+    cli_path = ""
+    for i, arg in enumerate(argv):
+        if arg == "--config" and i + 1 < len(argv):
+            cli_path = argv[i + 1]
+        elif arg.startswith("--config="):
+            cli_path = arg.split("=", 1)[1]
+    config = load_config(find_config_path(cli_path or None))
+    apply_config_to_env(config)
+    return config_teams(config)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -243,6 +279,9 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    # Load the optional config file first so its values populate the environment
+    # the argparse defaults read from (config < env < CLI). Returns the team list.
+    teams = _load_config(raw)
     args = _parse_args(raw)
     # --public-url is surfaced via the same env var the auth configs read, so the
     # flag and CONSOLE_ROOM_PUBLIC_URL stay a single source of truth.
@@ -270,6 +309,7 @@ def main(argv: list[str] | None = None) -> None:
                 tls_key=args.tls_key,
                 assignment_timeout=args.assignment_timeout,
                 mailbox=args.mailbox,
+                teams=teams,
             )
     except KeyboardInterrupt:
         logger.info("room: shutting down")

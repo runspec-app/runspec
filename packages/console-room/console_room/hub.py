@@ -370,6 +370,21 @@ class Hub:
         when email-verify isn't configured (no enrollment store)."""
         return self._enrollment.list_teams() if self._enrollment is not None else []
 
+    def sync_teams(self, teams: list[Team]) -> None:
+        """Reconcile the team list to ``teams`` authoritatively (the config-file boot
+        path). No-op when email-verify isn't configured or ``teams`` is empty."""
+        if self._enrollment is not None and teams:
+            self._enrollment.sync_teams(teams)
+
+    def find_member(self, email: str) -> Member | None:
+        """The verified member for ``email`` in this room's single queue, or ``None``.
+        Drives the "welcome back" login shortcut — a known email re-logs in with one
+        click, reusing its stored name + team. ``None`` when email-verify isn't
+        configured."""
+        if self._enrollment is None:
+            return None
+        return self._enrollment.get_member(email, DEFAULT_QUEUE)
+
     def add_team(self, name: str) -> list[Team]:
         """Create (or rename, if the slug collides) a team from a display ``name``;
         the slug is derived. A name with no usable slug is ignored. Returns the full

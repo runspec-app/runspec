@@ -135,6 +135,32 @@ class EnrollmentStore:
             )
             self._conn.commit()
 
+    def sync_teams(self, teams: list[Team]) -> None:
+        """Reconcile the team list to ``teams`` **authoritatively** (the config-file
+        boot path): upsert each given team and delete any other — except the
+        protected ``Default``, which always stays so the dropdown is never empty.
+        A fleet of rooms deploying the same config therefore converges on the same
+        list; runtime ``add_team``/``remove_team`` edits between boots are
+        re-reconciled here. No-op on an empty list (no config teams → leave the DB
+        as-is). Idempotent."""
+        if not teams:
+            return
+        keep = {DEFAULT_TEAM.slug} | {t.slug for t in teams}
+        now = time.time()
+        with self._lock:
+            for team in teams:
+                self._conn.execute(
+                    "INSERT INTO teams (slug, name, created_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(slug) DO UPDATE SET name = excluded.name",
+                    (team.slug, team.name, now),
+                )
+            placeholders = ",".join("?" for _ in keep)
+            self._conn.execute(
+                f"DELETE FROM teams WHERE slug NOT IN ({placeholders})",
+                tuple(keep),
+            )
+            self._conn.commit()
+
     def remove_team(self, slug: str) -> bool:
         """Delete a team. Refuses to remove the protected ``Default`` (so the list
         is never empty). Returns True when a row was deleted."""

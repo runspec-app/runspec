@@ -1,6 +1,6 @@
 """
 web/app.py — the Starlette app: the browser WebSocket door + the static frontend,
-optionally gated by the email-verify sign-up door.
+optionally gated by the email-verify login door.
 
 Thin by design. It adapts a Starlette ``WebSocket`` to the ``WebSocketLike`` seam
 ``BrowserConnection`` expects, serves the vanilla static frontend, and exposes a
@@ -11,9 +11,10 @@ doors.
 **Auth.** Two identity modes, sharing one ``session_user`` gate on the app shell +
 WebSocket. With an :class:`EmailVerifyConfig` (+ an
 :class:`~console_room.enrollment_store.EnrollmentStore`) the app mounts the
-email-verify sign-up door (``/signup`` / ``/queues`` / ``/verify``) — an internal
-employee verifies a company email to join a queue (docs/design/email-queue-signup.md);
-``SessionMiddleware`` then holds the signed identity. With neither, the app runs in
+email-verify login door (``/login`` / ``/verify``) — an internal employee verifies
+a company email to log into a queue (docs/design/email-queue-signup.md); the signed
+session ``SessionMiddleware`` holds then **expires** (``session_ttl``), so access is
+renewed by logging in again. With neither, the app runs in
 **dev mode**: identity comes from the ``?user=`` query param and nothing is gated
 (what keeps local dev and the tests runnable). See
 docs/design/console-room-server.md §1/§2/§6.
@@ -53,7 +54,7 @@ from ..ndjson_server import serve_ndjson
 from ..signup import EmailVerifyConfig
 from .auth import session_name, session_team, session_user
 from .connection import BrowserConnection
-from .signup_routes import signup_routes
+from .signup_routes import login_routes
 
 logger = logging.getLogger("console_room.web")
 
@@ -124,7 +125,7 @@ def create_app(
     the lifespan also serves the console NDJSON door on the same loop.
 
     Identity comes from one of two modes: ``email_verify`` → the email-verify
-    sign-up door (``/signup`` / ``/verify``), which requires ``hub`` to have been
+    login door (``/login`` / ``/verify``), which requires ``hub`` to have been
     built with its enrollment store + config (``hub.email_verify_enabled``) and a
     ``public_url`` (the verify links must point somewhere reachable); neither → dev
     mode (``?user=`` query param, nothing gated). The authenticated mode sets a
@@ -143,8 +144,12 @@ def create_app(
     gated = email_verify is not None
     session_secret = email_verify.session_secret if email_verify is not None else ""
     secure_cookies = email_verify.secure_cookies if email_verify is not None else False
-    # Where an unauthenticated visitor is sent (email-verify mode).
-    login_path = "/signup"
+    # Access expires after this many seconds — the signed session cookie's max_age,
+    # enforced server-side by itsdangerous. Past it the gate sees no session and
+    # sends the user back to log in (a fresh email link).
+    session_ttl = email_verify.session_ttl if email_verify is not None else 0
+    # Where an unauthenticated / expired visitor is sent (email-verify mode).
+    login_path = "/login"
 
     # ── WebSocket door ────────────────────────────────────────────────────────
     async def ws_room(websocket: WebSocket) -> None:
@@ -286,7 +291,7 @@ def create_app(
         Route("/", index, name="index"),
     ]
     if email_verify is not None:
-        routes += signup_routes(hub)
+        routes += login_routes(hub, email_verify)
     if FRONTEND_DIR.is_dir():
         # Static assets (app.js / style.css) — public so the shell can style the
         # login redirect. The app shell itself ("/") is gated above.
@@ -302,6 +307,7 @@ def create_app(
             Middleware(
                 SessionMiddleware,
                 secret_key=session_secret,
+                max_age=session_ttl,  # access expiry → re-login via email link
                 https_only=secure_cookies,
                 same_site="lax",
             )

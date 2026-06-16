@@ -4,6 +4,40 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.27.0]
+
+### Changed
+- **Email sign-up is now email *login*, with expiring access.** The verify flow is
+  unchanged (verify a company email via a link a connected console sends as the
+  queue mailbox), but the signed session that grants access no longer lasts
+  indefinitely — it **expires after `session_ttl`** (`CONSOLE_ROOM_SESSION_TTL`,
+  default **24h**), enforced server-side as the cookie's signed `max_age`. Past it
+  the gate sends the visitor back to log in again. The page copy, the gate redirect
+  target (`/login`), and the verify-failed copy all reframe to "log in"; the old
+  `/signup` path 307-redirects to `/login` for existing links.
+- **Returning visitors don't retype their email.** `/verify` sets a long-lived,
+  non-secret `room_email` cookie (the session cookie is still the only credential).
+  On the next visit a known member is offered a one-click **"Welcome back — send a
+  login link"** that reuses their stored name + team (with a "use a different email"
+  escape); an unknown email just pre-fills the full form. If the member's stored
+  team no longer exists (e.g. a config sync dropped it), the full form is shown so
+  they re-pick.
+
+### Added
+- **TOML config file (`--config` / `CONSOLE_ROOM_CONFIG` / `./console_room.toml`).**
+  Stands a room up from one Ansible-droppable file: `[server]` (host, ports, public
+  URL, mailbox, TLS, db, assignment timeout) and `[auth]` (`verify_ttl`,
+  `session_ttl`, and a **`session_secret_command`** whose stdout is the secret, so
+  it stays out of the committed file — or a literal `session_secret`). Precedence is
+  **defaults < config file < env var < CLI flag**: the loader injects each value
+  into the matching `CONSOLE_ROOM_*` env var only when it isn't already set, so a
+  real env var or flag always wins and every existing env read is untouched.
+- **`[[teams]]` in the config — the authoritative team list.** Synced into the room
+  on every boot (extras removed, the protected `Default` kept), so a fleet of rooms
+  deploying the same file shares one team list. Runtime `team_add`/`team_remove`
+  edits between boots are re-reconciled to the config.
+- A `tomli` dependency on Python 3.10 (stdlib `tomllib` on 3.11+) for the loader.
+
 ## [0.26.0]
 
 ### Changed
