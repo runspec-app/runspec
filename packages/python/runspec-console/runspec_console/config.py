@@ -355,6 +355,7 @@ def write_sync(sync: dict[str, Any]) -> None:
             "ref",
             "credential_id",
             "subpath",
+            "ca_bundle",
             "last_ref",
             "last_commit",
             "last_synced",
@@ -370,6 +371,9 @@ def write_sync(sync: dict[str, Any]) -> None:
         ]
         if preserve:
             entry["preserve"] = preserve
+        # Only written when disabled — default (verify on) keeps the file clean.
+        if sync.get("tls_verify", True) is False:
+            entry["tls_verify"] = False
         if entry:
             cfg["config_sync"] = entry
         else:

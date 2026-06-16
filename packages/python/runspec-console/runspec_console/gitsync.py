@@ -27,6 +27,7 @@ the wanted files straight out of the commit's tree.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -58,12 +59,21 @@ class GitAuth:
     HTTPS uses ``username`` + ``secret`` (a token or password). SSH uses
     ``key_path`` (and optional ``username``, default ``git``). ``scheme`` is
     informational — the actual transport is derived from the URL.
+
+    ``ca_bundle`` (HTTPS) is a path to a PEM bundle to verify the server against —
+    needed for an internal CA or a TLS-inspecting corporate proxy, since dulwich
+    defaults to certifi and ignores the OS / git cert stores. ``proxy`` (HTTPS) is
+    an HTTP CONNECT proxy URL (``http://proxy:8080``, scheme optional) the pull is
+    routed through — mirrors the console's ``[ssh] proxy``.
     """
 
     scheme: str = "https"  # "https" | "ssh" | "local"
     username: str = ""
     secret: str = ""  # token / password — never logged
     key_path: str = ""  # SSH private key file
+    ca_bundle: str = ""  # HTTPS: PEM bundle for cert verification
+    proxy: str = ""  # HTTPS: HTTP CONNECT proxy URL
+    tls_verify: bool = True  # HTTPS: set False to skip cert verification (insecure)
 
 
 @dataclass
@@ -132,8 +142,58 @@ def _transport_kwargs(url: str, auth: GitAuth) -> dict[str, Any]:
             kwargs["username"] = auth.username
         if auth.secret:
             kwargs["password"] = auth.secret
+        pool = _https_pool_manager(auth)
+        if pool is not None:
+            kwargs["pool_manager"] = pool
         return kwargs
     return {}  # local path / file://
+
+
+def _env_ca_bundle() -> str:
+    """A CA bundle path from the usual env vars (corporate setups often set one)."""
+    for var in ("SSL_CERT_FILE", "GIT_SSL_CAINFO", "REQUESTS_CA_BUNDLE"):
+        val = os.environ.get(var)
+        if val:
+            return val
+    return ""
+
+
+def _env_proxy() -> str:
+    for var in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy"):
+        val = os.environ.get(var)
+        if val:
+            return val
+    return ""
+
+
+def _https_pool_manager(auth: GitAuth) -> Any | None:
+    """Build a urllib3 pool manager for HTTPS when a CA bundle, proxy, or
+    verification override is needed.
+
+    Returns None when nothing custom applies — dulwich then uses its own default
+    (certifi CA + env-var proxy). When we do build one, we must include the proxy
+    ourselves (a custom ``pool_manager`` bypasses dulwich's proxy/env handling).
+    Prefer pointing ``ca_bundle`` at the internal/corporate CA PEM;
+    ``tls_verify=False`` is an escape hatch that skips verification entirely
+    (insecure — only on a trusted network)."""
+    ca = os.path.expanduser(auth.ca_bundle) if auth.ca_bundle else _env_ca_bundle()
+    proxy = auth.proxy or _env_proxy()
+    if auth.tls_verify and not ca and not auth.proxy:
+        return None  # nothing custom — let dulwich default (certifi + env proxy)
+
+    import urllib3
+
+    opts: dict[str, Any] = {}
+    if not auth.tls_verify:
+        opts["cert_reqs"] = "CERT_NONE"
+        urllib3.disable_warnings()  # silence the InsecureRequestWarning we opted into
+    elif ca:
+        opts["ca_certs"] = ca
+    if proxy:
+        if "://" not in proxy:
+            proxy = f"http://{proxy}"
+        return urllib3.ProxyManager(proxy, **opts)
+    return urllib3.PoolManager(**opts)
 
 
 def _install_paramiko_vendor() -> None:

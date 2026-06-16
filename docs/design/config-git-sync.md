@@ -1,7 +1,8 @@
 # Config Sync — pull console config from a git repo, by tag
 
 > **Status: shipped** — `runspec-console` 0.73.0; **non-destructive merge +
-> `preserve` in 0.74.0** (§5). A new **Settings → Config Sync** tab that pulls the
+> `preserve` in 0.74.0** (§5); **TLS CA bundle / proxy / verify-toggle in 0.75.0**
+> (§4). A new **Settings → Config Sync** tab that pulls the
 > console's config files from an external git repository at a tag, authenticating
 > with a saved credential. Pairs with the Credentials feature (Settings →
 > Credentials) for auth and the existing config I/O in `config.py`.
@@ -82,6 +83,7 @@ url           = "https://github.com/acme/runspec-config.git"
 ref           = "v1.4.0"          # tag (preferred) or branch
 credential_id = "config-repo"     # a Credentials-tab entry
 subpath       = ""                # optional dir within the repo
+ca_bundle     = ""                # PEM for an internal CA / TLS proxy (HTTPS)
 files         = ["config.toml", "runspec_hosts.toml", "runspec_triggers.toml",
                  "runspec_filters.toml", "runspec_credentials.toml"]
 preserve      = ["config.toml:mailbox.folder", "runspec_hosts.toml:*.room_user"]
@@ -97,6 +99,28 @@ url/ref/credential_id/subpath/files/preserve win over anything in the repo's
 file) and stamps `last_*`. So the operator's repo pointer always survives a pull,
 and a fresh install's typed settings persist through the first pull. The secret is
 never in this section — it lives in the keyring under `credential_id`.
+
+**TLS (private hosts / corporate proxies, 0.75.0).** dulwich verifies HTTPS
+against certifi — **not** the OS cert store or `git config http.sslCAInfo` — so a
+private GitLab with an internal CA, or a TLS-inspecting proxy that re-signs HTTPS,
+fails with `SSL CERTIFICATE_VERIFY_FAILED`. `ca_bundle` points verification at a
+PEM file (with `SSL_CERT_FILE` / `GIT_SSL_CAINFO` / `REQUESTS_CA_BUNDLE` as env
+fallbacks); the pull also routes through the console's `[ssh] proxy` (or
+`https_proxy`). Verification stays on — `gitsync._https_pool_manager` builds a
+urllib3 `PoolManager`/`ProxyManager` with `ca_certs` set and passes it to dulwich
+via `pool_manager=` (a custom manager bypasses dulwich's own CA/proxy handling, so
+it carries both). Returns `None` when nothing is configured, letting dulwich use
+its certifi default. A `tls_verify = false` escape hatch (Settings → "Verify TLS"
+off) builds the manager with `cert_reqs="CERT_NONE"` — insecure, for a trusted
+network where no CA bundle is available (mirrors git's `http.sslVerify false`);
+prefer the CA bundle.
+
+**dulwich ignores `~/.gitconfig`.** None of the operator's system-git settings
+(`http.proxy`, `http.sslVerify`, `http.sslBackend = schannel`, `credential.helper`)
+apply to the pull — dulwich reads none of them, and it uses certifi, not the
+Windows cert store that `schannel` would. That's why these are surfaced as Config
+Sync settings (CA bundle, verify toggle, `[ssh] proxy` reuse) and a Credentials-tab
+entry rather than inherited from git.
 
 ## 5. Merge semantics (non-destructive, 0.74.0)
 
@@ -172,6 +196,7 @@ the `ConfigSyncTab` in `SettingsDrawer.tsx`; the `git-sync` extra.
 | C4 | `ConfigSyncTab` (Settings) + bridge interface | ✅ 0.73.0 |
 | C5 | Tests (`test_gitsync.py`, `test_sync_pull.py`) | ✅ 0.73.0 |
 | C6 | Non-destructive merge + `preserve` (`configmerge`, `test_configmerge.py`) | ✅ 0.74.0 |
+| C7 | TLS CA bundle + proxy for private hosts (`_https_pool_manager`) | ✅ 0.75.0 |
 
 ## 9. Testing
 

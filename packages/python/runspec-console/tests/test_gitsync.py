@@ -104,3 +104,57 @@ def test_ssh_url_detection():
     assert gitsync._is_ssh_url("ssh://git@host/acme/cfg.git")
     assert not gitsync._is_ssh_url("https://github.com/acme/cfg.git")
     assert not gitsync._is_ssh_url("/local/path/to/repo")
+
+
+def test_pool_manager_none_when_no_ca_or_proxy(monkeypatch):
+    for var in (
+        "SSL_CERT_FILE",
+        "GIT_SSL_CAINFO",
+        "REQUESTS_CA_BUNDLE",
+        "https_proxy",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "HTTP_PROXY",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    # No CA / proxy → None (dulwich uses its certifi default).
+    assert gitsync._https_pool_manager(gitsync.GitAuth(scheme="https")) is None
+
+
+def test_pool_manager_uses_ca_bundle(tmp_path, monkeypatch):
+    for var in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    ca = tmp_path / "corp-ca.pem"
+    ca.write_text("-----BEGIN CERTIFICATE-----\n")
+    pm = gitsync._https_pool_manager(gitsync.GitAuth(scheme="https", ca_bundle=str(ca)))
+    assert pm is not None
+    assert pm.connection_pool_kw.get("ca_certs") == str(ca)
+
+
+def test_pool_manager_builds_proxy_manager(monkeypatch):
+    monkeypatch.delenv("https_proxy", raising=False)
+    import urllib3
+
+    pm = gitsync._https_pool_manager(
+        gitsync.GitAuth(scheme="https", proxy="proxy.corp:8080")
+    )
+    assert isinstance(pm, urllib3.ProxyManager)  # scheme is added automatically
+
+
+def test_pool_manager_verify_off(monkeypatch):
+    for var in (
+        "SSL_CERT_FILE",
+        "GIT_SSL_CAINFO",
+        "REQUESTS_CA_BUNDLE",
+        "https_proxy",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "HTTP_PROXY",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    # tls_verify=False must build a manager (not None) with verification disabled.
+    pm = gitsync._https_pool_manager(gitsync.GitAuth(scheme="https", tls_verify=False))
+    assert pm is not None
+    assert pm.connection_pool_kw.get("cert_reqs") == "CERT_NONE"

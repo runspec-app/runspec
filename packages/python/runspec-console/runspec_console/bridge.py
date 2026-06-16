@@ -3729,6 +3729,8 @@ class Bridge:
             "ref": sync.get("ref", ""),
             "credential_id": sync.get("credential_id", ""),
             "subpath": sync.get("subpath", ""),
+            "ca_bundle": sync.get("ca_bundle", ""),
+            "tls_verify": sync.get("tls_verify", True) is not False,
             "files": list(sync.get("files") or gitsync.KNOWN_FILES),
             "preserve": list(sync.get("preserve") or []),
             "last_ref": sync.get("last_ref", ""),
@@ -3748,6 +3750,8 @@ class Bridge:
                 "ref": str(data.get("ref", "")).strip(),
                 "credential_id": str(data.get("credential_id", "")).strip(),
                 "subpath": str(data.get("subpath", "")).strip(),
+                "ca_bundle": str(data.get("ca_bundle", "")).strip(),
+                "tls_verify": data.get("tls_verify", True) is not False,
                 "files": [
                     str(f).strip() for f in (data.get("files") or []) if str(f).strip()
                 ],
@@ -3781,22 +3785,32 @@ class Bridge:
     def _sync_auth(self, url: str, credential_id: str) -> Any:
         """Build a ``GitAuth`` for ``url`` from a saved credential.
 
-        HTTPS uses the credential's username + keyring secret (token). SSH uses
-        the credential's username (default ``git``) and the console's configured
-        SSH key (``[ssh] identityFile``) — credentials don't store key paths."""
+        HTTPS uses the credential's username + keyring secret (token), the
+        ``[config_sync] ca_bundle`` for cert verification (internal CA / TLS proxy),
+        and the console's ``[ssh] proxy`` for egress. SSH uses the credential's
+        username (default ``git``) and the console's configured SSH key
+        (``[ssh] identityFile``) — credentials don't store key paths."""
         from . import credentials as cred
         from . import gitsync
 
         entry = self._credential_entry(credential_id) if credential_id else None
         username = str((entry or {}).get("username", "")).strip()
+        cfg_ssh = self.get_config().get("ssh") or {}
         if gitsync._is_ssh_url(url):
-            cfg_ssh = self.get_config().get("ssh") or {}
             key_path = str(cfg_ssh.get("identityFile", "") or "")
             return gitsync.GitAuth(
                 scheme="ssh", username=username or "git", key_path=key_path
             )
         secret = cred.get_secret(credential_id) if credential_id else None
-        return gitsync.GitAuth(scheme="https", username=username, secret=secret or "")
+        sync = read_sync()
+        return gitsync.GitAuth(
+            scheme="https",
+            username=username,
+            secret=secret or "",
+            ca_bundle=str(sync.get("ca_bundle", "") or ""),
+            proxy=str(cfg_ssh.get("proxy", "") or ""),
+            tls_verify=sync.get("tls_verify", True) is not False,
+        )
 
     def sync_pull(self) -> dict[str, Any]:
         """Pull the configured files from the repo at the configured ref.

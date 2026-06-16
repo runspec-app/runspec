@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.75.0] — 2026-06-16
+
+### Added
+- **Config Sync TLS: CA bundle + proxy support.** A pull from a private git host
+  whose certificate is issued by an internal CA (or re-signed by a TLS-inspecting
+  corporate proxy) failed with `SSL CERTIFICATE_VERIFY_FAILED` — dulwich verifies
+  against certifi, not the OS / git cert store. New `[config_sync] ca_bundle` (and
+  a "CA bundle (optional)" field in the Config Sync tab) points verification at a
+  PEM file; the standard `SSL_CERT_FILE` / `GIT_SSL_CAINFO` / `REQUESTS_CA_BUNDLE`
+  env vars are honored as a fallback. The HTTPS pull also routes through the
+  console's `[ssh] proxy` (or the `https_proxy` env var) so a repo reachable only
+  via the corporate proxy works. Prefer the CA bundle; a **Verify TLS** toggle
+  (`[config_sync] tls_verify = false`) is an escape hatch that skips verification
+  for a trusted network with no CA bundle (mirrors git's `http.sslVerify false`).
+  Note dulwich **ignores `~/.gitconfig`**, so system-git settings (`http.proxy`,
+  `http.sslVerify`, `http.sslBackend`, `credential.helper`) don't apply — these
+  Config Sync settings replace them.
+
 ## [0.74.0] — 2026-06-16
 
 ### Changed

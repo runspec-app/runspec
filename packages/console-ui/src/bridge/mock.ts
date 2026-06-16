@@ -659,7 +659,7 @@ export const mockApi: BridgeApi = {
   credentials_backend: async () => ({ available: true, backend: 'WinVaultKeyring' }),
 
   get_sync_config: async () => ({
-    url: '', ref: '', credential_id: '', subpath: '',
+    url: '', ref: '', credential_id: '', subpath: '', ca_bundle: '', tls_verify: true,
     files: ['config.toml', 'runspec_hosts.toml', 'runspec_triggers.toml', 'runspec_filters.toml', 'runspec_credentials.toml'],
     preserve: [],
     last_ref: '', last_commit: '', last_synced: '',

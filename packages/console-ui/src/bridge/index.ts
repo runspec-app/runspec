@@ -128,6 +128,8 @@ export interface SyncConfig {
   ref: string
   credential_id: string
   subpath: string
+  ca_bundle: string
+  tls_verify: boolean
   files: string[]
   preserve: string[]
   last_ref: string

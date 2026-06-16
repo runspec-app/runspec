@@ -1698,6 +1698,8 @@ interface SyncFormValues {
   ref: string
   credential_id?: string
   subpath?: string
+  ca_bundle?: string
+  tls_verify?: boolean
   files: string[]
   preserve?: string[]
 }
@@ -1717,7 +1719,8 @@ function ConfigSyncTab() {
       setCfg(c)
       form.setFieldsValue({
         url: c.url, ref: c.ref, credential_id: c.credential_id || undefined,
-        subpath: c.subpath, files: c.files?.length ? c.files : c.files_default,
+        subpath: c.subpath, ca_bundle: c.ca_bundle, tls_verify: c.tls_verify !== false,
+        files: c.files?.length ? c.files : c.files_default,
         preserve: c.preserve ?? [],
       })
     })
@@ -1730,6 +1733,7 @@ function ConfigSyncTab() {
     await bridge.save_sync_config({
       url: v.url.trim(), ref: v.ref.trim(),
       credential_id: v.credential_id || '', subpath: v.subpath?.trim() || '',
+      ca_bundle: v.ca_bundle?.trim() || '', tls_verify: v.tls_verify !== false,
       files: v.files ?? [], preserve: v.preserve ?? [],
     })
     return true
@@ -1816,6 +1820,23 @@ function ConfigSyncTab() {
         <Form.Item name="subpath" label="Subdirectory (optional)"
           tooltip="A directory within the repo that holds the config files (blank = repo root).">
           <Input placeholder="" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+        </Form.Item>
+        <Form.Item
+          name="ca_bundle"
+          label="CA bundle (optional)"
+          tooltip="Path to a PEM file for verifying the server's TLS certificate. Needed for an internal CA or a TLS-inspecting corporate proxy — the pull uses certifi by default, not the OS/git cert store. Leave blank for public hosts. (HTTPS also reuses the SSH-tab proxy, if set.)"
+          help={<span style={{ fontSize: 11 }}>For a private GitLab / corporate proxy that gives an <code>SSL CERTIFICATE_VERIFY_FAILED</code> error — point this at your internal root CA <code>.pem</code>.</span>}
+        >
+          <Input placeholder="~/certs/corp-root-ca.pem" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+        </Form.Item>
+        <Form.Item
+          name="tls_verify"
+          label="Verify TLS"
+          valuePropName="checked"
+          tooltip="Off skips certificate verification entirely (like git's http.sslVerify=false). Insecure — only on a trusted internal network. Prefer a CA bundle above."
+          help={<span style={{ fontSize: 11 }}>Turn off only if you can't supply a CA bundle (e.g. your <code>git config</code> already sets <code>http.sslVerify false</code>).</span>}
+        >
+          <Switch size="small" />
         </Form.Item>
 
         <Space>
