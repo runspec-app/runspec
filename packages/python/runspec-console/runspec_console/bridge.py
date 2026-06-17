@@ -4429,6 +4429,11 @@ class Bridge:
     ) -> None:
         start = time.monotonic()
         tools = self._runnables_to_tools()
+        # Search mode hides runnables behind search_runnables; fold an always-on
+        # menu (id + one-liner) into what the model sees so it knows what exists.
+        index_text = (
+            self._build_catalog_index() if self._tool_mode() == "search" else ""
+        )
         usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         cancel = self._chat_cancels.get(chat_id) or threading.Event()
         stopped = False
@@ -4445,14 +4450,18 @@ class Bridge:
                     break
                 response: Any = None
                 assistant_text = ""  # this iteration's streamed assistant text
+                # The message list actually sent this iteration — history plus the
+                # folded-in catalog index (search mode). A per-call copy, so the
+                # stored history is never polluted with the index.
+                model_messages = self._fold_catalog_index(history, index_text)
                 # Diagnostic: the exact message list handed to the adapter — i.e.
                 # what the console sends to the model / proxy this iteration.
                 self._trace(
                     "model_request",
-                    {"chat_id": chat_id, "messages": jsonsafe_messages(history)},
+                    {"chat_id": chat_id, "messages": jsonsafe_messages(model_messages)},
                 )
                 try:
-                    async for event in adapter.stream_with_tools(history, tools):
+                    async for event in adapter.stream_with_tools(model_messages, tools):
                         if cancel.is_set():
                             stopped = True
                             break  # abort streaming (closes the provider stream)
@@ -6051,6 +6060,89 @@ class Bridge:
             },
             default=str,
         )
+
+    # ── always-on catalog index (search mode) ─────────────────────────────────
+    #
+    # Search mode hides every runnable behind search_runnables, which means the
+    # agent can only find a runnable it already thinks to search for — it never
+    # sees the menu. The index restores that visibility cheaply: one line per
+    # runnable (id + first sentence, no schemas), folded into the conversation so
+    # the agent always knows what exists, then uses search/describe for the args.
+
+    @staticmethod
+    def _first_sentence(text: str, maxlen: int = 120) -> str:
+        """First sentence of a description as a single trimmed line (capped)."""
+        s = " ".join(str(text or "").split())
+        if not s:
+            return ""
+        for sep in (". ", "! ", "? "):
+            i = s.find(sep)
+            if 0 <= i < maxlen:
+                return s[: i + 1]
+        return s if len(s) <= maxlen else s[: maxlen - 1].rstrip() + "…"
+
+    def _catalog_index_enabled(self) -> bool:
+        """``[llm] tool_index`` — on by default (only consulted in search mode)."""
+        val = self.get_config().get("llm", {}).get("tool_index", True)
+        if isinstance(val, str):
+            return val.strip().lower() not in ("false", "0", "no", "off")
+        return bool(val)
+
+    def _build_catalog_index(self) -> str:
+        """Compact, always-on menu of runnables for search mode: ``id — sentence``,
+        one per ``(group, name)``, sorted, bounded by ``[llm] tool_index_limit``
+        (default 300) with an overflow note. Empty when disabled or nothing's
+        discovered."""
+        if not self._catalog_index_enabled():
+            return ""
+        try:
+            limit = int(self.get_config().get("llm", {}).get("tool_index_limit", 300))
+        except (TypeError, ValueError):
+            limit = 300
+        with self._lock:
+            runnables = list(self._runnables_cache)
+        seen: dict[tuple[str, str], dict[str, Any]] = {}
+        order: list[tuple[str, str]] = []
+        for r in runnables:
+            key = (str(r.get("group") or ""), str(r.get("name") or ""))
+            if key not in seen:
+                seen[key] = r
+                order.append(key)
+        lines: list[str] = []
+        for key in sorted(order):
+            r = seen[key]
+            rid = self._dedup_tool_name(r)
+            desc = self._first_sentence(r.get("description") or "")
+            lines.append(f"- {rid}" + (f" — {desc}" if desc else ""))
+        if not lines:
+            return ""
+        if len(lines) > limit > 0:
+            overflow = len(lines) - limit
+            lines = lines[:limit]
+            lines.append(f"- …and {overflow} more — use search_runnables to find them.")
+        return "\n".join(lines)
+
+    def _fold_catalog_index(
+        self, history: list[dict[str, Any]], index_text: str
+    ) -> list[dict[str, Any]]:
+        """Return a copy of ``history`` with the catalog index prepended to the
+        first user message — provider-agnostic (every adapter handles user
+        messages) and it leaves the cached tools+system prefix untouched. Never
+        mutates the stored history."""
+        if not index_text:
+            return history
+        preamble = (
+            "Runnables you can execute via run_runnable (id — description). This is "
+            "the full menu; call search_runnables or describe_runnable to get a "
+            "runnable's arguments and hosts before running it.\n"
+            f"{index_text}\n\n"
+        )
+        out = [dict(m) for m in history]
+        for m in out:
+            if m.get("role") == "user" and isinstance(m.get("content"), str):
+                m["content"] = preamble + m["content"]
+                break
+        return out
 
     # ── terminal sessions ─────────────────────────────────────────────────────
 

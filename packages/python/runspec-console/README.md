@@ -136,6 +136,15 @@ stays ~3 tools regardless of fleet size. Same autonomy gate, credentials, and
 secret handling as the other modes. Agent-mode triggers (which scope to a curated
 allowlist) keep the `dedup` layout automatically.
 
+So the agent still knows *what exists* without paying for every schema, search mode
+also folds a compact **catalog index** into each turn — one line per runnable
+(`id — first sentence of its description`, no arguments). The agent reads the menu,
+then calls `search_runnables`/`describe_runnable` for the details of the one it
+wants. The index is bounded by `[llm] tool_index_limit` (default 300, with an
+overflow note) and can be turned off with `[llm] tool_index = false`. Tip: lead each
+runnable's description with its distinguishing detail — that first sentence is what
+the agent scans.
+
 ### Custom providers (plugins)
 
 When a model gateway is proprietary and its adapter must stay in a **private**

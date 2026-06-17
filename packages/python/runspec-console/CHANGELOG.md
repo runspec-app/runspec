@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.88.0] — 2026-06-17
+
+### Added
+- **Always-on catalog index for search mode.** Search mode (`tool_mode = "search"`)
+  hid every runnable behind `search_runnables`, so the agent could only find a
+  runnable it already thought to search for — it never saw the menu, and a runnable
+  whose distinguishing detail lived in its *description* (e.g. one service-desk among
+  several) went unfound until named. The agent now gets a compact **index** folded
+  into each chat turn: one line per runnable — `id — first sentence of description`,
+  deduped by `(group, name)`, sorted, **no schemas** — so it always knows what
+  exists, then uses `search_runnables`/`describe_runnable` for arguments and hosts.
+  - Cheap and bounded: ~1 short line per runnable (a fraction of the full-schema
+    cost), capped by `[llm] tool_index_limit` (default 300) with an overflow note.
+    Disable with `[llm] tool_index = false`.
+  - Provider-agnostic and cache-friendly: the index is folded into the first user
+    message of a per-call copy of the history (the stored history is never touched),
+    leaving the cached tools + system prompt prefix intact. Only the manual chat in
+    search mode carries it; dedup/per_host (and allow-scoped triggers) are unchanged.
+
+
 ## [0.87.0] — 2026-06-17
 
 ### Fixed

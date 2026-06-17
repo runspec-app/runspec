@@ -418,6 +418,37 @@ unwrap helper.
 
 ---
 
+## 13a. Always-on catalog index — implemented in 0.88.0 (the *discovery* fix)
+
+Production feedback surfaced a failure §5 doesn't address: a runnable whose
+distinguishing detail lived only in its **description** (one JSM service-desk among
+several similarly-named raise-runnables) went unfound — the agent answered without
+ever searching the right term, because in pure search mode it **can't see what
+exists** and so can't know to search for it. This is a *discovery* miss, upstream of
+ranking; better ranking can't fix a query the agent never thought to make.
+
+Fix (0.88.0): fold an **always-on catalog index** into each search-mode chat turn —
+one line per runnable, `id — first sentence of description`, deduped by
+`(group, name)`, sorted, **no schemas**. The agent always sees the full menu (the
+property dedup mode had for free), then uses `search_runnables`/`describe_runnable`
+for arguments + hosts. Restores discoverability at ~1/10th the full-schema cost.
+
+- `_build_catalog_index()` builds it from `_runnables_cache` (reusing
+  `_dedup_tool_name` for the id + a `_first_sentence` helper); bounded by
+  `[llm] tool_index_limit` (default 300) with an overflow note; gated by
+  `[llm] tool_index` (default true).
+- `_fold_catalog_index(history, index)` prepends it to the first user message of a
+  **per-call copy** of the history — provider-agnostic (no adapter-interface change,
+  preserving the public `stream_with_tools` plugin contract) and leaving the cached
+  tools+system prefix intact (§9). The stored `_chat_history` is never mutated.
+- Wired only into `_agentic_chat_turn` when `_tool_mode() == "search"`; dedup/per_host
+  and allow-scoped triggers are untouched. Tests in `tests/test_catalog_index.py`.
+
+This is the recommended primary remedy for discovery misses; §14 (dynamic schema
+injection) remains the separate, still-deferred remedy for *construction* misses.
+
+---
+
 ## 14. Phase 2 (only if first-call accuracy disappoints): dynamic working set
 
 If structured rows + pre-flight prove insufficient in practice, layer in dynamic
