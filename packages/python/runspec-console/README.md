@@ -107,6 +107,25 @@ the endpoint's `GET /input_schema`:
 | `auth_header` | `"Authorization"` | header the token is sent in |
 | `auth_scheme` | `"Bearer"` | scheme prefix; set to `""` to send the raw token |
 
+### Agent tool list (`tool_mode`)
+
+The assistant turns each fleet runnable into an LLM tool. On a uniform fleet —
+many hosts running the same package set — the default **`tool_mode = "dedup"`**
+sends **one tool per folder/runnable** (named `group__runnable`) with a required
+`host` enum listing the hosts that have it, instead of one tool per
+host×runnable. This keeps the tool list — re-sent on every turn — small (an
+18-host × 20-runnable fleet: 20 tools instead of 360). The agent names the host
+as an argument.
+
+```toml
+[llm]
+tool_mode = "dedup"      # default — collapse identical per-host tools
+# tool_mode = "per_host" # one tool per host__runnable (the original layout)
+```
+
+Use `"per_host"` if you'd rather the host be encoded in the tool name than chosen
+as an argument.
+
 ### Custom providers (plugins)
 
 When a model gateway is proprietary and its adapter must stay in a **private**

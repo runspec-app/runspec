@@ -37,6 +37,15 @@ class _StubBridge:
     def _run_tool_sync(self, name, tool_input):
         return self._run_result
 
+    def get_config(self):
+        return {}  # default tool_mode = "dedup"
+
+    _tool_mode = Bridge._tool_mode
+    _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
+    _dedup_tool_name = Bridge._dedup_tool_name
+    _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
+    _host_selector_key = Bridge._host_selector_key
+    _resolve_tool_target = Bridge._resolve_tool_target
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _confirm_decision = Bridge._confirm_decision
     _register_confirm = Bridge._register_confirm

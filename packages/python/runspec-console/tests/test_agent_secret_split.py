@@ -19,8 +19,16 @@ from runspec_console.bridge import Bridge
 
 class _AgentBridge:
     _run_tool_sync = Bridge._run_tool_sync
+    # Routing helpers _run_tool_sync delegates to. The host__name tool names below
+    # resolve via the per-host fallback under either layout.
+    _resolve_tool_target = Bridge._resolve_tool_target
+    _tool_mode = Bridge._tool_mode
+    _dedup_tool_name = Bridge._dedup_tool_name
+    _host_selector_key = Bridge._host_selector_key
     # These are @staticmethod on Bridge; re-wrap so binding onto the harness
     # doesn't turn them into instance methods (which would inject ``self``).
+    _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
+    _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
     _secret_arg_names = staticmethod(Bridge._secret_arg_names)
     _positionals_for = staticmethod(Bridge._positionals_for)
     # Credential resolution is a no-op here (no credentials configured).

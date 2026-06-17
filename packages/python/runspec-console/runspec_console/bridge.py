@@ -22,6 +22,7 @@ import logging
 import os
 import queue
 import random
+import re
 import shutil
 import stat
 import sys
@@ -4584,150 +4585,308 @@ class Bridge:
             "cache_creation": field("cache_creation_input_tokens"),
         }
 
+    def _tool_mode(self) -> str:
+        """Agent tool-list layout, from ``[llm] tool_mode``.
+
+        ``"dedup"`` (default) emits one tool per folder/runnable (named
+        ``group__name``) with a required ``host`` enum listing every host that has
+        it — collapsing the N identical per-host copies a uniform fleet produces
+        into a single definition, which is the bulk of the agent's context budget.
+        ``"per_host"`` restores the original one-tool-per-(host, runnable) layout
+        (``host__name``) as a zero-code escape hatch."""
+        mode = str(self.get_config().get("llm", {}).get("tool_mode", "dedup")).strip()
+        return mode if mode in ("dedup", "per_host") else "dedup"
+
+    @staticmethod
+    def _sanitize_tool_name(raw: str) -> str:
+        """Anthropic tool names allow only ``[a-zA-Z0-9_-]`` and cap at 64 chars."""
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", raw)[:64]
+
+    def _dedup_tool_name(self, r: dict[str, Any]) -> str:
+        """Folder-qualified tool name for dedup mode: sanitised ``group__name``
+        (the bare name when the runnable has no group)."""
+        group = str(r.get("group") or "")
+        name = str(r.get("name") or "")
+        return self._sanitize_tool_name(f"{group}__{name}" if group else name)
+
+    @staticmethod
+    def _declared_arg_name_set(r: dict[str, Any] | None) -> set[str]:
+        """Every arg name the runnable declares (globals + all subcommand args)."""
+        names: set[str] = set()
+        for a in (r or {}).get("args") or []:
+            if a.get("name"):
+                names.add(a["name"])
+        for cmd in ((r or {}).get("commands") or {}).values():
+            for a in cmd.get("args") or []:
+                if a.get("name"):
+                    names.add(a["name"])
+        return names
+
+    def _host_selector_key(self, r: dict[str, Any] | None) -> str:
+        """Property name for the injected host enum in dedup mode. Normally
+        ``"host"``; if the runnable already declares an arg named ``host`` (so the
+        selector would shadow a real input), fall back to ``_host`` / ``__host`` —
+        derived deterministically so build and dispatch agree without extra state."""
+        declared = self._declared_arg_name_set(r)
+        key = "host"
+        while key in declared:
+            key = "_" + key
+        return key
+
+    def _union_scoped_credentials(
+        self, hosts: list[str], runnable: str
+    ) -> list[dict[str, Any]]:
+        """Credentials in scope for ``runnable`` on *any* of ``hosts`` (dedup mode
+        offers one shared override enum; auto-apply still resolves per actual host
+        at dispatch). De-duplicated by id, first occurrence wins."""
+        seen: set[str] = set()
+        out: list[dict[str, Any]] = []
+        for h in hosts:
+            for c in self._scoped_credentials(h, runnable):
+                if c["id"] not in seen:
+                    seen.add(c["id"])
+                    out.append(c)
+        return out
+
+    def _allowed_hosts(
+        self, allowset: set[str], name: str, tool_name: str, hosts: list[str]
+    ) -> list[str]:
+        """Subset of ``hosts`` a dedup tool may target under a trigger allowlist.
+
+        A bare runnable ``name`` or the dedup ``tool_name`` admits every host; a
+        host-qualified entry (``host__name``, raw or sanitised) admits only that
+        host — so a trigger scoped to one host's runnable stays scoped even though
+        the deduped tool is shared across hosts."""
+        if name in allowset or tool_name in allowset:
+            return list(hosts)
+        out: list[str] = []
+        for h in hosts:
+            raw = f"{h}__{name}"
+            if raw in allowset or self._sanitize_tool_name(raw) in allowset:
+                out.append(h)
+        return out
+
+    def _build_input_schema(
+        self,
+        r: dict[str, Any],
+        scoped_creds: list[dict[str, Any]],
+        hosts: list[str] | None = None,
+        host_key: str = "host",
+    ) -> dict[str, Any]:
+        """Anthropic ``input_schema`` for one runnable.
+
+        ``hosts`` (dedup mode) prepends a required host enum under ``host_key``
+        naming the hosts that have this runnable; ``None`` (per-host mode) omits it
+        — the host is carried in the tool name instead. ``scoped_creds`` drives the
+        optional ``credential_id`` override enum."""
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+
+        if hosts is not None:
+            properties[host_key] = {
+                "type": "string",
+                "enum": list(hosts),
+                "description": "Host to run on. Options: " + ", ".join(hosts) + ".",
+            }
+            required.append(host_key)
+
+        def add_arg(arg: dict[str, Any], note: str = "") -> None:
+            """Add one spec arg as a JSON-schema property. ``note`` prefixes the
+            description (used to tag a subcommand's own args) and marks the arg
+            as conditional — never added to the tool's top-level ``required``."""
+            arg_name = arg.get("name", "")
+            if not arg_name or arg_name in properties:
+                return
+            arg_type = arg.get("type", "str")
+            json_type = {
+                "int": "integer",
+                "float": "number",
+                "flag": "boolean",
+                "bool": "boolean",
+                "path": "string",
+            }.get(arg_type, "string")
+            prop: dict[str, Any] = {"type": json_type}
+            # Build description: optional note + user-facing text + default hint
+            # so the LLM knows what value will be used when the arg is omitted.
+            desc_parts: list[str] = []
+            if note:
+                desc_parts.append(note)
+            if arg.get("description") or arg.get("help"):
+                desc_parts.append(str(arg.get("description") or arg.get("help")))
+            default = arg.get("default")
+            if default is not None:
+                if isinstance(default, str) and default.startswith("$"):
+                    desc_parts.append(f"(default from env var {default})")
+                else:
+                    desc_parts.append(f"(default: {default})")
+            if desc_parts:
+                prop["description"] = " ".join(desc_parts)
+            if arg.get("options"):
+                prop["enum"] = arg["options"]
+            properties[arg_name] = prop
+            if arg.get("required") and not note:
+                required.append(arg_name)
+
+        for arg in r.get("args") or []:
+            add_arg(arg)
+
+        # Surface subcommands so the agent can pick one — and knows when it
+        # MUST. Without this the agent only saw the global args and had no way
+        # to name a command, so require-command runnables were unrunnable.
+        commands = r.get("commands") or {}
+        if commands:
+            cmd_names = list(commands.keys())
+            require_command = bool(r.get("requireCommand"))
+            summary = "; ".join(
+                f"'{cn}'"
+                + (
+                    f" — {commands[cn].get('description')}"
+                    if commands[cn].get("description")
+                    else ""
+                )
+                for cn in cmd_names
+            )
+            properties["command"] = {
+                "type": "string",
+                "enum": cmd_names,
+                "description": (
+                    f"Subcommand to run ({summary}). "
+                    + (
+                        "Required: this runnable cannot run without choosing "
+                        "one of these commands."
+                        if require_command
+                        else "Optional — omit to run the runnable at its top level."
+                    )
+                ),
+            }
+            if require_command:
+                required.append("command")
+            # Each command's own (non-inherited) args become optional inputs,
+            # tagged with the command they belong to. Globals already added above.
+            for cn in cmd_names:
+                for arg in commands[cn].get("args") or []:
+                    if arg.get("inherited"):
+                        continue
+                    add_arg(arg, note=f"(for the '{cn}' command)")
+
+        # Offer any in-scope credentials by id (override only — in-scope ones
+        # apply automatically). The agent picks an *id*, never sees the secret.
+        if scoped_creds:
+            cred_summary = "; ".join(
+                f"'{c['id']}'" + (f" — {c['label']}" if c.get("label") else "")
+                for c in scoped_creds
+            )
+            properties["credential_id"] = {
+                "type": "string",
+                "enum": [c["id"] for c in scoped_creds],
+                "description": (
+                    "Optional: apply a saved credential by id to fill its bound "
+                    "arguments from secure storage. The matching credential(s) "
+                    "already apply automatically — set this only to choose a "
+                    f"specific one. Options: {cred_summary}."
+                ),
+            }
+
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        return schema
+
     def _runnables_to_tools(
         self, allow: Collection[str] | None = None
     ) -> list[dict[str, Any]]:
         """Convert cached runnables to Anthropic-format tool schemas.
 
-        ``allow`` (when non-empty) scopes the result to an allowlist of runnable
-        names — each entry matches a runnable's bare ``name`` or its qualified
-        ``host__name`` (raw or the sanitised tool name) — so an agent-mode trigger
-        can be limited to a curated set of tools. ``None``/empty = every runnable.
+        Layout follows ``_tool_mode()``: ``"dedup"`` (default) emits one tool per
+        ``(group, name)`` with a host enum; ``"per_host"`` emits one per
+        ``(host, name)``. ``allow`` (when non-empty) scopes the result to an
+        allowlist — each entry matches a runnable's bare ``name`` or its qualified
+        ``host__name`` (raw or sanitised) — so an agent-mode trigger can be limited
+        to a curated set of tools (in dedup mode a host-qualified entry also narrows
+        the shared tool's host enum). ``None``/empty = every runnable.
         """
-        import re
-
         allowset = {str(a).strip() for a in allow} if allow else None
         self._reload_credentials()  # so per-runnable credential_id enums are current
         with self._lock:
             runnables = list(self._runnables_cache)
         tools: list[dict[str, Any]] = []
         seen_tool_names: set[str] = set()
-        for r in runnables:
-            host = r.get("host", "local")
-            name = r.get("name", "")
-            raw_name = f"{host}__{name}"
-            tool_name = re.sub(r"[^a-zA-Z0-9_-]", "_", raw_name)[:64]
-            if allowset is not None and not (
-                name in allowset or raw_name in allowset or tool_name in allowset
-            ):
-                continue  # scoped out by the trigger's runnables allowlist
-            if tool_name in seen_tool_names:
-                sys.stderr.write(
-                    f"runspec-console: warning: duplicate tool name '{tool_name}' skipped"
-                    f" ('{name}' defined in multiple installed packages)\n"
-                )
-                sys.stderr.flush()
-                continue
-            seen_tool_names.add(tool_name)
-            description = r.get("description") or f"Run {name} on {host}"
-            args = r.get("args") or []
-            properties: dict[str, Any] = {}
-            required: list[str] = []
 
-            def add_arg(arg: dict[str, Any], note: str = "") -> None:
-                """Add one spec arg as a JSON-schema property. ``note`` prefixes the
-                description (used to tag a subcommand's own args) and marks the arg
-                as conditional — never added to the tool's top-level ``required``."""
-                arg_name = arg.get("name", "")
-                if not arg_name or arg_name in properties:
-                    return
-                arg_type = arg.get("type", "str")
-                json_type = {
-                    "int": "integer",
-                    "float": "number",
-                    "flag": "boolean",
-                    "bool": "boolean",
-                    "path": "string",
-                }.get(arg_type, "string")
-                prop: dict[str, Any] = {"type": json_type}
-                # Build description: optional note + user-facing text + default hint
-                # so the LLM knows what value will be used when the arg is omitted.
-                desc_parts: list[str] = []
-                if note:
-                    desc_parts.append(note)
-                if arg.get("description") or arg.get("help"):
-                    desc_parts.append(str(arg.get("description") or arg.get("help")))
-                default = arg.get("default")
-                if default is not None:
-                    if isinstance(default, str) and default.startswith("$"):
-                        desc_parts.append(f"(default from env var {default})")
-                    else:
-                        desc_parts.append(f"(default: {default})")
-                if desc_parts:
-                    prop["description"] = " ".join(desc_parts)
-                if arg.get("options"):
-                    prop["enum"] = arg["options"]
-                properties[arg_name] = prop
-                if arg.get("required") and not note:
-                    required.append(arg_name)
-
-            for arg in args:
-                add_arg(arg)
-
-            # Surface subcommands so the agent can pick one — and knows when it
-            # MUST. Without this the agent only saw the global args and had no way
-            # to name a command, so require-command runnables were unrunnable.
-            commands = r.get("commands") or {}
-            if commands:
-                cmd_names = list(commands.keys())
-                require_command = bool(r.get("requireCommand"))
-                summary = "; ".join(
-                    f"'{cn}'"
-                    + (
-                        f" — {commands[cn].get('description')}"
-                        if commands[cn].get("description")
-                        else ""
-                    )
-                    for cn in cmd_names
-                )
-                properties["command"] = {
-                    "type": "string",
-                    "enum": cmd_names,
-                    "description": (
-                        f"Subcommand to run ({summary}). "
-                        + (
-                            "Required: this runnable cannot run without choosing "
-                            "one of these commands."
-                            if require_command
-                            else "Optional — omit to run the runnable at its top level."
-                        )
-                    ),
-                }
-                if require_command:
-                    required.append("command")
-                # Each command's own (non-inherited) args become optional inputs,
-                # tagged with the command they belong to. Globals already added above.
-                for cn in cmd_names:
-                    for arg in commands[cn].get("args") or []:
-                        if arg.get("inherited"):
-                            continue
-                        add_arg(arg, note=f"(for the '{cn}' command)")
-
-            # Offer any in-scope credentials by id (override only — in-scope ones
-            # apply automatically). The agent picks an *id*, never sees the secret.
-            scoped_creds = self._scoped_credentials(host, name)
-            if scoped_creds:
-                cred_summary = "; ".join(
-                    f"'{c['id']}'" + (f" — {c['label']}" if c.get("label") else "")
-                    for c in scoped_creds
-                )
-                properties["credential_id"] = {
-                    "type": "string",
-                    "enum": [c["id"] for c in scoped_creds],
-                    "description": (
-                        "Optional: apply a saved credential by id to fill its bound "
-                        "arguments from secure storage. The matching credential(s) "
-                        "already apply automatically — set this only to choose a "
-                        f"specific one. Options: {cred_summary}."
-                    ),
-                }
-
-            schema: dict[str, Any] = {"type": "object", "properties": properties}
-            if required:
-                schema["required"] = required
-            tools.append(
-                {"name": tool_name, "description": description, "input_schema": schema}
+        def _dup_warn(tool_name: str, name: str) -> None:
+            sys.stderr.write(
+                f"runspec-console: warning: duplicate tool name '{tool_name}' skipped"
+                f" ('{name}' defined in multiple installed packages)\n"
             )
+            sys.stderr.flush()
+
+        if self._tool_mode() == "per_host":
+            for r in runnables:
+                host = r.get("host", "local")
+                name = r.get("name", "")
+                raw_name = f"{host}__{name}"
+                tool_name = self._sanitize_tool_name(raw_name)
+                if allowset is not None and not (
+                    name in allowset or raw_name in allowset or tool_name in allowset
+                ):
+                    continue  # scoped out by the trigger's runnables allowlist
+                if tool_name in seen_tool_names:
+                    _dup_warn(tool_name, name)
+                    continue
+                seen_tool_names.add(tool_name)
+                schema = self._build_input_schema(
+                    r, self._scoped_credentials(host, name)
+                )
+                tools.append(
+                    {
+                        "name": tool_name,
+                        "description": r.get("description") or f"Run {name} on {host}",
+                        "input_schema": schema,
+                    }
+                )
+        else:
+            # dedup: collapse the per-host copies of each (group, name). The first
+            # runnable seen for a key drives the schema (a uniform fleet runs an
+            # identical spec on every host); the host enum lists every host with it.
+            groups: dict[tuple[str, str], dict[str, Any]] = {}
+            order: list[tuple[str, str]] = []
+            for r in runnables:
+                key = (str(r.get("group") or ""), str(r.get("name") or ""))
+                g = groups.get(key)
+                if g is None:
+                    g = {"rep": r, "hosts": []}
+                    groups[key] = g
+                    order.append(key)
+                h = r.get("host", "local")
+                if h not in g["hosts"]:
+                    g["hosts"].append(h)
+            for key in order:
+                rep = groups[key]["rep"]
+                hosts = groups[key]["hosts"]
+                name = rep.get("name", "")
+                tool_name = self._dedup_tool_name(rep)
+                if allowset is not None:
+                    hosts = self._allowed_hosts(allowset, name, tool_name, hosts)
+                    if not hosts:
+                        continue  # no allowed host for this runnable
+                if tool_name in seen_tool_names:
+                    _dup_warn(tool_name, name)
+                    continue
+                seen_tool_names.add(tool_name)
+                schema = self._build_input_schema(
+                    rep,
+                    self._union_scoped_credentials(hosts, name),
+                    hosts=hosts,
+                    host_key=self._host_selector_key(rep),
+                )
+                tools.append(
+                    {
+                        "name": tool_name,
+                        "description": (
+                            rep.get("description") or f"Run {name} on a fleet host"
+                        ),
+                        "input_schema": schema,
+                    }
+                )
         # Built-in file-transfer tools are additive — never let a problem building
         # them strip the runnable tools the agent actually needs.
         try:
@@ -4935,6 +5094,79 @@ class Bridge:
             )
         return f"✗ {label} failed: {detail.get('error') or 'unknown error'}"
 
+    def _resolve_tool_target(
+        self, tool_name: str, tool_input: dict[str, Any]
+    ) -> tuple[str, str, dict[str, Any] | None, str | None] | str:
+        """Map an agent tool call back to its target, for both tool layouts.
+
+        Returns ``(host, name, cached_runnable, host_key)`` — where ``host_key`` is
+        the input key carrying the host (to pop before running), or ``None`` in
+        per-host mode where the host lives in the tool name. On a routing failure
+        returns an error string the agent can read and retry from.
+
+        ``per_host``: parse ``host__name`` from the tool name.
+        ``dedup``: recover the runnable by re-deriving each cached runnable's dedup
+        tool name (robust against the lossy name sanitiser, and guaranteed to agree
+        with the builder), then pick the host from the call's host argument."""
+        with self._lock:
+            runnables = list(self._runnables_cache)
+        if self._tool_mode() == "per_host":
+            if "__" not in tool_name:
+                return f"Error: invalid tool name '{tool_name}'"
+            host, name = tool_name.split("__", 1)
+            cached_r = next(
+                (
+                    r
+                    for r in runnables
+                    if r.get("host") == host and r.get("name") == name
+                ),
+                None,
+            )
+            return host, name, cached_r, None
+        # dedup: all runnables sharing this folder-qualified tool name
+        matches = [r for r in runnables if self._dedup_tool_name(r) == tool_name]
+        if not matches:
+            # Fall back to the explicit host__name form so internal callers that
+            # build a per-host tool name directly (e.g. the helpdesk portal enact
+            # path) keep working under dedup mode, and so do triggers whose calls
+            # name a specific host.
+            if "__" in tool_name:
+                host, name = tool_name.split("__", 1)
+                cached_r = next(
+                    (
+                        r
+                        for r in runnables
+                        if r.get("host") == host and r.get("name") == name
+                    ),
+                    None,
+                )
+                if cached_r is not None:
+                    return host, name, cached_r, None
+            return f"Error: unknown tool '{tool_name}'"
+        name = matches[0].get("name", "")
+        hosts: list[str] = []
+        for r in matches:
+            h = r.get("host", "local")
+            if h not in hosts:
+                hosts.append(h)
+        host_key = self._host_selector_key(matches[0])
+        host = str((tool_input or {}).get(host_key) or "")
+        if not host:
+            if len(hosts) == 1:
+                host = hosts[0]
+            else:
+                return (
+                    f"Error: '{name}' runs on multiple hosts — set the '{host_key}' "
+                    f"argument. Options: {', '.join(hosts)}."
+                )
+        if host not in hosts:
+            return (
+                f"Error: host '{host}' does not have '{name}'. "
+                f"Options: {', '.join(hosts)}."
+            )
+        cached_r = next((r for r in matches if r.get("host") == host), None)
+        return host, name, cached_r, host_key
+
     def _effective_tool_autonomy(
         self, tool_name: str, tool_input: dict[str, Any]
     ) -> str:
@@ -4943,18 +5175,10 @@ class Bridge:
         Unknown runnable → 'confirm' (gated by default — never silently run)."""
         if tool_name in _CUSTOM_TOOL_NAMES:
             return "confirm"  # side-effecting file move — always prompt
-        host, runnable = (
-            tool_name.split("__", 1) if "__" in tool_name else (None, tool_name)
-        )
-        with self._lock:
-            r = next(
-                (
-                    r
-                    for r in self._runnables_cache
-                    if r.get("host") == host and r.get("name") == runnable
-                ),
-                None,
-            )
+        target = self._resolve_tool_target(tool_name, tool_input)
+        if isinstance(target, str):
+            return "confirm"  # unresolved (bad host / unknown tool) → gated
+        _host, _name, r, _host_key = target
         if not r:
             return "confirm"
         level = r.get("autonomy") or "confirm"
@@ -5270,9 +5494,10 @@ class Bridge:
         """Blocking runnable execution — call via asyncio.to_thread from the agentic loop."""
         if tool_name in _CUSTOM_TOOL_NAMES:
             return self._run_custom_tool(tool_name, dict(tool_input or {}))
-        if "__" not in tool_name:
-            return f"Error: invalid tool name '{tool_name}'"
-        host, runnable = tool_name.split("__", 1)
+        target = self._resolve_tool_target(tool_name, tool_input)
+        if isinstance(target, str):
+            return target  # routing error (bad/missing host, unknown tool)
+        host, runnable, cached_r, host_key = target
         entry = self._host_entry(host)
         if entry is None:
             return f"Error: host '{host}' not found"
@@ -5281,6 +5506,8 @@ class Bridge:
         # enforces require-command, so an unknown/missing command surfaces a clear
         # "Available commands: …" error the agent can read and retry from.
         tool_input = dict(tool_input or {})
+        if host_key:
+            tool_input.pop(host_key, None)  # host selector, not a runnable arg
         chosen_command = tool_input.pop("command", None)
         # An explicit credential the agent chose to apply (in-scope ones apply
         # automatically regardless). Pulled out so it isn't treated as a runnable arg.
@@ -5300,15 +5527,6 @@ class Bridge:
             exit_code_holder[0] = exit_code
 
         tool_paths = _paths(entry)
-        with self._lock:
-            cached_r = next(
-                (
-                    r
-                    for r in self._runnables_cache
-                    if r.get("host") == host and r.get("name") == runnable
-                ),
-                None,
-            )
         run_group = cached_r.get("group") if cached_r else None
         rp = next(
             (p for p in tool_paths if venv_name(p) == run_group),

@@ -58,12 +58,25 @@ def test_discovery_no_commands_not_required():
 
 
 class _ToolBridge:
+    # These tests pin the per-host layout (one tool per host__runnable); the dedup
+    # default layout has its own coverage in test_tool_dedup.py.
     def __init__(self, runnables: list[dict[str, Any]]):
         self._lock = threading.Lock()
         self._runnables_cache = runnables
         self._credentials: list = []
 
+    def get_config(self):
+        return {"llm": {"tool_mode": "per_host"}}
+
     _runnables_to_tools = Bridge._runnables_to_tools
+    _build_input_schema = Bridge._build_input_schema
+    _tool_mode = Bridge._tool_mode
+    _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
+    _dedup_tool_name = Bridge._dedup_tool_name
+    _union_scoped_credentials = Bridge._union_scoped_credentials
+    _allowed_hosts = Bridge._allowed_hosts
+    _host_selector_key = Bridge._host_selector_key
+    _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
     _scoped_credentials = Bridge._scoped_credentials
     _scope_matches = staticmethod(Bridge._scope_matches)
 
@@ -214,6 +227,18 @@ def test_run_tool_sync_threads_command(monkeypatch):
         _positionals_for = staticmethod(Bridge._positionals_for)
         _secret_arg_names = staticmethod(Bridge._secret_arg_names)
         _run_tool_sync = Bridge._run_tool_sync
+        # Routing helpers _run_tool_sync now delegates to (host__name fallback
+        # resolves these per-host tool names under either layout).
+        _resolve_tool_target = Bridge._resolve_tool_target
+        _tool_mode = Bridge._tool_mode
+        _dedup_tool_name = Bridge._dedup_tool_name
+        _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
+        _host_selector_key = Bridge._host_selector_key
+        _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
+
+        def get_config(self):
+            return {}
+
         # Credential resolution is a no-op here (no credentials configured).
         _credentials: list = []
         _apply_credentials = Bridge._apply_credentials
@@ -265,6 +290,18 @@ def test_run_tool_sync_no_command_is_top_level(monkeypatch):
         _positionals_for = staticmethod(Bridge._positionals_for)
         _secret_arg_names = staticmethod(Bridge._secret_arg_names)
         _run_tool_sync = Bridge._run_tool_sync
+        # Routing helpers _run_tool_sync now delegates to (host__name fallback
+        # resolves these per-host tool names under either layout).
+        _resolve_tool_target = Bridge._resolve_tool_target
+        _tool_mode = Bridge._tool_mode
+        _dedup_tool_name = Bridge._dedup_tool_name
+        _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
+        _host_selector_key = Bridge._host_selector_key
+        _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
+
+        def get_config(self):
+            return {}
+
         # Credential resolution is a no-op here (no credentials configured).
         _credentials: list = []
         _apply_credentials = Bridge._apply_credentials

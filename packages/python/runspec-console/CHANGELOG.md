@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.85.0] — 2026-06-17
+
+### Added
+- **Deduplicated agent tool list (`[llm] tool_mode`).** A uniform fleet — N hosts
+  each running the same ~M runnables — produced N×M agent tools (`host__runnable`),
+  the same M definitions repeated once per host and re-sent on every turn, which
+  dominated the agent's context budget. The new default `tool_mode = "dedup"`
+  collapses these to **one tool per folder/runnable** (`group__runnable`) with a
+  **required `host` enum** naming the hosts that have it; the agent picks the host
+  as an argument. An 18-host × 20-runnable fleet drops from 360 tools to 20
+  (~84% fewer JSON bytes). Set `tool_mode = "per_host"` to restore the original
+  one-tool-per-(host, runnable) layout.
+  - Trigger allowlists keep their host-scoping: a bare runnable name admits every
+    host, while a `host__name` entry narrows the shared tool's `host` enum to that
+    host. The credential override enum is the union across the tool's hosts;
+    auto-apply still resolves per the actually-selected host at dispatch.
+  - Routing (`_resolve_tool_target`) maps a call back to `(host, runnable)` for
+    both layouts and accepts an explicit `host__name` even under dedup, so internal
+    callers (e.g. the helpdesk portal enact path) and host-pinned trigger calls are
+    unaffected. A runnable that declares its own `host` arg keeps it — the injected
+    selector falls back to `_host`.
+
+
 ## [0.84.0] — 2026-06-17
 
 ### Added

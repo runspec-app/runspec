@@ -19,6 +19,14 @@ from runspec_console.bridge import Bridge, _AGENT_TOOL_OUTPUT_CAP
 
 class _AgentBridge:
     _run_tool_sync = Bridge._run_tool_sync
+    # Routing helpers _run_tool_sync delegates to (per-host tool names resolve via
+    # the host__name fallback under either tool_mode layout).
+    _resolve_tool_target = Bridge._resolve_tool_target
+    _tool_mode = Bridge._tool_mode
+    _dedup_tool_name = Bridge._dedup_tool_name
+    _host_selector_key = Bridge._host_selector_key
+    _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
+    _declared_arg_name_set = staticmethod(Bridge._declared_arg_name_set)
     _secret_arg_names = staticmethod(Bridge._secret_arg_names)
     _positionals_for = staticmethod(Bridge._positionals_for)
     _apply_credentials = Bridge._apply_credentials
