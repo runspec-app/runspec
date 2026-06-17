@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.83.0] — 2026-06-17
+
+### Fixed
+- **Wheels can no longer ship a stale UI bundle.** The Vite frontend compiles to
+  the gitignored `runspec_console/dist/` which is force-included in the wheel —
+  but nothing forced a rebuild during a plain `hatchling build` / `python -m
+  build`, so a wheel could silently package an **old** UI (e.g. a markdown/UX
+  change present in source but missing from the published bundle). A new
+  hatchling **build hook** (`hatch_build.py`) now rebuilds the UI into `dist/`
+  when the bundle is missing or older than the UI source, so any built wheel
+  carries the current frontend regardless of how it was built. It's a no-op when
+  the bundle is already fresh (CI builds the UI first, so the hook skips), and
+  degrades gracefully when Node isn't available but a bundle already exists. The
+  staleness check is a pure, unit-tested mtime comparison.
+
+
 ## [0.80.0] — 2026-06-17
 
 ### Fixed
