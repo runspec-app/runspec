@@ -42,8 +42,10 @@ class _StubBridge:
     async def _gated_run_tool_async(self, name, tool_input, chat_id):
         return f"ran:{name}"
 
+    _debug = False  # tracing off → _trace is a no-op in these unit tests
     _usage_from_response = staticmethod(Bridge._usage_from_response)
     _trim_chat_history = Bridge._trim_chat_history
+    _trace = Bridge._trace
     clear_chat = Bridge.clear_chat
     cancel_chat = Bridge.cancel_chat
     _agentic_chat_turn = Bridge._agentic_chat_turn

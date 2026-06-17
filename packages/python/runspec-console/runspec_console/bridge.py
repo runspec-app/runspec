@@ -55,6 +55,7 @@ from .config import (
 from .discovery import discover_local, discover_remote
 from .executor import run_local, run_remote
 from .hosts import load_hosts, save_hosts, venv_name
+from .trace import jsonsafe_messages, trace_path, write_trace
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,15 @@ _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 # "__" so they never collide with the host__runnable scheme; both are
 # side-effecting file moves, so the autonomy gate prompts before running.
 _CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file"})
+
+# Cap on a single runnable's output handed to the model as a tool result. The
+# old 16 KB cap sliced data-heavy runnables (e.g. list-processes / list-containers
+# emitting one compact JSON line) *mid-JSON*, so the model received invalid,
+# partial data. 1 MB comfortably fits any normal structured result inside a modern
+# context window while still bounding a pathological dump; when we do have to cut,
+# the marker says so explicitly so the model knows the JSON is incomplete rather
+# than silently trusting a corrupt tail.
+_AGENT_TOOL_OUTPUT_CAP = 1_000_000
 
 
 class _BridgeTriggerOps:
@@ -555,6 +565,17 @@ class Bridge:
         """
         self._debug = debug
         logging.getLogger("paramiko").setLevel(logging.DEBUG if debug else logging.INFO)
+        path = trace_path(debug)
+        if path:
+            logger.info("agent trace enabled → %s", path)
+
+    def _trace(self, kind: str, data: dict[str, Any]) -> None:
+        """Append a diagnostic record (tool result / outbound model request) to
+        the agent trace file when tracing is on — see ``trace.py``. No-op
+        otherwise; never raises into the chat turn."""
+        path = trace_path(self._debug)
+        if path:
+            write_trace(path, kind, data)
 
     def _install_ssh_log_forwarder(self) -> None:
         """Route paramiko's loggers into the Dev tab and off the terminal.
@@ -4417,6 +4438,12 @@ class Bridge:
                     break
                 response: Any = None
                 assistant_text = ""  # this iteration's streamed assistant text
+                # Diagnostic: the exact message list handed to the adapter — i.e.
+                # what the console sends to the model / proxy this iteration.
+                self._trace(
+                    "model_request",
+                    {"chat_id": chat_id, "messages": jsonsafe_messages(history)},
+                )
                 try:
                     async for event in adapter.stream_with_tools(history, tools):
                         if cancel.is_set():
@@ -4491,6 +4518,18 @@ class Bridge:
                             "id": chat_id,
                             "tool_name": tc.name,
                             "output": output[:2000],
+                        },
+                    )
+                    # Diagnostic: the *full* tool-result string the model will
+                    # receive (the card only shows output[:2000]). This is the
+                    # byte-for-byte content that goes into the next request.
+                    self._trace(
+                        "tool_result",
+                        {
+                            "chat_id": chat_id,
+                            "tool": tc.name,
+                            "length": len(output),
+                            "output": output,
                         },
                     )
                     tool_results.append((tc, output))
@@ -5335,8 +5374,12 @@ class Bridge:
             )
 
         output = "\n".join(output_lines)
-        if len(output) > 16384:
-            output = output[:16384] + "\n[output truncated]"
+        if len(output) > _AGENT_TOOL_OUTPUT_CAP:
+            output = (
+                output[:_AGENT_TOOL_OUTPUT_CAP]
+                + f"\n[output truncated at {_AGENT_TOOL_OUTPUT_CAP} chars — "
+                "incomplete; any JSON above is cut off mid-structure]"
+            )
         if exit_code_holder[0] != 0:
             return f"[exit {exit_code_holder[0]}]\n{output}"
         return output or "(no output)"

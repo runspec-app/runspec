@@ -642,11 +642,18 @@ export function TriggersView() {
                   </div>
                   {preview && (
                     <div style={{
-                      whiteSpace: 'pre-wrap', maxHeight: 240, overflowY: 'auto',
+                      maxHeight: 240, overflowY: 'auto',
                       background: colBg, border: `1px solid ${border}`, borderRadius: 4,
                       padding: 8, marginBottom: 10,
                     }}>
-                      {preview}
+                      {/* A draft_reply preview is the agent's prose reply → render
+                          it as markdown (matches the Agent output below). Runnable
+                          arg previews are key=value lines, so keep those plain. */}
+                      {p.tool_name === 'draft_reply' ? (
+                        <Markdown color={textColor(isDark)}>{preview}</Markdown>
+                      ) : (
+                        <div style={{ whiteSpace: 'pre-wrap' }}>{preview}</div>
+                      )}
                     </div>
                   )}
                   <Space>
@@ -703,7 +710,13 @@ export function TriggersView() {
 
               {card.timeline && card.timeline.length > 0 && (
                 <>
-                  <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>Timeline</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <span style={{ color: dim, fontSize: 12 }}>Timeline</span>
+                    <CopyButton
+                      text={card.timeline.map(e => `${fmtTime(e.ts)}  ${e.text}`).join('\n')}
+                      title="Copy timeline"
+                    />
+                  </div>
                   <div style={{ borderLeft: `2px solid ${border}`, paddingLeft: 10 }}>
                     {card.timeline.map((entry, i) => (
                       <div key={i} style={{ marginBottom: 3 }}>

@@ -12,11 +12,15 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_debug(dev: bool, devtools_arg: bool) -> bool:
@@ -158,6 +162,51 @@ def _suppress_noisy_loggers() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
+def _enable_native_context_menu(window: Any, timeout: float = 5.0) -> None:
+    """Turn on the WebView2 default right-click menu (Windows / EdgeChromium).
+
+    pywebview disables the WebView2 default context menu unless debug mode is on,
+    which also removes the menu's Cut/Copy/Paste **and the spell-checker
+    suggestions** for a misspelled word in an editable field (the prompt box). The
+    red squiggles are WebView2's spellcheck — but the *suggestions* only surface
+    through that native menu, and there is no JS API to reach them, so re-enabling
+    the default menu is the only way to get right-click copy/paste + spelling fixes.
+
+    Best-effort and fully guarded: the ``CoreWebView2`` initialises asynchronously,
+    so we poll briefly for it, then flip ``AreDefaultContextMenusEnabled``. Any
+    failure (non-Windows, a different backend, a pywebview internals change) is a
+    silent no-op — exactly like :func:`_apply_dwm_title_bar`."""
+    import time
+
+    # The EdgeChromium control lives behind one of a couple of pywebview-internal
+    # attributes depending on version; probe each, then wait for CoreWebView2.
+    def _core_webview() -> Any:
+        native = getattr(window, "native", None)
+        for holder in (native, getattr(native, "web_view", None)):
+            core = getattr(holder, "CoreWebView2", None)
+            if core is not None:
+                return core
+        return None
+
+    try:
+        deadline = time.monotonic() + timeout
+        core = _core_webview()
+        while core is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+            core = _core_webview()
+        if core is None:
+            return
+        core.Settings.AreDefaultContextMenusEnabled = True
+    except Exception:
+        logger.debug("could not enable WebView2 context menu", exc_info=True)
+
+
+def _on_started(window: Any, title: str) -> None:
+    """webview ``started`` hook: native title-bar styling + context menu."""
+    _apply_dwm_title_bar(title)
+    _enable_native_context_menu(window)
+
+
 def main() -> None:
     _suppress_noisy_loggers()
 
@@ -210,7 +259,7 @@ def main() -> None:
 
     start_kwargs: dict[str, object] = {
         "debug": debug_enabled,
-        "func": lambda: _apply_dwm_title_bar(window_title),
+        "func": lambda: _on_started(window, window_title),
     }
     icon = _build_icon()
     if icon:

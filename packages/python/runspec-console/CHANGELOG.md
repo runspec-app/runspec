@@ -8,6 +8,50 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.84.0] — 2026-06-17
+
+### Added
+- **Markdown in the trigger approve/deny preview.** When the gated tool is a
+  `draft_reply`, the preview the operator approves is the agent's prose reply, so
+  it now renders as markdown (matching the Agent output below it). Runnable arg
+  previews stay plain key=value text.
+- **Copy button on the trigger detail Timeline.** The timeline (per-step audit
+  with timestamps) gets a Copy control like the agent-output and approve-preview
+  blocks, since right-click copy is unavailable outside webview debug mode.
+- **Agent diagnostic trace.** An opt-in trace of exactly what the chat agent
+  sends to the model/proxy, to answer "what bytes does the LLM actually
+  receive?" independent of how the cards render. When enabled it writes one JSON
+  line per event to a file: `tool_result` (the **full** tool-output string the
+  model will receive — the card only shows the first 2000 chars) and
+  `model_request` (a JSON-safe rendering of the outbound message list, including
+  the tool-result content). Enable with `--debug` (writes to
+  `{tempdir}/runspec_agent_trace.jsonl`) or set
+  `RUNSPEC_AGENT_TRACE=/path/to/trace.jsonl`. Off by default; the writer is
+  best-effort and never raises into a chat turn. Lives in the pure `trace`
+  module. (Python-only — no UI rebuild needed to use it.)
+
+### Fixed
+- **Right-click in the app now works — copy/paste and spell-check suggestions.**
+  pywebview disables the WebView2 default context menu unless debug mode is on,
+  which removed right-click Cut/Copy/Paste everywhere and the spell-checker
+  suggestions for a misspelled word in the prompt box (the red squiggles were
+  WebView2's spellcheck, but the *suggestions* only surface through that native
+  menu, and there's no JS API to reach them). The console now re-enables the
+  WebView2 default context menu on startup (`AreDefaultContextMenusEnabled`),
+  best-effort and Windows-only — a silent no-op on any other backend.
+
+### Changed
+- **Larger tool-output budget for the chat agent (hardening).** A runnable's
+  stdout handed to the model as a tool result was hard-capped at 16 KB, which
+  sliced a data-heavy runnable (e.g. a runspec-linux `list-processes` /
+  `list-containers` emitting one big compact `json.dumps` line) **mid-JSON** so
+  the model got invalid, partial data. The cap is raised to 1 MB (any normal
+  structured result passes through whole), and when output genuinely must be cut
+  the marker now says so explicitly so the model knows the JSON is incomplete
+  rather than trusting a corrupt tail. (This bounds *large* outputs — it is not
+  the cause of a small/tiny result not reaching the model.)
+
+
 ## [0.83.0] — 2026-06-17
 
 ### Fixed
