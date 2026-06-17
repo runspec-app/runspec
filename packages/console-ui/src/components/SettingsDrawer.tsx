@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Drawer, Form, Input, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Alert, Segmented, AutoComplete, Empty } from 'antd'
+import { Drawer, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -32,11 +32,21 @@ const BUILTIN_PROVIDER_OPTIONS = [
   { value: 'langserve', label: 'LangServe gateway' },
 ]
 
-// Keys the LLM form manages directly. Anything else under [llm] (e.g. the
-// rotating-token api_key_command, or langserve's input_messages_key / *_key /
-// tools_in_config knobs) is hand-edited in the TOML and must survive a Save —
-// so handleSave preserves unmanaged keys instead of rebuilding the section.
-const MANAGED_LLM_KEYS = ['provider', 'api_key', 'model', 'base_url', 'aws_region', 'system'] as const
+// String keys the LLM form owns: written when non-empty, removed when blank, so a
+// hand-edited value is only cleared by explicitly emptying its field. Non-string
+// keys (api_key_ttl_ms number, tools_in_config bool) are handled separately in
+// handleSave. Anything not listed here still survives a Save untouched.
+const MANAGED_LLM_STR_KEYS = [
+  'provider', 'api_key', 'model', 'base_url', 'aws_region', 'system', 'tool_mode',
+  'api_key_command', 'auth_header', 'auth_scheme', 'input_messages_key',
+  'input_tools_key', 'aws_access_key', 'aws_secret_key', 'aws_session_token',
+] as const
+
+const TOOL_MODE_OPTIONS = [
+  { value: 'dedup', label: 'Dedup — one tool per runnable, host as an argument (default)' },
+  { value: 'per_host', label: 'Per-host — one tool per host × runnable' },
+  { value: 'search', label: 'Search — discovery meta-tools (best for large, multi-package fleets)' },
+]
 
 // ── LLM tab ───────────────────────────────────────────────────────────────────
 
@@ -58,16 +68,27 @@ function LlmTab() {
 
   useEffect(() => {
     bridge.get_config().then(cfg => {
-      const llm = (cfg.llm ?? {}) as Record<string, string>
-      const p = llm.provider ?? ''
+      const llm = (cfg.llm ?? {}) as Record<string, unknown>
+      const p = (llm.provider as string) ?? ''
       setProvider(p)
       form.setFieldsValue({
         provider: p,
-        api_key: llm.api_key ?? '',
-        model: llm.model ?? '',
-        base_url: llm.base_url ?? '',
-        aws_region: llm.aws_region ?? '',
-        system: llm.system ?? '',
+        api_key: (llm.api_key as string) ?? '',
+        model: (llm.model as string) ?? '',
+        base_url: (llm.base_url as string) ?? '',
+        aws_region: (llm.aws_region as string) ?? '',
+        system: (llm.system as string) ?? '',
+        tool_mode: (llm.tool_mode as string) ?? '',
+        api_key_command: (llm.api_key_command as string) ?? '',
+        api_key_ttl_ms: llm.api_key_ttl_ms ?? undefined,
+        auth_header: (llm.auth_header as string) ?? '',
+        auth_scheme: (llm.auth_scheme as string) ?? '',
+        input_messages_key: (llm.input_messages_key as string) ?? '',
+        input_tools_key: (llm.input_tools_key as string) ?? '',
+        tools_in_config: !!llm.tools_in_config,
+        aws_access_key: (llm.aws_access_key as string) ?? '',
+        aws_secret_key: (llm.aws_secret_key as string) ?? '',
+        aws_session_token: (llm.aws_session_token as string) ?? '',
       })
     })
   }, [form])
@@ -84,9 +105,8 @@ function LlmTab() {
     setSaving(true)
     try {
       const cfg = await bridge.get_config()
-      // Start from the existing [llm] section so hand-edited advanced keys
-      // (api_key_command, langserve input/output knobs) aren't wiped on Save;
-      // set-or-delete only the keys the form owns.
+      // Start from the existing [llm] section so any key the form doesn't manage
+      // survives a Save; then set-or-delete only the keys we own.
       const llm: Record<string, unknown> = { ...((cfg.llm as Record<string, unknown>) ?? {}) }
       const next: Record<string, string> = {
         provider: v.provider ?? '',
@@ -95,11 +115,29 @@ function LlmTab() {
         base_url: v.base_url ?? '',
         aws_region: v.aws_region ?? '',
         system: v.system?.trim() ?? '',
+        tool_mode: v.tool_mode ?? '',
+        api_key_command: v.api_key_command?.trim() ?? '',
+        auth_header: v.auth_header?.trim() ?? '',
+        auth_scheme: v.auth_scheme?.trim() ?? '',
+        input_messages_key: v.input_messages_key?.trim() ?? '',
+        input_tools_key: v.input_tools_key?.trim() ?? '',
+        aws_access_key: v.aws_access_key ?? '',
+        aws_secret_key: v.aws_secret_key ?? '',
+        aws_session_token: v.aws_session_token ?? '',
       }
-      for (const k of MANAGED_LLM_KEYS) {
+      for (const k of MANAGED_LLM_STR_KEYS) {
         if (next[k]) llm[k] = next[k]
         else delete llm[k]
       }
+      // Numeric TTL for the rotating-token command (blank → use the key forever).
+      if (v.api_key_ttl_ms !== undefined && v.api_key_ttl_ms !== null && v.api_key_ttl_ms !== '') {
+        llm.api_key_ttl_ms = Number(v.api_key_ttl_ms)
+      } else {
+        delete llm.api_key_ttl_ms
+      }
+      // LangServe boolean — only persist when on (keeps the section tidy).
+      if (v.tools_in_config) llm.tools_in_config = true
+      else delete llm.tools_in_config
       await bridge.save_config({ ...cfg, llm })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -123,7 +161,7 @@ function LlmTab() {
             <Form.Item
               name="api_key"
               label={provider === 'langserve' ? 'API token' : 'API key'}
-              help={provider === 'langserve' ? 'Bearer token. For rotating corporate tokens, set api_key_command in the config file instead.' : undefined}
+              help={provider === 'langserve' ? 'Bearer token. For rotating corporate tokens, use the token command under Advanced.' : undefined}
             >
               <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : provider === 'openai' ? 'sk-...' : 'token'} />
             </Form.Item>
@@ -142,6 +180,13 @@ function LlmTab() {
               autoSize={{ minRows: 3, maxRows: 10 }}
               placeholder={'You are a helpful assistant with access to runspec tools on local and remote hosts.\nUse tools when they help; briefly explain each call before running it.'}
             />
+          </Form.Item>
+          <Form.Item
+            name="tool_mode"
+            label="Tool list mode"
+            help="How fleet runnables are exposed to the agent each turn. Dedup (default) collapses identical per-host copies; Search lists only discovery meta-tools — far fewer tokens on large, multi-package fleets."
+          >
+            <Select options={TOOL_MODE_OPTIONS} allowClear placeholder="dedup (default)" />
           </Form.Item>
           {(provider === 'openai' || provider === 'bedrock' || provider === 'langserve' || !BUILTIN_PROVIDERS.has(provider)) && (
             <Form.Item
@@ -167,6 +212,80 @@ function LlmTab() {
               </Form.Item>
             </>
           )}
+
+          <Collapse
+            size="small"
+            ghost
+            style={{ marginTop: 4 }}
+            items={[{
+              key: 'advanced',
+              label: <Text style={{ fontSize: 12 }}>Advanced</Text>,
+              children: (
+                <>
+                  <Form.Item
+                    name="api_key_command"
+                    label="Token command"
+                    help="Run this command to vend a short-lived token instead of a static key (rotating corporate creds). Its stdout is used as the token."
+                  >
+                    <Input placeholder="aws-vend-token --print" style={{ fontFamily: 'monospace' }} />
+                  </Form.Item>
+                  <Form.Item
+                    name="api_key_ttl_ms"
+                    label="Token cache (ms)"
+                    help="How long to reuse the token command's output. 0 or blank re-runs it every request."
+                  >
+                    <InputNumber min={0} step={1000} style={{ width: '100%' }} placeholder="0" />
+                  </Form.Item>
+
+                  {provider === 'bedrock' && (
+                    <>
+                      <Form.Item
+                        name="aws_access_key"
+                        label="AWS access key ID"
+                        help="Optional — leave blank to use the standard AWS credential chain (env vars / shared profile / STS). Stored in plaintext in config.toml."
+                      >
+                        <Input.Password placeholder="AKIA… (optional)" />
+                      </Form.Item>
+                      <Form.Item name="aws_secret_key" label="AWS secret access key">
+                        <Input.Password placeholder="(optional)" />
+                      </Form.Item>
+                      <Form.Item name="aws_session_token" label="AWS session token">
+                        <Input.Password placeholder="(optional — for temporary STS creds)" />
+                      </Form.Item>
+                    </>
+                  )}
+
+                  {provider === 'langserve' && (
+                    <>
+                      <Divider style={{ margin: '4px 0 10px' }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>LangServe wiring</Text>
+                      </Divider>
+                      <Form.Item name="auth_header" label="Auth header" help="HTTP header the token is sent in.">
+                        <Input placeholder="Authorization" style={{ fontFamily: 'monospace' }} />
+                      </Form.Item>
+                      <Form.Item name="auth_scheme" label="Auth scheme" help="Scheme prefix; blank sends the raw token.">
+                        <Input placeholder="Bearer" style={{ fontFamily: 'monospace' }} />
+                      </Form.Item>
+                      <Form.Item name="input_messages_key" label="Messages key" help="Key the chat history is sent under, inside input.">
+                        <Input placeholder="messages" style={{ fontFamily: 'monospace' }} />
+                      </Form.Item>
+                      <Form.Item name="input_tools_key" label="Tools key" help="Key the tool schemas are sent under.">
+                        <Input placeholder="tools" style={{ fontFamily: 'monospace' }} />
+                      </Form.Item>
+                      <Form.Item
+                        name="tools_in_config"
+                        label="Tools in config"
+                        valuePropName="checked"
+                        help="When on, tools move to config.configurable instead of input."
+                      >
+                        <Switch size="small" />
+                      </Form.Item>
+                    </>
+                  )}
+                </>
+              ),
+            }]}
+          />
         </>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
@@ -202,13 +321,26 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
 
   const loadConfig = () => {
     bridge.get_config().then(cfg => {
-      const ssh = (cfg.ssh ?? {}) as Record<string, string>
-      setKeyCreatedAt(ssh.key_created_at ?? null)
-      setKeyPath(ssh.identityFile ?? null)
+      const ssh = (cfg.ssh ?? {}) as Record<string, unknown>
+      const refresh = (cfg.refresh ?? {}) as Record<string, unknown>
+      setKeyCreatedAt((ssh.key_created_at as string) ?? null)
+      setKeyPath((ssh.identityFile as string) ?? null)
+      // Normalise the host-key mode to the two options the picker offers: any
+      // strict alias ("yes"/"true"/"strict"/"on"/"1") shows as "yes".
+      const hk = String(ssh.host_key_checking ?? '').toLowerCase()
+      const hkVal = ['yes', 'true', 'strict', 'on', '1'].includes(hk)
+        ? 'yes'
+        : hk === 'accept-new' ? 'accept-new' : ''
       form.setFieldsValue({
-        ssh_user: ssh.user ?? '',
-        ssh_proxy: ssh.proxy ?? '',
+        ssh_user: (ssh.user as string) ?? '',
+        ssh_proxy: (ssh.proxy as string) ?? '',
         ssh_use_ssh_config: !!ssh.use_ssh_config,
+        ssh_host_key_checking: hkVal,
+        ssh_connect_timeout: ssh.connect_timeout ?? undefined,
+        ssh_banner_timeout: ssh.banner_timeout ?? undefined,
+        ssh_auth_timeout: ssh.auth_timeout ?? undefined,
+        refresh_interval: refresh.interval ?? undefined,
+        refresh_jitter: refresh.jitter ?? undefined,
       })
     })
     bridge.get_public_key()
@@ -232,7 +364,28 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
       if (v.ssh_proxy) sshOut.proxy = v.ssh_proxy
       else delete sshOut.proxy
       sshOut.use_ssh_config = !!v.ssh_use_ssh_config
-      await bridge.save_config({ ...cfg, ssh: sshOut })
+      // Advanced: set-or-delete so a blank field falls back to the safe default.
+      if (v.ssh_host_key_checking) sshOut.host_key_checking = v.ssh_host_key_checking
+      else delete sshOut.host_key_checking
+      for (const [field, key] of [
+        ['ssh_connect_timeout', 'connect_timeout'],
+        ['ssh_banner_timeout', 'banner_timeout'],
+        ['ssh_auth_timeout', 'auth_timeout'],
+      ] as const) {
+        const n = v[field]
+        if (n !== undefined && n !== null && n !== '') sshOut[key] = Number(n)
+        else delete sshOut[key]
+      }
+      const refreshOut: Record<string, unknown> = { ...((cfg.refresh as Record<string, unknown>) ?? {}) }
+      for (const [field, key] of [
+        ['refresh_interval', 'interval'],
+        ['refresh_jitter', 'jitter'],
+      ] as const) {
+        const n = v[field]
+        if (n !== undefined && n !== null && n !== '') refreshOut[key] = Number(n)
+        else delete refreshOut[key]
+      }
+      await bridge.save_config({ ...cfg, ssh: sshOut, refresh: refreshOut })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -314,6 +467,72 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
       >
         <Switch size="small" />
       </Form.Item>
+
+      <Collapse
+        size="small"
+        ghost
+        items={[{
+          key: 'advanced',
+          label: <Text style={{ fontSize: 12 }}>Advanced</Text>,
+          children: (
+            <>
+              <Form.Item
+                name="ssh_host_key_checking"
+                label="Host-key checking"
+                help="accept-new (default) trusts a host the first time and rejects a changed key (TOFU). Strict rejects any host not already in known_hosts."
+              >
+                <Select
+                  allowClear
+                  placeholder="accept-new (default)"
+                  options={[
+                    { value: 'accept-new', label: 'Accept new (TOFU — default)' },
+                    { value: 'yes', label: 'Strict (known hosts only)' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item
+                name="ssh_connect_timeout"
+                label="Connect timeout (s)"
+                help="TCP connect timeout. Default 10."
+              >
+                <InputNumber min={1} style={{ width: '100%' }} placeholder="10" />
+              </Form.Item>
+              <Form.Item
+                name="ssh_banner_timeout"
+                label="Banner timeout (s)"
+                help="Wait for the SSH banner — raise it for busy servers (sshd MaxStartups). Default 30."
+              >
+                <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
+              </Form.Item>
+              <Form.Item
+                name="ssh_auth_timeout"
+                label="Auth timeout (s)"
+                help="Wait for the authentication exchange. Default 30."
+              >
+                <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
+              </Form.Item>
+
+              <Divider style={{ margin: '4px 0 10px' }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>Discovery</Text>
+              </Divider>
+              <Form.Item
+                name="refresh_interval"
+                label="Refresh interval (s)"
+                help="How often the console re-scans hosts for runnables. Default 30."
+              >
+                <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
+              </Form.Item>
+              <Form.Item
+                name="refresh_jitter"
+                label="Refresh jitter (± s)"
+                help="Random spread on each host's scan start, to avoid a thundering herd. Default 3."
+              >
+                <InputNumber min={0} style={{ width: '100%' }} placeholder="3" />
+              </Form.Item>
+            </>
+          ),
+        }]}
+      />
 
       <Divider />
 

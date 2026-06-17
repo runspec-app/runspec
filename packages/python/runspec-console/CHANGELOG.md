@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.89.0] — 2026-06-17
+
+### Added
+- **More LLM + operational settings in the Settings UI.** Several config keys that
+  were previously `config.toml`-only are now editable in **Settings**:
+  - Settings → LLM: **Tool list mode** dropdown (`dedup` / `per_host` / `search`)
+    — so the search layout can be turned on without hand-editing TOML. Plus an
+    **Advanced** section for the rotating-token command (`api_key_command` +
+    `api_key_ttl_ms`), the LangServe wiring knobs (`auth_header`, `auth_scheme`,
+    `input_messages_key`, `input_tools_key`, `tools_in_config`, shown for that
+    provider), and optional explicit Bedrock AWS credentials.
+  - Settings → SSH → Advanced: **host-key checking** (accept-new / strict), the
+    connect / banner / auth **timeouts**, and the discovery **refresh interval +
+    jitter** (`[refresh]`).
+  - Each field is set-or-clear: leaving it blank removes the key so the documented
+    default applies, and any unmanaged `[llm]` key still survives a Save.
+
+### Fixed
+- **README** referenced `runspec_config.toml`; the config file is `config.toml`.
+
+
 ## [0.88.0] — 2026-06-17
 
 ### Added

@@ -80,7 +80,7 @@ pip install "runspec-console[langserve]"   # corporate LLM gateway (LangServe /i
 If your only model access is a corporate **LLM gateway** that exposes a
 LangServe `/invoke` route (commonly Bedrock/Claude underneath), pick the
 `langserve` provider. Configure it in Settings → LLM, or hand-edit
-`%APPDATA%\runspec-console\runspec_config.toml`:
+`%APPDATA%\runspec-console\config.toml`:
 
 ```toml
 [llm]
@@ -116,6 +116,8 @@ sends **one tool per folder/runnable** (named `group__runnable`) with a required
 host×runnable. This keeps the tool list — re-sent on every turn — small (an
 18-host × 20-runnable fleet: 20 tools instead of 360). The agent names the host
 as an argument.
+
+Set it in **Settings → LLM → Tool list mode**, or in the config file:
 
 ```toml
 [llm]
