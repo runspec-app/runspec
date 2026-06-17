@@ -107,6 +107,12 @@ _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 # side-effecting file moves, so the autonomy gate prompts before running.
 _CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file"})
 
+# Read-only discovery meta-tools used by search mode (tool_mode = "search"). They
+# have no side effects, so the autonomy gate lets them run without a prompt; the
+# side-effecting executor in that mode is ``run_runnable``, gated by the *inner*
+# runnable it resolves to.
+_READONLY_META = frozenset({"search_runnables", "describe_runnable"})
+
 # Cap on a single runnable's output handed to the model as a tool result. The
 # old 16 KB cap sliced data-heavy runnables (e.g. list-processes / list-containers
 # emitting one compact JSON line) *mid-JSON*, so the model received invalid,
@@ -4593,9 +4599,12 @@ class Bridge:
         it — collapsing the N identical per-host copies a uniform fleet produces
         into a single definition, which is the bulk of the agent's context budget.
         ``"per_host"`` restores the original one-tool-per-(host, runnable) layout
-        (``host__name``) as a zero-code escape hatch."""
+        (``host__name``) as a zero-code escape hatch. ``"search"`` replaces the
+        per-runnable tools entirely with discovery meta-tools (search_runnables /
+        run_runnable / describe_runnable) — a constant ~3-tool footprint regardless
+        of how many distinct runnables the fleet installs."""
         mode = str(self.get_config().get("llm", {}).get("tool_mode", "dedup")).strip()
-        return mode if mode in ("dedup", "per_host") else "dedup"
+        return mode if mode in ("dedup", "per_host", "search") else "dedup"
 
     @staticmethod
     def _sanitize_tool_name(raw: str) -> str:
@@ -4799,14 +4808,28 @@ class Bridge:
 
         Layout follows ``_tool_mode()``: ``"dedup"`` (default) emits one tool per
         ``(group, name)`` with a host enum; ``"per_host"`` emits one per
-        ``(host, name)``. ``allow`` (when non-empty) scopes the result to an
-        allowlist — each entry matches a runnable's bare ``name`` or its qualified
-        ``host__name`` (raw or sanitised) — so an agent-mode trigger can be limited
-        to a curated set of tools (in dedup mode a host-qualified entry also narrows
-        the shared tool's host enum). ``None``/empty = every runnable.
+        ``(host, name)``; ``"search"`` emits only the discovery meta-tools. ``allow``
+        (when non-empty) scopes the result to an allowlist — each entry matches a
+        runnable's bare ``name`` or its qualified ``host__name`` (raw or sanitised) —
+        so an agent-mode trigger can be limited to a curated set of tools (in dedup
+        mode a host-qualified entry also narrows the shared tool's host enum).
+        ``None``/empty = every runnable.
+
+        Search mode applies only to the unrestricted (manual chat) tool list: a
+        trigger that passes an ``allow`` set is already curated to a handful of
+        runnables, so it falls back to the dedup layout (scoped) — the search
+        interface would add nothing there.
         """
         allowset = {str(a).strip() for a in allow} if allow else None
         self._reload_credentials()  # so per-runnable credential_id enums are current
+        mode = self._tool_mode()
+        if mode == "search" and allowset is None:
+            tools = self._search_mode_tools()
+            try:
+                tools.extend(self._custom_agent_tools())
+            except Exception:
+                logger.debug("custom agent tools unavailable", exc_info=True)
+            return tools
         with self._lock:
             runnables = list(self._runnables_cache)
         tools: list[dict[str, Any]] = []
@@ -4819,7 +4842,7 @@ class Bridge:
             )
             sys.stderr.flush()
 
-        if self._tool_mode() == "per_host":
+        if mode == "per_host":
             for r in runnables:
                 host = r.get("host", "local")
                 name = r.get("name", "")
@@ -5175,15 +5198,31 @@ class Bridge:
         Unknown runnable → 'confirm' (gated by default — never silently run)."""
         if tool_name in _CUSTOM_TOOL_NAMES:
             return "confirm"  # side-effecting file move — always prompt
-        target = self._resolve_tool_target(tool_name, tool_input)
-        if isinstance(target, str):
-            return "confirm"  # unresolved (bad host / unknown tool) → gated
-        _host, _name, r, _host_key = target
+        if tool_name in _READONLY_META:
+            return "autonomous"  # search/describe are read-only discovery
+        if tool_name == "run_runnable":
+            # Resolve the inner runnable so the gate reflects what actually runs —
+            # not the generic wrapper. The level + per-arg escalation come from the
+            # resolved runnable and the call's `args`, exactly as for a direct call.
+            ti = dict(tool_input or {})
+            resolved = self._resolve_id_host(
+                str(ti.get("id") or ""), str(ti.get("host") or "")
+            )
+            if isinstance(resolved, str):
+                return "confirm"
+            _host, _name, r = resolved
+            inner_args = dict(ti.get("args") or {})
+        else:
+            target = self._resolve_tool_target(tool_name, tool_input)
+            if isinstance(target, str):
+                return "confirm"  # unresolved (bad host / unknown tool) → gated
+            _host, _name, r, _host_key = target
+            inner_args = tool_input or {}
         if not r:
             return "confirm"
         level = r.get("autonomy") or "confirm"
         for arg in r.get("args") or []:
-            if arg.get("name") in (tool_input or {}) and arg.get("autonomy"):
+            if arg.get("name") in inner_args and arg.get("autonomy"):
                 if _AUTONOMY_RANK.get(arg["autonomy"], 0) > _AUTONOMY_RANK.get(
                     level, 0
                 ):
@@ -5209,6 +5248,9 @@ class Bridge:
 
         Returns (request_id, event, holder). The event is set by
         resolve_tool_confirmation() when the UI answers."""
+        # For the search-mode `run_runnable` wrapper, show the operator the *real*
+        # runnable + args it resolves to, not the generic envelope.
+        card_tool, card_input = self._confirm_card_view(tool_name, tool_input)
         request_id = uuid.uuid4().hex
         event = threading.Event()
         holder = {"approved": False, "cancelled": False}
@@ -5217,14 +5259,14 @@ class Bridge:
             self._pending_confirm_meta[request_id] = {
                 "id": chat_id,
                 "request_id": request_id,
-                "tool_name": tool_name,
-                "tool_input": tool_input,
+                "tool_name": card_tool,
+                "tool_input": card_input,
                 "autonomy": level,
                 "created_at": time.time(),
             }
         logger.info(
             "autonomy gate: prompting for %s (autonomy=%s) request_id=%s",
-            tool_name,
+            card_tool,
             level,
             request_id,
         )
@@ -5233,13 +5275,36 @@ class Bridge:
             {
                 "id": chat_id,
                 "request_id": request_id,
-                "tool_name": tool_name,
-                "tool_input": tool_input,
+                "tool_name": card_tool,
+                "tool_input": card_input,
                 "autonomy": level,
             },
         )
-        self._notify_confirm(tool_name, tool_input, level)
+        self._notify_confirm(card_tool, card_input, level)
         return request_id, event, holder
+
+    def _confirm_card_view(
+        self, tool_name: str, tool_input: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """The (tool_name, tool_input) to *display* on the confirm card. Identity
+        for normal calls; for ``run_runnable`` it unwraps to the resolved runnable
+        name + its real args (so the operator approves what actually runs)."""
+        if tool_name != "run_runnable":
+            return tool_name, tool_input
+        ti = dict(tool_input or {})
+        resolved = self._resolve_id_host(
+            str(ti.get("id") or ""), str(ti.get("host") or "")
+        )
+        if isinstance(resolved, str):
+            return tool_name, tool_input  # unresolved — show the raw call
+        host, name, _cached = resolved
+        view: dict[str, Any] = {"host": host}
+        view.update(dict(ti.get("args") or {}))
+        if ti.get("command"):
+            view["command"] = ti["command"]
+        if ti.get("credential_id"):
+            view["credential_id"] = ti["credential_id"]
+        return name, view
 
     # ── desktop notification for confirmation events ──────────────────────────
     #
@@ -5415,7 +5480,7 @@ class Bridge:
         ``stage`` (trigger turns only) reports the card stage: "awaiting_human"
         while a confirm is pending, then "running" once it actually executes."""
         decision = self._confirm_decision(tool_name, tool_input)
-        display = tool_name.split("__", 1)[-1]
+        display = self._confirm_card_view(tool_name, tool_input)[0].split("__", 1)[-1]
         logger.info("autonomy gate: tool=%s decision=%s", tool_name, decision)
         if decision == "manual":
             return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
@@ -5452,7 +5517,7 @@ class Bridge:
         autonomous → run; confirm/supervised → ask the user (Approve/Deny);
         manual → refuse (human-only; the user must use the Run button)."""
         decision = self._confirm_decision(tool_name, tool_input)
-        display = tool_name.split("__", 1)[-1]
+        display = self._confirm_card_view(tool_name, tool_input)[0].split("__", 1)[-1]
         if decision == "manual":
             return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
         if decision != "run":
@@ -5494,29 +5559,58 @@ class Bridge:
         """Blocking runnable execution — call via asyncio.to_thread from the agentic loop."""
         if tool_name in _CUSTOM_TOOL_NAMES:
             return self._run_custom_tool(tool_name, dict(tool_input or {}))
-        target = self._resolve_tool_target(tool_name, tool_input)
-        if isinstance(target, str):
-            return target  # routing error (bad/missing host, unknown tool)
-        host, runnable, cached_r, host_key = target
+        # Read-only discovery meta-tools (search mode) — no side effects, return JSON.
+        if tool_name == "search_runnables":
+            return self._run_search_tool(dict(tool_input or {}))
+        if tool_name == "describe_runnable":
+            return self._run_describe_tool(dict(tool_input or {}))
+        if tool_name == "run_runnable":
+            # The generic executor (search mode): resolve {id, host} → runnable, then
+            # validate the free-form args against the cached spec before dispatch.
+            # Search surfaces no per-runnable JSON schema, so we pre-flight here to
+            # catch mistakes in the same turn instead of after an SSH round-trip.
+            ti = dict(tool_input or {})
+            resolved = self._resolve_id_host(
+                str(ti.get("id") or ""), str(ti.get("host") or "")
+            )
+            if isinstance(resolved, str):
+                return resolved
+            host, runnable, cached_r = resolved
+            call_args = dict(ti.get("args") or {})
+            chosen_command = ti.get("command")
+            credential_id = str(ti.get("credential_id") or "")
+            command_path = (
+                [chosen_command]
+                if isinstance(chosen_command, str) and chosen_command
+                else []
+            )
+            preflight = self._preflight_validate(cached_r, command_path, call_args)
+            if preflight:
+                return preflight
+        else:
+            target = self._resolve_tool_target(tool_name, tool_input)
+            if isinstance(target, str):
+                return target  # routing error (bad/missing host, unknown tool)
+            host, runnable, cached_r, host_key = target
+            # `command` (when present) names the subcommand to descend into — pull it
+            # out of the args and pass it as the command path. Core validates it and
+            # enforces require-command, so an unknown/missing command surfaces a clear
+            # "Available commands: …" error the agent can read and retry from.
+            call_args = dict(tool_input or {})
+            if host_key:
+                call_args.pop(host_key, None)  # host selector, not a runnable arg
+            chosen_command = call_args.pop("command", None)
+            # An explicit credential the agent chose to apply (in-scope ones apply
+            # automatically regardless). Pulled out so it isn't treated as an arg.
+            credential_id = str(call_args.pop("credential_id", "") or "")
+            command_path = (
+                [chosen_command]
+                if isinstance(chosen_command, str) and chosen_command
+                else []
+            )
         entry = self._host_entry(host)
         if entry is None:
             return f"Error: host '{host}' not found"
-        # `command` (when present) names the subcommand to descend into — pull it
-        # out of the args and pass it as the command path. Core validates it and
-        # enforces require-command, so an unknown/missing command surfaces a clear
-        # "Available commands: …" error the agent can read and retry from.
-        tool_input = dict(tool_input or {})
-        if host_key:
-            tool_input.pop(host_key, None)  # host selector, not a runnable arg
-        chosen_command = tool_input.pop("command", None)
-        # An explicit credential the agent chose to apply (in-scope ones apply
-        # automatically regardless). Pulled out so it isn't treated as a runnable arg.
-        credential_id = str(tool_input.pop("credential_id", "") or "")
-        command_path = (
-            [chosen_command]
-            if isinstance(chosen_command, str) and chosen_command
-            else []
-        )
         output_lines: list[str] = []
         exit_code_holder = [0]
 
@@ -5540,10 +5634,10 @@ class Bridge:
         secret_names = self._secret_arg_names(cached_r, command_path)
         secrets = {
             k: v
-            for k, v in tool_input.items()
+            for k, v in call_args.items()
             if k in secret_names and v not in (None, "")
         }
-        exec_args = {k: v for k, v in tool_input.items() if k not in secret_names}
+        exec_args = {k: v for k, v in call_args.items() if k not in secret_names}
         # Fill bound credential values from secure storage (same resolver as the
         # manual path): in-scope credentials auto-apply, credential_id overrides.
         self._apply_credentials(
@@ -5601,6 +5695,362 @@ class Bridge:
         if exit_code_holder[0] != 0:
             return f"[exit {exit_code_holder[0]}]\n{output}"
         return output or "(no output)"
+
+    # ── search mode (tool_mode = "search") ────────────────────────────────────
+
+    def _search_mode_tools(self) -> list[dict[str, Any]]:
+        """The fixed meta-tool set for search mode: discover → run, plus an
+        optional full-schema lookup. A constant ~3 entries regardless of fleet
+        size — the agent finds runnables on demand instead of carrying every
+        runnable's schema in the tool list each turn."""
+        return [
+            {
+                "name": "search_runnables",
+                "description": (
+                    "Find runnables across the fleet by keyword. Returns matches with "
+                    "their id, hosts, description, and typed argument list. Call this "
+                    "first, then run_runnable with the id and host. Use an empty query "
+                    "(optionally with group/host) to browse."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Keywords matched against runnable name, description, and package/folder.",
+                        },
+                        "host": {
+                            "type": "string",
+                            "description": "Optional: only runnables available on this host.",
+                        },
+                        "group": {
+                            "type": "string",
+                            "description": "Optional: only runnables from this package/folder.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "run_runnable",
+                "description": (
+                    "Run a runnable found via search_runnables. Pass its id, the host "
+                    "to run on, and arguments by name (per the row's args). Arguments "
+                    "are validated before execution; a clear error comes back if "
+                    "anything is missing or wrong."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The runnable id from a search_runnables result.",
+                        },
+                        "host": {
+                            "type": "string",
+                            "description": "Which host to run on (from the row's hosts).",
+                        },
+                        "args": {
+                            "type": "object",
+                            "description": "Arguments by name, per the row's args list.",
+                            "additionalProperties": True,
+                        },
+                        "command": {
+                            "type": "string",
+                            "description": "Subcommand to run, if the runnable has one.",
+                        },
+                        "credential_id": {
+                            "type": "string",
+                            "description": "Optional saved credential id to apply.",
+                        },
+                    },
+                    "required": ["id", "host"],
+                },
+            },
+            {
+                "name": "describe_runnable",
+                "description": (
+                    "Get the full input schema for one runnable by id — use only when "
+                    "the search_runnables row isn't enough to construct the call."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The runnable id from a search_runnables result.",
+                        }
+                    },
+                    "required": ["id"],
+                },
+            },
+        ]
+
+    def _runnables_for_id(self, rid: str) -> list[dict[str, Any]]:
+        """Every cached runnable whose dedup id is ``rid`` (one per host that has
+        it). Falls back to an explicit ``host__name`` so a caller can address one
+        host directly. Empty when nothing matches."""
+        with self._lock:
+            runnables = list(self._runnables_cache)
+        matches = [r for r in runnables if self._dedup_tool_name(r) == rid]
+        if matches:
+            return matches
+        if "__" in rid:
+            host, name = rid.split("__", 1)
+            return [
+                r for r in runnables if r.get("host") == host and r.get("name") == name
+            ]
+        return []
+
+    def _resolve_id_host(
+        self, rid: str, host: str
+    ) -> tuple[str, str, dict[str, Any]] | str:
+        """Resolve a ``run_runnable``/``describe_runnable`` id (+ chosen host) to
+        ``(host, name, cached_runnable)``, or an error string the agent can read
+        and retry from. A single-host runnable defaults the host."""
+        if not rid:
+            return "Error: 'id' is required (use search_runnables to find it)."
+        matches = self._runnables_for_id(rid)
+        if not matches:
+            return (
+                f"Error: unknown runnable id '{rid}' (use search_runnables to find it)."
+            )
+        name = matches[0].get("name", "")
+        hosts: list[str] = []
+        for r in matches:
+            h = r.get("host", "local")
+            if h not in hosts:
+                hosts.append(h)
+        if not host:
+            if len(hosts) == 1:
+                host = hosts[0]
+            else:
+                return (
+                    f"Error: '{name}' runs on multiple hosts — set 'host'. "
+                    f"Options: {', '.join(hosts)}."
+                )
+        if host not in hosts:
+            return (
+                f"Error: host '{host}' does not have '{name}'. "
+                f"Options: {', '.join(hosts)}."
+            )
+        cached_r = next(r for r in matches if r.get("host", "local") == host)
+        return host, name, cached_r
+
+    @staticmethod
+    def _node_at(
+        cached_r: dict[str, Any] | None, command_path: list[str]
+    ) -> dict[str, Any]:
+        """The spec node reached by descending ``command_path`` from the runnable.
+        Its ``args`` already carry inherited globals (discovery merges them)."""
+        node = cached_r or {}
+        for seg in command_path:
+            node = (node.get("commands") or {}).get(seg) or {}
+        return node
+
+    def _preflight_validate(
+        self,
+        cached_r: dict[str, Any] | None,
+        command_path: list[str],
+        args: dict[str, Any],
+    ) -> str | None:
+        """Structural validation of ``run_runnable`` args against the cached spec,
+        so a bad call fails in-turn instead of after an SSH round-trip. Returns an
+        error string, or ``None`` when the call looks valid. Lightweight on
+        purpose (required / choice / int+float / range / unknown-arg / command);
+        anything subtler still bounces from core on the remote. Unknown spec →
+        skip (let the remote validate)."""
+        if not cached_r:
+            return None
+        commands = cached_r.get("commands") or {}
+        if commands and not command_path and cached_r.get("requireCommand"):
+            return (
+                "Error: this runnable requires a command. "
+                f"Options: {', '.join(commands.keys())}."
+            )
+        if command_path:
+            seg = command_path[0]
+            if seg not in commands:
+                return (
+                    f"Error: unknown command '{seg}'. "
+                    f"Options: {', '.join(commands.keys()) or '(none)'}."
+                )
+        declared = {
+            a["name"]: a
+            for a in self._node_at(cached_r, command_path).get("args", [])
+            if isinstance(a, dict) and a.get("name")
+        }
+        unknown = [k for k in args if k not in declared]
+        if unknown:
+            return (
+                f"Error: unknown argument(s): {', '.join(unknown)}. "
+                f"Valid arguments: {', '.join(declared) or '(none)'}."
+            )
+        missing = [
+            n for n, a in declared.items() if a.get("required") and n not in args
+        ]
+        if missing:
+            return f"Error: missing required argument(s): {', '.join(missing)}."
+        for name, value in args.items():
+            arg = declared[name]
+            atype = arg.get("type")
+            if atype == "choice" and arg.get("options") and value not in arg["options"]:
+                return (
+                    f"Error: '{name}' must be one of "
+                    f"{', '.join(map(str, arg['options']))} (got {value!r})."
+                )
+            if atype in ("int", "float"):
+                try:
+                    num: float = int(value) if atype == "int" else float(value)
+                except (TypeError, ValueError):
+                    kind = "an integer" if atype == "int" else "a number"
+                    return f"Error: '{name}' must be {kind} (got {value!r})."
+                rng = arg.get("range")
+                if (
+                    isinstance(rng, (list, tuple))
+                    and len(rng) == 2
+                    and not (rng[0] <= num <= rng[1])
+                ):
+                    return (
+                        f"Error: '{name}' must be between {rng[0]} and {rng[1]} "
+                        f"(got {num})."
+                    )
+        return None
+
+    def _search_runnables(
+        self, query: str, host: str = "", group: str = "", limit: int = 10
+    ) -> dict[str, Any]:
+        """Rank cached runnables for a search query and build compact, typed rows.
+
+        Collapses per-host copies by ``(group, name)`` like the dedup layout: one
+        row per runnable, ``hosts`` is the union, ``id`` is the dedup tool name.
+        ``password`` args are omitted (they flow via credentials/env, never inline).
+        Ranking is deterministic lexical token overlap over name/description/group;
+        an empty query browses (optionally filtered by host/group)."""
+        from .catalog import arg_to_property
+
+        with self._lock:
+            runnables = list(self._runnables_cache)
+        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        order: list[tuple[str, str]] = []
+        for r in runnables:
+            key = (str(r.get("group") or ""), str(r.get("name") or ""))
+            g = groups.get(key)
+            if g is None:
+                g = {"rep": r, "hosts": []}
+                groups[key] = g
+                order.append(key)
+            h = r.get("host", "local")
+            if h not in g["hosts"]:
+                g["hosts"].append(h)
+
+        tokens = [t for t in re.split(r"\W+", query.lower()) if t]
+
+        def score(rep: dict[str, Any], grp: str) -> int:
+            if not tokens:
+                return 1  # browse: everything qualifies equally
+            name = str(rep.get("name") or "").lower()
+            desc = str(rep.get("description") or "").lower()
+            grp_l = grp.lower()
+            s = 0
+            for t in tokens:
+                if t in name:
+                    s += 10
+                if t in grp_l:
+                    s += 3
+                if t in desc:
+                    s += 2
+            return s
+
+        scored: list[tuple[int, str, dict[str, Any]]] = []
+        for key in order:
+            grp, name = key
+            rep = groups[key]["rep"]
+            hosts = groups[key]["hosts"]
+            if host and host not in hosts:
+                continue
+            if group and group != grp:
+                continue
+            sc = score(rep, grp)
+            if sc <= 0:
+                continue
+            scored.append((sc, name, {"rep": rep, "hosts": hosts, "group": grp}))
+        # Highest score first; stable by name for ties (deterministic output).
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        truncated = len(scored) > limit
+        rows: list[dict[str, Any]] = []
+        for _sc, name, info in scored[:limit]:
+            rep = info["rep"]
+            arg_rows: list[dict[str, Any]] = []
+            for a in rep.get("args") or []:
+                if str(a.get("type")) == "password":
+                    continue  # secrets never travel inline
+                row = {"name": a.get("name"), "required": bool(a.get("required"))}
+                row.update(arg_to_property(a))  # type, enum, default, min/max, desc
+                arg_rows.append(row)
+            entry: dict[str, Any] = {
+                "id": self._dedup_tool_name(rep),
+                "name": name,
+                "group": info["group"],
+                "hosts": list(info["hosts"]),
+                "description": str(rep.get("description") or ""),
+                "autonomy": str(rep.get("autonomy") or "confirm"),
+                "args": arg_rows,
+            }
+            commands = rep.get("commands") or {}
+            if commands:
+                entry["command"] = {
+                    "required": bool(rep.get("requireCommand")),
+                    "options": list(commands.keys()),
+                }
+            rows.append(entry)
+        result: dict[str, Any] = {"count": len(rows), "results": rows}
+        if truncated:
+            result["truncated"] = True
+            result["hint"] = (
+                "More matches exist — refine the query or pass a group/host filter."
+            )
+        return result
+
+    def _run_search_tool(self, ti: dict[str, Any]) -> str:
+        """Execute the ``search_runnables`` meta-tool → JSON string for the agent."""
+        rows = self._search_runnables(
+            str(ti.get("query") or ""),
+            host=str(ti.get("host") or "").strip(),
+            group=str(ti.get("group") or "").strip(),
+        )
+        return json.dumps(rows, default=str)
+
+    def _run_describe_tool(self, ti: dict[str, Any]) -> str:
+        """Execute ``describe_runnable`` → the full input schema for one runnable."""
+        rid = str(ti.get("id") or "")
+        matches = self._runnables_for_id(rid)
+        if not matches:
+            return (
+                f"Error: unknown runnable id '{rid}' (use search_runnables to find it)."
+            )
+        rep = matches[0]
+        name = rep.get("name", "")
+        hosts: list[str] = []
+        for r in matches:
+            h = r.get("host", "local")
+            if h not in hosts:
+                hosts.append(h)
+        schema = self._build_input_schema(
+            rep,
+            self._union_scoped_credentials(hosts, name),
+            hosts=hosts,
+            host_key=self._host_selector_key(rep),
+        )
+        return json.dumps(
+            {
+                "id": rid,
+                "name": name,
+                "description": str(rep.get("description") or ""),
+                "input_schema": schema,
+            },
+            default=str,
+        )
 
     # ── terminal sessions ─────────────────────────────────────────────────────
 

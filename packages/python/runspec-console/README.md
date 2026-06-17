@@ -121,10 +121,20 @@ as an argument.
 [llm]
 tool_mode = "dedup"      # default — collapse identical per-host tools
 # tool_mode = "per_host" # one tool per host__runnable (the original layout)
+# tool_mode = "search"   # discovery meta-tools only (best for large, multi-package fleets)
 ```
 
 Use `"per_host"` if you'd rather the host be encoded in the tool name than chosen
 as an argument.
+
+**`"search"`** goes further for fleets that install *many distinct* runnables
+(several packages = 70–100+ tools): instead of listing every runnable, it exposes
+three fixed meta-tools — `search_runnables` (find by keyword; returns typed argument
+rows), `run_runnable` (execute by id + host, with arguments validated *before*
+dispatch), and `describe_runnable` (full schema on demand). The per-turn tool block
+stays ~3 tools regardless of fleet size. Same autonomy gate, credentials, and
+secret handling as the other modes. Agent-mode triggers (which scope to a curated
+allowlist) keep the `dedup` layout automatically.
 
 ### Custom providers (plugins)
 

@@ -170,6 +170,7 @@ class _StubBridge:
     def _focus_window(self):
         pass
 
+    _confirm_card_view = Bridge._confirm_card_view
     _register_confirm = Bridge._register_confirm
     _notify_confirm = Bridge._notify_confirm
 

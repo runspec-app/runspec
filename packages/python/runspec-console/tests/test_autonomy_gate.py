@@ -48,6 +48,7 @@ class _StubBridge:
     _resolve_tool_target = Bridge._resolve_tool_target
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _confirm_decision = Bridge._confirm_decision
+    _confirm_card_view = Bridge._confirm_card_view
     _register_confirm = Bridge._register_confirm
     _finish_confirm = Bridge._finish_confirm
     get_pending_confirms = Bridge.get_pending_confirms

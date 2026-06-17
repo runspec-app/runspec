@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.86.0] — 2026-06-17
+
+### Added
+- **Search tool mode (`[llm] tool_mode = "search"`).** Dedup (0.85.0) collapses the
+  *host* axis; search collapses the *runnable-breadth* axis. A fleet that installs
+  several packages surfaces 70–100+ distinct deduped tools, each carrying a full
+  schema in every turn's tool block. Search mode replaces them with **three fixed
+  discovery meta-tools** — `search_runnables` (keyword search returning typed,
+  structured argument rows), `run_runnable` (execute by `id` + `host`), and
+  `describe_runnable` (full schema on demand) — so the per-turn tool block is a
+  constant ~3 tools regardless of fleet size (a 12-host × 72-runnable fleet: 864
+  tools → 3).
+  - **Argument accuracy is preserved, not traded away.** Because every runnable is
+    `runspec.toml`-based, search rows carry the *typed* arg contract (enums, ranges,
+    defaults, required) — the schema is deferred, not discarded. `run_runnable`
+    runs a **client-side pre-flight** (required / choice / int+float / range /
+    unknown-arg / require-command) against the cached spec and returns a precise
+    correction *before* the SSH round-trip, so a bad call is fixed in the same turn.
+    `password`-typed args are omitted from search rows (they flow via
+    credentials/env, never inline).
+  - Reuses the dedup routing/schema/dispatch seams: `id` is the dedup tool name, so
+    resolution, the autonomy gate (keyed to the *inner* runnable `run_runnable`
+    resolves to), credentials, secret-splitting, and positionals all flow unchanged.
+    The confirm card unwraps to show the real runnable + args. Read-only meta-tools
+    run without a prompt.
+  - Applies to the unrestricted (manual chat) tool list only; agent-mode triggers
+    (already scoped to a curated allowlist) keep the `dedup` layout.
+  - Default stays `"dedup"`; `"search"` is opt-in. See `docs/design/agent-tool-search.md`.
+
+
 ## [0.85.0] — 2026-06-17
 
 ### Added

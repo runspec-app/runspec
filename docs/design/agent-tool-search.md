@@ -1,8 +1,21 @@
 # Design: agent tool **search** mode (`tool_mode = "search"`)
 
-Status: proposed (design only — not yet implemented)
+Status: implemented in runspec-console 0.86.0 (this doc is the original design).
 Package: `runspec-console` (`packages/python/runspec-console/`)
 Builds on: the dedup tool layout shipped in 0.85.0 (`[llm] tool_mode = "dedup" | "per_host"`).
+
+> Implementation notes / deltas from the original design:
+> - **Triggers fall back to dedup.** Rather than make `search_runnables` honour the
+>   allowlist (design §8), search mode applies only to the unrestricted manual-chat
+>   tool list; an agent trigger that passes an `allow` set keeps the scoped dedup
+>   layout. A trigger curated to a handful of runnables gains nothing from a search
+>   interface, and this keeps the meta-tool executors allowlist-free.
+> - **Pre-flight is lightweight structural validation** (required / choice /
+>   int+float / range / unknown-arg / require-command), per §5.2's recommendation;
+>   core's validator is not reused (the cached `rawSpec` excludes args/commands).
+>   Anything subtler still bounces from the remote.
+> - The unwrap (design §6) lives in `_run_tool_sync` (dispatch), `_effective_tool_autonomy`
+>   (gate), and `_confirm_card_view` (UI), plus `_resolve_id_host` for id→runnable.
 
 ---
 
