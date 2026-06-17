@@ -73,6 +73,23 @@ def _str(val: Any) -> str:
     return "" if val is None else str(val)
 
 
+def _connection_alive(namespace: Any) -> bool:
+    """Cheap liveness probe for an Outlook MAPI namespace proxy.
+
+    Reads a trivial property off the namespace. When Outlook restarts, the old COM
+    proxy is left pointing at a dead RPC server, so the read raises ("The RPC
+    server is not available") — the signal to tear down and re-``Dispatch``. Reads
+    through to ``CurrentUser.Name`` to force an actual round-trip rather than a
+    client-cached value."""
+    try:
+        user = namespace.CurrentUser
+        if user is not None:
+            _ = user.Name  # force a round-trip — raises if the RPC server is gone
+        return True
+    except Exception:
+        return False
+
+
 def _split_categories(val: Any) -> list[str]:
     """Outlook ``Categories`` is a comma-joined string → list of names."""
     text = _str(val).strip()
@@ -221,6 +238,8 @@ class OutlookSource:
     _PUMP_INTERVAL = 0.5  # s between COM message pumps (≈ ItemAdd latency)
     _POLL_INTERVAL = 30.0  # s between fallback folder polls
     _SEEN_CAP = 50_000  # bound the EntryID dedupe set over a long session
+    _RECONNECT_MIN = 5.0  # s: first wait before re-attaching to a restarted Outlook
+    _RECONNECT_MAX = 60.0  # s: cap on the reconnect backoff
 
     def __init__(self) -> None:
         self._emit: EmitFn | None = None
@@ -318,41 +337,88 @@ class OutlookSource:
                 _safe_emit(self._emit, event)
 
     def _pump(self) -> None:
-        """Own a COM apartment, bind a per-folder ItemAdd sink for each watch (+ the
-        Reminder sink), then loop: pump COM messages (delivers ItemAdd) and run the
-        poll fallback on an interval, until ``stop()``. Runs on the daemon thread."""
+        """Own a COM apartment and keep an Outlook connection alive for the source's
+        lifetime, **reconnecting when Outlook restarts**. Each connection binds the
+        per-folder ItemAdd sinks (+ Reminder sink) and runs the pump/poll loop; when
+        that loop detects the connection has dropped (the cached COM proxies point at
+        a dead RPC server — "The RPC server is not available" after an Outlook
+        restart), it tears the sinks down and re-attaches, with backoff, until
+        ``stop()``. Runs on the daemon thread."""
         import pythoncom
         import win32com.client
 
         pythoncom.CoInitialize()
         try:
-            try:
-                app = win32com.client.Dispatch("Outlook.Application")
-                namespace = app.GetNamespace("MAPI")
-            except Exception:
-                logger.exception(
-                    "outlook: could not attach to Outlook (is it installed/running?)"
-                )
-                return
-            self._app = app
+            # Forward-only from when the source starts; preserved across reconnects
+            # (the EntryID dedupe set stops a gap-poll re-emitting anything seen).
             self._poll_high_water = time.time()
-            self._bind_watches(win32com.client, namespace)
-            self._bind_reminders(win32com.client, app)
-            logger.info(
-                "outlook source: watching %d folder(s) + reminders", len(self._bound)
-            )
-            poll_deadline = time.monotonic() + self._POLL_INTERVAL
+            backoff = self._RECONNECT_MIN
             while not self._stop.is_set():
-                pythoncom.PumpWaitingMessages()  # delivers queued ItemAdd/Reminder
-                if time.monotonic() >= poll_deadline:
-                    self._poll_all()
-                    poll_deadline = time.monotonic() + self._POLL_INTERVAL
-                self._stop.wait(self._PUMP_INTERVAL)
+                namespace = self._connect(win32com.client)
+                if namespace is None:
+                    # Outlook not reachable yet (closed / still relaunching). Wait
+                    # and retry rather than killing the thread, so the source heals
+                    # itself when Outlook comes back — no settings re-save needed.
+                    if self._stop.wait(backoff):
+                        break
+                    backoff = min(backoff * 2, self._RECONNECT_MAX)
+                    continue
+                backoff = self._RECONNECT_MIN  # connected → reset the backoff
+                try:
+                    self._run_pump_loop(pythoncom, namespace)
+                finally:
+                    self._unbind()
         finally:
-            self._bound = []
-            self._reminder_sink = None
-            self._app = None
+            self._unbind()
             pythoncom.CoUninitialize()
+
+    def _connect(self, win32com_client: Any) -> Any:
+        """Attach to Outlook and bind the watch + reminder sinks. Returns the MAPI
+        namespace, or ``None`` if Outlook can't be reached (closed / mid-restart) so
+        the pump retries. ``Dispatch`` relaunches Outlook if it isn't running, which
+        is exactly the recovery we want after a restart."""
+        try:
+            app = win32com_client.Dispatch("Outlook.Application")
+            namespace = app.GetNamespace("MAPI")
+            # Touch the namespace so a dead/launching Outlook fails here (returns
+            # None → retry) rather than later mid-loop.
+            if not _connection_alive(namespace):
+                return None
+        except Exception:
+            logger.debug("outlook: not reachable yet, will retry", exc_info=True)
+            return None
+        self._app = app
+        self._bind_watches(win32com_client, namespace)
+        self._bind_reminders(win32com_client, app)
+        logger.info(
+            "outlook source: watching %d folder(s) + reminders", len(self._bound)
+        )
+        return namespace
+
+    def _run_pump_loop(self, pythoncom: Any, namespace: Any) -> None:
+        """Pump COM messages (delivers ItemAdd/Reminder) and run the poll fallback on
+        an interval. Returns when ``stop()`` is requested **or** the connection drops
+        (so :meth:`_pump` reconnects). The poll-deadline tick probes the connection
+        first; a restarted Outlook fails the probe and ends the loop."""
+        poll_deadline = time.monotonic() + self._POLL_INTERVAL
+        while not self._stop.is_set():
+            pythoncom.PumpWaitingMessages()  # delivers queued ItemAdd/Reminder
+            if time.monotonic() >= poll_deadline:
+                if not _connection_alive(namespace):
+                    logger.info(
+                        "outlook: connection lost (Outlook restarted?) — reconnecting"
+                    )
+                    return
+                self._poll_all()
+                poll_deadline = time.monotonic() + self._POLL_INTERVAL
+            self._stop.wait(self._PUMP_INTERVAL)
+
+    def _unbind(self) -> None:
+        """Drop the bound sinks + app handle so a stale COM proxy isn't reused on
+        reconnect (the next :meth:`_connect` binds fresh ones)."""
+        self._bound = []
+        self._reminder_sink = None
+        self._app = None
 
     def _bind_watches(self, win32com_client: Any, namespace: Any) -> None:
         """Resolve each watch and bind its folder's Items.ItemAdd sink. A watch that

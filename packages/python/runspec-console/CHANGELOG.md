@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.80.0] — 2026-06-17
+
+### Fixed
+- **Outlook source now reconnects when Outlook restarts.** The COM pump cached
+  the Outlook `Application` / namespace / per-folder `Items` proxies for its
+  lifetime; restarting Outlook left them pointing at a dead RPC server ("The RPC
+  server is not available"), so folder polling failed on every tick, `ItemAdd`
+  stopped firing, and the source only recovered when a Settings save restarted
+  it. The pump now probes the connection each poll tick and, on a drop, tears the
+  sinks down and re-`Dispatch`es Outlook with backoff — self-healing with no
+  settings re-save. (Dedupe-by-EntryID means the reconnect's catch-up poll never
+  re-emits mail already seen.)
+
+
 ## [0.79.0] — 2026-06-17
 
 ### Added

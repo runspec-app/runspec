@@ -18,6 +18,7 @@ import pytest
 from runspec_console.sources.outlook import (
     OutlookSource,
     _compose_reply_draft,
+    _connection_alive,
     _descend,
     _folder_segments,
     _mail_payload,
@@ -351,6 +352,67 @@ def test_compose_reply_draft_sets_send_as_mailbox():
     app, ns = _FakeApp(), _FakeNamespace()
     _compose_reply_draft(app, ns, "ENT1", "hi", "IT Support")
     assert app.mail.SentOnBehalfOfName == "IT Support"
+
+
+# ── connection liveness / reconnect on Outlook restart ────────────────────────
+
+
+class _DeadProp:
+    """A COM proxy left pointing at a restarted Outlook: any read raises the
+    classic RPC error."""
+
+    @property
+    def CurrentUser(self):
+        raise RuntimeError("The RPC server is not available")
+
+
+def test_connection_alive_true_for_live_namespace():
+    ns = SimpleNamespace(CurrentUser=SimpleNamespace(Name="Ops Mailbox"))
+    assert _connection_alive(ns) is True
+
+
+def test_connection_alive_false_when_namespace_dead():
+    # Outlook restarted → reading CurrentUser raises → probe reports dead.
+    assert _connection_alive(_DeadProp()) is False
+
+
+def test_connection_alive_false_when_user_read_dead():
+    # CurrentUser resolves but the round-trip read of .Name fails.
+    class _DeadUser:
+        @property
+        def Name(self):
+            raise RuntimeError("The RPC server is not available")
+
+    assert _connection_alive(SimpleNamespace(CurrentUser=_DeadUser())) is False
+
+
+def test_run_pump_loop_returns_when_connection_drops():
+    """The pump loop must end (so _pump can reconnect) the moment the connection
+    probe fails — not spin forever against a dead proxy."""
+    src = OutlookSource()
+    src._POLL_INTERVAL = 0.0  # probe on the very first tick
+    src._PUMP_INTERVAL = 0.0
+    pumped = []
+    fake_pythoncom = SimpleNamespace(PumpWaitingMessages=lambda: pumped.append(1))
+
+    # Returns (rather than hanging) because the namespace probe reports dead.
+    src._run_pump_loop(fake_pythoncom, _DeadProp())
+    assert pumped  # it did at least one pump before detecting the drop
+
+
+def test_run_pump_loop_exits_on_stop():
+    """A healthy connection keeps looping; setting stop ends it cleanly."""
+    src = OutlookSource()
+    src._POLL_INTERVAL = 100.0  # never reach a poll/probe in the test window
+    src._PUMP_INTERVAL = 0.0
+    ns = SimpleNamespace(CurrentUser=SimpleNamespace(Name="Ops"))
+
+    def pump():
+        # Stop after the first pump so the loop exits via the stop check.
+        src._stop.set()
+
+    src._run_pump_loop(SimpleNamespace(PumpWaitingMessages=pump), ns)
+    assert src._stop.is_set()
 
 
 # ── calendar rota decision ────────────────────────────────────────────────────
