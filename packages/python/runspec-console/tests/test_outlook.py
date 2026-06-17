@@ -17,6 +17,7 @@ import pytest
 
 from runspec_console.sources.outlook import (
     OutlookSource,
+    _compose_reply_draft,
     _descend,
     _folder_segments,
     _mail_payload,
@@ -262,6 +263,94 @@ def test_send_draft_off_windows():
         return
     with pytest.raises(RuntimeError, match="Windows"):
         send_draft("ENT1")
+
+
+# ── reply-draft composition (inline-response-proof, tested with COM fakes) ─────
+
+
+class _FakeRecipients:
+    def __init__(self):
+        self.resolved = False
+
+    def ResolveAll(self):
+        self.resolved = True
+
+
+class _FakeMail:
+    """A standalone CreateItem draft — records what got set and saves cleanly."""
+
+    def __init__(self):
+        self.To = ""
+        self.CC = ""
+        self.Subject = ""
+        self.Body = ""
+        self.SentOnBehalfOfName = ""
+        self.EntryID = ""
+        self.Recipients = _FakeRecipients()
+        self.saved = False
+
+    def Save(self):
+        self.saved = True
+        self.EntryID = "DRAFT-NEW"
+
+
+class _InlineReply:
+    """What Reply() returns under inline-reply mode: reading props is fine, but
+    the mutating methods raise the exact error the bug reported."""
+
+    To = "requester@example.com"
+    CC = "watcher@example.com"
+    Subject = "RE: printer down"
+    Body = "\n\n> original message text"
+
+    def Save(self):
+        raise RuntimeError(
+            "This method can't be used with an inline response mail item"
+        )
+
+    def Send(self):
+        raise RuntimeError(
+            "This method can't be used with an inline response mail item"
+        )
+
+
+class _FakeOriginal:
+    def Reply(self):
+        return _InlineReply()
+
+
+class _FakeApp:
+    def __init__(self):
+        self.mail = _FakeMail()
+
+    def CreateItem(self, _kind):
+        return self.mail
+
+
+class _FakeNamespace:
+    def GetItemFromID(self, _entry_id):
+        return _FakeOriginal()
+
+
+def test_compose_reply_draft_rebuilds_instead_of_saving_inline():
+    app, ns = _FakeApp(), _FakeNamespace()
+    out = _compose_reply_draft(app, ns, "ENT1", "Here is the fix.", None)
+
+    mail = app.mail
+    assert mail.saved  # saved the rebuilt CreateItem, never the inline reply
+    assert out["entry_id"] == "DRAFT-NEW"
+    assert out["to"] == "requester@example.com"
+    assert out["subject"] == "RE: printer down"  # Outlook's RE: preserved
+    # Agent body sits above the preserved quoted original.
+    assert mail.Body == "Here is the fix.\n\n\n\n> original message text"
+    assert mail.CC == "watcher@example.com"
+    assert mail.Recipients.resolved
+
+
+def test_compose_reply_draft_sets_send_as_mailbox():
+    app, ns = _FakeApp(), _FakeNamespace()
+    _compose_reply_draft(app, ns, "ENT1", "hi", "IT Support")
+    assert app.mail.SentOnBehalfOfName == "IT Support"
 
 
 # ── calendar rota decision ────────────────────────────────────────────────────

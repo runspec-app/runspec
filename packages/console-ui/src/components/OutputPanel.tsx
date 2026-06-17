@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { Button, Input, Space, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
+import { Markdown } from './Markdown'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
@@ -882,14 +883,11 @@ function BlockCard({
               <div style={{ padding: '10px 14px' }}>
                 {block.segments.map((seg, i) =>
                   seg.kind === 'text' ? (
-                    <pre key={i} style={{
-                      margin: 0, padding: 0,
-                      fontFamily: 'monospace', fontSize: 13,
-                      color: '#d4d4d4', lineHeight: 1.6,
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-                    }}>
-                      {seg.text}
-                    </pre>
+                    // Finalized assistant prose → markdown. The live streaming
+                    // tail (currentText, below) stays plain <pre> so half-emitted
+                    // markdown (an unclosed ``` ) doesn't flicker; it reflows to
+                    // markdown once the segment is committed.
+                    <Markdown key={i}>{seg.text}</Markdown>
                   ) : (
                     <ToolCallBlock
                       key={i}

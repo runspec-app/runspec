@@ -8,6 +8,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.79.0] — 2026-06-17
+
+### Added
+- **Markdown rendering for assistant messages.** The agent's natural-language
+  replies in the Console transcript and the Triggers detail drawer now render as
+  GitHub-flavored markdown (headings, lists, **bold**, tables, fenced code) via
+  `react-markdown` + `remark-gfm`, instead of raw monospace text. Only the
+  model's *prose* is rendered as markdown — runnable stdout / JSON / tool output
+  stays in the monospace `<pre>` blocks, and a code fence the model emits still
+  renders monospace (so quoted JSON looks right). The live streaming tail stays
+  plain while a turn is in flight, then reflows to markdown once committed.
+- **Abort button on a triggered run.** The Triggers detail drawer now shows a
+  **Stop** control while a card is in flight (triggered / triage / running). It
+  calls `cancel_chat(card_id)` — a trigger run's `chat_id` is its `card_id`, so
+  this trips the run's cancel event and unblocks any parked Approve/Deny gate.
+- **Copy buttons** on the Triggers drawer agent-output and approve-prompt
+  preview blocks. Right-click copy is suppressed outside webview debug mode;
+  these give a deterministic copy path (selectable text still supports Ctrl+C).
+
+### Changed
+- The Triggers detail drawer is wider and responsive (`min(820px, 92vw)`,
+  was a fixed 560px) so longer agent output and drafts fit.
+
+### Fixed
+- **Send reply on a trigger draft no longer throws "This method can't be used
+  with an inline response mail item".** `save_reply_draft` built the draft from
+  `MailItem.Reply()`, which under Outlook's reading-pane inline replies returns
+  an *inline response* item; saving it (and re-opening it by EntryID to send)
+  hit that error. The reply is now rebuilt onto a fresh `CreateItem` draft —
+  recipients, the "RE:" subject and the quoted original are copied off the reply
+  (reading inline-response properties is allowed), but the saved/sent item is a
+  plain mail that saves and sends cleanly. Threading-by-subject and the quote
+  are preserved.
+
+
 ## [0.78.0] — 2026-06-16
 
 ### Added

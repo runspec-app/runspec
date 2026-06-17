@@ -405,6 +405,52 @@ class OutlookSource:
         self._poll_high_water = max(self._poll_high_water, newest)
 
 
+def _compose_reply_draft(
+    app: Any, namespace: Any, entry_id: str, body: str, from_mailbox: str | None
+) -> dict[str, str]:
+    """Build + save the reply draft via the Outlook object model (testable core).
+
+    We do **not** save/send the object that ``MailItem.Reply()`` returns: with
+    Outlook's reading-pane inline replies, ``Reply()`` hands back an *inline
+    response* item, and calling ``Save()``/``Send()`` on it (or on a draft re-opened
+    from its EntryID) raises "This method can't be used with an inline response
+    mail item". Instead we only **read** recipients / subject / quoted body off the
+    reply, then copy them onto a fresh ``CreateItem`` mail — a standalone draft
+    that saves and sends cleanly. (Reading properties off an inline response is
+    fine; only the mutating methods are blocked.)
+
+    Subject keeps Outlook's "RE: …" and the quoted original is preserved, so
+    reply-by-subject threading and the quote survive even though we no longer use
+    the native Reply object. Returns ``{to, subject, entry_id}``; ``entry_id`` is
+    the saved draft the card's Send button later re-opens.
+    """
+    original = namespace.GetItemFromID(entry_id)
+    reply = original.Reply()  # read-only use — never Save()/Send() this object
+    quoted = _str(_attr(reply, "Body"))
+
+    mail = app.CreateItem(0)  # olMailItem — a plain draft, not an inline response
+    mail.To = _str(_attr(reply, "To"))
+    cc = _str(_attr(reply, "CC"))
+    if cc:
+        mail.CC = cc
+    mail.Subject = _str(_attr(reply, "Subject"))
+    mail.Body = body + ("\n\n" + quoted if quoted else "")
+    if from_mailbox:
+        mail.SentOnBehalfOfName = from_mailbox  # reply as the shared mailbox
+    try:
+        mail.Recipients.ResolveAll()  # resolve names copied from the reply
+    except Exception:
+        logger.debug("outlook: ResolveAll on reply draft failed", exc_info=True)
+    mail.Save()  # → Drafts; does NOT send
+    return {
+        "to": _str(_attr(mail, "To")),
+        "subject": _str(_attr(mail, "Subject")),
+        # EntryID is assigned once the draft is saved; the card's Send button
+        # re-opens the draft by this id and sends it (human-initiated).
+        "entry_id": _str(_attr(mail, "EntryID")),
+    }
+
+
 def save_reply_draft(
     entry_id: str, body: str, from_mailbox: str | None = None
 ) -> dict[str, str]:
@@ -415,7 +461,8 @@ def save_reply_draft(
     the card's Send button (see :func:`send_draft`). Returns a small summary
     (to / subject / ``entry_id`` of the saved draft, which the Send button uses).
     Raises on any failure so the caller can report it on the card. Windows-only;
-    the win32 imports stay inside this function.
+    the win32 imports stay inside this function. See :func:`_compose_reply_draft`
+    for why the reply is rebuilt rather than saved off ``Reply()`` directly.
 
     ``from_mailbox`` sends the reply **as that shared mailbox** (sets
     ``SentOnBehalfOfName``), so a help-desk requester sees the queue identity
@@ -435,20 +482,7 @@ def save_reply_draft(
     try:
         app = win32com.client.Dispatch("Outlook.Application")
         namespace = app.GetNamespace("MAPI")
-        original = namespace.GetItemFromID(entry_id)
-        reply = original.Reply()
-        existing = _str(_attr(reply, "Body"))
-        reply.Body = body + ("\n\n" + existing if existing else "")
-        if from_mailbox:
-            reply.SentOnBehalfOfName = from_mailbox  # reply as the shared mailbox
-        reply.Save()  # → Drafts; does NOT send
-        return {
-            "to": _str(_attr(reply, "To")),
-            "subject": _str(_attr(reply, "Subject")),
-            # EntryID is assigned once the draft is saved; the card's Send button
-            # reopens the draft by this id and sends it (human-initiated).
-            "entry_id": _str(_attr(reply, "EntryID")),
-        }
+        return _compose_reply_draft(app, namespace, entry_id, body, from_mailbox)
     finally:
         pythoncom.CoUninitialize()
 

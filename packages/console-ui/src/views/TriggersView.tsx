@@ -1,8 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input, Drawer } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined, SendOutlined } from '@ant-design/icons'
+import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input, Drawer, message } from 'antd'
+import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined, SendOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark } from '../ThemeContext'
+import { Markdown } from '../components/Markdown'
+
+// A status counts as "in flight" (abortable) while the engine is still working
+// it — anything before a terminal done/failed. The Stop button calls
+// bridge.cancel_chat(card_id): a trigger run's chat_id IS its card_id, so this
+// trips the same cancel event + unblocks a parked Approve/Deny gate.
+const RUNNING_STATUSES = new Set(['triggered', 'triage', 'running'])
+
+// Right-click copy is suppressed outside webview debug mode, so offer an
+// explicit Copy control. Selectable text already supports Ctrl+C.
+function CopyButton({ text, title = 'Copy' }: { text: string; title?: string }) {
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      message.success('Copied')
+    } catch {
+      message.error('Copy failed')
+    }
+  }
+  return (
+    <Tooltip title={title}>
+      <Button size="small" type="text" icon={<CopyOutlined />} onClick={e => { e.stopPropagation(); copy() }} />
+    </Tooltip>
+  )
+}
 
 // A chat card is a helpdesk-room thread surfaced in the Triggers inbox (source
 // === 'chat'); clicking it opens the live conversation pane. A portal card
@@ -543,7 +568,7 @@ export function TriggersView() {
       <Drawer
         open={!!selectedCard}
         onClose={() => setSelected(null)}
-        width={560}
+        width="min(820px, 92vw)"
         title={selectedCard?.summary}
       >
         {selectedCard && (() => {
@@ -561,6 +586,19 @@ export function TriggersView() {
                 <span style={{ color: dim }}>{card.trigger} · {card.source}:{card.event_type}</span>
                 {card.detail?.owner ? <span style={{ color: dim }}>· owner {String(card.detail.owner)}</span> : null}
                 <span style={{ color: dim, fontFamily: 'monospace', marginLeft: 'auto' }}>{fmtTime(card.created_at)}</span>
+                {/* Abort an in-flight run. The card's chat_id == card_id, so this
+                    trips the run's cancel event (and any parked confirm gate). */}
+                {RUNNING_STATUSES.has(card.column) && (
+                  <Button
+                    size="small" danger icon={<StopOutlined />}
+                    onClick={() => {
+                      bridge.cancel_chat(card.card_id).catch(console.error)
+                      message.info('Stopping run…')
+                    }}
+                  >
+                    Stop
+                  </Button>
+                )}
               </div>
 
               {/* A portal request the hub routed here: what the visitor asked for.
@@ -596,8 +634,11 @@ export function TriggersView() {
                   border: `1px solid ${COLUMN_COLOR.awaiting_human}`, borderRadius: 6,
                   padding: 12, marginBottom: 16,
                 }}>
-                  <div style={{ color: COLUMN_COLOR.awaiting_human, fontWeight: 600, marginBottom: 8 }}>
-                    Approve <code>{p.tool_name}</code>?
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <span style={{ color: COLUMN_COLOR.awaiting_human, fontWeight: 600 }}>
+                      Approve <code>{p.tool_name}</code>?
+                    </span>
+                    {preview && <CopyButton text={preview} title="Copy" />}
                   </div>
                   {preview && (
                     <div style={{
@@ -650,8 +691,13 @@ export function TriggersView() {
 
               {body && (
                 <>
-                  <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>Agent output</div>
-                  <div style={{ whiteSpace: 'pre-wrap', marginBottom: 16 }}>{body}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <span style={{ color: dim, fontSize: 12 }}>Agent output</span>
+                    <CopyButton text={body} title="Copy agent output" />
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <Markdown color={textColor(isDark)}>{body}</Markdown>
+                  </div>
                 </>
               )}
 
