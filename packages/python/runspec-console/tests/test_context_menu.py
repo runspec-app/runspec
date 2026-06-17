@@ -41,6 +41,30 @@ def test_finds_core_behind_web_view_attribute():
     assert settings.AreDefaultContextMenusEnabled is True
 
 
+def test_finds_core_deeply_nested():
+    # pywebview winforms can nest it under native.browser.web_view — the BFS must
+    # reach it regardless of the exact path.
+    settings = _Settings()
+    core = SimpleNamespace(Settings=settings)
+    window = SimpleNamespace(
+        native=SimpleNamespace(
+            browser=SimpleNamespace(web_view=SimpleNamespace(CoreWebView2=core))
+        )
+    )
+    _enable_native_context_menu(window)
+    assert settings.AreDefaultContextMenusEnabled is True
+
+
+def test_prints_diagnostic_when_not_found(capsys):
+    # When the control can't be located, a one-line stderr diagnostic with the
+    # native object's type + attrs is printed so the real path can be pinned.
+    window = SimpleNamespace(native=SimpleNamespace(some_attr=1))
+    _enable_native_context_menu(window, timeout=0.0)
+    err = capsys.readouterr().err
+    assert "CoreWebView2 not found" in err
+    assert "some_attr" in err
+
+
 def test_noop_when_no_native_control():
     # No EdgeChromium control (e.g. another backend) → must not raise. timeout=0
     # checks once and returns, so the test doesn't wait on the poll.

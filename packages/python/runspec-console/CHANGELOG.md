@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.87.0] — 2026-06-17
+
+### Fixed
+- **Right-click menu / spell-check suggestions now locate the WebView2 control
+  reliably.** The 0.84.0 context-menu enable guessed a single pywebview→WebView2
+  object path (`window.native` / `native.web_view`); if a pywebview version nests
+  the control elsewhere (e.g. `native.browser.web_view`) the hook silently found
+  nothing and the right-click menu + spelling suggestions stayed off. It now
+  breadth-first searches a curated set of child attributes for `CoreWebView2`, so
+  it works regardless of the exact path, and — since this is Windows-GUI internals
+  that can't be exercised off-Windows — prints a one-line stderr diagnostic (the
+  native object's type + attributes) when the control still can't be found, so the
+  real path can be pinned from an actual install.
+
+
 ## [0.86.0] — 2026-06-17
 
 ### Added

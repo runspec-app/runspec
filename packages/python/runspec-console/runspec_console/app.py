@@ -162,6 +162,40 @@ def _suppress_noisy_loggers() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
+def _find_core_webview2(window: Any) -> tuple[Any, str]:
+    """Walk the pywebview window's object graph for the WebView2 ``CoreWebView2``.
+
+    pywebview's EdgeChromium control sits behind version-dependent attributes
+    (``native`` / ``native.web_view`` / ``native.browser.web_view`` / …), so rather
+    than guess one path we breadth-first search a curated set of child attributes
+    (never arbitrary ``dir()`` members — those could invoke .NET properties with
+    side effects). Returns ``(core, dotted_path)`` or ``(None, "")``."""
+    child_attrs = (
+        "native",
+        "browser",
+        "web_view",
+        "webview",
+        "control",
+        "form",
+        "gui",
+    )
+    queue: list[tuple[Any, str]] = [(window, "window")]
+    seen: set[int] = set()
+    while queue:
+        obj, path = queue.pop(0)
+        if obj is None or id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        core = getattr(obj, "CoreWebView2", None)
+        if core is not None:
+            return core, path
+        for attr in child_attrs:
+            child = getattr(obj, attr, None)
+            if child is not None:
+                queue.append((child, f"{path}.{attr}"))
+    return None, ""
+
+
 def _enable_native_context_menu(window: Any, timeout: float = 5.0) -> None:
     """Turn on the WebView2 default right-click menu (Windows / EdgeChromium).
 
@@ -173,32 +207,33 @@ def _enable_native_context_menu(window: Any, timeout: float = 5.0) -> None:
     the default menu is the only way to get right-click copy/paste + spelling fixes.
 
     Best-effort and fully guarded: the ``CoreWebView2`` initialises asynchronously,
-    so we poll briefly for it, then flip ``AreDefaultContextMenusEnabled``. Any
-    failure (non-Windows, a different backend, a pywebview internals change) is a
-    silent no-op — exactly like :func:`_apply_dwm_title_bar`."""
+    so we poll briefly for it, then flip ``AreDefaultContextMenusEnabled``. When it
+    can't be found we print a one-line diagnostic to stderr (the control's type +
+    attributes) so the actual object path can be pinned on a real install — this is
+    Windows-GUI internals that can't be exercised off-Windows. Any failure is
+    otherwise a silent no-op, like :func:`_apply_dwm_title_bar`."""
     import time
-
-    # The EdgeChromium control lives behind one of a couple of pywebview-internal
-    # attributes depending on version; probe each, then wait for CoreWebView2.
-    def _core_webview() -> Any:
-        native = getattr(window, "native", None)
-        for holder in (native, getattr(native, "web_view", None)):
-            core = getattr(holder, "CoreWebView2", None)
-            if core is not None:
-                return core
-        return None
 
     try:
         deadline = time.monotonic() + timeout
-        core = _core_webview()
+        core, path = _find_core_webview2(window)
         while core is None and time.monotonic() < deadline:
             time.sleep(0.1)
-            core = _core_webview()
+            core, path = _find_core_webview2(window)
         if core is None:
+            native = getattr(window, "native", None)
+            attrs = [a for a in dir(native) if not a.startswith("_")] if native else []
+            print(
+                "runspec-console: WebView2 CoreWebView2 not found — right-click "
+                f"menu/spellcheck stay off. native={type(native).__name__} "
+                f"attrs={attrs[:60]}",
+                file=sys.stderr,
+            )
             return
         core.Settings.AreDefaultContextMenusEnabled = True
+        logger.info("WebView2 default context menu enabled (via %s)", path)
     except Exception:
-        logger.debug("could not enable WebView2 context menu", exc_info=True)
+        logger.info("could not enable WebView2 context menu", exc_info=True)
 
 
 def _on_started(window: Any, title: str) -> None:
