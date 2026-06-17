@@ -14,8 +14,11 @@ from console_room.signup import (
     domain_allowed,
     email_domain,
     email_verify_from_env,
+    login_domains,
     make_nonce,
     make_team_slug,
+    normalize_domain,
+    parse_domains,
     read_auth_mode,
     read_verify_token,
     sign_verify_token,
@@ -100,6 +103,23 @@ def test_email_verify_from_env_bad_ttl_falls_back(monkeypatch):
     assert cfg is not None and cfg.token_ttl == DEFAULT_TOKEN_TTL
 
 
+def test_email_verify_from_env_allowed_domains(monkeypatch):
+    monkeypatch.setenv("CONSOLE_ROOM_SESSION_SECRET", "shh")
+    monkeypatch.setenv(
+        "CONSOLE_ROOM_ALLOWED_DOMAINS", "@company1.com, company1.company2.com"
+    )
+    cfg = email_verify_from_env()
+    assert cfg is not None
+    assert cfg.allowed_domains == ("company1.com", "company1.company2.com")
+
+
+def test_email_verify_from_env_allowed_domains_default_empty(monkeypatch):
+    monkeypatch.setenv("CONSOLE_ROOM_SESSION_SECRET", "shh")
+    monkeypatch.delenv("CONSOLE_ROOM_ALLOWED_DOMAINS", raising=False)
+    cfg = email_verify_from_env()
+    assert cfg is not None and cfg.allowed_domains == ()
+
+
 def test_email_verify_from_env_nonpositive_ttl_falls_back(monkeypatch):
     monkeypatch.setenv("CONSOLE_ROOM_SESSION_SECRET", "shh")
     monkeypatch.setenv("CONSOLE_ROOM_VERIFY_TTL", "0")
@@ -140,6 +160,56 @@ def test_domain_allowed_rejects_malformed():
     assert domain_allowed("jane", "it-support@corp.com") is False
     assert domain_allowed("jane@corp.com", "not-an-email") is False
     assert domain_allowed("", "") is False
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("@company1.com", "company1.com"),
+        ("  Company1.COM  ", "company1.com"),
+        ("@ Company2.com", "company2.com"),
+        ("", ""),
+        ("   ", ""),
+    ],
+)
+def test_normalize_domain(value, expected):
+    assert normalize_domain(value) == expected
+
+
+def test_parse_domains_splits_normalizes_and_dedupes():
+    raw = "@company1.com, company1.company2.com  company2.com, company1.com"
+    assert parse_domains(raw) == [
+        "company1.com",
+        "company1.company2.com",
+        "company2.com",
+    ]
+    assert parse_domains("") == []
+    assert parse_domains("   ") == []
+
+
+def test_login_domains_mailbox_first_then_extras():
+    # The mailbox's own domain is always first; extras follow, deduped.
+    assert login_domains(
+        "shared@company2.com", ["company1.company2.com", "company1.com", "company2.com"]
+    ) == ["company2.com", "company1.company2.com", "company1.com"]
+    # No extras → just the mailbox domain (the prior behaviour).
+    assert login_domains("it-support@corp.com") == ["corp.com"]
+
+
+def test_domain_allowed_with_allowlist():
+    # The single monitored mailbox stays shared@company2.com; users on the variants
+    # are admitted by the allowlist.
+    mailbox = "shared@company2.com"
+    extras = ["company1.company2.com", "company1.com", "company2.com"]
+    assert domain_allowed("my.email@company1.company2.com", mailbox, extras) is True
+    assert domain_allowed("bob@company1.com", mailbox, extras) is True
+    assert domain_allowed("ann@company2.com", mailbox, extras) is True
+    # The mailbox domain is still allowed even when not repeated in the list.
+    assert domain_allowed("ceo@company2.com", mailbox, ["company1.com"]) is True
+    # A domain outside both the mailbox and the allowlist is still rejected.
+    assert domain_allowed("evil@elsewhere.com", mailbox, extras) is False
+    # Allowlist entries may carry a leading '@'.
+    assert domain_allowed("bob@company1.com", mailbox, ["@company1.com"]) is True
 
 
 # ── verify token ──────────────────────────────────────────────────────────────

@@ -50,6 +50,14 @@ verify mail to a *same-company* address. The residual risk (an insider pestering
 colleagues) is small, accountable, and auditable. So the allowlist is **automatic
 and zero-config** — derived from `it-support@corp.com` → `corp.com`.
 
+**Extra domains (opt-in).** Some companies sit on a few domain variants
+(`my.email@company1.company2.com`, `@company1.com`, `@company2.com`) while a single
+mailbox — say `shared@company2.com` — is the monitored connector. For them, an
+optional `CONSOLE_ROOM_ALLOWED_DOMAINS` / `[auth] allowed_domains` widens the
+allowlist beyond the mailbox's own domain. It's an **explicit list of full domains**
+(not a wildcard/subdomain rule — the variants aren't always clean subtrees of one
+another), still all same-company; the mailbox stays the single monitored connector.
+
 ---
 
 ## 2. Decisions (settled)
@@ -65,7 +73,9 @@ and zero-config** — derived from `it-support@corp.com` → `corp.com`.
    pending send is **persisted in the room's SQLite** and **flushed to the first
    console that connects** for that queue (off-shift is fine). One console claims
    each send so it can't double-fire. The user just sees "we'll email you shortly."
-4. **Domain allowlist = the queue mailbox's domain** — automatic, no config.
+4. **Domain allowlist = the queue mailbox's domain** — automatic, no config; an
+   optional `allowed_domains` widens it with extra same-company domains for shops on
+   a few domain variants behind one mailbox.
 5. **No enrollment approval in v1.** The per-request operator Accept is the
    authorization. A per-queue **"gated membership"** flag (an operator approves
    *who joins*, for sensitive queues) is a **v2** opt-in.
@@ -261,6 +271,7 @@ Set, then start `console-room`:
 | `CONSOLE_ROOM_SESSION_SECRET` | yes | Signs the session cookie **and** the verify token. A long random string. |
 | `CONSOLE_ROOM_PUBLIC_URL` | **yes** | The externally-reachable base URL the verify links point at, e.g. `https://rooms.corp.com`. Also `--public-url`. The server **refuses to start** without it (the emailed link is clicked later, so it can't be a per-request guess). |
 | `CONSOLE_ROOM_VERIFY_TTL` | no | Verify-link lifetime, seconds (default `1800`). |
+| `CONSOLE_ROOM_ALLOWED_DOMAINS` | no | Extra login domains beyond the mailbox's own (always allowed) — comma/space-separated, leading `@` optional, e.g. `company1.com,company1.company2.com`. Also `--allowed-domains` / `[auth] allowed_domains` (a TOML array). The mailbox stays the single monitored connector. |
 | `CONSOLE_ROOM_ENROLL_DB` | no | Members + outbox SQLite path (default: a sibling `…/<db>.enrollment.db` of the transcript DB). |
 
 Behind a reverse proxy: bind with `CONSOLE_ROOM_HOST=0.0.0.0`, terminate TLS at

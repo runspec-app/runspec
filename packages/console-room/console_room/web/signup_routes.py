@@ -30,7 +30,13 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Route
 
 from ..hub import Hub
-from ..signup import EmailVerifyConfig, Team, domain_allowed, email_domain
+from ..signup import (
+    EmailVerifyConfig,
+    Team,
+    domain_allowed,
+    email_domain,
+    login_domains,
+)
 
 __all__ = ["login_routes", "EMAIL_COOKIE"]
 
@@ -41,8 +47,23 @@ EMAIL_COOKIE = "room_email"
 _EMAIL_COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # a year
 
 
+def _domains_phrase(domains: list[str]) -> str:
+    """Join allowed domains for the hint/error: ``["a"]`` → ``"a"``; ``["a","b"]`` →
+    ``"a or b"``; ``["a","b","c"]`` → ``"a, b, or c"``."""
+    if len(domains) <= 1:
+        return domains[0] if domains else ""
+    if len(domains) == 2:
+        return f"{domains[0]} or {domains[1]}"
+    return f"{', '.join(domains[:-1])}, or {domains[-1]}"
+
+
 def _validate(
-    email: str, name: str, team: str, mailbox: str, team_slugs: set[str]
+    email: str,
+    name: str,
+    team: str,
+    mailbox: str,
+    allowed_domains: tuple[str, ...],
+    team_slugs: set[str],
 ) -> str:
     """The first human-readable problem with a login, or ``""`` if it's good."""
     if not mailbox:
@@ -53,8 +74,9 @@ def _validate(
         return "Choose your team."
     if not email_domain(email):
         return "Enter a valid email address."
-    if not domain_allowed(email, mailbox):
-        return f"Use your {email_domain(mailbox)} email address to log in."
+    if not domain_allowed(email, mailbox, allowed_domains):
+        phrase = _domains_phrase(login_domains(mailbox, allowed_domains))
+        return f"Use your {phrase} email address to log in."
     return ""
 
 
@@ -89,7 +111,7 @@ def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
 
     async def login(request: Any) -> Any:
         team_list = hub.list_teams()
-        domain = email_domain(hub.mailbox)
+        domains = login_domains(hub.mailbox, email_verify.allowed_domains)
         switch = request.query_params.get("switch") == "1"
         remembered_email = (request.cookies.get(EMAIL_COOKIE) or "").strip().lower()
         member = None if switch else _remembered_member(request)
@@ -99,7 +121,7 @@ def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
                 return HTMLResponse(_render_welcome_back(member.email, member.name))
             # "Use a different email" clears the prefill; otherwise offer it.
             prefill = "" if switch else remembered_email
-            return HTMLResponse(_render_login(team_list, domain, email=prefill))
+            return HTMLResponse(_render_login(team_list, domains, email=prefill))
 
         form = await _form(request)
         # The one-click path: a known email (from the cookie) reuses its name + team.
@@ -110,12 +132,14 @@ def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
             name = (form.get("name") or "").strip()
             team = (form.get("team") or "").strip()
             slugs = {t.slug for t in team_list}
-            problem = _validate(email, name, team, hub.mailbox, slugs)
+            problem = _validate(
+                email, name, team, hub.mailbox, email_verify.allowed_domains, slugs
+            )
             if problem:
                 return HTMLResponse(
                     _render_login(
                         team_list,
-                        domain,
+                        domains,
                         error=problem,
                         email=email,
                         name=name,
@@ -195,7 +219,7 @@ _PAGE = """<!doctype html>
 
 def _render_login(
     teams: list[Team],
-    domain: str,
+    domains: list[str],
     *,
     error: str = "",
     email: str = "",
@@ -213,7 +237,8 @@ def _render_login(
         f'<select name="team" required><option value="">Choose your team…</option>'
         f"{options}</select>"
     )
-    hint = f" with your {html.escape(domain)} email" if domain else ""
+    phrase = _domains_phrase(domains)
+    hint = f" with your {html.escape(phrase)} email" if phrase else ""
     body = (
         f"<h1>Log in to the helpdesk</h1>{err}"
         f'<p class="muted">Log in{hint} to request actions a team operator runs '

@@ -4,6 +4,23 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.28.0]
+
+### Added
+- **Configurable login domain allowlist.** The email-login door still derives its
+  allowlist from the queue mailbox's own domain (always allowed), but you can now
+  widen it with extra same-company domains via `CONSOLE_ROOM_ALLOWED_DOMAINS`
+  (comma/space-separated, leading `@` optional), `--allowed-domains`, or
+  `[auth] allowed_domains` in the config file (a TOML array or string). For a company
+  whose people sit on a few domain variants (`@company1.company2.com`, `@company1.com`,
+  `@company2.com`) behind a single monitored mailbox (`shared@company2.com`): the
+  mailbox stays the one connector, while the portal admits all the listed variants.
+  It's an explicit list of full domains (not a wildcard/subdomain rule), and the
+  login form hint + the rejection error both list the allowed domains. Precedence is
+  the usual **defaults < config file < env var < CLI flag**.
+
+---
+
 ## [0.27.0]
 
 ### Changed

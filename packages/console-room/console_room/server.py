@@ -238,6 +238,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "email = one room. Leave empty to accept any console (dev).",
     )
     parser.add_argument(
+        "--allowed-domains",
+        default=_env("CONSOLE_ROOM_ALLOWED_DOMAINS", ""),
+        help="extra company email domains allowed to log in besides the mailbox's "
+        "own domain (which is always allowed) — comma/space-separated, e.g. "
+        "'company1.com,company1.company2.com'. The mailbox stays the single "
+        "monitored connector; this just widens who may sign up on the portal.",
+    )
+    parser.add_argument(
         "--config",
         default=os.environ.get("CONSOLE_ROOM_CONFIG", ""),
         help="path to a TOML config file (see docs) — also CONSOLE_ROOM_CONFIG. "
@@ -287,6 +295,10 @@ def main(argv: list[str] | None = None) -> None:
     # flag and CONSOLE_ROOM_PUBLIC_URL stay a single source of truth.
     if args.public_url:
         os.environ["CONSOLE_ROOM_PUBLIC_URL"] = args.public_url
+    # --allowed-domains is surfaced via the same env var email_verify_from_env reads,
+    # so the flag and CONSOLE_ROOM_ALLOWED_DOMAINS stay one source of truth.
+    if args.allowed_domains:
+        os.environ["CONSOLE_ROOM_ALLOWED_DOMAINS"] = args.allowed_domains
     try:
         if args.ndjson_only:
             asyncio.run(

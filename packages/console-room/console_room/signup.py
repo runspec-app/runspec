@@ -13,8 +13,10 @@ small dataclasses — so they're unit-tested on their own. Storage lives in
 from __future__ import annotations
 
 import os
+import re
 import uuid
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from typing import Any
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -48,6 +50,10 @@ class EmailVerifyConfig:
     public_url: str = ""  # external base URL; used to build the verify link
     token_ttl: int = DEFAULT_TOKEN_TTL
     session_ttl: int = DEFAULT_SESSION_TTL  # access lifetime before re-login
+    #: Extra company domains allowed to log in *besides* the queue mailbox's own
+    #: domain (which is always allowed). For shops whose people sit on a few
+    #: variants of one domain while a single mailbox is the monitored connector.
+    allowed_domains: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def secure_cookies(self) -> bool:
@@ -87,6 +93,7 @@ def email_verify_from_env() -> EmailVerifyConfig | None:
         public_url=_env("CONSOLE_ROOM_PUBLIC_URL"),
         token_ttl=ttl,
         session_ttl=session_ttl,
+        allowed_domains=tuple(parse_domains(_env("CONSOLE_ROOM_ALLOWED_DOMAINS"))),
     )
 
 
@@ -101,7 +108,7 @@ def _positive_int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
-# ── domain allowlist (the queue mailbox's domain) ─────────────────────────────
+# ── domain allowlist (the queue mailbox's domain + configured extras) ─────────
 
 
 def email_domain(addr: str) -> str:
@@ -114,12 +121,50 @@ def email_domain(addr: str) -> str:
     return domain if local and domain else ""
 
 
-def domain_allowed(email: str, queue_email: str) -> bool:
-    """True if ``email`` may sign up for a queue whose mailbox is ``queue_email`` —
-    i.e. they share a (non-empty) domain. The allowlist is automatic: the queue's
-    own mailbox domain. Internal-only, so same-domain ≈ same company."""
+def normalize_domain(value: str) -> str:
+    """Normalize an allowlist entry to a bare lowercased domain: trims whitespace,
+    drops a leading ``@`` (so ``"@company1.com"`` and ``"company1.com"`` are the
+    same). ``""`` for an empty / whitespace-only entry."""
+    text = (value or "").strip().lower()
+    return text[1:].strip() if text.startswith("@") else text
+
+
+def parse_domains(raw: str) -> list[str]:
+    """Parse a comma/whitespace-separated allowlist string into normalized domains,
+    order-preserving and deduped. ``"@a.com, b.com  c.com"`` → ``["a.com", "b.com",
+    "c.com"]``. ``[]`` for blank input."""
+    out: list[str] = []
+    for part in re.split(r"[,\s]+", (raw or "").strip()):
+        domain = normalize_domain(part)
+        if domain and domain not in out:
+            out.append(domain)
+    return out
+
+
+def login_domains(queue_email: str, allowed_domains: Iterable[str] = ()) -> list[str]:
+    """The full set of domains allowed to log in: the queue mailbox's own domain
+    (always first, when present) followed by any configured ``allowed_domains``.
+    Normalized and deduped, order-preserving — drives both the check and the
+    human-readable hint/error."""
+    out: list[str] = []
+    for domain in (
+        email_domain(queue_email),
+        *(map(normalize_domain, allowed_domains)),
+    ):
+        if domain and domain not in out:
+            out.append(domain)
+    return out
+
+
+def domain_allowed(
+    email: str, queue_email: str, allowed_domains: Iterable[str] = ()
+) -> bool:
+    """True if ``email`` may sign up for a queue whose mailbox is ``queue_email``.
+    By default the allowlist is just the queue's own mailbox domain (internal-only,
+    so same-domain ≈ same company); ``allowed_domains`` widens it for companies that
+    sit on a few domain variants behind a single monitored mailbox."""
     domain = email_domain(email)
-    return bool(domain) and domain == email_domain(queue_email)
+    return bool(domain) and domain in login_domains(queue_email, allowed_domains)
 
 
 # ── verify token (signed, TTL; single use is DB-enforced via the nonce) ───────

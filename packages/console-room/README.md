@@ -53,6 +53,9 @@ export CONSOLE_ROOM_PUBLIC_URL="https://room.example.com"     # login links poin
 export CONSOLE_ROOM_MAILBOX="helpdesk@corp.com"               # one email = one room
 # export CONSOLE_ROOM_SESSION_TTL=86400   # access lifetime before re-login (s)
 # export CONSOLE_ROOM_VERIFY_TTL=1800     # login-link lifetime (s)
+# Extra login domains besides the mailbox's own (always allowed) — for a company
+# whose people sit on a few domain variants behind one monitored mailbox:
+# export CONSOLE_ROOM_ALLOWED_DOMAINS="company1.com,company1.company2.com"
 
 console-room --host 0.0.0.0 --port 443 \
   --tls-cert /etc/ssl/room.crt --tls-key /etc/ssl/room.key
@@ -90,6 +93,10 @@ session_secret_command = "cat /run/secrets/room_session_secret"
 # session_secret = "…"
 verify_ttl  = 1800     # login-link lifetime (s)
 session_ttl = 86400    # access lifetime before re-login (s) — 24h
+# Extra login domains beyond the mailbox's own (always allowed). A TOML array or a
+# comma/space-separated string; a leading "@" is optional. The mailbox stays the
+# single monitored connector — this only widens who may log in on the portal.
+# allowed_domains = ["company1.com", "company1.company2.com"]
 
 [[teams]]
 name = "Engineering"

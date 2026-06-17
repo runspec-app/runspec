@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .signup import Team, make_team_slug
+from .signup import Team, make_team_slug, parse_domains
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -48,7 +48,8 @@ logger = logging.getLogger("console_room.config")
 DEFAULT_CONFIG_NAME = "console_room.toml"
 
 #: ``[server]`` / ``[auth]`` key → the ``CONSOLE_ROOM_*`` env var it feeds. Only the
-#: scalar settings live here; the session secret and teams are handled separately.
+#: scalar settings live here; the session secret, teams, and the allowed-domains
+#: list (which may be a TOML array) are handled separately.
 _ENV_MAP: dict[tuple[str, str], str] = {
     ("server", "host"): "CONSOLE_ROOM_HOST",
     ("server", "port"): "CONSOLE_ROOM_PORT",
@@ -146,6 +147,27 @@ def apply_config_to_env(config: dict[str, Any]) -> None:
         secret = resolve_session_secret(config)
         if secret:
             os.environ["CONSOLE_ROOM_SESSION_SECRET"] = secret
+    if "CONSOLE_ROOM_ALLOWED_DOMAINS" not in os.environ:
+        domains = config_allowed_domains(config)
+        if domains:
+            os.environ["CONSOLE_ROOM_ALLOWED_DOMAINS"] = ",".join(domains)
+
+
+def config_allowed_domains(config: dict[str, Any]) -> list[str]:
+    """The extra login domains from ``[auth] allowed_domains`` — a TOML array
+    (``["company1.com", "company2.com"]``) or a comma/space-separated string.
+    Normalized (lowercased, leading ``@`` stripped) and deduped; ``[]`` when unset.
+    These widen the login allowlist beyond the queue mailbox's own domain (always
+    allowed) — for a company whose people sit on a few domain variants behind one
+    monitored mailbox."""
+    raw = (config.get("auth") or {}).get("allowed_domains")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return parse_domains(raw)
+    if isinstance(raw, (list, tuple)):
+        return parse_domains(",".join(str(item) for item in raw))
+    return []
 
 
 def config_teams(config: dict[str, Any]) -> list[Team]:

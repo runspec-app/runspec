@@ -198,6 +198,61 @@ def test_login_accepts_and_writes_outbox():
     assert [p.email for p in pending] == ["jane@corp.com"]
 
 
+def _build_with_allowlist():
+    """A room whose single monitored mailbox is ``shared@company2.com`` but whose
+    portal admits a few company domain variants via the allowlist."""
+    allowed = ("company1.company2.com", "company1.com")
+    cfg = EmailVerifyConfig(
+        session_secret=SECRET,
+        public_url="http://room.test",
+        token_ttl=1800,
+        allowed_domains=allowed,
+    )
+    enrollment = EnrollmentStore(":memory:")
+    enrollment.add_team(Team(slug="it-support", name="IT Support"))
+    hub = Hub(
+        FakeStore(),
+        enrollment=enrollment,
+        email_verify=cfg,
+        mailbox="shared@company2.com",
+    )
+    return TestClient(create_app(hub, email_verify=cfg)), hub, enrollment
+
+
+def test_login_accepts_allowlisted_variant_domains():
+    client, _hub, enrollment = _build_with_allowlist()
+    # A user on a variant domain (not the mailbox's own) is admitted.
+    r = client.post(
+        "/login",
+        data={
+            "team": "it-support",
+            "name": "Mae Smith",
+            "email": "my.email@company1.company2.com",
+        },
+    )
+    assert r.status_code == 200 and "Check your email" in r.text
+    pending = enrollment.claim_pending_sends("helpdesk", "probe")
+    assert [p.email for p in pending] == ["my.email@company1.company2.com"]
+
+
+def test_login_form_lists_allowlisted_domains():
+    client, *_ = _build_with_allowlist()
+    body = client.get("/login").text
+    # The hint reflects the mailbox domain plus the allowlisted variants.
+    assert "company2.com, company1.company2.com, or company1.com email" in body
+
+
+def test_login_rejects_domain_outside_allowlist():
+    client, _hub, enrollment = _build_with_allowlist()
+    r = client.post(
+        "/login",
+        data={"team": "it-support", "name": "Eve", "email": "eve@elsewhere.com"},
+    )
+    assert r.status_code == 400
+    assert "company1.com email" in r.text  # error lists the allowed domains
+    assert enrollment.claim_pending_sends("helpdesk", "x") == []
+
+
 # ── /verify: token, single-use, session ───────────────────────────────────────
 
 
