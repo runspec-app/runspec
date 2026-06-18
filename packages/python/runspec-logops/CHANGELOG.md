@@ -1,5 +1,15 @@
 # runspec-logops Changelog
 
+## [0.1.2] — 2026-06-18
+
+### Changed
+- `summarize-log` now reads **structured (JSON-lines) logs** natively — real
+  timestamps from the `ts` field, level from `level`, and a signature from the
+  embedded exception or the `message` (not the JSON shape), with a readable sample.
+- `map-trace` resolves a **bare** exception class / dotted name (e.g.
+  `BackoffError`) to its definition. Requires `runspec-logops-core>=0.3.0`.
+
+
 ## [0.1.1] — 2026-06-18
 
 ### Changed

@@ -91,6 +91,29 @@ def test_definition_fallback_ignores_imports_and_calls(tmp_path) -> None:
     assert res["frames"][0]["file"] == "svc.py"
 
 
+def test_bare_exception_class_resolves(tmp_path) -> None:
+    # A bare exception class from a digest signature (no @, no file:line).
+    (tmp_path / "errors.py").write_text("class BackoffError(Exception):\n    pass\n")
+    res = map_trace_to_sources(str(tmp_path), "BackoffError", context=1)
+    assert res["files_matched"] == 1
+    assert res["frames"][0]["file"] == "errors.py"
+    assert any("class BackoffError" in s for s in res["frames"][0]["snippet"])
+
+
+def test_bare_function_resolves(tmp_path) -> None:
+    (tmp_path / "svc.py").write_text("import os\n\n\ndef do_work():\n    return 1\n")
+    res = map_trace_to_sources(str(tmp_path), "do_work", context=0)
+    assert res["files_matched"] == 1
+    assert res["frames"][0]["file"] == "svc.py"
+
+
+def test_bare_unknown_returns_note(tmp_path) -> None:
+    (tmp_path / "x.py").write_text("y = 1\n")
+    res = map_trace_to_sources(str(tmp_path), "NoSuchThing")
+    assert res["files_matched"] == 0
+    assert "note" in res
+
+
 def test_total_lines_capped(tmp_path) -> None:
     for n in range(4):
         (tmp_path / f"f{n}.py").write_text("\n".join(str(i) for i in range(1, 200)) + "\n")

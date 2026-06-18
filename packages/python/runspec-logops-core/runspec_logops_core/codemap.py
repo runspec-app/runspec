@@ -58,6 +58,7 @@ _JAVA = re.compile(r"at\s+([\w.$]+)\(([^()\s:]+):(\d+)\)")
 _JS = re.compile(r"at\s+(?:([\w.$<>]+)\s+)?\(?((?:/|\./|\w:|[\w.\-]+/)[\w./\-]*\.[a-zA-Z]+):(\d+):\d+\)?")
 _GENERIC = re.compile(r"\b([\w./\-]+\.[a-zA-Z]{1,5}):(\d+)\b")
 _CAPWORD = re.compile(r"^[A-Z]\w+$")
+_IDENT = re.compile(r"^[\w.$]+$")
 
 
 def _def_patterns(symbol: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
@@ -117,6 +118,24 @@ def _frames_from_signature(trace: str) -> list[tuple[str | None, int | None, str
         method = parts[-1] if parts else None
         out.append((cls, None, method))
     return out
+
+
+def _frames_from_bare(trace: str) -> list[tuple[str | None, int | None, str | None]]:
+    """Treat a bare identifier as a symbol/class to locate.
+
+    A summarize-log signature can be just an exception class (``BackoffError``) or a
+    dotted name (``pkg.mod.func``) with no ``@`` and no ``file:line``. Resolve it to
+    where that symbol is *defined* in the checkout."""
+    t = trace.strip()
+    if not t or not _IDENT.match(t) or "@" in t:
+        return []
+    parts = t.split(".")
+    cls = next((p.split("$", 1)[0] for p in reversed(parts) if _CAPWORD.match(p.split("$", 1)[0])), None)
+    symbol = parts[-1].split("$")[-1] if parts else t
+    # A bare ``BackoffError`` is the class itself — search for its definition.
+    if cls and symbol == cls:
+        return [(cls, None, cls)]
+    return [(cls, None, symbol)]
 
 
 def _find_file(repo_root: str, file_hint: str) -> str | None:
@@ -222,7 +241,7 @@ def map_trace_to_sources(
     if not os.path.isdir(repo_root):
         raise SourceNotFoundError(f"repo checkout not found: {repo_root}")
 
-    candidates = _frames_from_trace(trace) or _frames_from_signature(trace)
+    candidates = _frames_from_trace(trace) or _frames_from_signature(trace) or _frames_from_bare(trace)
 
     frames: list[dict] = []
     total_lines = 0

@@ -1,5 +1,23 @@
 # runspec-logops-core Changelog
 
+## [0.3.0] — 2026-06-18
+
+### Changed
+- **`summarize_log` understands structured (JSON-lines) logs** — one JSON object
+  per line, as runspec itself and many apps emit. The timestamp now comes from the
+  record's `ts` field (so `first_ts`/`last_ts` populate and `--since`/`--until`
+  work), the level from `level`, and the **signature** from the embedded exception
+  (`exc`/`traceback`) — pulling the exception class *and* stack frames out of the
+  JSON-escaped traceback (e.g. `BackoffError@_connect_room>_open`, which
+  `map-trace` can then resolve) — or else the `message`, so lines cluster by what
+  they say instead of by the useless JSON *shape* (`{<str>: <str>, …}`). The sample
+  is a readable `ts level logger: message` one-liner rather than raw JSON.
+- **`map_trace_to_sources` resolves a bare identifier.** A signature that is just an
+  exception class (`BackoffError`) or a dotted name (`pkg.mod.func`) — no `@`, no
+  `file:line` — now resolves to where that symbol/class is *defined* in the
+  checkout, instead of matching nothing.
+
+
 ## [0.2.0] — 2026-06-18
 
 ### Changed
