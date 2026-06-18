@@ -71,6 +71,31 @@ def test_noop_when_no_native_control():
     _enable_native_context_menu(SimpleNamespace(native=None), timeout=0.0)
 
 
+def test_finds_core_when_a_node_property_throws():
+    # A real WebView2/pythonnet node can raise System.InvalidCastException from a
+    # property getter (e.g. CoreWebView2 probed before init / off the UI thread).
+    # getattr's default only swallows AttributeError, so such a throw used to abort
+    # the whole BFS and leave the menu off. The walk must skip the bad node and
+    # still reach a good CoreWebView2 elsewhere in the graph.
+    settings = _Settings()
+    core = SimpleNamespace(Settings=settings)
+
+    class _Throwing:
+        @property
+        def CoreWebView2(self):  # noqa: N802 — mimics the .NET property name
+            raise RuntimeError("InvalidCast: not ready")
+
+    # native exposes a throwing sibling plus the real control under web_view.
+    window = SimpleNamespace(
+        native=SimpleNamespace(
+            browser=_Throwing(),
+            web_view=SimpleNamespace(CoreWebView2=core),
+        )
+    )
+    _enable_native_context_menu(window)
+    assert settings.AreDefaultContextMenusEnabled is True
+
+
 def test_noop_when_setting_raises():
     # A control whose Settings access throws must be swallowed, not propagated.
     class _Boom:

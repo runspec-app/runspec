@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.90.1] — 2026-06-18
+
+### Fixed
+- **Native right-click menu + spell-check now actually enable on Windows.** The
+  WebView2 object-graph walk (`_find_core_webview2`) probed each node with
+  `getattr(obj, name, None)`, which only swallows `AttributeError`. Real
+  .NET/pythonnet property getters can *throw* — `CoreWebView2` raises
+  `System.InvalidCastException` when probed before the control is initialised
+  or off its UI thread — so the search aborted on the first throwing node,
+  logged the exception at startup, and left the default context menu (and thus
+  Cut/Copy/Paste + spell-check suggestions) disabled. All probes now go through
+  a `_safe_getattr` helper that treats any failure as "attribute absent", so a
+  throwing node is skipped and the walk still reaches a good `CoreWebView2`.
+
+
 ## [0.90.0] — 2026-06-18
 
 ### Added

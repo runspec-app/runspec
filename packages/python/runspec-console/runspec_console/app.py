@@ -162,6 +162,21 @@ def _suppress_noisy_loggers() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
+def _safe_getattr(obj: Any, name: str) -> Any:
+    """``getattr(obj, name, None)`` that also swallows non-``AttributeError``.
+
+    The objects in the WebView2 graph are .NET/pythonnet proxies whose property
+    getters can *throw* — e.g. ``CoreWebView2`` raises ``System.InvalidCastException``
+    when probed before the control is fully initialised or off its UI thread. Plain
+    ``getattr(obj, name, None)`` only suppresses ``AttributeError``, so such a throw
+    would abort the whole BFS. Treat any failure as "attribute absent" so one bad
+    node can't hide a good ``CoreWebView2`` elsewhere in the graph."""
+    try:
+        return getattr(obj, name, None)
+    except Exception:
+        return None
+
+
 def _find_core_webview2(window: Any) -> tuple[Any, str]:
     """Walk the pywebview window's object graph for the WebView2 ``CoreWebView2``.
 
@@ -169,7 +184,9 @@ def _find_core_webview2(window: Any) -> tuple[Any, str]:
     (``native`` / ``native.web_view`` / ``native.browser.web_view`` / …), so rather
     than guess one path we breadth-first search a curated set of child attributes
     (never arbitrary ``dir()`` members — those could invoke .NET properties with
-    side effects). Returns ``(core, dotted_path)`` or ``(None, "")``."""
+    side effects). Every probe goes through :func:`_safe_getattr` so a property
+    getter that *throws* (a real WebView2 hazard) is skipped, not fatal. Returns
+    ``(core, dotted_path)`` or ``(None, "")``."""
     child_attrs = (
         "native",
         "browser",
@@ -186,11 +203,11 @@ def _find_core_webview2(window: Any) -> tuple[Any, str]:
         if obj is None or id(obj) in seen:
             continue
         seen.add(id(obj))
-        core = getattr(obj, "CoreWebView2", None)
+        core = _safe_getattr(obj, "CoreWebView2")
         if core is not None:
             return core, path
         for attr in child_attrs:
-            child = getattr(obj, attr, None)
+            child = _safe_getattr(obj, attr)
             if child is not None:
                 queue.append((child, f"{path}.{attr}"))
     return None, ""
