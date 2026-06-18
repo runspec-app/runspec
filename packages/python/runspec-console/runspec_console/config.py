@@ -50,6 +50,19 @@ def filters_path() -> Path:
     return app_dir() / "runspec_filters.toml"
 
 
+def memory_path() -> Path:
+    """Machine-local agent memory (`runspec_memory.toml`) — accrued facts the agent
+    writes via the `remember` tool. **Never** synced (not in Config Sync's
+    KNOWN_FILES): it's local knowledge, not shared config."""
+    return app_dir() / "runspec_memory.toml"
+
+
+def skills_path() -> Path:
+    """Curated agent runbooks (`runspec_skills.toml`) — a `[[skill]]` collection.
+    Shareable: rides Config Sync (KNOWN_FILES), merged by `id` like filters."""
+    return app_dir() / "runspec_skills.toml"
+
+
 def credentials_path() -> Path:
     return app_dir() / "runspec_credentials.toml"
 

@@ -113,6 +113,13 @@ _CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file"})
 # runnable it resolves to.
 _READONLY_META = frozenset({"search_runnables", "describe_runnable"})
 
+# Persistent-memory / runbook tools. Backed by local TOML collections (see
+# memory.py) — local and reversible, so the autonomy gate lets them run without a
+# prompt (like the read-only meta-tools), keeping the model spend on actual work.
+_MEMORY_TOOL_NAMES = frozenset(
+    {"remember", "search_memory", "save_skill", "load_skill"}
+)
+
 # Cap on a single runnable's output handed to the model as a tool result. The
 # old 16 KB cap sliced data-heavy runnables (e.g. list-processes / list-containers
 # emitting one compact JSON line) *mid-JSON*, so the model received invalid,
@@ -4077,6 +4084,14 @@ class Bridge:
                 load_credentials(credentials_path()), incoming, "id", preserve
             )
             save_credentials(credentials_path(), merged)
+        elif name == "runspec_skills.toml":
+            from . import memory
+
+            incoming = tomllib.loads(text).get("skill", [])
+            merged = configmerge.merge_collection(
+                memory.load_skills(), incoming, "id", preserve
+            )
+            memory.save_skills(merged)
         elif name == "runspec_triggers.toml":
             self._merge_synced_triggers(tomllib.loads(text), preserve)
         else:
@@ -4346,7 +4361,20 @@ class Bridge:
         def run() -> None:
             try:
                 try:
-                    adapter = self._get_adapter()
+                    # Fold the pinned-memory header into this turn's system prompt via
+                    # the one-off system_override path, so it stays fresh without
+                    # invalidating the cached adapter. Empty header → cached adapter
+                    # (and a byte-identical, prompt-cached system prefix).
+                    from . import memory
+
+                    header = memory.build_header()
+                    adapter = (
+                        self._get_adapter(
+                            system_override=self._base_system() + "\n\n" + header
+                        )
+                        if header
+                        else self._get_adapter()
+                    )
                 except Exception as exc:
                     self._dispatch(
                         "runspec:token", {"id": chat_id, "token": f"⚠ {exc}"}
@@ -4934,7 +4962,7 @@ class Bridge:
         so the model picks valid values."""
         remote = [h["name"] for h in self._hosts if h.get("ssh")]
         if not remote:
-            return []  # nothing to transfer to/from
+            return self._memory_tools()  # no transfer tools, but memory is local
         self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
         filter_names = [f["name"] for f in filters if f.get("name")]
@@ -5065,7 +5093,169 @@ class Bridge:
                 "required": ["path", "dest_host", "dest_dir"],
             },
         }
-        return [download, relay]
+        return [download, relay, *self._memory_tools()]
+
+    def _memory_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the persistent-memory / runbook tools. Always available (the
+        stores are local) — so the agent accrues knowledge even with no remote hosts.
+        `load_skill`'s id is surfaced as an enum (with titles) so the model picks a
+        real runbook; it's omitted when none are saved."""
+        from . import memory
+
+        tools: list[dict[str, Any]] = [
+            {
+                "name": "remember",
+                "description": (
+                    "Save a durable fact about an application for future runs — where "
+                    "a log lives, what a recurring error means, which service to check. "
+                    "Cheap to call; it persists locally and is recalled later via "
+                    "search_memory. Set pin=true for a high-value fact you want folded "
+                    "into every future chat's context (use sparingly)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "fact": {
+                            "type": "string",
+                            "description": "The fact to remember, one sentence.",
+                        },
+                        "app": {
+                            "type": "string",
+                            "description": "Application/system this fact is about (groups related facts). Defaults to 'general'.",
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional keywords to aid later recall.",
+                        },
+                        "pin": {
+                            "type": "boolean",
+                            "description": "Pin into every future chat's context (only the most useful facts).",
+                        },
+                    },
+                    "required": ["fact"],
+                },
+            },
+            {
+                "name": "search_memory",
+                "description": (
+                    "Recall previously remembered facts about an application by keyword "
+                    "before investigating from scratch — saves re-deriving what a past "
+                    "run already learned. Returns the most relevant saved facts."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Keywords to search remembered facts for.",
+                        },
+                        "app": {
+                            "type": "string",
+                            "description": "Optional: restrict to one application's facts.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "save_skill",
+                "description": (
+                    "Save a reusable runbook — a named procedure with the symptom it "
+                    "addresses and the ordered steps (which runnables to call). "
+                    "Shareable across the team via Config Sync."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Short id/slug (blank → derived from title).",
+                        },
+                        "title": {"type": "string", "description": "Human title."},
+                        "symptom": {
+                            "type": "string",
+                            "description": "When to use this runbook.",
+                        },
+                        "steps": {
+                            "type": "string",
+                            "description": "Ordered steps, naming which runnables to call.",
+                        },
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["title", "steps"],
+                },
+            },
+        ]
+        skills = memory.list_skills()
+        if skills:
+            ids = [s["id"] for s in skills]
+            menu = "; ".join(
+                f"'{s['id']}'" + (f" — {s['title']}" if s.get("title") else "")
+                for s in skills
+            )
+            tools.append(
+                {
+                    "name": "load_skill",
+                    "description": (
+                        "Load a saved runbook's full steps by id, to follow an "
+                        f"established procedure for a known symptom. Available: {menu}."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "enum": ids,
+                                "description": "Which runbook to load.",
+                            }
+                        },
+                        "required": ["id"],
+                    },
+                }
+            )
+        return tools
+
+    def _run_memory_tool(self, name: str, ti: dict[str, Any]) -> str:
+        """Execute a memory/runbook tool against the local stores (the gate has
+        already cleared it as autonomous). Returns a short string the model reads."""
+        from . import memory
+
+        if name == "remember":
+            fact = str(ti.get("fact") or "").strip()
+            if not fact:
+                return "Error: 'fact' is required."
+            mid = memory.add_memory(
+                fact,
+                app=str(ti.get("app") or "general"),
+                tags=list(ti.get("tags") or []),
+                pin=bool(ti.get("pin")),
+            )
+            pinned = " (pinned into future context)" if ti.get("pin") else ""
+            return f"Remembered{pinned}. id={mid}"
+        if name == "search_memory":
+            app = str(ti.get("app") or "").strip() or None
+            hits = memory.search_memory(str(ti.get("query") or ""), app=app)
+            if not hits:
+                return "No matching memories."
+            return json.dumps({"memories": hits})
+        if name == "save_skill":
+            sid = memory.save_skill(
+                str(ti.get("id") or ""),
+                title=str(ti.get("title") or ""),
+                symptom=str(ti.get("symptom") or ""),
+                steps=str(ti.get("steps") or ""),
+                tags=list(ti.get("tags") or []),
+            )
+            if not sid:
+                return "Error: a skill needs a title (or an id) and steps."
+            return f"Saved runbook '{sid}'."
+        if name == "load_skill":
+            skill = memory.load_skill(str(ti.get("id") or ""))
+            if not skill:
+                return f"Error: no runbook with id '{ti.get('id')}'."
+            return json.dumps(skill)
+        return f"Error: unknown tool '{name}'"
 
     def _run_custom_tool(self, name: str, ti: dict[str, Any]) -> str:
         """Execute a built-in file-transfer tool synchronously and report the
@@ -5209,6 +5399,8 @@ class Bridge:
             return "confirm"  # side-effecting file move — always prompt
         if tool_name in _READONLY_META:
             return "autonomous"  # search/describe are read-only discovery
+        if tool_name in _MEMORY_TOOL_NAMES:
+            return "autonomous"  # local memory/runbook store — no model-spend gate
         if tool_name == "run_runnable":
             # Resolve the inner runnable so the gate reflects what actually runs —
             # not the generic wrapper. The level + per-arg escalation come from the
@@ -5568,6 +5760,8 @@ class Bridge:
         """Blocking runnable execution — call via asyncio.to_thread from the agentic loop."""
         if tool_name in _CUSTOM_TOOL_NAMES:
             return self._run_custom_tool(tool_name, dict(tool_input or {}))
+        if tool_name in _MEMORY_TOOL_NAMES:
+            return self._run_memory_tool(tool_name, dict(tool_input or {}))
         # Read-only discovery meta-tools (search mode) — no side effects, return JSON.
         if tool_name == "search_runnables":
             return self._run_search_tool(dict(tool_input or {}))

@@ -402,6 +402,7 @@ def test_start_transfer_push_unknown_filter_errors():
 
 class _ToolBridge:
     _custom_agent_tools = Bridge._custom_agent_tools
+    _memory_tools = Bridge._memory_tools
     _run_custom_tool = Bridge._run_custom_tool
     _await_transfer = Bridge._await_transfer
     _emit_transfer_end = Bridge._emit_transfer_end
@@ -441,7 +442,9 @@ def test_custom_tools_schema_lists_hosts_and_filters():
     )
     tools = b._custom_agent_tools()
     names = {t["name"] for t in tools}
-    assert names == {"download_file", "relay_file"}
+    # Transfer tools (gated on a remote host) plus the always-on memory tools.
+    assert {"download_file", "relay_file"} <= names
+    assert {"remember", "search_memory", "save_skill"} <= names
     dl = next(t for t in tools if t["name"] == "download_file")
     props = dl["input_schema"]["properties"]
     # Only the reachable remote host is offered (not "local").
@@ -453,8 +456,12 @@ def test_custom_tools_schema_lists_hosts_and_filters():
 
 
 def test_custom_tools_empty_without_remote_hosts():
+    # With no remote host there are no transfer tools, but the local memory tools
+    # are still offered (they don't need SSH).
     b = _ToolBridge(hosts=[{"name": "local"}], filters=[])
-    assert b._custom_agent_tools() == []
+    names = {t["name"] for t in b._custom_agent_tools()}
+    assert "download_file" not in names and "relay_file" not in names
+    assert {"remember", "search_memory", "save_skill"} <= names
 
 
 def test_custom_tools_are_gated():

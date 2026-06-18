@@ -1,0 +1,111 @@
+[config]
+autonomy-default = "autonomous"
+
+[config.logging]
+# Per-invocation log files: one {runnable}.{utc-ts}.{run_id}.log per run.
+# Multi-writer safe for shared venvs (use `runspec logs` to view/compact/prune).
+store = "per-run"
+
+# ── Log condensing ─────────────────────────────────────────────────────────────
+
+[summarize-log]
+serve       = ["local"]
+description = "Condense a log file into a small digest: cluster repeated errors by signature and return the top-N distinct issues with counts, first/last timestamp and one sample each. The digest size is bounded regardless of how big the log is, so read this instead of the raw log."
+autonomy    = "autonomous"
+output      = "json"
+
+[summarize-log.args.file]
+type        = "path"
+short       = "-f"
+description = "Path to the log file to summarise"
+
+[summarize-log.args.level]
+type        = "choice"
+options     = ["all", "warning", "error", "critical"]
+default     = "all"
+description = "Only include events at or above this severity"
+
+[summarize-log.args.since]
+type        = "str"
+required    = false
+description = "Window start: ISO timestamp, 'now', or '<n> <unit> ago' (e.g. '2 hours ago')"
+
+[summarize-log.args.until]
+type        = "str"
+required    = false
+description = "Window end: ISO timestamp, 'now', or '<n> <unit> ago'"
+
+[summarize-log.args.top]
+type        = "int"
+short       = "-n"
+default     = 10
+description = "Number of distinct signatures to return (most frequent first)"
+
+[summarize-log.args.max-sample-lines]
+type        = "int"
+default     = 20
+description = "Max lines of the sample kept per signature"
+
+# ── Trace → code ────────────────────────────────────────────────────────────────
+
+[map-trace]
+serve       = ["local"]
+description = "Map a stack trace (or a summarize-log signature like 'NullPointerException@com.acme.OrderSvc.price') to the few relevant source snippets in a checkout. Returns only the lines around each frame, never the whole repo."
+autonomy    = "autonomous"
+output      = "json"
+
+[map-trace.args.repo]
+type        = "path"
+short       = "-r"
+description = "Path to the source checkout to search"
+
+[map-trace.args.trace]
+type        = "str"
+short       = "-t"
+description = "The stack trace text, or a signature emitted by summarize-log"
+
+[map-trace.args.context]
+type        = "int"
+default     = 8
+description = "Lines of context to include around each resolved frame"
+
+[map-trace.args.max-files]
+type        = "int"
+default     = 5
+description = "Maximum number of frames/files to resolve"
+
+# ── Bundle for transfer ─────────────────────────────────────────────────────────
+
+[bundle-digest]
+serve       = ["local"]
+description = "Summarise a log and (optionally) map a trace to code, then pack the digest + snippets + manifest into one small zip ready for transfer to the local machine. Writes a file."
+autonomy    = "confirm"
+output      = "json"
+
+[bundle-digest.args.file]
+type        = "path"
+short       = "-f"
+description = "Path to the log file"
+
+[bundle-digest.args.repo]
+type        = "path"
+short       = "-r"
+required    = false
+description = "Path to the source checkout for the optional code map (omit for a digest-only bundle)"
+
+[bundle-digest.args.trace]
+type        = "str"
+required    = false
+description = "Optional trace/signature to map to code; omit for a digest-only bundle"
+
+[bundle-digest.args.destination]
+type        = "path"
+short       = "-d"
+default     = "/tmp"
+description = "Directory to write the zip into"
+
+[bundle-digest.args.top]
+type        = "int"
+short       = "-n"
+default     = 10
+description = "Number of distinct signatures to include in the digest"

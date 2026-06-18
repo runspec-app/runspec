@@ -1,0 +1,132 @@
+name: Logops Release
+
+on:
+  push:
+    tags:
+      - "logops-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. logops-v0.1.0)"
+        required: true
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-logops
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^logops-v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::Release tag '$RELEASE_TAG' is not well-formed — expected logops-v<x.y.z> (e.g. logops-v0.1.0). If you started this run manually, correct the 'tag' input: a hyphen before v, and no spaces."
+            exit 1
+          fi
+
+      - name: Verify tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor ${{ github.sha }} origin/main \
+            || { echo "::error::Tag must point to a commit on main — merge your PR first, then push the tag."; exit 1; }
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          # Install the core dependency from the sibling source in case it is not
+          # yet on PyPI, then the wheel under test.
+          /tmp/smoke/bin/pip install ../runspec-logops-core
+          /tmp/smoke/bin/pip install dist/*.whl
+          printf '2026-06-18T08:00:00Z ERROR ValueError: boom\n' > /tmp/smoke.log
+          /tmp/smoke/bin/summarize-log --file /tmp/smoke.log
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_logops')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          from runspec_logops import summarize_log
+          print('Wheel contents OK')
+          "
+
+      - name: Build sdist
+        run: python -m build --sdist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: packages/python/runspec-logops/dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/runspec-logops
+
+    permissions:
+      id-token: write   # required for OIDC trusted publishing
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotent re-run: if PyPI already has these files (e.g. a prior run
+          # published but the github-release job failed), skip rather than error,
+          # so the release can be completed by re-running the workflow.
+          skip-existing: true
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Extract changelog notes
+        run: |
+          VERSION="${{ inputs.tag || github.ref_name }}"
+          VERSION="${VERSION#logops-v}"
+          ESCAPED="${VERSION//./\\.}"
+          awk "/^## \\[${ESCAPED}\\]/{found=1; next} found && /^## \\[/{exit} found{print}" \
+            packages/python/runspec-logops/CHANGELOG.md > release-notes.md
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --notes-file release-notes.md
+          fi

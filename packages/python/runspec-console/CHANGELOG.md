@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.90.0] — 2026-06-18
+
+### Added
+- **Persistent agent memory + curated runbooks** — the agent now accrues knowledge
+  across runs so repeat application-support queries get cheaper, without bloating the
+  prompt. Four autonomous tools (local + reversible, so no confirm gate):
+  - `remember(fact, app?, tags?, pin?)` / `search_memory(query, app?)` — facts persist
+    in a local `runspec_memory.toml`, keyed by an `app` tag. Recall is stdlib
+    token-overlap (no embedding dependency). **Never synced** — machine-local.
+  - `save_skill` / `load_skill` — reusable runbooks (symptom + ordered steps naming
+    which runnables to call) in `runspec_skills.toml`, a `[[skill]]` collection that
+    **rides Config Sync** (added to `KNOWN_FILES`, merged by `id` like filters) so a
+    team ships vetted procedures from one git tag.
+- Only the **pinned** memory subset is folded into the system prompt (capped, and an
+  empty string when nothing is pinned), injected per turn via the existing
+  `system_override` path so the prompt-cached tool/system prefix never churns.
+- Pairs with the new `runspec-logops` runnables (`summarize-log` / `map-trace` /
+  `bundle-digest`) for cheap, log-driven application-support triage.
+
+
 ## [0.89.0] — 2026-06-17
 
 ### Added
