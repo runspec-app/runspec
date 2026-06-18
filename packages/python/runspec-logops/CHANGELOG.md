@@ -1,5 +1,15 @@
 # runspec-logops Changelog
 
+## [0.1.1] — 2026-06-18
+
+### Changed
+- `map-trace` now resolves a `summarize-log` **signature** much more reliably —
+  Java inner classes, methods in differently-named files, and Python
+  function-only signatures all land on real code via a definition search (requires
+  `runspec-logops-core>=0.2.0`). When nothing resolves, the JSON carries a `note`
+  explaining how to retry.
+
+
 ## [0.1.0] — 2026-06-18
 
 Initial release.

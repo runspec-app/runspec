@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-logops"
-version = "0.1.0"
+version = "0.1.1"
 requires-python = ">=3.10"
 description = "Log-condensing + code-mapping runnables for runspec — cheap application-support triage from a log file"
 dependencies = [
     "runspec>=0.27.0",
-    "runspec-logops-core>=0.1.0",
+    "runspec-logops-core>=0.2.0",
 ]
 
 [project.scripts]

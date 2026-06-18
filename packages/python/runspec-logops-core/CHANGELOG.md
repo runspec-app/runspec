@@ -1,5 +1,22 @@
 # runspec-logops-core Changelog
 
+## [0.2.0] — 2026-06-18
+
+### Changed
+- **`map_trace_to_sources` resolves digest signatures far more reliably.** When a
+  signature's class can't be matched to a same-named file, it now searches the
+  checkout for the **definition** of the symbol (preferring a keyworded
+  `def`/`class`/`function`, ignoring imports and call sites). This fixes the common
+  cases that previously matched nothing:
+  - Java **inner classes** (`Outer$Inner` → resolves in `Outer.java`).
+  - A method whose **file name differs from the class** in the frame.
+  - **Python function-only** signatures (e.g. `ValueError@process_order`) that carry
+    no class at all.
+  `_symbol_line` now lands on the definition line rather than the first reference.
+- When nothing resolves, the result carries a `note` explaining how to retry (pass a
+  raw `file:line` frame, or check `--repo`).
+
+
 ## [0.1.0] — 2026-06-18
 
 Initial release.

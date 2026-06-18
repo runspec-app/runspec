@@ -43,6 +43,52 @@ def test_signature_resolves_by_class_and_symbol(tmp_path) -> None:
     res = map_trace_to_sources(str(tmp_path), "NullPointerException@com.acme.OrderSvc.price", context=1)
     assert res["files_matched"] == 1
     assert res["frames"][0]["symbol"] == "price"
+    # lands on the definition line, not the class header
+    assert any("int price()" in s for s in res["frames"][0]["snippet"])
+
+
+def test_signature_inner_class_resolves_to_outer_file(tmp_path) -> None:
+    # Java inner class `Outer$Inner` lives in Outer.java — the $-suffix is dropped.
+    (tmp_path / "Outer.java").write_text("class Outer {\n  class Inner {\n    void handle() {\n      x();\n    }\n  }\n}\n")
+    res = map_trace_to_sources(str(tmp_path), "NPE@com.acme.Outer$Inner.handle", context=1)
+    assert res["files_matched"] == 1
+    assert res["frames"][0]["file"] == "Outer.java"
+    assert any("void handle()" in s for s in res["frames"][0]["snippet"])
+
+
+def test_signature_method_in_differently_named_file(tmp_path) -> None:
+    # No OrderSvc.java; the method is defined in Pricing.java → content-search fallback.
+    pkg = tmp_path / "src"
+    pkg.mkdir()
+    (pkg / "Pricing.java").write_text("\n".join(["package acme;", "class Pricing {", "  public int computePrice() {", "    return 1;", "  }", "}"]) + "\n")
+    res = map_trace_to_sources(str(tmp_path), "Exc@com.acme.OrderSvc.computePrice", context=1)
+    assert res["files_matched"] == 1
+    assert res["frames"][0]["file"].endswith("Pricing.java")
+    assert any("computePrice" in s for s in res["frames"][0]["snippet"])
+
+
+def test_signature_python_function_only(tmp_path) -> None:
+    # A Python signature has no class — resolve a bare function by its `def`.
+    (tmp_path / "orders.py").write_text("import os\n\n\ndef process_order(o):\n    return o\n")
+    res = map_trace_to_sources(str(tmp_path), "ValueError@process_order", context=1)
+    assert res["files_matched"] == 1
+    assert res["frames"][0]["file"] == "orders.py"
+    assert any("def process_order" in s for s in res["frames"][0]["snippet"])
+
+
+def test_unresolved_signature_returns_note(tmp_path) -> None:
+    (tmp_path / "unrelated.py").write_text("x = 1\n")
+    res = map_trace_to_sources(str(tmp_path), "Boom@com.acme.Nope.missing")
+    assert res["files_matched"] == 0
+    assert "note" in res
+
+
+def test_definition_fallback_ignores_imports_and_calls(tmp_path) -> None:
+    # An import of the symbol and a call site must not win over the real def.
+    (tmp_path / "caller.py").write_text("from svc import process_order\n\nprocess_order(1)\n")
+    (tmp_path / "svc.py").write_text("def process_order(o):\n    return o\n")
+    res = map_trace_to_sources(str(tmp_path), "ValueError@process_order", context=0)
+    assert res["frames"][0]["file"] == "svc.py"
 
 
 def test_total_lines_capped(tmp_path) -> None:
