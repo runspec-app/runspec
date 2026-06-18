@@ -8,6 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.91.0] — 2026-06-18
+
+### Added
+- **Window UX polish**, all via `create_window` options (no native object access):
+  - **No white startup flash** — the window now paints `#111111` (the dark-theme
+    content colour) before the SPA mounts (`background_color`).
+  - **Accidental-close guard** — a native "are you sure?" prompt on close
+    (`confirm_close`) so an in-progress agent run or chat isn't dropped by a stray
+    Ctrl+W / window-X.
+  - **Select & copy arbitrary text** — page text is now selectable everywhere, not
+    just inputs/outputs (`text_select`).
+  - **Zoom** — Ctrl+scroll / pinch zooms the whole UI (`zoomable`) for readability.
+
+
+## [0.90.3] — 2026-06-18
+
+### Changed
+- **Right-click menu + spell-check now use pywebview's own settings instead of
+  walking the WebView2 control — fixes the intermittent startup hang.** The
+  0.84.0–0.90.2 approach located the live `CoreWebView2` and flipped
+  `AreDefaultContextMenusEnabled` from pywebview's background `started` thread.
+  But those WebView2/WinForms objects are UI-thread-affine: off-thread access
+  *throws* when the control isn't ready (the safe path — it bailed and the window
+  loaded) but *blocks* when the control is mid-initialisation, deadlocking the
+  window at startup. That race is why it was intermittent, and no amount of
+  guarding the walk could fix it. pywebview already sets
+  `CoreWebView2.Settings.AreDefaultContextMenusEnabled = debug` itself, on the UI
+  thread at init, and opens the devtools *window* only when the separate
+  `OPEN_DEVTOOLS_IN_DEBUG` setting is also true. So the console now runs pywebview
+  in debug mode (menu + spellcheck on) while pinning `OPEN_DEVTOOLS_IN_DEBUG` to
+  the user's `--dev`/`--devtools` choice — the menu comes on without the inspector
+  popping open, and there is no background-thread access left that can hang.
+  `PYWEBVIEW_LOG` is pinned to `WARNING` so debug mode doesn't make pywebview log
+  at DEBUG. Removes `_find_core_webview2` / `_safe_getattr` and the object-graph
+  walk entirely.
+
+
 ## [0.90.2] — 2026-06-18
 
 ### Fixed

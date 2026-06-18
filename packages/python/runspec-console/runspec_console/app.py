@@ -24,10 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_debug(dev: bool, devtools_arg: bool) -> bool:
-    """Whether to enable the Chromium inspector.
+    """Whether to auto-open the Chromium devtools window.
 
     `--dev` implies it; `--devtools` or RUNSPEC_CONSOLE_DEVTOOLS=1 opt into it for
-    production (bundled-dist) builds where the inspector is otherwise off.
+    production (bundled-dist) builds where the inspector is otherwise off. Note the
+    WebView2 right-click menu + spellcheck are on regardless (see
+    :func:`_enable_native_context_menu`); this only controls the devtools *window*.
     """
     return dev or devtools_arg or os.environ.get("RUNSPEC_CONSOLE_DEVTOOLS") == "1"
 
@@ -162,117 +164,36 @@ def _suppress_noisy_loggers() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
-def _safe_getattr(obj: Any, name: str) -> Any:
-    """``getattr(obj, name, None)`` that also swallows non-``AttributeError``.
+def _enable_native_context_menu(webview_module: Any, *, open_devtools: bool) -> bool:
+    """Configure pywebview so the WebView2 default right-click menu is available.
 
-    The objects in the WebView2 graph are .NET/pythonnet proxies whose property
-    getters can *throw* — e.g. ``CoreWebView2`` raises ``System.InvalidCastException``
-    when probed before the control is fully initialised or off its UI thread. Plain
-    ``getattr(obj, name, None)`` only suppresses ``AttributeError``, so such a throw
-    would abort the whole BFS. Treat any failure as "attribute absent" so one bad
-    node can't hide a good ``CoreWebView2`` elsewhere in the graph."""
-    try:
-        return getattr(obj, name, None)
-    except Exception:
-        return None
+    That native menu carries Cut/Copy/Paste **and the spell-checker suggestions**
+    for a misspelled word in an editable field (the prompt box). The red squiggles
+    are WebView2's own spellcheck, but the *suggestions* only surface through the
+    default context menu — there is no JS API to reach them.
 
+    pywebview already does the right thing here: its EdgeChromium backend sets
+    ``CoreWebView2.Settings.AreDefaultContextMenusEnabled = debug`` itself, on the
+    UI thread during control init, and opens the *devtools window* only when the
+    **separate** ``OPEN_DEVTOOLS_IN_DEBUG`` setting is also true. So we run
+    pywebview in debug mode (which enables the menu + spellcheck) but pin
+    ``OPEN_DEVTOOLS_IN_DEBUG`` to the user's actual devtools preference — the menu
+    comes on without the inspector popping open.
 
-def _find_core_webview2(
-    window: Any, max_nodes: int = 64, max_depth: int = 8
-) -> tuple[Any, str]:
-    """Walk the pywebview window's object graph for the WebView2 ``CoreWebView2``.
+    This replaces an earlier approach that walked the live WebView2 object graph
+    from pywebview's background ``started`` thread to flip the setting after the
+    fact; touching those UI-thread-affine .NET objects off-thread intermittently
+    deadlocked the window at startup. Using the library's own settings removes the
+    background-thread access entirely, so it cannot hang.
 
-    pywebview's EdgeChromium control sits behind version-dependent attributes
-    (``native`` / ``native.web_view`` / ``native.browser.web_view`` / …), so rather
-    than guess one path we breadth-first search a curated set of child attributes
-    (never arbitrary ``dir()`` members — those could invoke .NET properties with
-    side effects). Every probe goes through :func:`_safe_getattr` so a property
-    getter that *throws* (a real WebView2 hazard) is skipped, not fatal.
-
-    The walk is **hard-bounded** by ``max_nodes`` and ``max_depth``: the WinForms
-    graph has back-references (a control reaches its parent/owner through these
-    attrs), and pythonnet hands back a *fresh proxy wrapper* on every attribute
-    access, so the ``id()``-keyed ``seen`` set cannot dedupe real .NET nodes — an
-    unbounded BFS would loop forever, spinning this background thread on
-    cross-thread property reads and hanging the UI. The bounds make the walk
-    terminate regardless of proxy identity; the real control lives only a few
-    hops deep so they don't cut off a reachable ``CoreWebView2``.
-
-    Returns ``(core, dotted_path)`` or ``(None, "")``."""
-    child_attrs = (
-        "native",
-        "browser",
-        "web_view",
-        "webview",
-        "control",
-        "form",
-        "gui",
-    )
-    queue: list[tuple[Any, str, int]] = [(window, "window", 0)]
-    seen: set[int] = set()
-    examined = 0
-    while queue and examined < max_nodes:
-        obj, path, depth = queue.pop(0)
-        if obj is None or id(obj) in seen:
-            continue
-        seen.add(id(obj))
-        examined += 1
-        core = _safe_getattr(obj, "CoreWebView2")
-        if core is not None:
-            return core, path
-        if depth >= max_depth:
-            continue
-        for attr in child_attrs:
-            child = _safe_getattr(obj, attr)
-            if child is not None:
-                queue.append((child, f"{path}.{attr}", depth + 1))
-    return None, ""
+    Returns the ``debug`` value to pass to :func:`webview.start` (always ``True``)."""
+    webview_module.settings["OPEN_DEVTOOLS_IN_DEBUG"] = open_devtools
+    return True
 
 
-def _enable_native_context_menu(window: Any, timeout: float = 5.0) -> None:
-    """Turn on the WebView2 default right-click menu (Windows / EdgeChromium).
-
-    pywebview disables the WebView2 default context menu unless debug mode is on,
-    which also removes the menu's Cut/Copy/Paste **and the spell-checker
-    suggestions** for a misspelled word in an editable field (the prompt box). The
-    red squiggles are WebView2's spellcheck — but the *suggestions* only surface
-    through that native menu, and there is no JS API to reach them, so re-enabling
-    the default menu is the only way to get right-click copy/paste + spelling fixes.
-
-    Best-effort and fully guarded: the ``CoreWebView2`` initialises asynchronously,
-    so we poll briefly for it, then flip ``AreDefaultContextMenusEnabled``. When it
-    can't be found we print a one-line diagnostic to stderr (the control's type +
-    attributes) so the actual object path can be pinned on a real install — this is
-    Windows-GUI internals that can't be exercised off-Windows. Any failure is
-    otherwise a silent no-op, like :func:`_apply_dwm_title_bar`."""
-    import time
-
-    try:
-        deadline = time.monotonic() + timeout
-        core, path = _find_core_webview2(window)
-        while core is None and time.monotonic() < deadline:
-            time.sleep(0.1)
-            core, path = _find_core_webview2(window)
-        if core is None:
-            native = getattr(window, "native", None)
-            attrs = [a for a in dir(native) if not a.startswith("_")] if native else []
-            print(
-                "runspec-console: WebView2 CoreWebView2 not found — right-click "
-                f"menu/spellcheck stay off. native={type(native).__name__} "
-                f"attrs={attrs[:60]}",
-                file=sys.stderr,
-            )
-            return
-        core.Settings.AreDefaultContextMenusEnabled = True
-        logger.info("WebView2 default context menu enabled (via %s)", path)
-    except Exception:
-        logger.info("could not enable WebView2 context menu", exc_info=True)
-
-
-def _on_started(window: Any, title: str) -> None:
-    """webview ``started`` hook: native title-bar styling + context menu."""
+def _on_started(title: str) -> None:
+    """webview ``started`` hook: native title-bar styling."""
     _apply_dwm_title_bar(title)
-    _enable_native_context_menu(window)
 
 
 def main() -> None:
@@ -286,6 +207,14 @@ def main() -> None:
     debug_enabled: bool = _resolve_debug(dev, bool(args.devtools.value))
 
     import webview
+
+    # Run pywebview in debug mode so the WebView2 default right-click menu +
+    # spell-check suggestions are on (see _enable_native_context_menu), but keep
+    # the devtools window gated on the user's --dev/--devtools choice. Pin
+    # PYWEBVIEW_LOG first so debug mode doesn't crank pywebview's logger to DEBUG.
+    os.environ.setdefault("PYWEBVIEW_LOG", "WARNING")
+    logging.getLogger("pywebview").setLevel(logging.WARNING)
+    webview_debug = _enable_native_context_menu(webview, open_devtools=debug_enabled)
 
     from . import notify
     from .bridge import Bridge
@@ -322,12 +251,22 @@ def main() -> None:
         width=1440,
         height=900,
         min_size=(1024, 600),
+        # Paint the window the dark-theme content colour (App.tsx contentBg) so
+        # there's no white flash before the SPA mounts.
+        background_color="#111111",
+        # Native "are you sure?" guard so an accidental close doesn't drop an
+        # in-progress agent run or chat.
+        confirm_close=True,
+        # Let users select & copy arbitrary page text (not just inputs/outputs).
+        text_select=True,
+        # Ctrl+scroll / pinch to zoom the whole UI (readability / accessibility).
+        zoomable=True,
     )
     bridge.set_window(window)
 
     start_kwargs: dict[str, object] = {
-        "debug": debug_enabled,
-        "func": lambda: _on_started(window, window_title),
+        "debug": webview_debug,
+        "func": lambda: _on_started(window_title),
     }
     icon = _build_icon()
     if icon:
