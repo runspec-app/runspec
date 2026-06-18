@@ -324,6 +324,11 @@ interface PendingConfirm {
   id: string          // chat block this confirm belongs to
   tool_name: string   // full host__tool name, matches the tool segment's entry.name
   tool_input: Record<string, unknown>
+  // Human-readable view of what's being approved. For the search-mode
+  // `run_runnable` wrapper these unwrap to the real runnable + args; for a plain
+  // tool call they equal tool_name/tool_input. Optional for back-compat.
+  display_name?: string
+  display_input?: Record<string, unknown>
   autonomy: string
 }
 
@@ -341,11 +346,12 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
 
   useEffect(() => {
     const onToolConfirm = (e: Event) => {
-      const { id, request_id, tool_name, tool_input, autonomy } = (e as CustomEvent).detail as {
-        id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>; autonomy: string
+      const { id, request_id, tool_name, tool_input, display_name, display_input, autonomy } = (e as CustomEvent).detail as {
+        id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>
+        display_name?: string; display_input?: Record<string, unknown>; autonomy: string
       }
       console.log('[runspec] tool_confirm received', { id, request_id, tool_name, autonomy })
-      setPendingConfirm({ request_id, id, tool_name, tool_input: tool_input ?? {}, autonomy })
+      setPendingConfirm({ request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, autonomy })
     }
     window.addEventListener('runspec:tool_confirm', onToolConfirm)
     return () => window.removeEventListener('runspec:tool_confirm', onToolConfirm)
@@ -452,15 +458,22 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
 function ToolCallBlock({
   entry,
   awaiting,
+  resolved,
   onAnswer,
 }: {
   entry: ToolCallEntry
   // non-null = this call is parked at the autonomy gate; value is the level
   awaiting?: string | null
+  // When parked at the gate, the human-readable view of what's being approved —
+  // for search-mode `run_runnable` this is the unwrapped runnable + its real
+  // args, so the approval panel shows that instead of the generic envelope.
+  resolved?: { name: string; input: Record<string, unknown> } | null
   onAnswer?: (approved: boolean) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const args = Object.entries(entry.input)
+  // Args shown in the approval panel: the resolved runnable's when we have it.
+  const approveArgs = resolved ? Object.entries(resolved.input) : args
 
   return (
     <div style={{
@@ -505,10 +518,12 @@ function ToolCallBlock({
       {awaiting && (
         <div style={{ padding: '10px 12px', background: '#1c1810', borderTop: '1px solid #5a4a1a' }}>
           <div style={{ fontSize: 12, color: '#bbb', marginBottom: 10 }}>
-            The assistant wants to run this. Autonomy is{' '}
+            The assistant wants to run{' '}
+            {resolved && <Text code style={{ fontSize: 11 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text>}
+            {resolved ? ' ' : 'this '}— autonomy is{' '}
             <strong style={{ color: '#e6a23c' }}>{awaiting}</strong>, so it needs your go-ahead.
           </div>
-          {args.length > 0 && (
+          {approveArgs.length > 0 && (
             // The header preview ellipsises; show the full args here, wrapped, so
             // the operator can see exactly what they're approving — a many-arg
             // runnable used to push this (and the buttons) off-screen.
@@ -519,7 +534,7 @@ function ToolCallBlock({
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               maxHeight: 180, overflowY: 'auto',
             }}>
-              {args.map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n')}
+              {approveArgs.map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n')}
             </pre>
           )}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -895,6 +910,11 @@ function BlockCard({
                       awaiting={
                         pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
                           ? pendingConfirm.autonomy
+                          : null
+                      }
+                      resolved={
+                        pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running && pendingConfirm.display_name
+                          ? { name: pendingConfirm.display_name, input: pendingConfirm.display_input ?? {} }
                           : null
                       }
                       onAnswer={onAnswerConfirm}

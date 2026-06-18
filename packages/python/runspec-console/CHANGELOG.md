@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.91.1] — 2026-06-18
+
+### Fixed
+- **Approve/Deny buttons now show for search-mode agent runs.** When the agent
+  calls a runnable via the search-mode `run_runnable` wrapper, the autonomy gate's
+  confirm event carried the *unwrapped* runnable name (e.g. `drain-node`) as
+  `tool_name`, but the running tool-call card is keyed by the *raw* tool name
+  (`run_runnable`). They never matched, so the confirm buttons never rendered and
+  the gate could only time out as a deny. The confirm event now sends the raw
+  `tool_name`/`tool_input` (so the card matches) plus separate
+  `display_name`/`display_input` for the human-readable resolved runnable — which
+  the approval panel now actually shows (the unwrapped view previously never
+  rendered, since the card reads the segment). Introduced with search tool mode
+  (#267); unrelated to the 0.91.0 window changes.
+
+
 ## [0.91.0] — 2026-06-18
 
 ### Added

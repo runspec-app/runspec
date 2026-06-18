@@ -433,8 +433,12 @@ export interface TriggerCard {
 export interface PendingConfirm {
   id: string
   request_id: string
-  tool_name: string
+  tool_name: string                     // raw tool name — matches the tool segment's entry.name
   tool_input: Record<string, unknown>
+  // Human-readable view of what's being approved (unwrapped runnable + args for
+  // the search-mode `run_runnable` wrapper; equal to tool_name/_input otherwise).
+  display_name?: string
+  display_input?: Record<string, unknown>
   autonomy: string
   created_at?: number
 }

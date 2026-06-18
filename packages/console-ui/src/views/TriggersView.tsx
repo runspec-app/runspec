@@ -80,6 +80,10 @@ interface PendingConfirm {
   request_id: string
   tool_name: string
   tool_input: Record<string, unknown>
+  // Human-readable resolved view (unwrapped runnable + args for search-mode
+  // run_runnable); equals tool_name/_input for plain calls. Optional for back-compat.
+  display_name?: string
+  display_input?: Record<string, unknown>
 }
 
 // Render a tool's input for the approve prompt — the draft body for draft_reply,
@@ -261,13 +265,14 @@ export function TriggersView() {
       setStreams(s => ({ ...s, [id]: (s[id] ?? '') + token }))
     }
     const onConfirm = (e: Event) => {
-      const { id, request_id, tool_name, tool_input } = (e as CustomEvent).detail as {
+      const { id, request_id, tool_name, tool_input, display_name, display_input } = (e as CustomEvent).detail as {
         id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>
+        display_name?: string; display_input?: Record<string, unknown>
       }
       // Only trigger-card confirms (chat confirms use chat ids we don't track).
       setCards(prev => {
         if (prev[id]) {
-          setPending(p => ({ ...p, [id]: { request_id, tool_name, tool_input: tool_input ?? {} } }))
+          setPending(p => ({ ...p, [id]: { request_id, tool_name, tool_input: tool_input ?? {}, display_name, display_input } }))
         }
         return prev
       })
@@ -577,7 +582,10 @@ export function TriggersView() {
           const result = card.detail?.result as string | undefined
           const error = card.detail?.error as string | undefined
           const body = result || streams[card.card_id]
-          const preview = p ? describeToolInput(p.tool_name, p.tool_input) : ''
+          // Prefer the human-readable resolved view (unwrapped runnable + args
+          // for search-mode run_runnable); falls back to the raw tool for plain
+          // calls. The draft_reply branch below still keys off the raw tool_name.
+          const preview = p ? describeToolInput(p.display_name ?? p.tool_name, p.display_input ?? p.tool_input) : ''
           const draft = drafts[card.card_id]
           return (
             <div style={{ fontSize: 13, color: textColor(isDark) }}>
@@ -636,7 +644,7 @@ export function TriggersView() {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                     <span style={{ color: COLUMN_COLOR.awaiting_human, fontWeight: 600 }}>
-                      Approve <code>{p.tool_name}</code>?
+                      Approve <code>{p.display_name ?? p.tool_name}</code>?
                     </span>
                     {preview && <CopyButton text={preview} title="Copy" />}
                   </div>

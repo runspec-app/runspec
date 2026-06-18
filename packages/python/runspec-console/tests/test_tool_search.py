@@ -26,6 +26,16 @@ class _Bridge:
         self._runnables_cache = runnables
         self._credentials = credentials or []
         self._mode = mode
+        # confirm-gate dispatch collaborators
+        self._pending_confirms: dict = {}
+        self._pending_confirm_meta: dict = {}
+        self._dispatched: list = []
+
+    def _dispatch(self, event, detail):
+        self._dispatched.append((event, detail))
+
+    def _notify_confirm(self, *a, **k):
+        pass
 
     def get_config(self):
         return {"llm": {"tool_mode": self._mode}, "ssh": {}}
@@ -66,6 +76,7 @@ class _Bridge:
     _run_search_tool = Bridge._run_search_tool
     _run_describe_tool = Bridge._run_describe_tool
     _confirm_card_view = Bridge._confirm_card_view
+    _register_confirm = Bridge._register_confirm
     # dispatch collaborators (no-ops with empty credentials)
     _scoped_credentials = Bridge._scoped_credentials
     _scope_matches = staticmethod(Bridge._scope_matches)
@@ -445,6 +456,42 @@ def test_confirm_card_unwraps_to_real_runnable():
     )
     assert name == "drain-node"
     assert view == {"host": "a", "node": "n1"}
+
+
+def test_run_runnable_confirm_keeps_raw_name_for_segment_match():
+    # The confirm event must carry the *raw* tool_name ("run_runnable") so the UI
+    # can match it to the running tool-call segment (segment.entry.name == tc.name)
+    # and render Approve/Deny. The unwrapped runnable rides along as display_name
+    # for the human-readable card — conflating the two (sending the unwrapped name
+    # as tool_name) is what hid the buttons for search-mode calls.
+    b = _Bridge([_rn("a", "drain-node")])
+    b._register_confirm(
+        "chat1",
+        "run_runnable",
+        {"id": "fleet__drain-node", "host": "a", "args": {"node": "n1"}},
+        "confirm",
+    )
+    event, detail = b._dispatched[0]
+    assert event == "runspec:tool_confirm"
+    assert detail["tool_name"] == "run_runnable"  # matches the segment
+    assert detail["tool_input"] == {
+        "id": "fleet__drain-node",
+        "host": "a",
+        "args": {"node": "n1"},
+    }
+    assert detail["display_name"] == "drain-node"  # human-readable resolved runnable
+    assert detail["display_input"] == {"host": "a", "node": "n1"}
+
+
+def test_plain_tool_confirm_display_equals_raw():
+    # For a non-search call, display_* mirror tool_* (no unwrapping), so the card
+    # is unchanged and matching still works.
+    b = _Bridge([_rn("a", "ping")])
+    b._register_confirm("chat1", "fleet__ping", {"count": 3}, "confirm")
+    _, detail = b._dispatched[0]
+    assert detail["tool_name"] == "fleet__ping"
+    assert detail["display_name"] == "fleet__ping"
+    assert detail["display_input"] == {"count": 3}
 
 
 # ── headline size comparison ──────────────────────────────────────────────────

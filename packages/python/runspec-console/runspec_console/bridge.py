@@ -5449,8 +5449,17 @@ class Bridge:
 
         Returns (request_id, event, holder). The event is set by
         resolve_tool_confirmation() when the UI answers."""
-        # For the search-mode `run_runnable` wrapper, show the operator the *real*
-        # runnable + args it resolves to, not the generic envelope.
+        # The confirm event carries TWO name/input pairs that serve different
+        # roles, and conflating them is a bug:
+        #   * tool_name / tool_input  — the *raw* tool call, kept verbatim so the
+        #     frontend can match this confirm to the running tool-call segment
+        #     (segment.entry.name == tc.name, set by the runspec:tool_start event).
+        #   * display_name / display_input — the human-readable view from
+        #     _confirm_card_view: for the search-mode `run_runnable` wrapper this
+        #     unwraps to the real runnable + args the operator is approving.
+        # Sending the unwrapped name as tool_name (the old behaviour) made it
+        # `run_runnable` != resolved-name, so the segment never matched and the
+        # Approve/Deny buttons never rendered for search-mode calls.
         card_tool, card_input = self._confirm_card_view(tool_name, tool_input)
         request_id = uuid.uuid4().hex
         event = threading.Event()
@@ -5460,8 +5469,10 @@ class Bridge:
             self._pending_confirm_meta[request_id] = {
                 "id": chat_id,
                 "request_id": request_id,
-                "tool_name": card_tool,
-                "tool_input": card_input,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "display_name": card_tool,
+                "display_input": card_input,
                 "autonomy": level,
                 "created_at": time.time(),
             }
@@ -5476,8 +5487,10 @@ class Bridge:
             {
                 "id": chat_id,
                 "request_id": request_id,
-                "tool_name": card_tool,
-                "tool_input": card_input,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "display_name": card_tool,
+                "display_input": card_input,
                 "autonomy": level,
             },
         )
