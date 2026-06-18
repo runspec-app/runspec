@@ -177,7 +177,9 @@ def _safe_getattr(obj: Any, name: str) -> Any:
         return None
 
 
-def _find_core_webview2(window: Any) -> tuple[Any, str]:
+def _find_core_webview2(
+    window: Any, max_nodes: int = 64, max_depth: int = 8
+) -> tuple[Any, str]:
     """Walk the pywebview window's object graph for the WebView2 ``CoreWebView2``.
 
     pywebview's EdgeChromium control sits behind version-dependent attributes
@@ -185,8 +187,18 @@ def _find_core_webview2(window: Any) -> tuple[Any, str]:
     than guess one path we breadth-first search a curated set of child attributes
     (never arbitrary ``dir()`` members — those could invoke .NET properties with
     side effects). Every probe goes through :func:`_safe_getattr` so a property
-    getter that *throws* (a real WebView2 hazard) is skipped, not fatal. Returns
-    ``(core, dotted_path)`` or ``(None, "")``."""
+    getter that *throws* (a real WebView2 hazard) is skipped, not fatal.
+
+    The walk is **hard-bounded** by ``max_nodes`` and ``max_depth``: the WinForms
+    graph has back-references (a control reaches its parent/owner through these
+    attrs), and pythonnet hands back a *fresh proxy wrapper* on every attribute
+    access, so the ``id()``-keyed ``seen`` set cannot dedupe real .NET nodes — an
+    unbounded BFS would loop forever, spinning this background thread on
+    cross-thread property reads and hanging the UI. The bounds make the walk
+    terminate regardless of proxy identity; the real control lives only a few
+    hops deep so they don't cut off a reachable ``CoreWebView2``.
+
+    Returns ``(core, dotted_path)`` or ``(None, "")``."""
     child_attrs = (
         "native",
         "browser",
@@ -196,20 +208,24 @@ def _find_core_webview2(window: Any) -> tuple[Any, str]:
         "form",
         "gui",
     )
-    queue: list[tuple[Any, str]] = [(window, "window")]
+    queue: list[tuple[Any, str, int]] = [(window, "window", 0)]
     seen: set[int] = set()
-    while queue:
-        obj, path = queue.pop(0)
+    examined = 0
+    while queue and examined < max_nodes:
+        obj, path, depth = queue.pop(0)
         if obj is None or id(obj) in seen:
             continue
         seen.add(id(obj))
+        examined += 1
         core = _safe_getattr(obj, "CoreWebView2")
         if core is not None:
             return core, path
+        if depth >= max_depth:
+            continue
         for attr in child_attrs:
             child = _safe_getattr(obj, attr)
             if child is not None:
-                queue.append((child, f"{path}.{attr}"))
+                queue.append((child, f"{path}.{attr}", depth + 1))
     return None, ""
 
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from runspec_console.app import _enable_native_context_menu
+from runspec_console.app import _enable_native_context_menu, _find_core_webview2
 
 
 class _Settings:
@@ -93,6 +93,41 @@ def test_finds_core_when_a_node_property_throws():
         )
     )
     _enable_native_context_menu(window)
+    assert settings.AreDefaultContextMenusEnabled is True
+
+
+def test_walk_terminates_on_cyclic_fresh_proxy_graph():
+    # pythonnet returns a *fresh* proxy on every attribute access, so the id()-keyed
+    # `seen` set can't dedupe real .NET nodes; combined with the WinForms graph's
+    # parent/child back-references this makes the object graph effectively infinite.
+    # The bounded walk must terminate instead of spinning forever (the cause of the
+    # window going "Not Responding" with no logged error). _FreshNode hands back a
+    # brand-new object with the same shape on every `.native` access — an unbounded
+    # BFS would never return.
+    class _FreshNode:
+        @property
+        def native(self):
+            return _FreshNode()
+
+    core, path = _find_core_webview2(_FreshNode())
+    assert core is None and path == ""  # returned, did not hang
+
+
+def test_finds_core_behind_cyclic_node():
+    # Even when a node loops back on itself, a real CoreWebView2 within the depth
+    # budget must still be found.
+    settings = _Settings()
+    core = SimpleNamespace(Settings=settings)
+
+    class _Cyclic:
+        def __init__(self) -> None:
+            self.web_view = SimpleNamespace(CoreWebView2=core)
+
+        @property
+        def native(self):  # self-reference → fresh proxy each access in real life
+            return _Cyclic()
+
+    _enable_native_context_menu(SimpleNamespace(native=_Cyclic()))
     assert settings.AreDefaultContextMenusEnabled is True
 
 

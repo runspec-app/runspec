@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.90.2] — 2026-06-18
+
+### Fixed
+- **Window no longer hangs ("Not Responding") at startup.** A follow-up to the
+  0.90.1 fix. Once `_safe_getattr` stopped a throwing .NET property from aborting
+  the WebView2 object-graph walk, the walk could run forever: the WinForms graph
+  has parent/owner back-references, and pythonnet returns a *fresh proxy wrapper*
+  on every attribute access, so the `id()`-keyed `seen` set never deduped real
+  .NET nodes. The unbounded BFS spun the startup background thread on cross-thread
+  property reads and kept the UI thread from pumping messages — a permanent hang
+  with no logged error. `_find_core_webview2` is now hard-bounded by `max_nodes`
+  and `max_depth`, so it always terminates regardless of proxy identity (the real
+  control sits only a few hops deep, well inside the bounds).
+
+
 ## [0.90.1] — 2026-06-18
 
 ### Fixed
