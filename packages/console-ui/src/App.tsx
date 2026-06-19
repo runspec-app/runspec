@@ -31,13 +31,14 @@ import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
 import { RelayModal } from './views/RelayModal'
 import { CopyKeyModal } from './views/CopyKeyModal'
+import { SkillRunModal } from './views/SkillRunModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
 // so it stays out of the initial bundle.
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type Runnable } from './bridge'
+import { bridge, type HistoryRecord, type Host, type Runnable, type Skill } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'analytics' | 'dev'
@@ -61,6 +62,8 @@ export default function App() {
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
+  const [skills, setSkills] = useState<Skill[]>([])
+  const [pendingSkill, setPendingSkill] = useState<Skill | null>(null)
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
@@ -135,11 +138,17 @@ export default function App() {
     // even if the initial JS→Python call stalled — also clear loading here.
     const onRunnablesUpdated = () =>
       bridge.get_runnables('all').then(r => { setRunnables(r); setRunnablesLoading(false) })
+    // Skills feed the `$` menu + run modal; refresh after the editor saves or a
+    // Config Sync pull lands new ones (gitsync dispatches runspec:skills_changed).
+    const loadSkills = () => bridge.get_skills().then(setSkills).catch(() => {})
+    loadSkills()
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
+    window.addEventListener('runspec:skills_changed', loadSkills)
     return () => {
       window.removeEventListener('runspec:hosts_updated', onHostsUpdated)
       window.removeEventListener('runspec:runnables_updated', onRunnablesUpdated)
+      window.removeEventListener('runspec:skills_changed', loadSkills)
     }
   }, [])
 
@@ -186,6 +195,16 @@ export default function App() {
     setInputHistory(h => [...h, message])
     if (autoSwitch) { setView('console') }
     window.dispatchEvent(new CustomEvent('runspec:send_chat', { detail: { message } }))
+  }
+
+  const handleOpenSkill = (skill: Skill) => setPendingSkill(skill)
+
+  // The run modal collected values; hand off to ConsoleView (it owns the
+  // bridge.run_skill call + the transcript block, mirroring runspec:send_chat).
+  const handleRunSkill = (skillId: string, values: Record<string, unknown>, extra: string) => {
+    setInputHistory(h => [...h, `$${skillId}`])
+    if (autoSwitch) { setView('console') }
+    window.dispatchEvent(new CustomEvent('runspec:run_skill', { detail: { skillId, values, extra } }))
   }
 
   // ConsoleView broadcasts the in-flight chat turn so the command bar's send
@@ -550,8 +569,10 @@ export default function App() {
             }}>
               <CommandInput
                 runnables={scopedRunnables}
+                skills={skills}
                 onRunRunnable={handleRunRunnable}
                 onOpenForm={handleOpenForm}
+                onOpenSkill={handleOpenSkill}
                 onSendChat={handleSendChat}
                 activeChatId={activeChatId}
                 onStopChat={(id) => { bridge.cancel_chat(id).catch(console.error) }}
@@ -576,6 +597,13 @@ export default function App() {
           open={relayOpen}
           onClose={() => setRelayOpen(false)}
           hosts={hosts}
+        />
+
+        <SkillRunModal
+          skill={pendingSkill}
+          hostNames={hosts.map(h => h.name)}
+          onClose={() => setPendingSkill(null)}
+          onRun={handleRunSkill}
         />
 
         <CopyKeyModal

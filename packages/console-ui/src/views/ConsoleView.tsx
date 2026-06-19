@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Popconfirm, Tag, Tooltip, Typography } from 'antd'
+import { Button, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
 import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { bridge, type InFlightRecord, type Runnable } from '../bridge'
 import { OutputPanel, useInvocationBlocks, type RerunData } from '../components/OutputPanel'
@@ -119,6 +119,26 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     }
     window.addEventListener('runspec:send_chat', onChat)
     return () => window.removeEventListener('runspec:send_chat', onChat)
+  }, [])
+
+  // A skill fired from the `$` menu's run modal: the bridge renders the body with
+  // the operator's values + tags the turn with the skill, then runs it like a chat
+  // turn. We show the rendered message as the chat block label.
+  useEffect(() => {
+    const onRunSkill = async (e: Event) => {
+      const { skillId, values, extra } = (e as CustomEvent).detail as {
+        skillId: string; values: Record<string, unknown>; extra: string
+      }
+      const res = await bridge.run_skill(skillId, values, extra)
+      if (res.error || !res.chat_id) {
+        message.error(res.error || 'Could not start skill')
+        return
+      }
+      addBlockRef.current({ id: res.chat_id, type: 'chat', label: res.message || `$${skillId}`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
+      window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
+    }
+    window.addEventListener('runspec:run_skill', onRunSkill)
+    return () => window.removeEventListener('runspec:run_skill', onRunSkill)
   }, [])
 
   // post_to_chat triggers mirror their run into the Console transcript as a

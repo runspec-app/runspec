@@ -1,7 +1,7 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, Tooltip } from 'antd'
 import { SendOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
-import type { Runnable } from '../bridge'
+import type { Runnable, Skill } from '../bridge'
 import { ThemeContext } from '../ThemeContext'
 
 interface SlashItem {
@@ -12,8 +12,10 @@ interface SlashItem {
 
 interface CommandInputProps {
   runnables: Runnable[]
+  skills: Skill[]
   onRunRunnable: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[]) => void
   onOpenForm: (runnable: Runnable, commandPath: string[]) => void
+  onOpenSkill: (skill: Skill) => void
   onSendChat: (message: string) => void
   activeChatId?: string | null   // set while a chat turn is in flight
   onStopChat?: (id: string) => void
@@ -68,13 +70,17 @@ function flattenToSlashItems(runnables: Runnable[]): SlashItem[] {
   return items
 }
 
-export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat, activeChatId, onStopChat, history, autoSwitch, onToggleAutoSwitch }: CommandInputProps) {
+export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onOpenSkill, onSendChat, activeChatId, onStopChat, history, autoSwitch, onToggleAutoSwitch }: CommandInputProps) {
   const isDark = useContext(ThemeContext)
   const [value, setValue] = useState('')
   const [slashItems, setSlashItems] = useState<SlashItem[]>([])
   const [slashOpen, setSlashOpen] = useState(false)
   const [slashFilter, setSlashFilter] = useState('')
   const [slashIndex, setSlashIndex] = useState(0)
+  // `$` opens the skills menu (parallel to `/` for runnables) — mutually exclusive.
+  const [skillsOpen, setSkillsOpen] = useState(false)
+  const [skillsFilter, setSkillsFilter] = useState('')
+  const [skillsIndex, setSkillsIndex] = useState(0)
   const [historyIndex, setHistoryIndex] = useState(-1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -100,6 +106,16 @@ export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat,
       })
     : slashItems
 
+  const filteredSkills = skillsFilter
+    ? skills.filter(s => {
+        const low = skillsFilter.toLowerCase()
+        return (s.id ?? '').toLowerCase().includes(low) ||
+          (s.title ?? '').toLowerCase().includes(low) ||
+          (s.symptom ?? '').toLowerCase().includes(low) ||
+          (s.tags ?? []).some(t => t.toLowerCase().includes(low))
+      })
+    : skills
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const v = e.target.value
     setValue(v)
@@ -109,8 +125,15 @@ export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat,
       setSlashFilter(v.slice(1).split(' ')[0])
       setSlashOpen(true)
       setSlashIndex(0)
+      setSkillsOpen(false)
+    } else if (v.startsWith('$')) {
+      setSkillsFilter(v.slice(1).split(' ')[0])
+      setSkillsOpen(true)
+      setSkillsIndex(0)
+      setSlashOpen(false)
     } else {
       setSlashOpen(false)
+      setSkillsOpen(false)
     }
   }
 
@@ -131,7 +154,17 @@ export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat,
     }
   }
 
+  const selectSkillItem = (skill: Skill) => {
+    setSkillsOpen(false)
+    setValue('')
+    onOpenSkill(skill)
+  }
+
   const submit = () => {
+    if (skillsOpen && filteredSkills[skillsIndex]) {
+      selectSkillItem(filteredSkills[skillsIndex])
+      return
+    }
     const trimmed = value.trim()
     if (!trimmed) return
     if (slashOpen && filteredItems[slashIndex]) {
@@ -158,13 +191,24 @@ export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat,
       }
     }
 
+    if (skillsOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSkillsIndex(i => Math.min(i + 1, filteredSkills.length - 1)); return }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setSkillsIndex(i => Math.max(i - 1, 0)); return }
+      if (e.key === 'Escape')    { setSkillsOpen(false); return }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault()
+        if (filteredSkills[skillsIndex]) selectSkillItem(filteredSkills[skillsIndex])
+        return
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()
       return
     }
 
-    if (!slashOpen) {
+    if (!slashOpen && !skillsOpen) {
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         const next = Math.min(historyIndex + 1, history.length - 1)
@@ -184,6 +228,51 @@ export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat,
 
   return (
     <div style={{ position: 'relative' }}>
+      {/* Skills dropdown ($) */}
+      {skillsOpen && filteredSkills.length > 0 && (
+        <div style={{
+          position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 6,
+          background: '#1e1e1e', border: '1px solid #333', borderRadius: 8,
+          maxHeight: 280, overflowY: 'auto', zIndex: 100,
+          boxShadow: '0 -4px 16px rgba(0,0,0,0.5)',
+        }}>
+          {filteredSkills.map((skill, idx) => (
+            <div
+              key={skill.id}
+              onMouseDown={() => selectSkillItem(skill)}
+              style={{
+                padding: '8px 14px',
+                cursor: 'pointer',
+                background: idx === skillsIndex ? '#2a2a2a' : 'transparent',
+                display: 'flex', alignItems: 'baseline', gap: 10,
+                borderBottom: '1px solid #222',
+              }}
+            >
+              <span style={{ fontSize: 13, minWidth: 180 }}>
+                <span style={{ color: '#bd93f9' }}>${skill.id}</span>
+              </span>
+              {skill.title && (
+                <span style={{ fontSize: 12, color: '#ccc', flexShrink: 0 }}>{skill.title}</span>
+              )}
+              {(skill.args ?? []).length > 0 && (
+                <span style={{ fontSize: 11, color: '#666', flexShrink: 0 }}>
+                  {(skill.args ?? []).map(a => a.name).join(' ')}
+                </span>
+              )}
+              {skill.symptom && (
+                <span style={{
+                  flex: 1, fontSize: 11, color: '#777',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  marginLeft: 10,
+                }}>
+                  {skill.symptom}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Slash dropdown */}
       {slashOpen && filteredItems.length > 0 && (
         <div style={{
@@ -249,7 +338,7 @@ export function CommandInput({ runnables, onRunRunnable, onOpenForm, onSendChat,
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder="Type / for runnables (supports --help and inline args) or ask the LLM..."
+          placeholder="Type / for runnables, $ for skills, or ask the LLM..."
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
             color: '#d4d4d4', fontSize: 14, resize: 'none',

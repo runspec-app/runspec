@@ -122,6 +122,26 @@ class TestEmit:
         s = next(obj for obj in lines if obj["logger"] == "runspec.runsummary")
         assert s["extra"]["trigger"] == ""
 
+    def test_summary_records_skill_provenance(self, tmp_path):
+        # `skill` is the saved runbook that drove the run (set from RUNSPEC_SKILL by
+        # the console's `$` menu), a provenance axis alongside trigger/agent.
+        configure_logging(_cfg(), runnable_name="myscript", skill="fetch-and-process-log")
+        logging.getLogger("test.skill").info("ran")
+        _emit_run_summary()
+        log_path = tmp_path / "logs" / "myscript.log"
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()]
+        s = next(obj for obj in lines if obj["logger"] == "runspec.runsummary")
+        assert s["extra"]["skill"] == "fetch-and-process-log"
+
+    def test_summary_skill_defaults_empty(self, tmp_path):
+        configure_logging(_cfg(), runnable_name="myscript")
+        logging.getLogger("test.skill2").info("ran")
+        _emit_run_summary()
+        log_path = tmp_path / "logs" / "myscript.log"
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()]
+        s = next(obj for obj in lines if obj["logger"] == "runspec.runsummary")
+        assert s["extra"]["skill"] == ""
+
     def test_summary_console_writes_line_to_stderr(self, capsys):
         configure_logging(_cfg(summary_console=True), runnable_name="myscript")
         logging.getLogger("test.stderr").info("ran")

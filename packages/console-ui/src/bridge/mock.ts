@@ -508,9 +508,9 @@ function _aggregateMock(runs: SyntheticRun[], sinceDays: number): AnalyticsData 
     const bkey = [day, r.host, r.group, r.runnable, r.operator, r.initiatedBy, r.autonomy].join('|')
     const b = bucketMap.get(bkey) ?? {
       date: day, host: r.host, group: r.group, runnable: r.runnable, operator: r.operator,
-      initiatedBy: r.initiatedBy, autonomy: r.autonomy,
+      initiatedBy: r.initiatedBy, autonomy: r.autonomy, skill: '',
       total: 0, success: 0, failure: 0, durationMsSum: 0,
-      events: { DEBUG: 0, INFO: 0, WARNING: 0, ERROR: 0, CRITICAL: 0 },
+      events: { DEBUG: 0, INFO: 0, WARNING: 0, ERROR: 0, CRITICAL: 0 } as Record<string, number>,
     }
     b.total++; r.ok ? b.success++ : b.failure++; b.durationMsSum += r.durationMs
     for (const k of Object.keys(b.events)) b.events[k] += r.events[k] ?? 0
@@ -547,7 +547,7 @@ function _aggregateMock(runs: SyntheticRun[], sinceDays: number): AnalyticsData 
     exceptions: [...excMap.values()].sort((a, b) => b.count - a.count).slice(0, 50),
     dimensions: {
       hosts: [...hosts].sort(), groups: [...groups].sort(), runnables: [...runnables].sort(),
-      operators: [...operators].sort(), initiatedBy: ['user', 'llm'],
+      operators: [...operators].sort(), initiatedBy: ['user', 'llm'], skills: [],
     },
     partial: false, errors: [],
   }
@@ -980,6 +980,9 @@ export const mockApi: BridgeApi = {
   },
 
   clear_chat: async () => {},
+  get_skills: async () => [],
+  save_skills: async () => ({ ok: true, count: 0 }),
+  run_skill: async (skillId, _values, _extra) => ({ chat_id: `mock-skill-${skillId}`, message: `$${skillId}` }),
   cancel_chat: async (chatId: string) => {
     if (_activeChat && (!chatId || _activeChat.id === chatId)) {
       _activeChat.cancelled = true

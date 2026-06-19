@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.96.0] — 2026-06-19
+
+### Added
+- **Skills — user-invocable, parameterized, shareable runbooks.** The existing
+  `runspec_skills.toml` runbooks (agent-authored via `save_skill`/`load_skill`) gain
+  a human front door. Type **`$`** in the chat prompt to open a skills menu (parallel
+  to `/` for runnables); picking one opens a **parameter form** and runs the rendered
+  body through the assistant — orchestrating SSH runnables, file relay, and filters
+  the agent already drives. A skill's parameters are a real runspec **`[skill.args]`**
+  table (same grammar as `[runnable.args]`): parsed by the core `loader`/`inference`
+  and validated by the core `validator`/`types` (one type system, no parallel schema),
+  so the run form reuses the Forms-tab `ArgInput` controls. A console-only
+  `ui = "host"` hint renders a fleet-host dropdown; `path` params are plain text (a
+  skill path is usually remote). The body (`steps`) references params as `{{name}}`.
+  Authoring is a new **Settings → Skills** tab (popout modal editor mirroring Jump
+  Hosts, with a parameter list). Skills already ride Config Sync, so a team shares one
+  curated set. New bridge methods `get_skills` / `save_skills` / `run_skill`;
+  `memory.save_skill` now round-trips the `args` table and adds `render_skill_body`;
+  new `skillargs` module bridges the console to the core arg machinery.
+- **Skill runs are attributed by name in History & Analytics.** A run started from
+  the `$` menu is tagged with its skill end-to-end: the bridge threads the skill id
+  through the run-origin seam, the executor sets `RUNSPEC_SKILL` on both the local and
+  remote run paths, and runspec **0.42.0** records it as `run_summary.extra.skill`
+  (a provenance axis mirroring `RUNSPEC_TRIGGER`). History gains a **Skill** column and
+  Analytics a **skill** filter + dimension, so runs can be grouped and filtered by the
+  skill that drove them. Requires `runspec >= 0.42.0`.
+
+
 ## [0.95.0] — 2026-06-19
 
 ### Changed

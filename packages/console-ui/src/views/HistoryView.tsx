@@ -244,6 +244,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   const groups = [...new Set(records.map(r => r.group))]
   const operators = [...new Set(records.map(r => r.operator))]
   const runAsUsers = [...new Set(records.map(r => r.runAs))]
+  const skills = [...new Set(records.map(r => r.skill).filter((s): s is string => !!s))]
 
   const columns: ColumnType<HistoryRecord>[] = [
     {
@@ -287,6 +288,15 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       onFilter: (value, record) => record.group === value,
       filteredValue: [],
     },
+    ...(skills.length > 0 ? [{
+      title: 'Skill',
+      key: 'skill',
+      render: (_: unknown, r: HistoryRecord) => r.skill
+        ? <Tag color="purple" style={{ fontFamily: 'monospace' }}>${r.skill}</Tag>
+        : <span style={{ color: '#999' }}>—</span>,
+      filters: skills.map(s => ({ text: `$${s}`, value: s })),
+      onFilter: (value, record) => record.skill === value,
+    } as ColumnType<HistoryRecord>] : []),
     {
       title: 'Host',
       dataIndex: 'host',

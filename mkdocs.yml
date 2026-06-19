@@ -40,12 +40,11 @@ nav:
 
 # Files kept in the repo but NOT built into the published (public) site.
 # The published surface is usage docs only — internal design notes, the
-# maintainer release process, the deprecated runspec-chat docs, the operator
-# capacity note, and the rationale-heavy changelog stay private.
+# maintainer release process, the operator capacity note, and the
+# rationale-heavy changelog stay private.
 exclude_docs: |
   design/
   releasing.md
-  runspec-chat.md
   console-ssh-capacity.md
   changelog.md
 

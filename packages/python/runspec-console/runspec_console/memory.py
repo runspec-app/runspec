@@ -225,7 +225,7 @@ def list_skills() -> list[dict[str, Any]]:
 
 
 def load_skill(skill_id: str) -> dict[str, Any] | None:
-    """One full skill (title/symptom/steps/tags) by id, or None."""
+    """One full skill (title/symptom/steps/tags/args) by id, or None."""
     return next((s for s in load_skills() if s.get("id") == skill_id), None)
 
 
@@ -236,13 +236,18 @@ def save_skill(
     symptom: str = "",
     steps: str = "",
     tags: list[str] | tuple[str, ...] = (),
+    args: dict[str, Any] | None = None,
 ) -> str:
     """Create or replace a runbook by id (slugified from title when blank). Returns
-    the id. Steps are free text (an ordered list of which runnables to call)."""
+    the id. ``steps`` is the body/prompt template (free text naming which runnables
+    to call, with ``{{name}}`` placeholders that map to ``args``). ``args`` is an
+    optional ``[skill.args]`` table using the exact runspec arg grammar — see
+    ``skillargs.py`` for how it is parsed/validated/rendered (the same core machinery
+    runnable forms use)."""
     skill_id = (skill_id or "").strip() or _slug(title)
     if not skill_id:
         return ""
-    entry = {
+    entry: dict[str, Any] = {
         "id": skill_id,
         "title": (title or "").strip(),
         "symptom": (symptom or "").strip(),
@@ -250,12 +255,39 @@ def save_skill(
         "tags": [str(t).strip() for t in tags if str(t).strip()],
         "updated": _now(),
     }
+    # Only persist a non-empty args table — keeps param-less skills clean and the
+    # TOML free of empty `[skill.args]` tables.
+    if args:
+        entry["args"] = dict(args)
     with _LOCK:
         rows = _load(skills_path(), "skill")
         rows = [s for s in rows if s.get("id") != skill_id]
         rows.append(entry)
         _save(skills_path(), "skill", rows)
     return skill_id
+
+
+# ── body rendering ──────────────────────────────────────────────────────────────
+
+_PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}")
+
+
+def render_skill_body(steps: str, values: dict[str, Any]) -> str:
+    """Substitute ``{{name}}`` placeholders in a skill body with ``values`` (the
+    operator's form input). Unknown placeholders are left intact so the agent can see
+    an unfilled slot rather than a silent blank. Mirrors the ``{{arg}}`` convention of
+    ``fs_transfer.render_pipeline`` (no shell-quoting here — this is prompt text)."""
+
+    def _sub(m: re.Match[str]) -> str:
+        name = m.group(1)
+        if name not in values:
+            return m.group(0)
+        v = values[name]
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        return "" if v is None else str(v)
+
+    return _PLACEHOLDER.sub(_sub, steps or "")
 
 
 def _slug(text: str) -> str:

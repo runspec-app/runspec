@@ -92,6 +92,50 @@ def test_skill_replace_by_id(mem):
     assert len(skills) == 1 and skills[0]["title"] == "v2"
 
 
+def test_skill_args_roundtrip(mem):
+    """A skill's [skill.args] table survives save → load verbatim."""
+    args = {
+        "app": {"type": "str", "required": True},
+        "filter": {"options": ["a", "b"], "default": "a"},
+    }
+    sid = mem.save_skill(
+        "fetch-log", title="Fetch log", steps="grab {{app}} via {{filter}}", args=args
+    )
+    full = mem.load_skill(sid)
+    assert full["args"] == args
+
+
+def test_skill_without_args_has_no_args_key(mem):
+    """Param-less skills stay clean — no empty `args` table is written."""
+    sid = mem.save_skill("plain", title="Plain", steps="do a thing")
+    assert "args" not in mem.load_skill(sid)
+
+
+def test_render_skill_body(mem):
+    body = "get {{app}} on {{host}} x{{count}} on={{flag}} miss={{nope}}"
+    out = mem.render_skill_body(
+        body, {"app": "web", "host": "h1", "count": 5, "flag": True}
+    )
+    # Known placeholders substituted (bool → true/false, int → str); unknown left intact.
+    assert out == "get web on h1 x5 on=true miss={{nope}}"
+
+
+def test_skill_args_survive_config_sync_merge(mem):
+    """Skills merge by id through configmerge — the nested args table travels with
+    the entry (adding from the repo, keeping the operator's own skills)."""
+    from runspec_console import configmerge
+
+    local = [{"id": "mine", "title": "Mine", "steps": "x"}]
+    incoming = [
+        {"id": "team", "title": "Team", "steps": "y", "args": {"app": {"type": "str"}}}
+    ]
+    merged = {
+        e["id"]: e for e in configmerge.merge_collection(local, incoming, "id", [])
+    }
+    assert set(merged) == {"mine", "team"}
+    assert merged["team"]["args"] == {"app": {"type": "str"}}
+
+
 def test_search_no_match_returns_empty(mem):
     mem.add_memory("totally unrelated", app="x")
     assert mem.search_memory("zzz qqq") == []
@@ -136,3 +180,57 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     assert "load_skill" in {t["name"] for t in b._memory_tools()}
     out = b._run_memory_tool("search_memory", {"query": "log"})
     assert "/var/log/app.log" in out
+
+
+def test_bridge_get_save_skills_roundtrip(tmp_path, monkeypatch):
+    """save_skills persists the collection (validating args); get_skills returns each
+    skill with its args parsed to the ArgDef shape the UI consumes."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    from runspec_console.bridge import Bridge
+
+    class _Stub:
+        get_skills = Bridge.get_skills
+        save_skills = Bridge.save_skills
+
+    b = _Stub()
+    res = b.save_skills(
+        [
+            {
+                "id": "fetch-log",
+                "title": "Fetch log",
+                "symptom": "pull a log",
+                "steps": "grab {{app}}",
+                "tags": ["logs"],
+                "argsRaw": {"app": {"type": "str", "required": True}},
+            }
+        ]
+    )
+    assert res["ok"] and res["count"] == 1
+
+    skills = b.get_skills()
+    assert len(skills) == 1
+    s = skills[0]
+    assert s["id"] == "fetch-log" and s["argsRaw"]["app"]["required"] is True
+    # args is the parsed ArgDef[] (same shape the Forms tab renders).
+    assert s["args"] == [{"name": "app", "type": "str", "required": True}]
+
+
+def test_bridge_save_skills_rejects_bad_args(tmp_path, monkeypatch):
+    """A malformed args table (choice without options) is rejected before it lands."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    from runspec_console.bridge import Bridge
+
+    class _Stub:
+        save_skills = Bridge.save_skills
+
+    res = _Stub().save_skills(
+        [
+            {
+                "id": "bad",
+                "title": "Bad",
+                "steps": "x",
+                "argsRaw": {"k": {"type": "choice"}},
+            }
+        ]
+    )
+    assert res["ok"] is False and "bad" in res["error"]

@@ -33,7 +33,7 @@ interface ArgInputProps {
   onChange: (v: unknown) => void
 }
 
-function ArgInput({ arg, host, runnable, runAs, group, value, error, onChange }: ArgInputProps) {
+export function ArgInput({ arg, host, runnable, runAs, group, value, error, onChange }: ArgInputProps) {
   const isDark = useIsDark()
   // `hint` (if declared) is the form placeholder; otherwise fall back to a
   // visible $VAR_REF default so the operator sees where the value comes from.

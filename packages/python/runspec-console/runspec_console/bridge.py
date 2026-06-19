@@ -4073,6 +4073,9 @@ class Bridge:
             self.restart_triggers()
         except Exception:
             logger.debug("restart_triggers after sync_pull failed", exc_info=True)
+        # Nudge the UI to re-read the merged skills (refreshes the `$` menu).
+        if "runspec_skills.toml" in written:
+            self._dispatch("runspec:skills_changed", {})
 
         return {
             "ok": True,
@@ -4403,6 +4406,14 @@ class Bridge:
     # ── chat ──────────────────────────────────────────────────────────────────
 
     def send_chat(self, message: str, invocation_id: str | None = None) -> str:
+        return self._spawn_chat_turn(message)
+
+    def _spawn_chat_turn(self, message: str, skill: str = "") -> str:
+        """Start an agentic chat turn on a worker thread; return its chat id.
+
+        ``skill`` (non-empty only on the run_skill path) tags the turn's run
+        provenance so every runnable the agent invokes during it is attributed to
+        the skill in History/Analytics — direct chat leaves it unset (no origin)."""
         chat_id = uuid.uuid4().hex[:12]
         with self._lock:
             self._chat_cancels[chat_id] = threading.Event()
@@ -4446,7 +4457,13 @@ class Bridge:
                         {"id": chat_id, "exit_code": 1, "duration_ms": 0},
                     )
                     return
-                asyncio.run(self._agentic_chat_turn(chat_id, message, adapter))
+                if skill:
+                    self._set_run_origin(chat_id, trigger="", agent=True, skill=skill)
+                try:
+                    asyncio.run(self._agentic_chat_turn(chat_id, message, adapter))
+                finally:
+                    if skill:
+                        self._clear_run_origin(chat_id)
             finally:
                 with self._lock:
                     self._chat_cancels.pop(chat_id, None)
@@ -4454,6 +4471,104 @@ class Bridge:
         t = threading.Thread(target=run, daemon=True)
         t.start()
         return chat_id
+
+    # ── skills (user-invocable, parameterized runbooks) ───────────────────────
+
+    def get_skills(self) -> list[dict[str, Any]]:
+        """All skills with their ``[skill.args]`` table parsed to the same ``ArgDef``
+        shape runnable forms use — feeds the `$` skills menu, the run modal, and the
+        Settings editor. ``argsRaw`` is the stored table for faithful editor round-trip."""
+        from . import memory, skillargs
+
+        out: list[dict[str, Any]] = []
+        for s in memory.load_skills():
+            if not s.get("id"):
+                continue
+            raw = s.get("args") if isinstance(s.get("args"), dict) else {}
+            entry: dict[str, Any] = {
+                "id": s.get("id"),
+                "title": s.get("title", ""),
+                "symptom": s.get("symptom", ""),
+                "steps": s.get("steps", ""),
+                "tags": list(s.get("tags", []) or []),
+                "updated": s.get("updated", ""),
+                "argsRaw": raw,
+            }
+            try:
+                entry["args"] = skillargs.parse_skill_args(raw)
+            except Exception as exc:
+                # Malformed args table — surface it, don't break the whole list.
+                entry["args"] = []
+                entry["argsError"] = str(exc)
+            out.append(entry)
+        return out
+
+    def save_skills(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """Persist the whole skills collection from the Settings editor (mirrors
+        save_jump_hosts). Validates each skill's args table up front so a bad one is
+        rejected before it lands in the synced file."""
+        from . import memory, skillargs
+
+        normalised: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for r in rows or []:
+            sid = str(r.get("id") or "").strip() or memory._slug(
+                str(r.get("title") or "")
+            )
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            raw = r.get("argsRaw")
+            if not isinstance(raw, dict):
+                raw = r.get("args") if isinstance(r.get("args"), dict) else None
+            if raw:
+                try:
+                    skillargs.parse_skill_args(raw)
+                except Exception as exc:
+                    return {"ok": False, "error": f"Skill '{sid}': {exc}"}
+            entry: dict[str, Any] = {
+                "id": sid,
+                "title": str(r.get("title") or "").strip(),
+                "symptom": str(r.get("symptom") or "").strip(),
+                "steps": str(r.get("steps") or "").strip(),
+                "tags": [
+                    str(t).strip() for t in (r.get("tags") or []) if str(t).strip()
+                ],
+                "updated": memory._now(),
+            }
+            if raw:
+                entry["args"] = dict(raw)
+            normalised.append(entry)
+        memory.save_skills(normalised)
+        return {"ok": True, "count": len(normalised)}
+
+    def run_skill(
+        self,
+        skill_id: str,
+        values: dict[str, Any] | None = None,
+        extra_instructions: str = "",
+    ) -> dict[str, Any]:
+        """Render a skill's body with the operator's form ``values`` (validated against
+        its args), append any free-text ``extra_instructions``, and start a chat turn
+        tagged with the skill. Returns ``{chat_id, message}`` — the rendered text the UI
+        shows as the chat block — or ``{error}`` if the skill is unknown / values invalid."""
+        from . import memory, skillargs
+
+        skill = memory.load_skill(str(skill_id or ""))
+        if not skill:
+            return {"error": f"No skill with id '{skill_id}'."}
+        vals = dict(values or {})
+        raw = skill.get("args") if isinstance(skill.get("args"), dict) else {}
+        errors = skillargs.validate_skill_values(raw, vals)
+        if errors:
+            return {"error": "\n".join(errors)}
+        body = memory.render_skill_body(str(skill.get("steps") or ""), vals)
+        extra = str(extra_instructions or "").strip()
+        message = f"{body}\n\n{extra}".strip() if extra else body.strip()
+        if not message:
+            return {"error": "This skill has an empty body."}
+        chat_id = self._spawn_chat_turn(message, skill=str(skill.get("id") or ""))
+        return {"chat_id": chat_id, "message": message}
 
     def cancel_chat(self, chat_id: str) -> None:
         """Signal an in-flight chat turn to stop. Best-effort: it halts at the
@@ -5792,14 +5907,21 @@ class Bridge:
                 )
         return self._run_tool_sync(tool_name, tool_input, chat_id)
 
-    def _set_run_origin(self, chat_id: str, trigger: str, agent: bool) -> None:
+    def _set_run_origin(
+        self, chat_id: str, trigger: str, agent: bool, skill: str = ""
+    ) -> None:
         """Register a turn's run provenance so _run_tool_sync can tag its runnable
-        runs (the trigger source + whether it's an LLM/agent turn). Keyed by the
-        card/chat id; cleared with _clear_run_origin in the handler's finally."""
+        runs (the trigger source, whether it's an LLM/agent turn, and the skill that
+        drove it when invoked via run_skill). Keyed by the card/chat id; cleared with
+        _clear_run_origin in the handler's finally."""
         if not chat_id:
             return
         with self._lock:
-            self._run_origin[chat_id] = {"trigger": trigger, "agent": agent}
+            self._run_origin[chat_id] = {
+                "trigger": trigger,
+                "agent": agent,
+                "skill": skill,
+            }
 
     def _clear_run_origin(self, chat_id: str) -> None:
         with self._lock:
@@ -5943,6 +6065,9 @@ class Bridge:
             origin = getattr(self, "_run_origin", {}).get(chat_id, {})
         run_agent = bool(origin.get("agent", True))
         run_trigger = str(origin.get("trigger", ""))
+        # The saved skill that drove this turn (set by run_skill) → tags each
+        # runnable's run_summary as extra.skill for History/Analytics attribution.
+        run_skill = str(origin.get("skill", ""))
         ssh = entry.get("ssh")
         if ssh:
             run_remote(
@@ -5963,6 +6088,7 @@ class Bridge:
                 positionals=self._positionals_for(cached_r, command_path),
                 secrets=secrets,
                 trigger=run_trigger,
+                skill=run_skill,
             )
         else:
             run_local(
@@ -5980,6 +6106,7 @@ class Bridge:
                 positionals=self._positionals_for(cached_r, command_path),
                 secrets=secrets,
                 trigger=run_trigger,
+                skill=run_skill,
             )
 
         output = "\n".join(output_lines)
@@ -8881,6 +9008,7 @@ def _summary_extra(extra: dict[str, Any]) -> dict[str, Any]:
         "autonomy": extra.get("autonomy"),
         "agent": bool(extra.get("agent")),
         "trigger": extra.get("trigger", "") or "",
+        "skill": extra.get("skill", "") or "",
         "exception": extra.get("exception"),
         "events": extra.get("events", {}),
         "command_path": extra.get("command_path", []),
@@ -8994,6 +9122,8 @@ def _parse_log_by_run_id(
             # Provenance: the event source that caused the run ("schedule"/…), or
             # "" for an interactive/manual run. Drives the History/Analytics badges.
             "trigger": extra.get("trigger", "") or "",
+            # The saved skill that drove the run ("" otherwise) — History "Skill" column.
+            "skill": extra.get("skill", "") or "",
         }
         exc = g["exc"]
         if exc:
@@ -9038,6 +9168,7 @@ def _parse_log_sequential(
                 "logLines": lines,
                 "initiatedBy": "llm" if extra.get("agent") else "user",
                 "trigger": extra.get("trigger", "") or "",
+                "skill": extra.get("skill", "") or "",
             }
             if include_extra:
                 record["extra"] = _summary_extra(extra)
@@ -9087,6 +9218,7 @@ def _aggregate_analytics(
     groups_seen: set[str] = set()
     runnables_seen: set[str] = set()
     operators_seen: set[str] = set()
+    skills_seen: set[str] = set()
     all_durations: list[float] = []
     total = success = failure = 0
 
@@ -9103,6 +9235,7 @@ def _aggregate_analytics(
         initiated = r.get("initiatedBy", "user")
         extra = r.get("extra", {}) or {}
         autonomy = extra.get("autonomy") or ""
+        skill = r.get("skill", "") or extra.get("skill", "") or ""
 
         total += 1
         success += 1 if ok else 0
@@ -9114,6 +9247,8 @@ def _aggregate_analytics(
         runnables_seen.add(run)
         if operator:
             operators_seen.add(operator)
+        if skill:
+            skills_seen.add(skill)
 
         d = daily.setdefault(
             day, {"total": 0, "success": 0, "failure": 0, "durations": []}
@@ -9123,7 +9258,7 @@ def _aggregate_analytics(
         d["failure"] += 0 if ok else 1
         d["durations"].append(dur)
 
-        bkey = (day, host, group, run, operator, initiated, autonomy)
+        bkey = (day, host, group, run, operator, initiated, autonomy, skill)
         b = buckets.get(bkey)
         if b is None:
             b = {
@@ -9134,6 +9269,7 @@ def _aggregate_analytics(
                 "operator": operator,
                 "initiatedBy": initiated,
                 "autonomy": autonomy,
+                "skill": skill,
                 "total": 0,
                 "success": 0,
                 "failure": 0,
@@ -9232,6 +9368,7 @@ def _aggregate_analytics(
             "runnables": sorted(runnables_seen),
             "operators": sorted(operators_seen),
             "initiatedBy": ["user", "llm"],
+            "skills": sorted(skills_seen),
         },
         "partial": partial,
         "errors": errors or [],

@@ -14,11 +14,13 @@ export function filterBuckets(
   groups: string[],
   operators: string[],
   initiatedBy: InitiatedFilter,
+  skills: string[] = [],
 ): AnalyticsBucket[] {
   return buckets.filter(b =>
     (groups.length === 0 || groups.includes(b.group)) &&
     (operators.length === 0 || operators.includes(b.operator)) &&
-    (initiatedBy === 'all' || b.initiatedBy === initiatedBy)
+    (initiatedBy === 'all' || b.initiatedBy === initiatedBy) &&
+    (skills.length === 0 || skills.includes(b.skill))
   )
 }
 

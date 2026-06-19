@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult } from '../bridge'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 
@@ -2116,6 +2116,233 @@ function ConfigSyncTab() {
   )
 }
 
+// ── Skills ────────────────────────────────────────────────────────────────────
+
+// One editor row for a skill parameter. Stored as a runspec `[skill.args]` entry —
+// `host` is the console-only `ui:"host"` pseudo-type (→ a fleet-host dropdown in the
+// run modal). `password` is intentionally absent: a skill substitutes values into the
+// prompt body, so secrets belong in a Credentials-bound runnable, not a skill param.
+interface SkillArgRow {
+  name?: string
+  type?: string
+  options?: string[]
+  default?: string
+  required?: boolean
+  description?: string
+}
+interface SkillFormValues {
+  id: string
+  title: string
+  symptom?: string
+  tags?: string[]
+  steps: string
+  args?: SkillArgRow[]
+}
+
+const SKILL_ARG_TYPES = ['str', 'int', 'float', 'flag', 'choice', 'path', 'host']
+
+function argsRawToRows(raw: Record<string, unknown> | undefined): SkillArgRow[] {
+  if (!raw) return []
+  return Object.entries(raw).map(([name, defUnknown]) => {
+    const def = (defUnknown ?? {}) as Record<string, unknown>
+    return {
+      name,
+      type: def.ui === 'host' ? 'host' : ((def.type as string) ?? 'str'),
+      options: (def.options as string[]) ?? [],
+      default: def.default !== undefined ? String(def.default) : undefined,
+      required: !!def.required,
+      description: (def.description as string) ?? '',
+    }
+  })
+}
+
+function rowsToArgsRaw(rows: SkillArgRow[] | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const row of rows ?? []) {
+    const name = (row.name ?? '').trim()
+    if (!name) continue
+    const def: Record<string, unknown> = {}
+    if (row.type === 'host') { def.type = 'str'; def.ui = 'host' }
+    else if (row.type === 'choice') { def.type = 'choice'; def.options = row.options ?? [] }
+    else { def.type = row.type ?? 'str' }
+    if (row.required) def.required = true
+    const raw = row.default
+    if (raw !== undefined && `${raw}`.trim() !== '') {
+      if (row.type === 'int') def.default = Number.parseInt(`${raw}`, 10)
+      else if (row.type === 'float') def.default = Number.parseFloat(`${raw}`)
+      else if (row.type === 'flag') def.default = `${raw}`.toLowerCase() === 'true'
+      else def.default = `${raw}`
+    }
+    if (row.description) def.description = row.description
+    out[name] = def
+  }
+  return out
+}
+
+function SkillsTab() {
+  const [skills, setSkills] = useState<Skill[]>([])
+  const [editingKey, setEditingKey] = useState<string | null>(null)  // '' = new
+  const [form] = Form.useForm<SkillFormValues>()
+
+  const load = () => bridge.get_skills().then(setSkills).catch(() => {})
+  useEffect(() => { load() }, [])
+
+  const startAdd = () => { form.resetFields(); form.setFieldsValue({ args: [] }); setEditingKey('') }
+  const startEdit = (s: Skill) => {
+    form.setFieldsValue({
+      id: s.id, title: s.title, symptom: s.symptom, tags: s.tags ?? [],
+      steps: s.steps, args: argsRawToRows(s.argsRaw),
+    })
+    setEditingKey(s.id)
+  }
+  const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  // Persist the whole collection (mirrors save_jump_hosts). Existing skills are sent
+  // by their stored argsRaw table; the edited one is rebuilt from the form rows.
+  const persist = async (rows: Array<Record<string, unknown>>) => {
+    const res = await bridge.save_skills(rows as unknown as Skill[])
+    if (!res.ok) { message.error(res.error || 'Could not save skill'); return false }
+    await load()
+    // Refresh the `$` menu / run modal elsewhere in the app.
+    window.dispatchEvent(new CustomEvent('runspec:skills_changed'))
+    return true
+  }
+
+  const save = async () => {
+    const values = await form.validateFields()
+    const id = (values.id ?? '').trim()
+    const edited: Record<string, unknown> = {
+      id,
+      title: (values.title ?? '').trim(),
+      symptom: (values.symptom ?? '').trim(),
+      steps: (values.steps ?? '').trim(),
+      tags: values.tags ?? [],
+      argsRaw: rowsToArgsRaw(values.args),
+    }
+    const others = skills
+      .filter(s => s.id !== (editingKey || id))
+      .map(s => ({
+        id: s.id, title: s.title, symptom: s.symptom, steps: s.steps,
+        tags: s.tags, argsRaw: s.argsRaw ?? {},
+      }))
+    if (await persist([...others, edited])) { setEditingKey(null); form.resetFields() }
+  }
+
+  const remove = async (id: string) => {
+    const rows = skills
+      .filter(s => s.id !== id)
+      .map(s => ({ id: s.id, title: s.title, symptom: s.symptom, steps: s.steps, tags: s.tags, argsRaw: s.argsRaw ?? {} }))
+    await persist(rows)
+  }
+
+  return (
+    <div>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        Skills are reusable, parameterized runbooks. Invoke one from the chat prompt
+        with <Typography.Text code>$</Typography.Text>: it collects the parameters
+        below in a form, then runs the steps through the assistant (using SSH runnables,
+        file relay, and filters). Parameters use the same fields as a runnable's args, and
+        the body can reference them as <Typography.Text code>{'{{name}}'}</Typography.Text>.
+        Skills sync with the rest of your config (Config Sync), so a team shares one set.
+      </Typography.Paragraph>
+
+      <Button type="dashed" icon={<PlusOutlined />} onClick={startAdd} style={{ marginBottom: 12 }}>
+        New skill
+      </Button>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {skills.length === 0 && <Empty description="No skills yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+        {skills.map(s => (
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
+            <span style={{ minWidth: 200 }}>
+              <Typography.Text code style={{ fontSize: 12 }}>${s.id}</Typography.Text>
+            </span>
+            <span style={{ flex: 1, fontSize: 12, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {s.title}{s.symptom ? ` — ${s.symptom}` : ''}
+            </span>
+            {(s.args ?? []).length > 0 && (
+              <Tag style={{ fontSize: 10, margin: 0 }}>{(s.args ?? []).length} param{(s.args ?? []).length !== 1 ? 's' : ''}</Tag>
+            )}
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
+            <Popconfirm title={`Remove ${s.id}?`} onConfirm={() => remove(s.id)}>
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+
+      <Modal
+        open={editingKey !== null}
+        title={editingKey === '' ? 'New skill' : `Edit — ${editingKey}`}
+        width={680}
+        onCancel={cancel}
+        onOk={save}
+        okText="Save"
+        maskClosable={false}
+      >
+        <Form form={form} layout="vertical" size="small">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+            <Form.Item name="id" label="Id" rules={[{ required: true, message: 'Required' }]}>
+              <Input placeholder="fetch-and-process-log" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+            </Form.Item>
+            <Form.Item name="title" label="Title">
+              <Input placeholder="Fetch & process a prod log" />
+            </Form.Item>
+          </div>
+          <Form.Item name="symptom" label="When to use">
+            <Input placeholder="Pull today's app log through a filter, then process it" />
+          </Form.Item>
+          <Form.Item name="tags" label="Tags">
+            <Select mode="tags" placeholder="logs, relay" tokenSeparators={[',']} />
+          </Form.Item>
+          <Form.Item name="steps" label="Body / steps" rules={[{ required: true, message: 'Required' }]}
+            help="Free text the assistant follows. Reference parameters as {{name}}.">
+            <Input.TextArea rows={6} style={{ fontFamily: 'monospace', fontSize: 12 }}
+              placeholder={'1. Use list-app-folders on {{host}} for {{app}}.\n2. Relay /srv/prod/{{app}}/logs/{{logfile}} via filter {{filter}} to jump-01:/home/me/logs.\n3. Run process-log --file /home/Jason/logs/{{logfile}}.'} />
+          </Form.Item>
+
+          <Divider style={{ margin: '8px 0' }} orientation="left" plain>Parameters</Divider>
+          <Form.List name="args">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map(({ key, name, ...rest }) => (
+                  <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginBottom: 6 }}>
+                    <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0, width: 130 }}
+                      rules={[{ required: true, message: 'name' }]}>
+                      <Input placeholder="name" style={{ fontFamily: 'monospace' }} />
+                    </Form.Item>
+                    <Form.Item {...rest} name={[name, 'type']} style={{ marginBottom: 0, width: 96 }} initialValue="str">
+                      <Select options={SKILL_ARG_TYPES.map(t => ({ label: t, value: t }))} />
+                    </Form.Item>
+                    <Form.Item noStyle shouldUpdate={(p, c) => p.args?.[name]?.type !== c.args?.[name]?.type}>
+                      {() => form.getFieldValue(['args', name, 'type']) === 'choice' ? (
+                        <Form.Item {...rest} name={[name, 'options']} style={{ marginBottom: 0, width: 150 }}>
+                          <Select mode="tags" placeholder="options" tokenSeparators={[',']} />
+                        </Form.Item>
+                      ) : (
+                        <Form.Item {...rest} name={[name, 'default']} style={{ marginBottom: 0, width: 150 }}>
+                          <Input placeholder="default" />
+                        </Form.Item>
+                      )}
+                    </Form.Item>
+                    <Form.Item {...rest} name={[name, 'required']} valuePropName="checked" style={{ marginBottom: 0 }}>
+                      <Tooltip title="Required"><Switch size="small" /></Tooltip>
+                    </Form.Item>
+                    <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                  </div>
+                ))}
+                <Button type="dashed" size="small" onClick={() => add({ type: 'str' })} icon={<PlusOutlined />}>
+                  Add parameter
+                </Button>
+              </>
+            )}
+          </Form.List>
+        </Form>
+      </Modal>
+    </div>
+  )
+}
+
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
@@ -2128,6 +2355,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
           { key: 'llm',       label: 'LLM / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
+          { key: 'skills',    label: 'Skills',     children: <SkillsTab /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },

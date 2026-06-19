@@ -90,6 +90,7 @@ def configure_logging(
     autonomy: str | None = None,
     agent: bool = False,
     trigger: str = "",
+    skill: str = "",
     command_path: list[str] | None = None,
     invocation_args: dict[str, Any] | None = None,
 ) -> None:
@@ -223,6 +224,9 @@ def configure_logging(
             # axis orthogonal to `agent`: a run can be both scheduled and an LLM
             # turn. Set from RUNSPEC_TRIGGER, mirroring RUNSPEC_AGENT → agent.
             "trigger": trigger,
+            # The saved skill that drove this run (RUNSPEC_SKILL), "" otherwise — a
+            # further provenance axis alongside trigger/agent.
+            "skill": skill,
             "command_path": list(command_path or []),
             "exception": None,
             "emitted": False,
@@ -635,6 +639,7 @@ def _emit_run_summary() -> None:
                     "exit_code": exit_code,
                     "agent": state["agent"],
                     "trigger": state["trigger"],
+                    "skill": state.get("skill", ""),
                     "autonomy": state["autonomy"],
                     "exception": state["exception"],
                     "events": dict(state["counter"].counts),

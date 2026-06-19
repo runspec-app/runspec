@@ -232,6 +232,7 @@ def run_local(
     positionals: dict[str, int] | None = None,
     secrets: dict[str, Any] | None = None,
     trigger: str = "",
+    skill: str = "",
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks."""
     bin_dir = Path(runspec_path).parent
@@ -252,9 +253,12 @@ def run_local(
     if sys.platform == "win32" and binary.suffix.lower() in (".cmd", ".bat"):
         cmd = ["cmd", "/c", *cmd]
     secrets_env = secret_env(runnable, secrets)
-    # Provenance of what caused this run (event source id) → recorded in the
-    # runnable's run_summary as extra.trigger. Orthogonal to RUNSPEC_AGENT.
+    # Provenance of what caused this run → recorded in the runnable's run_summary
+    # (extra.trigger = event source, extra.skill = the saved skill that drove it).
+    # Both orthogonal to RUNSPEC_AGENT.
     prov_env = {"RUNSPEC_TRIGGER": trigger} if trigger else {}
+    if skill:
+        prov_env["RUNSPEC_SKILL"] = skill
     extra_env: dict[str, str] = {}
     if run_as:
         # sudo/su strip the environment — carry RUNSPEC_AGENT and any secret env
@@ -453,6 +457,7 @@ def run_remote(
     positionals: dict[str, int] | None = None,
     secrets: dict[str, Any] | None = None,
     trigger: str = "",
+    skill: str = "",
 ) -> None:
     """Execute a remote runnable via paramiko SSH, streaming output via callbacks.
 
@@ -467,10 +472,13 @@ def run_remote(
     remote_bin = f"{bin_dir}/{runnable}"
     argv = args_to_argv(args, positionals)
     base_env = {"RUNSPEC_AGENT": "1"} if agent else {}
-    # Provenance of what caused this run (event source id) → recorded in the
-    # runnable's run_summary as extra.trigger. Orthogonal to RUNSPEC_AGENT.
+    # Provenance of what caused this run → recorded in the runnable's run_summary
+    # (extra.trigger = event source, extra.skill = the saved skill that drove it).
+    # Both orthogonal to RUNSPEC_AGENT.
     if trigger:
         base_env["RUNSPEC_TRIGGER"] = trigger
+    if skill:
+        base_env["RUNSPEC_SKILL"] = skill
     # password-typed args ride the environment, never argv — see secret_env().
     secrets_env = secret_env(runnable, secrets)
     all_env = {**base_env, **secrets_env}

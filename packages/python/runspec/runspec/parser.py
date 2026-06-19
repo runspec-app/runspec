@@ -193,6 +193,10 @@ def _parse_impl(
     # "schedule"); "" for an interactive/manual run. Recorded in run_summary as a
     # separate axis from `agent` (a run can be both scheduled and an LLM turn).
     trigger = os.environ.get("RUNSPEC_TRIGGER", "").strip()
+    # The skill (saved runbook) that drove this run, when started from the console's
+    # `$` skills menu. Recorded in run_summary as `extra.skill` — another provenance
+    # axis alongside `trigger`/`agent`, so History/Analytics can attribute runs to it.
+    skill = os.environ.get("RUNSPEC_SKILL", "").strip()
     if prompt_secrets:
         parsed_values, sources = _prompt_passwords(parsed_values, sources, raw_script["args"], agent)
 
@@ -251,6 +255,7 @@ def _parse_impl(
             autonomy=autonomy,
             agent=agent,
             trigger=trigger,
+            skill=skill,
             command_path=command_path,
             invocation_args=invocation_args,
         )

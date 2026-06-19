@@ -7,6 +7,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.42.0] — 2026-06-19
+
+### Added
+
+- **`RUNSPEC_SKILL` → `run_summary.extra.skill`.** A new provenance axis recorded
+  in the audit record, mirroring `RUNSPEC_TRIGGER` → `extra.trigger`. When set, it
+  names the saved skill (runbook) that drove the run, so a host can attribute its
+  runs to a skill (runspec-console reads it for the History/Analytics "Skill"
+  column). Defaults to `""` (a normal run); orthogonal to `agent`/`trigger`.
+
+
 ## [0.41.0] — 2026-06-19
 
 ### Added

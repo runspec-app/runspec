@@ -40,7 +40,6 @@ publishes. Publishing is always an explicit step.
 | `runspec-console` | `packages/python/runspec-console/pyproject.toml` | `console-v` | `console-release.yml` | PyPI + GitHub Release |
 | `runspec-room` | `packages/console-room/pyproject.toml` | `room-v` | `room-release.yml` | PyPI + GitHub Release |
 | `runspec-node` | `packages/node/package.json` | `node-v` | `node-release.yml` | npm + GitHub Release |
-| `runspec-chat` | `packages/python/runspec-chat/pyproject.toml` | `chat-v` | `chat-release.yml` | PyPI (see caveat) |
 | `registry` | `packages/registry/pyproject.toml` | `registry-v` | `registry-release.yml` | PyPI (archived) |
 
 ## Standard release flow
@@ -75,13 +74,11 @@ means the tag doesn't exist yet and the run fails.
 
 ## Caveats
 
-- **`runspec-chat` and `registry` have no `workflow_dispatch`** — they only trigger
-  on a real tag push. Since auto-tag's `GITHUB_TOKEN` push won't trigger them, a
-  release for these needs the tag pushed manually with a PAT (a token that can
-  re-trigger workflows). In practice both are inactive: `runspec-chat` is superseded
-  by `runspec-console`, and `registry` is archived. Prefer adding a
-  `workflow_dispatch` trigger to the workflow over PAT-pushing tags if either is
-  revived.
+- **`registry` has no `workflow_dispatch`** — it only triggers on a real tag push.
+  Since auto-tag's `GITHUB_TOKEN` push won't trigger it, a release would need the tag
+  pushed manually with a PAT (a token that can re-trigger workflows). In practice it
+  is inactive (archived). Prefer adding a `workflow_dispatch` trigger to the workflow
+  over PAT-pushing tags if it is revived.
 - **The release tag must point at a commit on `main`.** The tag-push path of each
   release workflow enforces this (`git merge-base --is-ancestor`). auto-tag always
   tags the merge commit, so this holds for the standard flow.

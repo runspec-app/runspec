@@ -32,6 +32,21 @@ export interface Runnable {
   rawSpec?: Record<string, unknown>  // full raw spec dict for the holistic Specs view
 }
 
+// A user-invocable, parameterized runbook (the `$` skills menu + Skills settings
+// tab). Its `args` are a real runspec `[skill.args]` table — parsed server-side to
+// the same ArgDef shape a runnable form uses, so the run modal reuses ArgInput.
+export interface Skill {
+  id: string
+  title: string
+  symptom: string          // "when to use" — shown in the menu + editor
+  steps: string            // body / prompt template, with {{name}} placeholders
+  tags: string[]
+  updated?: string
+  args: ArgDef[]           // parsed param defs — the run modal renders these
+  argsRaw?: Record<string, unknown>  // stored [skill.args] table (faithful editor round-trip)
+  argsError?: string       // set when a malformed args table failed to parse
+}
+
 export interface DirEntry {
   name: string
   type: 'directory' | 'file'
@@ -232,6 +247,7 @@ export interface HistoryRecord {
   logLines: HistoryLogLine[]         // log records belonging to this invocation
   initiatedBy?: 'llm' | 'user'      // 'llm' when triggered by the agentic chat loop
   trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive/manual
+  skill?: string                     // saved skill that drove the run (RUNSPEC_SKILL), "" = not a skill run
 }
 
 // A schedule (Schedules tab). When it fires it either emits a matchable event
@@ -311,6 +327,7 @@ export interface AnalyticsBucket {
   operator: string
   initiatedBy: 'user' | 'llm'
   autonomy: string
+  skill: string                     // saved skill that drove the run, "" = not a skill run
   total: number
   success: number
   failure: number
@@ -332,6 +349,7 @@ export interface AnalyticsDimensions {
   runnables: string[]
   operators: string[]
   initiatedBy: string[]
+  skills: string[]
 }
 
 export interface AnalyticsDurationStats {
@@ -680,6 +698,21 @@ export interface BridgeApi {
   send_chat: (message: string, invocationId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>
   clear_chat: () => Promise<void>
+  // ── skills (user-invocable, parameterized runbooks) ─────────────────────────
+  // All skills with their [skill.args] parsed to ArgDef[] — feeds the `$` menu,
+  // the run modal, and the Settings editor.
+  get_skills: () => Promise<Skill[]>
+  // Persist the whole collection from the Settings editor (validates each args
+  // table; rejects with {ok:false,error} if one is malformed).
+  save_skills: (skills: Skill[]) => Promise<{ ok: boolean; count?: number; error?: string }>
+  // Render a skill's body with the operator's form values (validated against its
+  // args) + optional extra instructions, then start a chat turn tagged with the
+  // skill. Returns {chat_id, message} (the rendered text the UI shows) or {error}.
+  run_skill: (
+    skillId: string,
+    values?: Record<string, unknown>,
+    extraInstructions?: string,
+  ) => Promise<{ chat_id?: string; message?: string; error?: string }>
   resolve_tool_confirmation: (requestId: string, approved: boolean) => Promise<void>
   // ── event triggers ─────────────────────────────────────────────────────────
   list_triggers: () => Promise<TriggerListResult>
