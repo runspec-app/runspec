@@ -1,5 +1,5 @@
 site_name: runspec
-site_url: https://JasonFinestone.github.io/runspec
+site_url: https://runspec.app
 # No repo_url/repo_name: the source repo is private, so a header link to it
 # would 404 for public visitors (and expose the owner's username). Re-add once
 # there is a public mirror, if ever.
