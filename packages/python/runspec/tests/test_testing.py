@@ -168,7 +168,7 @@ class TestHarnessApi:
     def test_inline_toml_and_context_manager(self) -> None:
         with ParseHarness(script_name="greet", toml=GREET) as g:
             spec = g.expect_ok(["--name", "Ada", "--times", "3"])
-            assert str(spec.name) == "Ada"
+            assert spec.name.value == "Ada"
             assert spec.times.value == 3
             assert spec.loud.value is False
 
@@ -221,7 +221,7 @@ class TestRunAsIsNotEnforced:
     def test_expect_ok_ignores_run_as(self) -> None:
         with harness("greet", toml=RUN_AS_SPEC) as g:
             spec = g.expect_ok(["--name", "Ada"])
-            assert str(spec.name) == "Ada"
+            assert spec.name.value == "Ada"
 
     def test_smoke_ignores_run_as(self) -> None:
         with harness("greet", toml=RUN_AS_SPEC) as g:
@@ -258,7 +258,7 @@ class TestNoRunAsCheck:
         cfg = self._spec(tmp_path)
         with no_run_as_check():
             spec = runspec.parse("greet", argv=["--name", "Ada"], config_path=cfg)
-        assert str(spec.name) == "Ada"
+        assert spec.name.value == "Ada"
 
     def test_helper_restores_the_original_after_the_block(self) -> None:
         from runspec import parser

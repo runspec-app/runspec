@@ -70,7 +70,7 @@ class TestParseCleanErrors:
 
     def test_valid_args_return_runspec(self, spec_dir):
         result = runspec.parse(script_name="clean", argv=["--name", "hello"])
-        assert result.name == "hello"
+        assert result.name.value == "hello"
 
     def test_runspec_config_env_var_overrides_walk_up(self, tmp_path, monkeypatch):
         """RUNSPEC_CONFIG points parse() at a specific TOML, bypassing find_config."""
@@ -93,7 +93,7 @@ class TestParseCleanErrors:
         monkeypatch.setenv("RUNSPEC_CONFIG", str(spec_dir / "runspec.toml"))
 
         result = runspec.parse(script_name="greet", argv=["--name", "hello"])
-        assert result.name == "hello"
+        assert result.name.value == "hello"
 
     def test_parse_finds_config_next_to_caller_module(self, tmp_path, monkeypatch):
         """Simulates the installed-package case: `clean` is invoked from cwd

@@ -44,7 +44,7 @@ def format_folders(data: dict) -> list[dict]:
 
 def main_outlook_unread() -> None:
     spec = rs.parse("outlook-unread")
-    count = int(spec.count)
+    count = spec.count.value
     run_graph(
         lambda: format_messages(
             graph_get(
@@ -62,8 +62,8 @@ def main_outlook_unread() -> None:
 
 def main_outlook_search() -> None:
     spec = rs.parse("outlook-search")
-    query = str(spec.query)
-    count = int(spec.count)
+    query = str(spec.query.value)
+    count = spec.count.value
     run_graph(
         lambda: format_messages(
             graph_get(

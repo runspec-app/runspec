@@ -52,18 +52,18 @@ def main_raise_request() -> None:
         field_values = parse_field_pairs(spec.field)
         # Convenience: summary/description map to the standard request fields.
         if opt(spec.summary):
-            field_values.setdefault("summary", str(spec.summary))
+            field_values.setdefault("summary", str(spec.summary.value))
         if opt(spec.description):
-            field_values.setdefault("description", str(spec.description))
+            field_values.setdefault("description", str(spec.description.value))
 
         result = create_request(
             config,
-            request_type_id=str(spec.request_type_id),
+            request_type_id=str(spec.request_type_id.value),
             field_values=field_values,
             service_desk_id=opt(spec.service_desk_id),
             raise_on_behalf_of=opt(spec.raise_on_behalf_of),
         )
-        print(json.dumps({"issueKey": result.get("issueKey"), "requestTypeId": str(spec.request_type_id), "created": True}))
+        print(json.dumps({"issueKey": result.get("issueKey"), "requestTypeId": str(spec.request_type_id.value), "created": True}))
     except JsmError as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)
@@ -73,7 +73,7 @@ def main_get_request() -> None:
     spec = rs.parse("jsm-get-request")
     try:
         config = config_from_env(env=opt(spec.env))
-        result = get_request(config, issue_key=str(spec.issue))
+        result = get_request(config, issue_key=str(spec.issue.value))
         print(json.dumps(result))
     except JsmError as e:
         print(json.dumps({"error": str(e)}))

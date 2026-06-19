@@ -79,7 +79,7 @@ def test_agent_does_not_affect_args(spec_dir, monkeypatch):
     monkeypatch.setenv("RUNSPEC_AGENT", "1")
     args = runspec.parse(script_name="greet", argv=["--name", "Jason"])
     assert args.__runspec_agent__ is True
-    assert args.name == "Jason"
+    assert args.name.value == "Jason"
 
 
 def test_agent_field_on_runspec_model():

@@ -8,13 +8,13 @@ from runspec_logops_core.errors import SourceNotFoundError
 
 def main_bundle_digest() -> None:
     spec = rs.parse("bundle-digest")
-    file_path = str(spec.file)
+    file_path = str(spec.file.value)
     # Unset optionals resolve to an Arg wrapping value None; read .value so the
     # absent case is a real None rather than the string "None".
-    repo = str(spec.repo) if spec.repo.value is not None else None
-    trace = str(spec.trace) if spec.trace.value is not None else None
-    destination = str(spec.destination)
-    top = int(spec.top)
+    repo = str(spec.repo.value) if spec.repo.value is not None else None
+    trace = str(spec.trace.value) if spec.trace.value is not None else None
+    destination = str(spec.destination.value)
+    top = spec.top.value
     try:
         digest = summarize_log(file_path, top=top)
         code_map = None

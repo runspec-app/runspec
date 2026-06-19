@@ -42,7 +42,7 @@ def main_list_catalog_items() -> None:
     spec = rs.parse("snow-list-catalog-items")
     try:
         config = config_from_env(env=opt(spec.env))
-        limit = int(spec.limit)
+        limit = spec.limit.value
         items = list_catalog_items(config, query=opt(spec.query), limit=limit)
         print(json.dumps([{"sysId": i.get("sys_id"), "name": i.get("name"), "shortDescription": i.get("short_description", "")} for i in items]))
     except SnowError as e:
@@ -54,7 +54,7 @@ def main_list_variables() -> None:
     spec = rs.parse("snow-list-variables")
     try:
         config = config_from_env(env=opt(spec.env))
-        variables = get_catalog_item_variables(config, item_sys_id=str(spec.item))
+        variables = get_catalog_item_variables(config, item_sys_id=str(spec.item.value))
         print(
             json.dumps(
                 [

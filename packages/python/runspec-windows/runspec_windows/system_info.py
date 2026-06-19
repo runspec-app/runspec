@@ -59,7 +59,7 @@ def _drive_usage(drive: str) -> dict | None:
 def main_disk_usage() -> None:
     spec = rs.parse("disk-usage")
     _platform.ensure_windows()
-    path = str(spec.path) if spec.path is not None else None
+    path = str(spec.path.value) if spec.path.value is not None else None
     try:
         if path:
             row = _drive_usage(path)

@@ -97,8 +97,8 @@ def main_update_state() -> None:
         config = config_from_env(env=opt(spec.env))
         table = resolve_table(config, opt(spec.table))
         field = opt(spec.field) or "state"
-        value = update_state(config, table, identifier=str(spec.record), state=str(spec.state), field=field, work_note=opt(spec.comment))
-        print(json.dumps({"table": table, "record": str(spec.record), "field": field, "value": value, "updated": True}))
+        value = update_state(config, table, identifier=str(spec.record.value), state=str(spec.state.value), field=field, work_note=opt(spec.comment))
+        print(json.dumps({"table": table, "record": str(spec.record.value), "field": field, "value": value, "updated": True}))
     except SnowError as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)

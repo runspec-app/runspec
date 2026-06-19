@@ -51,12 +51,12 @@ def format_messages(data: dict) -> list[dict]:
 
 def main_teams_list_chats() -> None:
     spec = rs.parse("teams-list-chats")
-    count = int(spec.count)
+    count = spec.count.value
     run_graph(lambda: format_chats(graph_get("/me/chats", params={"$top": count, "$expand": "members", "$orderby": "lastMessagePreview/createdDateTime desc"})))
 
 
 def main_teams_read_chat() -> None:
     spec = rs.parse("teams-read-chat")
-    chat_id = str(spec.chat_id)
-    count = int(spec.count)
+    chat_id = str(spec.chat_id.value)
+    count = spec.count.value
     run_graph(lambda: format_messages(graph_get(f"/chats/{chat_id}/messages", params={"$top": count})))

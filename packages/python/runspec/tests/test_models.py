@@ -1,127 +1,101 @@
 """
-Tests for the Arg transparent value access protocol.
+Tests for the explicit-value Arg model and the RunSpec namespace.
 
-Arg wraps a resolved value and should behave like that value in expressions —
-no .value unwrapping required by callers.
+Since 0.38.0 Arg is NOT a transparent proxy: callers read ``.value`` for the
+coerced native value. Arg deliberately does not masquerade as its value —
+arithmetic / indexing / iteration / ``int()`` / ``len()`` / ``os.fspath`` all
+raise, and the two contexts that would otherwise be *silently* wrong without a
+``.value`` (truthiness and equality) raise a guiding TypeError.
 """
 
-import sys
+import os
+from pathlib import Path
 
 import pytest
 
-from runspec.models import Arg
+from runspec.models import Arg, Group, RunSpec
 
 
-def arg(value, *, type="str", name="x"):
+def arg(value, *, type="str", name="x", **kw):
     """Minimal Arg constructor for tests."""
-    return Arg(value=value, name=name, type=type)
+    return Arg(value=value, name=name, type=type, **kw)
 
 
-class TestStringProtocol:
-    def test_str(self):
-        assert str(arg("hello")) == "hello"
+class TestValueAccess:
+    def test_value_is_the_native_value(self):
+        assert arg("hello").value == "hello"
+        assert arg(4, type="int").value == 4
+        assert arg(3.14, type="float").value == 3.14
 
-    def test_repr(self):
-        assert repr(arg("hello")) == "'hello'"
+    def test_unset_optional_value_is_real_none(self):
+        # The whole point: an unset optional is honestly None via .value,
+        # not an Arg wrapping None that fails `is None`.
+        a = arg(None, type="str", name="since")
+        assert a.value is None
 
-    def test_fstring_plain(self):
-        a = arg("world")
-        assert f"Hello, {a}!" == "Hello, world!"
+    def test_metadata_alongside_value(self):
+        a = arg("env", type="choice", name="environment", source="cli")
+        assert a.value == "env"
+        assert a.name == "environment"
+        assert a.type == "choice"
+        assert a.source == "cli"
 
-    def test_fstring_format_spec(self):
-        a = arg(3.14159, type="float")
-        assert f"{a:.2f}" == "3.14"
-
-    def test_fstring_alignment(self):
-        a = arg("hi", type="str")
-        assert f"{a:>10}" == "        hi"
-
-    def test_fstring_int_format(self):
-        a = arg(255, type="int")
-        assert f"{a:#010x}" == "0x000000ff"
-
-
-class TestNumericProtocol:
-    def test_int(self):
-        assert int(arg(4.9, type="float")) == 4
-
-    def test_float(self):
-        assert float(arg(3, type="int")) == 3.0
-
-    def test_index_in_range(self):
-        a = arg(3, type="int")
-        assert list(range(a)) == [0, 1, 2]
-
-    def test_index_in_list_slice(self):
-        a = arg(2, type="int")
-        assert [10, 20, 30, 40][a] == 30
-
-    def test_addition(self):
-        assert arg(3, type="int") + 2 == 5
-
-    def test_radd(self):
-        assert 2 + arg(3, type="int") == 5
-
-    def test_subtraction(self):
-        assert arg(10, type="int") - 3 == 7
-
-    def test_multiplication(self):
-        assert arg(4, type="int") * 3 == 12
-
-    def test_rmul(self):
-        assert 3 * arg(4, type="int") == 12
-
-    def test_truediv(self):
-        assert arg(10, type="float") / 4 == 2.5
-
-    def test_floordiv(self):
-        assert arg(10, type="int") // 3 == 3
-
-    def test_mod(self):
-        assert arg(10, type="int") % 3 == 1
+    def test_repr_shows_it_is_an_arg(self):
+        # repr must not masquerade as the bare value — a stray print should
+        # look wrong, prompting the developer to add .value.
+        assert repr(arg("hello", name="greeting")) == "Arg(name='greeting', value='hello')"
 
 
-class TestComparisonProtocol:
-    def test_eq_to_native(self):
-        assert arg(5, type="int") == 5
+class TestNoTransparentProtocol:
+    """Operations the old transparent proxy supported now fail loudly."""
 
-    def test_eq_to_arg(self):
-        assert arg(5, type="int") == arg(5, type="int")
+    def test_bool_raises(self):
+        with pytest.raises(TypeError, match=r"boolean context"):
+            bool(arg(True, type="flag", name="dry_run"))
 
-    def test_lt(self):
-        assert arg(3, type="int") < 5
+    def test_if_statement_raises(self):
+        with pytest.raises(TypeError, match=r"\.value"):
+            if arg(False, type="flag", name="force"):
+                pass
 
-    def test_le(self):
-        assert arg(5, type="int") <= 5
+    def test_eq_raises(self):
+        with pytest.raises(TypeError, match=r"compared with `==`"):
+            _ = arg("fast", name="mode") == "fast"
 
-    def test_gt(self):
-        assert arg(7, type="int") > 5
+    def test_ne_raises(self):
+        with pytest.raises(TypeError, match=r"compared with `!=`"):
+            _ = arg("fast", name="mode") != "slow"
 
-    def test_ge(self):
-        assert arg(5, type="int") >= 5
+    def test_arithmetic_raises(self):
+        with pytest.raises(TypeError):
+            _ = arg(3, type="int") + 1
 
-    def test_comparison_returns_bool(self):
-        result = arg(3, type="int") < 5
-        assert type(result) is bool
+    def test_int_raises(self):
+        with pytest.raises(TypeError):
+            int(arg(4, type="int"))
 
-    def test_eq_returns_bool(self):
-        result = arg(3, type="int") == 3
-        assert type(result) is bool
+    def test_iter_raises(self):
+        with pytest.raises(TypeError):
+            list(arg(["a", "b"], type="str", multiple=True))
 
+    def test_len_raises(self):
+        with pytest.raises(TypeError):
+            len(arg(["a", "b"], type="str", multiple=True))
 
-class TestBoolProtocol:
-    def test_truthy_flag(self):
-        assert bool(arg(True, type="flag")) is True
+    def test_getitem_raises(self):
+        with pytest.raises(TypeError):
+            _ = arg(["a", "b"], type="str", multiple=True)[0]
 
-    def test_falsy_flag(self):
-        assert bool(arg(False, type="flag")) is False
+    def test_fspath_raises(self, tmp_path):
+        with pytest.raises(TypeError):
+            os.fspath(arg(tmp_path, type="path"))
 
-    def test_if_statement(self):
-        a = arg(True, type="flag")
-        triggered = False
-        if a:
-            triggered = True
-        assert triggered
+    def test_attribute_delegation_gone(self, tmp_path):
+        # args.path.exists() no longer delegates — use args.path.value.exists().
+        a = arg(tmp_path, type="path")
+        with pytest.raises(AttributeError):
+            a.exists()
+        assert a.value.exists()  # the explicit form works
 
 
 class TestMeta:
@@ -135,8 +109,7 @@ class TestMeta:
         assert a.meta["web-01"]["datacenter"] == "us-east"
 
     def test_meta_absent_is_none(self):
-        a = Arg(value="hello", name="name", type="str")
-        assert a.meta is None
+        assert Arg(value="hello", name="name", type="str").meta is None
 
     def test_meta_lookup_by_value(self):
         a = Arg(
@@ -145,159 +118,7 @@ class TestMeta:
             type="choice",
             meta={"web-01": {"datacenter": "us-east"}, "web-02": {"datacenter": "us-west"}},
         )
-        datacenter = a.meta[a.value]["datacenter"]
-        assert datacenter == "us-west"
-
-
-class TestIterationProtocol:
-    def test_iter_on_list_value(self):
-        a = arg(["a", "b", "c"], type="str")
-        assert list(a) == ["a", "b", "c"]
-
-    def test_len_on_list_value(self):
-        a = arg(["x", "y"], type="str")
-        assert len(a) == 2
-
-    def test_len_on_string(self):
-        assert len(arg("hello")) == 5
-
-
-class TestPathProtocol:
-    def test_fspath_returns_string(self, tmp_path):
-        import os
-
-        a = arg(tmp_path, type="path")
-        assert os.fspath(a) == str(tmp_path)
-
-    def test_path_constructor_accepts_arg(self, tmp_path):
-        from pathlib import Path
-
-        a = arg(tmp_path, type="path")
-        assert Path(a) == tmp_path
-
-    @pytest.mark.skipif(sys.version_info < (3, 12), reason="Path.glob() requires exact str before Python 3.12 (pathlib internals rewritten in 3.12)")
-    def test_glob_accepts_str_arg_as_pattern(self, tmp_path):
-        (tmp_path / "a.txt").touch()
-        (tmp_path / "b.txt").touch()
-        directory = arg(tmp_path, type="path")
-        pattern = arg("*.txt", type="str")
-        matches = list(directory.glob(pattern))
-        assert len(matches) == 2
-
-    def test_fspath_raises_for_non_path(self):
-        import os
-
-        a = arg(42, type="int")
-        try:
-            os.fspath(a)
-            raise AssertionError("expected TypeError")
-        except TypeError:
-            pass
-
-
-class TestHashProtocol:
-    def test_arg_hashable(self):
-        a = arg("hello")
-        assert hash(a) == hash("hello")
-
-    def test_arg_usable_in_set(self):
-        a = arg("x")
-        b = arg("y")
-        s = {a, b}
-        assert len(s) == 2
-
-    def test_arg_usable_as_dict_key(self):
-        a = arg("key")
-        d = {a: "value"}
-        assert d[a] == "value"
-
-    def test_equal_args_have_same_hash(self):
-        a = arg(5, type="int")
-        b = arg(5, type="int")
-        assert a == b
-        assert hash(a) == hash(b)
-
-
-class TestIndexProtocol:
-    def test_getitem_on_list(self):
-        a = arg(["x", "y", "z"], type="str")
-        assert a[0] == "x"
-        assert a[2] == "z"
-
-    def test_getitem_on_string(self):
-        a = arg("hello")
-        assert a[1] == "e"
-
-    def test_getitem_slice(self):
-        a = arg([10, 20, 30, 40], type="int")
-        assert a[1:3] == [20, 30]
-
-
-class TestRunSpecMetadataProperties:
-    """Public properties mirror the __runspec_*__ dunder fields without the ugly access."""
-
-    def _make(self, **overrides):
-        from pathlib import Path
-
-        from runspec.models import RunSpec
-
-        defaults = {
-            "__runspec_runnable__": "clean",
-            "__runspec_source__": Path("/tmp/runspec.toml"),
-            "__runspec_command_path__": [],
-            "__runspec_autonomy__": "confirm",
-            "__runspec_agent__": False,
-            "__runspec_spec__": {"description": "test"},
-            "__runspec_groups__": [],
-        }
-        defaults.update(overrides)
-        return RunSpec(**defaults)
-
-    def test_runspec_runnable(self):
-        rs = self._make()
-        assert rs.runspec_runnable == "clean"
-
-    def test_runspec_source(self):
-        from pathlib import Path
-
-        rs = self._make(__runspec_source__=Path("/etc/runspec.toml"))
-        assert rs.runspec_source == Path("/etc/runspec.toml")
-
-    def test_runspec_autonomy(self):
-        rs = self._make(__runspec_autonomy__="autonomous")
-        assert rs.runspec_autonomy == "autonomous"
-
-    def test_runspec_agent_false_by_default(self):
-        rs = self._make()
-        assert rs.runspec_agent is False
-
-    def test_runspec_agent_true_under_agent(self):
-        rs = self._make(__runspec_agent__=True)
-        assert rs.runspec_agent is True
-
-    def test_runspec_spec(self):
-        rs = self._make(__runspec_spec__={"description": "Greet"})
-        assert rs.runspec_spec == {"description": "Greet"}
-
-    def test_runspec_groups(self):
-        from runspec.models import Group
-
-        g = Group(name="auth", args=["user", "pass"], inclusive=True)
-        rs = self._make(__runspec_groups__=[g])
-        assert rs.runspec_groups == [g]
-
-    def test_runspec_command_none_when_no_subcommand(self):
-        rs = self._make()
-        assert rs.runspec_command is None
-
-    def test_runspec_command_path_empty_when_no_subcommand(self):
-        rs = self._make()
-        assert rs.runspec_command_path == []
-
-    def test_runspec_command_returns_leaf(self):
-        rs = self._make(__runspec_command_path__=["run", "stage"])
-        assert rs.runspec_command == "stage"
-        assert rs.runspec_command_path == ["run", "stage"]
+        assert a.meta[a.value]["datacenter"] == "us-west"
 
 
 class TestPythonType:
@@ -325,6 +146,126 @@ class TestPythonType:
         assert a.python_type == "list[json-file]"
 
     def test_type_field_unchanged(self):
-        # .type stays the item type — it drives per-item coercion.
         a = Arg(value=["a"], name="t", type="str", multiple=True)
         assert a.type == "str"
+
+
+class TestRunSpecMetadataProperties:
+    """Public properties mirror the __runspec_*__ dunder fields without the ugly access."""
+
+    def _make(self, **overrides):
+        defaults = {
+            "__runspec_runnable__": "clean",
+            "__runspec_source__": Path("/tmp/runspec.toml"),
+            "__runspec_command_path__": [],
+            "__runspec_autonomy__": "confirm",
+            "__runspec_agent__": False,
+            "__runspec_spec__": {"description": "test"},
+            "__runspec_groups__": [],
+        }
+        defaults.update(overrides)
+        return RunSpec(**defaults)
+
+    def test_runspec_runnable(self):
+        assert self._make().runspec_runnable == "clean"
+
+    def test_runspec_source(self):
+        rs = self._make(__runspec_source__=Path("/etc/runspec.toml"))
+        assert rs.runspec_source == Path("/etc/runspec.toml")
+
+    def test_runspec_autonomy(self):
+        assert self._make(__runspec_autonomy__="autonomous").runspec_autonomy == "autonomous"
+
+    def test_runspec_agent_false_by_default(self):
+        assert self._make().runspec_agent is False
+
+    def test_runspec_agent_true_under_agent(self):
+        assert self._make(__runspec_agent__=True).runspec_agent is True
+
+    def test_runspec_spec(self):
+        assert self._make(__runspec_spec__={"description": "Greet"}).runspec_spec == {"description": "Greet"}
+
+    def test_runspec_groups(self):
+        g = Group(name="auth", args=["user", "pass"], inclusive=True)
+        assert self._make(__runspec_groups__=[g]).runspec_groups == [g]
+
+    def test_runspec_command_none_when_no_subcommand(self):
+        assert self._make().runspec_command is None
+
+    def test_runspec_command_path_empty_when_no_subcommand(self):
+        assert self._make().runspec_command_path == []
+
+    def test_runspec_command_returns_leaf(self):
+        rs = self._make(__runspec_command_path__=["run", "stage"])
+        assert rs.runspec_command == "stage"
+        assert rs.runspec_command_path == ["run", "stage"]
+
+
+class TestRunSpecArgAccess:
+    """Attribute access, safe get(), membership, and dir()."""
+
+    def _make_with_args(self, **args):
+        rs = RunSpec(
+            __runspec_runnable__="deploy",
+            __runspec_source__=Path("/tmp/runspec.toml"),
+        )
+        for name, a in args.items():
+            rs._set_arg(name, a)
+        return rs
+
+    def test_attribute_access_returns_arg(self):
+        rs = self._make_with_args(region=arg("eu", name="region"))
+        assert isinstance(rs.region, Arg)
+        assert rs.region.value == "eu"
+
+    def test_hyphen_normalised_to_underscore(self):
+        rs = self._make_with_args(**{"dry-run": arg(True, type="flag", name="dry-run")})
+        assert rs.dry_run.value is True
+
+    def test_missing_arg_raises_attribute_error_with_available(self):
+        rs = self._make_with_args(region=arg("eu", name="region"))
+        with pytest.raises(AttributeError, match=r"No argument 'symbol'.*Available: region"):
+            _ = rs.symbol
+
+    def test_contains_true_for_present_arg(self):
+        rs = self._make_with_args(region=arg("eu", name="region"))
+        assert "region" in rs
+        assert "region-name".replace("-", "_") not in rs  # sanity
+
+    def test_contains_normalises_hyphens(self):
+        rs = self._make_with_args(**{"dry-run": arg(True, type="flag", name="dry-run")})
+        assert "dry-run" in rs
+        assert "dry_run" in rs
+
+    def test_contains_false_for_other_subcommand_arg(self):
+        rs = self._make_with_args(region=arg("eu", name="region"))
+        assert "symbol" not in rs
+
+    def test_get_present_returns_real_arg(self):
+        a = arg("eu", name="region")
+        rs = self._make_with_args(region=a)
+        assert rs.get("region") is a
+        assert rs.get("region").value == "eu"
+
+    def test_get_absent_returns_not_set_arg_with_none(self):
+        rs = self._make_with_args(region=arg("eu", name="region"))
+        got = rs.get("symbol")
+        assert isinstance(got, Arg)
+        assert got.value is None
+        assert got.source == "not_set"
+
+    def test_get_absent_with_default(self):
+        rs = self._make_with_args(region=arg("eu", name="region"))
+        assert rs.get("symbol", "ABC123").value == "ABC123"
+
+    def test_get_never_raises_supports_safe_value_access(self):
+        # The boilerplate-killer: no up-front guard needed.
+        rs = self._make_with_args(region=arg("eu", name="region"))
+        assert rs.get("since").value is None
+
+    def test_dir_includes_active_args(self):
+        rs = self._make_with_args(region=arg("eu", name="region"), env=arg("qa", name="env"))
+        names = dir(rs)
+        assert "region" in names
+        assert "env" in names
+        assert "runspec_runnable" in names  # real properties still present

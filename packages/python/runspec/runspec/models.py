@@ -8,11 +8,10 @@ RunSpec — the full parsed result for a script
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 # Item-type name → its Python type repr, for `Arg.python_type`. Mirrors the type
 # map used by schema emit (cli._arg_to_json_schema) and the planned stub
@@ -31,15 +30,31 @@ _PYTHON_TYPE_NAMES = {
 }
 
 
-@dataclass
+@dataclass(eq=False)
 class Arg:
     """
     A single parsed argument. Carries its resolved value alongside
     its full spec metadata so the parsed result is self-describing.
 
-    Transparent value access — Arg behaves as its native type in
-    expressions. args.workers + 1, if args.dry_run, str(args.format)
-    all work without unwrapping.
+    Explicit value access — read ``.value`` to get the coerced native value::
+
+        workers: int = args.workers.value
+        if args.dry_run.value: ...
+        path = args.out_dir.value / "f.txt"
+
+    Arg is **not** a transparent proxy. It deliberately does not pretend to be
+    its value: arithmetic, indexing, iteration, ``int()``/``str()``/``len()``,
+    ``os.fspath``, and attribute delegation all raise rather than silently
+    operate on the wrapped value, so a forgotten ``.value`` fails loudly at the
+    use site instead of producing a subtly wrong result. ``bool()`` and ``==``
+    raise for the same reason — those are the two contexts where a missing
+    ``.value`` would otherwise be *silently* wrong (every object is truthy;
+    identity-equality is always False against a native value).
+
+    (Pre-0.38.0 Arg was a transparent proxy that forwarded ~30 dunders; the
+    leak — ``is None`` never matching, ``isinstance`` failing, values that
+    won't JSON-serialise — made ``.value`` necessary "sometimes but not
+    always". It is now always required.)
     """
 
     # Resolved value — coerced to native type by the language pack
@@ -89,118 +104,25 @@ class Arg:
         base = _PYTHON_TYPE_NAMES.get(self.type, self.type)
         return f"list[{base}]" if self.multiple else base
 
-    # ── Transparent value access ──────────────────────────────────────────────
+    # ── Explicit value access ─────────────────────────────────────────────────
+    # Read `.value` for the coerced native value. Arg is intentionally *not* a
+    # transparent proxy — most value operations are simply absent (so they raise
+    # naturally), and the two that would otherwise be *silently* wrong without a
+    # `.value` — truthiness and equality — raise a guiding TypeError.
 
     def __repr__(self) -> str:
-        return repr(self.value)
-
-    def __str__(self) -> str:
-        return str(self.value)
-
-    def __int__(self) -> int:
-        return int(self.value)
-
-    def __index__(self) -> int:
-        return int(self.value)
-
-    def __float__(self) -> float:
-        return float(self.value)
-
-    def __format__(self, spec: str) -> str:
-        return format(self.value, spec)
+        # Show that this is an Arg, not the bare value — a stray `print(args.x)`
+        # should look wrong, not masquerade as the value.
+        return f"Arg(name={self.name!r}, value={self.value!r})"
 
     def __bool__(self) -> bool:
-        return bool(self.value)
+        raise TypeError(f"Arg {self.name!r} used in a boolean context — write `args.{self.name.replace('-', '_')}.value` (e.g. `if args.{self.name.replace('-', '_')}.value:`).")
 
     def __eq__(self, other: object) -> bool:
-        if isinstance(other, Arg):
-            return bool(self.value == other.value)
-        return bool(self.value == other)
+        raise TypeError(f"Arg {self.name!r} compared with `==` — write `args.{self.name.replace('-', '_')}.value == ...`.")
 
-    def __lt__(self, other: object) -> bool:
-        if isinstance(other, Arg):
-            return bool(self.value < other.value)
-        return bool(self.value < other)
-
-    def __le__(self, other: object) -> bool:
-        if isinstance(other, Arg):
-            return bool(self.value <= other.value)
-        return bool(self.value <= other)
-
-    def __gt__(self, other: object) -> bool:
-        if isinstance(other, Arg):
-            return bool(self.value > other.value)
-        return bool(self.value > other)
-
-    def __ge__(self, other: object) -> bool:
-        if isinstance(other, Arg):
-            return bool(self.value >= other.value)
-        return bool(self.value >= other)
-
-    def __add__(self, other: object) -> Any:
-        if isinstance(other, Arg):
-            return self.value + other.value
-        return self.value + other
-
-    def __radd__(self, other: object) -> Any:
-        return other + self.value
-
-    def __sub__(self, other: object) -> Any:
-        if isinstance(other, Arg):
-            return self.value - other.value
-        return self.value - other
-
-    def __rsub__(self, other: object) -> Any:
-        return other - self.value
-
-    def __mul__(self, other: object) -> Any:
-        if isinstance(other, Arg):
-            return self.value * other.value
-        return self.value * other
-
-    def __rmul__(self, other: object) -> Any:
-        return other * self.value
-
-    def __truediv__(self, other: object) -> Any:
-        if isinstance(other, Arg):
-            return self.value / other.value
-        return self.value / other
-
-    def __floordiv__(self, other: object) -> Any:
-        if isinstance(other, Arg):
-            return self.value // other.value
-        return self.value // other
-
-    def __mod__(self, other: object) -> Any:
-        if isinstance(other, Arg):
-            return self.value % other.value
-        return self.value % other
-
-    def __fspath__(self) -> str:
-        return cast(str, os.fspath(self.value))
-
-    def __hash__(self) -> int:
-        return hash(self.value)
-
-    def __getitem__(self, key: Any) -> Any:
-        return self.value[key]
-
-    def __iter__(self) -> Any:
-        """Allow iteration when value is a list (multiple=true args)."""
-        return iter(self.value)
-
-    def __len__(self) -> int:
-        return len(self.value)
-
-    def __getattr__(self, name: str) -> Any:
-        """
-        Delegate attribute access to the value for types like pathlib.Path.
-        This allows args.input.is_dir(), args.input.glob("*.jpg") etc.
-        """
-        # Avoid infinite recursion on dataclass internals
-        if name.startswith("_") or name in self.__dataclass_fields__:
-            raise AttributeError(name)
-        return getattr(self.value, name)
+    def __ne__(self, other: object) -> bool:
+        raise TypeError(f"Arg {self.name!r} compared with `!=` — write `args.{self.name.replace('-', '_')}.value != ...`.")
 
 
 @dataclass
@@ -278,6 +200,40 @@ class RunSpec:
     def __repr__(self) -> str:
         args_repr = ", ".join(f"{k}={v.value!r}" for k, v in self._args.items())
         return f"RunSpec(runnable={self.__runspec_runnable__!r}, {args_repr})"
+
+    def __contains__(self, name: str) -> bool:
+        """`"symbol" in args` — True when the arg is in the active command path.
+
+        The effective arg set is scoped to the resolved subcommand path (the
+        runnable's globals plus the chosen command's own args), so an arg
+        declared only on a *different* subcommand is not present. Hyphens are
+        normalised to underscores, matching attribute access.
+        """
+        return name.replace("-", "_") in self._args
+
+    def get(self, name: str, default: Any = None) -> Arg:
+        """Safe arg lookup — always returns an Arg, never raises.
+
+        Use this for args whose presence depends on the active subcommand, so
+        you don't have to guard every access:
+
+            since = args.get("since").value        # None if not in this path
+            symbol = args.get("symbol", "ABC123").value
+
+        When the arg is in the active command path its real Arg is returned;
+        otherwise a synthetic ``not_set`` Arg wrapping ``default`` is returned,
+        so ``args.get(name).value`` is always safe and yields ``default`` for an
+        arg that doesn't apply to the current invocation.
+        """
+        norm = name.replace("-", "_")
+        existing = self._args.get(norm)
+        if existing is not None:
+            return existing
+        return Arg(value=default, name=norm, type="str", source="not_set")
+
+    def __dir__(self) -> list[str]:
+        """Include the active args so they show up in dir()/REPL completion."""
+        return [*super().__dir__(), *self._args.keys()]
 
     # ── Public metadata accessors ─────────────────────────────────────────────
     # The dunder fields (__runspec_*__) are the storage; these properties are

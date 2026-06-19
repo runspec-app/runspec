@@ -23,8 +23,8 @@ def main_add_comment() -> None:
     try:
         config = config_from_env(env=opt(spec.env))
         public = not flag(spec.internal)
-        result = add_comment(config, issue_key=str(spec.issue), body=str(spec.body), public=public)
-        print(json.dumps({"issue": str(spec.issue), "commentId": result.get("id"), "public": public}))
+        result = add_comment(config, issue_key=str(spec.issue.value), body=str(spec.body.value), public=public)
+        print(json.dumps({"issue": str(spec.issue.value), "commentId": result.get("id"), "public": public}))
     except JsmError as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)

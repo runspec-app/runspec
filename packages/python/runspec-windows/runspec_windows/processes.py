@@ -47,8 +47,8 @@ def parse_tasklist_csv(text: str) -> list[dict]:
 def main_list_processes() -> None:
     spec = rs.parse("list-processes")
     _platform.ensure_windows()
-    name_filter = str(spec.filter).lower() if spec.filter is not None else None
-    limit = int(spec.limit)
+    name_filter = spec.filter.value.lower() if spec.filter.value is not None else None
+    limit = spec.limit.value
     try:
         result = _platform.run_cmd(["tasklist", "/fo", "csv", "/nh"])
         rows = parse_tasklist_csv(result.stdout)
@@ -63,7 +63,7 @@ def main_list_processes() -> None:
 def main_process_info() -> None:
     spec = rs.parse("process-info")
     _platform.ensure_windows()
-    pid = int(spec.pid)
+    pid = spec.pid.value
     script = (
         f"Get-Process -Id {pid} -ErrorAction Stop | "
         "Select-Object Id,ProcessName,"
@@ -85,7 +85,7 @@ def main_process_info() -> None:
 def main_kill_process() -> None:
     spec = rs.parse("kill-process")
     _platform.ensure_windows()
-    pid = int(spec.pid)
+    pid = spec.pid.value
     try:
         result = _platform.run_cmd(["taskkill", "/PID", str(pid), "/F"])
         if result.returncode != 0:

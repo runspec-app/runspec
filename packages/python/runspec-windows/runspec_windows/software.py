@@ -66,7 +66,7 @@ def _read(entry: object, value: str) -> str | None:
 def main_installed_software() -> None:
     spec = rs.parse("installed-software")
     _platform.ensure_windows()
-    name_filter = str(spec.filter).lower() if spec.filter is not None else None
+    name_filter = spec.filter.value.lower() if spec.filter.value is not None else None
     try:
         rows = _collect()
         if name_filter:

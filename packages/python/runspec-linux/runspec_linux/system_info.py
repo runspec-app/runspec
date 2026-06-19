@@ -34,8 +34,8 @@ def main_check_memory() -> None:
 
 def main_list_processes() -> None:
     spec = rs.parse("list-processes")
-    name_filter = str(spec.filter) if spec.filter is not None else None
-    limit = int(spec.limit)
+    name_filter = spec.filter.value
+    limit = spec.limit.value
     try:
         print(json.dumps(list_processes(name_filter, limit)))
     except Exception as e:

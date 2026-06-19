@@ -314,7 +314,7 @@ def test_example_scan_stub_uses_parse(tmp_path, monkeypatch):
     content = (tmp_path / "scan.py").read_text()
     assert "from runspec import parse" in content
     assert "args = parse()" in content
-    assert "args.directory.glob" in content
+    assert "args.directory.value" in content
 
 
 def test_example_toml_has_scan_runnable(tmp_path, monkeypatch):

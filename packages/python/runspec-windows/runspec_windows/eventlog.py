@@ -53,9 +53,9 @@ def _query(log: str, count: int, level: str | None) -> list[dict]:
 def main_query_eventlog() -> None:
     spec = rs.parse("query-eventlog")
     _platform.ensure_windows()
-    log = str(spec.log)
-    level = str(spec.level)
-    count = int(spec.count)
+    log = str(spec.log.value)
+    level = str(spec.level.value)
+    count = spec.count.value
     try:
         # Emit a top-level array of flat rows (like list-processes/list-services)
         # so the console renders a table; log/level just echo the input args.
@@ -73,7 +73,7 @@ def main_query_eventlog() -> None:
 def main_recent_errors() -> None:
     spec = rs.parse("recent-errors")
     _platform.ensure_windows()
-    count = int(spec.count)
+    count = spec.count.value
     rows: list[dict] = []
     try:
         for log in ("System", "Application"):

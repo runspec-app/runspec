@@ -26,14 +26,14 @@ def main_set_property() -> None:
     spec = rs.parse("jsm-set-property")
     try:
         config = config_from_env(env=opt(spec.env))
-        raw = str(spec.value)
+        raw = str(spec.value.value)
         try:
             value = json.loads(raw)
         except json.JSONDecodeError:
             # Not valid JSON — store the raw string as the property value.
             value = raw
-        set_issue_property(config, issue_key=str(spec.issue), property_key=str(spec.property_key), value=value)
-        print(json.dumps({"issue": str(spec.issue), "propertyKey": str(spec.property_key), "set": True}))
+        set_issue_property(config, issue_key=str(spec.issue.value), property_key=str(spec.property_key.value), value=value)
+        print(json.dumps({"issue": str(spec.issue.value), "propertyKey": str(spec.property_key.value), "set": True}))
     except JsmError as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)

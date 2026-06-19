@@ -7,7 +7,7 @@ from runspec_linux_core import last_logins, who
 
 def main_last_logins() -> None:
     spec = rs.parse("last-logins")
-    limit = int(spec.limit)
+    limit = spec.limit.value
     try:
         print(json.dumps(last_logins(limit)))
     except Exception as e:

@@ -54,7 +54,7 @@ def main_list_transitions() -> None:
     spec = rs.parse("jsm-list-transitions")
     try:
         config = config_from_env(env=opt(spec.env))
-        transitions = list_transitions(config, issue_key=str(spec.issue))
+        transitions = list_transitions(config, issue_key=str(spec.issue.value))
         print(json.dumps([{"id": t.get("id"), "name": t.get("name"), "to": (t.get("to") or {}).get("name")} for t in transitions]))
     except JsmError as e:
         print(json.dumps({"error": str(e)}))
@@ -65,8 +65,8 @@ def main_transition_issue() -> None:
     spec = rs.parse("jsm-transition-issue")
     try:
         config = config_from_env(env=opt(spec.env))
-        tid = transition_issue(config, issue_key=str(spec.issue), transition=str(spec.transition), comment=opt(spec.comment))
-        print(json.dumps({"issue": str(spec.issue), "transitionId": tid, "transitioned": True}))
+        tid = transition_issue(config, issue_key=str(spec.issue.value), transition=str(spec.transition.value), comment=opt(spec.comment))
+        print(json.dumps({"issue": str(spec.issue.value), "transitionId": tid, "transitioned": True}))
     except JsmError as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)

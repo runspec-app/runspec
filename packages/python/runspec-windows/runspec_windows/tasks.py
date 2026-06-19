@@ -51,7 +51,7 @@ def parse_schtasks_csv(text: str, name_filter: str | None = None) -> list[dict]:
 def main_list_scheduled_tasks() -> None:
     spec = rs.parse("list-scheduled-tasks")
     _platform.ensure_windows()
-    name_filter = str(spec.filter) if spec.filter is not None else None
+    name_filter = str(spec.filter.value) if spec.filter.value is not None else None
     try:
         result = _platform.run_cmd(["schtasks", "/query", "/fo", "csv", "/v"])
         print(json.dumps(parse_schtasks_csv(result.stdout, name_filter)))

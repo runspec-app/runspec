@@ -118,6 +118,12 @@ def main():
     print("done")
 ```
 
+Read an argument's value with `args.<name>.value` (e.g. `args.directory.value`)
+— `args.<name>` is an `Arg`, and since 0.38.0 it is not a transparent proxy, so
+`if args.x:` / `args.x == y` raise a `TypeError` telling you to add `.value`. Use
+`name in args` / `args.get(name, default)` for args that only exist under some
+subcommands.
+
 pyproject.toml entry:
 ```toml
 [project.scripts]
@@ -189,7 +195,7 @@ SPEC = Path(__file__).parent.parent / "runspec.toml"   # adjust to your layout
 def test_wiring():
     h = ParseHarness(script_name="myrule", config_path=SPEC)
     spec = h.expect_ok(["--directory", "."])
-    assert str(spec.directory) == "."
+    assert spec.directory.value == "."
     h.expect_exit(["--format", "nope"], contains="--format")  # bad choice rejected
     h.smoke(values={"directory": "."})                        # walk the whole tree
     h.close()

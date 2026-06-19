@@ -13,11 +13,11 @@ __all__ = ["main", "nc_send"]
 
 def main() -> None:
     spec = rs.parse("nc-command")
-    host = str(spec.host)
-    port = int(spec.port)
-    command = str(spec.command)
-    wait = float(spec.wait)
-    read_timeout = float(spec.read_timeout)
+    host = spec.host.value
+    port = spec.port.value
+    command = spec.command.value
+    wait = spec.wait.value
+    read_timeout = spec.read_timeout.value
 
     try:
         response = nc_send(host, port, command, wait=wait, read_timeout=read_timeout)

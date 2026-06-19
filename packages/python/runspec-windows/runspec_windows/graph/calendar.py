@@ -54,8 +54,8 @@ def _calendar_view(start: datetime, end: datetime, count: int) -> list[dict]:
 
 def main_calendar_upcoming() -> None:
     spec = rs.parse("calendar-upcoming")
-    days = int(spec.days)
-    count = int(spec.count)
+    days = spec.days.value
+    count = spec.count.value
     now = datetime.now(timezone.utc)
     run_graph(lambda: _calendar_view(now, now + timedelta(days=days), count))
 

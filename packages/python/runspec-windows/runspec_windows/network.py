@@ -15,8 +15,8 @@ from runspec_windows import _platform
 def main_ping_host() -> None:
     spec = rs.parse("ping-host")
     _platform.ensure_windows()
-    host = str(spec.host)
-    count = int(spec.count)
+    host = str(spec.host.value)
+    count = spec.count.value
     try:
         result = _platform.run_cmd(["ping", "-n", str(count), host])
         output = result.stdout + result.stderr
@@ -43,9 +43,9 @@ def main_ping_host() -> None:
 def main_check_port() -> None:
     spec = rs.parse("check-port")
     _platform.ensure_windows()
-    host = str(spec.host)
-    port = int(spec.port)
-    timeout = float(spec.timeout)
+    host = str(spec.host.value)
+    port = spec.port.value
+    timeout = spec.timeout.value
     start = time.monotonic()
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -89,7 +89,7 @@ def parse_netstat(text: str, state_filter: str = "all") -> list[dict]:
 def main_show_connections() -> None:
     spec = rs.parse("show-connections")
     _platform.ensure_windows()
-    state_filter = str(spec.state)
+    state_filter = str(spec.state.value)
     try:
         result = _platform.run_cmd(["netstat", "-ano"])
         print(json.dumps(parse_netstat(result.stdout, state_filter)))

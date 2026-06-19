@@ -78,7 +78,7 @@ def main_create_record() -> None:
         fields = parse_field_pairs(spec.field)
         # Convenience: --short-description maps to the standard short_description column.
         if opt(spec.short_description):
-            fields.setdefault("short_description", str(spec.short_description))
+            fields.setdefault("short_description", str(spec.short_description.value))
         if not fields:
             raise SnowError("No fields supplied — set --short-description or --field name=value")
 
@@ -94,7 +94,7 @@ def main_get_record() -> None:
     try:
         config = config_from_env(env=opt(spec.env))
         table = resolve_table(config, opt(spec.table))
-        record = get_record(config, table, identifier=str(spec.record))
+        record = get_record(config, table, identifier=str(spec.record.value))
         print(json.dumps(record))
     except SnowError as e:
         print(json.dumps({"error": str(e)}))

@@ -264,19 +264,19 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     args = parse("static-data")
-    service_user = user.get_service_user(env=args.env)          # boundary 1: credentials
+    service_user = user.get_service_user(env=args.env.value)     # boundary 1: credentials
     if service_user.username is None or service_user.password is None:
         raise errors.RunSpecError("* Missing service credentials: ...")
     action = args.runspec_command
     if action is None:
         raise errors.RunSpecError("* Missing RunSpec Command. For choices see --help")
-    if action in {"clone", "create", "setup", "copy"} and len(args.symbols) > 1 and args.price.value is not None:
-        logger.warning(f"Ignoring --price for {action} with {len(args.symbols)} symbols. ...")
-        args.price = None
-    if args.region == "asia_and_australia":                         # fan-out
-        return (actions.multi(args=args, user=service_user, symbols=args.symbols, region="asia", action=action)
-                + actions.multi(args=args, user=service_user, symbols=args.symbols, region="australia", action=action))
-    return actions.multi(args=args, user=service_user, symbols=args.symbols, region=args.region, action=action)  # boundary 2: the work
+    symbols = args.symbols.value
+    if action in {"clone", "create", "setup", "copy"} and len(symbols) > 1 and args.price.value is not None:
+        logger.warning(f"Ignoring --price for {action} with {len(symbols)} symbols. ...")
+    if args.region.value == "asia_and_australia":                   # fan-out
+        return (actions.multi(args=args, user=service_user, symbols=symbols, region="asia", action=action)
+                + actions.multi(args=args, user=service_user, symbols=symbols, region="australia", action=action))
+    return actions.multi(args=args, user=service_user, symbols=symbols, region=args.region.value, action=action)  # boundary 2: the work
 ```
 
 The two things to mock are `user.get_service_user` (credential lookup) and

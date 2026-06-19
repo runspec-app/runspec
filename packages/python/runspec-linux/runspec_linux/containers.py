@@ -8,7 +8,7 @@ from runspec_linux_core.errors import CommandError
 
 def main_list_containers() -> None:
     spec = rs.parse("list-containers")
-    include_all = bool(spec.all)
+    include_all = spec.all.value
     try:
         print(json.dumps(list_containers(include_all)))
     except Exception as e:
@@ -19,8 +19,8 @@ def main_list_containers() -> None:
 
 def main_container_logs() -> None:
     spec = rs.parse("container-logs")
-    container = str(spec.container)
-    lines = int(spec.lines)
+    container = spec.container.value
+    lines = spec.lines.value
     try:
         print(json.dumps(container_logs(container, lines)))
     except Exception as e:
@@ -30,7 +30,7 @@ def main_container_logs() -> None:
 
 def main_restart_container() -> None:
     spec = rs.parse("restart-container")
-    container = str(spec.container)
+    container = spec.container.value
     try:
         print(json.dumps(restart_container(container)))
     except CommandError as e:

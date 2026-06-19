@@ -501,7 +501,7 @@ Because the spec is unambiguous TOML, no interpretation is needed — an agent c
 from runspec import parse
 
 args = parse()            # finds runspec config automatically
-print(args.quality)       # typed, validated, defaults applied
+print(args.quality.value) # typed, validated, defaults applied
 ```
 
 The Python library handles type coercion, required field validation, range checks, choice validation, flag handling, and error messages.
@@ -527,8 +527,8 @@ Read `runspec.toml` directly with any TOML library and implement validation inli
 ```python
 args = runspec.parse()
 
-# Simple value access — works exactly like argparse
-args.quality              # 85
+# Simple value access — read .value for the coerced native value
+args.quality.value        # 85
 
 # But each arg also knows itself
 args.quality.type         # "int"
@@ -545,7 +545,9 @@ args.__groups__           # list of Group objects
 args.__spec__             # full raw parsed spec dict
 ```
 
-Args behave transparently as their native type — `args.quality + 10` works, `if args.dry_run` works — because `Arg` implements `__int__`, `__str__`, `__bool__`, and `__eq__`. You never have to unwrap.
+You read an argument's value explicitly through `.value` — `args.quality.value + 10`, `if args.dry_run.value:`. `Arg` is deliberately **not** a transparent proxy: it does not implement arithmetic/`int`/`str`/iteration/`fspath`, and `bool()`/`==` raise a guiding `TypeError` rather than silently doing the wrong thing on a forgotten `.value`.
+
+> **Design note (0.38.0).** Earlier versions made `Arg` a transparent proxy that forwarded ~30 dunders so `args.quality + 10` and `if args.dry_run:` worked without `.value`. The convenience was real but the abstraction leaked in ways that were silent and surprising: `args.opt is None` never matched an unset optional (it's an `Arg` wrapping `None`, not `None`), `isinstance(args.x, str)` was `False`, `str()` of an unset optional was the literal `"None"`, and the value wouldn't JSON-serialise. So `.value` was needed "sometimes but not always", and the boundary was invisible. 0.38.0 made `.value` the single, explicit way to read a value, so the rule is uniform and a forgotten `.value` fails loudly at the use site instead of producing a subtly wrong result.
 
 This richness is what makes future capabilities natural:
 
@@ -1068,20 +1070,20 @@ go get github.com/runspec/runspec-go  # Go type coercion (future)
 ```python
 args = parse()
 
-args.input       # pathlib.Path — resolved, absolute
-args.quality     # int — range-checked, arithmetic works
-args.ratio       # float — range-checked
-args.dry_run     # bool — True/False from flag presence
-args.format      # str — validated against options list
-args.tag         # list[str] — from multiple = true
-args.fields      # list[str] — split by delimiter automatically
+args.input.value       # pathlib.Path — resolved, absolute
+args.quality.value     # int — range-checked
+args.ratio.value       # float — range-checked
+args.dry_run.value     # bool — True/False from flag presence
+args.format.value      # str — validated against options list
+args.tag.value         # list[str] — from multiple = true
+args.fields.value      # list[str] — split by delimiter automatically
 
-# Path methods work directly
-args.input.is_dir()
-args.input.glob("*.jpg")
+# Path methods work on the value
+args.input.value.is_dir()
+args.input.value.glob("*.jpg")
 
-# Numeric arithmetic works directly
-chunks = total // args.workers
+# Numeric arithmetic on the value
+chunks = total // args.workers.value
 scaled = args.ratio * 100
 ```
 

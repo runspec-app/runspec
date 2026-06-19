@@ -32,20 +32,20 @@ def format_items(data: dict) -> list[dict]:
 
 def main_onedrive_recent() -> None:
     spec = rs.parse("onedrive-recent")
-    count = int(spec.count)
+    count = spec.count.value
     run_graph(lambda: format_items(graph_get("/me/drive/recent", params={"$top": count})))
 
 
 def main_onedrive_search() -> None:
     spec = rs.parse("onedrive-search")
-    query = str(spec.query)
-    count = int(spec.count)
+    query = str(spec.query.value)
+    count = spec.count.value
     path = f"/me/drive/root/search(q='{quote(query)}')"
     run_graph(lambda: format_items(graph_get(path, params={"$top": count, "$select": _ITEM_SELECT})))
 
 
 def main_onedrive_list() -> None:
     spec = rs.parse("onedrive-list")
-    folder = str(spec.path).strip("/")
+    folder = str(spec.path.value).strip("/")
     path = f"/me/drive/root:/{quote(folder)}:/children" if folder else "/me/drive/root/children"
     run_graph(lambda: format_items(graph_get(path, params={"$select": _ITEM_SELECT})))

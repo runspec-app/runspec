@@ -62,10 +62,10 @@ from runspec import parse
 
 def main():
     args = parse()
-    message = f"Hello, {args.name}!"
-    if args.loud:
+    message = f"Hello, {args.name.value}!"
+    if args.loud.value:
         message = message.upper()
-    for _ in range(args.times):
+    for _ in range(args.times.value):
         print(message)
 ```
 

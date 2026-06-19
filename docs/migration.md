@@ -163,14 +163,21 @@ Arguments:
 | manual range check + `parser.error` | `{range = [min, max]}` on a numeric arg |
 | manual regex / length check | `{type = "str", pattern = "...", min-length = 3, max-length = 40}` |
 | manual mutually-exclusive logic | a `groups` block (see below) |
-| `args = parser.parse_args()`; `args.quality` (int) | `args = parse()`; `args.quality` (already coerced) |
+| `args = parser.parse_args()`; `args.quality` (int) | `args = parse()`; `args.quality.value` (already coerced) |
 
-!!! tip "Arg objects are transparent"
-    `parse()` returns coerced, native values: `args.quality + 1` works,
-    `args.format == "jpeg"` works, `for t in args.tag` works. There's no
-    `.value` unwrapping needed for normal use — the `Arg` proxies through to
-    the coerced value. (`.meta` and friends are still there when you reach
-    for them.)
+!!! tip "Read `.value` (since 0.38.0)"
+    `parse()` returns an `Arg` per argument; read `.value` for the coerced
+    native value: `args.quality.value + 1`, `args.format.value == "jpeg"`,
+    `for t in args.tag.value`. `Arg` is **not** a transparent proxy — `if
+    args.x:` and `args.x == y` raise a `TypeError` pointing you at `.value`,
+    and other value operations (`int()`, arithmetic, iteration, `os.fspath`)
+    raise too. The same `Arg` carries the metadata (`.type`, `.source`,
+    `.meta`, …). An unset optional is honestly `None` via `.value`.
+
+    Upgrading from a pre-0.38.0 runnable that relied on the transparent
+    proxy? Add `.value` at each value use site. The fast path: run the
+    runnable (or its tests) and follow the `TypeError`/`AttributeError`
+    messages — each names the arg and tells you to add `.value`.
 
 ### What you can omit — inference rules
 

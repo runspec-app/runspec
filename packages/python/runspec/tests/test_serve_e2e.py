@@ -56,7 +56,7 @@ def e2e_pkg(tmp_path_factory: pytest.TempPathFactory) -> Any:
             def main():
                 from runspec import parse
                 args = parse()
-                print(args.message)
+                print(args.message.value)
         """)
     )
 

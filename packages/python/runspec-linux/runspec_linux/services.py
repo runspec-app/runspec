@@ -8,7 +8,7 @@ from runspec_linux_core.errors import CommandError
 
 def main_check_service() -> None:
     spec = rs.parse("check-service")
-    service = str(spec.service)
+    service = spec.service.value
     try:
         print(json.dumps(check_service(service)))
     except Exception as e:
@@ -18,7 +18,7 @@ def main_check_service() -> None:
 
 def main_list_services() -> None:
     spec = rs.parse("list-services")
-    state_filter = str(spec.state)
+    state_filter = spec.state.value
     try:
         print(json.dumps(list_services(state_filter)))
     except Exception as e:
@@ -28,7 +28,7 @@ def main_list_services() -> None:
 
 def main_restart_service() -> None:
     spec = rs.parse("restart-service")
-    service = str(spec.service)
+    service = spec.service.value
     try:
         print(json.dumps(restart_service(service)))
     except CommandError as e:

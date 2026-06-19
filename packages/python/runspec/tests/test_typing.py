@@ -4,9 +4,10 @@ Static-typing regression tests.
 These run mypy over small fixture programs that use the public API the way a
 runnable author would, and assert the checker is happy. They guard the
 ergonomics of the parsed result: because args are dynamic (names and value
-types come from runspec.toml at runtime), RunSpec.__getattr__ is typed `Any`
-so a parsed value flows into an `int`/`str`/`Path`-annotated variable without
-the caller having to unwrap it. See RunSpec.__getattr__ in models.py.
+types come from runspec.toml at runtime), RunSpec.__getattr__ is typed `Any`,
+and `Arg.value` is `Any`, so an explicit `args.x.value` flows into an
+`int`/`str`/`Path`-annotated variable without a cast. See
+RunSpec.__getattr__ / Arg in models.py.
 """
 
 import os
@@ -39,16 +40,16 @@ def _run_mypy(source: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_parsed_args_flow_into_annotated_variables(tmp_path: Path) -> None:
-    """The core ergonomic guarantee: no unwrapping needed at the use site."""
+    """The core ergonomic guarantee: `.value` flows into the annotated type."""
     source = """\
 import runspec as rs
 
 args = rs.parse("greeter")
 
-workers: int = args.workers          # Any flows into int
-name: str = args.name                # Any flows into str
-total: int = args.workers + 1        # arithmetic stays usable
-flag: bool = bool(args.verbose)      # explicit conversion still works
+workers: int = args.workers.value        # .value (Any) flows into int
+name: str = args.name.value              # .value flows into str
+total: int = args.workers.value + 1      # arithmetic on the unwrapped value
+flag: bool = bool(args.verbose.value)    # explicit
 """
     result = _run_mypy(source, tmp_path)
     assert result.returncode == 0, f"mypy reported errors:\n{result.stdout}\n{result.stderr}"

@@ -43,7 +43,7 @@ def main_add_comment() -> None:
         config = config_from_env(env=opt(spec.env))
         table = resolve_table(config, opt(spec.table))
         work_note = flag(spec.internal)
-        record = add_comment(config, table, identifier=str(spec.record), body=str(spec.body), work_note=work_note)
+        record = add_comment(config, table, identifier=str(spec.record.value), body=str(spec.body.value), work_note=work_note)
         print(json.dumps({"table": table, "sysId": record.get("sys_id"), "number": record.get("number"), "workNote": work_note}))
     except SnowError as e:
         print(json.dumps({"error": str(e)}))

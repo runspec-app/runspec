@@ -10,8 +10,8 @@ from runspec_linux_core.errors import ToolNotFoundError
 
 def main_tail_log() -> None:
     spec = rs.parse("tail-log")
-    file_path = str(spec.file)
-    lines = int(spec.lines)
+    file_path = str(spec.file.value)
+    lines = spec.lines.value
     try:
         print(json.dumps(tail_log(file_path, lines)))
     except OSError as e:
@@ -21,9 +21,9 @@ def main_tail_log() -> None:
 
 def main_search_log() -> None:
     spec = rs.parse("search-log")
-    file_path = str(spec.file)
-    pattern = str(spec.pattern)
-    limit = int(spec.limit)
+    file_path = str(spec.file.value)
+    pattern = spec.pattern.value
+    limit = spec.limit.value
     try:
         print(json.dumps(search_log(file_path, pattern, limit)))
     except OSError as e:
@@ -36,9 +36,9 @@ def main_search_log() -> None:
 
 def main_journalctl() -> None:
     spec = rs.parse("journalctl")
-    unit = str(spec.unit)
-    lines = int(spec.lines)
-    since = str(spec.since) if spec.since is not None else None
+    unit = spec.unit.value
+    lines = spec.lines.value
+    since = spec.since.value
     try:
         print(json.dumps(journalctl(unit, lines, since)))
     except ToolNotFoundError as e:

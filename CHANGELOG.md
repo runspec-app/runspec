@@ -7,6 +7,50 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.38.0] — 2026-06-19
+
+### Changed (BREAKING)
+
+- **`Arg` is no longer a transparent proxy — read `.value`.** Attribute access
+  on a parsed spec (`args.workers`) returns an `Arg`; to use the value you now
+  write `args.workers.value`. Previously `Arg` forwarded ~30 dunders so it
+  behaved like its native value in expressions (`args.workers + 1`, `if
+  args.dry_run:`, `args.format == "json"`, `str(args.path)`, iteration,
+  indexing, `os.fspath`). That convenience leaked in silent, surprising ways:
+  `args.opt is None` never matched an unset optional (it was an `Arg` wrapping
+  `None`), `isinstance(args.x, str)` was `False`, `str()` of an unset optional
+  was the literal `"None"`, and the value would not JSON-serialise — so `.value`
+  was needed *sometimes but not always*, with no visible boundary. `.value` is
+  now the single, explicit way to read a value.
+
+  To fail loudly instead of silently, the two operations a forgotten `.value`
+  would otherwise get *wrong* — truthiness (`if args.x:`) and equality
+  (`args.x == y` / `!=`) — raise a `TypeError` that names the arg and tells you
+  to add `.value`. All other value operations (arithmetic, `int()`/`float()`,
+  iteration, indexing, `len()`, `os.fspath`, attribute delegation like
+  `args.path.is_dir()`) are simply absent, so they raise `TypeError`/
+  `AttributeError` at the use site. The `Arg` still carries its metadata
+  (`.type`, `.source`, `.meta`, `.options`, …), and `RunSpec`'s `runspec_*`
+  metadata properties are unchanged. An unset optional is now honestly `None`
+  via `.value`.
+
+  **Migration:** add `.value` at each value use site. Fast path — run the
+  runnable (or its tests) and follow the error messages; each names the arg.
+  The bundled integration packages (`runspec-linux`, `-logops`, `-jsm`,
+  `-snow`, `-windows`) and the `runspec init` Python stubs were migrated in
+  this release. (Node parity is tracked separately and unchanged here.)
+
+### Added
+
+- **`RunSpec.get(name, default=None)` and `name in args`.** With subcommands the
+  effective arg set is scoped to the active command path, so an arg declared
+  only on a *different* subcommand isn't present and reading it as an attribute
+  raises `AttributeError`. `"symbol" in args` tests membership; `args.get(name,
+  default)` always returns an `Arg` (a synthetic `not_set` one wrapping
+  `default` when the arg doesn't apply), so `args.get(name).value` is always
+  safe — replacing the up-front "does this arg exist?" guards. `dir(args)` now
+  lists the active args.
+
 ## [0.37.2] / [node-0.33.2] — 2026-06-15
 
 ### Added

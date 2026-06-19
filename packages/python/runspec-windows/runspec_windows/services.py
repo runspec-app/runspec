@@ -46,7 +46,7 @@ def normalize_services(data: object, status_filter: str = "all") -> list[dict]:
 def main_list_services() -> None:
     spec = rs.parse("list-services")
     _platform.ensure_windows()
-    status = str(spec.status)
+    status = str(spec.status.value)
     try:
         out = _platform.run_powershell(f"Get-Service | {_SELECT} | ConvertTo-Json -Compress").strip()
         data = json.loads(out) if out else []
@@ -58,7 +58,7 @@ def main_list_services() -> None:
 def main_check_service() -> None:
     spec = rs.parse("check-service")
     _platform.ensure_windows()
-    service = str(spec.service)
+    service = str(spec.service.value)
     try:
         out = _platform.run_powershell(f"Get-Service -Name '{service}' -ErrorAction Stop | {_SELECT} | ConvertTo-Json -Compress").strip()
         rows = normalize_services(json.loads(out)) if out else []
@@ -74,7 +74,7 @@ def main_check_service() -> None:
 def main_restart_service() -> None:
     spec = rs.parse("restart-service")
     _platform.ensure_windows()
-    service = str(spec.service)
+    service = str(spec.service.value)
     try:
         _platform.run_powershell(f"Restart-Service -Name '{service}' -Force -ErrorAction Stop")
         print(json.dumps({"service": service, "restarted": True}))
@@ -87,7 +87,7 @@ def main_restart_service() -> None:
 def main_stop_service() -> None:
     spec = rs.parse("stop-service")
     _platform.ensure_windows()
-    service = str(spec.service)
+    service = str(spec.service.value)
     try:
         _platform.run_powershell(f"Stop-Service -Name '{service}' -Force -ErrorAction Stop")
         print(json.dumps({"service": service, "stopped": True}))

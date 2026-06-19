@@ -35,7 +35,7 @@ def main_set_field() -> None:
         config = config_from_env(env=opt(spec.env))
         table = resolve_table(config, opt(spec.table))
         fields = parse_field_pairs(spec.field)
-        record = set_fields(config, table, identifier=str(spec.record), fields=fields)
+        record = set_fields(config, table, identifier=str(spec.record.value), fields=fields)
         print(json.dumps({"table": table, "sysId": record.get("sys_id"), "number": record.get("number"), "set": sorted(fields)}))
     except SnowError as e:
         print(json.dumps({"error": str(e)}))

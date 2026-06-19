@@ -8,10 +8,10 @@ from runspec_logops_core.errors import SourceNotFoundError
 
 def main_map_trace() -> None:
     spec = rs.parse("map-trace")
-    repo = str(spec.repo)
-    trace = str(spec.trace)
-    context = int(spec.context)
-    max_files = int(spec.max_files)
+    repo = str(spec.repo.value)
+    trace = str(spec.trace.value)
+    context = spec.context.value
+    max_files = spec.max_files.value
     try:
         result = map_trace_to_sources(repo, trace, context=context, max_files=max_files)
         print(json.dumps(result))

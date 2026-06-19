@@ -107,7 +107,7 @@ def main_list_fields() -> None:
     spec = rs.parse("jsm-list-fields")
     try:
         config = config_from_env(env=opt(spec.env))
-        fields = get_request_type_fields(config, request_type_id=str(spec.request_type_id), service_desk_id=opt(spec.service_desk_id))
+        fields = get_request_type_fields(config, request_type_id=str(spec.request_type_id.value), service_desk_id=opt(spec.service_desk_id))
         print(
             json.dumps(
                 [

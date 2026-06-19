@@ -84,7 +84,7 @@ def cmd_local(args: list[str]) -> None:
 
     parsed = _parse(script_name="runspec", argv=["local"] + args, config_path=_CLI_CONFIG)
 
-    fmt = str(parsed.format)
+    fmt = parsed.format.value
     runnable_filter: str | None = parsed.runnable.value
 
     discovered = _deduplicate(_discover_installed())
@@ -131,7 +131,7 @@ def cmd_test(args: list[str]) -> None:
 
     parsed = _parse(script_name="runspec", argv=["test"] + args, config_path=_CLI_CONFIG)
 
-    fmt = str(parsed.format)
+    fmt = parsed.format.value
     runnable_filter: str | None = parsed.runnable.value
 
     discovered = _deduplicate(_discover_installed())
@@ -339,7 +339,7 @@ def cmd_jump(args: list[str]) -> None:
         print("   Example: runspec jump user@prod.example.com")
         sys.exit(1)
 
-    fmt = str(parsed.format)
+    fmt = parsed.format.value
     bin_flag: str | None = parsed.bin.value
     tool_name: str | None = parsed.tool.value
     tool_argv: list[str] = parsed.tool_args.value or []
@@ -437,19 +437,19 @@ def cmd_logs(args: list[str]) -> None:
                 since=since,
                 run=parsed.run.value,
                 user=parsed.user.value,
-                as_json=bool(parsed.json),
-                follow=bool(parsed.follow),
+                as_json=parsed.json.value,
+                follow=parsed.follow.value,
             )
         elif verb == "status":
-            _logs.status(runnable, as_json=bool(parsed.json))
+            _logs.status(runnable, as_json=parsed.json.value)
         elif verb == "prune":
             _logs.prune(
                 runnable,
                 older_than=_logs.parse_duration(parsed.older_than.value) if parsed.older_than.value else None,
                 max_files=parsed.max_files.value,
                 max_total_size=_logs.parse_size(parsed.max_total_size.value) if parsed.max_total_size.value else None,
-                dry_run=bool(parsed.dry_run),
-                as_json=bool(parsed.json),
+                dry_run=parsed.dry_run.value,
+                as_json=parsed.json.value,
             )
         elif verb == "compact":
             if not parsed.older_than.value:
@@ -458,9 +458,9 @@ def cmd_logs(args: list[str]) -> None:
             _logs.compact(
                 runnable,
                 older_than=_logs.parse_duration(parsed.older_than.value),
-                gzip_=bool(parsed.gzip),
-                dry_run=bool(parsed.dry_run),
-                as_json=bool(parsed.json),
+                gzip_=parsed.gzip.value,
+                dry_run=parsed.dry_run.value,
+                as_json=parsed.json.value,
             )
     except ValueError as exc:
         print(f"✗  {exc}")
@@ -474,11 +474,11 @@ def cmd_init(args: list[str]) -> None:
     parsed = _parse(script_name="runspec", argv=["init"] + args, config_path=_CLI_CONFIG)
 
     name_flag: str | None = parsed.name.value
-    lang_flag = str(parsed.lang)
-    example = bool(parsed.example)
-    write_project = bool(parsed.write_project)
+    lang_flag = parsed.lang.value
+    example = parsed.example.value
+    write_project = parsed.write_project.value
     project_dir_arg: str | None = parsed.project_dir.value
-    force = bool(parsed.force)
+    force = parsed.force.value
 
     cwd = Path.cwd()
     pkg_name = _sanitize_name(cwd.name)
@@ -601,27 +601,32 @@ from runspec import parse
 def main():
     args = parse()
 
-    cutoff = time.time() - args.older_than * 86400
-    matches = [p for p in args.directory.glob(args.pattern) if p.is_file() and p.stat().st_mtime < cutoff]
+    # Read .value for each argument's coerced native value.
+    older_than = args.older_than.value
+    directory = args.directory.value
+    pattern = args.pattern.value
+
+    cutoff = time.time() - older_than * 86400
+    matches = [p for p in directory.glob(pattern) if p.is_file() and p.stat().st_mtime < cutoff]
 
     if not matches:
-        print(f"No '{args.pattern}' files older than {args.older_than} days found in {args.directory}.")
+        print(f"No '{pattern}' files older than {older_than} days found in {directory}.")
         return
 
-    if args.format == "json":
+    if args.format.value == "json":
         data = [
             {"path": str(p), "size": p.stat().st_size, "days_old": int((time.time() - p.stat().st_mtime) / 86400)}
             for p in matches
         ]
         print(json.dumps(data, indent=2))
     else:
-        print(f"Found {len(matches)} file(s) matching '{args.pattern}' older than {args.older_than} days:")
+        print(f"Found {len(matches)} file(s) matching '{pattern}' older than {older_than} days:")
         print()
         for p in matches:
             days = int((time.time() - p.stat().st_mtime) / 86400)
             print(f"  {p}  ({p.stat().st_size:,} bytes, {days}d old)")
 
-    if args.delete:
+    if args.delete.value:
         # Agents must declare autonomy='autonomous' to invoke a destructive
         # action. Human invocation (--delete typed on the CLI) is the human's
         # explicit confirmation; agents need the equivalent declared in the spec.
@@ -647,10 +652,15 @@ from runspec import parse
 def main():
     args = parse()
 
-    cutoff = time.time() - args.older_than * 86400
-    matches = [p for p in args.directory.glob(args.pattern) if p.is_file() and p.stat().st_mtime < cutoff]
+    # Read .value for each argument's coerced native value.
+    older_than = args.older_than.value
+    directory = args.directory.value
+    pattern = args.pattern.value
 
-    if args.format == "json":
+    cutoff = time.time() - older_than * 86400
+    matches = [p for p in directory.glob(pattern) if p.is_file() and p.stat().st_mtime < cutoff]
+
+    if args.format.value == "json":
         data = [
             {"path": str(p), "size": p.stat().st_size, "days_old": int((time.time() - p.stat().st_mtime) / 86400)}
             for p in matches
@@ -658,9 +668,9 @@ def main():
         print(json.dumps(data, indent=2))
     else:
         if not matches:
-            print(f"No '{args.pattern}' files older than {args.older_than} days found in {args.directory}.")
+            print(f"No '{pattern}' files older than {older_than} days found in {directory}.")
             return
-        print(f"Found {len(matches)} file(s) matching '{args.pattern}' older than {args.older_than} days:")
+        print(f"Found {len(matches)} file(s) matching '{pattern}' older than {older_than} days:")
         print()
         for p in matches:
             days = int((time.time() - p.stat().st_mtime) / 86400)

@@ -95,8 +95,8 @@ Pass `argv` directly to test without touching `sys.argv`:
 ```python
 def test_greet_loud():
     args = runspec.parse(argv=["--name", "Alice", "--loud"])
-    assert args.name == "Alice"
-    assert args.loud is True
+    assert args.name.value == "Alice"
+    assert args.loud.value is True
 ```
 
 ---
@@ -109,10 +109,34 @@ metadata. Hyphens in arg names become underscores.
 ```python
 args = runspec.parse()
 
-print(args.name)          # str
-print(args.workers)       # int
-print(args.input_dir)     # pathlib.Path
-print(args.format)        # str, one of declared options
+print(args.name.value)        # str
+print(args.workers.value)     # int
+print(args.input_dir.value)   # pathlib.Path
+print(args.format.value)      # str, one of declared options
+```
+
+Each `args.<name>` is an [`Arg`](#arg) — read `.value` for the coerced native
+value (see [Arg](#arg)). Hyphens in arg names become underscores
+(`args.dry_run` for `dry-run`).
+
+### Safe access across subcommands — `in` and `get()`
+
+The arg set is scoped to the active subcommand path (the runnable's globals
+plus the chosen command's own args). An arg declared only on a *different*
+subcommand is not present, and reading it as an attribute raises
+`AttributeError`. Use `in` to test membership, or `get()` for a value that may
+not apply to this invocation — neither requires an up-front guard:
+
+```python
+args = runspec.parse()
+
+if "symbol" in args:
+    do_something(args.symbol.value)
+
+# get() always returns an Arg, so .value is always safe — it yields the
+# default (None unless given) when the arg isn't in the active command path:
+since = args.get("since").value            # None if not applicable here
+symbol = args.get("symbol", "ABC123").value # default when absent
 ```
 
 ### Metadata properties
@@ -167,7 +191,7 @@ destructive actions:
 ```python
 args = runspec.parse()
 
-if args.delete:
+if args.delete.value:
     if args.runspec_agent and args.runspec_autonomy != "autonomous":
         raise SystemExit(
             "✗ --delete requires autonomy='autonomous' for agent invocation"
@@ -188,71 +212,64 @@ already chosen the action by passing the flag.
 args = runspec.parse()
 
 if args.runspec_agent:
-    print(json.dumps({"status": "deployed", "env": str(args.env)}))
+    print(json.dumps({"status": "deployed", "env": args.env.value}))
 else:
-    print(f"✓ Deployed to {args.env}")
+    print(f"✓ Deployed to {args.env.value}")
 ```
 
 ---
 
 ## Arg
 
-Every argument is an `Arg` — a value plus its full spec metadata. `Arg` is
-transparent: it behaves as its native type in expressions, so you rarely
-need to think about it.
-
-### Transparent value access
-
-`Arg` implements the Python data model:
+Every argument is an `Arg` — a value plus its full spec metadata. Read
+`.value` for the coerced native value:
 
 ```python
-# Arithmetic
-total = args.batch_size * args.workers    # int * int
-scaled = args.quality / 100               # int / int → float
-items = args.workers + 2
+# .value is the native Python value, already coerced
+total  = args.batch_size.value * args.workers.value   # int * int
+scaled = args.quality.value / 100                      # int / int → float
 
-# Boolean
-if args.dry_run:                          # flag arg
+if args.dry_run.value:                    # flag arg → bool
     print("Dry run — no writes")
 
-# Formatting
-print(f"Format: {args.format!r}")         # __repr__
-print(f"Quality: {args.quality:03d}")     # __format__
+print(f"Format: {args.format.value!r}")
+print(f"Quality: {args.quality.value:03d}")
 
-# Iteration (multiple=true args return a list)
-for tag in args.tag:
+# multiple=true args return a list
+for tag in args.tag.value:
     print(tag)
 
-# Range / indexing
-for i in range(args.workers):             # __index__
+for i in range(args.workers.value):
     ...
 
-# Path args are pathlib.Path — all Path methods work
-for file in args.input_dir.glob("*.csv"):
+# path args are pathlib.Path
+for file in args.input_dir.value.glob("*.csv"):
     ...
-if args.output.is_dir():
+if args.output.value.is_dir():
     ...
-```
 
-### `__fspath__`, `__hash__`, `__getitem__`
-
-`Arg` implements three additional dunders so it slots into common Python
-APIs without unwrapping:
-
-```python
-# __fspath__: works directly with open(), os.path, pathlib
-with open(args.input_path) as f:
+# .value slots straight into common APIs
+with open(args.input_path.value) as f:
     data = f.read()
-
-shutil.copy(args.input_path, args.output_path)
-
-# __hash__: works as a dict key or in a set
-seen = {args.format, args.lang}
-
-# __getitem__: indexing into multiple=true list values
-first_tag = args.tag[0]
-slice_   = args.tag[:3]
+shutil.copy(args.input_path.value, args.output_path.value)
+first_tag = args.tag.value[0]
 ```
+
+!!! warning "`Arg` is not a transparent proxy (since 0.38.0)"
+    `Arg` deliberately does **not** behave as its value. `args.x + 1`,
+    `int(args.x)`, `for t in args.x`, `open(args.x)`, and `args.x.is_dir()`
+    all raise — and `if args.x:` and `args.x == "y"` raise a `TypeError`
+    telling you to add `.value` (those two are the cases where a forgotten
+    `.value` would otherwise be *silently* wrong: every object is truthy, and
+    identity-equality against a native value is always `False`). Always read
+    `.value`.
+
+    Before 0.38.0 `Arg` proxied ~30 operators to masquerade as its value, but
+    the proxy leaked — `args.x is None` never matched an unset optional,
+    `isinstance(args.x, str)` was `False`, and the value would not
+    JSON-serialise — so `.value` was needed "sometimes but not always". It is
+    now always required, and an unset optional is honestly `None` via
+    `.value`.
 
 ### Arg fields
 
@@ -417,8 +434,8 @@ logger = logging.getLogger(__name__)
 
 def main():
     args = parse()
-    logger.info("Deploy starting for %s", args.target)
-    logger.info("Result", extra={"target": args.target, "duration_ms": 1240})
+    logger.info("Deploy starting for %s", args.target.value)
+    logger.info("Result", extra={"target": args.target.value, "duration_ms": 1240})
 ```
 
 Sensitive-data redaction (passwords, tokens, `Authorization` headers, URL
@@ -504,27 +521,27 @@ def main():
     args = parse()
 
     logger.info("Run starting", extra={
-        "format": str(args.format),
-        "workers": int(args.workers),
-        "tags": list(args.tag),
+        "format": args.format.value,
+        "workers": args.workers.value,
+        "tags": args.tag.value,
     })
 
-    if args.dry_run:
+    if args.dry_run.value:
         logger.info("Dry run — no writes")
         if args.runspec_agent:
-            print(json.dumps({"status": "dry-run", "input": str(args.input)}))
+            print(json.dumps({"status": "dry-run", "input": str(args.input.value)}))
         else:
-            print(f"[dry run] would process {args.input}")
+            print(f"[dry run] would process {args.input.value}")
         return
 
-    for i in range(args.workers):
-        chunk = load_chunk(args.input, i, args.workers)
-        process(chunk, format=str(args.format))
+    for i in range(args.workers.value):
+        chunk = load_chunk(args.input.value, i, args.workers.value)
+        process(chunk, format=args.format.value)
 
     if args.runspec_agent:
-        print(json.dumps({"status": "ok", "tags": list(args.tag)}))
+        print(json.dumps({"status": "ok", "tags": args.tag.value}))
     else:
-        if args.verbose:
+        if args.verbose.value:
             print(f"Ran as: {args.runspec_runnable} "
                   f"(autonomy={args.runspec_autonomy})")
 ```
