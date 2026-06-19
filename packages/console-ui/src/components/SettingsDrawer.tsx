@@ -50,7 +50,7 @@ const TOOL_MODE_OPTIONS = [
 
 // ── LLM tab ───────────────────────────────────────────────────────────────────
 
-function LlmTab() {
+export function LlmTab() {
   const [form] = Form.useForm()
   const [provider, setProvider] = useState<string>('')
   const [saving, setSaving] = useState(false)
@@ -219,6 +219,12 @@ function LlmTab() {
             style={{ marginTop: 4 }}
             items={[{
               key: 'advanced',
+              // Force-render the panel so its Form.Items are always mounted. Without
+              // this, antd Collapse leaves an unexpanded panel's children unmounted,
+              // so getFieldsValue() omits them at Save time and the set-or-delete loop
+              // drops hand-edited keys (api_key_command, api_key_ttl_ms, …) whenever
+              // the user saves without first opening Advanced.
+              forceRender: true,
               label: <Text style={{ fontSize: 12 }}>Advanced</Text>,
               children: (
                 <>
