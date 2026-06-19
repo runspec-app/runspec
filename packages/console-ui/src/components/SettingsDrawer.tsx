@@ -1259,12 +1259,18 @@ function FiltersTab() {
         </Space>
       </div>
 
-      {editingKey !== null && (
-        <div style={{ border: '1px solid #333', borderRadius: 8, padding: '14px 14px 6px', marginBottom: 12, background: 'rgba(255,255,255,0.02)' }}>
-          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
-            {editingKey === '' ? 'New filter' : `Edit — ${editingKey}`}
-          </Text>
-          <Form form={form} layout="vertical" size="small">
+      <Modal
+        open={editingKey !== null}
+        title={editingKey === '' ? 'New filter' : `Edit — ${editingKey}`}
+        width={680}
+        onCancel={cancel}
+        onOk={save}
+        okText="Save"
+        maskClosable={false}
+        okButtonProps={{ icon: <CheckOutlined /> }}
+        cancelButtonProps={{ icon: <CloseOutlined /> }}
+      >
+        <Form form={form} layout="vertical" size="small">
             <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Required' }]}>
               <Input placeholder="id-lines" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
             </Form.Item>
@@ -1282,13 +1288,8 @@ function FiltersTab() {
             <Form.Item name="description" label="Description">
               <Input placeholder="What this filter keeps (optional — shown in the picker / used by the agent)" />
             </Form.Item>
-            <Space style={{ marginTop: 2, marginBottom: 8 }}>
-              <Button size="small" type="primary" icon={<CheckOutlined />} onClick={save}>Save</Button>
-              <Button size="small" icon={<CloseOutlined />} onClick={cancel}>Cancel</Button>
-            </Space>
-          </Form>
-        </div>
-      )}
+        </Form>
+      </Modal>
 
       {filters.length === 0 && editingKey === null && (
         <Text type="secondary" style={{ fontSize: 12 }}>No filters yet. Add one to shrink large transfers at the source.</Text>
@@ -1400,12 +1401,18 @@ function CredentialsTab() {
         </Text>
       )}
 
-      {editingId !== null && (
-        <div style={{ border: '1px solid #333', borderRadius: 8, padding: '14px 14px 6px', marginBottom: 12, background: 'rgba(255,255,255,0.02)' }}>
-          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
-            {editingId === '' ? 'New credential' : `Edit — ${editingCred?.label ?? editingId}`}
-          </Text>
-          <Form form={form} layout="vertical" size="small">
+      <Modal
+        open={editingId !== null}
+        title={editingId === '' ? 'New credential' : `Edit — ${editingCred?.label ?? editingId}`}
+        width={680}
+        onCancel={cancel}
+        onOk={save}
+        okText="Save"
+        maskClosable={false}
+        okButtonProps={{ icon: <CheckOutlined /> }}
+        cancelButtonProps={{ icon: <CloseOutlined /> }}
+      >
+        <Form form={form} layout="vertical" size="small">
             <Form.Item name="label" label="Label" rules={[{ required: true, message: 'Required' }]}>
               <Input placeholder="Service account (prod)" />
             </Form.Item>
@@ -1434,13 +1441,8 @@ function CredentialsTab() {
             <Form.Item name="scope_runnables" label="Runnable scope">
               <Select mode="tags" placeholder="deploy, db-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
             </Form.Item>
-            <Space style={{ marginTop: 2, marginBottom: 8 }}>
-              <Button size="small" type="primary" icon={<CheckOutlined />} onClick={save}>Save</Button>
-              <Button size="small" icon={<CloseOutlined />} onClick={cancel}>Cancel</Button>
-            </Space>
-          </Form>
-        </div>
-      )}
+        </Form>
+      </Modal>
 
       {creds.length === 0 && editingId === null && (
         <Text type="secondary" style={{ fontSize: 12 }}>No credentials yet. Add one to let a runnable or relay use a stored identity.</Text>
@@ -1736,10 +1738,19 @@ function TriggersEditor() {
           description={<ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>{errors.map((e, i) => <li key={i}>{e}</li>)}</ul>} />
       )}
 
-      {editing && (
-        <div style={{ border: '1px solid #333', borderRadius: 8, padding: '14px 14px 6px', marginBottom: 12, background: 'rgba(255,255,255,0.02)' }}>
-          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>{editName === null ? 'New trigger' : `Edit — ${editName}`}</Text>
-          <Form form={form} layout="vertical" size="small">
+      <Modal
+        open={editing}
+        title={editName === null ? 'New trigger' : `Edit — ${editName}`}
+        width={680}
+        onCancel={cancel}
+        onOk={save}
+        okText="Save"
+        confirmLoading={saving}
+        maskClosable={false}
+        okButtonProps={{ icon: <CheckOutlined /> }}
+        cancelButtonProps={{ icon: <CloseOutlined /> }}
+      >
+        <Form form={form} layout="vertical" size="small">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
               <Form.Item name="name" label="Name" rules={[{ required: true, whitespace: true, message: 'Required' }, { pattern: /^[^\s]+$/, message: 'No spaces' }]}>
                 <Input placeholder="password-reset" style={{ fontFamily: 'monospace' }} disabled={editName !== null} />
@@ -1799,14 +1810,9 @@ function TriggersEditor() {
               <Switch size="small" /> <span style={{ fontSize: 12, color: '#888', marginLeft: 6 }}>Enabled</span>
             </Form.Item>
 
-            {err && <Alert type="error" showIcon style={{ marginBottom: 10 }} message={err} />}
-            <Space style={{ marginBottom: 8 }}>
-              <Button size="small" type="primary" icon={<CheckOutlined />} onClick={save} loading={saving}>Save</Button>
-              <Button size="small" icon={<CloseOutlined />} onClick={cancel}>Cancel</Button>
-            </Space>
-          </Form>
-        </div>
-      )}
+            {err && <Alert type="error" showIcon style={{ marginBottom: 4 }} message={err} />}
+        </Form>
+      </Modal>
 
       {triggers.length === 0 && !editing ? (
         <Empty description={<span style={{ fontSize: 12, color: '#888' }}>No triggers yet. Add one to react to a monitored event.</span>} />

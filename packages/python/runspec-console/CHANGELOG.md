@@ -8,6 +8,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.95.0] — 2026-06-19
+
+### Changed
+- **Settings → Filters, Credentials, and Triggers now edit in a pop-out modal**,
+  matching the Hosts editor. Editing an entry deep in a long list opens a centered
+  dialog instead of an inline form, so you never lose your place. No change to the
+  fields or what's saved — only the add/edit surface. (Triggers action-field
+  wording is being reworked separately; see `docs/design/trigger-actions-ux.md`.)
+
+
 ## [0.94.0] — 2026-06-19
 
 ### Added
