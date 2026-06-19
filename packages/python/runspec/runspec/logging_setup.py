@@ -89,6 +89,7 @@ def configure_logging(
     debug: bool = False,
     autonomy: str | None = None,
     agent: bool = False,
+    trigger: str = "",
     command_path: list[str] | None = None,
     invocation_args: dict[str, Any] | None = None,
 ) -> None:
@@ -217,6 +218,11 @@ def configure_logging(
             "runnable": runnable_name,
             "autonomy": autonomy,
             "agent": agent,
+            # Provenance of what *caused* this run (the event source id —
+            # "schedule"/"outlook"/… — or "" for an interactive/manual run). An
+            # axis orthogonal to `agent`: a run can be both scheduled and an LLM
+            # turn. Set from RUNSPEC_TRIGGER, mirroring RUNSPEC_AGENT → agent.
+            "trigger": trigger,
             "command_path": list(command_path or []),
             "exception": None,
             "emitted": False,
@@ -628,6 +634,7 @@ def _emit_run_summary() -> None:
                     "duration_ms": duration_ms,
                     "exit_code": exit_code,
                     "agent": state["agent"],
+                    "trigger": state["trigger"],
                     "autonomy": state["autonomy"],
                     "exception": state["exception"],
                     "events": dict(state["counter"].counts),

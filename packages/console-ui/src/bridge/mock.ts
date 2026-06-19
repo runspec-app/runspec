@@ -358,6 +358,7 @@ const MOCK_HISTORY: HistoryRecord[] = [
   {
     id: '2', runnable: 'log-rotate', group: 'platform-core', host: 'prod-1', operator: 'Scheduled Task', runAs: 'svc-runner',
     exitCode: 0, durationMs: 812, ts: new Date(Date.now() - 7200000).toISOString(),
+    trigger: 'schedule',
     args: { keep: '7' },
     argSources: { keep: 'env' },
     logLines: [
@@ -380,6 +381,7 @@ const MOCK_HISTORY: HistoryRecord[] = [
   {
     id: '4', runnable: 'cache-purge', group: 'platform-core', host: 'prod-1', operator: 'Scheduled Task', runAs: 'svc-runner',
     exitCode: 0, durationMs: 201, ts: new Date(Date.now() - 86400000).toISOString(),
+    trigger: 'schedule', initiatedBy: 'llm',
     args: {},
     argSources: {},
     logLines: [
@@ -567,6 +569,7 @@ const MOCK_IN_FLIGHT: InFlightRecord[] = [
     runAs: 'svc-runner',
     startedAt: new Date(Date.now() - 45000).toISOString(),
     args: { keep: 7 },
+    trigger: 'schedule',
   },
   {
     id: 'inf-2',

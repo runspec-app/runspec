@@ -101,6 +101,27 @@ class TestEmit:
         assert s["extra"]["exit_code"] == 0
         assert s["extra"]["exception"] is None
 
+    def test_summary_records_trigger_provenance(self, tmp_path):
+        # `trigger` is the provenance of what caused the run (an event source id),
+        # an axis orthogonal to `agent` — both can be set on one run.
+        configure_logging(_cfg(), runnable_name="myscript", agent=True, trigger="schedule")
+        logging.getLogger("test.trigger").info("ran")
+        _emit_run_summary()
+        log_path = tmp_path / "logs" / "myscript.log"
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()]
+        s = next(obj for obj in lines if obj["logger"] == "runspec.runsummary")
+        assert s["extra"]["trigger"] == "schedule"
+        assert s["extra"]["agent"] is True
+
+    def test_summary_trigger_defaults_empty(self, tmp_path):
+        configure_logging(_cfg(), runnable_name="myscript")
+        logging.getLogger("test.trigger2").info("ran")
+        _emit_run_summary()
+        log_path = tmp_path / "logs" / "myscript.log"
+        lines = [json.loads(line) for line in log_path.read_text().strip().splitlines()]
+        s = next(obj for obj in lines if obj["logger"] == "runspec.runsummary")
+        assert s["extra"]["trigger"] == ""
+
     def test_summary_console_writes_line_to_stderr(self, capsys):
         configure_logging(_cfg(summary_console=True), runnable_name="myscript")
         logging.getLogger("test.stderr").info("ran")

@@ -274,9 +274,18 @@ exit. This has two independently controlled parts:
 - **The audit record** (`summary`, default **on**) — one structured JSON record
   written to the audit log. It captures the run's duration, exit code, log-event
   counts by level, the effective autonomy, whether it ran under an agent
-  (`runspec serve`), the command path, and any uncaught exception. This is the
-  data the console **history**/**analytics** tabs and `runspec logs` read, so it
-  gives every invocation an audit-trail entry even when the tool logs nothing.
+  (`runspec serve` / `RUNSPEC_AGENT`), the **trigger provenance** (see below),
+  the command path, and any uncaught exception. This is the data the console
+  **history**/**analytics** tabs and `runspec logs` read, so it gives every
+  invocation an audit-trail entry even when the tool logs nothing.
+
+  **Provenance — `RUNSPEC_TRIGGER`.** A caller can set `RUNSPEC_TRIGGER` in the
+  environment (e.g. `RUNSPEC_TRIGGER=schedule`) to record *what caused* the run;
+  it lands in the record as `extra.trigger` (empty for an interactive/manual
+  run). This is an axis **orthogonal** to `agent` — a single run can be both
+  scheduled and an LLM turn — so a consumer can attribute and badge runs on both
+  axes independently. runspec-console sets it on scheduled and event-triggered
+  runs to show per-run icons.
 
 - **The console echo** (`summary_console`, default **off**) — one human-readable
   line to **stderr**:

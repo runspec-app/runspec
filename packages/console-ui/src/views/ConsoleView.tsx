@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, Popconfirm, Tag, Tooltip, Typography } from 'antd'
-import { CloseOutlined, LoadingOutlined, PlusOutlined } from '@ant-design/icons'
+import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { bridge, type InFlightRecord, type Runnable } from '../bridge'
 import { OutputPanel, useInvocationBlocks, type RerunData } from '../components/OutputPanel'
 import { useIsDark } from '../ThemeContext'
@@ -51,6 +51,11 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
         <span key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <LoadingOutlined style={{ color: '#52c41a', fontSize: 11 }} spin />
           <Text style={{ fontFamily: 'monospace', fontSize: 12, color: nameCol }}>/{r.runnable}</Text>
+          {r.trigger === 'schedule' && (
+            <Tooltip title="Ran on a schedule">
+              <ClockCircleOutlined style={{ color: '#8c8c8c', fontSize: 11 }} />
+            </Tooltip>
+          )}
           <Tag style={{ fontSize: 11, margin: 0 }}>{r.host}</Tag>
           <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{r.group}</Tag>
           <Text type="secondary" style={{ fontSize: 11 }}>{r.operator}</Text>

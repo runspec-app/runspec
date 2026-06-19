@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.94.0] — 2026-06-19
+
+### Added
+- **Run-provenance badges in History, Analytics, and the in-flight strip.** Each
+  run now carries the event source that *caused* it (its `trigger`) alongside
+  whether it was an LLM turn (`initiatedBy`) — two independent axes — surfaced as
+  small icons: a clock 🕐 for a scheduled run and the existing robot 🤖 for an
+  LLM/agent run (both show together for a scheduled agent turn). Provenance is
+  recorded durably in the runnable's own `run_summary` audit (via the new
+  `RUNSPEC_TRIGGER` env that runspec 0.39.0 records as `extra.trigger`), so it
+  survives restarts and works across hosts. The console sets it on every run
+  path: direct `action="runnable"` schedules (`trigger="schedule"`) and
+  event-driven trigger runs (`trigger=<event source>`).
+
+### Changed
+- **Rule-mode trigger runs now record `agent=False`.** A `mode="rule"` trigger
+  runs a fixed runnable with no LLM involved, but such runs previously flowed
+  through the shared agent tool path and were recorded as `agent=True` (showing
+  as LLM-initiated in History/Analytics). They are now correctly attributed as
+  non-LLM. Agent-mode trigger runs and chat tool calls are unchanged
+  (`agent=True`). Requires `runspec>=0.39.0`.
+
+
 ## [0.93.0] — 2026-06-19
 
 ### Added

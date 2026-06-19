@@ -189,6 +189,10 @@ def _parse_impl(
     # terminal user supplies them here; agent / non-interactive runs fall through
     # to the env-var value (or the required-arg error if it is missing).
     agent = os.environ.get("RUNSPEC_AGENT", "").lower() in ("1", "true", "yes")
+    # Provenance of what caused this run (the triggering event source id, e.g.
+    # "schedule"); "" for an interactive/manual run. Recorded in run_summary as a
+    # separate axis from `agent` (a run can be both scheduled and an LLM turn).
+    trigger = os.environ.get("RUNSPEC_TRIGGER", "").strip()
     if prompt_secrets:
         parsed_values, sources = _prompt_passwords(parsed_values, sources, raw_script["args"], agent)
 
@@ -246,6 +250,7 @@ def _parse_impl(
             debug=debug,
             autonomy=autonomy,
             agent=agent,
+            trigger=trigger,
             command_path=command_path,
             invocation_args=invocation_args,
         )

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Table, Tag, Typography, Button, Tooltip, message, Input, Space } from 'antd'
-import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined, CaretRightOutlined } from '@ant-design/icons'
+import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined, CaretRightOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HistoryRecord, type HistoryLogLine } from '../bridge'
 
@@ -252,6 +252,11 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       render: (_: unknown, r: HistoryRecord) => (
         <span style={{ fontFamily: 'monospace', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span><span style={{ color: '#666' }}>{r.group}/</span>{r.runnable}</span>
+          {r.trigger === 'schedule' && (
+            <Tooltip title="Ran on a schedule">
+              <ClockCircleOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+            </Tooltip>
+          )}
           {r.initiatedBy === 'llm' && (
             <Tooltip title="Triggered by LLM">
               <RobotOutlined style={{ color: '#1677ff', fontSize: 12 }} />

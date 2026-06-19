@@ -42,6 +42,7 @@ def _summary_line(
     agent: bool = False,
     autonomy: str = "confirm",
     user: str = "alice",
+    trigger: str = "",
     events: dict | None = None,
     exception: dict | None = None,
     command_path: list | None = None,
@@ -55,6 +56,7 @@ def _summary_line(
         "duration_ms": duration_ms,
         "exit_code": exit_code,
         "agent": agent,
+        "trigger": trigger,
         "autonomy": autonomy,
         "exception": exception,
         "events": events
@@ -125,6 +127,19 @@ class TestParserIncludeExtra(unittest.TestCase):
         self.assertEqual(extra["exception"]["type"], "ValueError")
         # And the lean record still reflects the agent flag.
         self.assertEqual(rec["initiatedBy"], "llm")
+
+    def test_trigger_provenance_surfaced(self) -> None:
+        # A scheduled run that is also an LLM turn: both axes are independent and
+        # both surface (lean record + rich extra).
+        text = _summary_line(run_id="r1", agent=True, trigger="schedule")
+        rec = _parse_log_text("backup", text, "local", include_extra=True)[0]
+        self.assertEqual(rec["trigger"], "schedule")
+        self.assertEqual(rec["initiatedBy"], "llm")
+        self.assertEqual(rec["extra"]["trigger"], "schedule")
+
+    def test_trigger_defaults_empty_for_manual_run(self) -> None:
+        rec = _parse_log_text("backup", _summary_line(run_id="r1"), "local")[0]
+        self.assertEqual(rec["trigger"], "")
 
 
 # ── 2. percentile + aggregate fold ───────────────────────────────────────────

@@ -150,6 +150,7 @@ class _BridgeTriggerOps:
         allowed_runnables: list[str] | None = None,
         record: Any = None,
         stage: Any = None,
+        trigger: str = "",
     ) -> str:
         return self._bridge._trigger_run_agent_turn(
             chat_id,
@@ -162,6 +163,7 @@ class _BridgeTriggerOps:
             allowed_runnables=allowed_runnables,
             record=record,
             stage=stage,
+            trigger=trigger,
         )
 
     def queue_mailbox_for(self, payload: dict[str, Any]) -> str:
@@ -171,9 +173,19 @@ class _BridgeTriggerOps:
         return str(payload.get("mailbox") or "")
 
     def run_rule_tool(
-        self, chat_id: str, tool_name: str, tool_input: dict[str, Any]
+        self,
+        chat_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        trigger: str = "",
     ) -> str:
-        return self._bridge._gated_run_tool(tool_name, tool_input, chat_id)
+        # A rule run is a fixed, deterministic runnable call — not an LLM turn —
+        # so record agent=False with the causing event source as provenance.
+        self._bridge._set_run_origin(chat_id, trigger, agent=False)
+        try:
+            return self._bridge._gated_run_tool(tool_name, tool_input, chat_id)
+        finally:
+            self._bridge._clear_run_origin(chat_id)
 
     def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
         # The Console tab renders this as a finished block matching the trigger
@@ -391,10 +403,16 @@ class Bridge:
         # that host's own ssh target + key so the tunnel reuses the pooled
         # connection. Keyed by room name: live ChatSource while connected.
         self._chat_sources: dict[str, Any] = {}
-        # The bridge-owned schedule source (cron / interval triggers). Built from
-        # the loaded triggers and started alongside the engine in start_triggers;
-        # stopped in stop_triggers. None when no schedule trigger is configured.
+        # The bridge-owned schedule source. Built from the Schedules tab and
+        # started alongside the engine in start_triggers; stopped in
+        # stop_triggers. None when no schedule is configured.
         self._schedule_source: Any | None = None
+        # Per-turn run provenance, keyed by chat_id (the card id for triggers).
+        # The trigger handler registers {"trigger": <source>, "agent": <bool>}
+        # before a rule/agent run so _run_tool_sync can tag the runnable's
+        # run_summary (RUNSPEC_TRIGGER) and set the right agent flag. Absent for a
+        # direct chat turn (→ agent run, no trigger). Guarded by self._lock.
+        self._run_origin: dict[str, dict[str, Any]] = {}
         self._chat_stop = threading.Event()
         self._chat_supervisors: dict[str, threading.Thread] = {}
         # Per-room last logged connect-failure summary, so the reconnect loop logs a
@@ -2705,7 +2723,11 @@ class Bridge:
         exec + the runnable's own run_summary audit that History/Analytics read)."""
         try:
             self.invoke_runnable(
-                host, runnable, dict(args or {}), operator="Scheduled Task"
+                host,
+                runnable,
+                dict(args or {}),
+                operator="Scheduled Task",
+                trigger="schedule",
             )
         except Exception:
             logger.exception(
@@ -4221,6 +4243,7 @@ class Bridge:
         group: str | None = None,
         credential_id: str = "",
         operator: str | None = None,
+        trigger: str = "",
     ) -> str:
         inv_id = uuid.uuid4().hex[:12]
         cp = command_path or []
@@ -4280,6 +4303,7 @@ class Bridge:
                 "runAs": run_as,
                 "startedAt": _iso_now(),
                 "args": exec_args,
+                **({"trigger": trigger} if trigger else {}),
                 **({"credentials": applied_creds} if applied_creds else {}),
                 _CANCEL_KEY: cancel_event,
             }
@@ -4336,6 +4360,7 @@ class Bridge:
                     session_factory=session_factory,
                     positionals=self._positionals_for(cached, cp),
                     secrets=secrets,
+                    trigger=trigger,
                 )
             else:
                 run_local(
@@ -4351,6 +4376,7 @@ class Bridge:
                     become_flags=become_flags,
                     positionals=self._positionals_for(cached, cp),
                     secrets=secrets,
+                    trigger=trigger,
                 )
 
         t = threading.Thread(target=run, daemon=True)
@@ -5744,7 +5770,9 @@ class Bridge:
                 )
         if stage is not None:
             stage("running")
-        return await asyncio.to_thread(self._run_tool_sync, tool_name, tool_input)
+        return await asyncio.to_thread(
+            self._run_tool_sync, tool_name, tool_input, chat_id
+        )
 
     def _gated_run_tool(
         self, tool_name: str, tool_input: dict[str, Any], chat_id: str
@@ -5762,7 +5790,20 @@ class Bridge:
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
-        return self._run_tool_sync(tool_name, tool_input)
+        return self._run_tool_sync(tool_name, tool_input, chat_id)
+
+    def _set_run_origin(self, chat_id: str, trigger: str, agent: bool) -> None:
+        """Register a turn's run provenance so _run_tool_sync can tag its runnable
+        runs (the trigger source + whether it's an LLM/agent turn). Keyed by the
+        card/chat id; cleared with _clear_run_origin in the handler's finally."""
+        if not chat_id:
+            return
+        with self._lock:
+            self._run_origin[chat_id] = {"trigger": trigger, "agent": agent}
+
+    def _clear_run_origin(self, chat_id: str) -> None:
+        with self._lock:
+            self._run_origin.pop(chat_id, None)
 
     def _await_confirmation(
         self, tool_name: str, tool_input: dict[str, Any], level: str, chat_id: str
@@ -5792,8 +5833,16 @@ class Bridge:
                 request_id,
             )
 
-    def _run_tool_sync(self, tool_name: str, tool_input: dict[str, Any]) -> str:
-        """Blocking runnable execution — call via asyncio.to_thread from the agentic loop."""
+    def _run_tool_sync(
+        self, tool_name: str, tool_input: dict[str, Any], chat_id: str = ""
+    ) -> str:
+        """Blocking runnable execution — call via asyncio.to_thread from the agentic loop.
+
+        ``chat_id`` keys the turn's run provenance (set by the trigger handler):
+        a rule trigger run is recorded with its source and ``agent=False`` (not an
+        LLM run), an agent trigger run with its source and ``agent=True``; a direct
+        chat turn (no registered origin) defaults to an agent run with no trigger.
+        """
         if tool_name in _CUSTOM_TOOL_NAMES:
             return self._run_custom_tool(tool_name, dict(tool_input or {}))
         if tool_name in _MEMORY_TOOL_NAMES:
@@ -5887,6 +5936,13 @@ class Bridge:
             explicit_id=credential_id,
             valid_args=self._declared_arg_names(cached_r, command_path),
         )
+        # Run provenance for this turn (set by the trigger handler; absent → a
+        # direct chat agent run). `agent` distinguishes an LLM turn (chat / agent
+        # trigger) from a fixed rule run; `trigger` is the causing event source.
+        with self._lock:
+            origin = getattr(self, "_run_origin", {}).get(chat_id, {})
+        run_agent = bool(origin.get("agent", True))
+        run_trigger = str(origin.get("trigger", ""))
         ssh = entry.get("ssh")
         if ssh:
             run_remote(
@@ -5899,13 +5955,14 @@ class Bridge:
                 on_done,
                 entry.get("identityFile"),
                 timeout=120,
-                agent=True,
+                agent=run_agent,
                 global_ssh_config=self.get_config().get("ssh"),
                 run_as=run_as,
                 become_method=become_method,
                 become_flags=become_flags,
                 positionals=self._positionals_for(cached_r, command_path),
                 secrets=secrets,
+                trigger=run_trigger,
             )
         else:
             run_local(
@@ -5916,12 +5973,13 @@ class Bridge:
                 on_line,
                 on_done,
                 timeout=120,
-                agent=True,
+                agent=run_agent,
                 run_as=run_as,
                 become_method=become_method,
                 become_flags=become_flags,
                 positionals=self._positionals_for(cached_r, command_path),
                 secrets=secrets,
+                trigger=run_trigger,
             )
 
         output = "\n".join(output_lines)
@@ -8196,6 +8254,7 @@ class Bridge:
         allowed_runnables: list[str] | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
+        trigger: str = "",
     ) -> str:
         """BridgeOps: run an isolated headless agent turn for a trigger card.
 
@@ -8221,6 +8280,10 @@ class Bridge:
         cancel = threading.Event()
         with self._lock:
             self._chat_cancels[chat_id] = cancel
+        # An agent trigger turn IS an LLM run; tag every runnable it calls with
+        # the causing event source (agent=True). Direct chat turns register no
+        # origin and default to the same agent=True with no trigger.
+        self._set_run_origin(chat_id, trigger, agent=True)
         try:
             return asyncio.run(
                 self._run_isolated_agent_turn(
@@ -8236,6 +8299,7 @@ class Bridge:
                 )
             )
         finally:
+            self._clear_run_origin(chat_id)
             with self._lock:
                 self._chat_cancels.pop(chat_id, None)
 
@@ -8816,6 +8880,7 @@ def _summary_extra(extra: dict[str, Any]) -> dict[str, Any]:
     return {
         "autonomy": extra.get("autonomy"),
         "agent": bool(extra.get("agent")),
+        "trigger": extra.get("trigger", "") or "",
         "exception": extra.get("exception"),
         "events": extra.get("events", {}),
         "command_path": extra.get("command_path", []),
@@ -8926,6 +8991,9 @@ def _parse_log_by_run_id(
             "argSources": extra.get("arg_sources", {}),
             "logLines": g["lines"],
             "initiatedBy": "llm" if extra.get("agent") else "user",
+            # Provenance: the event source that caused the run ("schedule"/…), or
+            # "" for an interactive/manual run. Drives the History/Analytics badges.
+            "trigger": extra.get("trigger", "") or "",
         }
         exc = g["exc"]
         if exc:
@@ -8969,6 +9037,7 @@ def _parse_log_sequential(
                 "argSources": extra.get("arg_sources", {}),
                 "logLines": lines,
                 "initiatedBy": "llm" if extra.get("agent") else "user",
+                "trigger": extra.get("trigger", "") or "",
             }
             if include_extra:
                 record["extra"] = _summary_extra(extra)

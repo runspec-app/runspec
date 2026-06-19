@@ -7,6 +7,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.39.0] — 2026-06-19
+
+### Added
+
+- **`run_summary` now records a `trigger` provenance field.** A new
+  `RUNSPEC_TRIGGER` environment variable (e.g. `RUNSPEC_TRIGGER=schedule`) is
+  recorded into the `run_summary` audit record as `extra.trigger` — the
+  provenance of *what caused* the run (an event source id), `""` for an
+  interactive/manual run. It is an axis orthogonal to `agent` (`RUNSPEC_AGENT`):
+  a single run can be both scheduled and an LLM turn. Consumers like
+  runspec-console use it to attribute and badge runs (e.g. a scheduled-run
+  marker) in History/Analytics. No behaviour change when the env var is unset.
+
+---
+
 ## [0.38.0] — 2026-06-19
 
 ### Changed (BREAKING)

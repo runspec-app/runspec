@@ -43,6 +43,7 @@ class BridgeOps(Protocol):
         allowed_runnables: list[str] | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
+        trigger: str = "",
     ) -> str:
         """Run an isolated, headless agent turn under ``chat_id`` (the card id),
         with ``system`` as its system prompt and ``message`` as the sole user
@@ -68,10 +69,15 @@ class BridgeOps(Protocol):
         ...
 
     def run_rule_tool(
-        self, chat_id: str, tool_name: str, tool_input: dict[str, Any]
+        self,
+        chat_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        trigger: str = "",
     ) -> str:
         """Run a single runnable through the autonomy gate, returning its output
-        (or a gate-decline message). ``chat_id`` is the card id."""
+        (or a gate-decline message). ``chat_id`` is the card id; ``trigger`` is the
+        causing event source, recorded as the run's provenance."""
         ...
 
     def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
@@ -202,7 +208,9 @@ def make_handler(
         if trigger.mode == "rule":
             tool_input = trigger.render_args(event.payload)
             card.move(Column.RUNNING, tool=trigger.run, args=tool_input)
-            output = ops.run_rule_tool(card.id, trigger.run, tool_input)
+            output = ops.run_rule_tool(
+                card.id, trigger.run, tool_input, trigger=event.source
+            )
             card.move(Column.DONE, result=output[:_RESULT_CAP])
             if trigger.post_to_chat:
                 # Mirror as a standard slash-command run card: "/runnable on host".
@@ -249,6 +257,7 @@ def make_handler(
             allowed_runnables=trigger.runnables or None,
             record=card.log,  # per-tool/gate steps onto the card timeline
             stage=lambda col: card.move(col),  # awaiting_human → running stages
+            trigger=event.source,  # provenance recorded on each runnable the agent runs
         )
         # The agent's reply + any actions land on the card — a trigger turn has no
         # chat transcript, so this is where its output is visible.

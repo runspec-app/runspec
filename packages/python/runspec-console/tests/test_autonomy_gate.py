@@ -34,7 +34,7 @@ class _StubBridge:
         # Desktop toast is orthogonal to the gate logic under test; no-op here.
         pass
 
-    def _run_tool_sync(self, name, tool_input):
+    def _run_tool_sync(self, name, tool_input, chat_id=""):
         return self._run_result
 
     def get_config(self):

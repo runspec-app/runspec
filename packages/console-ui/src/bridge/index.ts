@@ -231,6 +231,7 @@ export interface HistoryRecord {
   argSources?: Record<string, string> // provenance of each arg: "cli" | "env" | "runspec_env" | "spec_default" | "not_set"
   logLines: HistoryLogLine[]         // log records belonging to this invocation
   initiatedBy?: 'llm' | 'user'      // 'llm' when triggered by the agentic chat loop
+  trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive/manual
 }
 
 // A schedule (Schedules tab). When it fires it either emits a matchable event
@@ -265,6 +266,7 @@ export interface InFlightRecord {
   runAs: string
   startedAt: string
   args: Record<string, unknown>
+  trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive/manual
 }
 
 export interface TodayByRunnable {

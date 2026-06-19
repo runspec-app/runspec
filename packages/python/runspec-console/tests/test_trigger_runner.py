@@ -45,6 +45,7 @@ class FakeOps:
         allowed_runnables=None,
         record=None,
         stage=None,
+        trigger="",
     ):
         self.agent_calls.append(
             {
@@ -57,6 +58,7 @@ class FakeOps:
                 "from_mailbox": from_mailbox,
                 "allowed_runnables": allowed_runnables,
                 "record_callable": callable(record),
+                "trigger": trigger,
             }
         )
         return self._agent_summary
@@ -66,9 +68,14 @@ class FakeOps:
         # fake returns whatever this case was constructed with ("" = personal).
         return self._mailbox
 
-    def run_rule_tool(self, chat_id, tool_name, tool_input):
+    def run_rule_tool(self, chat_id, tool_name, tool_input, trigger=""):
         self.rule_calls.append(
-            {"chat_id": chat_id, "tool_name": tool_name, "tool_input": tool_input}
+            {
+                "chat_id": chat_id,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "trigger": trigger,
+            }
         )
         return self._tool_output
 
@@ -399,7 +406,12 @@ def test_handler_rule_mode():
     handler(card, t, Event.new("outlook", "new_mail", {"subject": "web01"}))
 
     assert ops.rule_calls == [
-        {"chat_id": "card1", "tool_name": "host__check", "tool_input": {"svc": "web01"}}
+        {
+            "chat_id": "card1",
+            "tool_name": "host__check",
+            "tool_input": {"svc": "web01"},
+            "trigger": "outlook",  # provenance = the causing event source
+        }
     ]
     assert [c for c, _ in moves] == [Column.RUNNING, Column.DONE]
     assert moves[-1][1]["result"] == "exit 0\nall good"
