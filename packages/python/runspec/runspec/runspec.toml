@@ -56,6 +56,20 @@ examples = [
 format   = {type = "choice", description = "Output format", options = ["text", "json", "mcp", "openai", "anthropic"], short = "-f", default = "text"}
 runnable = {type = "str",    description = "Filter output to a single runnable by name", short = "-r", required = false}
 
+[runspec.commands.stubs]
+description = "Generate typings/runspec/__init__.pyi so parse() is precisely typed per runnable"
+autonomy    = "autonomous"
+
+examples = [
+  {cmd = "runspec stubs",         description = "Generate/refresh the type stub from installed runnables"},
+  {cmd = "runspec stubs --check", description = "Exit non-zero if the stub is missing or stale (CI/pre-commit)"},
+  {cmd = "runspec stubs --off",   description = "Disable typing: remove the stub (arg access back to Any)"},
+]
+
+[runspec.commands.stubs.args]
+check = {type = "flag", description = "Verify the stub is up to date; do not write. Exit 1 if stale.", default = false}
+off   = {type = "flag", description = "Remove the stub, restoring the default Any-typed arg access.",   default = false}
+
 [runspec.commands.test]
 description = "Smoke-test installed runnables: spec smoke + entry-point --help"
 autonomy    = "autonomous"

@@ -184,6 +184,63 @@ Every emitted tool carries:
 
 ---
 
+## `runspec stubs`
+
+Generate precise per-runnable types for `parse()`, so your editor and type
+checker know each runnable's args. Scans the installed venv (same discovery as
+`runspec local`) and writes a self-contained stub to
+`typings/runspec/__init__.pyi` at the project root.
+
+```bash
+runspec stubs [--check] [--off]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--check` | off | Verify the stub is up to date; write nothing. Exit 1 if missing/stale. |
+| `--off` | off | Remove the stub, restoring the default `Any`-typed arg access. |
+
+With the stub in place, `parse("<name>")` is typed precisely at the call site —
+no annotation, no cast:
+
+```python
+from runspec import parse
+
+args = parse("deploy")
+args.workers.value        # int
+args.format.value         # Literal["json", "yaml"]
+args.wrokers              # error: "_DeployArgs" has no attribute "wrokers"; maybe "workers"?
+```
+
+A typo or an arg you haven't regenerated for is a hard error rather than a
+silent `Any`. The runnable's metadata surface (`args.runspec_*`, `args.get(...)`,
+`name in args`) is preserved, and subcommand args are exposed as the superset
+across the command tree (read presence-dependent ones with `args.get(...)`).
+
+**Editor setup.** pyright / Pylance (VS Code) read `typings/` by default — no
+config. For mypy, point it at the directory:
+
+```toml
+# pyproject.toml
+[tool.mypy]
+mypy_path = "typings"
+```
+
+**Keeping it fresh.** The stub is generated from `runspec.toml`, so regenerate
+when an interface changes — the same reflex as re-locking dependencies. Guard it
+in CI or a pre-commit hook so a stale stub can't slip through:
+
+```yaml
+# .github/workflows/ci.yml
+- name: Check runspec stubs are current
+  run: runspec stubs --check
+```
+
+A stale stub never affects runtime — `parse()` reads the toml, not the stub — so
+the worst case is an out-of-date hint until you rerun `runspec stubs`.
+
+---
+
 ## `runspec test`
 
 A CI smoke gate. Where `runspec local` validates *metadata* (descriptions,

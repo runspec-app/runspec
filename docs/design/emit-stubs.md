@@ -1,5 +1,12 @@
 # Design: `runspec emit --stubs`
 
+> **Status: shipped (0.40.0) as `runspec stubs`.** This document is the original
+> design rationale and predates two changes: (1) since 0.38.0 the parsed value is
+> read via `.value` (`args.workers.value`, not `args.workers`); (2) the shipped
+> command is `runspec stubs`, which writes a self-contained
+> `typings/runspec/__init__.pyi` (not `emit --stubs`). The implementation lives
+> in `runspec/stubgen.py`; usage is in the [CLI Reference](../cli.md#runspec-stubs).
+
 ## Problem
 
 Args parsed from `runspec.toml` are dynamic — their names and value types are
@@ -10,7 +17,7 @@ without unwrapping:
 
 ```python
 args = rs.parse("greeter")
-workers: int = args.workers   # ok — Any flows into int
+workers: int = args.workers.value   # ok — Any flows into int
 ```
 
 That unblocks typed *usage*, but the type checker still doesn't *know* the

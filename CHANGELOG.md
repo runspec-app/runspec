@@ -7,6 +7,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.40.0] — 2026-06-19
+
+### Added
+
+- **`runspec stubs` — precise per-runnable types for `parse()`.** A new command
+  scans the installed venv (same discovery as `runspec local`) and writes a
+  self-contained `typings/runspec/__init__.pyi` at the project root. Each
+  runnable becomes a typed view so `args = parse("demo")` is precisely typed at
+  the call site with **no annotation or cast** — `args.workers.value` is `int`,
+  `args.format.value` is `Literal["json", "yaml"]`, and a typo like
+  `args.wrokers` is a hard "no attribute" error (with a suggestion) instead of a
+  silent `Any`. Subcommand args are exposed as the superset across the command
+  tree; the runnable's metadata surface (`runspec_*`, `get`, `in`) is preserved.
+  pyright reads `typings/` by default; for mypy add `mypy_path = typings`.
+  - `runspec stubs --check` exits non-zero when the stub is missing or stale
+    (for CI / pre-commit), and `runspec stubs --off` removes the stub to restore
+    the default `Any`-typed access.
+- **`Arg` is now generic (`Arg[T]`).** `Arg.value` is typed `T`, so a generated
+  stub can pin it precisely (`Arg[int]`, `Arg[Literal[...]]`). `Generic` is
+  erased at runtime, so there is **no behaviour change** — plain runtime use is
+  `Arg[Any]` exactly as before.
+
+---
+
 ## [0.39.0] — 2026-06-19
 
 ### Added

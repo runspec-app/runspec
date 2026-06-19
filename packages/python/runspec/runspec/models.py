@@ -11,7 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Generic, TypeVar
+
+# Value type carried by an Arg. Generic so a generated stub can pin it precisely
+# (`Arg[int]`, `Arg[Literal["json", "yaml"]]`); plain runtime use is `Arg[Any]`.
+# Generic is erased at runtime, so this changes nothing about behaviour.
+T = TypeVar("T")
 
 # Item-type name → its Python type repr, for `Arg.python_type`. Mirrors the type
 # map used by schema emit (cli._arg_to_json_schema) and the planned stub
@@ -31,7 +36,7 @@ _PYTHON_TYPE_NAMES = {
 
 
 @dataclass(eq=False)
-class Arg:
+class Arg(Generic[T]):
     """
     A single parsed argument. Carries its resolved value alongside
     its full spec metadata so the parsed result is self-describing.
@@ -57,8 +62,9 @@ class Arg:
     always". It is now always required.)
     """
 
-    # Resolved value — coerced to native type by the language pack
-    value: Any
+    # Resolved value — coerced to native type by the language pack. Typed T so a
+    # generated stub can pin it (see TypeVar above); at runtime it is Arg[Any].
+    value: T
 
     # Spec metadata
     name: str
@@ -167,7 +173,7 @@ class RunSpec:
     __runspec_groups__: list[Group] = field(default_factory=list)
 
     # Args are stored internally and exposed as attributes
-    _args: dict[str, Arg] = field(default_factory=dict)
+    _args: dict[str, Arg[Any]] = field(default_factory=dict)
 
     # Values loaded from the .runspec_env file at parse time
     _runspec_env: dict[str, str] = field(default_factory=dict)
@@ -195,7 +201,7 @@ class RunSpec:
         annotation; until then a parsed arg is ``Any`` to the checker.
         """
         try:
-            args: dict[str, Arg] = object.__getattribute__(self, "_args")
+            args: dict[str, Arg[Any]] = object.__getattribute__(self, "_args")
             return args[name]
         except KeyError as err:
             raise AttributeError(f"No argument '{name}' in spec for '{self.__runspec_runnable__}'. Available: {', '.join(self._args.keys())}") from err
@@ -214,7 +220,7 @@ class RunSpec:
         """
         return name.replace("-", "_") in self._args
 
-    def get(self, name: str, default: Any = None) -> Arg:
+    def get(self, name: str, default: Any = None) -> Arg[Any]:
         """Safe arg lookup — always returns an Arg, never raises.
 
         Use this for args whose presence depends on the active subcommand, so
@@ -310,7 +316,7 @@ class RunSpec:
 
         return make_env_namespace(self._runspec_env)
 
-    def _set_arg(self, name: str, arg: Arg) -> None:
+    def _set_arg(self, name: str, arg: Arg[Any]) -> None:
         """Internal: store an arg. Normalises hyphens to underscores."""
         normalised = name.replace("-", "_")
         self._args[normalised] = arg

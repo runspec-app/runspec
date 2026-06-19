@@ -61,6 +61,7 @@ def main() -> None:
     commands = {
         "init": cmd_init,
         "local": cmd_local,
+        "stubs": cmd_stubs,
         "test": cmd_test,
         "serve": cmd_serve,
         "jump": cmd_jump,
@@ -116,6 +117,67 @@ def cmd_local(args: list[str]) -> None:
             print(f"✗  Unknown format: {fmt}")
             print("   Available formats: text, json, mcp, openai, anthropic")
             sys.exit(1)
+
+
+def _project_root() -> Path:
+    """Nearest ancestor of cwd containing .git — the project boundary (CLAUDE.md).
+    Falls back to cwd when no .git is found (e.g. a bare checkout)."""
+    cwd = Path.cwd().resolve()
+    for d in (cwd, *cwd.parents):
+        if (d / ".git").exists():
+            return d
+    return cwd
+
+
+def cmd_stubs(args: list[str]) -> None:
+    """Generate (or check/disable) the per-runnable type stub for parse().
+
+    Writes ``<project_root>/typings/runspec/__init__.pyi`` from the runnables
+    installed in this venv (same discovery as ``runspec local``). pyright reads
+    ``typings/`` by default; for mypy add ``mypy_path = typings``.
+    """
+    from runspec import stubgen
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["stubs"] + args, config_path=_CLI_CONFIG)
+    check = parsed.check.value
+    off = parsed.off.value
+
+    root = _project_root()
+    target = root / "typings" / "runspec" / "__init__.pyi"
+    rel = target.relative_to(root) if target.is_relative_to(root) else target
+
+    # --off disables typing by removing the stub, restoring the installed
+    # package's default (Any-typed arg access) — no self-shadowing permissive stub.
+    if off:
+        if target.exists():
+            target.unlink()
+            print(f"✓  Removed {rel} — arg typing disabled (back to Any).")
+        else:
+            print(f"✓  No stub at {rel} — typing already off.")
+        return
+
+    discovered = _deduplicate(_discover_installed())
+    if not discovered:
+        print("No runspec-aware runnables found in this environment.")
+        print("Install a package that declares 'runspec' as a dependency,")
+        print("or run 'pip install -e .' from your project directory.")
+        sys.exit(1)
+    content = stubgen.render_stub(stubgen.specs_from_discovered(discovered))
+
+    if check:
+        existing = target.read_text(encoding="utf-8") if target.exists() else None
+        if existing == content:
+            print(f"✓  {rel} is up to date.")
+            return
+        reason = "is out of date" if existing is not None else "is missing"
+        print(f"✗  {rel} {reason} — run 'runspec stubs'.")
+        sys.exit(1)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    n = content.count("@overload") - 1
+    print(f"✓  Wrote {rel} ({n} runnable{'s' if n != 1 else ''} typed).")
 
 
 def cmd_test(args: list[str]) -> None:
