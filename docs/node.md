@@ -122,9 +122,12 @@ const tags     = (args.tag as string[]) ?? [];
 const dryRun   = args.dry_run as boolean;
 ```
 
-Unlike the Python `Arg` proxy, there is no transparent wrapper — `args.name`
-IS the coerced value. Cast to the TypeScript type you expect, or use a small
-helper:
+In Python (since 0.38.0) each argument is an `Arg` you read via `args.name.value`;
+Node has **no wrapper** — `args.name` IS the coerced value. So the ergonomics the
+Python `Arg`/`get()` API provides are already native here: a missing arg (e.g. one
+that belongs to a different subcommand) is `undefined`, `'name' in args` tests
+membership, and `args.name ?? fallback` supplies a default. Cast to the TypeScript
+type you expect, or use a small helper:
 
 ```typescript
 function get<T>(args: ParsedArgs, key: string): T {
