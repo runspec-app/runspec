@@ -1,5 +1,12 @@
 # runspec-logops Changelog
 
+## [0.1.3] — 2026-06-18
+
+### Fixed
+- Snippets/samples now decode source files and logs as UTF-8 (no cp1252 mojibake
+  on Windows). Requires `runspec-logops-core>=0.3.1`.
+
+
 ## [0.1.2] — 2026-06-18
 
 ### Changed

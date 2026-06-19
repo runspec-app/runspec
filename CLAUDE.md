@@ -237,8 +237,8 @@ Both Python and Node packages are active and published.
 | `runspec-windows` | 0.1.2 | PyPI | 35 Windows system admin + Microsoft 365 (Outlook/Teams/Calendar/OneDrive) runnables |
 | `runspec-jsm` | 0.1.0 | PyPI | 8 Jira Service Management (Data Center) service-desk runnables — raise/comment/transition/set-property + portal-field discovery |
 | `runspec-snow` | 0.1.0 | PyPI | 8 ServiceNow ITSM runnables — create/get/comment/state/set-field over the Table API + Service Catalog discovery |
-| `runspec-logops` | 0.1.2 | PyPI | 3 log-condensing + code-mapping runnables (`summarize-log`/`map-trace`/`bundle-digest`) — cheap application-support triage from a log file; thin wrappers over `runspec-logops-core` |
-| `runspec-logops-core` | 0.3.0 | PyPI | Pure-Python logic core behind `runspec-logops` — importable helpers, **no runspec dep / no runspec.toml / no entry points** (surfaces zero runnables) |
+| `runspec-logops` | 0.1.3 | PyPI | 3 log-condensing + code-mapping runnables (`summarize-log`/`map-trace`/`bundle-digest`) — cheap application-support triage from a log file; thin wrappers over `runspec-logops-core` |
+| `runspec-logops-core` | 0.3.1 | PyPI | Pure-Python logic core behind `runspec-logops` — importable helpers, **no runspec dep / no runspec.toml / no entry points** (surfaces zero runnables) |
 | `runspec-webops` | 0.1.0 | npm | HTTPS/TLS certificate + web-endpoint runnables (Node; `packages/node-webops`) |
 | `runspec-registry` | 0.1.1 | PyPI | Archived — registry removed in favour of SSH+MCP jump-host model |
 

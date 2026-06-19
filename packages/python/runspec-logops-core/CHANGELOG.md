@@ -1,5 +1,13 @@
 # runspec-logops-core Changelog
 
+## [0.3.1] — 2026-06-18
+
+### Fixed
+- Read source files and logs as **UTF-8** explicitly. On Windows the default
+  locale codec (cp1252) mangled non-ASCII (e.g. em-dashes in comments) into
+  mojibake in `map-trace` snippets and `summarize-log` samples.
+
+
 ## [0.3.0] — 2026-06-18
 
 ### Changed

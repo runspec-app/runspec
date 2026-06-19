@@ -196,7 +196,7 @@ def _find_definition(repo_root: str, symbol: str, class_hint: str | None) -> tup
     best: tuple[int, str, int] | None = None  # (rank, path, lineno)
     for path in _iter_source_files(repo_root):
         try:
-            with open(path, errors="replace") as fh:
+            with open(path, encoding="utf-8", errors="replace") as fh:
                 lines = fh.read().splitlines()
         except OSError:
             continue
@@ -219,7 +219,7 @@ def _find_definition(repo_root: str, symbol: str, class_hint: str | None) -> tup
 
 def _snippet(path: str, lineno: int, context: int) -> list[str]:
     """Return ``lineno`` ±context as ``"<n>: <text>"`` strings (no trailing newline)."""
-    with open(path, errors="replace") as fh:
+    with open(path, encoding="utf-8", errors="replace") as fh:
         lines = fh.read().splitlines()
     start = max(0, lineno - context - 1)
     end = min(len(lines), lineno + context)
@@ -260,7 +260,7 @@ def map_trace_to_sources(
 
         resolved_line = lineno
         if path is not None and resolved_line is None and symbol:
-            with open(path, errors="replace") as fh:
+            with open(path, encoding="utf-8", errors="replace") as fh:
                 resolved_line = _symbol_line(fh.read().splitlines(), symbol)
 
         # 3) Fallback: no file, or the class file didn't contain the symbol — search

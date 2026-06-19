@@ -153,7 +153,7 @@ def _iter_events(path: str):
     """
     block: list[str] = []
     block_ts: datetime | None = None
-    with open(path, errors="replace") as fh:
+    with open(path, encoding="utf-8", errors="replace") as fh:
         for raw in fh:
             line = raw.rstrip("\n")
             if block and _is_continuation(line):

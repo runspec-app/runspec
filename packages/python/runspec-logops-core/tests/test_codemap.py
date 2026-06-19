@@ -114,6 +114,16 @@ def test_bare_unknown_returns_note(tmp_path) -> None:
     assert "note" in res
 
 
+def test_snippet_decodes_utf8_not_locale(tmp_path) -> None:
+    # Source files are UTF-8; reading must not fall back to a locale codec (cp1252
+    # on Windows) or non-ASCII turns to mojibake. Write UTF-8 bytes explicitly.
+    (tmp_path / "svc.py").write_text("def go():\n    pass  # cost — in euros €\n", encoding="utf-8")
+    res = map_trace_to_sources(str(tmp_path), "go", context=1)
+    snippet = "\n".join(res["frames"][0]["snippet"])
+    assert "cost — in euros €" in snippet
+    assert "â" not in snippet  # the classic cp1252 mojibake lead byte
+
+
 def test_total_lines_capped(tmp_path) -> None:
     for n in range(4):
         (tmp_path / f"f{n}.py").write_text("\n".join(str(i) for i in range(1, 200)) + "\n")
