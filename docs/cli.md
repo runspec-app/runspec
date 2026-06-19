@@ -202,6 +202,9 @@ checker know each runnable's args. Scans the installed venv (same discovery as
 `runspec local`) and writes a self-contained stub to
 `typings/runspec/__init__.pyi` at the project root.
 
+> For a step-by-step walkthrough and the everyday workflow, see
+> [Typed args (`runspec stubs`)](typed-args.md).
+
 ```bash
 runspec stubs [--check] [--off]
 ```
