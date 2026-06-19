@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
-import type { ArgDef, Host, Runnable } from '../bridge'
+import type { ArgDef, Host, Runnable, Skill } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { PathInput } from './PathInput'
@@ -541,6 +541,61 @@ function RunnableCard({ runnable, hosts, onClick }: {
   )
 }
 
+// A saved skill, rendered as a launchable card alongside runnables. Clicking opens
+// the same parameter form the `$` chat menu uses (App owns the SkillRunModal).
+function SkillCard({ skill, onClick }: { skill: Skill; onClick: () => void }) {
+  const isDark = useIsDark()
+  const [hovered, setHovered] = useState(false)
+
+  const argCount = (skill.args ?? []).length
+  const requiredCount = (skill.args ?? []).filter(a => a.required).length
+
+  const accent = isDark ? '#bd93f9' : '#722ed1'
+  const border = hovered ? accent : (isDark ? '#2a2a2a' : '#e0e0e0')
+  const bg = hovered
+    ? (isDark ? 'rgba(189,147,249,0.05)' : 'rgba(114,46,209,0.03)')
+    : (isDark ? '#141414' : '#fafafa')
+
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        border: `1px solid ${border}`, borderRadius: 8, padding: '14px 16px',
+        cursor: 'pointer', background: bg, transition: 'border-color 0.15s, background 0.15s',
+        display: 'flex', flexDirection: 'column', gap: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Text style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: accent }}>
+          ${skill.id}
+        </Text>
+        <div style={{ marginLeft: 'auto' }}>
+          <Tag color="purple" style={{ fontSize: 10, margin: 0 }}>skill</Tag>
+        </div>
+      </div>
+      {(skill.title || skill.symptom) && (
+        <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.4 }}>
+          {skill.title}{skill.title && skill.symptom ? ' — ' : ''}{skill.symptom}
+        </Text>
+      )}
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
+        {argCount > 0 ? (
+          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 10, margin: 0 }}>
+            {argCount} param{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
+          </Tag>
+        ) : (
+          <Tag style={{ fontSize: 10, margin: 0 }}>no params</Tag>
+        )}
+        {(skill.tags ?? []).slice(0, 3).map(t => (
+          <Tag key={t} style={{ fontSize: 10, margin: 0 }}>{t}</Tag>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main view ───────────────────────────────────────────────────────────────
 
 export interface PendingForm {
@@ -556,11 +611,14 @@ interface FormsViewProps {
   onRunRunnable: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[], credentialId?: string) => void
   pendingForm?: PendingForm | null
   onPendingFormClear?: () => void
+  skills?: Skill[]
+  onOpenSkill?: (skill: Skill) => void
 }
 
 export function FormsView({
   runnables, hosts, selectedHost, activeScope,
   onRunRunnable, pendingForm, onPendingFormClear,
+  skills = [], onOpenSkill,
 }: FormsViewProps) {
   const isDark = useIsDark()
   const [search, setSearch] = useState('')
@@ -631,6 +689,20 @@ export function FormsView({
     ? scopeFiltered.filter(r => searchMatch(r, search))
     : scopeFiltered
 
+  // Skills are host-agnostic, so they ignore the host/scope filters — only the
+  // text search narrows them. Shown as their own swimlane above the runnables.
+  const filteredSkills = (onOpenSkill && skills.length > 0)
+    ? (search
+        ? skills.filter(s => {
+            const low = search.toLowerCase()
+            return s.id.toLowerCase().includes(low) ||
+              (s.title ?? '').toLowerCase().includes(low) ||
+              (s.symptom ?? '').toLowerCase().includes(low) ||
+              (s.tags ?? []).some(t => t.toLowerCase().includes(low))
+          })
+        : skills)
+    : []
+
   // Group into swimlanes preserving existing group order
   const groupMap = new Map<string, Runnable[]>()
   for (const r of filtered) {
@@ -653,15 +725,36 @@ export function FormsView({
         />
       </div>
 
-      {filtered.length === 0 ? (
+      {filtered.length === 0 && filteredSkills.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>
           <div style={{ textAlign: 'center' }}>
             <AppstoreOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
-            <Text type="secondary">No runnables match the current filter.</Text>
+            <Text type="secondary">Nothing matches the current filter.</Text>
           </div>
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
+          {filteredSkills.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{
+                fontSize: 10, color: isDark ? '#aaa' : '#999',
+                textTransform: 'uppercase', letterSpacing: '0.08em',
+                marginBottom: 12, paddingBottom: 6,
+                borderBottom: `1px solid ${borderCol}`,
+              }}>
+                Skills
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+                gap: 10,
+              }}>
+                {filteredSkills.map(s => (
+                  <SkillCard key={s.id} skill={s} onClick={() => onOpenSkill?.(s)} />
+                ))}
+              </div>
+            </div>
+          )}
           {[...groupMap.entries()].map(([group, groupRunnables]) => (
             <div key={group} style={{ marginBottom: 28 }}>
               <div style={{

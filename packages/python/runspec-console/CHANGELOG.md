@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.97.0] — 2026-06-19
+
+### Added
+- **Skills appear as launchable cards in the Forms tab.** A parameterized skill is
+  effectively a form, so the Forms view now shows a **Skills** swimlane above the
+  runnable cards — click a card to open the same parameter form the `$` chat menu
+  uses (and run it through the assistant). Cards show the skill id, title/symptom,
+  param count, and tags; they're host-agnostic (only the text search filters them).
+  No backend change — reuses `get_skills` and the existing `SkillRunModal`.
+
+
 ## [0.96.0] — 2026-06-19
 
 ### Added
