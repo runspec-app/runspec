@@ -391,4 +391,3 @@ only with `--debug`, while the audit file always has the complete record.
 - [Node Library](node.md) — `getLogger` and ParsedArgs integration
 - [Agent Integration](agents.md) — how `[config.logging]` behaves when
   invoked via `runspec serve`
-- [CHANGELOG](changelog.md) for 0.10.0 / node-0.9.0 / 0.11.0 / 0.12.0

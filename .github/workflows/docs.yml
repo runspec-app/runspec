@@ -3,6 +3,14 @@ name: Deploy docs
 on:
   push:
     branches: [main]
+  # Also build (strict, no deploy) on PRs that touch the docs, so a link
+  # leaking an excluded/internal page is caught before merge — not at
+  # deploy time after it has already landed on main.
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
 
 permissions:
   contents: read
@@ -18,13 +26,19 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install mkdocs-material
-      - run: mkdocs build
+      # --strict fails the build if a published page links to an excluded
+      # (internal) or missing page — a guard against leaking design docs into
+      # the public site via a stray link.
+      - run: mkdocs build --strict
       - uses: actions/upload-pages-artifact@v5
+        if: github.event_name == 'push'
         with:
           path: site/
 
   deploy:
     needs: build
+    # PRs build for validation only; deploy to Pages happens on main pushes.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

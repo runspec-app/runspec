@@ -8,9 +8,8 @@ and MCP-ready tool schemas — without writing argument-parsing code.
 
 !!! info "Versions"
     This reference tracks the latest published `runspec` (Python) and
-    `runspec-node` (Node) releases. See the [Changelog](changelog.md) for what
-    landed in each version; features below are annotated with the version that
-    introduced them.
+    `runspec-node` (Node) releases; features below are annotated with the
+    version that introduced them.
 
 ---
 

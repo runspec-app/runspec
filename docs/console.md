@@ -7,8 +7,8 @@ discovers every runnable installed in its environment, and can reach runnables
 on remote hosts over SSH.
 
 !!! info "Supersedes runspec-chat"
-    runspec-console replaces the older Chainlit-based
-    [runspec-chat](runspec-chat.md) UI. Prefer the console for new setups.
+    runspec-console replaces the older Chainlit-based runspec-chat UI. Prefer
+    the console for new setups.
 
 ---
 

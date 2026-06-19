@@ -5,9 +5,9 @@ Node.js and TypeScript projects. Same TOML format, same CLI, same MCP server
 — just `parse()` returning a `ParsedArgs` object instead of a Python `RunSpec`.
 
 !!! info "Version"
-    This page tracks the latest published **runspec-node** release (see the
-    [Changelog](changelog.md)); API additions are annotated with the version
-    that introduced them. Node 18+ is required; CI covers 18, 20, and 22.
+    This page tracks the latest published **runspec-node** release; API
+    additions are annotated with the version that introduced them. Node 18+ is
+    required; CI covers 18, 20, and 22.
 
 !!! success "Python parity (node-0.18.0)"
     As of **node-0.18.0**, the Node pack is at feature parity with the Python
