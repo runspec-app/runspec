@@ -176,6 +176,87 @@ unchanged — the prediction held. The listener polls `get_notifications_async`
 on an interval and diffs ids (forward-only: the startup backlog is snapshotted,
 never replayed); the toast payload extractor is pure and unit-tested with fakes.
 
+### 4.3 Source #3 — Schedule (`sources/schedule.py`) ✅ *implemented*
+
+The clock as an event source. Unlike the other sources, a schedule is **not a
+trigger** — it's its own thing, managed in the **Schedules tab** and persisted to
+`runspec_schedules.toml`. This keeps the two concepts cleanly separated: a
+*schedule* says **when** something happens; a *trigger* says **what to do** when
+an event happens. Scheduling inside the console (rather than the OS task
+scheduler) is what gives a scheduled run the console's audit record, history, and
+— for the event path — the full agent/confirm-gate machinery.
+
+When a schedule fires it does one of two things, chosen by `action`:
+
+- **`action = "event"`** — emit a rich, matchable `Event` into the trigger
+  engine, exactly like a new mail arriving. Triggers with `source = "schedule"`
+  pick it up by `event` type + `match` rules, so a **single** scheduled emit can
+  fan out to **many** triggers, each with its own autonomy / agent-or-rule /
+  match. The clock becomes just another event source, reusing the whole email
+  mental model (and a scheduled *agent turn* is simply an `action="event"`
+  schedule with a `mode="agent"` trigger listening for it).
+- **`action = "runnable"`** — run a specific runnable on a host with fixed args,
+  **directly and autonomously**: no agent, no confirm gate (scheduling it *is*
+  the authorization), audited as the `Scheduled Task` operator via the normal
+  `invoke_runnable` path.
+
+The timing lives in a `when` table — exactly one of `cron = "30 17 * * mon-fri"`
+(5-field crontab) or `every = "15m"` (interval, `<n>` + `s`/`m`/`h`/`d`), plus an
+optional `timezone` (IANA name; default PC-local).
+
+```toml
+# action = "event" — fan out to triggers
+[[schedule]]
+id = "nightly-report"
+action = "event"
+event = "nightly_report"
+when = { cron = "0 2 * * *", timezone = "Europe/London" }
+fields = { scope = "prod", report = "billing" }
+
+# action = "runnable" — direct fixed run, no trigger needed
+[[schedule]]
+id = "log-rotate-weekly"
+action = "runnable"
+host = "prod-1"
+runnable = "log-rotate"
+when = { cron = "0 3 * * 0" }
+args = { keep = "7" }
+```
+
+And the trigger that reacts to the event is an ordinary trigger — no schedule
+knowledge, just a `match` like any mail trigger:
+
+```toml
+[[triggers]]
+name = "billing-report-agent"
+source = "schedule"
+event = "nightly_report"
+mode = "agent"
+[triggers.match]
+report = "billing"
+```
+
+The `event` payload carries the user's `fields` plus built-ins the trigger can
+match or template on: `schedule` (id), `event`, `fired_at`, and
+`date`/`time`/`weekday`/`dow`/`hour`/`minute`/`day`/`month` (PC-local).
+
+The engine is **APScheduler** (`BackgroundScheduler`), shipped as the optional
+`schedule` extra (`pip install runspec-console[schedule]`); the source reports
+`(False, …)` from `available()` until it's installed. Like the chat source, it is
+**bridge-owned and marked external** (`external_sources={"schedule"}`): the
+engine doesn't start it (the zero-arg registry factory can't know the schedule
+list); the bridge builds it from `get_schedules()` in `start_triggers`, wires
+`run_runnable=self._run_scheduled` for the direct path, feeds event-action fires
+in via `engine.feed`, and stops it in `stop_triggers`. Adding/removing a schedule
+restarts the engine so the change takes effect live. It is still
+`register_source`'d so the Triggers UI lists "schedule" in the source dropdown,
+and `list_triggers` advertises the event names schedules actually emit for the
+trigger Event-field autocomplete.
+
+**Known limitation (v1):** forward-only, no persistence — a fire that would land
+while the console is closed is skipped (the default in-memory jobstore). A SQLite
+jobstore is a clean later drop-in for missed-run catch-up.
+
 ---
 
 ## 5. Trigger contract (TOML, symmetric to a runnable's args)

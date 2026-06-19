@@ -391,6 +391,10 @@ class Bridge:
         # that host's own ssh target + key so the tunnel reuses the pooled
         # connection. Keyed by room name: live ChatSource while connected.
         self._chat_sources: dict[str, Any] = {}
+        # The bridge-owned schedule source (cron / interval triggers). Built from
+        # the loaded triggers and started alongside the engine in start_triggers;
+        # stopped in stop_triggers. None when no schedule trigger is configured.
+        self._schedule_source: Any | None = None
         self._chat_stop = threading.Event()
         self._chat_supervisors: dict[str, threading.Thread] = {}
         # Per-room last logged connect-failure summary, so the reconnect loop logs a
@@ -2684,11 +2688,29 @@ class Bridge:
         schedules = self.get_schedules()
         schedules.append(data)
         _write_schedules(path, schedules)
+        # Rebuild the engine so the new schedule's APScheduler job starts now
+        # (mirrors save_trigger / set_trigger_enabled).
+        self.restart_triggers()
 
     def delete_schedule(self, id: str) -> None:
         path = hosts_path().parent / "runspec_schedules.toml"
         schedules = [s for s in self.get_schedules() if s.get("id") != id]
         _write_schedules(path, schedules)
+        self.restart_triggers()
+
+    def _run_scheduled(self, host: str, runnable: str, args: dict[str, Any]) -> None:
+        """Run a runnable-action schedule: fire it directly and autonomously — no
+        agent, no confirm gate (scheduling it is the authorization) — labelled as
+        the 'Scheduled Task' operator. Reuses the normal invoke path (SSH/local
+        exec + the runnable's own run_summary audit that History/Analytics read)."""
+        try:
+            self.invoke_runnable(
+                host, runnable, dict(args or {}), operator="Scheduled Task"
+            )
+        except Exception:
+            logger.exception(
+                "schedule: scheduled run of %s on %s failed", runnable, host
+            )
 
     # ── today digest ──────────────────────────────────────────────────────────
 
@@ -4198,6 +4220,7 @@ class Bridge:
         command_path: list[str] | None = None,
         group: str | None = None,
         credential_id: str = "",
+        operator: str | None = None,
     ) -> str:
         inv_id = uuid.uuid4().hex[:12]
         cp = command_path or []
@@ -4253,7 +4276,7 @@ class Bridge:
                 "runnable": runnable,
                 "group": venv_name(rp) if rp else "",
                 "host": host,
-                "operator": self._current_user(),
+                "operator": operator or self._current_user(),
                 "runAs": run_as,
                 "startedAt": _iso_now(),
                 "args": exec_args,
@@ -6900,7 +6923,11 @@ class Bridge:
         # triggers (new_mail still flows in for any future trigger), so don't bail
         # on zero triggers when a mailbox is configured.
         mailbox = read_mailbox()
-        if not triggers and mailbox is None:
+        # Schedules (Schedules tab) can run with no triggers at all — a
+        # runnable-action schedule fires directly — so they keep the engine alive
+        # too (event-action schedules still need it to route their events).
+        schedules = self.get_schedules()
+        if not triggers and mailbox is None and not schedules:
             return
         handler = make_handler(
             _BridgeTriggerOps(self),
@@ -6922,9 +6949,11 @@ class Bridge:
             clock_ok=self._build_clock_ok(),
             # The chat source is owned by the always-on supervisor (start_chat),
             # not the engine — it pushes messages in via engine.feed(). Marking it
-            # external stops the engine constructing/starting a second one.
-            external_sources={"chat"},
-            always_start=always_start,
+            # external stops the engine constructing/starting a second one. The
+            # schedule source is likewise bridge-owned (it needs the trigger list
+            # to build its APScheduler jobs) and feeds ticks in via engine.feed().
+            external_sources={"chat", "schedule"},
+            always_start=always_start,  # schedule source built from the Schedules tab below
             # Durable once_per_thread dedup — so a trigger that fired on a thread's
             # opening message doesn't re-fire on replies after a console restart.
             thread_store=ThreadDedupStore(trigger_state_path()),
@@ -6939,6 +6968,22 @@ class Bridge:
             self._trigger_engine = engine
         for problem in problems:
             logger.info("trigger source: %s", problem)
+        # Schedule source: bridge-owned (external). Built from the Schedules tab
+        # (runspec_schedules.toml), it fires event-action schedules into
+        # engine.feed() — where source="schedule" triggers match them like mail —
+        # and runs runnable-action schedules directly via _run_scheduled. Started
+        # after the engine so its events route like any other.
+        if schedules:
+            from .sources.schedule import ScheduleSource
+
+            src = ScheduleSource(schedules, run_runnable=self._run_scheduled)
+            ok, reason = src.available()
+            if ok:
+                src.start(engine.feed)
+                with self._lock:
+                    self._schedule_source = src
+            else:
+                logger.info("schedule source not started: %s", reason)
         # The email channel is forward-only — it reacts to mail that arrives while
         # the console is running (NewMailEx), with no startup backlog scan. Claim/
         # lifecycle state lives in the mailbox markers and re-coordinates on the
@@ -6958,8 +7003,12 @@ class Bridge:
         with self._lock:
             engine = self._trigger_engine
             self._trigger_engine = None
+            schedule_source = self._schedule_source
+            self._schedule_source = None
             card_ids = set(self._trigger_cards)
         self._abort_turns(card_ids)
+        if schedule_source is not None:
+            schedule_source.stop()
         if engine is not None:
             engine.stop()
 
@@ -7955,15 +8004,28 @@ class Bridge:
         if file_error:
             errors = [file_error, *errors]
         sources_info: list[dict[str, Any]] = []
+        # The schedule source's event names come from the Schedules tab (the
+        # registry instance is zero-arg and knows none), so a schedule-source
+        # trigger's Event field can autocomplete the events schedules actually emit.
+        schedule_events = sorted(
+            {
+                str(s.get("event") or "").strip()
+                for s in self.get_schedules()
+                if str(s.get("action") or "runnable") == "event" and s.get("event")
+            }
+        )
         for sid in available_sources():
             src = create_source(sid)
             ok, reason = src.available() if src is not None else (False, "unknown")
+            event_types = src.event_types() if src is not None else []
+            if sid == "schedule":
+                event_types = schedule_events
             sources_info.append(
                 {
                     "id": sid,
                     "available": ok,
                     "reason": reason,
-                    "event_types": src.event_types() if src is not None else [],
+                    "event_types": event_types,
                 }
             )
         return {

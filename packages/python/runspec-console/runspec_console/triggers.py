@@ -187,6 +187,9 @@ class Trigger:
             return val
 
         source = _req("source")
+        # source="schedule" is just another source here: the schedule (in the
+        # Schedules tab) emits a named event, and this trigger matches it by
+        # event type + match rules, exactly like a mail trigger.
         event = _req("event")
 
         mode = str(data.get("mode") or "agent").strip()

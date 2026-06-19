@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.92.0"
+version = "0.93.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -53,6 +53,11 @@ credentials = ["keyring>=24"]
 # install needs no system `git` binary; SSH repos go over the already-bundled
 # paramiko. The feature reports itself unavailable until installed.
 git-sync = ["dulwich>=0.22"]
+# Scheduled triggers: a `source = "schedule"` trigger fires a runnable on a cron
+# or interval timer, routed through the normal trigger gate. APScheduler provides
+# the cron/interval engine. Cross-platform; the schedule source reports itself
+# unavailable until installed.
+schedule = ["apscheduler>=3.10"]
 # PyWinRT projection for two notification surfaces: *reading* system toasts (the
 # listener trigger source — Teams / Slack / any toast, needs the `.Management`
 # namespace + a user consent grant) and *sending* confirm toasts (notify.py —
@@ -73,7 +78,7 @@ notifications = [
 # Recursive self-reference (resolved by pip/poetry); excludes `dev`. Win32-only
 # deps inside `notifications` keep their markers, so `[all]` is safe on any OS.
 all = [
-    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications]",
+    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule]",
 ]
 dev = [
     "ruff",
@@ -81,6 +86,7 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
     "dulwich>=0.22",
+    "apscheduler>=3.10",
 ]
 
 [tool.pytest.ini_options]
@@ -91,5 +97,5 @@ python_version = "3.11"
 mypy_path = "../runspec"
 
 [[tool.mypy.overrides]]
-module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*"]
+module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*"]
 ignore_missing_imports = true

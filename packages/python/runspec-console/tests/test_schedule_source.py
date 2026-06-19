@@ -1,0 +1,368 @@
+"""
+Tests for the schedule event source (sources/schedule.py).
+
+A schedule lives in the Schedules tab (runspec_schedules.toml). When it fires it
+either emits a rich, matchable event (action="event") that source="schedule"
+triggers pick up like mail, or runs a runnable directly (action="runnable").
+
+The pure helpers (parse_when / parse_schedule_entry / _parse_every /
+event_payload) and the _fire dispatch need no APScheduler; the when→APScheduler
+conversion test importorskips it, and the routing test drives the engine via
+feed() with a synthetic event.
+"""
+
+from __future__ import annotations
+
+from concurrent.futures import Executor, Future
+from datetime import datetime
+from typing import Any, Callable
+
+import pytest
+
+from runspec_console.events import Event
+from runspec_console.sources.schedule import (
+    ScheduleJob,
+    ScheduleSource,
+    When,
+    _parse_every,
+    event_payload,
+    parse_schedule_entry,
+    parse_when,
+)
+from runspec_console.triggers import Trigger, TriggerEngine
+
+
+class InlineExecutor(Executor):
+    """Runs submitted work immediately in the calling thread (deterministic)."""
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future:
+        f: Future = Future()
+        try:
+            f.set_result(fn(*args, **kwargs))
+        except Exception as exc:  # pragma: no cover
+            f.set_exception(exc)
+        return f
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        pass
+
+
+# ── _parse_every ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("30s", {"seconds": 30}),
+        ("15m", {"minutes": 15}),
+        ("1h", {"hours": 1}),
+        ("2d", {"days": 2}),
+        (" 5M ", {"minutes": 5}),  # trimmed + case-insensitive
+    ],
+)
+def test_parse_every_ok(text, expected):
+    assert _parse_every(text) == expected
+
+
+@pytest.mark.parametrize("bad", ["", "m", "15", "15x", "x5m", "0m", "-3h", "1.5h"])
+def test_parse_every_rejects_bad(bad):
+    with pytest.raises(ValueError):
+        _parse_every(bad)
+
+
+# ── parse_when ────────────────────────────────────────────────────────────────
+
+
+def test_parse_when_cron():
+    w = parse_when({"cron": "30 17 * * mon-fri", "timezone": "Europe/London"})
+    assert w == When(cron="30 17 * * mon-fri", every="", timezone="Europe/London")
+
+
+def test_parse_when_every():
+    assert parse_when({"every": "15m"}) == When(every="15m")
+
+
+def test_parse_when_requires_exactly_one():
+    with pytest.raises(ValueError):
+        parse_when({})  # neither
+    with pytest.raises(ValueError):
+        parse_when({"cron": "* * * * *", "every": "5m"})  # both
+
+
+def test_parse_when_validates_every_now():
+    with pytest.raises(ValueError):
+        parse_when({"every": "soon"})
+
+
+# ── parse_schedule_entry ──────────────────────────────────────────────────────
+
+
+def test_parse_entry_runnable():
+    job = parse_schedule_entry(
+        {
+            "id": "log-rotate-weekly",
+            "action": "runnable",
+            "host": "prod-1",
+            "runnable": "log-rotate",
+            "when": {"cron": "0 3 * * 0"},
+            "args": {"keep": "7"},
+        }
+    )
+    assert job == ScheduleJob(
+        id="log-rotate-weekly",
+        when=When(cron="0 3 * * 0"),
+        action="runnable",
+        enabled=True,
+        host="prod-1",
+        runnable="log-rotate",
+        args={"keep": "7"},
+    )
+
+
+def test_parse_entry_event():
+    job = parse_schedule_entry(
+        {
+            "id": "nightly-report",
+            "action": "event",
+            "event": "nightly_report",
+            "when": {"cron": "0 2 * * *"},
+            "fields": {"scope": "prod"},
+        }
+    )
+    assert job.action == "event"
+    assert job.event == "nightly_report"
+    assert job.fields == {"scope": "prod"}
+    assert job.host == "" and job.runnable == ""
+
+
+def test_parse_entry_action_defaults_to_runnable():
+    job = parse_schedule_entry(
+        {"id": "x", "host": "h", "runnable": "r", "when": {"every": "5m"}}
+    )
+    assert job.action == "runnable"
+
+
+def test_parse_entry_requires_id():
+    with pytest.raises(ValueError):
+        parse_schedule_entry({"action": "runnable", "host": "h", "runnable": "r"})
+
+
+def test_parse_entry_unknown_action():
+    with pytest.raises(ValueError):
+        parse_schedule_entry({"id": "x", "action": "explode", "when": {"every": "5m"}})
+
+
+def test_parse_entry_event_requires_event_name():
+    with pytest.raises(ValueError):
+        parse_schedule_entry({"id": "x", "action": "event", "when": {"every": "5m"}})
+
+
+def test_parse_entry_runnable_requires_host_and_runnable():
+    with pytest.raises(ValueError):
+        parse_schedule_entry(
+            {"id": "x", "action": "runnable", "host": "h", "when": {"every": "5m"}}
+        )
+
+
+# ── event_payload ─────────────────────────────────────────────────────────────
+
+
+def test_event_payload_builtins_and_fields():
+    # 2026-06-19 is a Friday.
+    job = ScheduleJob(
+        id="nightly",
+        when=When(cron="0 2 * * *"),
+        action="event",
+        event="nightly_report",
+        fields={"scope": "prod"},
+    )
+    p = event_payload(job, datetime(2026, 6, 19, 17, 30, 5))
+    assert p["schedule"] == "nightly"
+    assert p["event"] == "nightly_report"
+    assert p["scope"] == "prod"  # user field present
+    assert p["weekday"] == "Fri"
+    assert p["date"] == "2026-06-19"
+    assert p["time"] == "17:30"
+    assert p["fired_at"].startswith("2026-06-19T17:30")
+
+
+def test_event_payload_user_field_overrides_builtin():
+    job = ScheduleJob(
+        id="x",
+        when=When(every="5m"),
+        action="event",
+        event="e",
+        fields={"weekday": "custom"},
+    )
+    assert event_payload(job, datetime(2026, 6, 19))["weekday"] == "custom"
+
+
+# ── _when_to_trigger (needs APScheduler) ──────────────────────────────────────
+
+
+def test_when_to_trigger_cron_and_interval():
+    pytest.importorskip("apscheduler")
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    from runspec_console.sources.schedule import _when_to_trigger
+
+    cron = _when_to_trigger(When(cron="30 17 * * mon-fri"))
+    assert isinstance(cron, CronTrigger)
+
+    interval = _when_to_trigger(When(every="15m"))
+    assert isinstance(interval, IntervalTrigger)
+    assert interval.interval.total_seconds() == 15 * 60
+
+
+# ── ScheduleSource._fire: emit an event / run a runnable ──────────────────────
+
+
+def _source_with_jobs(run_runnable=None):
+    return ScheduleSource(
+        [
+            {
+                "id": "e1",
+                "action": "event",
+                "event": "nightly",
+                "when": {"every": "5m"},
+                "fields": {"scope": "prod"},
+            },
+            {
+                "id": "r1",
+                "action": "runnable",
+                "host": "h",
+                "runnable": "backup",
+                "when": {"cron": "0 2 * * *"},
+                "args": {"db": "main"},
+            },
+        ],
+        run_runnable=run_runnable,
+    )
+
+
+def test_fire_event_emits_matchable_event():
+    emitted: list[Event] = []
+    src = _source_with_jobs()
+    src._emit = emitted.append  # simulate a started source (no apscheduler needed)
+    src._fire("e1")
+    assert len(emitted) == 1
+    ev = emitted[0]
+    assert ev.source == "schedule" and ev.type == "nightly"
+    assert ev.payload["scope"] == "prod" and ev.payload["schedule"] == "e1"
+
+
+def test_fire_runnable_calls_run_runnable():
+    ran: list[tuple[str, str, dict]] = []
+    src = _source_with_jobs(run_runnable=lambda h, r, a: ran.append((h, r, a)))
+    src._fire("r1")
+    assert ran == [("h", "backup", {"db": "main"})]
+
+
+def test_fire_unknown_id_is_noop():
+    src = _source_with_jobs()
+    src._emit = lambda ev: pytest.fail("should not emit")  # type: ignore[assignment]
+    src._fire("nope")  # no such job — silently ignored
+
+
+# ── ScheduleSource introspection ──────────────────────────────────────────────
+
+
+def test_source_event_types_lists_event_schedule_names():
+    src = _source_with_jobs()
+    assert src.event_types() == ["nightly"]  # only the event-action schedule
+
+
+def test_source_skips_disabled_and_invalid():
+    src = ScheduleSource(
+        [
+            {"id": "ok", "action": "event", "event": "e", "when": {"every": "5m"}},
+            {
+                "id": "off",
+                "action": "event",
+                "event": "e",
+                "when": {"every": "5m"},
+                "enabled": False,
+            },
+            {"id": "bad", "action": "runnable", "when": {"every": "5m"}},  # no host
+        ]
+    )
+    assert [j.id for j in src._jobs] == ["ok"]
+
+
+def test_source_zero_arg_construct():
+    src = ScheduleSource()  # registry/UI instance — no jobs
+    assert src.id == "schedule"
+    assert src.event_types() == []
+
+
+def test_source_available_reports_extra_when_missing(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "apscheduler" or name.startswith("apscheduler."):
+            raise ImportError("no apscheduler")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    ok, reason = ScheduleSource().available()
+    assert ok is False
+    assert "schedule" in reason
+
+
+# ── engine routing: one scheduled event fans out to matching triggers ─────────
+
+
+def test_scheduled_event_fans_out_by_event_type_and_match():
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+
+    # A and B both listen for the "nightly" event; A narrows by a match field, B
+    # takes any "nightly". C listens for a different event and must not fire.
+    a = Trigger.from_config(
+        {
+            "name": "A",
+            "source": "schedule",
+            "event": "nightly",
+            "mode": "rule",
+            "run": "h__a",
+            "match": {"scope": "prod"},
+        }
+    )
+    b = Trigger.from_config(
+        {
+            "name": "B",
+            "source": "schedule",
+            "event": "nightly",
+            "mode": "rule",
+            "run": "h__b",
+        }
+    )
+    c = Trigger.from_config(
+        {
+            "name": "C",
+            "source": "schedule",
+            "event": "weekly",
+            "mode": "rule",
+            "run": "h__c",
+        }
+    )
+    engine = TriggerEngine(
+        [a, b, c],
+        handler=handler,
+        create_source=lambda name: None,
+        external_sources={"schedule"},  # bridge-owned; fed via feed()
+        executor=InlineExecutor(),
+    )
+    engine.start()
+
+    engine.feed(Event.new("schedule", "nightly", {"scope": "prod"}))
+    assert sorted(fired) == ["A", "B"]  # one emit → two triggers; C untouched
+
+    fired.clear()
+    engine.feed(Event.new("schedule", "nightly", {"scope": "dev"}))
+    assert fired == ["B"]  # A's match excludes it

@@ -233,12 +233,26 @@ export interface HistoryRecord {
   initiatedBy?: 'llm' | 'user'      // 'llm' when triggered by the agentic chat loop
 }
 
+// A schedule (Schedules tab). When it fires it either emits a matchable event
+// (action 'event') that source="schedule" triggers pick up like mail, or runs a
+// runnable directly (action 'runnable'). Timing lives in `when` (cron or every).
+export interface ScheduleWhen {
+  cron?: string
+  every?: string
+  timezone?: string
+}
 export interface Schedule {
   id: string
-  runnable: string
-  host: string
-  schedule: string
+  enabled?: boolean
+  action: 'runnable' | 'event'
+  when: ScheduleWhen
+  // action === 'runnable'
+  host?: string
+  runnable?: string
   args?: Record<string, unknown>
+  // action === 'event'
+  event?: string
+  fields?: Record<string, string>
   nextRun?: string
 }
 

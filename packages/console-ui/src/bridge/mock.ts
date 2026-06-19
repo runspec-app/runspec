@@ -552,8 +552,9 @@ function _aggregateMock(runs: SyntheticRun[], sinceDays: number): AnalyticsData 
 }
 
 let MOCK_SCHEDULES: Schedule[] = [
-  { id: 'rs-backup-daily', runnable: 'backup', host: 'local', schedule: '0 2 * * *', args: { db: 'postgres-main' } },
-  { id: 'rs-log-rotate-weekly', runnable: 'log-rotate', host: 'prod-1', schedule: '0 3 * * 0', args: { keep: 7 } },
+  { id: 'rs-backup-daily', action: 'runnable', runnable: 'backup', host: 'local', when: { cron: '0 2 * * *' }, args: { db: 'postgres-main' } },
+  { id: 'rs-log-rotate-weekly', action: 'runnable', runnable: 'log-rotate', host: 'prod-1', when: { cron: '0 3 * * 0' }, args: { keep: 7 } },
+  { id: 'rs-nightly-report', action: 'event', event: 'nightly_report', when: { cron: '0 2 * * *', timezone: 'Europe/London' }, fields: { scope: 'prod', report: 'billing' } },
 ]
 
 const MOCK_IN_FLIGHT: InFlightRecord[] = [
@@ -684,7 +685,7 @@ export const mockApi: BridgeApi = {
 
   create_schedule: async (data) => {
     const s = data as unknown as Schedule
-    MOCK_SCHEDULES = [...MOCK_SCHEDULES, { ...s, id: s.id || `rs-${s.runnable}-${Date.now()}` }]
+    MOCK_SCHEDULES = [...MOCK_SCHEDULES, { ...s, id: s.id || `rs-${s.runnable ?? s.event ?? 'sched'}-${Date.now()}` }]
   },
 
   delete_schedule: async (id) => { console.log('[mock] delete_schedule', id) },

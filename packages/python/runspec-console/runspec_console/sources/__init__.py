@@ -12,5 +12,6 @@ from __future__ import annotations
 from . import chat  # noqa: F401 — registers the "chat" source
 from . import notifications  # noqa: F401 — registers the "notifications" source
 from . import outlook  # noqa: F401 — registers the "outlook" source
+from . import schedule  # noqa: F401 — registers the "schedule" source
 
-__all__ = ["chat", "notifications", "outlook"]
+__all__ = ["chat", "notifications", "outlook", "schedule"]

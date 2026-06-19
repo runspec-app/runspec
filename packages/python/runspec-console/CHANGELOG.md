@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.93.0] — 2026-06-19
+
+### Added
+- **Schedules (Schedules tab).** Schedules are now first-class and managed in the
+  **Schedules tab** (persisted to `runspec_schedules.toml`), separate from
+  triggers: a schedule says *when*, a trigger says *what to do*. Each schedule
+  has a `when` (a 5-field `cron` expression or an `every` interval —
+  `s`/`m`/`h`/`d` — plus an optional `timezone`, default PC-local) and an
+  `action`:
+  - `action = "event"` emits a rich, matchable event into the trigger engine —
+    so a `source = "schedule"` trigger picks it up by `event` type + `match`
+    rules, exactly like mail. **One** scheduled emit can fan out to **many**
+    triggers (and a scheduled *agent turn* is just a `mode = "agent"` trigger
+    listening for the event). The payload carries the schedule's own `fields`
+    plus built-ins (`schedule`, `event`, `fired_at`, `date`/`time`/`weekday`/…).
+  - `action = "runnable"` runs a specific runnable on a host with fixed args
+    **directly and autonomously** — no agent, no confirm gate — audited as the
+    `Scheduled Task` operator.
+
+  The engine is APScheduler, shipped as the new optional `schedule` extra
+  (`pip install runspec-console[schedule]`); the schedule source reports itself
+  unavailable until installed, and adding/removing a schedule applies live.
+  Forward-only for now — a fire that would land while the console is closed is
+  skipped (no persistence/catch-up across restarts yet).
+
+
 ## [0.92.0] — 2026-06-19
 
 ### Added
