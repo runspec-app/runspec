@@ -76,10 +76,13 @@ informational message.
 === "init --write-project (Python)"
 
     ```
-    .                     # parent of cwd, by default
-    ├── pyproject.toml    # [project.scripts] already wired up
+    .                          # parent of cwd, by default
+    ├── pyproject.toml         # [project.scripts] wired; [tool.mypy] mypy_path
     ├── .gitignore
-    ├── CLAUDE.md         # project memory for Claude Code
+    ├── .pre-commit-config.yaml # runspec stubs hook (keeps types fresh)
+    ├── CLAUDE.md              # project memory for Claude Code
+    ├── typings/
+    │   └── runspec/__init__.pyi  # placeholder — "run runspec stubs"
     └── greet/
         ├── __init__.py
         ├── runspec.toml
@@ -89,6 +92,14 @@ informational message.
 `--lang typescript` and `--lang javascript` generate a `.ts` / `.js` stub
 respectively. The Node CLI supports the same `--lang` values but `python` is
 not in its menu (use the Python CLI to scaffold a Python project).
+
+**`parse()` typing is wired from the start.** `init` drops a placeholder
+`typings/runspec/__init__.pyi`, so before you've generated anything your editor
+already says *run `runspec stubs`* (a typed arg access is a clear error, not a
+silent `Any`). Once the package is installed, the next `runspec local`
+auto-upgrades that placeholder to real types; afterwards `runspec local` nudges
+when the stub is stale, and the `--write-project` pre-commit hook regenerates it
+when a `runspec.toml` changes. See [`runspec stubs`](#runspec-stubs).
 
 ### Examples (from the bundled spec)
 

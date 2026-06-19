@@ -101,6 +101,7 @@ def cmd_local(args: list[str]) -> None:
 
     if fmt == "text":
         _print_local_text(discovered)
+        _stub_status_note()
     else:
         bin_dir = Path(sys.executable).parent
 
@@ -129,6 +130,56 @@ def _project_root() -> Path:
     return cwd
 
 
+def _stub_target(root: Path | None = None) -> Path:
+    """Path to the generated stub for a project root (default: detected root)."""
+    return (root or _project_root()) / "typings" / "runspec" / "__init__.pyi"
+
+
+def _render_installed_stub() -> str | None:
+    """The real stub for the runnables installed in this venv, or None if none."""
+    from runspec import stubgen
+
+    discovered = _deduplicate(_discover_installed())
+    if not discovered:
+        return None
+    return stubgen.render_stub(stubgen.specs_from_discovered(discovered))
+
+
+def _stub_status_note() -> None:
+    """Auto-refresh footer for `runspec local` (text mode), opt-in via the stub's
+    existence:
+
+    * a placeholder left by `runspec init` is upgraded to real types now that the
+      package is installed (safe — only ever replaces the placeholder), and
+    * a real-but-stale stub gets a nudge (no write — staleness is the dev's call,
+      and writing would surprise CI / dirty the tree).
+    """
+    from runspec import stubgen
+
+    target = _stub_target()
+    if not target.exists():
+        return  # not opted in — stay quiet
+    try:
+        existing = target.read_text(encoding="utf-8")
+    except OSError:
+        return
+    content = _render_installed_stub()
+    if content is None or existing == content:
+        return
+    root = _project_root()
+    rel = target.relative_to(root) if target.is_relative_to(root) else target
+    if existing == stubgen.render_sentinel_stub():
+        try:
+            target.write_text(content, encoding="utf-8")
+        except OSError:
+            print(f"\nℹ  {rel} is a placeholder — run 'runspec stubs' to generate types.")
+            return
+        n = content.count("@overload") - 1
+        print(f"\n✓  Generated parse() types for {n} runnable{'s' if n != 1 else ''} → {rel}")
+    else:
+        print(f"\nℹ  {rel} is out of date — run 'runspec stubs' to refresh.")
+
+
 def cmd_stubs(args: list[str]) -> None:
     """Generate (or check/disable) the per-runnable type stub for parse().
 
@@ -136,7 +187,6 @@ def cmd_stubs(args: list[str]) -> None:
     installed in this venv (same discovery as ``runspec local``). pyright reads
     ``typings/`` by default; for mypy add ``mypy_path = typings``.
     """
-    from runspec import stubgen
     from runspec.parser import parse as _parse
 
     parsed = _parse(script_name="runspec", argv=["stubs"] + args, config_path=_CLI_CONFIG)
@@ -144,7 +194,7 @@ def cmd_stubs(args: list[str]) -> None:
     off = parsed.off.value
 
     root = _project_root()
-    target = root / "typings" / "runspec" / "__init__.pyi"
+    target = _stub_target(root)
     rel = target.relative_to(root) if target.is_relative_to(root) else target
 
     # --off disables typing by removing the stub, restoring the installed
@@ -157,13 +207,12 @@ def cmd_stubs(args: list[str]) -> None:
             print(f"✓  No stub at {rel} — typing already off.")
         return
 
-    discovered = _deduplicate(_discover_installed())
-    if not discovered:
+    content = _render_installed_stub()
+    if content is None:
         print("No runspec-aware runnables found in this environment.")
         print("Install a package that declares 'runspec' as a dependency,")
         print("or run 'pip install -e .' from your project directory.")
         sys.exit(1)
-    content = stubgen.render_stub(stubgen.specs_from_discovered(discovered))
 
     if check:
         existing = target.read_text(encoding="utf-8") if target.exists() else None
@@ -572,8 +621,10 @@ def cmd_init(args: list[str]) -> None:
         _init_pyproject(project_root, runnable_name, pkg_name, example=example)
         _init_gitignore(project_root)
         _init_claude_md(project_root, pkg_name)
+        _init_stubs(project_root, write_project=True)
         _print_next_steps(install_from=project_dir_arg or "..", example=example)
     else:
+        _init_stubs(_project_root(), write_project=False)
         if example:
             _print_pyproject_snippet_example(pkg_name)
         else:
@@ -787,6 +838,51 @@ def _init_code_stub(directory: Path, name: str, lang: str, example: bool = False
             print(f"  ✓  Created {stub_path.name}")
 
 
+def _init_stubs(project_root: Path, *, write_project: bool) -> None:
+    """Wire the parse() type stub for a freshly scaffolded project.
+
+    Writes a *placeholder* ``typings/runspec/__init__.pyi`` so the editor shows
+    "run ``runspec stubs``" until the package is installed and real types are
+    generated (``runspec stubs`` / the next ``runspec local`` upgrades it). With
+    --write-project it also drops a pre-commit hook that keeps the stub fresh.
+    """
+    from runspec import stubgen
+
+    stub = _stub_target(project_root)
+    if stub.exists():
+        print("  ℹ  typings/runspec/__init__.pyi already exists — skipped")
+    else:
+        stub.parent.mkdir(parents=True, exist_ok=True)
+        stub.write_text(stubgen.render_sentinel_stub(), encoding="utf-8")
+        print("  ✓  Created typings/runspec/__init__.pyi (placeholder — run 'runspec stubs' after install)")
+
+    if write_project:
+        _init_precommit(project_root)
+
+
+def _init_precommit(project_root: Path) -> None:
+    path = project_root / ".pre-commit-config.yaml"
+    if path.exists():
+        print("  ℹ  .pre-commit-config.yaml already exists — add a 'runspec stubs' hook manually")
+        return
+    path.write_text(
+        "# Regenerates typings/runspec/__init__.pyi when a runspec.toml changes,\n"
+        "# so parse() stays precisely typed. Fails the commit if it had to rewrite\n"
+        "# the stub — re-stage and commit again.\n"
+        "repos:\n"
+        "  - repo: local\n"
+        "    hooks:\n"
+        "      - id: runspec-stubs\n"
+        "        name: runspec stubs\n"
+        "        entry: runspec stubs\n"
+        "        language: system\n"
+        "        pass_filenames: false\n"
+        "        files: runspec\\.toml$\n",
+        encoding="utf-8",
+    )
+    print("  ✓  Created .pre-commit-config.yaml (runspec stubs hook)")
+
+
 def _init_package_init(directory: Path) -> None:
     init_path = directory / "__init__.py"
     if init_path.exists():
@@ -875,6 +971,10 @@ def _build_pyproject(runnable_name: str, pkg_name: str, example: bool = False) -
         f"[tool.hatch.build.targets.wheel]\n"
         f'packages = ["{pkg_name}"]\n'
         f"\n"
+        f"[tool.mypy]\n"
+        f"# So mypy reads the generated parse() stub (pyright reads typings/ by default).\n"
+        f'mypy_path = "typings"\n'
+        f"\n"
         f"[build-system]\n"
         f'requires      = ["hatchling"]\n'
         f'build-backend = "hatchling.build"\n'
@@ -909,12 +1009,14 @@ def _print_next_steps(install_from: str | None, example: bool = False) -> None:
         print("         uv sync              # uv")
         print("         poetry install       # poetry")
         print("    3. Run 'runspec local' to validate your setup")
+        print("    4. Run 'runspec stubs' to type parse() (editor autocompletes args)")
     else:
         print("    1. Install before running:")
         print(f"         pip install -e {install_from}")
         print(f"         uv sync              # uv — run from {install_from}")
         print(f"         poetry install       # poetry — run from {install_from}")
         print("    2. Run 'runspec local' to validate your setup")
+        print("    3. Run 'runspec stubs' to type parse() (editor autocompletes args)")
 
     if example:
         print()

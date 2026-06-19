@@ -7,6 +7,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.41.0] — 2026-06-19
+
+### Added
+
+- **`runspec init` now wires up `parse()` typing.** A freshly scaffolded project
+  gets a **placeholder** `typings/runspec/__init__.pyi` so the editor immediately
+  shows a clear "run `runspec stubs`" signal (`parse("x")` is typed
+  `_StubsNotGenerated` — metadata works, but touching an arg is a hard error, not
+  a silent `Any`). With `--write-project` it also adds `[tool.mypy] mypy_path =
+  "typings"` to the generated `pyproject.toml` and a `.pre-commit-config.yaml`
+  hook that regenerates the stub when a `runspec.toml` changes.
+- **`runspec local` keeps the stub fresh.** In text mode it auto-upgrades the
+  `runspec init` placeholder to real types once the package is installed, and
+  nudges (without writing) when a real stub is out of date. No-op when no stub
+  exists — entirely opt-in via the stub's presence. CI should still gate with
+  `runspec stubs --check`.
+
+---
+
 ## [0.40.0] — 2026-06-19
 
 ### Added

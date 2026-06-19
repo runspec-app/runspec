@@ -181,6 +181,18 @@ def render_overloads(runnables: list[str]) -> str:
     return "\n".join(out)
 
 
+def _prelude() -> list[str]:
+    """Shared top of every generated stub: header + self-contained Arg/Group/
+    RunSpec/_RunSpecView, so the file never re-exports from shadowed submodules."""
+    return [
+        _HEADER,
+        _render_dataclass(Group),
+        _render_dataclass(Arg, generic=True, extra="    @property\n    def python_type(self) -> str: ..."),
+        _VIEW_BASE,
+        _RUNSPEC,
+    ]
+
+
 def render_stub(specs: dict[str, dict[str, dict[str, Any]]]) -> str:
     """Full ``typings/runspec/__init__.pyi`` text.
 
@@ -189,16 +201,39 @@ def render_stub(specs: dict[str, dict[str, dict[str, Any]]]) -> str:
     diffs are stable). Runnables are emitted in sorted order.
     """
     names = sorted(specs)
-    blocks = [
-        _HEADER,
-        _render_dataclass(Group),
-        _render_dataclass(Arg, generic=True, extra="    @property\n    def python_type(self) -> str: ..."),
-        _VIEW_BASE,
-        _RUNSPEC,
-    ]
+    blocks = _prelude()
     blocks += [render_view(name, specs[name]) for name in names]
     blocks.append(render_overloads(names))
     return "\n\n\n".join(blocks) + "\n"
+
+
+# Placeholder name surfaced in the editor before `runspec stubs` has run — the
+# type's name *is* the message.
+_SENTINEL = '''\
+class _StubsNotGenerated(_RunSpecView):
+    """Run `runspec stubs` to enable typed, per-runnable arguments.
+
+    Until then arg access (e.g. ``args.workers``) is a clear "no attribute"
+    error rather than a silent ``Any``. Metadata (``runspec_*``, ``get``,
+    ``in``) still works.
+    """
+
+@overload
+def parse(script_name: Literal[None] = ..., argv: list[str] | None = ..., config_path: Path | None = ...) -> RunSpec: ...
+@overload
+def parse(script_name: str = ..., argv: list[str] | None = ..., config_path: Path | None = ...) -> _StubsNotGenerated: ...
+def load_spec(script_name: str | None = ..., config_path: Path | None = ...) -> RunSpec: ...
+def register_type(name: str, coercer: Any) -> None: ...'''
+
+
+def render_sentinel_stub() -> str:
+    """Placeholder stub written by ``runspec init`` before real generation.
+
+    ``parse("<name>")`` is typed ``_StubsNotGenerated`` — metadata works, but
+    touching an arg flags "run ``runspec stubs``". A bare ``parse()`` still
+    yields ``RunSpec`` (the generic fallback). Replaced by the real stub on the
+    first ``runspec stubs`` / ``runspec local``."""
+    return "\n\n\n".join([*_prelude(), _SENTINEL]) + "\n"
 
 
 def specs_from_discovered(discovered: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:

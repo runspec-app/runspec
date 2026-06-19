@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from runspec import stubgen
 from runspec.cli import _sanitize_name, cmd_init
 
 # ── _sanitize_name ────────────────────────────────────────────────────────────
@@ -58,6 +59,37 @@ def test_creates_runspec_toml_default_name(tmp_path, monkeypatch):
     assert toml.exists()
     name = _sanitize_name(tmp_path.name)
     assert f"[{name}]" in toml.read_text()
+
+
+# ── stubs wiring (A+B) ────────────────────────────────────────────────────────
+
+
+def test_init_writes_placeholder_stub(tmp_path, monkeypatch):
+    """init drops the sentinel placeholder so the editor nudges 'run runspec stubs'."""
+    monkeypatch.chdir(tmp_path)
+    cmd_init(["--name", "greeter"])
+
+    stub = tmp_path / "typings" / "runspec" / "__init__.pyi"
+    assert stub.exists()
+    assert stub.read_text() == stubgen.render_sentinel_stub()
+
+
+def test_init_write_project_wires_precommit_and_mypy(tmp_path, monkeypatch):
+    pkg = tmp_path / "toolkit"
+    pkg.mkdir()
+    monkeypatch.chdir(pkg)
+    cmd_init(["--name", "deploy", "--write-project"])
+
+    # placeholder at the project root, not inside the package dir
+    assert (tmp_path / "typings" / "runspec" / "__init__.pyi").exists()
+
+    precommit = tmp_path / ".pre-commit-config.yaml"
+    assert precommit.exists()
+    assert "runspec stubs" in precommit.read_text()
+
+    pyproject = (tmp_path / "pyproject.toml").read_text()
+    assert "[tool.mypy]" in pyproject
+    assert 'mypy_path = "typings"' in pyproject
 
 
 # ── safety check: refuse if cwd already has pyproject.toml ───────────────────

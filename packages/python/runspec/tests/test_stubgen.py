@@ -147,3 +147,35 @@ def test_generated_stub_flags_unknown_arg(tmp_path: Path) -> None:
     result = _mypy(consumer, typings)
     assert result.returncode != 0
     assert "attr-defined" in result.stdout
+
+
+# ── sentinel placeholder (written by `runspec init`) ──────────────────────────
+
+
+def test_sentinel_stub_renders() -> None:
+    out = stubgen.render_sentinel_stub()
+    assert "_StubsNotGenerated" in out
+    assert "def parse(" in out
+    # self-contained, like the real stub
+    assert "from runspec" not in out
+
+
+@pytestmark_mypy
+def test_sentinel_flags_args_but_keeps_metadata(tmp_path: Path) -> None:
+    typings = tmp_path / "typings"
+    target = typings / "runspec" / "__init__.pyi"
+    target.parent.mkdir(parents=True)
+    target.write_text(stubgen.render_sentinel_stub())
+    consumer = tmp_path / "use.py"
+    consumer.write_text(
+        "from typing import assert_type\n"
+        "from runspec import parse\n"
+        "args = parse('greeter')\n"
+        "assert_type(args.runspec_agent, bool)\n"  # metadata still works
+        "args.workers\n"  # arg access flagged — "run runspec stubs"
+    )
+    result = _mypy(consumer, typings)
+    assert result.returncode != 0
+    assert "attr-defined" in result.stdout
+    # the failure is the arg, not the metadata assert_type
+    assert "runspec_agent" not in result.stdout
