@@ -22,8 +22,6 @@ from runspec_console.adapters.base import (
     register_adapter,
 )
 
-__version__ = "0.43.2"
-
 __all__ = [
     "ModelAdapter",
     "ChatResponse",

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Drawer, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty } from 'antd'
+import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -1001,12 +1001,20 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         </Space>
       </div>
 
-      {editingKey !== null && (
-        <div style={{ border: '1px solid #333', borderRadius: 8, padding: '14px 14px 6px', marginBottom: 12, background: 'rgba(255,255,255,0.02)' }}>
-          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
-            {editingKey === '' ? 'New jump host' : `Edit — ${editingKey}`}
-          </Text>
-          <Form form={form} layout="vertical" size="small">
+      {/* The add/edit form lives in a modal so editing a host deep in a long list
+          never requires scrolling back to the top — it opens centred in view. */}
+      <Modal
+        open={editingKey !== null}
+        title={editingKey === '' ? 'New jump host' : `Edit — ${editingKey}`}
+        width={680}
+        onCancel={cancel}
+        onOk={save}
+        okText="Save"
+        maskClosable={false}
+        okButtonProps={{ icon: <CheckOutlined /> }}
+        cancelButtonProps={{ icon: <CloseOutlined /> }}
+      >
+        <Form form={form} layout="vertical" size="small">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
               <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Required' }]}>
                 <Input placeholder="prod-eu-1" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
@@ -1094,13 +1102,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 />
               </Form.Item>
             </div>
-            <Space style={{ marginTop: 2, marginBottom: 8 }}>
-              <Button size="small" type="primary" icon={<CheckOutlined />} onClick={save}>Save</Button>
-              <Button size="small" icon={<CloseOutlined />} onClick={cancel}>Cancel</Button>
-            </Space>
-          </Form>
-        </div>
-      )}
+        </Form>
+      </Modal>
 
       {hosts.length === 0 && editingKey === null && (
         <Text type="secondary" style={{ fontSize: 12 }}>No jump hosts configured. Add one to get started.</Text>
@@ -1466,7 +1469,7 @@ function CredentialsTab() {
   )
 }
 
-// ── Triggers tab (monitored mailbox) ────────────────────────────────────────
+// ── Mailbox tab (the monitored mailbox; its own tab so Triggers has room) ────
 
 function MailboxesTab() {
   const [form] = Form.useForm<Mailbox>()
@@ -1834,8 +1837,6 @@ function TriggersEditor() {
 function TriggersTab() {
   return (
     <div>
-      <MailboxesTab />
-      <Divider style={{ margin: '20px 0' }} />
       <TriggersEditor />
     </div>
   )
@@ -2113,9 +2114,10 @@ function ConfigSyncTab() {
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
   return (
-    <Drawer title="Settings" placement="right" width={760} open={open} onClose={onClose}>
+    <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
       <Tabs
         size="small"
+        tabPosition="left"
         items={[
           { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
           { key: 'llm',       label: 'LLM / API',  children: <LlmTab /> },
@@ -2123,6 +2125,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
+          { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
           { key: 'triggers',  label: 'Triggers',   children: <TriggersTab /> },
           { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },
         ]}

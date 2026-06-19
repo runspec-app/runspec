@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.92.0] — 2026-06-19
+
+### Added
+- **Settings panel layout — less scrolling, more room.** The Settings drawer is
+  wider and its tabs now sit on a left/vertical rail, giving each tab more
+  vertical space. The **monitored mailbox** settings moved out of the Triggers
+  tab into their own **Mailbox** tab, so Triggers has room to be managed
+  comfortably. The Jump Hosts **add/edit form now opens in a modal** instead of
+  rendering inline at the top of the tab — editing a host deep in a long list no
+  longer requires scrolling back to the top to reach its fields.
+
+### Changed
+- **Dropped the hand-maintained in-tree `__version__` constant.** `pyproject.toml`
+  is now the single source of truth for the version; `installed_version()` reads
+  the installed package metadata and returns `""` from a source checkout (where it
+  previously borrowed a constant that silently drifted out of sync). No effect on
+  installed users — metadata still reports the real version.
+
+### Fixed
+- **LLM adapter keys no longer dropped on Settings save.** `api_key_command` and
+  `api_key_ttl_ms` live under the LLM tab's "Advanced" panel; antd's Collapse
+  left that panel's fields unmounted until expanded, so saving after editing only
+  a top-level field (without opening Advanced) silently deleted those keys from
+  `config.toml`. The Advanced panel now force-renders its fields so a hand-edited
+  value survives a Save unless its field is explicitly emptied.
+
+
 ## [0.91.1] — 2026-06-18
 
 ### Fixed

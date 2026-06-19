@@ -2,8 +2,10 @@
 version.py — the installed runspec-console version and a best-effort update check.
 
 ``installed_version()`` reads the version recorded in the package metadata (what
-``pip`` actually installed), falling back to the in-tree ``__version__`` when the
-package isn't installed (running straight from a source checkout).
+``pip`` actually installed), falling back to the adjacent ``pyproject.toml`` when
+the package isn't installed (running straight from a source checkout). There is
+no hand-maintained in-tree version constant — ``pyproject.toml`` is the single
+source of truth, so the source-run version can never drift out of sync.
 
 ``latest_version()`` asks ``pip`` — running from the very interpreter
 runspec-console is installed in (``sys.executable``) — what the newest available
@@ -20,7 +22,9 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tomllib
 from importlib import metadata
+from pathlib import Path
 
 PACKAGE_NAME = "runspec-console"
 
@@ -39,18 +43,33 @@ _PAREN_RE = re.compile(r"\(([^)]+)\)\s*$")
 def installed_version(package: str = PACKAGE_NAME) -> str:
     """The version pip installed for ``package``.
 
-    For runspec-console itself, falls back to the in-tree ``__version__`` when the
-    package isn't installed (running from a source checkout). For a branded
-    wrapper package there is no in-tree version to borrow, so an uninstalled one
-    yields ``""``.
+    For runspec-console itself, falls back to the adjacent ``pyproject.toml`` when
+    the package isn't installed (running from a source checkout) — there is no
+    hand-maintained version constant to drift out of sync. For a branded wrapper
+    package there is no such file to borrow, so an uninstalled one yields ``""``
+    and the caller simply skips the update indicator.
     """
     try:
         return metadata.version(package)
     except metadata.PackageNotFoundError:
         if package == PACKAGE_NAME:
-            from runspec_console import __version__
+            return _source_tree_version()
+        return ""
 
-            return __version__
+
+def _source_tree_version() -> str:
+    """Best-effort version from the ``pyproject.toml`` next to this package.
+
+    Only meaningful in a source checkout: an installed wheel ships no
+    ``pyproject.toml``, but then ``metadata.version()`` already succeeds and this
+    is never reached. Returns ``""`` if the file is missing or unparseable.
+    """
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    try:
+        with pyproject.open("rb") as fh:
+            version = tomllib.load(fh).get("project", {}).get("version", "")
+        return version if isinstance(version, str) else ""
+    except (OSError, tomllib.TOMLDecodeError):
         return ""
 
 
