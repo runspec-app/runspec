@@ -176,20 +176,23 @@ class RunSpec:
         """Access args as attributes: args.quality, args.input_dir.
 
         Annotated ``-> Any`` (not ``-> Arg``) on purpose. Args are dynamic —
-        their names and value types come from runspec.toml at runtime, so a
-        type checker can't know them statically. Returning ``Any`` makes the
-        transparent-value design hold up under type checking: the runtime value
-        is still an Arg that behaves as its native type, and gradual typing lets
-        callers pin the type at the use site —
+        their names come from runspec.toml at runtime, so a type checker can't
+        know which attributes exist or what each value's type is. Returning
+        ``Any`` lets ``args.<name>`` resolve without a checker error; the
+        runtime object is an Arg (read ``.value`` for the coerced native value,
+        and ``.type``/``.source``/``.meta``/… for metadata) —
 
-            workers: int = args.workers      # ok — Any flows into int
-            for tag in args.tags: ...        # ok — Arg.__iter__ at runtime
-            args.out_dir / "f.txt"           # ok — Path methods via delegation
+            workers = args.workers.value     # int — read .value
+            if args.dry_run.value: ...
+            out = args.out_dir.value / "f.txt"   # .value is a Path
 
-        Same idiom as argparse.Namespace / SimpleNamespace, whose __getattr__
-        is also typed Any. Returning Arg here would force every call site to
-        unwrap (int(args.workers), args.workers.value) just to satisfy the
-        checker, defeating the transparent protocol.
+        Arg is **not** a transparent proxy (since 0.38.0): truthiness and ``==``
+        on a bare ``args.<name>`` raise, and value operations are absent. Same
+        idiom as argparse.Namespace / SimpleNamespace, whose __getattr__ is also
+        typed Any. Precise per-arg static types (so ``args.workers.value`` is
+        ``int`` and a typo is flagged) are the job of the planned
+        ``emit --stubs`` generator — a PEP 561 ``.pyi`` per package — not this
+        annotation; until then a parsed arg is ``Any`` to the checker.
         """
         try:
             args: dict[str, Arg] = object.__getattribute__(self, "_args")
