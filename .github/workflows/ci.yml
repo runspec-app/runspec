@@ -19,6 +19,15 @@ permissions:
   contents: read
   pull-requests: read
 
+# Cancel superseded runs: a new push to a PR (or branch) aborts the previous
+# run for the same ref instead of letting both finish. This is the biggest
+# Actions-minute saver during iterative work — force-pushes/rebases no longer
+# stack full matrix runs. Main is never cancelled (so a release run always
+# completes), keyed by run id there to keep each push its own group.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect changes
@@ -138,7 +147,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Full sweep on pushes to main; just the version ends on PRs to save
+        # minutes — the in-between minors almost never diverge. fromJSON parses
+        # each branch's string into the matrix list.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.10", "3.13"]') || fromJSON('["3.10", "3.11", "3.12", "3.13"]') }}
     defaults:
       run:
         working-directory: packages/python/runspec
@@ -157,13 +169,13 @@ jobs:
         run: pytest
 
       - name: Build wheel
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         run: |
           pip install build
           python -m build --wheel
 
       - name: Wheel smoke test
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         run: |
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip install dist/*.whl
@@ -178,7 +190,7 @@ jobs:
 
       - name: Upload coverage
         uses: codecov/codecov-action@v7
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
@@ -809,7 +821,11 @@ jobs:
   windows-smoke:
     name: runspec-windows smoke (windows-latest)
     needs: changes
-    if: needs.changes.outputs.windows == 'true'
+    # windows-latest runners bill at 2× — run this only on pushes to main, not on
+    # every PR push. The ubuntu windows-quality/windows-unit jobs still cover lint/
+    # format/parsers on PRs; this catches Windows-only wheel/runtime breakage before
+    # release. (See concurrency note up top for the other saver.)
+    if: needs.changes.outputs.windows == 'true' && github.event_name == 'push'
     runs-on: windows-latest
     defaults:
       run:
@@ -940,7 +956,10 @@ jobs:
   console-smoke:
     name: runspec-console smoke (windows-latest)
     needs: changes
-    if: needs.changes.outputs.console == 'true'
+    # windows-latest runners bill at 2× — run only on pushes to main, not every PR
+    # push. The ubuntu console-test/console-ui jobs cover the logic on PRs; this
+    # asserts the Windows-only COM/WinRT import paths resolve before release.
+    if: needs.changes.outputs.console == 'true' && github.event_name == 'push'
     runs-on: windows-latest
     defaults:
       run:
