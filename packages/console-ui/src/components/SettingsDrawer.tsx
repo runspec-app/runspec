@@ -2268,8 +2268,18 @@ function SkillsTab() {
   const [editingKey, setEditingKey] = useState<string | null>(null)  // '' = new
   const [form] = Form.useForm<SkillFormValues>()
 
-  const load = () => bridge.get_skills().then(setSkills).catch(() => {})
-  useEffect(() => { load() }, [])
+  const load = useCallback(() => bridge.get_skills().then(setSkills).catch(() => {}), [])
+  // Load on mount, and refresh whenever skills change elsewhere — notably a
+  // Config Sync pull, which merges new skills to disk and dispatches this event.
+  // Without this the panel stayed stale until the drawer was reopened/restarted,
+  // and a subsequent bulk save here would clobber the pulled-in skills it never
+  // saw (they live in the in-memory `skills` list this rebuilds from).
+  useEffect(() => {
+    load()
+    const onChanged = () => { load() }
+    window.addEventListener('runspec:skills_changed', onChanged)
+    return () => window.removeEventListener('runspec:skills_changed', onChanged)
+  }, [load])
 
   const startAdd = () => { form.resetFields(); form.setFieldsValue({ args: [] }); setEditingKey('') }
   const startEdit = (s: Skill) => {

@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.99.2] — 2026-06-20
+
+### Fixed
+- **Settings → Skills now refreshes after a Config Sync pull.** The Skills panel
+  loaded once when the drawer opened and never re-read, so skills merged in by a
+  pull didn't appear until the drawer was reopened or the console restarted — even
+  though the pull dispatches `runspec:skills_changed` (the `$`-menu already
+  listened). The panel now subscribes to that event and reloads. This also closes
+  a data-loss path: because the panel held a stale in-memory list, adding a skill
+  from the drawer (a whole-collection save) could overwrite skills pulled in since
+  the drawer opened; keeping the list current prevents the clobber.
+
 ## [0.99.1] — 2026-06-20
 
 ### Added
