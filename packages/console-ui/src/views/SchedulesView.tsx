@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented } from 'antd'
-import { DeleteOutlined, PlusOutlined, MinusCircleOutlined } from '@ant-design/icons'
+import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, message } from 'antd'
+import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 
@@ -23,16 +23,17 @@ const CRON_PRESETS = [
 type Action = 'runnable' | 'event'
 type WhenKind = 'cron' | 'every'
 
-interface NewScheduleModalProps {
+interface ScheduleModalProps {
   open: boolean
   hosts: Host[]
   runnables: Runnable[]
   defaultHost: string
+  editing: Schedule | null
   onCancel: () => void
-  onCreate: (s: Schedule) => void
+  onSaved: () => void
 }
 
-function NewScheduleModal({ open, hosts, runnables, defaultHost, onCancel, onCreate }: NewScheduleModalProps) {
+function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel, onSaved }: ScheduleModalProps) {
   const [form] = Form.useForm()
   const [action, setAction] = useState<Action>('runnable')
   const [whenKind, setWhenKind] = useState<WhenKind>('cron')
@@ -44,6 +45,58 @@ function NewScheduleModal({ open, hosts, runnables, defaultHost, onCancel, onCre
 
   const hostName: string = Form.useWatch('host', form) ?? defaultHost
   const hostRunnables = runnables.filter(r => r.host === hostName)
+  const isEdit = !!editing
+
+  const resetAll = () => {
+    form.resetFields()
+    setAction('runnable')
+    setWhenKind('cron')
+    setCronPreset('')
+    setCustomCron('')
+    setSelectedRunnable(null)
+  }
+
+  // Prefill from the schedule being edited (or a clean slate for a new one)
+  // whenever the dialog opens. Local state (action/whenKind/cron preset) lives
+  // outside the Form, so it has to be seeded here too.
+  useEffect(() => {
+    if (!open) return
+    if (!editing) {
+      resetAll()
+      form.setFieldsValue({ host: defaultHost, fields: [] })
+      return
+    }
+    setAction(editing.action)
+    const kind: WhenKind = editing.when.every ? 'every' : 'cron'
+    setWhenKind(kind)
+    if (kind === 'cron') {
+      const cron = editing.when.cron ?? ''
+      if (CRON_PRESETS.some(p => p.value === cron)) {
+        setCronPreset(cron)
+        setCustomCron('')
+      } else {
+        setCronPreset('__custom__')
+        setCustomCron(cron)
+      }
+    } else {
+      setCronPreset('')
+      setCustomCron('')
+    }
+    const r = runnables.find(x => x.host === editing.host && x.name === editing.runnable) ?? null
+    setSelectedRunnable(r)
+    const fv: Record<string, unknown> = {
+      host: editing.host ?? defaultHost,
+      runnable: editing.runnable,
+      timezone: editing.when.timezone ?? '',
+      cron: editing.when.cron ?? '',
+      every: editing.when.every ?? '',
+      event: editing.event ?? '',
+      fields: Object.entries(editing.fields ?? {}).map(([key, value]) => ({ key, value })),
+    }
+    for (const [k, v] of Object.entries(editing.args ?? {})) fv[`arg_${k}`] = String(v)
+    form.setFieldsValue(fv)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing])
 
   const handleRunnableChange = (name: string) => {
     const r = hostRunnables.find(x => x.name === name) ?? null
@@ -57,15 +110,6 @@ function NewScheduleModal({ open, hosts, runnables, defaultHost, onCancel, onCre
 
   const handleHostChange = () => {
     form.setFieldValue('runnable', undefined)
-    setSelectedRunnable(null)
-  }
-
-  const resetAll = () => {
-    form.resetFields()
-    setAction('runnable')
-    setWhenKind('cron')
-    setCronPreset('')
-    setCustomCron('')
     setSelectedRunnable(null)
   }
 
@@ -86,7 +130,7 @@ function NewScheduleModal({ open, hosts, runnables, defaultHost, onCancel, onCre
     const tz = String(values.timezone ?? '').trim()
     if (tz) when.timezone = tz
 
-    const base: Schedule = { id: '', action, when, enabled: true }
+    const base: Schedule = { id: editing?.id ?? '', action, when, enabled: editing?.enabled ?? true }
     if (action === 'event') {
       const event = String(values.event ?? '').trim()
       if (!event) { form.setFields([{ name: 'event', errors: ['Required'] }]); return }
@@ -96,7 +140,7 @@ function NewScheduleModal({ open, hosts, runnables, defaultHost, onCancel, onCre
       }
       base.event = event
       base.fields = fields
-      base.id = `rs-${event}-${Date.now()}`
+      if (!base.id) base.id = `rs-${event}-${Date.now()}`
     } else {
       const args: Record<string, unknown> = {}
       for (const a of selectedRunnable?.args ?? []) {
@@ -106,14 +150,18 @@ function NewScheduleModal({ open, hosts, runnables, defaultHost, onCancel, onCre
       base.host = values.host
       base.runnable = values.runnable
       base.args = args
-      base.id = `rs-${values.runnable}-${Date.now()}`
+      if (!base.id) base.id = `rs-${values.runnable}-${Date.now()}`
     }
 
     setSubmitting(true)
     try {
-      await bridge.create_schedule({ ...base } as unknown as Record<string, unknown>)
-      onCreate(base)
+      if (isEdit) await bridge.update_schedule(base.id, { ...base } as unknown as Record<string, unknown>)
+      else await bridge.create_schedule({ ...base } as unknown as Record<string, unknown>)
+      message.success(isEdit ? 'Schedule updated' : 'Schedule created')
+      onSaved()
       resetAll()
+    } catch (e) {
+      message.error(String(e))
     } finally {
       setSubmitting(false)
     }
@@ -125,13 +173,14 @@ function NewScheduleModal({ open, hosts, runnables, defaultHost, onCancel, onCre
 
   return (
     <Modal
-      title="New schedule"
+      title={isEdit ? 'Edit schedule' : 'New schedule'}
       open={open}
       onCancel={handleCancel}
       onOk={handleSubmit}
-      okText="Create"
+      okText={isEdit ? 'Save' : 'Create'}
       confirmLoading={submitting}
       width={480}
+      destroyOnClose
     >
       <Form form={form} layout="vertical" initialValues={{ host: defaultHost, fields: [] }}>
         <Form.Item label="When it fires, it will…">
@@ -295,32 +344,108 @@ function NewScheduleModal({ open, hosts, runnables, defaultHost, onCancel, onCre
   )
 }
 
+// "in 2h 5m" / "in 30s" / "due" — a compact countdown to the next fire.
+function relativeWhen(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now()
+  if (Number.isNaN(ms)) return ''
+  if (ms <= 0) return 'due'
+  const mins = Math.round(ms / 60000)
+  if (mins < 60) return `in ${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `in ${hours}h ${mins % 60}m`
+  const days = Math.floor(hours / 24)
+  return `in ${days}d ${hours % 24}h`
+}
+
 export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewProps) {
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<Schedule | null>(null)
   const isDark = useIsDark()
 
-  useEffect(() => {
-    bridge.get_schedules().then(setSchedules)
-  }, [])
+  const reload = () => bridge.get_schedules().then(setSchedules)
+
+  useEffect(() => { reload() }, [])
 
   const handleDelete = async (id: string) => {
     await bridge.delete_schedule(id)
     setSchedules(s => s.filter(x => x.id !== id))
   }
 
-  const handleCreate = (s: Schedule) => {
-    setSchedules(prev => [...prev, s])
+  const handleSaved = () => {
     setModalOpen(false)
+    setEditing(null)
+    reload()
+  }
+
+  const openNew = () => { setEditing(null); setModalOpen(true) }
+  const openEdit = (s: Schedule) => { setEditing(s); setModalOpen(true) }
+
+  const handleToggle = async (s: Schedule, enabled: boolean) => {
+    // Optimistic flip; persist via update_schedule, then refresh for nextRun.
+    setSchedules(prev => prev.map(x => (x.id === s.id ? { ...x, enabled } : x)))
+    try {
+      await bridge.update_schedule(s.id, { ...s, enabled } as unknown as Record<string, unknown>)
+      reload()
+    } catch (e) {
+      message.error(String(e))
+      reload()
+    }
+  }
+
+  const handleRunNow = async (s: Schedule) => {
+    try {
+      const res = await bridge.run_schedule_now(s.id)
+      if (res.action === 'event') message.success(`Emitted event “${res.event}”`)
+      else message.success(`Running /${res.runnable} on ${res.host}…`)
+    } catch (e) {
+      message.error(String(e))
+    }
   }
 
   const dimCol = isDark ? '#888' : '#999'
+  const keyCol = isDark ? '#4fc1ff' : '#0958d9'
   const whenText = (w: ScheduleWhen) => {
     const base = w.every ? `every ${w.every}` : (w.cron ?? '')
     return w.timezone ? `${base}  (${w.timezone})` : base
   }
 
+  const detailFor = (s: Schedule): Record<string, unknown> =>
+    s.action === 'event' ? (s.fields ?? {}) : (s.args ?? {})
+
+  // Inline summary of the args/fields — first couple of entries as tiny tags,
+  // with a "+N" overflow. Full set stays in the expandable row.
+  const detailSummary = (s: Schedule) => {
+    const entries = Object.entries(detailFor(s))
+    if (entries.length === 0) return <span style={{ color: dimCol }}>—</span>
+    const shown = entries.slice(0, 2)
+    const prefix = s.action === 'event' ? '' : '--'
+    return (
+      <Space size={4} wrap>
+        {shown.map(([k, v]) => (
+          <span key={k} style={{ fontFamily: 'monospace', fontSize: 11 }}>
+            <span style={{ color: keyCol }}>{prefix}{k}</span>
+            <span style={{ color: dimCol }}>={String(v)}</span>
+          </span>
+        ))}
+        {entries.length > shown.length && (
+          <span style={{ color: dimCol, fontSize: 11 }}>+{entries.length - shown.length}</span>
+        )}
+      </Space>
+    )
+  }
+
   const columns = [
+    {
+      title: '',
+      key: 'enabled',
+      width: 56,
+      render: (_: unknown, s: Schedule) => (
+        <Tooltip title={s.enabled === false ? 'Disabled — won’t fire' : 'Enabled'}>
+          <Switch size="small" checked={s.enabled !== false} onChange={v => handleToggle(s, v)} />
+        </Tooltip>
+      ),
+    },
     {
       title: 'Action',
       key: 'action',
@@ -341,28 +466,48 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
       render: (_: unknown, s: Schedule) => <code style={{ fontSize: 12 }}>{whenText(s.when)}</code>,
     },
     {
+      title: 'Details',
+      key: 'detail',
+      render: (_: unknown, s: Schedule) => detailSummary(s),
+    },
+    {
       title: 'Next run',
       dataIndex: 'nextRun',
       key: 'nextRun',
-      render: (v?: string) => <span style={{ color: dimCol }}>{v ?? '—'}</span>,
+      render: (v: string | undefined, s: Schedule) => {
+        if (s.enabled === false) return <span style={{ color: dimCol }}>paused</span>
+        if (!v) return <span style={{ color: dimCol }}>—</span>
+        return (
+          <Tooltip title={new Date(v).toLocaleString()}>
+            <span style={{ color: dimCol }}>{relativeWhen(v)}</span>
+          </Tooltip>
+        )
+      },
     },
     {
       title: '',
       key: 'actions',
-      width: 48,
+      width: 132,
       render: (_: unknown, s: Schedule) => (
-        <Button danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(s.id)} />
+        <Space size={2}>
+          <Tooltip title="Run now">
+            <Button type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => handleRunNow(s)} />
+          </Tooltip>
+          <Tooltip title="Edit">
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(s)} />
+          </Tooltip>
+          <Popconfirm title="Delete this schedule?" okText="Delete" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(s.id)}>
+            <Button danger type="text" size="small" icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
       ),
     },
   ]
 
-  const detailFor = (s: Schedule): Record<string, unknown> =>
-    s.action === 'event' ? (s.fields ?? {}) : (s.args ?? {})
-
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button type="primary" icon={<PlusOutlined />} size="small" onClick={() => setModalOpen(true)}>
+        <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openNew}>
           New schedule
         </Button>
       </div>
@@ -372,13 +517,14 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
         columns={columns}
         rowKey="id"
         size="small"
+        rowClassName={s => (s.enabled === false ? 'rs-schedule-disabled' : '')}
         expandable={{
           rowExpandable: s => Object.keys(detailFor(s)).length > 0,
           expandedRowRender: s => (
             <div style={{ paddingLeft: 24, fontFamily: 'monospace', fontSize: 12, color: dimCol }}>
               {Object.entries(detailFor(s)).map(([k, v]) => (
                 <span key={k} style={{ marginRight: 12 }}>
-                  <span style={{ color: isDark ? '#4fc1ff' : '#0958d9' }}>
+                  <span style={{ color: keyCol }}>
                     {s.action === 'event' ? k : `--${k}`}
                   </span>={String(v)}
                 </span>
@@ -388,13 +534,14 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
         }}
       />
 
-      <NewScheduleModal
+      <ScheduleModal
         open={modalOpen}
         hosts={hosts}
         runnables={runnables}
         defaultHost={selectedHost}
-        onCancel={() => setModalOpen(false)}
-        onCreate={handleCreate}
+        editing={editing}
+        onCancel={() => { setModalOpen(false); setEditing(null) }}
+        onSaved={handleSaved}
       />
     </div>
   )

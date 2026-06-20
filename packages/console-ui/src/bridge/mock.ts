@@ -554,9 +554,9 @@ function _aggregateMock(runs: SyntheticRun[], sinceDays: number): AnalyticsData 
 }
 
 let MOCK_SCHEDULES: Schedule[] = [
-  { id: 'rs-backup-daily', action: 'runnable', runnable: 'backup', host: 'local', when: { cron: '0 2 * * *' }, args: { db: 'postgres-main' } },
-  { id: 'rs-log-rotate-weekly', action: 'runnable', runnable: 'log-rotate', host: 'prod-1', when: { cron: '0 3 * * 0' }, args: { keep: 7 } },
-  { id: 'rs-nightly-report', action: 'event', event: 'nightly_report', when: { cron: '0 2 * * *', timezone: 'Europe/London' }, fields: { scope: 'prod', report: 'billing' } },
+  { id: 'rs-backup-daily', action: 'runnable', runnable: 'backup', host: 'local', when: { cron: '0 2 * * *' }, args: { db: 'postgres-main' }, enabled: true, nextRun: new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString() },
+  { id: 'rs-log-rotate-weekly', action: 'runnable', runnable: 'log-rotate', host: 'prod-1', when: { cron: '0 3 * * 0' }, args: { keep: 7 }, enabled: false },
+  { id: 'rs-nightly-report', action: 'event', event: 'nightly_report', when: { cron: '0 2 * * *', timezone: 'Europe/London' }, fields: { scope: 'prod', report: 'billing' }, enabled: true, nextRun: new Date(Date.now() + 11 * 60 * 60 * 1000).toISOString() },
 ]
 
 const MOCK_IN_FLIGHT: InFlightRecord[] = [
@@ -692,10 +692,23 @@ export const mockApi: BridgeApi = {
 
   create_schedule: async (data) => {
     const s = data as unknown as Schedule
-    MOCK_SCHEDULES = [...MOCK_SCHEDULES, { ...s, id: s.id || `rs-${s.runnable ?? s.event ?? 'sched'}-${Date.now()}` }]
+    const id = s.id || `rs-${s.runnable ?? s.event ?? 'sched'}-${Date.now()}`
+    MOCK_SCHEDULES = [...MOCK_SCHEDULES, { ...s, id, nextRun: new Date(Date.now() + 60 * 60 * 1000).toISOString() }]
   },
 
-  delete_schedule: async (id) => { console.log('[mock] delete_schedule', id) },
+  update_schedule: async (id, data) => {
+    const s = data as unknown as Schedule
+    MOCK_SCHEDULES = MOCK_SCHEDULES.map(x => (x.id === id ? { ...s, id } : x))
+  },
+
+  delete_schedule: async (id) => { MOCK_SCHEDULES = MOCK_SCHEDULES.filter(s => s.id !== id) },
+
+  run_schedule_now: async (id) => {
+    const s = MOCK_SCHEDULES.find(x => x.id === id)
+    console.log('[mock] run_schedule_now', id)
+    if (s?.action === 'event') return { action: 'event', event: s.event }
+    return { action: 'runnable', inv_id: `inv-${Date.now()}`, host: s?.host, runnable: s?.runnable }
+  },
 
   import_jump_hosts: async (content) => {
     // Minimal TOML section parser — mirrors what Python's tomllib.loads() does on the real bridge

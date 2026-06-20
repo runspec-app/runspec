@@ -653,7 +653,12 @@ export interface BridgeApi {
   list_providers: () => Promise<{ value: string; label: string }[]>
   save_config: (data: Record<string, unknown>) => Promise<void>
   create_schedule: (data: Record<string, unknown>) => Promise<void>
+  // Replace a schedule in place (edit dialog, inline enable/disable). Keeps the id.
+  update_schedule: (id: string, data: Record<string, unknown>) => Promise<void>
   delete_schedule: (id: string) => Promise<void>
+  // Fire a schedule immediately — runs the runnable (returns inv_id) or emits the
+  // event (returns event), regardless of the schedule's enabled flag.
+  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event'; inv_id?: string; event?: string; host?: string; runnable?: string }>
   get_jump_hosts: () => Promise<JumpHost[]>
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>

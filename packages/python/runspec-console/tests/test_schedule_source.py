@@ -215,6 +215,44 @@ def test_when_to_trigger_cron_and_interval():
     assert interval.interval.total_seconds() == 15 * 60
 
 
+# ── next_fire_time (needs APScheduler) ────────────────────────────────────────
+
+
+def test_next_fire_time_cron_is_tomorrow_0200():
+    pytest.importorskip("apscheduler")
+    from runspec_console.sources.schedule import next_fire_time
+
+    now = datetime(2026, 6, 20, 12, 0, 0).astimezone()
+    nxt = next_fire_time(When(cron="0 2 * * *"), now=now)
+    assert nxt is not None
+    assert (nxt.year, nxt.month, nxt.day, nxt.hour, nxt.minute) == (2026, 6, 21, 2, 0)
+
+
+def test_next_fire_time_interval_is_aware():
+    pytest.importorskip("apscheduler")
+    from runspec_console.sources.schedule import next_fire_time
+
+    nxt = next_fire_time(When(every="15m"))
+    assert nxt is not None
+    assert nxt.tzinfo is not None  # always timezone-aware
+
+
+def test_next_fire_time_returns_none_without_apscheduler(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "apscheduler" or name.startswith("apscheduler."):
+            raise ImportError("no apscheduler")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    from runspec_console.sources.schedule import next_fire_time
+
+    assert next_fire_time(When(cron="0 2 * * *")) is None
+
+
 # ── ScheduleSource._fire: emit an event / run a runnable ──────────────────────
 
 

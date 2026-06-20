@@ -6,3 +6,12 @@ html, body, #root {
   padding: 0;
   overflow: hidden;
 }
+
+/* Schedules tab — dim a disabled (paused) schedule row so it reads as inactive. */
+.rs-schedule-disabled td {
+  opacity: 0.55;
+}
+.rs-schedule-disabled td:first-child,
+.rs-schedule-disabled td:last-child {
+  opacity: 1;
+}

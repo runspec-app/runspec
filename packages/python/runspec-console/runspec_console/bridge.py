@@ -2697,7 +2697,14 @@ class Bridge:
 
     # ── schedules ─────────────────────────────────────────────────────────────
 
-    def get_schedules(self) -> list[dict[str, Any]]:
+    def _read_schedules(self) -> list[dict[str, Any]]:
+        """The raw ``[[schedule]]`` entries from ``runspec_schedules.toml``.
+
+        Internal/persistence callers use this — it never carries the transient
+        ``nextRun`` field that :meth:`get_schedules` attaches for the UI, so a
+        round-trip back through ``_write_schedules`` can't accidentally persist
+        a computed value.
+        """
         path = hosts_path().parent / "runspec_schedules.toml"
         if not path.exists():
             return []
@@ -2705,28 +2712,125 @@ class Bridge:
             data = tomllib.load(f)
         return data.get("schedule", [])
 
+    def get_schedules(self) -> list[dict[str, Any]]:
+        """The schedules for the Schedules tab, each with a computed ``nextRun``.
+
+        ``nextRun`` is the next fire time (ISO-8601) for an enabled schedule,
+        derived from its ``when`` via APScheduler. It is **display-only** —
+        omitted when APScheduler isn't installed or the schedule is disabled, and
+        never written back to the TOML (see :meth:`_read_schedules`)."""
+        out = []
+        for s in self._read_schedules():
+            entry = dict(s)
+            if entry.get("enabled", True):
+                nxt = self._schedule_next_run(s)
+                if nxt:
+                    entry["nextRun"] = nxt
+            out.append(entry)
+        return out
+
+    def _schedule_next_run(self, raw: dict[str, Any]) -> str:
+        """The next fire time of one schedule as an ISO string, or ``""``.
+
+        Best-effort: any parse/timing error (or a missing APScheduler) yields
+        ``""`` so the Schedules tab simply shows ``—`` rather than failing."""
+        try:
+            from .sources.schedule import next_fire_time, parse_schedule_entry
+
+            job = parse_schedule_entry(raw)
+            nxt = next_fire_time(job.when)
+            return nxt.isoformat(timespec="seconds") if nxt is not None else ""
+        except Exception:
+            return ""
+
     def create_schedule(self, data: dict[str, Any]) -> None:
         path = hosts_path().parent / "runspec_schedules.toml"
-        schedules = self.get_schedules()
+        schedules = self._read_schedules()
         schedules.append(data)
         _write_schedules(path, schedules)
         # Rebuild the engine so the new schedule's APScheduler job starts now
         # (mirrors save_trigger / set_trigger_enabled).
         self.restart_triggers()
 
-    def delete_schedule(self, id: str) -> None:
+    def update_schedule(self, id: str, data: dict[str, Any]) -> None:
+        """Replace the schedule with ``id`` in place, keeping its id stable.
+
+        Used by the Schedules tab's edit dialog and the inline enable/disable
+        toggle. Falls back to appending if no entry matches (so a stale id can't
+        silently drop an edit). Restarts the engine so the change takes effect
+        immediately — same as create/delete."""
         path = hosts_path().parent / "runspec_schedules.toml"
-        schedules = [s for s in self.get_schedules() if s.get("id") != id]
+        entry = {k: v for k, v in data.items() if k != "nextRun"}
+        entry["id"] = id
+        schedules = self._read_schedules()
+        replaced = False
+        for i, s in enumerate(schedules):
+            if s.get("id") == id:
+                schedules[i] = entry
+                replaced = True
+                break
+        if not replaced:
+            schedules.append(entry)
         _write_schedules(path, schedules)
         self.restart_triggers()
 
+    def delete_schedule(self, id: str) -> None:
+        path = hosts_path().parent / "runspec_schedules.toml"
+        schedules = [s for s in self._read_schedules() if s.get("id") != id]
+        _write_schedules(path, schedules)
+        self.restart_triggers()
+
+    def run_schedule_now(self, id: str) -> dict[str, Any]:
+        """Fire a schedule immediately, exactly as its timer would.
+
+        Runnable-action → run the runnable directly (autonomous + audited, the
+        same path a timed fire uses), returning its in-flight ``inv_id``.
+        Event-action → emit the matchable event into the trigger engine, fanning
+        out to ``source="schedule"`` triggers. The ``enabled`` flag is ignored —
+        clicking *Run now* is the explicit authorization."""
+        raw = next((s for s in self._read_schedules() if s.get("id") == id), None)
+        if raw is None:
+            raise ValueError(f"no schedule with id {id!r}")
+        from .sources.schedule import event_payload, parse_schedule_entry
+
+        job = parse_schedule_entry(raw)
+        if job.action == "event":
+            from datetime import datetime
+
+            from .events import Event
+
+            engine = self._trigger_engine
+            if engine is None:
+                raise RuntimeError(
+                    "the trigger engine isn't running — can't emit the event right now"
+                )
+            engine.feed(
+                Event.new("schedule", job.event, event_payload(job, datetime.now()))
+            )
+            return {"action": "event", "event": job.event}
+        inv_id = self._invoke_scheduled(job.host, job.runnable, dict(job.args))
+        return {
+            "action": "runnable",
+            "inv_id": inv_id,
+            "host": job.host,
+            "runnable": job.runnable,
+        }
+
     def _run_scheduled(self, host: str, runnable: str, args: dict[str, Any]) -> None:
-        """Run a runnable-action schedule: fire it directly and autonomously — no
-        agent, no confirm gate (scheduling it is the authorization) — labelled as
-        the 'Scheduled Task' operator. Reuses the normal invoke path (SSH/local
-        exec + the runnable's own run_summary audit that History/Analytics read)."""
+        """Run a runnable-action schedule on the timer: fire it directly and
+        autonomously — no agent, no confirm gate (scheduling it is the
+        authorization). The callback ignores the return; the manual *Run now*
+        path uses :meth:`_invoke_scheduled` so it can surface the in-flight id."""
+        self._invoke_scheduled(host, runnable, args)
+
+    def _invoke_scheduled(self, host: str, runnable: str, args: dict[str, Any]) -> str:
+        """Invoke a runnable as the scheduler would and return its in-flight
+        ``inv_id`` (``""`` on failure). Labelled as the 'Scheduled Task' operator
+        and tagged ``trigger="schedule"`` so it reads identically in
+        History/Analytics whether the timer or *Run now* started it. Reuses the
+        normal invoke path (SSH/local exec + the runnable's own run_summary)."""
         try:
-            self.invoke_runnable(
+            return self.invoke_runnable(
                 host,
                 runnable,
                 dict(args or {}),
@@ -2737,6 +2841,7 @@ class Bridge:
             logger.exception(
                 "schedule: scheduled run of %s on %s failed", runnable, host
             )
+            return ""
 
     # ── today digest ──────────────────────────────────────────────────────────
 
@@ -7282,7 +7387,7 @@ class Bridge:
         # Schedules (Schedules tab) can run with no triggers at all — a
         # runnable-action schedule fires directly — so they keep the engine alive
         # too (event-action schedules still need it to route their events).
-        schedules = self.get_schedules()
+        schedules = self._read_schedules()
         if not triggers and mailbox is None and not schedules:
             return
         handler = make_handler(
@@ -8366,7 +8471,7 @@ class Bridge:
         schedule_events = sorted(
             {
                 str(s.get("event") or "").strip()
-                for s in self.get_schedules()
+                for s in self._read_schedules()
                 if str(s.get("action") or "runnable") == "event" and s.get("event")
             }
         )
@@ -9559,6 +9664,8 @@ def _write_schedules(path: Path, schedules: list[dict[str, Any]]) -> None:
     for s in schedules:
         lines.append("[[schedule]]")
         for k, v in s.items():
+            if k == "nextRun":  # display-only, computed by get_schedules
+                continue
             if isinstance(v, dict):
                 inner = ", ".join(f"{ik} = {_toml_scalar(iv)}" for ik, iv in v.items())
                 lines.append(f"{k} = {{ {inner} }}")

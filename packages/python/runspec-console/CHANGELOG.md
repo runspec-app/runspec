@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.102.0] — 2026-06-20
+
+### Added
+- **Schedules tab — edit, richer rows, and Run now.** A scheduled entry is no
+  longer create-or-delete only:
+  - **Edit** — the row's pencil opens the same dialog pre-filled with the
+    schedule (action, cron preset/custom or interval, timezone, host/runnable +
+    args, or event + fields); saving replaces it in place via a new
+    `update_schedule(id, data)` bridge method that keeps the id stable.
+  - **More detail in the row** — an inline enable/disable **Switch** (persists
+    via `update_schedule`, dims the row when paused), an inline summary of the
+    first couple of args/fields (`--key=value`, with a `+N` overflow; the full
+    set stays in the expandable row), and a real **Next run** — `get_schedules`
+    now attaches a computed `nextRun` (next fire time from the `when`, via
+    APScheduler) shown as a relative countdown with the absolute time on hover.
+    `nextRun` is display-only and never written back to `runspec_schedules.toml`.
+  - **Run now** — the play button fires a schedule immediately regardless of its
+    enabled flag via `run_schedule_now(id)`: a runnable-action schedule runs
+    directly (same audited path, "Scheduled Task" operator) and an event-action
+    schedule emits its matchable event into the trigger engine, fanning out to
+    `source="schedule"` triggers.
+
 ## [0.101.1] — 2026-06-20
 
 ### Fixed

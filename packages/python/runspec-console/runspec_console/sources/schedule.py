@@ -195,6 +195,29 @@ def _when_to_trigger(when: When) -> Any:
     return IntervalTrigger(timezone=tz, **_parse_every(when.every))
 
 
+def next_fire_time(when: When, now: datetime | None = None) -> datetime | None:
+    """The next time a :class:`When` would fire, as a timezone-aware datetime.
+
+    Used by the Schedules tab to show a real "Next run" instead of "—". Lazily
+    imports APScheduler (the ``schedule`` extra) and returns ``None`` when it is
+    not installed or the timing can't be resolved, so callers can degrade
+    gracefully. ``now`` defaults to the current time in the trigger's timezone.
+    """
+    try:
+        trigger = _when_to_trigger(when)
+    except Exception:
+        return None
+    tz = getattr(trigger, "timezone", None)
+    if now is None:
+        now = datetime.now(tz) if tz is not None else datetime.now().astimezone()
+    elif now.tzinfo is None:
+        now = now.astimezone(tz) if tz is not None else now.astimezone()
+    try:
+        return trigger.get_next_fire_time(None, now)
+    except Exception:
+        return None
+
+
 def event_payload(job: ScheduleJob, now: datetime) -> dict[str, str]:
     """The payload for an ``action="event"`` schedule firing at local time ``now``.
 
