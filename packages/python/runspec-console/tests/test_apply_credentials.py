@@ -258,13 +258,34 @@ def test_lone_password_not_filled_when_caller_supplied(kr):
     assert secrets == {"password": "typed"}  # not overwritten
 
 
-def test_empty_valid_args_does_not_block_secret_arg_injection(kr):
-    # A missing arg cache (empty valid_args) must not silently block auto-apply of
-    # a bound credential — this is the agent-path regression.
-    c = _cred("svc-prod", secret_arg="user-password", scope_runnables=["deploy"])
+def test_in_scope_credential_not_injected_into_argless_runnable(kr):
+    # An argument-less runnable (e.g. upgrade-packages) has an empty declared-args
+    # set, which must block auto-injection — otherwise an in-scope credential's
+    # username_arg bleeds a `--user` into a runnable that doesn't accept it.
+    c = _cred(
+        "svc-prod",
+        username="jason",
+        username_arg="user",
+        secret_arg="user-password",
+        scope_runnables=["upgrade-packages"],
+    )
+    b = _ApplyBridge([c])
+    exec_args: dict = {}
+    secrets: dict = {}
+    applied = b._apply_credentials(
+        "h", "upgrade-packages", exec_args, secrets, valid_args=set()
+    )
+    assert exec_args == {} and secrets == {} and applied == []
+
+
+def test_explicit_credential_still_applies_with_empty_valid_args(kr):
+    # An explicitly named credential bypasses the declared-args guard.
+    c = _cred("svc-prod", secret_arg="user-password")
     b = _ApplyBridge([c])
     secrets: dict = {}
-    b._apply_credentials("h", "deploy", {}, secrets, valid_args=set())
+    b._apply_credentials(
+        "h", "r", {}, secrets, explicit_id="svc-prod", valid_args=set()
+    )
     assert secrets == {"user-password": "s3cret"}
 
 

@@ -1,5 +1,15 @@
 # runspec-linux Changelog
 
+## [0.4.1] — 2026-06-20
+
+Give `list-upgrades` `run_as = "root"`. It refreshes the package index
+(`apt-get update` / `dnf check-update` / …) by default, which needs root — but it
+had no `run_as`, so over the console it ran as the SSH login user and failed with
+`Could not open lock file /var/lib/apt/lists/lock — Permission denied`. It now
+escalates like the rest of the package family (works password-free with the
+`enable-passwordless-sudo` drop-in). `--no-refresh` still skips the index refresh
+and lists from the cache (now just faster, rather than a non-root workaround).
+
 ## [0.4.0] — 2026-06-20
 
 Make the privileged package/power runnables escalate via runspec's `run_as`, and

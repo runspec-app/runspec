@@ -7016,10 +7016,11 @@ class Bridge:
         applies (even out of scope) and wins any per-arg conflict. A value the
         caller already supplied is never overwritten, and when two in-scope
         credentials bind the same arg with no explicit winner it's ambiguous and
-        skipped. A non-empty ``valid_args`` limits *auto* injection to args the
-        runnable actually declares — an explicitly named credential still applies
-        (an empty/None set imposes no such limit, so a missing arg cache can't
-        silently block injection).
+        skipped. ``valid_args`` (when not None) limits *auto* injection to args the
+        runnable actually declares — so an in-scope credential never injects a
+        username/secret into a runnable that doesn't declare that arg (an
+        argument-less runnable's empty set blocks all auto-injection). An
+        explicitly named credential still applies regardless.
 
         ``secret_args`` (the runnable's ``password``-typed arg names) drives a
         fallback: a credential applied here with a stored secret but **no**
@@ -7056,8 +7057,8 @@ class Bridge:
                     chosen: dict[str, Any] | None = explicit
                 elif len(cs) == 1:
                     chosen = cs[0]
-                    if valid_args and arg_name not in valid_args:
-                        continue  # auto-apply only into a declared arg (when known)
+                    if valid_args is not None and arg_name not in valid_args:
+                        continue  # auto-apply only into a declared arg
                 else:
                     logger.warning(
                         "ambiguous credential binding for arg %r on %s/%s; skipping",

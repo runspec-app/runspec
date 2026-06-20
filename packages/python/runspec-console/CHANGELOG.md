@@ -8,6 +8,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.102.2] — 2026-06-20
+
+### Fixed
+- **An in-scope credential could bleed a flag into an argument-less runnable.**
+  0.102.1 changed the credential auto-apply guard to treat an *empty* `valid_args`
+  set as "no restriction" — but a runnable that genuinely declares **no args**
+  (e.g. `upgrade-packages`) has an empty set, so an in-scope credential's
+  `username_arg`/`secret_arg` would inject e.g. `--user <name>` into a runnable
+  that doesn't accept it, failing the run. Reverted: an empty declared-args set
+  again blocks auto-injection (there are no args to fill). An explicitly named
+  `credential_id` still applies regardless, and the lone-`password` fallback (the
+  actual 0.102.1 fix) is unaffected.
+
 ## [0.102.1] — 2026-06-20
 
 ### Fixed

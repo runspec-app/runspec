@@ -324,10 +324,11 @@ serve       = ["local"]
 description = "List packages with an available upgrade (refreshes the package index first)"
 autonomy    = "autonomous"
 output      = "json"
+run_as      = "root"
 
 [list-upgrades.args.no-refresh]
 type        = "flag"
-description = "Read the cached package index instead of refreshing it first (no root needed)"
+description = "Skip refreshing the package index — list from the cached index (faster)"
 default     = false
 
 [upgrade-packages]
