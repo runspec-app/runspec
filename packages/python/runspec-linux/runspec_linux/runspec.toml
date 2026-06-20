@@ -335,12 +335,14 @@ serve       = ["local"]
 description = "Refresh the package index and upgrade all installed packages (needs root)"
 autonomy    = "confirm"
 output      = "json"
+run_as      = "root"
 
 [install-package]
 serve       = ["local"]
 description = "Install one or more packages by name (needs root)"
 autonomy    = "confirm"
 output      = "json"
+run_as      = "root"
 
 [install-package.args.package]
 type        = "str"
@@ -352,6 +354,7 @@ serve       = ["local"]
 description = "Remove one or more packages by name (needs root)"
 autonomy    = "confirm"
 output      = "json"
+run_as      = "root"
 
 [remove-package.args.package]
 type        = "str"
@@ -365,12 +368,41 @@ serve       = ["local"]
 description = "Reboot the host, optionally after a delay in minutes (needs root)"
 autonomy    = "confirm"
 output      = "json"
+run_as      = "root"
 
 [reboot-host.args.delay-minutes]
 type        = "int"
 short       = "-d"
 description = "Minutes to wait before rebooting (0 = immediately)"
 default     = 0
+
+# ── Privilege bootstrap ───────────────────────────────────────────────────────
+
+# One-time setup so the run_as="root" runnables above need no password. Itself
+# escalates with the supplied password via `sudo -S` (read from stdin, never
+# argv), so it must NOT declare run_as. Validated with visudo before + after
+# install and rolled back on failure.
+[enable-passwordless-sudo]
+serve       = ["local"]
+description = "Install a validated /etc/sudoers.d drop-in so run_as='root' runnables need no password (one-time bootstrap)"
+autonomy    = "confirm"
+output      = "json"
+
+[enable-passwordless-sudo.args.password]
+type        = "password"
+description = "Your sudo password — sent over the secret channel and piped to 'sudo -S'; never appears in argv, ps, or logs"
+
+[enable-passwordless-sudo.args.user]
+type        = "str"
+short       = "-u"
+description = "User to grant passwordless sudo (defaults to the current login user)"
+required    = false
+
+[enable-passwordless-sudo.args.scope]
+type        = "choice"
+options     = ["scoped", "all"]
+default     = "scoped"
+description = "scoped = NOPASSWD only for the runspec venv runnables (manual/CLI runs); all = NOPASSWD: ALL (also covers agent-driven runs)"
 
 # ── TCP interfaces (nc-command) ────────────────────────────────────────────────
 

@@ -30,6 +30,7 @@ from runspec_linux_core.packages import (
 from runspec_linux_core.power import reboot_host
 from runspec_linux_core.security import last_logins, who
 from runspec_linux_core.services import check_service, list_services, restart_service
+from runspec_linux_core.sudoers import enable_passwordless_sudo
 from runspec_linux_core.system import check_memory, disk_usage, list_processes, system_info
 
 __all__ = [
@@ -73,6 +74,8 @@ __all__ = [
     "remove_package",
     # power
     "reboot_host",
+    # sudoers
+    "enable_passwordless_sudo",
     # tcp
     "nc_send",
 ]

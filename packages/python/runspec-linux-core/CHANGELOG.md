@@ -1,5 +1,25 @@
 # runspec-linux-core Changelog
 
+## [0.3.0] — 2026-06-20
+
+Add `enable_passwordless_sudo()` (new `sudoers.py`) — the one-time bootstrap that
+makes the `run_as = "root"` package/power runnables work without a password.
+
+- Installs a validated drop-in at `/etc/sudoers.d/runspec`. Two scopes:
+  `"scoped"` → `NOPASSWD` for the runspec venv's runnable scripts only
+  (`{venv_bin}/`); `"all"` → `NOPASSWD: ALL`.
+- The sudo password is read from **stdin via `sudo -S`** — never on argv, in the
+  process table, shell history, or the audit log.
+- Validates with `visudo -cf` before install *and* `visudo -c` after; rolls the
+  drop-in back if the post-install check fails, so a typo can't lock sudo out.
+- The target user name is validated against a strict pattern before it reaches
+  the file (no rule injection); idempotent when an identical drop-in exists.
+- Raises `ValueError` (bad scope/user), `ToolNotFoundError` (no `sudo`/`visudo`),
+  or `CommandError` (auth failure / validation failure).
+
+Note: the console's *agent* path wraps the command in `env(1)`, so a `"scoped"`
+grant covers manual/CLI runs; agent-driven runs need `"all"`.
+
 ## [0.2.0] — 2026-06-20
 
 Add package-manager and host-power helpers so a fleet can be patched and

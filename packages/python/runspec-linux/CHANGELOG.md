@@ -1,5 +1,29 @@
 # runspec-linux Changelog
 
+## [0.4.0] — 2026-06-20
+
+Make the privileged package/power runnables escalate via runspec's `run_as`, and
+add a one-time bootstrap runnable to enable it without a password. Bumps the
+`runspec-linux-core` floor to `>=0.3.0`.
+
+- **`run_as = "root"`** on `upgrade-packages`, `install-package`,
+  `remove-package`, and `reboot-host`. The console's SSH executor now wraps these
+  in `sudo -u root …` before they run, instead of failing with permission denied
+  when the SSH login user isn't root. (`list-packages` / `list-upgrades` stay
+  un-escalated — least privilege; `list-upgrades --no-refresh` works as any user.)
+  A site with a service account can override `run_as` in its own spec.
+- **New `enable-passwordless-sudo`** (confirm) — the one-time setup that makes the
+  above work password-free. Takes a **`password`-typed** arg (delivered over the
+  console's secret channel and piped to `sudo -S` — never on argv/ps/logs),
+  optional `--user` (defaults to the login user), and `--scope`
+  (`scoped` = the runspec venv runnables only; `all` = `NOPASSWD: ALL`). Installs
+  a `visudo`-validated `/etc/sudoers.d/runspec`, rolling back on a bad result. It
+  declares no `run_as` (it bootstraps root itself).
+
+Setup flow: run `enable-passwordless-sudo` once per host (pick `all` for
+agent-driven fleet management; `scoped` is enough for manual/CLI runs), then
+`upgrade-packages` and friends run without a password.
+
 ## [0.3.0] — 2026-06-20
 
 Add 6 runnables for managing a fleet's packages and power state from
