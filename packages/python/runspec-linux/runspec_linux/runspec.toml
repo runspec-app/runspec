@@ -299,6 +299,79 @@ type        = "str"
 short       = "-c"
 description = "Container name or ID"
 
+# ── Packages ──────────────────────────────────────────────────────────────────
+
+[list-packages]
+serve       = ["local"]
+description = "List installed packages (apt/dnf/yum/zypper/pacman), optionally filtered by name"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-packages.args.filter]
+type        = "str"
+short       = "-f"
+description = "Only list packages whose name contains this string"
+required    = false
+
+[list-packages.args.limit]
+type        = "int"
+short       = "-n"
+description = "Maximum number of packages to return (sorted by name)"
+default     = 100
+
+[list-upgrades]
+serve       = ["local"]
+description = "List packages with an available upgrade (refreshes the package index first)"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-upgrades.args.no-refresh]
+type        = "flag"
+description = "Read the cached package index instead of refreshing it first (no root needed)"
+default     = false
+
+[upgrade-packages]
+serve       = ["local"]
+description = "Refresh the package index and upgrade all installed packages (needs root)"
+autonomy    = "confirm"
+output      = "json"
+
+[install-package]
+serve       = ["local"]
+description = "Install one or more packages by name (needs root)"
+autonomy    = "confirm"
+output      = "json"
+
+[install-package.args.package]
+type        = "str"
+short       = "-p"
+description = "Package name to install (space-separated for several)"
+
+[remove-package]
+serve       = ["local"]
+description = "Remove one or more packages by name (needs root)"
+autonomy    = "confirm"
+output      = "json"
+
+[remove-package.args.package]
+type        = "str"
+short       = "-p"
+description = "Package name to remove (space-separated for several)"
+
+# ── Power ─────────────────────────────────────────────────────────────────────
+
+[reboot-host]
+serve       = ["local"]
+description = "Reboot the host, optionally after a delay in minutes (needs root)"
+autonomy    = "confirm"
+output      = "json"
+
+[reboot-host.args.delay-minutes]
+type        = "int"
+short       = "-d"
+description = "Minutes to wait before rebooting (0 = immediately)"
+default     = 0
+
 # ── TCP interfaces (nc-command) ────────────────────────────────────────────────
 
 [nc-command]

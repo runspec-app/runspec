@@ -68,3 +68,39 @@ def test_restart_container_requires_docker(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr("runspec_linux_core.containers.shutil.which", lambda _: None)
     with pytest.raises(ToolNotFoundError):
         core.restart_container("web")
+
+
+def test_list_packages_requires_a_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("runspec_linux_core.packages.shutil.which", lambda _: None)
+    with pytest.raises(ToolNotFoundError):
+        core.list_packages()
+
+
+def test_list_upgrades_requires_a_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("runspec_linux_core.packages.shutil.which", lambda _: None)
+    with pytest.raises(ToolNotFoundError):
+        core.list_upgrades()
+
+
+def test_upgrade_packages_requires_a_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("runspec_linux_core.packages.shutil.which", lambda _: None)
+    with pytest.raises(ToolNotFoundError):
+        core.upgrade_packages()
+
+
+def test_install_package_requires_a_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("runspec_linux_core.packages.shutil.which", lambda _: None)
+    with pytest.raises(ToolNotFoundError):
+        core.install_package("htop")
+
+
+def test_remove_package_requires_a_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("runspec_linux_core.packages.shutil.which", lambda _: None)
+    with pytest.raises(ToolNotFoundError):
+        core.remove_package("htop")
+
+
+def test_reboot_host_requires_a_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("runspec_linux_core.power.shutil.which", lambda _: None)
+    with pytest.raises(ToolNotFoundError):
+        core.reboot_host()

@@ -19,6 +19,15 @@ from runspec_linux_core.files import backup_files, find_large_files
 from runspec_linux_core.logs import journalctl, search_log, tail_log
 from runspec_linux_core.nc import nc_send
 from runspec_linux_core.network import check_port, ping_host, show_connections
+from runspec_linux_core.packages import (
+    detect_manager,
+    install_package,
+    list_packages,
+    list_upgrades,
+    remove_package,
+    upgrade_packages,
+)
+from runspec_linux_core.power import reboot_host
 from runspec_linux_core.security import last_logins, who
 from runspec_linux_core.services import check_service, list_services, restart_service
 from runspec_linux_core.system import check_memory, disk_usage, list_processes, system_info
@@ -55,6 +64,15 @@ __all__ = [
     "list_containers",
     "container_logs",
     "restart_container",
+    # packages
+    "detect_manager",
+    "list_packages",
+    "list_upgrades",
+    "upgrade_packages",
+    "install_package",
+    "remove_package",
+    # power
+    "reboot_host",
     # tcp
     "nc_send",
 ]

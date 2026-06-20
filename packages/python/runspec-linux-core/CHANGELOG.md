@@ -1,5 +1,37 @@
 # runspec-linux-core Changelog
 
+## [0.2.0] — 2026-06-20
+
+Add package-manager and host-power helpers so a fleet can be patched and
+rebooted through `runspec-linux`.
+
+New in `packages.py` — detect the distro's manager (`apt-get`/`dnf`/`yum`/
+`zypper`/`pacman`) and operate over it:
+
+- `detect_manager()` — first supported manager on PATH (raises
+  `ToolNotFoundError` if none).
+- `list_packages(name_filter=None, limit=100)` — installed packages
+  (name + version), filtered + sorted + capped; `total` is the pre-cap count.
+- `list_upgrades(refresh=True)` — packages with an available upgrade
+  (name/current/candidate). `refresh` updates the index first (needs root);
+  `refresh=False` reads the cache as any user.
+- `upgrade_packages()` — refresh the index and upgrade everything (needs root).
+- `install_package(packages)` / `remove_package(packages)` — install/remove one
+  or more space-separated packages (needs root).
+
+New in `power.py`:
+
+- `reboot_host(delay_minutes=0)` — reboot now or schedule with `shutdown -r +N`,
+  falling back to `systemctl reboot` for an immediate reboot.
+
+Each helper returns plain data and raises `ToolNotFoundError` (no manager/tool)
+or `CommandError` (non-zero exit, e.g. run unprivileged), matching the existing
+contract. Package names are validated against a conservative token shape before
+reaching argv (rejects leading dashes and shell metacharacters), raising
+`ValueError` on a bad name. The write commands run non-interactively
+(`-y`/`--non-interactive`/`--noconfirm`, `DEBIAN_FRONTEND=noninteractive`) and
+return a bounded tail of their output.
+
 ## [0.1.0] — 2026-06-09
 
 Initial release.

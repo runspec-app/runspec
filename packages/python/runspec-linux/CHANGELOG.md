@@ -1,5 +1,35 @@
 # runspec-linux Changelog
 
+## [0.3.0] — 2026-06-20
+
+Add 6 runnables for managing a fleet's packages and power state from
+runspec-console — thin wrappers over the new `runspec-linux-core` 0.2.0 helpers
+(dependency floor bumped to `>=0.2.0`). They work across the common distro
+families (apt/dnf/yum/zypper/pacman).
+
+**Packages**
+
+- `list-packages` (autonomous) — list installed packages, optional `--filter`
+  substring and `--limit`.
+- `list-upgrades` (autonomous) — list packages with an available upgrade;
+  refreshes the index first, or pass `--no-refresh` to read the cache without
+  root.
+- `upgrade-packages` (confirm) — refresh the index and upgrade everything.
+- `install-package` (confirm) — install one or more packages (`--package`,
+  space-separated for several).
+- `remove-package` (confirm) — remove one or more packages.
+
+**Power**
+
+- `reboot-host` (confirm) — reboot the host now, or schedule with
+  `--delay-minutes`.
+
+The read-only runnables are `autonomous`; the state-changing ones are `confirm`,
+matching `restart-service` / `restart-container`. Missing package manager / a
+non-root failure returns structured JSON (`{... false, "error": ...}`) and a
+non-zero exit rather than a stack trace; package names are validated before they
+reach the package manager.
+
 ## [0.2.0] — 2026-06-09
 
 Split the pure logic out into a new dependency-free package,
