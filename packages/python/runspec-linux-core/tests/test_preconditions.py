@@ -101,12 +101,12 @@ def test_remove_package_requires_a_manager(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_reboot_host_requires_a_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("runspec_linux_core.power.shutil.which", lambda _: None)
+    monkeypatch.setattr("runspec_linux_core.power.which", lambda _: None)
     with pytest.raises(ToolNotFoundError):
         core.reboot_host()
 
 
 def test_enable_passwordless_sudo_requires_sudo(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("runspec_linux_core.sudoers.shutil.which", lambda _: None)
+    monkeypatch.setattr("runspec_linux_core.sudoers.which", lambda _: None)
     with pytest.raises(ToolNotFoundError):
         core.enable_passwordless_sudo("pw", "alice", "scoped")

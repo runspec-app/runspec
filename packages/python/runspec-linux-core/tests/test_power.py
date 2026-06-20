@@ -14,7 +14,7 @@ def _completed(returncode: int = 0, stderr: str = "") -> subprocess.CompletedPro
 
 def test_reboot_now_uses_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
-    monkeypatch.setattr("runspec_linux_core.power.shutil.which", lambda name: name == "shutdown")
+    monkeypatch.setattr("runspec_linux_core.power.which", lambda name: name if name == "shutdown" else None)
     monkeypatch.setattr(
         "runspec_linux_core.power.subprocess.run",
         lambda cmd, **kw: seen.append(cmd) or _completed(),
@@ -26,7 +26,7 @@ def test_reboot_now_uses_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_reboot_with_delay_schedules(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
-    monkeypatch.setattr("runspec_linux_core.power.shutil.which", lambda name: name == "shutdown")
+    monkeypatch.setattr("runspec_linux_core.power.which", lambda name: name if name == "shutdown" else None)
     monkeypatch.setattr(
         "runspec_linux_core.power.subprocess.run",
         lambda cmd, **kw: seen.append(cmd) or _completed(),
@@ -38,7 +38,7 @@ def test_reboot_with_delay_schedules(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_reboot_falls_back_to_systemctl(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
-    monkeypatch.setattr("runspec_linux_core.power.shutil.which", lambda name: name == "systemctl")
+    monkeypatch.setattr("runspec_linux_core.power.which", lambda name: name if name == "systemctl" else None)
     monkeypatch.setattr(
         "runspec_linux_core.power.subprocess.run",
         lambda cmd, **kw: seen.append(cmd) or _completed(),
@@ -49,7 +49,7 @@ def test_reboot_falls_back_to_systemctl(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_reboot_non_zero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("runspec_linux_core.power.shutil.which", lambda name: name == "shutdown")
+    monkeypatch.setattr("runspec_linux_core.power.which", lambda name: name if name == "shutdown" else None)
     monkeypatch.setattr(
         "runspec_linux_core.power.subprocess.run",
         lambda cmd, **kw: _completed(returncode=1, stderr="Operation not permitted"),

@@ -19,7 +19,8 @@ def _ok(stdout: str = "", returncode: int = 0, stderr: str = "") -> subprocess.C
 
 @pytest.fixture(autouse=True)
 def _tools_present(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("runspec_linux_core.sudoers.shutil.which", lambda name: f"/usr/sbin/{name}")
+    # Resolver returns the bare name so the stubbed commands read cleanly.
+    monkeypatch.setattr("runspec_linux_core.sudoers.which", lambda name: name)
     monkeypatch.setattr("runspec_linux_core.sudoers._runspec_bin_dir", lambda: "/opt/rs/bin")
 
 
@@ -142,6 +143,6 @@ def test_post_validate_failure_rolls_back(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_requires_visudo(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("runspec_linux_core.sudoers.shutil.which", lambda name: None if name == "visudo" else "/usr/bin/sudo")
+    monkeypatch.setattr("runspec_linux_core.sudoers.which", lambda name: None if name == "visudo" else "/usr/bin/sudo")
     with pytest.raises(ToolNotFoundError, match="visudo"):
         sudoers.enable_passwordless_sudo("pw", "alice", "scoped")

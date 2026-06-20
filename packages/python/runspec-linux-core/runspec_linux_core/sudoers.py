@@ -24,11 +24,11 @@ Two grant scopes:
 import getpass
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 
+from runspec_linux_core._paths import which
 from runspec_linux_core.errors import CommandError, ToolNotFoundError
 
 _DROP_IN = "/etc/sudoers.d/runspec"
@@ -56,10 +56,10 @@ def _sudoers_content(user: str, scope: str, bin_dir: str) -> str:
     return f"{_MANAGED_HEADER}{rule}\n"
 
 
-def _sudo(password: str, argv: list[str]) -> subprocess.CompletedProcess:
+def _sudo(sudo_path: str, password: str, argv: list[str]) -> subprocess.CompletedProcess:
     """Run ``sudo -S -p '' argv``, feeding ``password`` on stdin (never on argv)."""
     return subprocess.run(
-        ["sudo", "-S", "-p", "", *argv],
+        [sudo_path, "-S", "-p", "", *argv],
         input=password + "\n",
         capture_output=True,
         text=True,
@@ -90,9 +90,13 @@ def enable_passwordless_sudo(password: str, user: str | None = None, scope: str 
     user = user or getpass.getuser()
     if not _USER_RE.match(user):
         raise ValueError(f"invalid user name: {user!r}")
-    if not shutil.which("sudo"):
+    # visudo lives in /usr/sbin, which is often absent from a non-login SSH PATH;
+    # resolve to absolute paths so the lookups (and invocations) work anyway.
+    sudo_path = which("sudo")
+    if not sudo_path:
         raise ToolNotFoundError("sudo is not installed")
-    if not shutil.which("visudo"):
+    visudo_path = which("visudo")
+    if not visudo_path:
         raise ToolNotFoundError("visudo is not installed (needed to validate the sudoers file)")
 
     content = _sudoers_content(user, scope, _runspec_bin_dir())
@@ -102,25 +106,25 @@ def enable_passwordless_sudo(password: str, user: str | None = None, scope: str 
         tmp_path = tf.name
     try:
         # 1) Validate the generated syntax locally before touching the system.
-        check = subprocess.run(["visudo", "-cf", tmp_path], capture_output=True, text=True)
+        check = subprocess.run([visudo_path, "-cf", tmp_path], capture_output=True, text=True)
         if check.returncode != 0:
             detail = check.stdout.strip() or check.stderr.strip()
             raise CommandError(f"generated sudoers failed validation: {detail}")
 
         # 2) Idempotent: identical drop-in already present? (reading it needs root)
-        existing = _sudo(password, ["cat", _DROP_IN])
+        existing = _sudo(sudo_path, password, ["cat", _DROP_IN])
         if existing.returncode == 0 and existing.stdout == content:
             return {"user": user, "scope": scope, "path": _DROP_IN, "installed": True, "already_configured": True}
 
         # 3) Install atomically as root, 0440 root:root.
-        install = _sudo(password, ["install", "-m", "0440", "-o", "root", "-g", "root", tmp_path, _DROP_IN])
+        install = _sudo(sudo_path, password, ["install", "-m", "0440", "-o", "root", "-g", "root", tmp_path, _DROP_IN])
         if install.returncode != 0:
             raise CommandError(_auth_hint(install))
 
         # 4) Re-validate the whole sudoers tree; roll our drop-in back if broken.
-        verify = _sudo(password, ["visudo", "-c"])
+        verify = _sudo(sudo_path, password, [visudo_path, "-c"])
         if verify.returncode != 0:
-            _sudo(password, ["rm", "-f", _DROP_IN])
+            _sudo(sudo_path, password, ["rm", "-f", _DROP_IN])
             detail = verify.stdout.strip() or verify.stderr.strip()
             raise CommandError(f"sudoers validation failed after install — rolled back: {detail}")
 

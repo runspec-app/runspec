@@ -1,5 +1,18 @@
 # runspec-linux-core Changelog
 
+## [0.3.1] — 2026-06-20
+
+Fix `enable_passwordless_sudo` failing with "visudo not installed" (and the same
+latent bug in `reboot_host`'s `shutdown` lookup). The console runs runnables over
+a non-login, non-interactive SSH shell whose `PATH` usually omits `/usr/sbin` and
+`/sbin`, so `shutil.which()` couldn't find these sbin-resident admin tools even
+when installed.
+
+New `_paths.which()` searches `PATH` first, then the standard sbin/bin dirs
+(`/usr/local/sbin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`, `/usr/bin`, `/bin`),
+and returns an absolute path. `sudoers.py` and `power.py` resolve and invoke
+`visudo` / `shutdown` / `systemctl` through it, so they work regardless of `PATH`.
+
 ## [0.3.0] — 2026-06-20
 
 Add `enable_passwordless_sudo()` (new `sudoers.py`) — the one-time bootstrap that
