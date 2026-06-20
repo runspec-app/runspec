@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.102.1] — 2026-06-20
+
+### Fixed
+- **A credential's secret now reaches a runnable's lone `password` arg without a
+  `secret_arg` binding** — fixes the agent (and form) still failing with `Missing
+  required argument: --password` even with a credential applied. Previously
+  `_apply_credentials` injected a secret only when the credential's `secret_arg`
+  named the arg, so a credential set up for a relay (secret referenced by id, no
+  `secret_arg`) had nothing to bind. Now a credential applied to a run (an
+  explicit `credential_id`, or the single in-scope one) fills the runnable's sole
+  still-unset `password`-typed arg from its stored secret — matching how the relay
+  picker already works. The `secret_arg` binding still takes precedence; an
+  ambiguous case (two in-scope credentials, none explicit) is skipped; a typed
+  value is never overwritten.
+- **Auto-applied credentials no longer silently skipped when the arg cache is
+  empty.** The auto-apply guard treated an *empty* `valid_args` set (a missing
+  discovery cache) as "no declared args", blocking all injection — this could hit
+  the agent path while the form path (full cache) worked. An empty/None set now
+  imposes no restriction.
+
 ## [0.102.0] — 2026-06-20
 
 ### Added

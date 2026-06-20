@@ -4521,6 +4521,7 @@ class Bridge:
             secrets,
             explicit_id=credential_id,
             valid_args=self._declared_arg_names(cached, cp),
+            secret_args=secret_names,
         )
 
         with self._lock:
@@ -6333,6 +6334,7 @@ class Bridge:
             secrets,
             explicit_id=credential_id,
             valid_args=self._declared_arg_names(cached_r, command_path),
+            secret_args=secret_names,
         )
         # Run provenance for this turn (set by the trigger handler; absent → a
         # direct chat agent run). `agent` distinguishes an LLM turn (chat / agent
@@ -7005,6 +7007,7 @@ class Bridge:
         secrets: dict[str, Any],
         explicit_id: str = "",
         valid_args: set[str] | None = None,
+        secret_args: set[str] | None = None,
     ) -> list[str]:
         """Inject bound credential values into ``exec_args`` (username, plain) and
         ``secrets`` (the secret, via the env channel), returning the ids applied.
@@ -7013,8 +7016,16 @@ class Bridge:
         applies (even out of scope) and wins any per-arg conflict. A value the
         caller already supplied is never overwritten, and when two in-scope
         credentials bind the same arg with no explicit winner it's ambiguous and
-        skipped. ``valid_args`` (when given) limits *auto* injection to args the
-        runnable actually declares — an explicitly named credential still applies.
+        skipped. A non-empty ``valid_args`` limits *auto* injection to args the
+        runnable actually declares — an explicitly named credential still applies
+        (an empty/None set imposes no such limit, so a missing arg cache can't
+        silently block injection).
+
+        ``secret_args`` (the runnable's ``password``-typed arg names) drives a
+        fallback: a credential applied here with a stored secret but **no**
+        ``secret_arg`` binding fills the runnable's sole still-unset password arg —
+        so a credential set up for a relay (secret referenced by id) also works on
+        a runnable without extra wiring.
         """
         from . import credentials as cred
 
@@ -7045,8 +7056,8 @@ class Bridge:
                     chosen: dict[str, Any] | None = explicit
                 elif len(cs) == 1:
                     chosen = cs[0]
-                    if valid_args is not None and arg_name not in valid_args:
-                        continue  # auto-apply only into a declared arg
+                    if valid_args and arg_name not in valid_args:
+                        continue  # auto-apply only into a declared arg (when known)
                 else:
                     logger.warning(
                         "ambiguous credential binding for arg %r on %s/%s; skipping",
@@ -7075,6 +7086,29 @@ class Bridge:
 
         inject("username_arg", is_secret=False)
         inject("secret_arg", is_secret=True)
+
+        # Fallback: an applied credential with a stored secret but no secret_arg
+        # binding fills the runnable's sole still-unset password-typed arg, so a
+        # credential picked for a run (or set up for a relay) "just works" without
+        # also wiring secret_arg. Only when unambiguous: exactly one password arg
+        # left unset, and either an explicit credential or a single in-scope
+        # secret-bearing one.
+        pw_unset = [n for n in (secret_args or ()) if secrets.get(n) in (None, "")]
+        if len(pw_unset) == 1:
+            arg_name = pw_unset[0]
+            chosen_fb: dict[str, Any] | None = explicit
+            if chosen_fb is None:
+                with_secret = [
+                    c for c in candidates if cred.has_secret(str(c.get("id", "")))
+                ]
+                if len(with_secret) == 1:
+                    chosen_fb = with_secret[0]
+            if chosen_fb is not None:
+                val = cred.get_secret(str(chosen_fb.get("id", "")))
+                if val:
+                    secrets[arg_name] = val
+                    applied.add(str(chosen_fb.get("id", "")))
+
         return sorted(applied)
 
     def _local_host_entry(self) -> dict[str, Any]:

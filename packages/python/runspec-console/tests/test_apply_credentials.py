@@ -195,3 +195,72 @@ def test_unknown_explicit_id_ignored(kr):
         "h", "r", {}, {}, explicit_id="ghost", valid_args=VALID
     )
     assert applied == []
+
+
+# ── lone password-arg fallback (no secret_arg binding needed) ───────────────────
+
+
+def test_lone_password_filled_from_explicit_without_secret_arg(kr):
+    # A relay-style credential (no secret_arg) explicitly applied fills the
+    # runnable's sole password arg from its stored secret.
+    c = _cred("svc-prod")  # secret_arg = ""
+    b = _ApplyBridge([c])
+    secrets: dict = {}
+    applied = b._apply_credentials(
+        "h", "r", {}, secrets, explicit_id="svc-prod", secret_args={"password"}
+    )
+    assert secrets == {"password": "s3cret"}
+    assert applied == ["svc-prod"]
+
+
+def test_lone_password_filled_from_single_in_scope_without_secret_arg(kr):
+    c = _cred("svc-prod", scope_runnables=["deploy"])  # in scope, no secret_arg
+    b = _ApplyBridge([c])
+    secrets: dict = {}
+    applied = b._apply_credentials("h", "deploy", {}, secrets, secret_args={"password"})
+    assert secrets == {"password": "s3cret"}
+    assert applied == ["svc-prod"]
+
+
+def test_lone_password_ambiguous_in_scope_skipped(kr):
+    # Two in-scope secret-bearing creds, none explicit → ambiguous → don't guess.
+    a = _cred("svc-prod", scope_runnables=["deploy"])
+    b_ = _cred("svc-dev", scope_runnables=["deploy"])
+    bridge = _ApplyBridge([a, b_])
+    secrets: dict = {}
+    applied = bridge._apply_credentials(
+        "h", "deploy", {}, secrets, secret_args={"password"}
+    )
+    assert secrets == {} and applied == []
+
+
+def test_lone_password_respects_secret_arg_binding(kr):
+    # When secret_arg already routes the secret, the fallback is a no-op (the
+    # password arg is already set) and doesn't double-fill.
+    c = _cred("svc-prod", secret_arg="password")
+    b = _ApplyBridge([c])
+    secrets: dict = {}
+    b._apply_credentials(
+        "h", "r", {}, secrets, explicit_id="svc-prod", secret_args={"password"}
+    )
+    assert secrets == {"password": "s3cret"}
+
+
+def test_lone_password_not_filled_when_caller_supplied(kr):
+    c = _cred("svc-prod")
+    b = _ApplyBridge([c])
+    secrets = {"password": "typed"}
+    b._apply_credentials(
+        "h", "r", {}, secrets, explicit_id="svc-prod", secret_args={"password"}
+    )
+    assert secrets == {"password": "typed"}  # not overwritten
+
+
+def test_empty_valid_args_does_not_block_secret_arg_injection(kr):
+    # A missing arg cache (empty valid_args) must not silently block auto-apply of
+    # a bound credential — this is the agent-path regression.
+    c = _cred("svc-prod", secret_arg="user-password", scope_runnables=["deploy"])
+    b = _ApplyBridge([c])
+    secrets: dict = {}
+    b._apply_credentials("h", "deploy", {}, secrets, valid_args=set())
+    assert secrets == {"user-password": "s3cret"}
