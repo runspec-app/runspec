@@ -1359,6 +1359,11 @@ function CredentialsTab() {
   }
   const cancel = () => { setEditingId(null); form.resetFields() }
 
+  const pickKey = async (field: 'private_key' | 'public_key') => {
+    const path = await bridge.browse_key_file()
+    if (path) form.setFieldValue(field, path)
+  }
+
   const save = async () => {
     const v = await form.validateFields()
     const entry: Credential = {
@@ -1433,10 +1438,12 @@ function CredentialsTab() {
                   An SSH-key credential authenticates a Config Sync SSH repo with its own deploy key (use it in Settings → Config Sync). The key files stay on disk — only the paths are saved.
                 </Text>
                 <Form.Item name="private_key" label="Private key path" rules={[{ required: true, message: 'Required' }]} tooltip="Path to the private key file (e.g. an ed25519 deploy key). Passed to the SSH client as the identity file.">
-                  <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+                  <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: 'monospace' }} autoComplete="off"
+                    addonAfter={<a onClick={() => pickKey('private_key')}>Browse</a>} />
                 </Form.Item>
                 <Form.Item name="public_key" label="Public key path" tooltip="Optional — the matching .pub file. Informational; not required to connect.">
-                  <Input placeholder="~/.ssh/runspec_ed25519.pub" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+                  <Input placeholder="~/.ssh/runspec_ed25519.pub" style={{ fontFamily: 'monospace' }} autoComplete="off"
+                    addonAfter={<a onClick={() => pickKey('public_key')}>Browse</a>} />
                 </Form.Item>
                 <Form.Item name="username" label="SSH user" tooltip="The SSH login user — defaults to git for most hosts (GitHub, GitLab).">
                   <Input placeholder="git" autoComplete="off" />
@@ -1962,7 +1969,6 @@ interface SyncFormValues {
   url: string
   ref: string
   credential_id?: string
-  subpath?: string
   layers?: string[]
   ca_bundle?: string
   tls_verify?: boolean
@@ -1989,7 +1995,8 @@ function ConfigSyncTab() {
       setCfg(c)
       form.setFieldsValue({
         url: c.url, ref: c.ref, credential_id: c.credential_id || undefined,
-        subpath: c.subpath, layers: c.layers ?? [],
+        // One unified "folders" field: prefer layers; migrate an old single subpath.
+        layers: c.layers?.length ? c.layers : (c.subpath ? [c.subpath] : []),
         ca_bundle: c.ca_bundle, tls_verify: c.tls_verify !== false,
         files: c.files?.length ? c.files : c.files_default,
         preserve: c.preserve ?? [],
@@ -2011,7 +2018,10 @@ function ConfigSyncTab() {
     const v = await form.validateFields()
     await bridge.save_sync_config({
       url: v.url.trim(), ref: v.ref.trim(),
-      credential_id: v.credential_id || '', subpath: v.subpath?.trim() || '',
+      credential_id: v.credential_id || '',
+      // The unified "folders" field is the single source of truth; clear the
+      // legacy subpath so there's no stale second value behind it.
+      subpath: '',
       layers: (v.layers ?? []).map(s => s.trim()).filter(Boolean),
       ca_bundle: v.ca_bundle?.trim() || '', tls_verify: v.tls_verify !== false,
       files: v.files ?? [], preserve: v.preserve ?? [],
@@ -2113,14 +2123,10 @@ function ConfigSyncTab() {
           <Select mode="tags" tokenSeparators={[',', ' ']} open={false} suffixIcon={null}
             placeholder="config.toml:mailbox.folder  (Enter to add)" />
         </Form.Item>
-        <Form.Item name="subpath" label="Subdirectory (optional)"
-          tooltip="A single directory within the repo that holds the config files (blank = repo root). Ignored when Overlay layers are set below.">
-          <Input placeholder="" style={{ fontFamily: 'monospace' }} autoComplete="off" />
-        </Form.Item>
-        <Form.Item name="layers" label="Overlay layers (optional)"
-          tooltip="Ordered repo subdirectories merged low→high: a shared base, then a region/team dir on top. Each later layer wins; your local entries and preserved keys still win over all of them. When set, this supersedes Subdirectory."
-          help={<span style={{ fontSize: 11 }}>e.g. <code>_base</code>, <code>regions/emea</code>, <code>teams/emea-pay</code> — a shared base plus this team's flavour. Drag-free order = merge order.</span>}>
-          <Select mode="tags" placeholder="_base, teams/emea  (Enter to add, in order)" tokenSeparators={[',']} open={false} suffixIcon={null} style={{ fontFamily: 'monospace' }} />
+        <Form.Item name="layers" label="Folder(s) in the repo (optional)"
+          tooltip="Where in the repo the config files live. Leave blank to read the repo root. Add one folder to read just that folder. Add several to combine them in order — a shared base first, your team's folder last — so common config is shared and your team overlays its own on top (later folders win; your local entries are always kept)."
+          help={<span style={{ fontSize: 11 }}>Blank = repo root. One folder, e.g. <code>teams/emea</code> = just that folder. Several, e.g. <code>_base</code> then <code>teams/emea</code> = shared base + your team on top (order = how they stack).</span>}>
+          <Select mode="tags" placeholder="blank = repo root  ·  or e.g. _base then teams/emea" tokenSeparators={[',']} open={false} suffixIcon={null} style={{ fontFamily: 'monospace' }} />
         </Form.Item>
         <Form.Item
           name="ca_bundle"

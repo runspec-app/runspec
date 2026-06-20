@@ -8,6 +8,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.99.1] — 2026-06-20
+
+### Added
+- **Runnable catalogue in the runbook docs.** The generated wiki now publishes the
+  console's cached discovery catalogue: `runnables.md` (per-host index) and
+  `runnables/<host>.md` (every runnable's description, autonomy, run-as, arguments,
+  and subcommands), drawn from `get_runnables("all")` so it publishes offline from
+  the last sync. `README.md` gains a Runnables section and `hosts.md` a
+  runnable-count column linking each host's page — so the docs are a real reference
+  even with no skills defined.
+- **Default "regenerate docs" skill embedded in the docs.** `maintaining-docs.md`
+  carries a paste-able `[[skill]]` block for a "Regenerate the runbook docs"
+  runbook, so whoever uploads the docs can drop it into the repo's
+  `runspec_skills.toml` and give the whole team a one-click refresh after the next
+  Config Sync pull.
+- **Browse buttons** on the SSH-key credential's private/public key path fields
+  (Settings → Credentials), via a native file picker (`browse_key_file`, mirroring
+  `browse_ssh_binary`).
+
+### Changed
+- **Config Sync folder selection is now one field.** The separate "Subdirectory"
+  and "Overlay layers" inputs are merged into a single **"Folder(s) in the repo"**
+  field: blank = repo root, one folder = read just that folder, several = a shared
+  base + your team's folder stacked in order. Saving writes `layers` and clears the
+  legacy `subpath` (one source of truth); an existing single `subpath` shows as the
+  one entry on load. No behaviour change — the backend already preferred the layer
+  list.
+
+
 ## [0.99.0] — 2026-06-20
 
 ### Added

@@ -971,6 +971,7 @@ export const mockApi: BridgeApi = {
   launch_puttygen: async () => { console.log('mock: launch_puttygen') },
   open_putty_url: async (url: string) => { console.log('mock: open_putty_url', url) },
   browse_ssh_binary: async () => '',
+  browse_key_file: async () => '',
 
   // Mirrors the Python bridge's gate round-trip: send_chat parks a resolver
   // keyed by request_id; resolve_tool_confirmation (called by the UI's

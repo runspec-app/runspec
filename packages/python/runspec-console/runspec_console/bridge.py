@@ -3482,6 +3482,29 @@ class Bridge:
             chosen = str(result)
         return _normalize_path(chosen)
 
+    def browse_key_file(self) -> str:
+        """Open a native file picker for an SSH key file; returns the path or ''.
+
+        Used by the SSH-key credential form for the private/public key fields. No
+        extension filter — key files have no standard suffix. Path normalised to
+        forward slashes for a consistent UI / config representation."""
+        import webview
+
+        windows = getattr(webview, "windows", None) or []
+        if not windows:
+            return ""
+        try:
+            result = windows[0].create_file_dialog(webview.FileDialog.OPEN)
+        except Exception:
+            return ""
+        if not result:
+            return ""
+        if isinstance(result, (list, tuple)):
+            chosen = str(result[0]) if result else ""
+        else:
+            chosen = str(result)
+        return _normalize_path(chosen)
+
     # ── hosts file management ─────────────────────────────────────────────────
 
     def test_host(self, name: str) -> dict[str, Any]:
@@ -4645,7 +4668,11 @@ class Bridge:
         target = str(dest_dir or "").strip() or read_docs_dir()
         base = Path(target).expanduser() if target else (app_dir() / "docs")
         try:
-            pages = docsgen.render_wiki(memory.load_skills(), list(self._hosts))
+            pages = docsgen.render_wiki(
+                memory.load_skills(),
+                list(self._hosts),
+                self.get_runnables("all"),
+            )
             written: list[str] = []
             for rel, text in pages.items():
                 dest = base / rel

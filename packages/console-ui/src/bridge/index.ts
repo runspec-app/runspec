@@ -785,6 +785,7 @@ export interface BridgeApi {
   launch_puttygen: () => Promise<void>
   open_putty_url: (url: string) => Promise<void>
   browse_ssh_binary: () => Promise<string>
+  browse_key_file: () => Promise<string>
   minimize_window: () => Promise<void>
   toggle_maximize_window: () => Promise<void>
   close_window: () => Promise<void>

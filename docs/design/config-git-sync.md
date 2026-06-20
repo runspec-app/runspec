@@ -86,16 +86,26 @@ entire stack. Validation aborts the whole pull if **any** layer's TOML is broken
 Net precedence: **local (bottom) ← _base ← region ← team (top)**, with `preserve`
 pinned on top of everything.
 
+The UI collapses `subpath` + `layers` into one **"Folder(s) in the repo"** field
+(a list): empty = repo root, a single entry = that one folder (the old
+`subpath`), several = the overlay stack. Saving writes `layers` and clears
+`subpath`, so there's one source of truth; an existing single `subpath` is shown
+as the one entry on load (back-compat).
+
 ### Runbook docs — a deterministic wiki (0.99.0)
 
 Skills are written for the agent; `runspec_console/docsgen.py` renders them as a
-human-followable **markdown wiki** (`render_wiki(skills, hosts) -> {path: md}`)
-so during an outage — when the console may be down — a person can SSH in and run
-the same runnables the agent would. `bridge.generate_docs(dest_dir)` writes a
-`README.md` (index grouped by tag + a host list + an SSH preamble),
+human-followable **markdown wiki** (`render_wiki(skills, hosts, runnables) ->
+{path: md}`) so during an outage — when the console may be down — a person can
+SSH in and run the same runnables the agent would. `bridge.generate_docs(dest_dir)`
+writes a `README.md` (index grouped by tag + an SSH preamble + section links),
 `skills/<id>.md` per skill (when-to-use, steps, a params table from
 `[skill.args]`, and cross-links to the `host__runnable` tokens and host names its
-steps mention), and `hosts.md`.
+steps mention), `hosts.md`, and the **runnable catalogue** — `runnables.md` plus a
+per-host `runnables/<host>.md` listing every runnable's description, autonomy,
+run-as, args, and subcommands. The catalogue comes from the console's cached
+discovery (`get_runnables("all")`), so it publishes offline from the last sync —
+no live SSH at generate time.
 
 Output is **deterministic** — everything sorted, no timestamps — so the same
 skills produce byte-identical files; re-running (or a daily refresh) only changes
