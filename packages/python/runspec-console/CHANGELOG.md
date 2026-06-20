@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.101.1] — 2026-06-20
+
+### Fixed
+- **Run form still blocked on a required `password` arg.** The 0.101.0 fix only
+  cleared the required-field block when the form could *prove* a credential
+  covered the arg (in-scope, `secret_arg` set, secret stored). If any of that
+  wasn't exactly so — or a value arrived via an `env`/`$VAR` alias the form can't
+  see — it still reported "Required". A `password` arg is now **never** blocked by
+  the form: its value always arrives out-of-band (a bound credential's secret, an
+  env alias, or the masked field), and the form can't validate a secret anyway.
+  The field shows a neutral "secret · optional here" tag instead of "required";
+  if no secret is supplied anywhere the runnable fails at run time with its own
+  error, exactly as a wrong secret would. (Non-secret required args are unchanged,
+  and the credential-coverage "from credential" tag still applies.)
+
 ## [0.101.0] — 2026-06-20
 
 ### Fixed

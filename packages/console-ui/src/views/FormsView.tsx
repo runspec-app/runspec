@@ -12,6 +12,18 @@ function isVarRef(val: unknown): val is string {
   return typeof val === 'string' && /^\$[A-Z_][A-Z0-9_]*$/.test(val)
 }
 
+// Whether the run form should block submission because a required arg has no
+// value. A `password` arg never blocks: its value always arrives out-of-band — a
+// bound credential's secret (injected from the keyring), an `env`/`$VAR` alias
+// the form can't see, or the masked field itself — and the form can't validate a
+// secret anyway. A non-secret required arg blocks when empty unless a credential
+// covers it (`covered`). Exported for unit tests.
+export function argNeedsValue(arg: ArgDef, value: unknown, covered: boolean): boolean {
+  if (arg.type === 'password') return false
+  if (!arg.required || covered) return false
+  return value === undefined || value === ''
+}
+
 function resolveNode(root: Runnable, path: string[]): Runnable {
   let node = root
   for (const seg of path) {
@@ -159,11 +171,13 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, covered, onCh
         )}
         {covered
           ? <Tooltip title="A saved credential fills this argument from secure storage — no need to enter it"><Tag color="green" style={{ fontSize: 10, margin: 0 }}>from credential</Tag></Tooltip>
-          : arg.required
-            ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
-            : isVarRef(arg.default)
-              ? <Text style={{ fontSize: 10, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default as string}</Text>
-              : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
+          : arg.type === 'password'
+            ? <Tooltip title="A secret — supplied by a bound credential, an env var, or typed here. The form never blocks on it."><Tag color="default" style={{ fontSize: 10, margin: 0 }}>secret · optional here</Tag></Tooltip>
+            : arg.required
+              ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
+              : isVarRef(arg.default)
+                ? <Text style={{ fontSize: 10, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default as string}</Text>
+                : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
         }
         {arg.description && (
           <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
@@ -366,7 +380,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     const errs: Record<string, string> = {}
     for (const arg of currentNode.args ?? []) {
       const v = values[arg.name]
-      if (arg.required && (v === undefined || v === '') && !coveredArgs.has(arg.name)) {
+      if (argNeedsValue(arg, v, coveredArgs.has(arg.name))) {
         errs[arg.name] = 'Required'
       } else if (arg.range && (arg.type === 'int' || arg.type === 'float') && v !== undefined && v !== '') {
         const n = Number(v)
