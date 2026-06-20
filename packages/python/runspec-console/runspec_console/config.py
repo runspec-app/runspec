@@ -33,6 +33,10 @@ _CONFIG_LOCK = threading.RLock()
 # `[console] docs_url` in config.toml so a fork / internal mirror can retarget it.
 DEFAULT_DOCS_URL = "https://jasonfinestone.github.io/runspec/"
 
+# How many `<name>.bak-<ts>` backups Config Sync keeps per file before pruning the
+# oldest (`[config_sync] backups_keep`). 0 means keep all (never prune).
+DEFAULT_BACKUPS_KEEP = 5
+
 
 def app_dir() -> Path:
     env = os.environ.get("APPDATA")
@@ -366,6 +370,7 @@ def read_sync() -> dict[str, Any]:
         layers        = ["_base", "teams/emea"]  # ordered overlay dirs (low→high)
         files         = ["config.toml", "runspec_hosts.toml", ...]
         preserve      = ["config.toml:mailbox.folder", ...]  # keep local on pull
+        backups_keep  = 5                 # per-file backup retention (0 = keep all)
         last_ref      = "v1.4.0"          # stamped by a successful pull
         last_commit   = "a1b2c3d…"
         last_synced   = "2026-06-16T04:30:00Z"
@@ -411,6 +416,10 @@ def write_sync(sync: dict[str, Any]) -> None:
         ]
         if preserve:
             entry["preserve"] = preserve
+        # Only written when overridden — the default keeps the file clean.
+        keep = backups_keep_value(sync)
+        if keep != DEFAULT_BACKUPS_KEEP:
+            entry["backups_keep"] = keep
         # Only written when disabled — default (verify on) keeps the file clean.
         if sync.get("tls_verify", True) is False:
             entry["tls_verify"] = False
@@ -420,6 +429,22 @@ def write_sync(sync: dict[str, Any]) -> None:
             cfg.pop("config_sync", None)
 
     update_config(mutate)
+
+
+def backups_keep_value(sync: dict[str, Any]) -> int:
+    """`[config_sync] backups_keep` coerced to a non-negative int.
+
+    The per-file cap on `<name>.bak-<ts>` backups Config Sync retains; the oldest
+    beyond it are pruned after a pull. Falls back to ``DEFAULT_BACKUPS_KEEP`` when
+    unset or unparseable; ``0`` means keep every backup (never prune). Negatives
+    clamp to 0."""
+    raw = sync.get("backups_keep")
+    if raw is None:
+        return DEFAULT_BACKUPS_KEEP
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_BACKUPS_KEEP
 
 
 def confirm_notifications_enabled() -> bool:

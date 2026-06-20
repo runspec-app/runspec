@@ -15,6 +15,7 @@ background threads via window.evaluate_js().  The frontend listens for:
 from __future__ import annotations
 
 import asyncio
+import filecmp
 import gzip
 import hashlib
 import json
@@ -42,6 +43,7 @@ else:
 from . import notify
 from .config import (
     app_dir,
+    backups_keep_value,
     confirm_notifications_enabled,
     credentials_path,
     filters_path,
@@ -3918,6 +3920,7 @@ class Bridge:
             "tls_verify": sync.get("tls_verify", True) is not False,
             "files": list(sync.get("files") or gitsync.KNOWN_FILES),
             "preserve": list(sync.get("preserve") or []),
+            "backups_keep": backups_keep_value(sync),
             "last_ref": sync.get("last_ref", ""),
             "last_commit": sync.get("last_commit", ""),
             "last_synced": sync.get("last_synced", ""),
@@ -3948,6 +3951,7 @@ class Bridge:
                     for p in (data.get("preserve") or [])
                     if str(p).strip()
                 ],
+                "backups_keep": backups_keep_value(data),
             }
         )
         write_sync(sync)
@@ -4019,7 +4023,10 @@ class Bridge:
         overlay their own flavour. With no layers it reads the single ``subpath``.
 
         Validates every fetched ``.toml`` before touching disk (a broken pull
-        writes nothing) and backs up each existing file. The merge is
+        writes nothing) and backs up each existing file it actually changes (a
+        no-op re-pull leaves no backup), keeping only the most recent
+        ``backups_keep`` (default 5; 0 = keep all) per file and pruning the rest.
+        The merge is
         **non-destructive**: collection files (hosts / triggers / filters /
         credentials) merge by each entry's identity (name / id) — adding new
         entries, updating matching ones, and keeping the operator's own; mapping
@@ -4031,7 +4038,7 @@ class Bridge:
         hot-reloads hosts / filters / credentials / SSH / triggers, so no restart
         is needed.
 
-        Returns ``{ok, ref, commit, written, skipped, backups}`` or
+        Returns ``{ok, ref, commit, written, skipped, backups, pruned}`` or
         ``{ok: False, error}``."""
         from . import configmerge, gitsync
 
@@ -4106,9 +4113,11 @@ class Bridge:
         old_cfg = self.get_config()
         app = app_dir()
         ts = time.strftime("%Y%m%d-%H%M%S")
+        keep = backups_keep_value(sync)
         written: list[str] = []
         skipped: list[str] = []
         backups: list[str] = []
+        pruned: list[str] = []
 
         for name in safe:
             datas = fetched_layers.get(name)
@@ -4116,12 +4125,16 @@ class Bridge:
                 skipped.append(name)
                 continue
             dest = app / name
+            # Snapshot the prior file before the merge overwrites it, then keep the
+            # backup only if the pull actually changed the file (a re-pull at the
+            # same ref is a no-op and should leave no backup behind).
+            backup: Path | None = None
             if dest.exists():
                 backup = dest.with_name(f"{name}.bak-{ts}")
                 try:
                     shutil.copy2(dest, backup)
-                    backups.append(backup.name)
                 except Exception:
+                    backup = None
                     logger.warning(
                         "could not back up %s before pull", name, exc_info=True
                     )
@@ -4133,6 +4146,17 @@ class Bridge:
                 # An unrecognised file (a future addition) — top layer verbatim.
                 self._atomic_write_bytes(dest, datas[-1])
             written.append(name)
+            if backup is not None:
+                unchanged = False
+                try:
+                    unchanged = filecmp.cmp(dest, backup, shallow=False)
+                except Exception:
+                    unchanged = False
+                if unchanged:
+                    backup.unlink(missing_ok=True)
+                else:
+                    backups.append(backup.name)
+            pruned.extend(self._prune_backups(app, name, keep))
 
         # Re-inject the local [config_sync] into the freshly-written config.toml
         # (so the repo pointer survives the overwrite) and stamp last_*.
@@ -4161,7 +4185,26 @@ class Bridge:
             "written": written,
             "skipped": skipped,
             "backups": backups,
+            "pruned": pruned,
         }
+
+    def _prune_backups(self, app: Path, name: str, keep: int) -> list[str]:
+        """Delete all but the ``keep`` most recent ``<name>.bak-<ts>`` files.
+
+        The ``%Y%m%d-%H%M%S`` timestamp is fixed-width, so a lexical sort of the
+        names is chronological. ``keep <= 0`` disables pruning (keep all). Returns
+        the names removed (best-effort — a failed unlink is logged, not raised)."""
+        if keep <= 0:
+            return []
+        existing = sorted(app.glob(f"{name}.bak-*"))
+        removed: list[str] = []
+        for old in existing[:-keep]:
+            try:
+                old.unlink()
+                removed.append(old.name)
+            except Exception:
+                logger.warning("could not prune old backup %s", old.name, exc_info=True)
+        return removed
 
     def _atomic_write_bytes(self, dest: Path, data: bytes) -> None:
         """Write ``data`` to ``dest`` atomically (temp + os.replace), mirroring

@@ -34,7 +34,7 @@ Credentials tab — no second secret store.
 | 2 | Git engine | **dulwich** (pure-Python), behind a swappable boundary in `gitsync.py`. No system `git` needed on fresh/Windows installs. Optional `git-sync` extra. |
 | 3 | Transports | HTTPS (token passed in-process — never on argv/log) **and** SSH (over the already-bundled paramiko via a small vendor, so no system `ssh` either). |
 | 4 | Versioning | Pull by **ref** — a tag (recommended) or a branch. The UI offers a tag dropdown (`ls-remote`) with a free-text fallback. |
-| 5 | Merge (0.74.0) | **Non-destructive merge, with backup** (was replace). Collections merge by identity; mappings deep-overlay; a `preserve` list keeps machine-local keys local. Each existing file is still backed up to `<name>.bak-<ts>` first. See §6. |
+| 5 | Merge (0.74.0) | **Non-destructive merge, with backup** (was replace). Collections merge by identity; mappings deep-overlay; a `preserve` list keeps machine-local keys local. Each *changed* file is backed up to `<name>.bak-<ts>` first; a no-op re-pull leaves none, and only the most recent `backups_keep` (default 5; 0 = keep all) per file are kept — older ones are pruned (0.100.0). See §6. |
 | 6 | Validation | Every fetched `.toml` is parsed **before** anything is written. A single broken file aborts the whole pull — never clobber good config with a broken pull. |
 | 7 | Credentials file | **Merged by id** (a special case of the collection merge) — so the credential used to authenticate the pull (and any other local-only entry) survives. Secrets are never in the file; an id with a local keyring secret keeps it. |
 | 8 | Scope | `config.toml`, `runspec_hosts.toml`, `runspec_triggers.toml`, `runspec_filters.toml`, `runspec_credentials.toml`. The list is **data-driven** (`gitsync.KNOWN_FILES` + the configured `files`), so new files sync with no code change. Bare filenames only (no path traversal out of the app dir). |
@@ -144,7 +144,7 @@ URL + tag + credential  ── save ──▶  save_sync_config  ──▶  [con
                                        4. per file: back up → write   (credentials.toml: merge by id)
                                        5. re-inject local [config_sync] + stamp last_*
                                        6. reload hosts/filters/creds/ssh + restart triggers
-                                     ◀── { ok, ref, commit, written, skipped, backups }
+                                     ◀── { ok, ref, commit, written, skipped, backups, pruned }
 ```
 
 No working tree is checked out: `fetch_files` fetches the ref, peels an annotated
@@ -164,6 +164,7 @@ ca_bundle     = ""                # PEM for an internal CA / TLS proxy (HTTPS)
 files         = ["config.toml", "runspec_hosts.toml", "runspec_triggers.toml",
                  "runspec_filters.toml", "runspec_credentials.toml"]
 preserve      = ["config.toml:mailbox.folder", "runspec_hosts.toml:*.room_user"]
+backups_keep  = 5                 # per-file backup retention (0 = keep all)
 last_ref      = "v1.4.0"          # stamped by a successful pull
 last_commit   = "a1b2c3d…"
 last_synced   = "2026-06-16T04:30:00Z"
@@ -258,7 +259,9 @@ the `ConfigSyncTab` in `SettingsDrawer.tsx`; the `git-sync` extra.
 - The token rides in-process to dulwich's HTTP client — never on a command line
   or in a log. SSH uses paramiko with the key file.
 - **Validate-before-write** + **backup-before-write** make a failed pull
-  non-destructive.
+  non-destructive. Backups are bounded: a file the pull doesn't actually change
+  gets no backup, and a per-file `backups_keep` cap (default 5; 0 = keep all)
+  prunes the oldest so they can't silently fill the config folder.
 - The **non-destructive merge** (and credential merge-by-id) means a pull can
   never delete the operator's own entries — including the auth credential.
 - A **filename allowlist** (bare names only) blocks writing outside the app dir.

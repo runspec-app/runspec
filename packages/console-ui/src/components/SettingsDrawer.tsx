@@ -1974,6 +1974,7 @@ interface SyncFormValues {
   tls_verify?: boolean
   files: string[]
   preserve?: string[]
+  backups_keep?: number
 }
 
 function ConfigSyncTab() {
@@ -2000,6 +2001,7 @@ function ConfigSyncTab() {
         ca_bundle: c.ca_bundle, tls_verify: c.tls_verify !== false,
         files: c.files?.length ? c.files : c.files_default,
         preserve: c.preserve ?? [],
+        backups_keep: c.backups_keep ?? 5,
       })
     })
   }, [form])
@@ -2025,6 +2027,7 @@ function ConfigSyncTab() {
       layers: (v.layers ?? []).map(s => s.trim()).filter(Boolean),
       ca_bundle: v.ca_bundle?.trim() || '', tls_verify: v.tls_verify !== false,
       files: v.files ?? [], preserve: v.preserve ?? [],
+      backups_keep: v.backups_keep ?? 5,
     })
     return true
   }
@@ -2145,6 +2148,14 @@ function ConfigSyncTab() {
         >
           <Switch size="small" />
         </Form.Item>
+        <Form.Item
+          name="backups_keep"
+          label="Backups to keep per file"
+          tooltip="Before a pull changes a file it copies the old one to <name>.bak-<timestamp>. This caps how many of those are kept per file — older ones are pruned after each pull. A pull that changes nothing makes no backup. 0 = keep all (never prune)."
+          help={<span style={{ fontSize: 11 }}>Default 5. Set <code>0</code> to keep every backup (they'll accumulate in the config folder).</span>}
+        >
+          <InputNumber min={0} step={1} style={{ width: '100%' }} placeholder="5" />
+        </Form.Item>
 
         <Space>
           <Button size="small" onClick={handleSave} loading={saving}>{saved ? 'Saved' : 'Save settings'}</Button>
@@ -2170,6 +2181,7 @@ function ConfigSyncTab() {
             Wrote: {result.written?.length ? <code>{result.written.join(', ')}</code> : 'nothing'}.
             {result.skipped?.length ? <> Skipped (not in repo): <code>{result.skipped.join(', ')}</code>.</> : null}
             {result.backups?.length ? <> Backed up {result.backups.length} file(s).</> : null}
+            {result.pruned?.length ? <> Pruned {result.pruned.length} old backup(s).</> : null}
             {' '}Hosts and triggers reloaded — no restart needed.
           </span>} />
       )}

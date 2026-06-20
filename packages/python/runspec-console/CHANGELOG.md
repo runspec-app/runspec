@@ -8,6 +8,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.100.0] — 2026-06-20
+
+### Changed
+- **Config Sync backups are now bounded.** A pull used to copy every targeted
+  config file to `<name>.bak-<timestamp>` unconditionally and never clean up, so
+  repeated pulls left a growing pile of (often identical) backups in the config
+  folder. Now: (1) a file the pull doesn't actually change gets **no backup**, so a
+  re-pull at the same ref leaves none; and (2) only the most recent
+  `[config_sync] backups_keep` (default **5**; `0` = keep all) backups per file are
+  retained — the oldest are pruned after each pull. The Config Sync tab gains a
+  "Backups to keep per file" field, and the Pull-now result reports how many old
+  backups were pruned. `sync_pull` now also returns a `pruned` list.
+
 ## [0.99.2] — 2026-06-20
 
 ### Fixed

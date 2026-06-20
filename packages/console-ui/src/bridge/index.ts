@@ -150,6 +150,7 @@ export interface SyncConfig {
   tls_verify: boolean
   files: string[]
   preserve: string[]
+  backups_keep: number
   last_ref: string
   last_commit: string
   last_synced: string
@@ -165,6 +166,7 @@ export interface SyncPullResult {
   written?: string[]
   skipped?: string[]
   backups?: string[]
+  pruned?: string[]
   error?: string
 }
 

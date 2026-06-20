@@ -50,6 +50,18 @@ def test_read_write_sync_round_trips(monkeypatch, tmp_path):
     assert got["preserve"] == ["config.toml:mailbox.folder"]
 
 
+def test_backups_keep_round_trips(monkeypatch, tmp_path):
+    _cfg_path(monkeypatch, tmp_path)
+    # The default is omitted from the file to keep it clean, but reads back as 5.
+    cfg.write_sync({"url": "https://x/y.git", "ref": "v1", "backups_keep": 5})
+    assert "backups_keep" not in cfg.read_config().get("config_sync", {})
+    assert cfg.backups_keep_value(cfg.read_sync()) == 5
+    # A non-default value is persisted and coerced on read.
+    cfg.write_sync({"url": "https://x/y.git", "ref": "v1", "backups_keep": 0})
+    assert cfg.read_config()["config_sync"]["backups_keep"] == 0
+    assert cfg.backups_keep_value(cfg.read_sync()) == 0
+
+
 def test_write_sync_preserves_other_sections(monkeypatch, tmp_path):
     _cfg_path(monkeypatch, tmp_path)
     cfg.write_config(
@@ -72,6 +84,7 @@ class _SyncBridge:
     _atomic_write_bytes = Bridge._atomic_write_bytes
     _merge_synced_file = Bridge._merge_synced_file
     _merge_synced_triggers = Bridge._merge_synced_triggers
+    _prune_backups = Bridge._prune_backups
 
     def __init__(self):
         self._credentials: list = []
@@ -130,17 +143,18 @@ def _wire_layers(
     )
 
 
-def _set_sync(files=None, preserve=None, layers=None):
-    cfg.write_sync(
-        {
-            "url": "https://example.com/cfg.git",
-            "ref": "v1.0.0",
-            "credential_id": "config-repo",
-            "files": files or ["config.toml", "runspec_hosts.toml"],
-            "preserve": preserve or [],
-            "layers": layers or [],
-        }
-    )
+def _set_sync(files=None, preserve=None, layers=None, backups_keep=None):
+    sync = {
+        "url": "https://example.com/cfg.git",
+        "ref": "v1.0.0",
+        "credential_id": "config-repo",
+        "files": files or ["config.toml", "runspec_hosts.toml"],
+        "preserve": preserve or [],
+        "layers": layers or [],
+    }
+    if backups_keep is not None:
+        sync["backups_keep"] = backups_keep
+    cfg.write_sync(sync)
 
 
 def _read_toml(path):
@@ -310,6 +324,60 @@ def test_existing_file_is_backed_up(monkeypatch, tmp_path):
     backups = list(tmp_path.glob("runspec_hosts.toml.bak-*"))
     assert len(backups) == 1
     assert _read_toml(backups[0])["host"][0]["name"] == "old"
+
+
+def test_no_op_pull_leaves_no_backup(monkeypatch, tmp_path):
+    # A re-pull that changes nothing must not leave a backup behind — the bulk of
+    # the "backups pile up" problem was these identical-content copies.
+    _wire(monkeypatch, tmp_path, {"runspec_hosts.toml": b'[[host]]\nname = "web1"\n'})
+    _set_sync(files=["runspec_hosts.toml"])
+    save_hosts(tmp_path / "runspec_hosts.toml", [{"name": "web1"}])
+
+    # First pull settles the file into its merged form (already matches here).
+    _SyncBridge().sync_pull()
+    for b in tmp_path.glob("runspec_hosts.toml.bak-*"):
+        b.unlink()
+
+    # Second, identical pull: the merged result equals what's on disk → no backup.
+    res = _SyncBridge().sync_pull()
+
+    assert res["ok"] is True
+    assert list(tmp_path.glob("runspec_hosts.toml.bak-*")) == []
+    assert res["backups"] == []
+
+
+def test_old_backups_pruned_to_keep(monkeypatch, tmp_path):
+    _wire(monkeypatch, tmp_path, {"runspec_hosts.toml": b'[[host]]\nname = "web1"\n'})
+    _set_sync(files=["runspec_hosts.toml"], backups_keep=2)
+    save_hosts(tmp_path / "runspec_hosts.toml", [{"name": "old"}])
+    # Five stale backups already sitting in the config dir (timestamps sort lexically).
+    for i in range(1, 6):
+        (tmp_path / f"runspec_hosts.toml.bak-20200101-00000{i}").write_text("stale")
+
+    res = _SyncBridge().sync_pull()
+
+    assert res["ok"] is True
+    # This pull changed the file, so it adds one fresh backup; with keep=2 only the
+    # two most recent survive (the new one + the newest stale), the rest are pruned.
+    remaining = sorted(p.name for p in tmp_path.glob("runspec_hosts.toml.bak-*"))
+    assert len(remaining) == 2
+    assert "runspec_hosts.toml.bak-20200101-000005" in remaining
+    assert len(res["pruned"]) == 4
+
+
+def test_backups_keep_zero_keeps_all(monkeypatch, tmp_path):
+    _wire(monkeypatch, tmp_path, {"runspec_hosts.toml": b'[[host]]\nname = "web1"\n'})
+    _set_sync(files=["runspec_hosts.toml"], backups_keep=0)
+    save_hosts(tmp_path / "runspec_hosts.toml", [{"name": "old"}])
+    for i in range(1, 4):
+        (tmp_path / f"runspec_hosts.toml.bak-20200101-00000{i}").write_text("stale")
+
+    res = _SyncBridge().sync_pull()
+
+    assert res["ok"] is True
+    # 0 = keep all: the 3 stale + 1 fresh backup all remain, nothing pruned.
+    assert len(list(tmp_path.glob("runspec_hosts.toml.bak-*"))) == 4
+    assert res["pruned"] == []
 
 
 def test_credentials_merged_by_id_local_only_survives(monkeypatch, tmp_path):
