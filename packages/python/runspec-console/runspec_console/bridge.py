@@ -47,10 +47,12 @@ from .config import (
     filters_path,
     hosts_path,
     read_config,
+    read_docs_dir,
     read_sync,
     room_notifications_enabled,
     update_config,
     write_config,
+    write_docs_dir,
     write_sync,
 )
 from .discovery import discover_local, discover_remote
@@ -3888,6 +3890,7 @@ class Bridge:
             "ref": sync.get("ref", ""),
             "credential_id": sync.get("credential_id", ""),
             "subpath": sync.get("subpath", ""),
+            "layers": list(sync.get("layers") or []),
             "ca_bundle": sync.get("ca_bundle", ""),
             "tls_verify": sync.get("tls_verify", True) is not False,
             "files": list(sync.get("files") or gitsync.KNOWN_FILES),
@@ -3909,6 +3912,9 @@ class Bridge:
                 "ref": str(data.get("ref", "")).strip(),
                 "credential_id": str(data.get("credential_id", "")).strip(),
                 "subpath": str(data.get("subpath", "")).strip(),
+                "layers": [
+                    str(s).strip() for s in (data.get("layers") or []) if str(s).strip()
+                ],
                 "ca_bundle": str(data.get("ca_bundle", "")).strip(),
                 "tls_verify": data.get("tls_verify", True) is not False,
                 "files": [
@@ -3984,6 +3990,11 @@ class Bridge:
     def sync_pull(self) -> dict[str, Any]:
         """Pull the configured files from the repo at the configured ref.
 
+        When ``[config_sync] layers`` is set, each file is read at every layer
+        subdir and **folded** low→high (a shared ``_base`` then a team dir, say)
+        into one effective table before merging — so teams share a base and
+        overlay their own flavour. With no layers it reads the single ``subpath``.
+
         Validates every fetched ``.toml`` before touching disk (a broken pull
         writes nothing) and backs up each existing file. The merge is
         **non-destructive**: collection files (hosts / triggers / filters /
@@ -4019,27 +4030,38 @@ class Bridge:
             for f in requested
             if "/" not in f and "\\" not in f and f not in ("", "..")
         ]
-        subpath = str(sync.get("subpath", "")).strip()
+        # Overlay layers (low→high precedence); fall back to the single subpath.
+        layers = [str(s).strip() for s in (sync.get("layers") or []) if str(s).strip()]
+        if not layers:
+            layers = [str(sync.get("subpath", "")).strip()]
         cred_id = str(sync.get("credential_id", "")).strip()
 
         try:
             auth = self._sync_auth(url, cred_id)
-            result = gitsync.fetch_files(url, ref, safe, auth, subpath)
+            result = gitsync.fetch_layers(url, ref, safe, auth, layers)
         except gitsync.GitSyncError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"pull failed: {exc}"}
 
-        fetched = result.files
-        if not fetched:
+        # Per file, the layers (in order) that carry it — the fold input.
+        fetched_layers: dict[str, list[bytes]] = {}
+        for name in safe:
+            for layer in layers:
+                data = result.layers.get(layer, {}).get(name)
+                if data is not None:
+                    fetched_layers.setdefault(name, []).append(data)
+        if not fetched_layers:
             return {
                 "ok": False,
                 "error": f"none of the configured files were found at {ref} in the repo",
             }
 
-        # Validate-before-replace: any unparseable TOML aborts the whole pull.
-        for name, data in fetched.items():
-            if name.endswith(".toml"):
+        # Validate-before-replace: any unparseable TOML in any layer aborts it all.
+        for name, datas in fetched_layers.items():
+            if not name.endswith(".toml"):
+                continue
+            for data in datas:
                 try:
                     tomllib.loads(data.decode("utf-8"))
                 except Exception as exc:  # noqa: BLE001
@@ -4051,6 +4073,12 @@ class Bridge:
         preserve = configmerge.parse_preserve(
             [*configmerge.DEFAULT_PRESERVE, *(sync.get("preserve") or [])]
         )
+        # Files the merge engine understands; anything else is written verbatim.
+        mergeable = {
+            "config.toml",
+            "runspec_triggers.toml",
+            *configmerge.COLLECTION_FILES,
+        }
 
         old_cfg = self.get_config()
         app = app_dir()
@@ -4060,7 +4088,8 @@ class Bridge:
         backups: list[str] = []
 
         for name in safe:
-            if name not in fetched:
+            datas = fetched_layers.get(name)
+            if not datas:
                 skipped.append(name)
                 continue
             dest = app / name
@@ -4073,7 +4102,13 @@ class Bridge:
                     logger.warning(
                         "could not back up %s before pull", name, exc_info=True
                     )
-            self._merge_synced_file(name, fetched[name], preserve.get(name, []))
+            if name in mergeable:
+                parsed_layers = [tomllib.loads(d.decode("utf-8")) for d in datas]
+                effective = configmerge.fold_layers(name, parsed_layers)
+                self._merge_synced_file(name, effective, preserve.get(name, []))
+            else:
+                # An unrecognised file (a future addition) — top layer verbatim.
+                self._atomic_write_bytes(dest, datas[-1])
             written.append(name)
 
         # Re-inject the local [config_sync] into the freshly-written config.toml
@@ -4113,55 +4148,50 @@ class Bridge:
         os.replace(tmp, dest)
 
     def _merge_synced_file(
-        self, name: str, data: bytes, preserve: list[list[str]]
+        self, name: str, parsed: dict[str, Any], preserve: list[list[str]]
     ) -> None:
-        """Merge one pulled file's bytes into the local config, non-destructively.
+        """Merge one pulled file's effective table into local config, non-destructively.
 
-        Collection files merge by identity (``name``/``id``); mapping files
-        deep-overlay; ``preserve`` paths keep machine-local keys local. An
-        unrecognised file (a future addition) is written verbatim."""
+        ``parsed`` is the file's already-folded layers (a single overlay collapses
+        to itself), in the file's native top-level shape. Collection files merge by
+        identity (``name``/``id``); mapping files deep-overlay; ``preserve`` paths
+        keep machine-local keys local."""
         from . import configmerge
 
-        text = data.decode("utf-8")
         if name == "config.toml":
-            merged = configmerge.merge_mapping(
-                self.get_config(), tomllib.loads(text), preserve
-            )
+            merged = configmerge.merge_mapping(self.get_config(), parsed, preserve)
             write_config(merged)
         elif name == "runspec_hosts.toml":
-            incoming = tomllib.loads(text).get("host", [])
             merged = configmerge.merge_collection(
-                load_hosts(hosts_path()), incoming, "name", preserve
+                load_hosts(hosts_path()), parsed.get("host", []), "name", preserve
             )
             save_hosts(hosts_path(), merged)
         elif name == "runspec_filters.toml":
             from .filters_store import load_filters, save_filters
 
-            incoming = tomllib.loads(text).get("filter", [])
             merged = configmerge.merge_collection(
-                load_filters(filters_path()), incoming, "name", preserve
+                load_filters(filters_path()), parsed.get("filter", []), "name", preserve
             )
             save_filters(filters_path(), merged)
         elif name == "runspec_credentials.toml":
             from .credentials import load_credentials, save_credentials
 
-            incoming = tomllib.loads(text).get("credential", [])
             merged = configmerge.merge_collection(
-                load_credentials(credentials_path()), incoming, "id", preserve
+                load_credentials(credentials_path()),
+                parsed.get("credential", []),
+                "id",
+                preserve,
             )
             save_credentials(credentials_path(), merged)
         elif name == "runspec_skills.toml":
             from . import memory
 
-            incoming = tomllib.loads(text).get("skill", [])
             merged = configmerge.merge_collection(
-                memory.load_skills(), incoming, "id", preserve
+                memory.load_skills(), parsed.get("skill", []), "id", preserve
             )
             memory.save_skills(merged)
         elif name == "runspec_triggers.toml":
-            self._merge_synced_triggers(tomllib.loads(text), preserve)
-        else:
-            self._atomic_write_bytes(app_dir() / name, data)
+            self._merge_synced_triggers(parsed, preserve)
 
     def _merge_synced_triggers(
         self, parsed: dict[str, Any], preserve: list[list[str]]
@@ -4588,6 +4618,44 @@ class Bridge:
             return {"error": "This skill has an empty body."}
         chat_id = self._spawn_chat_turn(message, skill=str(skill.get("id") or ""))
         return {"chat_id": chat_id, "message": message}
+
+    # ── runbook docs (deterministic wiki from skills + hosts) ────────────────────
+
+    def get_docs_config(self) -> dict[str, Any]:
+        """The runbook-docs settings for the UI: the configured output ``dir`` and
+        the ``default`` used when it's blank (``app_dir()/docs``)."""
+        return {"dir": read_docs_dir(), "default": str(app_dir() / "docs")}
+
+    def save_docs_config(self, dest_dir: str) -> None:
+        """Persist the runbook-docs output directory (blank clears it)."""
+        write_docs_dir(str(dest_dir or ""))
+
+    def generate_docs(self, dest_dir: str = "") -> dict[str, Any]:
+        """Write the deterministic runbook wiki (README + per-skill + hosts pages)
+        from the local skills + fleet into ``dest_dir``.
+
+        Resolution: the ``dest_dir`` arg → the saved ``[docs] dir`` → the default
+        ``app_dir()/docs``. Output is byte-stable (no timestamps), so re-running
+        only changes files whose skills changed — clean to commit back to the
+        config repo. Returns ``{ok, dir, written}`` or ``{ok: False, error}``."""
+        from pathlib import Path
+
+        from . import docsgen, memory
+
+        target = str(dest_dir or "").strip() or read_docs_dir()
+        base = Path(target).expanduser() if target else (app_dir() / "docs")
+        try:
+            pages = docsgen.render_wiki(memory.load_skills(), list(self._hosts))
+            written: list[str] = []
+            for rel, text in pages.items():
+                dest = base / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                self._atomic_write_bytes(dest, text.encode("utf-8"))
+                written.append(rel)
+            return {"ok": True, "dir": str(base), "written": sorted(written)}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("generate_docs failed", exc_info=True)
+            return {"ok": False, "error": f"could not generate docs: {exc}"}
 
     def cancel_chat(self, chat_id: str) -> None:
         """Signal an in-flight chat turn to stop. Best-effort: it halts at the

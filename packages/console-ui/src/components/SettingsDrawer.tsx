@@ -1963,6 +1963,7 @@ interface SyncFormValues {
   ref: string
   credential_id?: string
   subpath?: string
+  layers?: string[]
   ca_bundle?: string
   tls_verify?: boolean
   files: string[]
@@ -1978,13 +1979,18 @@ function ConfigSyncTab() {
   const [saved, setSaved] = useState(false)
   const [pulling, setPulling] = useState(false)
   const [result, setResult] = useState<SyncPullResult | null>(null)
+  const [docsDir, setDocsDir] = useState('')
+  const [docsDefault, setDocsDefault] = useState('')
+  const [docsBusy, setDocsBusy] = useState(false)
+  const [docsResult, setDocsResult] = useState<{ ok: boolean; dir?: string; written?: string[]; error?: string } | null>(null)
 
   const load = useCallback(() => {
     bridge.get_sync_config().then(c => {
       setCfg(c)
       form.setFieldsValue({
         url: c.url, ref: c.ref, credential_id: c.credential_id || undefined,
-        subpath: c.subpath, ca_bundle: c.ca_bundle, tls_verify: c.tls_verify !== false,
+        subpath: c.subpath, layers: c.layers ?? [],
+        ca_bundle: c.ca_bundle, tls_verify: c.tls_verify !== false,
         files: c.files?.length ? c.files : c.files_default,
         preserve: c.preserve ?? [],
       })
@@ -2006,6 +2012,7 @@ function ConfigSyncTab() {
     await bridge.save_sync_config({
       url: v.url.trim(), ref: v.ref.trim(),
       credential_id: v.credential_id || '', subpath: v.subpath?.trim() || '',
+      layers: (v.layers ?? []).map(s => s.trim()).filter(Boolean),
       ca_bundle: v.ca_bundle?.trim() || '', tls_verify: v.tls_verify !== false,
       files: v.files ?? [], preserve: v.preserve ?? [],
     })
@@ -2040,6 +2047,22 @@ function ConfigSyncTab() {
       else message.error(r.error || 'Pull failed')
       load()
     } finally { setPulling(false) }
+  }
+
+  // Runbook docs: load the configured output dir + the default it falls back to.
+  useEffect(() => {
+    bridge.get_docs_config().then(d => { setDocsDir(d.dir || ''); setDocsDefault(d.default) })
+  }, [])
+
+  const generateDocs = async () => {
+    setDocsBusy(true); setDocsResult(null)
+    try {
+      await bridge.save_docs_config(docsDir.trim())
+      const r = await bridge.generate_docs(docsDir.trim())
+      setDocsResult(r)
+      if (r.ok) message.success(`Wrote ${r.written?.length ?? 0} doc file(s)`)
+      else message.error(r.error || 'Doc generation failed')
+    } finally { setDocsBusy(false) }
   }
 
   const engineMissing = cfg !== null && !cfg.engine
@@ -2091,8 +2114,13 @@ function ConfigSyncTab() {
             placeholder="config.toml:mailbox.folder  (Enter to add)" />
         </Form.Item>
         <Form.Item name="subpath" label="Subdirectory (optional)"
-          tooltip="A directory within the repo that holds the config files (blank = repo root).">
+          tooltip="A single directory within the repo that holds the config files (blank = repo root). Ignored when Overlay layers are set below.">
           <Input placeholder="" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+        </Form.Item>
+        <Form.Item name="layers" label="Overlay layers (optional)"
+          tooltip="Ordered repo subdirectories merged low→high: a shared base, then a region/team dir on top. Each later layer wins; your local entries and preserved keys still win over all of them. When set, this supersedes Subdirectory."
+          help={<span style={{ fontSize: 11 }}>e.g. <code>_base</code>, <code>regions/emea</code>, <code>teams/emea-pay</code> — a shared base plus this team's flavour. Drag-free order = merge order.</span>}>
+          <Select mode="tags" placeholder="_base, teams/emea  (Enter to add, in order)" tokenSeparators={[',']} open={false} suffixIcon={null} style={{ fontFamily: 'monospace' }} />
         </Form.Item>
         <Form.Item
           name="ca_bundle"
@@ -2141,6 +2169,26 @@ function ConfigSyncTab() {
       )}
       {result && !result.ok && (
         <Alert type="error" showIcon style={{ marginTop: 12 }} message="Pull failed" description={<span style={{ fontSize: 12 }}>{result.error}</span>} />
+      )}
+
+      <Divider style={{ margin: '18px 0 12px' }} />
+      <Text strong style={{ fontSize: 13, display: 'block' }}>Runbook docs</Text>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', margin: '4px 0 10px' }}>
+        Generate a plain-markdown <strong>wiki</strong> from your skills + fleet — grouped by tag, one page per skill, cross-linked to the runnables and hosts each names. It's for humans to follow during an outage (when the console may be down). Output is deterministic, so re-running only changes what your skills changed — point it at a local clone of the config repo and commit the docs back for the team.
+      </Text>
+      <Space.Compact style={{ width: '100%' }}>
+        <Input size="small" value={docsDir} onChange={e => setDocsDir(e.target.value)}
+          placeholder={docsDefault ? `${docsDefault}  (default)` : 'output directory'}
+          style={{ fontFamily: 'monospace' }} autoComplete="off" />
+        <Button size="small" type="primary" onClick={generateDocs} loading={docsBusy}>Generate</Button>
+      </Space.Compact>
+      {docsResult && docsResult.ok && (
+        <Alert type="success" showIcon style={{ marginTop: 10 }}
+          message={`Wrote ${docsResult.written?.length ?? 0} file(s)`}
+          description={<span style={{ fontSize: 12 }}>Into <code>{docsResult.dir}</code>. Commit them from your repo clone to share with the team.</span>} />
+      )}
+      {docsResult && !docsResult.ok && (
+        <Alert type="error" showIcon style={{ marginTop: 10 }} message="Doc generation failed" description={<span style={{ fontSize: 12 }}>{docsResult.error}</span>} />
       )}
     </div>
   )

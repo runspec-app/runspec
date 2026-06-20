@@ -101,7 +101,19 @@ class _SyncBridge:
 
 
 def _wire(monkeypatch, tmp_path, files: dict[str, bytes], *, commit="a1b2c3d4" * 5):
-    """Point all paths at tmp_path and make gitsync.fetch_files return `files`."""
+    """Point all paths at tmp_path; make gitsync.fetch_layers return one layer."""
+    _wire_layers(monkeypatch, tmp_path, {"": files}, commit=commit)
+
+
+def _wire_layers(
+    monkeypatch,
+    tmp_path,
+    by_layer: dict[str, dict[str, bytes]],
+    *,
+    commit="a1b2c3d4" * 5,
+):
+    """Like ``_wire`` but maps each layer subpath → its files, so a pull folds
+    them. ``fetch_layers`` is mocked to return exactly the requested subpaths."""
     monkeypatch.setattr(cfg, "app_dir", lambda: tmp_path)
     monkeypatch.setattr(bridge_mod, "app_dir", lambda: tmp_path)
     monkeypatch.setattr(
@@ -109,14 +121,16 @@ def _wire(monkeypatch, tmp_path, files: dict[str, bytes], *, commit="a1b2c3d4" *
     )
     monkeypatch.setattr(
         gitsync,
-        "fetch_files",
-        lambda url, ref, names, auth, subpath="": gitsync.FetchResult(
-            ref=ref, commit=commit, files=files
+        "fetch_layers",
+        lambda url, ref, names, auth, subpaths: gitsync.LayeredFetchResult(
+            ref=ref,
+            commit=commit,
+            layers={sp: by_layer.get(sp, {}) for sp in subpaths},
         ),
     )
 
 
-def _set_sync(files=None, preserve=None):
+def _set_sync(files=None, preserve=None, layers=None):
     cfg.write_sync(
         {
             "url": "https://example.com/cfg.git",
@@ -124,6 +138,7 @@ def _set_sync(files=None, preserve=None):
             "credential_id": "config-repo",
             "files": files or ["config.toml", "runspec_hosts.toml"],
             "preserve": preserve or [],
+            "layers": layers or [],
         }
     )
 
@@ -329,6 +344,88 @@ def test_pull_without_url_errors(monkeypatch, tmp_path):
     res = _SyncBridge().sync_pull()
     assert res["ok"] is False
     assert "URL" in res["error"]
+
+
+# ── layered pull (shared base + team overlay) ────────────────────────────────────
+
+
+def test_layers_config_folds_base_then_team(monkeypatch, tmp_path):
+    _wire_layers(
+        monkeypatch,
+        tmp_path,
+        {
+            "_base": {
+                "config.toml": b'[llm]\nprovider = "anthropic"\nbase_only = "kept"\n'
+            },
+            "teams/x": {"config.toml": b'[llm]\nprovider = "openai"\n'},
+        },
+    )
+    cfg.write_config(
+        {
+            "llm": {"provider": "local", "api_key": "sk-local"},
+            "mailbox": {"folder": "Tickets/Mine"},
+        }
+    )
+    _set_sync(files=["config.toml"], layers=["_base", "teams/x"])
+
+    assert _SyncBridge().sync_pull()["ok"] is True
+
+    back = cfg.read_config()
+    assert back["llm"]["provider"] == "openai"  # team layer wins
+    assert back["llm"]["base_only"] == "kept"  # base-only key survives the fold
+    assert back["llm"]["api_key"] == "sk-local"  # local-only key survives
+    assert back["mailbox"]["folder"] == "Tickets/Mine"  # default-preserved
+
+
+def test_layers_hosts_fold_by_identity(monkeypatch, tmp_path):
+    _wire_layers(
+        monkeypatch,
+        tmp_path,
+        {
+            "_base": {
+                "runspec_hosts.toml": b'[[host]]\nname = "web1"\nssh = "base@web1"\n'
+                b'\n[[host]]\nname = "dbbase"\nssh = "base@db"\n'
+            },
+            "teams/x": {
+                "runspec_hosts.toml": b'[[host]]\nname = "web1"\nssh = "team@web1"\n'
+                b'\n[[host]]\nname = "web2"\nssh = "team@web2"\n'
+            },
+        },
+    )
+    save_hosts(
+        tmp_path / "runspec_hosts.toml",
+        [
+            {"name": "web1", "ssh": "old@web1", "room_user": "alice"},
+            {"name": "my-laptop", "ssh": "me@laptop"},
+        ],
+    )
+    _set_sync(files=["runspec_hosts.toml"], layers=["_base", "teams/x"])
+
+    assert _SyncBridge().sync_pull()["ok"] is True
+
+    hosts = {h["name"]: h for h in load_hosts(tmp_path / "runspec_hosts.toml")}
+    assert hosts["web1"]["ssh"] == "team@web1"  # team beats base beats local
+    assert hosts["web1"]["room_user"] == "alice"  # preserved on the matched entry
+    assert hosts["dbbase"]["ssh"] == "base@db"  # base-only entry kept
+    assert hosts["web2"]["ssh"] == "team@web2"  # team-only entry added
+    assert "my-laptop" in hosts  # local-only entry kept
+
+
+def test_layers_broken_toml_in_any_layer_aborts(monkeypatch, tmp_path):
+    _wire_layers(
+        monkeypatch,
+        tmp_path,
+        {
+            "_base": {"runspec_hosts.toml": b'[[host]]\nname = "web1"\n'},
+            "teams/x": {"runspec_hosts.toml": b"a = = broken"},
+        },
+    )
+    _set_sync(files=["runspec_hosts.toml"], layers=["_base", "teams/x"])
+
+    res = _SyncBridge().sync_pull()
+    assert res["ok"] is False
+    assert "not valid TOML" in res["error"]
+    assert not (tmp_path / "runspec_hosts.toml").exists()  # nothing written
 
 
 # ── _sync_auth: SSH-key credentials ──────────────────────────────────────────────

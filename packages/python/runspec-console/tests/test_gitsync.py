@@ -60,6 +60,57 @@ def repo(tmp_path):
     return str(path)
 
 
+@pytest.fixture
+def layered_repo(tmp_path):
+    """A repo whose config.toml differs by subdir: _base (a=1) and teams/x (a=2)."""
+    path = tmp_path / "layered"
+    path.mkdir()
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-C", str(path), *args], check=True, capture_output=True, env=env
+        )
+
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    git("config", "commit.gpgsign", "false")
+    (path / "_base").mkdir()
+    (path / "teams" / "x").mkdir(parents=True)
+    (path / "_base" / "config.toml").write_text("a = 1\n")
+    (path / "teams" / "x" / "config.toml").write_text("a = 2\n")
+    git("add", "-A")
+    git("commit", "-qm", "v1")
+    git("tag", "v1.0.0")
+    return str(path)
+
+
+def test_fetch_layers_single_fetch_reads_each_subpath(layered_repo, monkeypatch):
+    calls = {"n": 0}
+    real = gitsync._fetch_tree
+
+    def spy(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(gitsync, "_fetch_tree", spy)
+    r = gitsync.fetch_layers(
+        layered_repo,
+        "v1.0.0",
+        ["config.toml"],
+        gitsync.GitAuth(scheme="local"),
+        ["_base", "teams/x"],
+    )
+    assert calls["n"] == 1  # one network fetch covers every layer
+    assert r.layers["_base"]["config.toml"] == b"a = 1\n"
+    assert r.layers["teams/x"]["config.toml"] == b"a = 2\n"
+
+
 def test_list_tags_newest_first(repo):
     assert gitsync.list_tags(repo, gitsync.GitAuth(scheme="local")) == [
         "v2.0.0",

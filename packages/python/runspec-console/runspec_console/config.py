@@ -331,6 +331,27 @@ def write_mailbox(mailbox: dict[str, Any] | None) -> None:
     update_config(mutate)
 
 
+def read_docs_dir() -> str:
+    """The ``[docs] dir`` — where ``generate_docs`` writes the runbook wiki ('' when
+    unset; the bridge then defaults to ``app_dir()/docs``). Point it at a local
+    clone of the config repo's team folder to commit the docs back."""
+    docs = read_config().get("docs")
+    return str(docs.get("dir", "")).strip() if isinstance(docs, dict) else ""
+
+
+def write_docs_dir(path: str) -> None:
+    """Persist (or clear) the ``[docs] dir`` setting, leaving other sections alone."""
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        p = str(path or "").strip()
+        if p:
+            cfg.setdefault("docs", {})["dir"] = p
+        else:
+            cfg.pop("docs", None)
+
+    update_config(mutate)
+
+
 def read_sync() -> dict[str, Any]:
     """The ``[config_sync]`` table from config.toml ({} when unset).
 
@@ -342,13 +363,16 @@ def read_sync() -> dict[str, Any]:
         ref           = "v1.4.0"          # tag (preferred) or branch
         credential_id = "config-repo"     # a Credentials-tab entry
         subpath       = ""                # optional dir within the repo
+        layers        = ["_base", "teams/emea"]  # ordered overlay dirs (low→high)
         files         = ["config.toml", "runspec_hosts.toml", ...]
         preserve      = ["config.toml:mailbox.folder", ...]  # keep local on pull
         last_ref      = "v1.4.0"          # stamped by a successful pull
         last_commit   = "a1b2c3d…"
         last_synced   = "2026-06-16T04:30:00Z"
 
-    The secret is never here — it lives in the keyring under ``credential_id``.
+    ``layers`` are repo subdirectories overlaid in order (each later layer wins);
+    when empty, ``subpath`` is used as a single layer (back-compat). The secret is
+    never here — it lives in the keyring under ``credential_id``.
     """
     raw = read_config().get("config_sync")
     return dict(raw) if isinstance(raw, dict) else {}
@@ -376,6 +400,9 @@ def write_sync(sync: dict[str, Any]) -> None:
             val = str(sync.get(key) or "").strip()
             if val:
                 entry[key] = val
+        layers = [str(s).strip() for s in (sync.get("layers") or []) if str(s).strip()]
+        if layers:
+            entry["layers"] = layers
         files = [str(f).strip() for f in (sync.get("files") or []) if str(f).strip()]
         if files:
             entry["files"] = files

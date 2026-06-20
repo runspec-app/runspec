@@ -664,7 +664,7 @@ export const mockApi: BridgeApi = {
   credentials_backend: async () => ({ available: true, backend: 'WinVaultKeyring' }),
 
   get_sync_config: async () => ({
-    url: '', ref: '', credential_id: '', subpath: '', ca_bundle: '', tls_verify: true,
+    url: '', ref: '', credential_id: '', subpath: '', layers: [], ca_bundle: '', tls_verify: true,
     files: ['config.toml', 'runspec_hosts.toml', 'runspec_triggers.toml', 'runspec_filters.toml', 'runspec_credentials.toml'],
     preserve: [],
     last_ref: '', last_commit: '', last_synced: '',
@@ -675,6 +675,9 @@ export const mockApi: BridgeApi = {
   save_sync_config: async (data) => { console.log('[mock] save_sync_config', data) },
   list_sync_tags: async () => ({ tags: ['v1.2.0', 'v1.1.0', 'v1.0.0'] }),
   sync_pull: async () => { console.log('[mock] sync_pull'); return { ok: true, ref: 'v1.2.0', commit: 'a1b2c3d4e5f6', written: ['config.toml', 'runspec_hosts.toml'], skipped: [], backups: ['config.toml.bak-20260616-043000'] } },
+  get_docs_config: async () => ({ dir: '', default: '/home/user/.config/runspec-console/docs' }),
+  save_docs_config: async (dest_dir) => { console.log('[mock] save_docs_config', dest_dir) },
+  generate_docs: async (dest_dir) => { console.log('[mock] generate_docs', dest_dir); return { ok: true, dir: dest_dir || '/home/user/.config/runspec-console/docs', written: ['README.md', 'hosts.md', 'skills/restart-web.md'] } },
 
   test_host: async (name): Promise<TestResult> => {
     await new Promise(r => setTimeout(r, 1200))

@@ -87,6 +87,19 @@ class FetchResult:
     files: dict[str, bytes] = field(default_factory=dict)
 
 
+@dataclass
+class LayeredFetchResult:
+    """One fetch, read at several subpaths (overlay layers, low→high precedence).
+
+    ``layers`` maps each requested subpath to the files found there ({} for a
+    subpath that carries none). All layers share the one ``commit`` since they
+    come from the same ref/tree."""
+
+    ref: str
+    commit: str
+    layers: dict[str, dict[str, bytes]] = field(default_factory=dict)
+
+
 # ── engine availability ─────────────────────────────────────────────────────────
 
 
@@ -355,13 +368,45 @@ def fetch_files(
     carry every file. Raises ``GitSyncError`` on connection/auth failure or when
     ``ref`` can't be resolved.
     """
+    repo, commit_sha, tree_sha = _fetch_tree(url, ref, auth)
+    out = _read_subpath(repo, tree_sha, files, subpath)
+    return FetchResult(ref=ref, commit=commit_sha.decode("ascii"), files=out)
+
+
+def fetch_layers(
+    url: str,
+    ref: str,
+    files: list[str] | tuple[str, ...],
+    auth: GitAuth,
+    subpaths: list[str] | tuple[str, ...],
+) -> LayeredFetchResult:
+    """Fetch ``ref`` **once** and read ``files`` at each of ``subpaths``.
+
+    The shared-base/overlay case: one network fetch, then the same commit tree is
+    read at every subpath (a base dir, a team dir, …). Each layer's missing files
+    are simply omitted (not an error). Layer order is preserved in the result so
+    the caller can fold them low→high. Raises ``GitSyncError`` like ``fetch_files``.
+    """
+    paths = list(subpaths) or [""]
+    repo, commit_sha, tree_sha = _fetch_tree(url, ref, auth)
+    layers = {sp: _read_subpath(repo, tree_sha, files, sp) for sp in paths}
+    return LayeredFetchResult(ref=ref, commit=commit_sha.decode("ascii"), layers=layers)
+
+
+# ── helpers ─────────────────────────────────────────────────────────────────────
+
+
+def _fetch_tree(url: str, ref: str, auth: GitAuth) -> tuple[Any, bytes, bytes]:
+    """Fetch ``ref`` into a MemoryRepo; return (repo, commit_sha, tree_sha).
+
+    Resolves the ref, peels annotated tags to their commit, and reads the commit
+    tree — the shared front half of ``fetch_files`` / ``fetch_layers``."""
     if not available():
         raise GitSyncError(
             "git engine unavailable — install the 'git-sync' extra "
             "(pip install runspec-console[git-sync])"
         )
     from dulwich.client import get_transport_and_path
-    from dulwich.object_store import tree_lookup_path
     from dulwich.repo import MemoryRepo
 
     repo = MemoryRepo()
@@ -383,9 +428,16 @@ def fetch_files(
     try:
         commit_sha = _peel_to_commit(repo, sha)
         commit = repo.object_store[commit_sha]
-        tree_sha = commit.tree
+        return repo, commit_sha, commit.tree
     except Exception as exc:  # noqa: BLE001
         raise GitSyncError(f"could not read commit for ref {ref!r}: {exc}") from exc
+
+
+def _read_subpath(
+    repo: Any, tree_sha: bytes, files: list[str] | tuple[str, ...], subpath: str
+) -> dict[str, bytes]:
+    """Read ``files`` under ``subpath`` out of a commit tree (absent → omitted)."""
+    from dulwich.object_store import tree_lookup_path
 
     out: dict[str, bytes] = {}
     base = subpath.strip("/")
@@ -398,11 +450,7 @@ def fetch_files(
             out[name] = repo.object_store[blob_sha].data
         except KeyError:
             continue  # absent at this ref — fine
-
-    return FetchResult(ref=ref, commit=commit_sha.decode("ascii"), files=out)
-
-
-# ── helpers ─────────────────────────────────────────────────────────────────────
+    return out
 
 
 def _resolve_ref(refs: dict[bytes, bytes], ref: str) -> bytes | None:

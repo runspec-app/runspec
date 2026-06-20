@@ -95,3 +95,27 @@ def test_merge_collection_preserve_targets_named_entry():
     }
     assert out["a"] == "keepme"  # only entry "a" preserved
     assert out["b"] == "repo"  # entry "b" takes repo value
+
+
+# ── fold_layers (shared base + overlay) ──────────────────────────────────────────
+
+
+def test_fold_layers_mapping_deep_overlays_in_order():
+    base = {"llm": {"provider": "anthropic", "base_only": "x"}}
+    team = {"llm": {"provider": "openai"}}
+    eff = cm.fold_layers("config.toml", [base, team])
+    assert eff["llm"]["provider"] == "openai"  # later layer wins
+    assert eff["llm"]["base_only"] == "x"  # earlier-only key survives
+
+
+def test_fold_layers_collection_merges_by_identity():
+    base = {"host": [{"name": "web1", "ssh": "base"}, {"name": "db", "ssh": "base"}]}
+    team = {"host": [{"name": "web1", "ssh": "team"}, {"name": "web2", "ssh": "team"}]}
+    eff = cm.fold_layers("runspec_hosts.toml", [base, team])
+    hosts = {h["name"]: h["ssh"] for h in eff["host"]}
+    assert hosts == {"web1": "team", "db": "base", "web2": "team"}
+
+
+def test_fold_layers_single_layer_is_identity():
+    one = {"skill": [{"id": "a"}]}
+    assert cm.fold_layers("runspec_skills.toml", [one]) == one

@@ -145,6 +145,7 @@ export interface SyncConfig {
   ref: string
   credential_id: string
   subpath: string
+  layers: string[]
   ca_bundle: string
   tls_verify: boolean
   files: string[]
@@ -164,6 +165,20 @@ export interface SyncPullResult {
   written?: string[]
   skipped?: string[]
   backups?: string[]
+  error?: string
+}
+
+// Settings → Config Sync → Runbook docs. Where the deterministic skill wiki is
+// written (blank = the `default`, app_dir()/docs).
+export interface DocsConfig {
+  dir: string
+  default: string
+}
+
+export interface DocsGenResult {
+  ok: boolean
+  dir?: string
+  written?: string[]
   error?: string
 }
 
@@ -662,6 +677,12 @@ export interface BridgeApi {
   save_sync_config: (data: Partial<SyncConfig>) => Promise<void>
   list_sync_tags: () => Promise<{ tags?: string[]; error?: string }>
   sync_pull: () => Promise<SyncPullResult>
+  // Runbook docs: a deterministic markdown wiki generated from the local skills
+  // + fleet, for humans to follow during an outage. get/save the output dir and
+  // (re)generate the files.
+  get_docs_config: () => Promise<DocsConfig>
+  save_docs_config: (dest_dir: string) => Promise<void>
+  generate_docs: (dest_dir?: string) => Promise<DocsGenResult>
   test_host: (name: string) => Promise<TestResult>
   // `credentialId` (optional) applies a saved credential by id, overriding any
   // in-scope credential that would auto-apply. In-scope credentials fill their

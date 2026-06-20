@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.99.0] — 2026-06-20
+
+### Added
+- **Shared base config via ordered Config Sync layers.** `[config_sync]` gains a
+  `layers` list of repo subdirectories overlaid low→high (e.g. `["_base",
+  "regions/emea", "teams/emea-pay"]`), so teams share a common base and overlay
+  their own flavour instead of each folder duplicating it. A pull fetches the ref
+  **once** (`gitsync.fetch_layers`) and reads every layer from the same commit
+  tree, then folds them per file (`configmerge.fold_layers`: mappings deep-overlay,
+  collections merge by identity) into one effective table before the existing
+  non-destructive merge onto local — so `preserve` and local-only entries still
+  win over the whole stack. Empty `layers` falls back to the single `subpath`
+  (unchanged behaviour). New "Overlay layers" field in Settings → Config Sync.
+- **Runbook docs — a deterministic markdown wiki** (Settings → Config Sync →
+  Runbook docs; `runspec_console/docsgen.py`). Generates a human-followable wiki
+  from the local skills + fleet — an index grouped by tag, one page per skill
+  (when-to-use, steps, params, and cross-links to the runnables/hosts the steps
+  name), and a hosts page — so during an outage a person can SSH in and run the
+  same runnables the agent would. Output is **byte-stable** (sorted, no
+  timestamps), so re-running only changes what the skills changed and the files
+  diff cleanly when committed back to the config repo. New `generate_docs` /
+  `get_docs_config` / `save_docs_config` bridge methods and a `[docs] dir` setting
+  (defaults to `app_dir()/docs`; point it at a local clone of the config repo to
+  commit the docs back for the team).
+
+### Notes
+- Config Sync stays **pull-only** with no working tree, so the generated docs are
+  committed back by the operator from their own clone — the console never pushes.
+
+
 ## [0.98.0] — 2026-06-20
 
 ### Added

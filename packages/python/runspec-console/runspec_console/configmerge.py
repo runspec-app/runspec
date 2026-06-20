@@ -124,6 +124,42 @@ def merge_collection(
     return list(merged.values())
 
 
+# ── layer folding (shared base config) ───────────────────────────────────────────
+
+# Array-of-tables config files → (top-level key, per-entry identity field). These
+# fold across layers by identity (merge_collection); everything else (config.toml,
+# the triggers file's named [triggers.*] / [rota] tables) folds by deep_overlay.
+COLLECTION_FILES: dict[str, tuple[str, str]] = {
+    "runspec_hosts.toml": ("host", "name"),
+    "runspec_filters.toml": ("filter", "name"),
+    "runspec_credentials.toml": ("credential", "id"),
+    "runspec_skills.toml": ("skill", "id"),
+}
+
+
+def fold_layers(name: str, parsed_layers: list[dict[str, Any]]) -> dict[str, Any]:
+    """Fold a file's parsed layers (low→high precedence) into one effective table.
+
+    Collection files merge their array-of-tables by identity so a base layer's
+    entries survive a later layer that only adds/updates a few; mapping files
+    deep-overlay (later layer wins, earlier keys survive). The result has the
+    file's native top-level shape, ready for the same per-file merge a single-layer
+    pull uses. No *preserve* is applied here — that protects the local values and
+    is applied once, downstream, against the local file."""
+    coll = COLLECTION_FILES.get(name)
+    if coll is not None:
+        key_name, id_key = coll
+        eff_list: list[dict[str, Any]] = []
+        for parsed in parsed_layers:
+            items = parsed.get(key_name) or []
+            eff_list = merge_collection(eff_list, items, id_key, [])
+        return {key_name: eff_list}
+    eff: dict[str, Any] = {}
+    for parsed in parsed_layers:
+        eff = deep_overlay(eff, parsed)
+    return eff
+
+
 # ── path helpers ────────────────────────────────────────────────────────────────
 
 
