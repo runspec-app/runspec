@@ -15,6 +15,7 @@ import pytest
 import runspec_console.credentials as cred_mod
 from runspec_console.bridge import Bridge
 from runspec_console.credentials import KEYRING_SERVICE
+from runspec_console.discovery import _spec_to_runnables
 
 
 class _FakeKR:
@@ -32,6 +33,7 @@ class _ApplyBridge:
     _scope_matches = staticmethod(Bridge._scope_matches)
     _credential_entry = Bridge._credential_entry
     _declared_arg_names = staticmethod(Bridge._declared_arg_names)
+    _secret_arg_names = staticmethod(Bridge._secret_arg_names)
 
     def __init__(self, creds):
         self._credentials = creds
@@ -264,3 +266,38 @@ def test_empty_valid_args_does_not_block_secret_arg_injection(kr):
     secrets: dict = {}
     b._apply_credentials("h", "deploy", {}, secrets, valid_args=set())
     assert secrets == {"user-password": "s3cret"}
+
+
+def test_agent_path_fills_password_from_relay_credential(kr):
+    # End-to-end of the agent path's credential wiring: a discovered runnable with
+    # a password arg (type preserved by discovery) → _secret_arg_names finds it →
+    # an explicitly applied relay-style credential (no secret_arg) fills it. This
+    # is exactly `enable-passwordless-sudo` + the "Linux User" credential.
+    spec = {
+        "args": {
+            "password": {"type": "password"},
+            "user": {"type": "str", "required": False},
+            "scope": {"type": "choice", "options": ["scoped", "all"]},
+        }
+    }
+    record = _spec_to_runnables(
+        "enable-passwordless-sudo", spec, "little-sister", "grp"
+    )[0]
+    secret_names = _ApplyBridge._secret_arg_names(record, [])
+    assert secret_names == {"password"}  # discovery kept the password type
+
+    cred = _cred("602b0d790fff")  # relay-style: stored secret, no secret_arg
+    kr["602b0d790fff"] = "sudo-pass"
+    b = _ApplyBridge([cred])
+    secrets: dict = {}
+    applied = b._apply_credentials(
+        "little-sister",
+        "enable-passwordless-sudo",
+        {},
+        secrets,
+        explicit_id="602b0d790fff",
+        valid_args=_ApplyBridge._declared_arg_names(record, []),
+        secret_args=secret_names,
+    )
+    assert secrets == {"password": "sudo-pass"}
+    assert applied == ["602b0d790fff"]
