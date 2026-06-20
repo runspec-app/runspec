@@ -107,6 +107,22 @@ def test_tool_no_credential_id_when_out_of_scope():
     )
 
 
+def test_tool_omits_password_args():
+    # A password-typed arg must not appear in the agent's tool schema (and must
+    # not be required) — the agent never sees or types a secret; a bound
+    # credential fills it at run time.
+    runnables = _spec_to_runnables(
+        "bootstrap",
+        {"args": {"password": {"type": "password"}, "user": {"type": "str"}}},
+        "local",
+        "grp",
+    )
+    schema = _ToolBridge(runnables)._runnables_to_tools()[0]["input_schema"]
+    assert "password" not in schema["properties"]
+    assert "password" not in schema.get("required", [])
+    assert "user" in schema["properties"]  # non-secret args still surface
+
+
 def _tool_for(spec: dict[str, Any]) -> dict[str, Any]:
     runnables = _spec_to_runnables("cluster", spec, "local", "grp")
     tools = _ToolBridge(runnables)._runnables_to_tools()

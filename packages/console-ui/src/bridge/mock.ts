@@ -658,7 +658,7 @@ export const mockApi: BridgeApi = {
   list_credentials: async () => [
     { id: 'svc-prod', label: 'Service account (prod)', kind: 'userpass', username: 'svc_runner', username_arg: 'service-username', secret_arg: 'user-password', scope_hosts: ['prod-*'], scope_runnables: ['deploy'], has_secret: true },
   ],
-  credentials_for_runnable: async (host, runnable) => { console.log('[mock] credentials_for_runnable', host, runnable); return [{ id: 'svc-prod', label: 'Service account (prod)', has_secret: true }] },
+  credentials_for_runnable: async (host, runnable) => { console.log('[mock] credentials_for_runnable', host, runnable); return [{ id: 'svc-prod', label: 'Service account (prod)', has_secret: true, secret_arg: 'password', username_arg: '', username: '' }] },
   save_credential: async (entry) => { console.log('[mock] save_credential', { ...entry, secret: entry.secret ? '***' : undefined }); return { id: entry.id || 'mock-' + Date.now() } },
   delete_credential: async (id) => { console.log('[mock] delete_credential', id) },
   credentials_backend: async () => ({ available: true, backend: 'WinVaultKeyring' }),

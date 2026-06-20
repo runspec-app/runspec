@@ -3826,6 +3826,13 @@ class Bridge:
                 "id": str(c.get("id", "")),
                 "label": c.get("label", ""),
                 "has_secret": cred.has_secret(str(c.get("id", ""))),
+                # The runnable args this credential fills, so the form can treat a
+                # required arg as satisfied (and not block) when a credential covers
+                # it. username is non-secret metadata; the secret itself never leaves
+                # the keyring — has_secret says whether secret_arg will be filled.
+                "secret_arg": str(c.get("secret_arg", "")).strip(),
+                "username_arg": str(c.get("username_arg", "")).strip(),
+                "username": str(c.get("username", "")).strip(),
             }
             for c in self._scoped_credentials(host, runnable)
         ]
@@ -5063,6 +5070,13 @@ class Bridge:
             as conditional — never added to the tool's top-level ``required``."""
             arg_name = arg.get("name", "")
             if not arg_name or arg_name in properties:
+                return
+            # Secrets never become agent inputs — the agent must not see, type, or
+            # guess a password (a guess just yields an auth failure). A bound
+            # credential fills it from secure storage at run time (in-scope ones
+            # auto-apply; credential_id picks a specific one). Same rule as the
+            # visitor catalog (catalog.py) and the core's --format mcp emit.
+            if arg.get("type") == "password":
                 return
             arg_type = arg.get("type", "str")
             json_type = {

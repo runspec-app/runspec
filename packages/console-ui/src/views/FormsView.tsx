@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable, Skill } from '../bridge'
@@ -30,10 +30,11 @@ interface ArgInputProps {
   group?: string
   value: unknown
   error?: string
+  covered?: boolean
   onChange: (v: unknown) => void
 }
 
-export function ArgInput({ arg, host, runnable, runAs, group, value, error, onChange }: ArgInputProps) {
+export function ArgInput({ arg, host, runnable, runAs, group, value, error, covered, onChange }: ArgInputProps) {
   const isDark = useIsDark()
   // `hint` (if declared) is the form placeholder; otherwise fall back to a
   // visible $VAR_REF default so the operator sees where the value comes from.
@@ -78,7 +79,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         size="small"
         value={value as string ?? ''}
         onChange={e => onChange(e.target.value)}
-        placeholder={placeholder ?? 'secret — sent as an env var, not on the command line'}
+        placeholder={covered ? 'will be filled from the selected credential — leave blank' : (placeholder ?? 'secret — sent as an env var, not on the command line')}
         autoComplete="new-password"
         style={inputStyle}
         status={error ? 'error' : undefined}
@@ -145,7 +146,7 @@ function SectionLabel({ children }: { children: ReactNode }) {
   )
 }
 
-function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange }: ArgInputProps) {
+function ArgRow({ arg, host, runnable, runAs, group, value, error, covered, onChange }: ArgInputProps) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
@@ -156,23 +157,25 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange }: A
             <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>inherited</Tag>
           </Tooltip>
         )}
-        {arg.required
-          ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
-          : isVarRef(arg.default)
-            ? <Text style={{ fontSize: 10, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default as string}</Text>
-            : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
+        {covered
+          ? <Tooltip title="A saved credential fills this argument from secure storage — no need to enter it"><Tag color="green" style={{ fontSize: 10, margin: 0 }}>from credential</Tag></Tooltip>
+          : arg.required
+            ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
+            : isVarRef(arg.default)
+              ? <Text style={{ fontSize: 10, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default as string}</Text>
+              : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
         }
         {arg.description && (
           <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
         )}
       </div>
-      <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} />
+      <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} covered={covered} onChange={onChange} />
       {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
     </div>
   )
 }
 
-function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange }: {
+function ArgForm({ node, host, runnable, runAs, group, values, errors, coveredArgs, onChange }: {
   node: Runnable
   host: string
   runnable: string
@@ -180,6 +183,7 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange 
   group?: string
   values: Record<string, unknown>
   errors: Record<string, string>
+  coveredArgs?: Set<string>
   onChange: (name: string, v: unknown) => void
 }) {
   const args = node.args ?? []
@@ -207,6 +211,7 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange 
       group={group}
       value={values[arg.name]}
       error={errors[arg.name]}
+      covered={coveredArgs?.has(arg.name)}
       onChange={v => onChange(arg.name, v)}
     />
   )
@@ -301,7 +306,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [credentialId, setCredentialId] = useState('')
-  const [creds, setCreds] = useState<{ id: string; label: string }[]>([])
+  const [creds, setCreds] = useState<{ id: string; label: string; has_secret: boolean; secret_arg: string; username_arg: string; username: string }[]>([])
 
   // Reset form when the modal or node changes
   useEffect(() => {
@@ -320,6 +325,30 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
       .then(setCreds).catch(() => setCreds([]))
   }, [state?.rootRunnable.name, state?.rootRunnable.host, state?.commandPath.join('/')])
 
+  // Arg names a credential will fill at run time, so a required field they cover
+  // doesn't block the form (the secret is injected from the keyring, never typed
+  // here). Mirrors the backend's apply rules: an explicitly picked credential
+  // applies its bindings; otherwise every in-scope credential auto-applies, but a
+  // binding shared by two of them is ambiguous (the backend skips it) so it isn't
+  // counted. secret_arg counts only when a secret is actually stored; username_arg
+  // only when a username is set.
+  const coveredArgs = useMemo(() => {
+    const effective = credentialId ? creds.filter(c => c.id === credentialId) : creds
+    const secretCount: Record<string, number> = {}
+    const userCount: Record<string, number> = {}
+    for (const c of effective) {
+      if (c.secret_arg) secretCount[c.secret_arg] = (secretCount[c.secret_arg] ?? 0) + 1
+      if (c.username_arg) userCount[c.username_arg] = (userCount[c.username_arg] ?? 0) + 1
+    }
+    const covered = new Set<string>()
+    for (const c of effective) {
+      const unambiguous = (n: string, counts: Record<string, number>) => !!credentialId || counts[n] === 1
+      if (c.secret_arg && c.has_secret && unambiguous(c.secret_arg, secretCount)) covered.add(c.secret_arg)
+      if (c.username_arg && c.username && unambiguous(c.username_arg, userCount)) covered.add(c.username_arg)
+    }
+    return covered
+  }, [creds, credentialId])
+
   if (!state) return null
 
   const { rootRunnable, commandPath, currentNode } = state
@@ -337,7 +366,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     const errs: Record<string, string> = {}
     for (const arg of currentNode.args ?? []) {
       const v = values[arg.name]
-      if (arg.required && (v === undefined || v === '')) {
+      if (arg.required && (v === undefined || v === '') && !coveredArgs.has(arg.name)) {
         errs[arg.name] = 'Required'
       } else if (arg.range && (arg.type === 'int' || arg.type === 'float') && v !== undefined && v !== '') {
         const n = Number(v)
@@ -437,7 +466,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
               {currentNode.description}
             </Text>
           )}
-          <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} />
+          <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} coveredArgs={coveredArgs} onChange={handleChange} />
           {creds.length > 0 && (
             <div style={{ marginTop: 8 }}>
               <Text style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>

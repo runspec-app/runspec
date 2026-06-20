@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.101.0] — 2026-06-20
+
+### Fixed
+- **Saved credentials couldn't fill a *required* secret arg.** A runnable with a
+  required `password`-typed arg (e.g. `enable-passwordless-sudo`) couldn't be run
+  with a bound credential: the run form blocked on the empty field, and the agent
+  either had to invent a value (→ auth failure) or was blocked by the required
+  schema. The secret was actually injected from the keyring at run time — only the
+  pre-flight checks were credential-blind.
+  - **Agent:** the tool schema now omits `password`-typed args entirely (and never
+    marks them required) — same rule as the visitor catalog and the core's
+    `--format mcp` emit. The agent never sees, types, or guesses a secret; an
+    in-scope credential auto-applies and `credential_id` picks a specific one.
+  - **Run form:** `credentials_for_runnable` now returns each in-scope
+    credential's bound arg names (`secret_arg`/`username_arg`, plus non-secret
+    `username`), so the form treats a required arg a credential will fill as
+    satisfied — mirroring the backend's auto-apply + ambiguity rules. The covered
+    field shows a "from credential" tag and can be left blank.
+
 ## [0.100.0] — 2026-06-20
 
 ### Changed

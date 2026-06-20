@@ -668,7 +668,7 @@ export interface BridgeApi {
   list_credentials: () => Promise<Credential[]>
   // In-scope credentials for a runnable (id + label) — for the Forms run dialog's
   // optional credential override. In-scope credentials auto-apply on run anyway.
-  credentials_for_runnable: (host: string, runnable: string) => Promise<{ id: string; label: string; has_secret: boolean }[]>
+  credentials_for_runnable: (host: string, runnable: string) => Promise<{ id: string; label: string; has_secret: boolean; secret_arg: string; username_arg: string; username: string }[]>
   save_credential: (entry: Credential) => Promise<{ id?: string; error?: string }>
   delete_credential: (id: string) => Promise<void>
   credentials_backend: () => Promise<CredentialBackend>

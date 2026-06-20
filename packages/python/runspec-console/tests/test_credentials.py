@@ -204,7 +204,14 @@ def test_ssh_key_requires_private_key(b):
 
 
 def test_credentials_for_runnable_filters_by_scope(b):
-    b.save_credential({"label": "Prod", "secret": "s", "scope_runnables": ["deploy"]})
+    b.save_credential(
+        {
+            "label": "Prod",
+            "secret": "s",
+            "secret_arg": "password",
+            "scope_runnables": ["deploy"],
+        }
+    )
     b.save_credential(
         {"label": "Other", "secret": "s", "scope_runnables": ["something-else"]}
     )
@@ -212,6 +219,10 @@ def test_credentials_for_runnable_filters_by_scope(b):
     assert [c["label"] for c in scoped] == ["Prod"]
     assert scoped[0]["has_secret"] is True
     assert "secret" not in scoped[0]
+    # The bound arg names are surfaced so the run form can treat a required arg
+    # the credential fills as satisfied (and not block submission).
+    assert scoped[0]["secret_arg"] == "password"
+    assert scoped[0]["username_arg"] == ""
 
 
 def test_backend_reports_available(b):
