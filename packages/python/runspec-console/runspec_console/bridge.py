@@ -3776,6 +3776,8 @@ class Bridge:
                 "username": c.get("username", ""),
                 "username_arg": c.get("username_arg", ""),
                 "secret_arg": c.get("secret_arg", ""),
+                "private_key": c.get("private_key", ""),
+                "public_key": c.get("public_key", ""),
                 "scope_hosts": list(c.get("scope_hosts", []) or []),
                 "scope_runnables": list(c.get("scope_runnables", []) or []),
                 "has_secret": cred.has_secret(cid) if cid else False,
@@ -3820,6 +3822,11 @@ class Bridge:
         if kind not in VALID_KINDS:
             return {"error": f"unknown kind: {kind}"}
 
+        private_key = str(entry.get("private_key", "")).strip()
+        public_key = str(entry.get("public_key", "")).strip()
+        if kind == "ssh-key" and not private_key:
+            return {"error": "an SSH-key credential needs a private key path"}
+
         secret = entry.get("secret")
         has_new_secret = isinstance(secret, str) and secret != ""
         if has_new_secret and not cred.available():
@@ -3835,6 +3842,8 @@ class Bridge:
             "username": str(entry.get("username", "")).strip(),
             "username_arg": str(entry.get("username_arg", "")).strip(),
             "secret_arg": str(entry.get("secret_arg", "")).strip(),
+            "private_key": private_key,
+            "public_key": public_key,
             "scope_hosts": _clean_str_list(entry.get("scope_hosts")),
             "scope_runnables": _clean_str_list(entry.get("scope_runnables")),
         }
@@ -3937,9 +3946,11 @@ class Bridge:
 
         HTTPS uses the credential's username + keyring secret (token), the
         ``[config_sync] ca_bundle`` for cert verification (internal CA / TLS proxy),
-        and the console's ``[ssh] proxy`` for egress. SSH uses the credential's
-        username (default ``git``) and the console's configured SSH key
-        (``[ssh] identityFile``) — credentials don't store key paths."""
+        and the console's ``[ssh] proxy`` for egress. SSH prefers an ``ssh-key``
+        credential's own ``private_key`` path (with its keyring passphrase, if
+        any) so a repo can use a dedicated deploy key; it falls back to the
+        console's configured SSH key (``[ssh] identityFile``) when the credential
+        carries no key. The username defaults to ``git``."""
         from . import credentials as cred
         from . import gitsync
 
@@ -3947,9 +3958,17 @@ class Bridge:
         username = str((entry or {}).get("username", "")).strip()
         cfg_ssh = self.get_config().get("ssh") or {}
         if gitsync._is_ssh_url(url):
-            key_path = str(cfg_ssh.get("identityFile", "") or "")
+            cred_key = str((entry or {}).get("private_key", "") or "").strip()
+            key_path = cred_key or str(cfg_ssh.get("identityFile", "") or "")
+            # An ssh-key credential's keyring secret is the key's passphrase.
+            passphrase = ""
+            if credential_id and str((entry or {}).get("kind", "")) == "ssh-key":
+                passphrase = cred.get_secret(credential_id) or ""
             return gitsync.GitAuth(
-                scheme="ssh", username=username or "git", key_path=key_path
+                scheme="ssh",
+                username=username or "git",
+                key_path=key_path,
+                passphrase=passphrase,
             )
         secret = cred.get_secret(credential_id) if credential_id else None
         sync = read_sync()

@@ -1320,6 +1320,7 @@ const KIND_OPTIONS = [
   { value: 'userpass', label: 'Username + password' },
   { value: 'password', label: 'Password / passphrase' },
   { value: 'token', label: 'Token / API key' },
+  { value: 'ssh-key', label: 'SSH key (private + public key files)' },
 ]
 
 interface CredFormValues {
@@ -1328,6 +1329,8 @@ interface CredFormValues {
   username?: string
   username_arg?: string
   secret_arg?: string
+  private_key?: string
+  public_key?: string
   scope_hosts?: string[]
   scope_runnables?: string[]
   secret?: string
@@ -1348,6 +1351,7 @@ function CredentialsTab() {
     form.setFieldsValue({
       label: c.label, kind: c.kind, username: c.username,
       username_arg: c.username_arg, secret_arg: c.secret_arg,
+      private_key: c.private_key, public_key: c.public_key,
       scope_hosts: c.scope_hosts ?? [], scope_runnables: c.scope_runnables ?? [],
       secret: '',  // write-only: blank means "keep the stored value"
     })
@@ -1364,6 +1368,8 @@ function CredentialsTab() {
       username: v.username?.trim() || undefined,
       username_arg: v.username_arg?.trim() || undefined,
       secret_arg: v.secret_arg?.trim() || undefined,
+      private_key: v.private_key?.trim() || undefined,
+      public_key: v.public_key?.trim() || undefined,
       scope_hosts: v.scope_hosts ?? [],
       scope_runnables: v.scope_runnables ?? [],
       ...(v.secret ? { secret: v.secret } : {}),  // only send when set
@@ -1385,6 +1391,8 @@ function CredentialsTab() {
 
   const isEditing = editingId !== null
   const editingCred = editingId ? creds.find(c => c.id === editingId) : undefined
+  const kind = Form.useWatch('kind', form)
+  const isSshKey = kind === 'ssh-key'
 
   return (
     <div>
@@ -1419,28 +1427,50 @@ function CredentialsTab() {
             <Form.Item name="kind" label="Kind">
               <Select options={KIND_OPTIONS} />
             </Form.Item>
-            <Form.Item name="username" label="Username" tooltip="The non-secret identity (for username + password kinds).">
-              <Input placeholder="svc_runner" autoComplete="off" />
-            </Form.Item>
-            <Form.Item name="secret" label="Secret" tooltip={editingId !== '' ? 'Leave blank to keep the stored secret.' : undefined}>
-              <Input.Password placeholder={editingId !== '' && editingCred?.has_secret ? '•••••••• (unchanged)' : 'password / token'} autoComplete="new-password" disabled={!backend?.available} />
-            </Form.Item>
-            <Divider style={{ margin: '4px 0 12px' }} />
-            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
-              Binding — which runnable arguments these values fill, and where the credential may be applied (glob patterns; blank = any).
-            </Text>
-            <Form.Item name="username_arg" label="Username → argument" tooltip="Runnable arg name that receives the username (passed normally).">
-              <Input placeholder="service-username" style={{ fontFamily: 'monospace' }} autoComplete="off" />
-            </Form.Item>
-            <Form.Item name="secret_arg" label="Secret → argument" tooltip="Runnable arg name that receives the secret (passed via env, never argv).">
-              <Input placeholder="user-password" style={{ fontFamily: 'monospace' }} autoComplete="off" />
-            </Form.Item>
-            <Form.Item name="scope_hosts" label="Host scope">
-              <Select mode="tags" placeholder="prod-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
-            </Form.Item>
-            <Form.Item name="scope_runnables" label="Runnable scope">
-              <Select mode="tags" placeholder="deploy, db-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
-            </Form.Item>
+            {isSshKey ? (
+              <>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+                  An SSH-key credential authenticates a Config Sync SSH repo with its own deploy key (use it in Settings → Config Sync). The key files stay on disk — only the paths are saved.
+                </Text>
+                <Form.Item name="private_key" label="Private key path" rules={[{ required: true, message: 'Required' }]} tooltip="Path to the private key file (e.g. an ed25519 deploy key). Passed to the SSH client as the identity file.">
+                  <Input placeholder="~/.ssh/runspec_ed25519" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+                </Form.Item>
+                <Form.Item name="public_key" label="Public key path" tooltip="Optional — the matching .pub file. Informational; not required to connect.">
+                  <Input placeholder="~/.ssh/runspec_ed25519.pub" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+                </Form.Item>
+                <Form.Item name="username" label="SSH user" tooltip="The SSH login user — defaults to git for most hosts (GitHub, GitLab).">
+                  <Input placeholder="git" autoComplete="off" />
+                </Form.Item>
+                <Form.Item name="secret" label="Key passphrase" tooltip={editingId !== '' ? 'Leave blank to keep the stored passphrase. Leave empty for an unencrypted key.' : 'Only if the private key is encrypted; stored in the OS keychain.'}>
+                  <Input.Password placeholder={editingId !== '' && editingCred?.has_secret ? '•••••••• (unchanged)' : 'optional — only for an encrypted key'} autoComplete="new-password" disabled={!backend?.available} />
+                </Form.Item>
+              </>
+            ) : (
+              <>
+                <Form.Item name="username" label="Username" tooltip="The non-secret identity (for username + password kinds).">
+                  <Input placeholder="svc_runner" autoComplete="off" />
+                </Form.Item>
+                <Form.Item name="secret" label="Secret" tooltip={editingId !== '' ? 'Leave blank to keep the stored secret.' : undefined}>
+                  <Input.Password placeholder={editingId !== '' && editingCred?.has_secret ? '•••••••• (unchanged)' : 'password / token'} autoComplete="new-password" disabled={!backend?.available} />
+                </Form.Item>
+                <Divider style={{ margin: '4px 0 12px' }} />
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+                  Binding — which runnable arguments these values fill, and where the credential may be applied (glob patterns; blank = any).
+                </Text>
+                <Form.Item name="username_arg" label="Username → argument" tooltip="Runnable arg name that receives the username (passed normally).">
+                  <Input placeholder="service-username" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+                </Form.Item>
+                <Form.Item name="secret_arg" label="Secret → argument" tooltip="Runnable arg name that receives the secret (passed via env, never argv).">
+                  <Input placeholder="user-password" style={{ fontFamily: 'monospace' }} autoComplete="off" />
+                </Form.Item>
+                <Form.Item name="scope_hosts" label="Host scope">
+                  <Select mode="tags" placeholder="prod-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
+                </Form.Item>
+                <Form.Item name="scope_runnables" label="Runnable scope">
+                  <Select mode="tags" placeholder="deploy, db-*  (Enter to add)" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
+                </Form.Item>
+              </>
+            )}
         </Form>
       </Modal>
 
@@ -2029,7 +2059,7 @@ function ConfigSyncTab() {
 
       <Form form={form} layout="vertical" size="small">
         <Form.Item name="url" label="Repository URL" rules={[{ required: true, message: 'Required' }]}
-          tooltip="HTTPS (https://…) or SSH (git@host:org/repo.git). HTTPS uses the credential's token; SSH uses your console SSH key.">
+          tooltip="HTTPS (https://…) or SSH (git@host:org/repo.git). HTTPS uses the credential's token; SSH uses an SSH-key credential's deploy key (or your console SSH key when none is selected).">
           <Input placeholder="https://github.com/acme/runspec-config.git" autoComplete="off" />
         </Form.Item>
         <Form.Item name="ref" label="Tag / ref" rules={[{ required: true, message: 'Required' }]}
@@ -2043,9 +2073,9 @@ function ConfigSyncTab() {
           </AutoComplete>
         </Form.Item>
         <Form.Item name="credential_id" label="Credential"
-          tooltip="A Credentials-tab entry. For HTTPS use a token/userpass credential (username + token). For SSH, the username (default git) plus your console SSH key.">
+          tooltip="A Credentials-tab entry. For HTTPS use a token/userpass credential (username + token). For SSH use an ssh-key credential (a per-repo deploy key); without one, SSH falls back to your console SSH key.">
           <Select allowClear placeholder="None (public / anonymous)"
-            options={creds.map(c => ({ value: c.id, label: `${c.label}${c.username ? ` (${c.username})` : ''}` }))} />
+            options={creds.map(c => ({ value: c.id, label: `${c.label}${c.kind === 'ssh-key' ? ' (ssh-key)' : c.username ? ` (${c.username})` : ''}` }))} />
         </Form.Item>
         <Form.Item name="files" label="Files to pull"
           tooltip="Files missing from the repo at that ref are skipped, not an error.">

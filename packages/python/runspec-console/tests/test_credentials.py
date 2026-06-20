@@ -160,6 +160,49 @@ def test_invalid_kind_errors(b):
     assert res == {"error": "unknown kind: bogus"}
 
 
+# ── ssh-key credentials ─────────────────────────────────────────────────────────
+
+
+def test_ssh_key_credential_stores_paths_not_key(b, kr):
+    res = b.save_credential(
+        {
+            "label": "Config repo deploy key",
+            "kind": "ssh-key",
+            "username": "git",
+            "private_key": "~/.ssh/runspec_ed25519",
+            "public_key": "~/.ssh/runspec_ed25519.pub",
+        }
+    )
+    cid = res["id"]
+    entry = b.list_credentials()[0]
+    assert entry["kind"] == "ssh-key"
+    assert entry["private_key"] == "~/.ssh/runspec_ed25519"
+    assert entry["public_key"] == "~/.ssh/runspec_ed25519.pub"
+    # No passphrase was given → nothing in the keyring.
+    assert (KEYRING_SERVICE, cid) not in kr.store
+    # Paths are metadata; the key file itself is never read or stored.
+    text = (b._tmp / "creds.toml").read_text()
+    assert 'kind = "ssh-key"' in text
+
+
+def test_ssh_key_passphrase_goes_to_keyring(b, kr):
+    cid = b.save_credential(
+        {
+            "label": "Encrypted key",
+            "kind": "ssh-key",
+            "private_key": "/keys/id_ed25519",
+            "secret": "pa55phrase",
+        }
+    )["id"]
+    assert kr.store[(KEYRING_SERVICE, cid)] == "pa55phrase"
+    assert "pa55phrase" not in (b._tmp / "creds.toml").read_text()
+
+
+def test_ssh_key_requires_private_key(b):
+    res = b.save_credential({"label": "No key", "kind": "ssh-key"})
+    assert res == {"error": "an SSH-key credential needs a private key path"}
+
+
 def test_credentials_for_runnable_filters_by_scope(b):
     b.save_credential({"label": "Prod", "secret": "s", "scope_runnables": ["deploy"]})
     b.save_credential(

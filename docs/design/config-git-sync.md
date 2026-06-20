@@ -30,7 +30,7 @@ Credentials tab — no second secret store.
 
 | # | Decision | Choice |
 |---|----------|--------|
-| 1 | Auth | A saved **credential** (Credentials tab). HTTPS uses its username + keyring token; SSH repos use the console's SSH key (`[ssh] identityFile`). |
+| 1 | Auth | A saved **credential** (Credentials tab). HTTPS uses its username + keyring token; SSH repos use an **`ssh-key` credential's deploy key** (`private_key` path + optional keyring passphrase) — one identity per repo — falling back to the console's SSH key (`[ssh] identityFile`) when no key-bearing credential is selected. See §SSH-key credentials. |
 | 2 | Git engine | **dulwich** (pure-Python), behind a swappable boundary in `gitsync.py`. No system `git` needed on fresh/Windows installs. Optional `git-sync` extra. |
 | 3 | Transports | HTTPS (token passed in-process — never on argv/log) **and** SSH (over the already-bundled paramiko via a small vendor, so no system `ssh` either). |
 | 4 | Versioning | Pull by **ref** — a tag (recommended) or a branch. The UI offers a tag dropdown (`ls-remote`) with a free-text fallback. |
@@ -39,6 +39,30 @@ Credentials tab — no second secret store.
 | 7 | Credentials file | **Merged by id** (a special case of the collection merge) — so the credential used to authenticate the pull (and any other local-only entry) survives. Secrets are never in the file; an id with a local keyring secret keeps it. |
 | 8 | Scope | `config.toml`, `runspec_hosts.toml`, `runspec_triggers.toml`, `runspec_filters.toml`, `runspec_credentials.toml`. The list is **data-driven** (`gitsync.KNOWN_FILES` + the configured `files`), so new files sync with no code change. Bare filenames only (no path traversal out of the app dir). |
 | 9 | No restart | After a successful pull the running app hot-reloads hosts / filters / credentials / SSH / triggers. |
+
+### SSH-key credentials (0.98.0)
+
+SSH repos historically reused the one console-wide SSH identity
+(`[ssh] identityFile`), so there was no way to give the config repo its **own**
+deploy key. The Credentials tab now has a `kind = "ssh-key"` credential that
+references a key pair **by file path** — `private_key` (passed to paramiko as the
+identity file) and an optional `public_key` (informational). The key material
+never leaves disk; only an optional **key passphrase** is stored in the OS
+keychain under the credential id (the same channel as any other secret).
+
+`_sync_auth` resolves an SSH URL like this:
+
+1. If the selected credential carries a `private_key`, use it (and, for an
+   `ssh-key` credential, its keyring passphrase).
+2. Otherwise fall back to `[ssh] identityFile`.
+3. The username defaults to `git` (override per credential for non-GitHub hosts).
+
+`GitAuth` gained a `passphrase` field. dulwich's `SSHVendor.run_command`
+signature has no passphrase parameter, so the passphrase is **bound into the
+vendor factory** (`_install_paramiko_vendor(passphrase)`) rather than threaded
+through the call; paramiko then decrypts `key_filename` with it. Key paths are
+`~`-expanded before reaching paramiko. Multiple `ssh-key` credentials can coexist
+— one deploy key per repo — which the single `identityFile` couldn't express.
 
 ### Why dulwich (engine choice)
 

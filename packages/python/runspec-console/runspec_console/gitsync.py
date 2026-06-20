@@ -17,8 +17,10 @@ Two transports:
     dulwich's HTTP client, so the secret never lands on a command line or in a
     log.
   * **SSH** — over paramiko (already a core dependency) via a small vendor below,
-    so SSH repos work without a system ``ssh`` client either. The key file
-    defaults to the console's configured SSH key.
+    so SSH repos work without a system ``ssh`` client either. The key file comes
+    from an ``ssh-key`` credential (a per-repo deploy key) when one is selected,
+    else the console's configured SSH key; an encrypted key's passphrase rides
+    a closure in the vendor.
 
 No working tree is checked out: we fetch the ref, peel it to its commit, and read
 the wanted files straight out of the commit's tree.
@@ -72,6 +74,7 @@ class GitAuth:
     username: str = ""
     secret: str = ""  # token / password — never logged
     key_path: str = ""  # SSH private key file
+    passphrase: str = ""  # SSH: passphrase for an encrypted key file — never logged
     ca_bundle: str = ""  # HTTPS: PEM bundle for cert verification
     proxy: str = ""  # HTTPS: HTTP CONNECT proxy URL
     tls_verify: bool = True  # HTTPS: set False to skip cert verification (insecure)
@@ -129,10 +132,12 @@ def _transport_kwargs(url: str, auth: GitAuth) -> dict[str, Any]:
     need nothing.
     """
     if _is_ssh_url(url):
-        _install_paramiko_vendor()
+        # A key passphrase can't ride dulwich's SSHVendor signature, so the
+        # vendor captures it in a closure here (paramiko decrypts the key file).
+        _install_paramiko_vendor(auth.passphrase)
         kwargs: dict[str, Any] = {}
         if auth.key_path:
-            kwargs["key_filename"] = auth.key_path
+            kwargs["key_filename"] = os.path.expanduser(auth.key_path)
         if auth.username:
             kwargs["username"] = auth.username
         return kwargs
@@ -197,13 +202,17 @@ def _https_pool_manager(auth: GitAuth) -> Any | None:
     return urllib3.PoolManager(**opts)
 
 
-def _install_paramiko_vendor() -> None:
+def _install_paramiko_vendor(passphrase: str = "") -> None:
     """Point dulwich's SSH transport at our paramiko vendor.
 
     dulwich 1.x defaults to a subprocess vendor that shells out to the system
     ``ssh``. We override it with a paramiko-backed vendor so SSH repos work with
     no external ``ssh`` client (paramiko is already a core dependency). Best
     effort: if paramiko is missing, leave dulwich's default in place.
+
+    ``passphrase`` decrypts an encrypted key file. dulwich's ``SSHVendor``
+    interface has no passphrase parameter, so we bind it into the vendor factory
+    here rather than threading it through ``run_command``.
     """
     try:
         import dulwich.client as client
@@ -213,7 +222,7 @@ def _install_paramiko_vendor() -> None:
         import paramiko  # noqa: F401
     except Exception:
         return
-    client.get_ssh_vendor = _ParamikoSSHVendor
+    client.get_ssh_vendor = lambda: _ParamikoSSHVendor(passphrase)
 
 
 class _ParamikoChannel:
@@ -244,8 +253,11 @@ class _ParamikoChannel:
             self._ssh.close()
 
 
-def _ParamikoSSHVendor() -> Any:  # noqa: N802 — used as a vendor factory
-    """A dulwich SSHVendor backed by paramiko (constructed lazily)."""
+def _ParamikoSSHVendor(passphrase: str = "") -> Any:  # noqa: N802 — vendor factory
+    """A dulwich SSHVendor backed by paramiko (constructed lazily).
+
+    ``passphrase`` (captured from ``GitAuth``) decrypts an encrypted key file.
+    """
     import paramiko
     from dulwich.client import SSHVendor
 
@@ -271,6 +283,8 @@ def _ParamikoSSHVendor() -> Any:  # noqa: N802 — used as a vendor factory
                 connect["password"] = password
             if key_filename:
                 connect["key_filename"] = key_filename
+                if passphrase:
+                    connect["passphrase"] = passphrase
             ssh.connect(**connect)
             transport = ssh.get_transport()
             if transport is None:

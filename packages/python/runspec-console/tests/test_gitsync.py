@@ -106,6 +106,30 @@ def test_ssh_url_detection():
     assert not gitsync._is_ssh_url("/local/path/to/repo")
 
 
+def test_ssh_transport_kwargs_expand_key_and_user():
+    auth = gitsync.GitAuth(
+        scheme="ssh", username="git", key_path="~/.ssh/runspec_ed25519"
+    )
+    kwargs = gitsync._transport_kwargs("git@github.com:acme/cfg.git", auth)
+    assert kwargs["username"] == "git"
+    # ~ is expanded so paramiko gets an absolute identity file path.
+    assert kwargs["key_filename"] == os.path.expanduser("~/.ssh/runspec_ed25519")
+    assert "~" not in kwargs["key_filename"]
+
+
+def test_ssh_vendor_factory_binds_passphrase():
+    # _install_paramiko_vendor binds the passphrase into the vendor factory so a
+    # later run_command can decrypt the key. Verify the factory is installed and
+    # callable with a passphrase captured (no network/connection needed).
+    pytest.importorskip("paramiko")
+    import dulwich.client as client
+
+    gitsync._install_paramiko_vendor("secret-pass")
+    assert client.get_ssh_vendor is not gitsync._ParamikoSSHVendor
+    vendor = client.get_ssh_vendor()  # builds the paramiko-backed vendor
+    assert hasattr(vendor, "run_command")
+
+
 def test_pool_manager_none_when_no_ca_or_proxy(monkeypatch):
     for var in (
         "SSL_CERT_FILE",

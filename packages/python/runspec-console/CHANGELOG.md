@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.98.0] — 2026-06-20
+
+### Added
+- **SSH-key credentials** (Settings → Credentials). A new credential `kind =
+  "ssh-key"` references an SSH key pair **by file path** (`private_key` +
+  optional `public_key`); the key material stays on disk and only an optional
+  key **passphrase** is stored in the OS keychain. This lets multiple SSH
+  identities coexist — e.g. a dedicated GitHub **deploy key** per repo — rather
+  than the single console-wide `[ssh] identityFile`.
+- **Config Sync uses an SSH-key credential's deploy key.** For an SSH repo URL,
+  `_sync_auth` now prefers the selected credential's `private_key` (and its
+  keyring passphrase) and falls back to `[ssh] identityFile` when no key-bearing
+  credential is chosen. `GitAuth` gains a `passphrase` field; the paramiko vendor
+  decrypts the key file with it (bound into the vendor factory, since dulwich's
+  `SSHVendor` signature has no passphrase parameter). SSH key paths are
+  `~`-expanded before they reach paramiko.
+
+### Notes
+- SSH-key credential metadata (`private_key` / `public_key` paths) rides Config
+  Sync's non-destructive credential merge like any other credential, but the
+  paths are machine-local — protect them with a `preserve` entry if a synced
+  repo also defines the same credential id.
+
+
 ## [0.97.0] — 2026-06-19
 
 ### Added

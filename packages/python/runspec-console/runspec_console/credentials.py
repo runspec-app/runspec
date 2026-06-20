@@ -28,6 +28,20 @@ leaves them empty and is referenced by ``id``. The flat shape (single
 username/secret arg, string-array scopes) keeps the TOML writer trivial — mirrors
 ``filters_store`` — while still expressing the ``--service-username`` /
 ``--user-password`` case.
+
+An ``ssh-key`` credential references an SSH **key pair by file path** rather than
+binding to a runnable — Config Sync uses it to authenticate an SSH repo with a
+dedicated deploy key (so multiple SSH identities can coexist, one per repo)::
+
+  [[credential]]
+  id          = "config-repo"
+  label       = "Config repo deploy key"
+  kind        = "ssh-key"
+  private_key = "~/.ssh/runspec_ed25519"      # passed to paramiko key_filename
+  public_key  = "~/.ssh/runspec_ed25519.pub"  # optional; informational
+
+The key material stays on disk (the paths are metadata); only an optional key
+**passphrase** is stored in the keyring under the credential's ``id``.
 """
 
 from __future__ import annotations
@@ -46,10 +60,19 @@ KEYRING_SERVICE = "runspec-console"
 
 # Metadata fields persisted to runspec_credentials.toml, in write order. The
 # secret value is deliberately absent — it only ever lives in the keyring.
-_STR_FIELDS = ("id", "label", "kind", "username", "username_arg", "secret_arg")
+_STR_FIELDS = (
+    "id",
+    "label",
+    "kind",
+    "username",
+    "username_arg",
+    "secret_arg",
+    "private_key",
+    "public_key",
+)
 _LIST_FIELDS = ("scope_hosts", "scope_runnables")
 
-VALID_KINDS = ("userpass", "password", "token")
+VALID_KINDS = ("userpass", "password", "token", "ssh-key")
 
 
 # ── metadata store (TOML) ──────────────────────────────────────────────────────

@@ -116,13 +116,15 @@ export interface Filter {
 export interface Credential {
   id: string
   label: string
-  kind: 'userpass' | 'password' | 'token'
+  kind: 'userpass' | 'password' | 'token' | 'ssh-key'
   username?: string
   username_arg?: string
   secret_arg?: string
+  private_key?: string   // ssh-key: path to the private key file
+  public_key?: string    // ssh-key: path to the public key file (optional)
   scope_hosts?: string[]
   scope_runnables?: string[]
-  has_secret?: boolean
+  has_secret?: boolean   // ssh-key: a key passphrase is stored
   secret?: string   // write-only; never returned by list_credentials
 }
 

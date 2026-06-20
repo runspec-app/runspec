@@ -329,3 +329,62 @@ def test_pull_without_url_errors(monkeypatch, tmp_path):
     res = _SyncBridge().sync_pull()
     assert res["ok"] is False
     assert "URL" in res["error"]
+
+
+# ── _sync_auth: SSH-key credentials ──────────────────────────────────────────────
+
+
+class _AuthBridge:
+    """Borrows the real _sync_auth + _credential_entry over a fixed config."""
+
+    _sync_auth = Bridge._sync_auth
+    _credential_entry = Bridge._credential_entry
+
+    def __init__(self, creds, config):
+        self._credentials = creds
+        self._config = config
+
+    def get_config(self):
+        return self._config
+
+
+def test_sync_auth_ssh_uses_credential_key_and_passphrase(monkeypatch, tmp_path):
+    import runspec_console.credentials as cred_mod
+
+    monkeypatch.setattr(cfg, "config_path", lambda: tmp_path / "config.toml")
+
+    class _FakeKeyring:
+        store = {("runspec-console", "deploy"): "pass1"}
+
+        def get_password(self, service, name):
+            return self.store.get((service, name))
+
+    monkeypatch.setattr(cred_mod, "_keyring", lambda: _FakeKeyring())
+
+    b = _AuthBridge(
+        creds=[
+            {
+                "id": "deploy",
+                "kind": "ssh-key",
+                "username": "git",
+                "private_key": "/keys/runspec_ed25519",
+            }
+        ],
+        config={"ssh": {"identityFile": "/console/default_key"}},
+    )
+    auth = b._sync_auth("git@github.com:acme/cfg.git", "deploy")
+    assert auth.scheme == "ssh"
+    assert auth.username == "git"
+    # the credential's own key + its keyring passphrase win over the console key
+    assert auth.key_path == "/keys/runspec_ed25519"
+    assert auth.passphrase == "pass1"
+
+
+def test_sync_auth_ssh_falls_back_to_console_key(monkeypatch, tmp_path):
+    monkeypatch.setattr(cfg, "config_path", lambda: tmp_path / "config.toml")
+    # No credential selected → use the console's configured identityFile, default user.
+    b = _AuthBridge(creds=[], config={"ssh": {"identityFile": "/console/default_key"}})
+    auth = b._sync_auth("git@github.com:acme/cfg.git", "")
+    assert auth.key_path == "/console/default_key"
+    assert auth.username == "git"
+    assert auth.passphrase == ""
