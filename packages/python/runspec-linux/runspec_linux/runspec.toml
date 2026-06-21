@@ -508,6 +508,7 @@ output      = "json"
 
 [install-into-venv.args.venv]
 type        = "path"
+ui          = "directory"
 short       = "-v"
 description = "Path to the venv to install into (its bundled python runs pip)"
 
@@ -611,6 +612,7 @@ description = "Where to write pip.conf: user (~/.config/pip/pip.conf) or venv (<
 
 [configure-pip.args.venv]
 type        = "path"
+ui          = "directory"
 description = "Venv path for --scope venv (the file is written to <venv>/pip.conf)"
 required    = false
 

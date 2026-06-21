@@ -163,7 +163,9 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, covered, onCh
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
         <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
-        <Tag color="default" style={{ fontSize: 10, margin: 0 }}>{arg.type}</Tag>
+        <Tag color="default" style={{ fontSize: 10, margin: 0 }}>
+          {arg.type === 'path' && arg.ui === 'directory' ? 'folder' : arg.type}
+        </Tag>
         {arg.inherited && (
           <Tooltip title="Inherited from a global arg or a parent command — applies to this run">
             <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>inherited</Tag>

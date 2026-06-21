@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.108.0] — 2026-06-21
+
+### Fixed
+- **The Forms path picker can now select a *folder*, not just a file.** In the
+  browse modal's single-select mode the "Use this folder" action is always
+  available (previously only when the arg was `ui = "directory"`), so a generic
+  `path` arg that accepts a file *or* a folder (e.g. `install-into-venv --project`)
+  can finally pick a directory — in file mode you could otherwise only click a
+  file or descend into folders. A `ui = "directory"` arg now also titles the modal
+  "Select a folder · <host>" and the form field tags it **folder** (not `path`),
+  so it's clear the arg wants a directory (e.g. `install-into-venv --venv`, which
+  points at the venv folder, not the `bin/python` inside it). Backend folder
+  listing (`dirs_only`) was already supported; this is the missing UI affordance.
+
+
 ## [0.107.0] — 2026-06-21
 
 ### Added

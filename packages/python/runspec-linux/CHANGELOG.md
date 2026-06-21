@@ -1,5 +1,14 @@
 # runspec-linux Changelog
 
+## [0.4.3] — 2026-06-21
+
+- **`install-into-venv --venv` and `configure-pip --venv` are now marked
+  `ui = "directory"`.** Both point at an existing venv *folder*, so the console's
+  path picker opens a folder picker ("Use this folder") instead of a file picker
+  — it was previously unclear the arg wanted the venv directory, not the
+  `bin/python` inside it. (`install-into-venv --project` stays a generic `path`
+  since it accepts either a project directory or a wheel/sdist file.)
+
 ## [0.4.2] — 2026-06-21
 
 Add 3 runnables for managing Python virtualenvs on a fleet host — thin wrappers

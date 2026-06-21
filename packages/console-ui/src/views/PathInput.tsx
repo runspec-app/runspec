@@ -224,7 +224,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
       open
       onCancel={onClose}
       width={560}
-      title={<Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{multiSelect ? `Select files · ${host}` : `Browse ${host}`}</Text>}
+      title={<Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{multiSelect ? `Select files · ${host}` : dirsOnly ? `Select a folder · ${host}` : `Browse ${host}`}</Text>}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
@@ -236,11 +236,20 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
               <Button type="primary" disabled={selected.size === 0} onClick={() => { onPickMany?.([...selected]); onClose() }}>
                 Add {selected.size} file{selected.size === 1 ? '' : 's'}
               </Button>
-            ) : dirsOnly ? (
-              <Button type="primary" disabled={!cwd} onClick={() => onPick?.(cwd)}>
+            ) : (
+              // Always offer the current folder as the value: required for a
+              // directory arg, and the only way to pick a folder for a generic
+              // path arg that accepts a file *or* a folder (in file mode you can
+              // otherwise only click a file). In file mode it's a secondary
+              // action (clicking a file still picks it).
+              <Button
+                type={dirsOnly ? 'primary' : 'default'}
+                disabled={!cwd}
+                onClick={() => onPick?.(cwd)}
+              >
                 Use this folder
               </Button>
-            ) : null}
+            )}
           </div>
         </div>
       }
