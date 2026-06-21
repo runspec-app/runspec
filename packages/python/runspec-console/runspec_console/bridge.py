@@ -124,6 +124,12 @@ _MEMORY_TOOL_NAMES = frozenset(
     {"remember", "search_memory", "save_skill", "load_skill"}
 )
 
+# Read-only status tool: report the live working-hours rota + configured
+# triggers/schedules on demand (the same data folded into each turn's context,
+# but queryable mid-session after the clock may have crossed a rota boundary). No
+# side effects, so the autonomy gate runs it without a prompt.
+_STATUS_TOOL_NAMES = frozenset({"console_status"})
+
 # Cap on a single runnable's output handed to the model as a tool result. The
 # old 16 KB cap sliced data-heavy runnables (e.g. list-processes / list-containers
 # emitting one compact JSON line) *mid-JSON*, so the model received invalid,
@@ -4757,18 +4763,24 @@ class Bridge:
         def run() -> None:
             try:
                 try:
-                    # Fold the pinned-memory header into this turn's system prompt via
-                    # the one-off system_override path, so it stays fresh without
-                    # invalidating the cached adapter. Empty header → cached adapter
-                    # (and a byte-identical, prompt-cached system prefix).
+                    # Fold the live console context (working-hours rota +
+                    # configured triggers/schedules) and the pinned-memory header
+                    # into this turn's system prompt via the one-off system_override
+                    # path, so they stay fresh without invalidating the cached
+                    # adapter. Both empty → cached adapter (and a byte-identical,
+                    # prompt-cached system prefix) for an unconfigured console.
                     from . import memory
 
-                    header = memory.build_header()
+                    extra = "\n\n".join(
+                        part
+                        for part in (self._console_context(), memory.build_header())
+                        if part
+                    )
                     adapter = (
                         self._get_adapter(
-                            system_override=self._base_system() + "\n\n" + header
+                            system_override=self._base_system() + "\n\n" + extra
                         )
-                        if header
+                        if extra
                         else self._get_adapter()
                     )
                 except Exception as exc:
@@ -5511,7 +5523,8 @@ class Bridge:
         so the model picks valid values."""
         remote = [h["name"] for h in self._hosts if h.get("ssh")]
         if not remote:
-            return self._memory_tools()  # no transfer tools, but memory is local
+            # No transfer tools (no remote hosts), but status + memory are local.
+            return [*self._status_tools(), *self._memory_tools()]
         self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
         filter_names = [f["name"] for f in filters if f.get("name")]
@@ -5642,7 +5655,36 @@ class Bridge:
                 "required": ["path", "dest_host", "dest_dir"],
             },
         }
-        return [download, relay, *self._memory_tools()]
+        return [download, relay, *self._status_tools(), *self._memory_tools()]
+
+    def _status_tools(self) -> list[dict[str, Any]]:
+        """Schema for the read-only ``console_status`` tool — lets the agent
+        re-check the working-hours rota (and whether it's inside/outside hours
+        right now) plus the configured triggers/schedules on demand, e.g. before
+        running something in a long session where the clock may have crossed a
+        working-hours boundary since the turn began."""
+        return [
+            {
+                "name": "console_status",
+                "description": (
+                    "Report the live console automation state: the working-hours "
+                    "rota (on/off and whether it is currently INSIDE or OUTSIDE "
+                    "working hours), plus the configured triggers and schedules. "
+                    "Read-only. Use it to re-check working hours before running, "
+                    "scheduling, or triggering something — especially in a long "
+                    "conversation where the time may have crossed a rota boundary."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ]
+
+    def _run_status_tool(self, ti: dict[str, Any]) -> str:
+        """Execute ``console_status`` — return the live rota + triggers + schedules
+        snapshot (the autonomy gate has already let it run; it has no side effects)."""
+        return self._console_context() or (
+            "Working-hours rota: OFF — automation runs at any time. No triggers or "
+            "schedules are configured."
+        )
 
     def _memory_tools(self) -> list[dict[str, Any]]:
         """Schemas for the persistent-memory / runbook tools. Always available (the
@@ -5950,6 +5992,8 @@ class Bridge:
             return "autonomous"  # search/describe are read-only discovery
         if tool_name in _MEMORY_TOOL_NAMES:
             return "autonomous"  # local memory/runbook store — no model-spend gate
+        if tool_name in _STATUS_TOOL_NAMES:
+            return "autonomous"  # read-only status report — no side effects
         if tool_name == "run_runnable":
             # Resolve the inner runnable so the gate reflects what actually runs —
             # not the generic wrapper. The level + per-arg escalation come from the
@@ -6354,6 +6398,8 @@ class Bridge:
             return self._run_custom_tool(tool_name, dict(tool_input or {}))
         if tool_name in _MEMORY_TOOL_NAMES:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
+        if tool_name in _STATUS_TOOL_NAMES:
+            return self._run_status_tool(dict(tool_input or {}))
         # Read-only discovery meta-tools (search mode) — no side effects, return JSON.
         if tool_name == "search_runnables":
             return self._run_search_tool(dict(tool_input or {}))
@@ -7496,6 +7542,92 @@ class Bridge:
             "runspec runnables on local and remote hosts via tools. Use tools "
             "when they help, and confirm before anything destructive."
         )
+
+    def _console_context(self) -> str:
+        """A per-turn system-prompt block making the chat agent aware of the
+        working-hours rota and the configured triggers/schedules, so it can reason
+        about them and react when asked to act outside working hours. Folded into
+        the per-turn ``system_override`` (like the pinned-memory header), and
+        returns ``""`` when nothing is configured so an unconfigured console keeps
+        the fully prompt-cached fast path."""
+        from datetime import datetime
+
+        from .config import read_rota, read_triggers
+        from .triggers import _DAYS, within_rota
+
+        rota = read_rota()
+        triggers = read_triggers()
+        schedules = self._read_schedules()
+        rota_on = bool(rota.get("enabled"))
+        if not rota_on and not triggers and not schedules:
+            return ""  # nothing to say — keep the cached system prefix
+
+        lines: list[str] = ["## Console context (live automation state)"]
+
+        if not rota_on:
+            lines.append(
+                "Working-hours rota: OFF — triggers and schedules run at any time."
+            )
+        else:
+            now = datetime.now()
+            inside = within_rota(rota, now)
+            src = (
+                "Outlook calendar"
+                if rota.get("source") == "outlook"
+                else "console grid"
+            )
+            day = rota.get(_DAYS[now.weekday()])
+            if isinstance(day, dict) and day.get("on"):
+                today = f"today ({now.strftime('%a')}) {day.get('start', '?')}–{day.get('end', '?')}"
+            else:
+                today = f"today ({now.strftime('%a')}) is a non-working day"
+            note = (
+                " (the live gate also consults your Outlook calendar, so treat this as approximate)"
+                if rota.get("source") == "outlook"
+                else ""
+            )
+            lines.append(
+                f"Working-hours rota: ON ({src}); {today}. Right now it is "
+                f"**{'INSIDE' if inside else 'OUTSIDE'}** working hours{note}. "
+                "Automated triggers and schedules do not fire outside these hours. "
+                "Interactive requests like this one are not auto-blocked — but when it "
+                "is outside working hours and the user asks you to run, schedule, or "
+                "trigger something with side effects, point out that it's outside their "
+                "working hours and confirm they want to proceed before acting."
+            )
+
+        if triggers:
+            lines.append("")
+            lines.append(f"Configured triggers ({len(triggers)}):")
+            for t in triggers[:20]:
+                state = "" if t.get("enabled", True) else " [disabled]"
+                lines.append(
+                    f"- {t.get('name')}: {t.get('source')}:{t.get('event')} · "
+                    f"{t.get('mode', 'agent')}{state}"
+                )
+            if len(triggers) > 20:
+                lines.append(f"- … and {len(triggers) - 20} more")
+
+        if schedules:
+            lines.append("")
+            lines.append(f"Configured schedules ({len(schedules)}):")
+            for s in schedules[:20]:
+                when = s.get("when") or {}
+                when_txt = (
+                    f"every {when['every']}"
+                    if when.get("every")
+                    else str(when.get("cron", "?"))
+                )
+                if str(s.get("action") or "runnable") == "event":
+                    target = f"emit {s.get('event')}"
+                else:
+                    target = f"run /{s.get('runnable')} on {s.get('host')}"
+                state = "" if s.get("enabled", True) else " [disabled]"
+                lines.append(f"- {s.get('id')}: {target} · {when_txt}{state}")
+            if len(schedules) > 20:
+                lines.append(f"- … and {len(schedules) - 20} more")
+
+        return "\n".join(lines)
 
     def start_triggers(self) -> None:
         """Build the trigger engine from config and start its sources. Idempotent

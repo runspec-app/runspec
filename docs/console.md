@@ -364,6 +364,17 @@ start = "09:00"
 end = "17:30"
 ```
 
+**The chat agent knows about all of this.** Each interactive turn tells the agent
+whether the rota is on and whether it's **currently inside or outside** working
+hours, plus the triggers and schedules you have configured. So if you ask it to
+run, schedule, or trigger something outside your hours it can point that out and
+confirm before acting — and it can reason about your existing automation rather
+than being oblivious to it. (Interactive requests are never hard-blocked by the
+rota — that gate only applies to *automated* triggers and schedules.) The agent
+also has a read-only **`console_status`** tool it can call to re-check the rota
+and your triggers/schedules mid-conversation — handy in a long session where the
+clock may have crossed a working-hours boundary.
+
 ### Audit timeline
 
 Every run card keeps a timestamped **timeline** of what happened to it —

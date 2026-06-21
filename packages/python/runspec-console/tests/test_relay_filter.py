@@ -403,6 +403,7 @@ def test_start_transfer_push_unknown_filter_errors():
 class _ToolBridge:
     _custom_agent_tools = Bridge._custom_agent_tools
     _memory_tools = Bridge._memory_tools
+    _status_tools = Bridge._status_tools
     _run_custom_tool = Bridge._run_custom_tool
     _await_transfer = Bridge._await_transfer
     _emit_transfer_end = Bridge._emit_transfer_end

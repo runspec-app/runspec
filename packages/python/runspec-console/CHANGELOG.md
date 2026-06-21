@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.105.0] — 2026-06-21
+
+### Added
+- **The chat agent is now aware of the working-hours rota and the configured
+  triggers/schedules.** Each interactive turn folds a compact "console context"
+  block into the system prompt (via the same per-turn `system_override` path as
+  pinned memory, so the prompt-cached tool prefix doesn't churn): whether the rota
+  is on and whether it's **currently inside or outside** working hours, plus the
+  list of configured triggers (`source:event`, mode) and schedules (when +
+  target). So the agent can reason about them and, when asked to run/schedule/
+  trigger something **outside** working hours, flag that and confirm before acting
+  rather than running blindly. An unconfigured console (rota off, no triggers/
+  schedules) emits no block and keeps the fully prompt-cached fast path.
+- **`console_status` agent tool.** A read-only, autonomous (no confirm gate) tool
+  the agent can call on demand to re-check the rota (and whether it's currently
+  inside/outside working hours) plus the configured triggers/schedules — useful in
+  a long session where the clock may have crossed a working-hours boundary since
+  the turn began. Returns the same snapshot as the per-turn context block.
+
 ## [0.104.0] — 2026-06-21
 
 ### Changed
