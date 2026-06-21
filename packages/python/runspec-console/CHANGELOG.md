@@ -8,6 +8,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.107.0] — 2026-06-21
+
+### Added
+- **The chat agent can use Outlook Classic (desktop COM).** Six built-in agent
+  tools, available only when Outlook COM is reachable (Windows + pywin32), riding
+  the desktop's signed-in session so they work where the Microsoft Graph
+  device-code flow is blocked:
+  - **Read-only (autonomous, no prompt):** `outlook_inbox` (recent/unread mail in
+    the monitored or default folder), `outlook_search` (subject/body text),
+    `outlook_calendar` (upcoming events over N days), `outlook_reminders`.
+  - **Write (confirm-gated):** `outlook_draft` (save a new mail or a reply — with
+    the original quoted — to Drafts) and `outlook_send` (send a saved draft or
+    compose+send). `from_mailbox` sends as a shared mailbox. **Send is
+    confirm-gated**, so the operator approves each one.
+
+  Built on the console's existing Outlook COM (`sources/outlook.py`) — new
+  helpers `list_messages` / `search_messages` / `upcoming_events` /
+  `list_reminders` / `save_new_draft` / `send_new_mail` plus the bridge wiring
+  (`_outlook_tools` / `_run_outlook_tool`, `_OUTLOOK_READ_TOOLS` autonomous /
+  `_OUTLOOK_WRITE_TOOLS` confirm).
+- **The agent is now aware of the monitored mailbox.** `_console_context()` (the
+  per-turn awareness block) names the monitored mailbox/folder and the available
+  `outlook_*` tools when Outlook is reachable — so the agent knows it can read,
+  search, draft and send, and `console_status` reports it too. Emits nothing when
+  no mailbox is configured (keeps the prompt-cached fast path).
+
+This shifts Outlook usage for the agent fully onto Outlook Classic. The
+`runspec-windows[graph]` Outlook/Calendar runnables are now redundant; retiring
+them (and dropping the `[graph]` extra, which still backs the Teams/OneDrive
+Graph runnables) is a planned follow-up.
+
+
 ## [0.106.1] — 2026-06-21
 
 ### Changed

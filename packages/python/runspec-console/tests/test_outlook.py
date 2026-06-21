@@ -20,12 +20,20 @@ from runspec_console.sources.outlook import (
     _compose_reply_draft,
     _connection_alive,
     _descend,
+    _event_row,
     _folder_segments,
     _mail_payload,
+    _mail_summary,
     _reminder_payload,
+    _search_dasl,
     _split_categories,
+    list_messages,
+    outlook_available,
+    save_new_draft,
     save_reply_draft,
     send_draft,
+    send_new_mail,
+    upcoming_events,
 )
 
 
@@ -467,3 +475,77 @@ def test_calendar_clock_ok_none_off_windows():
     from runspec_console.sources.outlook import calendar_clock_ok
 
     assert calendar_clock_ok(datetime.now(), "shift", False) is None
+
+
+# ── agent-facing helpers (Outlook Classic tools) ──────────────────────────────
+
+
+def test_outlook_available_off_windows():
+    if sys.platform != "win32":
+        assert outlook_available() is False
+
+
+def test_search_dasl_escapes_quotes_and_covers_subject_and_body():
+    dasl = _search_dasl("o'brien")
+    assert dasl.startswith("@SQL=(")
+    assert "o''brien" in dasl  # single quote doubled
+    assert "urn:schemas:httpmail:subject" in dasl
+    assert "urn:schemas:httpmail:textdescription" in dasl
+
+
+def test_mail_summary_shape_and_preview_cap():
+    long_body = "word " * 200
+    mail = SimpleNamespace(
+        Subject="Hi",
+        SenderName="Alice",
+        SenderEmailAddress="a@b.com",
+        ReceivedTime="2026-06-21 09:00",
+        UnRead=True,
+        EntryID="E1",
+        Body=long_body,
+    )
+    row = _mail_summary(mail)
+    assert row["subject"] == "Hi"
+    assert row["from"] == "Alice"
+    assert row["unread"] is True
+    assert row["entry_id"] == "E1"
+    assert len(row["preview"]) <= 281  # cap + ellipsis
+    assert row["preview"].endswith("…")
+
+
+def test_mail_summary_falls_back_to_sender_address():
+    mail = SimpleNamespace(
+        Subject="S", SenderName="", SenderEmailAddress="x@y.com", Body="b"
+    )
+    assert _mail_summary(mail)["from"] == "x@y.com"
+
+
+def test_event_row_shape():
+    from datetime import datetime
+
+    it = SimpleNamespace(
+        Subject="Standup",
+        Start=datetime(2026, 6, 21, 9, 0),
+        End=datetime(2026, 6, 21, 9, 30),
+        Location="Room 1",
+        Organizer="Bob",
+        BusyStatus=2,
+    )
+    row = _event_row(it)
+    assert row["subject"] == "Standup"
+    assert row["location"] == "Room 1"
+    assert row["busy"] is True
+
+
+def test_read_and_compose_helpers_guard_non_windows():
+    if sys.platform == "win32":
+        return
+    # Reads that degrade return None; the rest raise a clear Windows-only error.
+    assert upcoming_events() is None
+    for fn in (
+        lambda: list_messages(),
+        lambda: save_new_draft("a@b.com", "s", "b"),
+        lambda: send_new_mail("a@b.com", "s", "b"),
+    ):
+        with pytest.raises(RuntimeError):
+            fn()

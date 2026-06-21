@@ -132,6 +132,17 @@ _MEMORY_TOOL_NAMES = frozenset(
 # side effects, so the autonomy gate runs it without a prompt.
 _STATUS_TOOL_NAMES = frozenset({"console_status"})
 
+# Outlook Classic (desktop COM) agent tools. Reads are autonomous (no side
+# effects — local COM reads on the operator's box); draft/send are write actions
+# and prompt before running. Only offered when Outlook COM is available (Windows
+# + pywin32). These ride the desktop's signed-in Outlook session, so they work in
+# locked-down environments that block the Graph device-code flow.
+_OUTLOOK_READ_TOOLS = frozenset(
+    {"outlook_inbox", "outlook_search", "outlook_calendar", "outlook_reminders"}
+)
+_OUTLOOK_WRITE_TOOLS = frozenset({"outlook_draft", "outlook_send"})
+_OUTLOOK_TOOL_NAMES = _OUTLOOK_READ_TOOLS | _OUTLOOK_WRITE_TOOLS
+
 # Cap on a single runnable's output handed to the model as a tool result. The
 # old 16 KB cap sliced data-heavy runnables (e.g. list-processes / list-containers
 # emitting one compact JSON line) *mid-JSON*, so the model received invalid,
@@ -5591,6 +5602,7 @@ class Bridge:
             # local and the denylist tool works against any host with a runspec path.
             return [
                 *([deny_tool] if deny_tool else []),
+                *self._outlook_tools(),
                 *self._status_tools(),
                 *self._memory_tools(),
             ]
@@ -5728,9 +5740,258 @@ class Bridge:
             download,
             relay,
             *([deny_tool] if deny_tool else []),
+            *self._outlook_tools(),
             *self._status_tools(),
             *self._memory_tools(),
         ]
+
+    def _outlook_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the Outlook Classic (desktop COM) tools — read inbox /
+        search / calendar / reminders (read-only, autonomous) and draft / send
+        (confirm-gated). Offered only when Outlook COM is available (Windows +
+        pywin32); empty list otherwise so non-Windows consoles are unaffected."""
+        from .config import read_mailbox
+        from .sources import outlook as ol
+
+        if not ol.outlook_available():
+            return []
+        mailbox = read_mailbox() or {}
+        mbox_hint = (
+            f" The monitored mailbox is {mailbox.get('address') or 'your default account'}"
+            f"{('/' + mailbox['folder']) if mailbox.get('folder') else ''};"
+            " omit mailbox/folder to use it."
+            if mailbox
+            else " Omit mailbox/folder to use your default account's Inbox."
+        )
+        return [
+            {
+                "name": "outlook_inbox",
+                "description": (
+                    "List recent messages from Outlook Classic (desktop COM, newest "
+                    "first), unread by default." + mbox_hint
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "unread_only": {
+                            "type": "boolean",
+                            "description": "Only unread messages (default true).",
+                        },
+                        "count": {
+                            "type": "integer",
+                            "description": "Max messages to return (default 20).",
+                        },
+                        "mailbox": {
+                            "type": "string",
+                            "description": "Mailbox address; omit for the monitored/default account.",
+                        },
+                        "folder": {
+                            "type": "string",
+                            "description": "Folder path (e.g. 'Tickets/Open'); omit for Inbox.",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "outlook_search",
+                "description": "Search an Outlook folder's messages by subject/body text (desktop COM)."
+                + mbox_hint,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Text to match in subject or body.",
+                        },
+                        "count": {
+                            "type": "integer",
+                            "description": "Max messages to return (default 20).",
+                        },
+                        "mailbox": {
+                            "type": "string",
+                            "description": "Mailbox address; omit for the monitored/default account.",
+                        },
+                        "folder": {
+                            "type": "string",
+                            "description": "Folder path; omit for Inbox.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "outlook_calendar",
+                "description": "List upcoming Outlook calendar events over the next N days (desktop COM).",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "days": {
+                            "type": "integer",
+                            "description": "Days ahead to include (default 1 = today).",
+                        },
+                        "count": {
+                            "type": "integer",
+                            "description": "Max events to return (default 20).",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "outlook_reminders",
+                "description": "List currently-active Outlook reminders (desktop COM).",
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "outlook_draft",
+                "description": (
+                    "Save a mail to the Outlook Drafts folder (never sent). Provide "
+                    "reply_to (a message entry_id) to draft a reply with the original "
+                    "quoted, or to/subject to draft a new message. from_mailbox sends "
+                    "as a shared mailbox (send-as/on-behalf)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "body": {
+                            "type": "string",
+                            "description": "Message body (your text; goes above the quoted original on a reply).",
+                        },
+                        "reply_to": {
+                            "type": "string",
+                            "description": "entry_id of the message to reply to (from outlook_inbox/search or a new_mail trigger).",
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "Recipient(s) for a new message (semicolon-separated).",
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Subject for a new message.",
+                        },
+                        "cc": {
+                            "type": "string",
+                            "description": "CC recipient(s) for a new message.",
+                        },
+                        "from_mailbox": {
+                            "type": "string",
+                            "description": "Shared mailbox to send as (optional).",
+                        },
+                    },
+                    "required": ["body"],
+                },
+            },
+            {
+                "name": "outlook_send",
+                "description": (
+                    "Send mail via Outlook Classic. Provide entry_id to send an "
+                    "existing draft, or to/subject/body to compose and send. This "
+                    "actually sends — it is confirm-gated, so the operator approves "
+                    "each send. from_mailbox sends as a shared mailbox."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of a saved draft to send.",
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "Recipient(s) when composing+sending (semicolon-separated).",
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Subject when composing+sending.",
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "Body when composing+sending.",
+                        },
+                        "cc": {"type": "string", "description": "CC recipient(s)."},
+                        "from_mailbox": {
+                            "type": "string",
+                            "description": "Shared mailbox to send as (optional).",
+                        },
+                    },
+                },
+            },
+        ]
+
+    def _run_outlook_tool(self, name: str, ti: dict[str, Any]) -> str:
+        """Execute an Outlook Classic tool via desktop COM and return a compact
+        result. Reads return JSON rows; draft/send return a one-line summary (the
+        autonomy gate has already approved a write)."""
+        import json as _json
+
+        from .sources import outlook as ol
+
+        try:
+            if name == "outlook_inbox":
+                rows = ol.list_messages(
+                    str(ti.get("mailbox") or ""),
+                    str(ti.get("folder") or ""),
+                    bool(ti.get("unread_only", True)),
+                    int(ti.get("count") or 20),
+                )
+                return _json.dumps({"messages": rows, "count": len(rows)}, default=str)
+            if name == "outlook_search":
+                query = str(ti.get("query") or "").strip()
+                if not query:
+                    return "Error: 'query' is required for outlook_search."
+                rows = ol.search_messages(
+                    query,
+                    str(ti.get("mailbox") or ""),
+                    str(ti.get("folder") or ""),
+                    int(ti.get("count") or 20),
+                )
+                return _json.dumps({"messages": rows, "count": len(rows)}, default=str)
+            if name == "outlook_calendar":
+                rows = ol.upcoming_events(
+                    int(ti.get("days") or 1), int(ti.get("count") or 20)
+                )
+                if rows is None:
+                    return "Could not read the Outlook calendar (is Outlook running?)."
+                return _json.dumps({"events": rows, "count": len(rows)}, default=str)
+            if name == "outlook_reminders":
+                rows = ol.list_reminders(int(ti.get("count") or 20))
+                if rows is None:
+                    return "Could not read Outlook reminders (is Outlook running?)."
+                return _json.dumps({"reminders": rows, "count": len(rows)}, default=str)
+            if name == "outlook_draft":
+                body = str(ti.get("body") or "")
+                fm = str(ti.get("from_mailbox") or "") or None
+                if ti.get("reply_to"):
+                    res = ol.save_reply_draft(str(ti["reply_to"]), body, fm)
+                else:
+                    to = str(ti.get("to") or "")
+                    if not to:
+                        return "Error: provide reply_to (an entry_id) or to (a recipient) for outlook_draft."
+                    res = ol.save_new_draft(
+                        to,
+                        str(ti.get("subject") or ""),
+                        body,
+                        str(ti.get("cc") or ""),
+                        fm or "",
+                    )
+                return f"✓ Draft saved to Drafts (entry_id {res.get('entry_id')}): to {res.get('to')} — {res.get('subject')}"
+            if name == "outlook_send":
+                if ti.get("entry_id"):
+                    res = ol.send_draft(str(ti["entry_id"]))
+                else:
+                    to = str(ti.get("to") or "")
+                    if not to:
+                        return "Error: provide entry_id (a saved draft) or to/subject/body for outlook_send."
+                    res = ol.send_new_mail(
+                        to,
+                        str(ti.get("subject") or ""),
+                        str(ti.get("body") or ""),
+                        str(ti.get("cc") or ""),
+                        str(ti.get("from_mailbox") or ""),
+                    )
+                return f"✓ Sent: to {res.get('to')} — {res.get('subject', '')}"
+        except Exception as exc:  # noqa: BLE001 — surface COM failures to the agent
+            return f"✗ Outlook {name} failed: {exc}"
+        return f"Error: unknown Outlook tool '{name}'."
 
     def _denylist_tool(self) -> dict[str, Any] | None:
         """Schema for the built-in ``manage_denylist`` tool — a fleet kill switch.
@@ -6229,6 +6490,10 @@ class Bridge:
             # (add/all/clear/mode) stay confirm-gated.
             action = str((tool_input or {}).get("action") or "").lower()
             return "autonomous" if action == "list" else "confirm"
+        if tool_name in _OUTLOOK_READ_TOOLS:
+            return "autonomous"  # read-only Outlook reads (local COM) — no prompt
+        if tool_name in _OUTLOOK_WRITE_TOOLS:
+            return "confirm"  # draft/send mail — always prompt (send is irreversible)
         if tool_name in _CUSTOM_TOOL_NAMES:
             return "confirm"  # side-effecting file move — always prompt
         if tool_name in _READONLY_META:
@@ -6639,6 +6904,8 @@ class Bridge:
         """
         if tool_name in _CUSTOM_TOOL_NAMES:
             return self._run_custom_tool(tool_name, dict(tool_input or {}))
+        if tool_name in _OUTLOOK_TOOL_NAMES:
+            return self._run_outlook_tool(tool_name, dict(tool_input or {}))
         if tool_name in _MEMORY_TOOL_NAMES:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
         if tool_name in _STATUS_TOOL_NAMES:
@@ -7795,14 +8062,16 @@ class Bridge:
         the fully prompt-cached fast path."""
         from datetime import datetime
 
-        from .config import read_rota, read_triggers
+        from .config import read_mailbox, read_rota, read_triggers
+        from .sources import outlook as ol
         from .triggers import _DAYS, within_rota
 
         rota = read_rota()
         triggers = read_triggers()
         schedules = self._read_schedules()
+        mailbox = read_mailbox() if ol.outlook_available() else None
         rota_on = bool(rota.get("enabled"))
-        if not rota_on and not triggers and not schedules:
+        if not rota_on and not triggers and not schedules and not mailbox:
             return ""  # nothing to say — keep the cached system prefix
 
         lines: list[str] = ["## Console context (live automation state)"]
@@ -7869,6 +8138,19 @@ class Bridge:
                 lines.append(f"- {s.get('id')}: {target} · {when_txt}{state}")
             if len(schedules) > 20:
                 lines.append(f"- … and {len(schedules) - 20} more")
+
+        if mailbox:
+            lines.append("")
+            where = mailbox.get("address") or "your default account"
+            if mailbox.get("folder"):
+                where += f" / {mailbox['folder']}"
+            lines.append(
+                f"Outlook (Classic, desktop): monitoring {where} for new mail"
+                + (f" — label '{mailbox['label']}'" if mailbox.get("label") else "")
+                + ". You can read, search, draft and send via the outlook_* tools "
+                "(outlook_inbox / outlook_search / outlook_calendar / outlook_reminders "
+                "are read-only; outlook_draft / outlook_send write — send is confirm-gated)."
+            )
 
         return "\n".join(lines)
 

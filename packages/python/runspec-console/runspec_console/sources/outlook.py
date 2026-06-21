@@ -45,7 +45,7 @@ import queue
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from ..events import EmitFn, Event, register_source
@@ -616,6 +616,263 @@ def send_draft(entry_id: str) -> dict[str, str]:
         }
         draft.Send()
         return summary
+    finally:
+        pythoncom.CoUninitialize()
+
+
+# ── agent-facing reads + compose (Outlook Classic tools) ──────────────────────
+#
+# On-demand helpers the chat agent calls to read the inbox / calendar / reminders
+# and to draft or send mail — all via the same desktop COM session the source
+# uses, so they ride the org SSO and dodge the Graph device-code wall. Each opens
+# its own ``CoInitialize`` (they run on the bridge's tool-call thread, not the
+# pump). The pure row-shapers (``_mail_summary`` / ``_event_row`` / ``_search_dasl``)
+# are duck-typed and unit-tested with fakes on any platform.
+
+_PREVIEW_CAP = 280  # chars of body preview in a list/search row (tokens stay small)
+
+
+def outlook_available() -> bool:
+    """True when Outlook Classic COM can be driven from this process (Windows +
+    pywin32). Cheap; used to gate the agent tools' presence."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import pythoncom  # noqa: F401
+        import win32com.client  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def _mail_summary(mail: Any) -> dict[str, Any]:
+    """Compact row for a message (subject/from/received/unread/entry_id + a short
+    preview) — small enough to list many without bloating the model context. The
+    agent can fetch the full body via the entry_id if it needs it."""
+    body = " ".join(_str(_attr(mail, "Body")).split())
+    preview = body[:_PREVIEW_CAP] + ("…" if len(body) > _PREVIEW_CAP else "")
+    return {
+        "subject": _str(_attr(mail, "Subject")),
+        "from": _str(_attr(mail, "SenderName") or _attr(mail, "SenderEmailAddress")),
+        "received": _str(_attr(mail, "ReceivedTime")),
+        "unread": bool(_attr(mail, "UnRead", False)),
+        "entry_id": _str(_attr(mail, "EntryID")),
+        "preview": preview,
+    }
+
+
+def _event_row(it: Any) -> dict[str, Any]:
+    """Compact row for a calendar item."""
+    return {
+        "subject": _str(_attr(it, "Subject")),
+        "start": _str(_to_dt(_attr(it, "Start", None))),
+        "end": _str(_to_dt(_attr(it, "End", None))),
+        "location": _str(_attr(it, "Location")),
+        "organizer": _str(_attr(it, "Organizer")),
+        "busy": int(_attr(it, "BusyStatus", 0) or 0) in _BUSY_STATUSES,
+    }
+
+
+def _search_dasl(query: str) -> str:
+    """A DASL ``@SQL`` Restrict filter matching ``query`` in subject or body.
+
+    Pure + testable. Single quotes in the query are doubled (DASL string escape);
+    the property names are the standard httpmail schema URNs."""
+    q = query.replace("'", "''")
+    subj = "urn:schemas:httpmail:subject"
+    text = "urn:schemas:httpmail:textdescription"
+    return f"@SQL=(\"{subj}\" LIKE '%{q}%' OR \"{text}\" LIKE '%{q}%')"
+
+
+def list_messages(
+    mailbox: str = "", folder: str = "", unread_only: bool = True, count: int = 20
+) -> list[dict[str, Any]]:
+    """Most-recent messages in the watched folder (default: the configured/Inbox),
+    newest first, optionally unread-only. Windows-only; win32 imports stay here."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        target = _resolve_watch(ns, mailbox, folder)
+        items = target.Items
+        items.Sort("[ReceivedTime]", True)  # descending — newest first
+        if unread_only:
+            items = items.Restrict("[Unread] = true")
+        out: list[dict[str, Any]] = []
+        for it in items:
+            out.append(_mail_summary(it))
+            if len(out) >= count:
+                break
+        return out
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def search_messages(
+    query: str, mailbox: str = "", folder: str = "", count: int = 20
+) -> list[dict[str, Any]]:
+    """Messages in the watched folder whose subject or body match ``query``
+    (substring), newest first. Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        target = _resolve_watch(ns, mailbox, folder)
+        items = target.Items
+        items.Sort("[ReceivedTime]", True)
+        restricted = items.Restrict(_search_dasl(query))
+        out: list[dict[str, Any]] = []
+        for it in restricted:
+            out.append(_mail_summary(it))
+            if len(out) >= count:
+                break
+        return out
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def upcoming_events(days: int = 1, count: int = 20) -> list[dict[str, Any]] | None:
+    """Calendar events overlapping the window now…now+``days`` (default today),
+    soonest first. ``None`` if the calendar can't be read (non-Windows / Outlook
+    closed / COM error). Windows-only."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        try:
+            app = win32com.client.Dispatch("Outlook.Application")
+            cal = app.GetNamespace("MAPI").GetDefaultFolder(9)  # olFolderCalendar
+            items = cal.Items
+            items.IncludeRecurrences = True
+            items.Sort("[Start]")
+            now = datetime.now()
+            end = now + timedelta(days=max(1, days))
+            fmt = "%m/%d/%Y %I:%M %p"
+            restricted = items.Restrict(
+                f"[Start] <= '{end.strftime(fmt)}' AND [End] >= '{now.strftime(fmt)}'"
+            )
+            out: list[dict[str, Any]] = []
+            for it in restricted:
+                out.append(_event_row(it))
+                if len(out) >= count:
+                    break
+            return out
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception:
+        logger.exception("outlook: upcoming_events read failed")
+        return None
+
+
+def list_reminders(count: int = 20) -> list[dict[str, Any]] | None:
+    """Currently-active Outlook reminders (caption + due time). ``None`` on a COM
+    error. Windows-only."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        try:
+            app = win32com.client.Dispatch("Outlook.Application")
+            out: list[dict[str, Any]] = []
+            for r in app.Reminders:
+                if not _attr(r, "IsVisible", True):
+                    continue
+                out.append(
+                    {
+                        "caption": _str(_attr(r, "Caption")),
+                        "due": _str(_attr(r, "NextReminderDate")),
+                    }
+                )
+                if len(out) >= count:
+                    break
+            return out
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception:
+        logger.exception("outlook: list_reminders read failed")
+        return None
+
+
+def save_new_draft(
+    to: str, subject: str, body: str, cc: str = "", from_mailbox: str = ""
+) -> dict[str, str]:
+    """Compose a fresh mail and save it to Drafts (never sent). Returns
+    {to, subject, entry_id}. Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        mail = app.CreateItem(0)  # olMailItem
+        mail.To = to
+        mail.Subject = subject
+        mail.Body = body
+        if cc:
+            mail.CC = cc
+        if from_mailbox:
+            mail.SentOnBehalfOfName = from_mailbox
+        try:
+            mail.Recipients.ResolveAll()
+        except Exception:
+            logger.debug("outlook: ResolveAll on new draft failed", exc_info=True)
+        mail.Save()
+        return {
+            "to": _str(_attr(mail, "To")),
+            "subject": _str(_attr(mail, "Subject")),
+            "entry_id": _str(_attr(mail, "EntryID")),
+        }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def send_new_mail(
+    to: str, subject: str, body: str, cc: str = "", from_mailbox: str = ""
+) -> dict[str, str]:
+    """Compose and **send** a fresh mail in one step (the agent's confirm-gated
+    send path). Returns {to, subject}. Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    if not to:
+        raise RuntimeError("send has no recipient")
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        mail = app.CreateItem(0)
+        mail.To = to
+        mail.Subject = subject
+        mail.Body = body
+        if cc:
+            mail.CC = cc
+        if from_mailbox:
+            mail.SentOnBehalfOfName = from_mailbox
+        try:
+            mail.Recipients.ResolveAll()
+        except Exception:
+            logger.debug("outlook: ResolveAll on send failed", exc_info=True)
+        mail.Send()
+        return {"to": to, "subject": subject}
     finally:
         pythoncom.CoUninitialize()
 
