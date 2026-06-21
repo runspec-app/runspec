@@ -459,9 +459,9 @@ export interface TestResult {
 
 // ── event triggers (Triggers tab) ───────────────────────────────────────────
 
-// runspec:trigger_card event detail — one kanban card (an event instance flowing
-// across the board). Columns: triggered | triage | awaiting_human | running |
-// done | failed.
+// runspec:trigger_card event detail — one run card (an event instance moving
+// through its run inbox). Lifecycle statuses: triggered | triage | awaiting_human
+// | running | done | failed.
 export interface TimelineEntry {
   ts: number      // epoch seconds
   text: string
@@ -478,6 +478,10 @@ export interface TriggerCard {
   created_at: number
   timeline?: TimelineEntry[]   // timestamped audit trail of stage changes + steps
 }
+
+// A run card in the shared run inbox (RunInbox). Schedule runs reuse the exact
+// TriggerCard shape, so one type serves both the Triggers and Schedules inboxes.
+export type RunCard = TriggerCard
 
 // A parked autonomy-gate confirm — the runspec:tool_confirm event's shape, also
 // returned by get_pending_confirms for cold-start. `id` is the chat/card id; a
@@ -754,6 +758,14 @@ export interface BridgeApi {
   save_rota: (rota: Rota) => Promise<{ ok: boolean }>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>
+  // Fire a trigger now with a synthetic event (the Triggers table's "Trigger now"
+  // button) — test a trigger without waiting for a real event. `body` is the
+  // pasted message (lands under the `body` payload key); `fields` are key=value
+  // payload overrides. Bypasses match/rota/dedup for the named trigger.
+  test_trigger: (name: string, body: string, fields: Record<string, string>) => Promise<{ ok: boolean; error?: string }>
+  // Schedules mirror the trigger run inbox + event log with their own feeds.
+  get_schedule_board: () => Promise<RunCard[]>
+  get_schedule_events: () => Promise<TriggerEvent[]>
   // Cold-start snapshot for the work inbox: autonomy-gate confirms parked before
   // the view mounted (the live path only emits runspec:tool_confirm for later ones).
   get_pending_confirms: () => Promise<PendingConfirm[]>

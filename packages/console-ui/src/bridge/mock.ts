@@ -1141,6 +1141,10 @@ export const mockApi: BridgeApi = {
     console.log('mock: save_trigger', trigger)
     return { ok: true }
   },
+  test_trigger: async (name: string, body: string, fields: Record<string, string>) => {
+    console.log('mock: test_trigger', name, body, fields)
+    return { ok: true }
+  },
   delete_trigger: async (name: string) => {
     console.log('mock: delete_trigger', name)
     return { ok: true }
@@ -1184,6 +1188,29 @@ export const mockApi: BridgeApi = {
     { id: 'e1', source: 'outlook', type: 'new_mail', summary: 'Outage on web01 — site returning 503', matched: ['vip-outage-triage'], skipped: [], ts: Date.now() / 1000 - 300 },
     { id: 'e2', source: 'outlook', type: 'new_mail', summary: 'Lunch order for Friday', matched: [], skipped: [], ts: Date.now() / 1000 - 120 },
     { id: 'e3', source: 'outlook', type: 'new_mail', summary: 'URGENT: cert expiring', matched: [], skipped: ['vip-outage-triage'], ts: Date.now() / 1000 - 60 },
+  ],
+  get_schedule_board: async () => [
+    {
+      card_id: 'sched-demo1', trigger: 'nightly-backup', source: 'schedule',
+      event_type: 'runnable', summary: '/backup-db on db01',
+      column: 'done', detail: { host: 'db01', runnable: 'backup-db', exit_code: 0, result: 'Backed up 3 databases (1.2 GB) in 42s.' },
+      created_at: Date.now() / 1000 - 600,
+      timeline: [
+        { ts: Date.now() / 1000 - 600, text: 'running' },
+        { ts: Date.now() / 1000 - 558, text: 'done (exit 0)' },
+      ],
+    },
+    {
+      card_id: 'sched-demo2', trigger: 'cert-check', source: 'schedule',
+      event_type: 'runnable', summary: '/check-cert on web01',
+      column: 'running', detail: { host: 'web01', runnable: 'check-cert' },
+      created_at: Date.now() / 1000 - 5,
+      timeline: [{ ts: Date.now() / 1000 - 5, text: 'running' }],
+    },
+  ],
+  get_schedule_events: async () => [
+    { id: 'se1', source: 'schedule', type: 'backup-db', summary: '/backup-db on db01', matched: ['nightly-backup'], skipped: [], ts: Date.now() / 1000 - 600 },
+    { id: 'se2', source: 'schedule', type: 'nightly_report', summary: 'emit nightly_report', matched: [], skipped: ['weekend-report'], ts: Date.now() / 1000 - 200 },
   ],
   send_trigger_draft: async (entryId: string) => {
     console.log('mock: send_trigger_draft', entryId)

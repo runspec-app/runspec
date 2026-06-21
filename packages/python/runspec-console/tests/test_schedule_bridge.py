@@ -15,6 +15,7 @@ touches are supplied.
 
 from __future__ import annotations
 
+import threading
 import types
 
 import pytest
@@ -35,10 +36,21 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
         "delete_schedule",
         "run_schedule_now",
         "_invoke_scheduled",
+        "_run_scheduled",
+        "_record_schedule_fire",
+        "_on_schedule_event",
+        "_on_schedule_card",
+        "get_schedule_board",
+        "get_schedule_events",
     ):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
     ns.restart_triggers = lambda: None
     ns._trigger_engine = engine
+    ns._lock = threading.Lock()
+    ns._schedule_cards = {}
+    ns._schedule_events = []
+    ns.dispatched = []
+    ns._dispatch = lambda ev, payload: ns.dispatched.append((ev, payload))
     ns.runs = []
     ns.invoke_runnable = lambda host, runnable, args, **kw: (
         ns.runs.append((host, runnable, args, kw)) or "inv-xyz"
@@ -163,7 +175,49 @@ def test_run_now_runnable_invokes_directly(tmp_path, monkeypatch):
     }
     host, runnable, args, kw = ns.runs[0]
     assert (host, runnable, args) == ("prod-1", "backup", {"db": "main"})
-    assert kw == {"operator": "Scheduled Task", "trigger": "schedule"}
+    assert kw["operator"] == "Scheduled Task" and kw["trigger"] == "schedule"
+    # The scheduled path pre-allocates the inv_id and wires a progress callback so
+    # it can build the run card from the invoke lifecycle.
+    assert "inv_id" in kw and callable(kw["on_progress"])
+    # A run card was emitted to the Schedules inbox, and the fire recorded.
+    board = ns.get_schedule_board()
+    assert len(board) == 1 and board[0]["source"] == "schedule"
+    assert (
+        board[0]["column"] == "running" and board[0]["summary"] == "/backup on prod-1"
+    )
+    assert board[0]["card_id"] == kw["inv_id"]
+    events = ns.get_schedule_events()
+    assert len(events) == 1 and events[0]["matched"] == ["r1"]
+
+
+def test_run_now_runnable_card_finalizes_on_exit(tmp_path, monkeypatch):
+    """The progress callback finalizes the card to done/failed from the exit code."""
+    ns = _stub(tmp_path, monkeypatch)
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "r1",
+                "action": "runnable",
+                "host": "prod-1",
+                "runnable": "backup",
+                "when": {"cron": "0 2 * * *"},
+                "args": {},
+            }
+        ],
+    )
+    ns.run_schedule_now("r1")
+    _, _, _, kw = ns.runs[0]
+    on_progress = kw["on_progress"]
+    on_progress("line", {"line": "working…", "stream": "stdout"})
+    on_progress("done", {"exit_code": 0, "duration_ms": 5})
+    card = ns.get_schedule_board()[0]
+    assert card["column"] == "done"
+    assert card["detail"]["exit_code"] == 0 and "working" in card["detail"]["result"]
+    # A non-zero exit lands as failed with an error.
+    on_progress("done", {"exit_code": 2, "duration_ms": 5})
+    card = ns.get_schedule_board()[0]
+    assert card["column"] == "failed" and card["detail"]["error"]
 
 
 def test_run_now_event_feeds_engine(tmp_path, monkeypatch):
@@ -188,6 +242,10 @@ def test_run_now_event_feeds_engine(tmp_path, monkeypatch):
     ev = fed[0]
     assert ev.source == "schedule" and ev.type == "nightly"
     assert ev.payload["scope"] == "prod" and ev.payload["schedule"] == "e1"
+    # Store isolation: an event-action fire makes NO schedule run card (it routes
+    # through the engine), but it IS recorded in the Schedules event log.
+    assert ns.get_schedule_board() == []
+    assert len(ns.get_schedule_events()) == 1
 
 
 def test_run_now_event_without_engine_raises(tmp_path, monkeypatch):

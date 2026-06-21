@@ -62,7 +62,7 @@ seeing the room and the others' acks.
 ## 3. What we reuse (almost everything)
 
 Identical to the reuse table in `console-triggers.md` §3 — the engine, the
-`match` pre-filter, rule/agent routing, the autonomy gate, the kanban surface,
+`match` pre-filter, rule/agent routing, the autonomy gate, the run inbox,
 and the `_dispatch` → `runspec:*` CustomEvent channel to the frontend. The only
 genuinely new pieces are:
 

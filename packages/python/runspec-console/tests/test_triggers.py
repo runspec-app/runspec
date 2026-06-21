@@ -358,6 +358,39 @@ def test_engine_clock_gate_skips_outside_hours():
     assert fired == ["a"]
 
 
+def test_fire_test_dispatches_one_trigger_bypassing_gates():
+    """'Trigger now' fires exactly the named trigger, ignoring match/rota/dedup."""
+    fired: list[str] = []
+    recs: list[dict] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    # A non-matching `match` + clock_ok=False would normally suppress this entirely.
+    t = Trigger.from_config(
+        {
+            "name": "vip",
+            "source": "outlook",
+            "event": "new_mail",
+            "match": {"subject": "(?i)never-matches-this"},
+        }
+    )
+    other = Trigger.from_config(
+        {"name": "other", "source": "outlook", "event": "new_mail"}
+    )
+    engine, _, _ = _engine(
+        [t, other], handler, on_event=recs.append, clock_ok=lambda: False
+    )
+    engine.start()
+    engine.fire_test("vip", Event.new("outlook", "new_mail", {"body": "hello"}))
+    assert fired == ["vip"]  # only the named trigger, and it ran despite the gates
+    assert recs[-1]["matched"] == ["vip"]
+    # An unknown name is a no-op.
+    assert engine.fire_test("nope", Event.new("outlook", "new_mail", {})) is None
+    assert fired == ["vip"]
+
+
 # ── card timeline ─────────────────────────────────────────────────────────────
 
 

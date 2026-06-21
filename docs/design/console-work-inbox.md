@@ -22,7 +22,7 @@ Three places in the console can need a human *right now*:
 
 - the **chat / agent confirm-gate** — a tool call parked on the autonomy gate
   (`runspec:tool_confirm`), waiting for Approve/Deny;
-- a **Triggers** kanban card sitting in **Awaiting human** (a parked gate from a
+- a **Triggers** run card sitting in **Awaiting human** (a parked gate from a
   headless trigger turn);
 - a **Rooms/helpdesk** conversation — an unclaimed thread, or an unread visitor
   message on a thread you're handling.
@@ -36,8 +36,8 @@ answers "what needs me?" across all three.
 
 - become a second source of truth for thread state, card state, or gate state —
   each owning surface stays authoritative;
-- **merge the data models.** A trigger card (an `Event` moving through kanban
-  columns), a helpdesk conversation (a `room` with an `open→…→closed` lifecycle),
+- **merge the data models.** A trigger card (an `Event` moving through its
+  lifecycle statuses), a helpdesk conversation (a `room` with an `open→…→closed` lifecycle),
   and a confirm gate (a `request_id` + `threading.Event`) are genuinely different
   shapes. We decided in `console-room-next-session.md` **not** to merge the tabs;
   this note honours that — the inbox holds lightweight *references* with
@@ -70,6 +70,17 @@ trigger-tagged confirms; `roomAttention` (lines ~201–206) reads
 `runspec:room_attention`; the Console tab shows `inFlight`. The work inbox
 **generalises and unifies** that badge logic into a first-class list — the badge
 counts become "rows you can act on."
+
+> **Note (run-inbox migration + schedules).** The Triggers tab's run view was
+> always rendered as an **inbox list**, not a literal kanban board with columns;
+> the descriptive wording moved from "kanban" to "run inbox" / "run card" /
+> "lifecycle status" to match. The **Schedules** tab now mirrors the Triggers
+> view — it reuses the same **run-inbox** component + detail drawer for its
+> runnable-action schedule runs, and has its own **Event log** of every scheduled
+> fire and its disposition (fired / skipped by working hours). The working-hours
+> **rota** (now its own first-class tab) is the single shared gate over **both**
+> triggers and schedules. None of this changes the work inbox's projection: a
+> scheduled run card enters/leaves on the same `runspec:trigger_*` signals.
 
 ---
 

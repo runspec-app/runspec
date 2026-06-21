@@ -1,33 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Input, Drawer, message } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined, BellOutlined, SendOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons'
+import { useEffect, useRef, useState } from 'react'
+import { Tag, Alert, Button, Tooltip, Space, Collapse, Input, message } from 'antd'
+import { CheckOutlined, CloseOutlined, ReloadOutlined, BellOutlined, SendOutlined } from '@ant-design/icons'
 import { bridge, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark, textColor } from '../ThemeContext'
 import { Markdown } from '../components/Markdown'
-
-// A status counts as "in flight" (abortable) while the engine is still working
-// it — anything before a terminal done/failed. The Stop button calls
-// bridge.cancel_chat(card_id): a trigger run's chat_id IS its card_id, so this
-// trips the same cancel event + unblocks a parked Approve/Deny gate.
-const RUNNING_STATUSES = new Set(['triggered', 'triage', 'running'])
-
-// Right-click copy is suppressed outside webview debug mode, so offer an
-// explicit Copy control. Selectable text already supports Ctrl+C.
-function CopyButton({ text, title = 'Copy' }: { text: string; title?: string }) {
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      message.success('Copied')
-    } catch {
-      message.error('Copy failed')
-    }
-  }
-  return (
-    <Tooltip title={title}>
-      <Button size="small" type="text" icon={<CopyOutlined />} onClick={e => { e.stopPropagation(); copy() }} />
-    </Tooltip>
-  )
-}
+import { RunInbox } from '../components/RunInbox'
+import { EventLog } from '../components/EventLog'
+import { TriggersEditor } from '../components/TriggersEditor'
+import { CopyButton, COLUMN_COLOR } from '../components/runShared'
 
 // A chat card is a helpdesk-room thread surfaced in the Triggers inbox (source
 // === 'chat'); clicking it opens the live conversation pane. A portal card
@@ -39,36 +19,9 @@ type QueueMsg = { sender?: string; text?: string; id?: string; ts?: number; kind
 const isChatCard = (c: TriggerCard) => c.source === 'chat'
 const visitorOf = (room: string) => room.split('/').slice(2).join('/') || room
 
-// Run lifecycle statuses, in order. The engine drives triggered→…→done/failed; the
-// awaiting_human column is overlaid client-side from a card-scoped tool_confirm.
-const COLUMNS: { key: string; label: string }[] = [
-  { key: 'triggered', label: 'Triggered' },
-  { key: 'triage', label: 'Triage' },
-  { key: 'awaiting_human', label: 'Awaiting human' },
-  { key: 'running', label: 'Running' },
-  { key: 'done', label: 'Done' },
-  { key: 'failed', label: 'Failed' },
-]
-
-const COLUMN_COLOR: Record<string, string> = {
-  triggered: '#8c8c8c',
-  triage: '#1677ff',
-  awaiting_human: '#fa8c16',
-  running: '#13c2c2',
-  done: '#52c41a',
-  failed: '#ff4d4f',
-}
-
-const STATUS_LABEL: Record<string, string> = Object.fromEntries(COLUMNS.map(c => [c.key, c.label]))
-
-function StatusBadge({ status }: { status: string }) {
-  const color = COLUMN_COLOR[status] ?? '#8c8c8c'
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color, flexShrink: 0, width: 110 }}>
-      <span style={{ width: 8, height: 8, borderRadius: 8, background: color }} />
-      {STATUS_LABEL[status] ?? status}
-    </span>
-  )
+function fmtTime(epochSeconds: number): string {
+  if (!epochSeconds) return ''
+  return new Date(epochSeconds * 1000).toLocaleTimeString()
 }
 
 interface PendingConfirm {
@@ -88,11 +41,6 @@ function describeToolInput(toolName: string, input: Record<string, unknown>): st
   const entries = Object.entries(input ?? {})
   if (entries.length === 0) return ''
   return entries.map(([k, v]) => `${k} = ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n')
-}
-
-function fmtTime(epochSeconds: number): string {
-  if (!epochSeconds) return ''
-  return new Date(epochSeconds * 1000).toLocaleTimeString()
 }
 
 export function TriggersView() {
@@ -249,24 +197,19 @@ export function TriggersView() {
     finally { setSending(false) }
   }
 
-  const toggleEnabled = async (name: string, enabled: boolean) => {
-    await bridge.set_trigger_enabled(name, enabled)
-    loadConfig()
-  }
-
-  // Runs as an inbox list, newest first. Click a row → the detail drawer.
-  const runs = useMemo(
-    () => Object.values(cards).sort((a, b) => b.created_at - a.created_at),
-    [cards],
-  )
+  // awaiting_human is overlaid client-side when a card has a parked confirm gate.
   const statusOf = (card: TriggerCard) =>
     pending[card.card_id] ? 'awaiting_human' : card.column
-  const selectedCard = selected ? cards[selected] : undefined
+  // A chat card opens the conversation pane; everything else opens the drawer.
+  const onSelect = (id: string | null) => {
+    if (id === null) { setSelected(null); return }
+    if (isChatCard(cards[id])) setConvo(id)
+    else setSelected(id)
+  }
   const convoCard = convo ? cards[convo] : undefined
   const convoRoom = (convoCard?.detail?.room as string | undefined) || ''
 
   const dim = isDark ? '#888' : '#999'
-  const cardBg = isDark ? '#1f1f1f' : '#fafafa'
   const colBg = isDark ? '#141414' : '#f0f0f0'
   const border = isDark ? '#303030' : '#e8e8e8'
 
@@ -278,50 +221,6 @@ export function TriggersView() {
   // uses — no point nagging about, say, the notifications source on a machine
   // that only runs Outlook triggers.
   const usedSources = new Set(triggers.map(t => String(t.source)))
-
-  const configColumns = [
-    {
-      title: 'Trigger',
-      dataIndex: 'name',
-      key: 'name',
-      render: (n: string) => <strong>{n}</strong>,
-    },
-    {
-      title: 'On',
-      key: 'on',
-      render: (_: unknown, t: Record<string, unknown>) => (
-        <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
-          {String(t.source)}:{String(t.event)}
-        </span>
-      ),
-    },
-    {
-      title: 'Mode',
-      dataIndex: 'mode',
-      key: 'mode',
-      render: (m: string) => <Tag color={m === 'rule' ? 'geekblue' : 'purple'}>{m ?? 'agent'}</Tag>,
-    },
-    {
-      title: 'Reply',
-      key: 'reply',
-      render: (_: unknown, t: Record<string, unknown>) => {
-        const reply = t.reply as { draft?: boolean } | undefined
-        return reply?.draft ? <Tag color="gold">draft</Tag> : <span style={{ color: dim }}>—</span>
-      },
-    },
-    {
-      title: 'Enabled',
-      key: 'enabled',
-      width: 90,
-      render: (_: unknown, t: Record<string, unknown>) => (
-        <Switch
-          size="small"
-          checked={t.enabled !== false}
-          onChange={v => toggleEnabled(String(t.name), v)}
-        />
-      ),
-    },
-  ]
 
   return (
     <div style={{ color: textColor(isDark) }}>
@@ -348,7 +247,7 @@ export function TriggersView() {
         />
       )}
 
-      {/* Configured triggers — collapsible, like Working hours below */}
+      {/* Configured triggers — collapsible editor (create/edit/delete + Trigger now) */}
       <Collapse
         size="small"
         defaultActiveKey={['triggers']}
@@ -371,118 +270,41 @@ export function TriggersView() {
               />
             </Tooltip>
           ),
-          children: triggers.length === 0 ? (
-            <Empty
-              description={
-                <span style={{ color: dim }}>
-                  No triggers configured. Add <code>[triggers.&lt;name&gt;]</code>{' '}
-                  tables to <code>runspec_triggers.toml</code> in the app config
-                  directory.
-                </span>
-              }
-            />
-          ) : (
-            <Table
-              dataSource={triggers}
-              columns={configColumns}
-              rowKey={(t: Record<string, unknown>) => String(t.name)}
-              size="small"
-              pagination={false}
-            />
-          ),
+          children: <TriggersEditor triggers={triggers} sources={sources} reload={loadConfig} />,
         }]}
       />
 
-      {/* Runs — inbox list; click a row for the full detail drawer */}
-      {runs.length === 0 ? (
-        <Empty description={<span style={{ color: dim }}>No trigger runs yet.</span>} />
-      ) : (
-        <div style={{ border: `1px solid ${border}`, borderRadius: 6 }}>
-          {runs.map((card, i) => {
-            // A chat card opens the live conversation pane (it reads the room hub);
-            // everything else (portal requests, matched triggers, reminders) opens
-            // the detail drawer, where the Approve/Deny gate + result render.
-            const chat = isChatCard(card)
-            return (
-            <div
-              key={card.card_id}
-              onClick={() => (chat ? setConvo(card.card_id) : setSelected(card.card_id))}
-              style={{
-                display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px',
-                borderBottom: i < runs.length - 1 ? `1px solid ${border}` : undefined,
-                cursor: 'pointer', fontSize: 12,
-                background: selected === card.card_id || convo === card.card_id ? colBg : undefined,
-              }}
+      {/* Runs — shared inbox list + detail drawer. The trigger-only sections
+          (portal request, approve/deny gate, draft reply) are injected here; the
+          chat conversation pane stays below. */}
+      <RunInbox
+        cards={cards}
+        selected={selected}
+        onSelect={onSelect}
+        onStop={id => bridge.cancel_chat(id).catch(console.error)}
+        statusOf={statusOf}
+        streams={streams}
+        emptyText="No trigger runs yet."
+        renderRowExtra={card => (
+          pending[card.card_id] ? (
+            <Button
+              size="small" type="primary"
+              onClick={e => { e.stopPropagation(); setSelected(card.card_id) }}
             >
-              <StatusBadge status={statusOf(card)} />
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>
-                {card.summary}
-              </span>
-              <span style={{ color: dim, flexShrink: 0 }}>{card.trigger}</span>
-              {pending[card.card_id] && (
-                <Button
-                  size="small" type="primary"
-                  onClick={e => { e.stopPropagation(); setSelected(card.card_id) }}
-                >
-                  Review
-                </Button>
-              )}
-              <span style={{ color: dim, fontFamily: 'monospace', flexShrink: 0 }}>{fmtTime(card.created_at)}</span>
-            </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Run detail — the large view: full event, agent output, timeline, gate */}
-      <Drawer
-        open={!!selectedCard}
-        onClose={() => setSelected(null)}
-        width="min(820px, 92vw)"
-        title={selectedCard?.summary}
-      >
-        {selectedCard && (() => {
-          const card = selectedCard
+              Review
+            </Button>
+          ) : null
+        )}
+        renderDrawerExtra={card => {
           const p = pending[card.card_id]
-          const result = card.detail?.result as string | undefined
-          const error = card.detail?.error as string | undefined
-          const body = result || streams[card.card_id]
-          // Prefer the human-readable resolved view (unwrapped runnable + args
-          // for search-mode run_runnable); falls back to the raw tool for plain
-          // calls. The draft_reply branch below still keys off the raw tool_name.
           const preview = p ? describeToolInput(p.display_name ?? p.tool_name, p.display_input ?? p.tool_input) : ''
           const draft = drafts[card.card_id]
           return (
-            <div style={{ fontSize: 13, color: textColor(isDark) }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                <StatusBadge status={statusOf(card)} />
-                <span style={{ color: dim }}>{card.trigger} · {card.source}:{card.event_type}</span>
-                {card.detail?.owner ? <span style={{ color: dim }}>· owner {String(card.detail.owner)}</span> : null}
-                <span style={{ color: dim, fontFamily: 'monospace', marginLeft: 'auto' }}>{fmtTime(card.created_at)}</span>
-                {/* Abort an in-flight run. The card's chat_id == card_id, so this
-                    trips the run's cancel event (and any parked confirm gate). */}
-                {RUNNING_STATUSES.has(card.column) && (
-                  <Button
-                    size="small" danger icon={<StopOutlined />}
-                    onClick={() => {
-                      bridge.cancel_chat(card.card_id).catch(console.error)
-                      message.info('Stopping run…')
-                    }}
-                  >
-                    Stop
-                  </Button>
-                )}
-              </div>
-
-              {/* A portal request the hub routed here: what the visitor asked for.
-                  Approve/Deny below enacts it through the autonomy gate; the result
-                  + timeline land in this same drawer as the audit record. */}
+            <>
+              {/* A portal request the hub routed here: what the visitor asked for. */}
               {card.source === 'portal' ? (
                 <div style={{ marginBottom: 16, border: `1px solid ${border}`, borderRadius: 6, padding: 12 }}>
                   <div style={{ color: dim, fontSize: 12, marginBottom: 4 }}>
-                    {/* email-verify signup carries a display name + team; show
-                        "Name <email>" when present, else just the verified id, with
-                        the visitor's team as a tag. */}
                     {card.detail?.visitor_name
                       ? `${String(card.detail.visitor_name)} <${String(card.detail?.visitor ?? '')}>`
                       : String(card.detail?.visitor ?? 'A visitor')}
@@ -519,9 +341,6 @@ export function TriggersView() {
                       background: colBg, border: `1px solid ${border}`, borderRadius: 4,
                       padding: 8, marginBottom: 10,
                     }}>
-                      {/* A draft_reply preview is the agent's prose reply → render
-                          it as markdown (matches the Agent output below). Runnable
-                          arg previews are key=value lines, so keep those plain. */}
                       {p.tool_name === 'draft_reply' ? (
                         <Markdown color={textColor(isDark)}>{preview}</Markdown>
                       ) : (
@@ -564,46 +383,10 @@ export function TriggersView() {
                   )}
                 </div>
               )}
-
-              {error && (
-                <div style={{ color: COLUMN_COLOR.failed, marginBottom: 16, whiteSpace: 'pre-wrap' }}>{error}</div>
-              )}
-
-              {body && (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <span style={{ color: dim, fontSize: 12 }}>Agent output</span>
-                    <CopyButton text={body} title="Copy agent output" />
-                  </div>
-                  <div style={{ marginBottom: 16 }}>
-                    <Markdown color={textColor(isDark)}>{body}</Markdown>
-                  </div>
-                </>
-              )}
-
-              {card.timeline && card.timeline.length > 0 && (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <span style={{ color: dim, fontSize: 12 }}>Timeline</span>
-                    <CopyButton
-                      text={card.timeline.map(e => `${fmtTime(e.ts)}  ${e.text}`).join('\n')}
-                      title="Copy timeline"
-                    />
-                  </div>
-                  <div style={{ borderLeft: `2px solid ${border}`, paddingLeft: 10 }}>
-                    {card.timeline.map((entry, i) => (
-                      <div key={i} style={{ marginBottom: 3 }}>
-                        <span style={{ color: dim, fontFamily: 'monospace', marginRight: 8 }}>{fmtTime(entry.ts)}</span>
-                        {entry.text}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+            </>
           )
-        })()}
-      </Drawer>
+        }}
+      />
 
       {/* Conversation pane — the selected queue card's transcript + reply box, a
           persistent pane under the inbox (this is where the old Rooms tab's chat
@@ -642,48 +425,8 @@ export function TriggersView() {
         </div>
       )}
 
-      {/* Event audit feed — open by default so the trail (every event seen, its
-          disposition) is visible without a click; collapsible to free space. */}
-      <Collapse
-        size="small"
-        defaultActiveKey={['events']}
-        style={{ marginTop: 20 }}
-        items={[{
-          key: 'events',
-          label: (
-            <span><BellOutlined /> Event log<span style={{ color: dim, fontSize: 12 }}> · every event seen, matched or not</span></span>
-          ),
-          children: events.length === 0 ? (
-            <div style={{ color: dim, fontSize: 12 }}>No events yet.</div>
-          ) : (
-            <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 6 }}>
-            {events.map((ev, i) => {
-              const disposition =
-                ev.matched.length > 0
-                  ? { color: COLUMN_COLOR.done, text: `fired: ${ev.matched.join(', ')}` }
-                  : ev.skipped.length > 0
-                    ? { color: COLUMN_COLOR.awaiting_human, text: `skipped (working hours): ${ev.skipped.join(', ')}` }
-                    : { color: dim, text: 'no match' }
-              return (
-                <div
-                  key={ev.id || i}
-                  style={{
-                    display: 'flex', gap: 8, alignItems: 'baseline', padding: '4px 8px',
-                    borderBottom: i < events.length - 1 ? `1px solid ${border}` : undefined,
-                    fontSize: 12,
-                  }}
-                >
-                  <span style={{ color: dim, fontFamily: 'monospace', flexShrink: 0 }}>{fmtTime(ev.ts)}</span>
-                  <span style={{ color: dim, flexShrink: 0 }}>{ev.source}:{ev.type}</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.summary}</span>
-                  <span style={{ color: disposition.color, flexShrink: 0 }}>{disposition.text}</span>
-                </div>
-              )
-            })}
-            </div>
-          ),
-        }]}
-      />
+      {/* Event audit feed — every event seen + its disposition (shared widget). */}
+      <EventLog events={events} />
     </div>
   )
 }

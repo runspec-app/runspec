@@ -41,7 +41,7 @@ This is already true in `make_handler`; the UI just doesn't present it this way.
 - **Rule mode** (`trigger_runner.py` rule branch): renders `arg_map` from the
   event payload and calls `run_rule_tool(card.id, run, args)` — **one** runnable,
   through the autonomy gate. The "action on the result" today is implicit (the run
-  output lands on the kanban card; `post_to_chat` mirrors it).
+  output lands on the run card; `post_to_chat` mirrors it).
 - **Agent mode**: calls `run_agent_turn(...)` — a headless LLM turn that may call
   **multiple** runnable tools, scoped by the optional `runnables` allowlist, and
   reason over their outputs. `reply.draft` merely *adds one more tool*

@@ -395,12 +395,17 @@ class Bridge:
         self._branding: Any = None  # Branding | None
         self._window_title: str = "runspec console"
         # Event-trigger engine (built lazily in start_triggers) and the in-memory
-        # kanban board: card_id → card.to_dict(). Cards are not persisted — a
+        # run inbox: card_id → card.to_dict(). Cards are not persisted — a
         # missed event while the console was closed is intentionally not replayed.
         self._trigger_engine: Any = None
         self._trigger_cards: dict[str, dict[str, Any]] = {}
         # Audit feed: every event the engine sees + its disposition (bounded ring).
         self._trigger_events: list[dict[str, Any]] = []
+        # Schedules mirror the trigger run inbox + event log with their own stores
+        # (kept separate so schedule runs never leak into the Triggers tab/badge):
+        # card_id → card.to_dict()-shaped run card, and a bounded event-audit ring.
+        self._schedule_cards: dict[str, dict[str, Any]] = {}
+        self._schedule_events: list[dict[str, Any]] = []
         # Chat rooms are a property of fleet host entries (room + room_port in
         # runspec_hosts.toml). The console joins each declared room always-on,
         # independent of triggers, via a reconnecting supervisor per room — using
@@ -2786,8 +2791,10 @@ class Bridge:
         Runnable-action → run the runnable directly (autonomous + audited, the
         same path a timed fire uses), returning its in-flight ``inv_id``.
         Event-action → emit the matchable event into the trigger engine, fanning
-        out to ``source="schedule"`` triggers. The ``enabled`` flag is ignored —
-        clicking *Run now* is the explicit authorization."""
+        out to ``source="schedule"`` triggers. The ``enabled`` flag — and the
+        working-hours rota — are ignored: clicking *Run now* is the explicit
+        authorization. The fire is recorded in the Schedules event log either
+        way."""
         raw = next((s for s in self._read_schedules() if s.get("id") == id), None)
         if raw is None:
             raise ValueError(f"no schedule with id {id!r}")
@@ -2807,8 +2814,12 @@ class Bridge:
             engine.feed(
                 Event.new("schedule", job.event, event_payload(job, datetime.now()))
             )
+            self._record_schedule_fire(job)
             return {"action": "event", "event": job.event}
-        inv_id = self._invoke_scheduled(job.host, job.runnable, dict(job.args))
+        inv_id = self._invoke_scheduled(
+            job.host, job.runnable, dict(job.args), schedule_id=job.id
+        )
+        self._record_schedule_fire(job)
         return {
             "action": "runnable",
             "inv_id": inv_id,
@@ -2816,19 +2827,95 @@ class Bridge:
             "runnable": job.runnable,
         }
 
-    def _run_scheduled(self, host: str, runnable: str, args: dict[str, Any]) -> None:
+    def _record_schedule_fire(self, job: Any) -> None:
+        """Record a manual *Run now* fire in the Schedules event log (the timer
+        path records inside ScheduleSource; this mirrors it for the explicit fire,
+        which deliberately bypasses the rota gate)."""
+        if job.action == "event":
+            etype, summary = job.event, f"emit {job.event}"
+        else:
+            etype = job.runnable or "runnable"
+            summary = f"/{job.runnable} on {job.host}"
+        self._on_schedule_event(
+            {
+                "id": uuid.uuid4().hex[:12],
+                "source": "schedule",
+                "type": etype,
+                "summary": summary,
+                "matched": [job.id],
+                "skipped": [],
+                "ts": time.time(),
+            }
+        )
+
+    def _run_scheduled(
+        self, schedule_id: str, host: str, runnable: str, args: dict[str, Any]
+    ) -> None:
         """Run a runnable-action schedule on the timer: fire it directly and
         autonomously — no agent, no confirm gate (scheduling it is the
         authorization). The callback ignores the return; the manual *Run now*
         path uses :meth:`_invoke_scheduled` so it can surface the in-flight id."""
-        self._invoke_scheduled(host, runnable, args)
+        self._invoke_scheduled(host, runnable, args, schedule_id=schedule_id)
 
-    def _invoke_scheduled(self, host: str, runnable: str, args: dict[str, Any]) -> str:
+    def _invoke_scheduled(
+        self,
+        host: str,
+        runnable: str,
+        args: dict[str, Any],
+        schedule_id: str = "",
+    ) -> str:
         """Invoke a runnable as the scheduler would and return its in-flight
         ``inv_id`` (``""`` on failure). Labelled as the 'Scheduled Task' operator
         and tagged ``trigger="schedule"`` so it reads identically in
         History/Analytics whether the timer or *Run now* started it. Reuses the
-        normal invoke path (SSH/local exec + the runnable's own run_summary)."""
+        normal invoke path (SSH/local exec + the runnable's own run_summary), and
+        builds a run card for the Schedules-tab inbox from the invoke lifecycle —
+        a ``running`` card up front, finalised to ``done``/``failed`` on exit."""
+        inv_id = uuid.uuid4().hex[:12]
+        created = time.time()
+        # card_id == inv_id so runspec:output / runspec:run_end route to this card.
+        card: dict[str, Any] = {
+            "card_id": inv_id,
+            "trigger": schedule_id or runnable,
+            "source": "schedule",
+            "event_type": "runnable",
+            "summary": f"/{runnable} on {host}",
+            "column": "running",
+            "detail": {
+                "host": host,
+                "runnable": runnable,
+                "args": dict(args or {}),
+                "schedule_id": schedule_id,
+            },
+            "created_at": created,
+            "timeline": [{"ts": created, "text": "running"}],
+        }
+        self._on_schedule_card(card)
+
+        # Accumulate a bounded output tail for the card's detail.result, then
+        # finalise the card's column from the exit code when the run ends.
+        output: list[str] = []
+
+        def on_progress(kind: str, data: dict[str, Any]) -> None:
+            if kind == "line":
+                output.append(data.get("line", ""))
+                if len(output) > 500:
+                    del output[: len(output) - 500]
+                return
+            # kind == "done"
+            ec = int(data.get("exit_code", -1))
+            now = time.time()
+            tail = "\n".join(output[-200:])
+            card["column"] = "done" if ec == 0 else "failed"
+            card["detail"] = {**card["detail"], "exit_code": ec, "result": tail}
+            if ec != 0:
+                card["detail"]["error"] = tail or f"exited with code {ec}"
+            card["timeline"] = [
+                *card["timeline"],
+                {"ts": now, "text": f"{card['column']} (exit {ec})"},
+            ]
+            self._on_schedule_card(card)
+
         try:
             return self.invoke_runnable(
                 host,
@@ -2836,11 +2923,18 @@ class Bridge:
                 dict(args or {}),
                 operator="Scheduled Task",
                 trigger="schedule",
+                inv_id=inv_id,
+                on_progress=on_progress,
             )
         except Exception:
             logger.exception(
                 "schedule: scheduled run of %s on %s failed", runnable, host
             )
+            now = time.time()
+            card["column"] = "failed"
+            card["detail"] = {**card["detail"], "error": "failed to start the run"}
+            card["timeline"] = [*card["timeline"], {"ts": now, "text": "failed"}]
+            self._on_schedule_card(card)
             return ""
 
     # ── today digest ──────────────────────────────────────────────────────────
@@ -4474,8 +4568,15 @@ class Bridge:
         credential_id: str = "",
         operator: str | None = None,
         trigger: str = "",
+        inv_id: str | None = None,
+        on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> str:
-        inv_id = uuid.uuid4().hex[:12]
+        # Callers may pre-allocate the id (the scheduled-run path uses it as the
+        # run card's card_id so output/run_end route to the card with no
+        # correlation step); default mints a fresh one as before. on_progress, when
+        # set, mirrors the per-line + completion lifecycle to the caller so it can
+        # build a run card without the dispatch path having to know about cards.
+        inv_id = inv_id or uuid.uuid4().hex[:12]
         cp = command_path or []
         entry = self._host_entry(host)
         cancel_event = threading.Event()
@@ -4544,6 +4645,8 @@ class Bridge:
                 self._dispatch(
                     "runspec:output", {"id": inv_id, "line": line, "stream": stream}
                 )
+                if on_progress is not None:
+                    on_progress("line", {"line": line, "stream": stream})
 
             def on_done(exit_code: int, duration_ms: int) -> None:
                 with self._lock:
@@ -4552,6 +4655,10 @@ class Bridge:
                     "runspec:run_end",
                     {"id": inv_id, "exit_code": exit_code, "duration_ms": duration_ms},
                 )
+                if on_progress is not None:
+                    on_progress(
+                        "done", {"exit_code": exit_code, "duration_ms": duration_ms}
+                    )
 
             if entry is None or not rp:
                 on_line(f"✗  Host '{host}' not found in runspec_hosts.toml", "stderr")
@@ -7472,7 +7579,14 @@ class Bridge:
         if schedules:
             from .sources.schedule import ScheduleSource
 
-            src = ScheduleSource(schedules, run_runnable=self._run_scheduled)
+            src = ScheduleSource(
+                schedules,
+                run_runnable=self._run_scheduled,
+                # Same working-hours gate the engine uses, so schedules and
+                # triggers honour one shared rota; plus the Schedules event-log hook.
+                clock_ok=self._build_clock_ok(),
+                on_event=self._on_schedule_event,
+            )
             ok, reason = src.available()
             if ok:
                 src.start(engine.feed)
@@ -8100,7 +8214,7 @@ class Bridge:
         except Exception:
             logger.debug("desktop page notify failed", exc_info=True)
 
-    # State → kanban column for a queue card's StatusBadge fallback (the row's
+    # State → lifecycle status for a queue card's StatusBadge fallback (the row's
     # real lifecycle chip is rendered from detail["state"] in the UI).
     _QUEUE_STATE_COLUMN = {
         "open": "triggered",
@@ -8627,8 +8741,37 @@ class Bridge:
         self.restart_chat()
         return {"ok": True}
 
+    def test_trigger(
+        self, name: str, body: str = "", fields: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Fire a configured trigger now with a synthetic event, for the Triggers
+        tab's "Trigger now" button — so a trigger can be tested without waiting for
+        a real event. Builds an event from the trigger's own ``source``/``event``
+        with the pasted ``body`` (under the ``body`` payload key, overridable) and
+        the key=value ``fields``, then dispatches *that one* trigger via the engine
+        — bypassing match/rota/dedup. Requires the engine running. Returns
+        ``{ok, error?}``; a run card appears in the Triggers inbox on success."""
+        from .config import read_triggers
+        from .events import Event
+
+        engine = self._trigger_engine
+        if engine is None:
+            return {"ok": False, "error": "The trigger engine isn't running."}
+        raw = next((t for t in read_triggers() if t.get("name") == name), None)
+        if raw is None:
+            return {"ok": False, "error": f"No trigger named {name!r}."}
+        source = str(raw.get("source") or "")
+        etype = str(raw.get("event") or "")
+        payload: dict[str, Any] = {
+            str(k): v for k, v in (fields or {}).items() if str(k).strip()
+        }
+        if body and "body" not in payload:
+            payload["body"] = body
+        engine.fire_test(name, Event.new(source, etype, payload))
+        return {"ok": True}
+
     def get_trigger_board(self) -> list[dict[str, Any]]:
-        """Snapshot of the kanban cards for this session (newest last)."""
+        """Snapshot of the run inbox's cards for this session (newest last)."""
         with self._lock:
             cards = list(self._trigger_cards.values())
         return sorted(cards, key=lambda c: c.get("created_at", 0.0))
@@ -8678,6 +8821,44 @@ class Bridge:
                 for old in oldest:
                     self._trigger_cards.pop(old["card_id"], None)
         self._dispatch("runspec:trigger_card", detail)
+
+    # ── schedule run inbox + event log (mirrors the trigger hooks) ──────────────
+
+    def get_schedule_events(self) -> list[dict[str, Any]]:
+        """The Schedules event-audit feed (every scheduled fire + disposition)."""
+        with self._lock:
+            return list(self._schedule_events)
+
+    def _on_schedule_event(self, record: dict[str, Any]) -> None:
+        """Record a scheduled fire's disposition and push it to the Schedules
+        event log. Mirrors :meth:`_on_trigger_event`; may run on a source thread."""
+        with self._lock:
+            self._schedule_events.append(record)
+            if len(self._schedule_events) > 300:
+                del self._schedule_events[: len(self._schedule_events) - 300]
+        self._dispatch("runspec:schedule_event", record)
+
+    def get_schedule_board(self) -> list[dict[str, Any]]:
+        """Snapshot of the schedule run cards for this session (newest last)."""
+        with self._lock:
+            cards = list(self._schedule_cards.values())
+        return sorted(cards, key=lambda c: c.get("created_at", 0.0))
+
+    def _on_schedule_card(self, card: dict[str, Any]) -> None:
+        """Record/advance a schedule run card and push it to the UI. The card is a
+        plain dict (TriggerCard.to_dict() shape) built by :meth:`_invoke_scheduled`,
+        so this just stores + bounds + dispatches. Kept separate from the trigger
+        board so schedule runs never surface in the Triggers tab or its badge."""
+        with self._lock:
+            self._schedule_cards[card["card_id"]] = card
+            if len(self._schedule_cards) > 200:
+                oldest = sorted(
+                    self._schedule_cards.values(),
+                    key=lambda c: c.get("created_at", 0.0),
+                )[:50]
+                for old in oldest:
+                    self._schedule_cards.pop(old["card_id"], None)
+        self._dispatch("runspec:schedule_card", dict(card))
 
     def _trigger_run_agent_turn(
         self,
@@ -8761,7 +8942,7 @@ class Bridge:
         propose_reply tool is offered (both handled inline).
 
         Returns a short summary (the model's closing reply + any tool actions)
-        for display on the kanban card — trigger turns have no chat transcript,
+        for display on the run card — trigger turns have no chat transcript,
         so this is where the agent's output becomes visible."""
         from .trigger_runner import draft_reply_schema, propose_reply_schema
 

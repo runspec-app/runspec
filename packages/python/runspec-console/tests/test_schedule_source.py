@@ -256,7 +256,9 @@ def test_next_fire_time_returns_none_without_apscheduler(monkeypatch):
 # ── ScheduleSource._fire: emit an event / run a runnable ──────────────────────
 
 
-def _source_with_jobs(run_runnable=None):
+def _source_with_jobs(
+    run_runnable=None, *, clock_ok=None, on_event=None, ignore_rota=False
+):
     return ScheduleSource(
         [
             {
@@ -265,6 +267,7 @@ def _source_with_jobs(run_runnable=None):
                 "event": "nightly",
                 "when": {"every": "5m"},
                 "fields": {"scope": "prod"},
+                "ignore_rota": ignore_rota,
             },
             {
                 "id": "r1",
@@ -273,9 +276,12 @@ def _source_with_jobs(run_runnable=None):
                 "runnable": "backup",
                 "when": {"cron": "0 2 * * *"},
                 "args": {"db": "main"},
+                "ignore_rota": ignore_rota,
             },
         ],
         run_runnable=run_runnable,
+        clock_ok=clock_ok,
+        on_event=on_event,
     )
 
 
@@ -291,16 +297,71 @@ def test_fire_event_emits_matchable_event():
 
 
 def test_fire_runnable_calls_run_runnable():
-    ran: list[tuple[str, str, dict]] = []
-    src = _source_with_jobs(run_runnable=lambda h, r, a: ran.append((h, r, a)))
+    ran: list[tuple[str, str, str, dict]] = []
+    src = _source_with_jobs(run_runnable=lambda s, h, r, a: ran.append((s, h, r, a)))
     src._fire("r1")
-    assert ran == [("h", "backup", {"db": "main"})]
+    assert ran == [("r1", "h", "backup", {"db": "main"})]
 
 
 def test_fire_unknown_id_is_noop():
     src = _source_with_jobs()
     src._emit = lambda ev: pytest.fail("should not emit")  # type: ignore[assignment]
     src._fire("nope")  # no such job — silently ignored
+
+
+# ── ScheduleSource._fire: working-hours rota gate + event log ──────────────────
+
+
+def test_fire_skipped_outside_working_hours():
+    """clock_ok=False drops the fire (no emit/run) and records a skipped event."""
+    emitted: list[Event] = []
+    events: list[dict] = []
+    src = _source_with_jobs(clock_ok=lambda: False, on_event=events.append)
+    src._emit = emitted.append
+    src._fire("e1")
+    assert emitted == []  # event-action schedule never emitted
+    assert len(events) == 1
+    rec = events[0]
+    assert rec["source"] == "schedule" and rec["type"] == "nightly"
+    assert rec["skipped"] == ["e1"] and rec["matched"] == []
+
+
+def test_fire_runnable_skipped_outside_working_hours():
+    ran: list = []
+    events: list[dict] = []
+    src = _source_with_jobs(
+        run_runnable=lambda *a: ran.append(a),
+        clock_ok=lambda: False,
+        on_event=events.append,
+    )
+    src._fire("r1")
+    assert ran == []  # runnable-action schedule never ran
+    assert events[0]["skipped"] == ["r1"]
+
+
+def test_fire_ignore_rota_fires_outside_working_hours():
+    """A schedule with ignore_rota fires even when the rota would skip it."""
+    ran: list = []
+    events: list[dict] = []
+    src = _source_with_jobs(
+        run_runnable=lambda *a: ran.append(a),
+        clock_ok=lambda: False,
+        on_event=events.append,
+        ignore_rota=True,
+    )
+    src._fire("r1")
+    assert len(ran) == 1
+    assert events[0]["matched"] == ["r1"] and events[0]["skipped"] == []
+
+
+def test_fire_within_working_hours_records_fired_event():
+    emitted: list[Event] = []
+    events: list[dict] = []
+    src = _source_with_jobs(clock_ok=lambda: True, on_event=events.append)
+    src._emit = emitted.append
+    src._fire("e1")
+    assert len(emitted) == 1
+    assert events[0]["matched"] == ["e1"] and events[0]["skipped"] == []
 
 
 # ── ScheduleSource introspection ──────────────────────────────────────────────

@@ -6,8 +6,8 @@ a regex ``match``) to an action: either a deterministic runnable call
 (``mode = "rule"``) or a headless agent turn (``mode = "agent"``). The
 ``TriggerEngine`` starts the shared event sources, matches each incoming
 :class:`~runspec_console.events.Event` against the configured triggers, creates a
-kanban ``TriggerCard`` per match, and runs the action — serialised per trigger so
-two firings of the same trigger never overlap.
+run-inbox ``TriggerCard`` per match, and runs the action — serialised per trigger
+so two firings of the same trigger never overlap.
 
 This module is bridge-agnostic and platform-independent: the *action* (running a
 runnable / agent turn through the autonomy gate) is an injected ``handler``, and
@@ -99,7 +99,7 @@ def within_rota(rota: dict[str, Any] | None, now: datetime) -> bool:
     return start <= cur <= end if start <= end else (cur >= start or cur <= end)
 
 
-# ── kanban columns ──────────────────────────────────────────────────────────
+# ── run lifecycle statuses ────────────────────────────────────────────────────
 
 
 class Column:
@@ -307,7 +307,7 @@ class Trigger:
         return {arg: _TEMPLATE.sub(_sub, tmpl) for arg, tmpl in self.arg_map.items()}
 
 
-# ── kanban card ─────────────────────────────────────────────────────────────
+# ── run card ──────────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -567,6 +567,19 @@ class TriggerEngine:
         triggered?" — the email channel surfaces a ticket only for mail a trigger
         matches, so the help-desk inbox isn't a mirror of the whole mailbox."""
         return any(t.matches(event) for t in self._triggers)
+
+    def fire_test(self, name: str, event: Event) -> Future[None] | None:
+        """Dispatch one named trigger with a synthetic ``event``, for the Triggers
+        tab's "Trigger now" button — so a user can exercise a trigger without
+        waiting for a real event. Deliberately bypasses ``match``, the rota gate,
+        and once_per_thread dedup: the user explicitly chose *this* trigger to
+        test, so the run should always happen. Records an audit entry (matched)
+        and returns the run's Future. Returns ``None`` if no such trigger."""
+        trigger = next((t for t in self._triggers if t.name == name), None)
+        if trigger is None:
+            return None
+        self._record_event(event, [name], [], [])
+        return self._dispatch(trigger, event)
 
     def _route(self, event: Event) -> Future[None] | None:
         """Route an event to every matching trigger.

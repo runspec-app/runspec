@@ -177,16 +177,16 @@ docs_url = "https://docs.internal.corp/console"
 
 Triggers let the console **react to things that happen on the machine** and run
 runspec runnables — a new email, a meeting reminder, a Teams/Slack notification.
-The **Triggers** tab shows your configured triggers and a kanban board where each
-matched event flows across columns: **Triggered → Triage → Awaiting human →
-Running → Done / Failed**.
+The **Triggers** tab shows your configured triggers and a **run inbox** where each
+matched event flows through its lifecycle status: **Triggered → Triage → Awaiting
+human → Running → Done / Failed**.
 
 A trigger binds an **event source** + **event type** (optionally narrowed by a
 regex `match`) to an **action**. The action is either a deterministic runnable
 call (`mode = "rule"`) or a headless agent turn (`mode = "agent"`) that follows
 the trigger's `rules` with the full runnable toolset. Either way, every runnable a
 trigger drives goes through the **same autonomy gate as chat** — confirm-by-default,
-so a card parks in *Awaiting human* with inline Approve / Deny.
+so a run card parks in *Awaiting human* with inline Approve / Deny.
 
 > Triggers are a **Windows** feature today and only fire while the console is
 > running (they never replay a backlog — see *forward-only* below). An LLM
@@ -207,6 +207,12 @@ The Triggers tab shows each source's availability and the reason any is off
 (not on Windows, `winrt` not installed, consent not granted, …).
 
 ### Configuring triggers
+
+You create and edit triggers directly on the **Triggers** tab (the editor moved
+here — Settings no longer has a Triggers sub-tab; the Mailbox sub-tab stays).
+Each trigger row also has a **"Trigger now"** button that fires it with a
+*synthetic* event — a pasted message plus `key=value` fields — so you can test a
+trigger without waiting for a real event to arrive.
 
 Triggers live in `runspec_triggers.toml` in the app config directory
 (`%APPDATA%\runspec-console\`). Give each trigger its own **named table**,
@@ -309,12 +315,14 @@ enables it and the event is a mail with something to reply to.
 ### Working hours (rota)
 
 So automation only runs while you're around to handle confirms, you can restrict
-triggers to a **weekly working-hours rota**. In the Triggers tab → **Working
-hours**: a master switch, then per-day on/off with a start and end time (local
-machine time). Outside those windows, matching events are **ignored** (dropped,
-not queued — you won't get a backlog dump when the window opens). It's **off by
-default** (triggers run anytime until you set it up), and stored as `[rota]` in
-`runspec_triggers.toml`:
+automation to a **weekly working-hours rota**. The rota lives on its own
+first-class **Rota** tab and is the **single shared working-hours gate for both
+triggers and schedules** — outside the rota neither a matching event nor a
+scheduled fire runs. On the Rota tab: a master switch, then per-day on/off with a
+start and end time (local machine time). Outside those windows, matching events
+are **ignored** (dropped, not queued — you won't get a backlog dump when the
+window opens). It's **off by default** (automation runs anytime until you set it
+up), and stored as `[rota]` in `runspec_triggers.toml`:
 
 ```toml
 [rota]
@@ -356,14 +364,14 @@ end = "17:30"
 
 ### Audit timeline
 
-Every kanban card keeps a timestamped **timeline** of what happened to it —
+Every run card keeps a timestamped **timeline** of what happened to it —
 stage changes (triggered → triage → … → done) and each tool the agent ran.
 Expand a card's *timeline* to read the full trace; it's recorded on the backend,
-so even a card that flew through the early lanes leaves a complete record.
+so even a card that flew through the early statuses leaves a complete record.
 
 ### Event log
 
-Below the board, the **Event log** shows *every* event the engine saw and what
+Below the run inbox, the **Event log** shows *every* event the engine saw and what
 happened to it: **fired** (which triggers ran), **skipped (working hours)** (it
 matched but the rota gated it), or **no match**. It's the first place to look
 when a trigger doesn't fire:
@@ -381,12 +389,31 @@ Rota times are **local machine time**, not UTC.
 
 - **Confirm-by-default.** Trigger-driven runnables use the same autonomy gate as
   chat; a `manual` runnable is still never run by the agent. Approve / Deny is
-  surfaced on the card (the *Awaiting human* column).
+  surfaced on the run card (the *Awaiting human* status).
 - **Forward-only.** Sources only react to events that arrive **while the console
   is running** — your inbox / existing toasts are snapshotted at startup and
   never replayed, so reopening the console doesn't re-handle old messages.
 - **Kill switch.** Toggle any trigger off in the Triggers tab (it stops
   immediately); delete it from `runspec_triggers.toml` to remove it.
+
+---
+
+## Schedules
+
+The **Schedules** tab runs runnables (or emits trigger events) on a clock, and
+mirrors the Triggers view's layout:
+
+- the **schedules table** sits inside a collapsible bar at the top;
+- a **run inbox** + detail drawer shows the runs of runnable-action schedules
+  (reusing the same component as the Triggers tab) so each scheduled run flows
+  through the same lifecycle status as a triggered one;
+- an **Event log** records *every* scheduled fire and its disposition —
+  **fired** or **skipped (working hours)**;
+- the shared **rota gates schedules too**: a fire that lands outside working
+  hours is skipped, exactly like a trigger. A single schedule can opt out with
+  `ignore_rota = true` for an off-hours job.
+
+A nav badge appears on the tab while a schedule run is in flight.
 
 ---
 

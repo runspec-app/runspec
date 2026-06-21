@@ -39,6 +39,7 @@ import { SkillRunModal } from './views/SkillRunModal'
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
+import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable, type Skill } from './bridge'
 import { ThemeContext } from './ThemeContext'
@@ -75,6 +76,9 @@ export default function App() {
   // Triggers tab badge — pending human confirms + waiting (unclaimed) queue
   // conversations, so an approval or a new queue caller is visible from any tab.
   const [triggerAwaiting, setTriggerAwaiting] = useState(0)
+  // Schedules badge: how many schedule runs are currently in flight (mirrors the
+  // Triggers badge). Lives here, not in SchedulesView, since that view unmounts.
+  const [scheduleRunning, setScheduleRunning] = useState(0)
   const inFlight = useInFlight()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
@@ -263,6 +267,26 @@ export default function App() {
     }
   }, [])
 
+  // Schedules tab badge: count schedule run cards still in flight (mirrors the
+  // Triggers badge), driven by runspec:schedule_card with run_end clearing them.
+  useEffect(() => {
+    const cols = new Map<string, string>()  // card_id → lifecycle status
+    const recompute = () => setScheduleRunning(
+      [...cols.values()].filter(c => RUNNING_STATUSES.has(c)).length,
+    )
+    const onCard = (e: Event) => {
+      const c = (e as CustomEvent).detail as { card_id: string; column: string }
+      cols.set(c.card_id, c.column)
+      recompute()
+    }
+    bridge.get_schedule_board().then(board => {
+      board.forEach(c => cols.set(c.card_id, c.column))
+      recompute()
+    }).catch(() => {})
+    window.addEventListener('runspec:schedule_card', onCard)
+    return () => window.removeEventListener('runspec:schedule_card', onCard)
+  }, [])
+
   const headerBg  = isDark ? '#0d0d0d' : '#fafafa'
   const siderBg   = isDark ? '#111'    : '#fafafa'
   const borderCol = isDark ? '#222'    : '#e0e0e0'
@@ -284,7 +308,13 @@ export default function App() {
     { key: 'analytics' as ViewKey, label: 'Analytics', icon: <BarChartOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
-    { key: 'schedules' as ViewKey, label: 'Schedules', icon: <CalendarOutlined /> },
+    {
+      key: 'schedules' as ViewKey,
+      label: 'Schedules',
+      icon: scheduleRunning > 0
+        ? <Badge count={scheduleRunning} size="small" offset={[2, -1]}><CalendarOutlined /></Badge>
+        : <CalendarOutlined />,
+    },
     {
       key: 'triggers' as ViewKey,
       label: 'Triggers',

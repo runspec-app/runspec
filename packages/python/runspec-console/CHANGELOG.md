@@ -8,16 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.103.0.dev1] — 2026-06-21
+## [0.103.0] — 2026-06-21
+
+The console is a **user tool, not an always-on automation system** — so both
+triggers and schedules are now governed by one shared working-hours rota, and the
+Schedules tab gains the Triggers tab's full run surface.
 
 ### Changed
 - **Working hours moved to its own Rota tab.** The working-hours editor that lived
-  inside the Triggers tab is now a first-class **Rota** tab. Same editor, same
-  behaviour (console grid or Outlook calendar source) — just promoted out, because
-  the rota is the single shared gate for *both* triggers and schedules: automation
-  only runs while someone's around to handle confirms, keeping the console a user
-  tool rather than an always-on automation system. (Pre-release dev build; the
-  Schedules/Triggers parity work that relies on this lands next.)
+  inside the Triggers tab is now a first-class **Rota** tab — the single shared
+  gate for *both* triggers and schedules. Same editor and behaviour (console grid
+  or Outlook calendar source). (Shipped first as the `0.103.0.dev1` pre-release.)
+- **Trigger editing moved onto the Triggers tab.** The create/edit/delete editor
+  that lived under *Settings → Triggers* is now the Triggers tab's collapsible
+  "Triggers" bar; the Settings → Triggers sub-tab was removed (Mailbox stays).
+- **The run view is a "run inbox", not a "kanban board".** Docs/comments reworded
+  to match what the UI has always rendered (a list, not columns). No behaviour or
+  wire-format change (`column`/`runspec:trigger_card`/`get_trigger_board` unchanged).
+
+### Added
+- **Schedules now mirror the Triggers tab.** The schedules table sits in a
+  collapsible bar, and below it a **run inbox** + detail drawer shows every
+  runnable-action schedule run (live status, output, timeline, Stop), plus an
+  **Event log** of every scheduled fire and its disposition — reusing the same
+  components as the Triggers tab. A nav badge shows while a schedule run is in
+  flight.
+- **Schedules honour the working-hours rota.** A scheduled fire outside working
+  hours is skipped (dropped, not queued) and recorded as "skipped (working hours)"
+  in the Schedules event log — exactly like a trigger. A per-schedule
+  `ignore_rota` opts a schedule out; *Run now* always fires (explicit
+  authorization). Backed by `ScheduleSource` gaining a `clock_ok` gate and an
+  `on_event` audit hook, and the bridge's `get_schedule_board` /
+  `get_schedule_events` feeds.
+- **"Trigger now" on each trigger row.** Fire a trigger immediately with a
+  synthetic event — a pasted message (under the `body` field) plus key=value
+  fields — to test it without waiting for a real event. Bypasses match/rota/dedup
+  for the chosen trigger (`TriggerEngine.fire_test` / bridge `test_trigger`); the
+  run appears in the Triggers run inbox.
 
 ## [0.102.2] — 2026-06-20
 

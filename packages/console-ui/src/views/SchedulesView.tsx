@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, message } from 'antd'
-import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined } from '@ant-design/icons'
-import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen } from '../bridge'
+import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, message } from 'antd'
+import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
+import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen, type RunCard, type TriggerEvent } from '../bridge'
 import { useIsDark } from '../ThemeContext'
+import { RunInbox } from '../components/RunInbox'
+import { EventLog } from '../components/EventLog'
 
 interface SchedulesViewProps {
   hosts: Host[]
@@ -361,11 +363,51 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Schedule | null>(null)
+  // Run inbox (runnable-action schedule runs) + event-audit feed, mirroring the
+  // Triggers tab. Cards arrive via runspec:schedule_card; their streamed output
+  // (keyed by card_id) via runspec:output; events via runspec:schedule_event.
+  const [cards, setCards] = useState<Record<string, RunCard>>({})
+  const [streams, setStreams] = useState<Record<string, string>>({})
+  const [selected, setSelected] = useState<string | null>(null)
+  const [events, setEvents] = useState<TriggerEvent[]>([])
   const isDark = useIsDark()
 
   const reload = () => bridge.get_schedules().then(setSchedules)
 
   useEffect(() => { reload() }, [])
+
+  // Seed + subscribe to the schedule run inbox and event log.
+  useEffect(() => {
+    const cardIds = new Set<string>()
+    bridge.get_schedule_board().then(board => {
+      board.forEach(c => cardIds.add(c.card_id))
+      setCards(Object.fromEntries(board.map(c => [c.card_id, c])))
+    }).catch(console.error)
+    bridge.get_schedule_events().then(evs => setEvents([...evs].reverse())).catch(console.error)
+
+    const onCard = (e: Event) => {
+      const card = (e as CustomEvent).detail as RunCard
+      cardIds.add(card.card_id)
+      setCards(prev => ({ ...prev, [card.card_id]: card }))
+    }
+    const onOutput = (e: Event) => {
+      const { id, line } = (e as CustomEvent).detail as { id: string; line: string }
+      if (!cardIds.has(id)) return  // only schedule-run output
+      setStreams(s => ({ ...s, [id]: (s[id] ?? '') + line + '\n' }))
+    }
+    const onEvent = (e: Event) => {
+      const rec = (e as CustomEvent).detail as TriggerEvent
+      setEvents(prev => [rec, ...prev].slice(0, 300))
+    }
+    window.addEventListener('runspec:schedule_card', onCard)
+    window.addEventListener('runspec:output', onOutput)
+    window.addEventListener('runspec:schedule_event', onEvent)
+    return () => {
+      window.removeEventListener('runspec:schedule_card', onCard)
+      window.removeEventListener('runspec:output', onOutput)
+      window.removeEventListener('runspec:schedule_event', onEvent)
+    }
+  }, [])
 
   const handleDelete = async (id: string) => {
     await bridge.delete_schedule(id)
@@ -504,35 +546,74 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     },
   ]
 
+  const scheduleTable = (
+    <Table
+      dataSource={schedules}
+      columns={columns}
+      rowKey="id"
+      size="small"
+      pagination={false}
+      rowClassName={s => (s.enabled === false ? 'rs-schedule-disabled' : '')}
+      expandable={{
+        rowExpandable: s => Object.keys(detailFor(s)).length > 0,
+        expandedRowRender: s => (
+          <div style={{ paddingLeft: 24, fontFamily: 'monospace', fontSize: 12, color: dimCol }}>
+            {Object.entries(detailFor(s)).map(([k, v]) => (
+              <span key={k} style={{ marginRight: 12 }}>
+                <span style={{ color: keyCol }}>
+                  {s.action === 'event' ? k : `--${k}`}
+                </span>={String(v)}
+              </span>
+            ))}
+          </div>
+        ),
+      }}
+    />
+  )
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openNew}>
-          New schedule
-        </Button>
-      </div>
-
-      <Table
-        dataSource={schedules}
-        columns={columns}
-        rowKey="id"
+      {/* Schedules — collapsible table, mirroring the Triggers tab. Schedules are
+          gated by the same working-hours rota (set on the Rota tab); fires outside
+          it are skipped and recorded in the event log below. */}
+      <Collapse
         size="small"
-        rowClassName={s => (s.enabled === false ? 'rs-schedule-disabled' : '')}
-        expandable={{
-          rowExpandable: s => Object.keys(detailFor(s)).length > 0,
-          expandedRowRender: s => (
-            <div style={{ paddingLeft: 24, fontFamily: 'monospace', fontSize: 12, color: dimCol }}>
-              {Object.entries(detailFor(s)).map(([k, v]) => (
-                <span key={k} style={{ marginRight: 12 }}>
-                  <span style={{ color: keyCol }}>
-                    {s.action === 'event' ? k : `--${k}`}
-                  </span>={String(v)}
-                </span>
-              ))}
-            </div>
+        defaultActiveKey={['schedules']}
+        style={{ marginBottom: 20 }}
+        items={[{
+          key: 'schedules',
+          label: (
+            <span>
+              <CalendarOutlined /> Schedules
+              <span style={{ color: dimCol, fontSize: 12 }}>{' · '}{schedules.length} configured</span>
+            </span>
           ),
-        }}
+          extra: (
+            <Space size={8} onClick={e => e.stopPropagation()}>
+              <Tooltip title="Reload schedules">
+                <ReloadOutlined onClick={reload} style={{ color: dimCol }} />
+              </Tooltip>
+              <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openNew}>
+                New schedule
+              </Button>
+            </Space>
+          ),
+          children: scheduleTable,
+        }]}
       />
+
+      {/* Run inbox — runnable-action schedule runs (no agent, no gate). */}
+      <RunInbox
+        cards={cards}
+        selected={selected}
+        onSelect={setSelected}
+        onStop={id => bridge.cancel_invocation(id).catch(console.error)}
+        streams={streams}
+        emptyText="No schedule runs yet."
+      />
+
+      {/* Event log — every scheduled fire + its disposition (shared widget). */}
+      <EventLog events={events} hint="every scheduled fire, run or skipped" />
 
       <ScheduleModal
         open={modalOpen}

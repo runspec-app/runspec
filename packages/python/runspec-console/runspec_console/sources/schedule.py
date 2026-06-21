@@ -32,6 +32,8 @@ docs/design/console-triggers.md.
 from __future__ import annotations
 
 import logging
+import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
@@ -46,8 +48,17 @@ _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 # every = "<n><unit>" — unit → the IntervalTrigger keyword it maps to.
 _INTERVAL_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
-# What a runnable-action schedule calls to run its runnable: (host, runnable, args).
-RunFn = Callable[[str, str, dict[str, Any]], None]
+# What a runnable-action schedule calls to run its runnable:
+# (schedule_id, host, runnable, args). The id lets the bridge label the run card.
+RunFn = Callable[[str, str, str, dict[str, Any]], None]
+
+# Working-hours gate (no args → True/False): whether the rota currently permits a
+# fire. None means "no gate" (always fire).
+ClockFn = Callable[[], bool]
+
+# Per-fire audit hook: a record (matching the trigger event-log shape) of a
+# schedule fire and its disposition, for the Schedules-tab event log.
+ScheduleEventFn = Callable[[dict[str, Any]], None]
 
 
 # ── schedule spec (pure — no apscheduler) ─────────────────────────────────────
@@ -74,6 +85,9 @@ class ScheduleJob:
     when: When
     action: str = "runnable"
     enabled: bool = True
+    # Fire even outside the working-hours rota (escape hatch, mirrors a trigger's
+    # ignore_rota). Default off — a schedule is gated like a trigger.
+    ignore_rota: bool = False
     # action == "event"
     event: str = ""
     fields: dict[str, str] = field(default_factory=dict)
@@ -175,6 +189,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         when=when,
         action=action,
         enabled=bool(data.get("enabled", True)),
+        ignore_rota=bool(data.get("ignore_rota", False)),
         event=event,
         fields=fields,
         host=host,
@@ -262,6 +277,8 @@ class ScheduleSource:
         schedules: list[dict[str, Any]] | None = None,
         *,
         run_runnable: RunFn | None = None,
+        clock_ok: ClockFn | None = None,
+        on_event: ScheduleEventFn | None = None,
     ) -> None:
         self._jobs: list[ScheduleJob] = []
         for raw in schedules or []:
@@ -276,6 +293,11 @@ class ScheduleSource:
             if job.enabled:
                 self._jobs.append(job)
         self._run_runnable = run_runnable
+        # Working-hours gate + per-fire audit hook (both bridge-owned). When
+        # clock_ok is set and returns False, a fire is skipped (unless the job sets
+        # ignore_rota) — so schedules honour the same rota as triggers.
+        self._clock_ok = clock_ok
+        self._on_event = on_event
         self._emit: EmitFn | None = None
         self._scheduler: Any | None = None
 
@@ -330,10 +352,23 @@ class ScheduleSource:
         self._emit = None
 
     def _fire(self, job_id: str) -> None:
-        """APScheduler job callback: emit the event, or run the runnable."""
+        """APScheduler job callback: rota-gate, then emit the event or run the
+        runnable, recording the disposition for the Schedules event log."""
         job = next((j for j in self._jobs if j.id == job_id), None)
         if job is None:
             return
+        # Working-hours gate: outside the rota a schedule is skipped (dropped, not
+        # queued), exactly like a trigger — unless it opts out with ignore_rota.
+        if self._clock_ok is not None and not job.ignore_rota:
+            try:
+                clock_ok = self._clock_ok()
+            except Exception:
+                logger.exception("schedule: rota gate failed — firing %r", job_id)
+                clock_ok = True  # fail open
+            if not clock_ok:
+                logger.info("schedule '%s' skipped: outside working hours", job.id)
+                self._record(job, skipped=True)
+                return
         try:
             if job.action == "event":
                 if self._emit is not None:
@@ -343,9 +378,37 @@ class ScheduleSource:
                         )
                     )
             elif self._run_runnable is not None:
-                self._run_runnable(job.host, job.runnable, dict(job.args))
+                self._run_runnable(job.id, job.host, job.runnable, dict(job.args))
+            self._record(job, skipped=False)
         except Exception:
             logger.exception("schedule: fire failed for %r", job_id)
+
+    def _record(self, job: ScheduleJob, *, skipped: bool) -> None:
+        """Push a Schedules event-log record (trigger-event shape) for one fire.
+
+        ``matched``/``skipped`` carry the schedule id so the reused Event-log
+        widget renders "fired …" / "skipped (working hours) …" with no changes."""
+        if self._on_event is None:
+            return
+        if job.action == "event":
+            etype, summary = job.event, f"emit {job.event}"
+        else:
+            etype = job.runnable or "runnable"
+            summary = f"/{job.runnable} on {job.host}"
+        try:
+            self._on_event(
+                {
+                    "id": uuid.uuid4().hex[:12],
+                    "source": "schedule",
+                    "type": etype,
+                    "summary": summary,
+                    "matched": [] if skipped else [job.id],
+                    "skipped": [job.id] if skipped else [],
+                    "ts": time.time(),
+                }
+            )
+        except Exception:
+            logger.exception("schedule event-audit hook failed")
 
 
 register_source("schedule", ScheduleSource)

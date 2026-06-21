@@ -49,7 +49,7 @@ state machine, it belongs in a workflow engine downstream of runspec, not here.
                               │  TriggerEngine            │
                               │  match source+type+filter │
                               └─────────────┬─────────────┘
-                                            │  (creates a kanban card)
+                                            │  (creates a run card)
                          ┌──────────────────┴───────────────────┐
                          ▼                                       ▼
                  mode = "rule"                            mode = "agent"
@@ -61,14 +61,14 @@ state machine, it belongs in a workflow engine downstream of runspec, not here.
               │  autonomy gate          │  ◀────────────────────-┘
               │  (_confirm_decision)    │   each proposed runnable call
               │  confirm → "Awaiting    │
-              │   human" kanban column  │
+              │   human" run inbox      │
               └───────────┬─────────────┘
                           ▼
                    runnable runs (local / SSH)  →  card → Done
 ```
 
 The only genuinely new components are the **event sources** and the
-**TriggerEngine + kanban surface**. Everything to the right of the engine
+**TriggerEngine + run inbox**. Everything to the right of the engine
 already exists.
 
 ---
@@ -81,14 +81,14 @@ already exists.
 | `_agentic_chat_turn()` | The agent loop (stream → tool_use → gate → tool_result). Reused for `mode = "agent"` triggers, run against an isolated per-card history |
 | `_runnables_to_tools()` | The toolset the agent may call — unchanged |
 | `_confirm_decision()` / `_effective_tool_autonomy()` | Gate decision: `run` / `manual` / needs-prompt. **Confirm-by-default** is exactly the human-in-the-loop we want |
-| `_register_confirm()` → `runspec:tool_confirm` + `threading.Event` keyed by `request_id`; `resolve_tool_confirmation()` | The "Awaiting human" parking mechanism. A parked gate **is** a kanban card in the Awaiting-human column |
+| `_register_confirm()` → `runspec:tool_confirm` + `threading.Event` keyed by `request_id`; `resolve_tool_confirmation()` | The "Awaiting human" parking mechanism. A parked gate **is** a run card at the Awaiting-human lifecycle status |
 | `_custom_agent_tools()` / `_run_custom_tool()` / `_CUSTOM_TOOL_NAMES` | The seam for any built-in tools a trigger flow needs (e.g. "draft reply") |
-| `_dispatch(event, detail)` → `window.evaluate_js(dispatchEvent(CustomEvent…))` | How kanban card updates reach the UI — new `runspec:trigger_*` events ride the same channel |
+| `_dispatch(event, detail)` → `window.evaluate_js(dispatchEvent(CustomEvent…))` | How run card updates reach the UI — new `runspec:trigger_*` events ride the same channel |
 | `config.py` (`config_path`, host/filter persistence) | Where `[[triggers]]` is stored, same as hosts and filters today |
 
 The autonomy gate is the keystone. "Decisions by AI and humans together" is not
 new machinery — it is `_confirm_decision` returning `confirm`, surfaced
-spatially as a board column instead of an inline chat prompt.
+as a lifecycle status in the run inbox instead of an inline chat prompt.
 
 ---
 
@@ -171,7 +171,7 @@ New surface this one needs (the *only* reason it's #2, not #1):
 Because of the registry, that was the entire delta: a new file
 (`sources/notifications.py`, registering `"notifications"`), the `winsdk`
 dependency (the `notifications` extra), and a synchronous `get_access_status()`
-check in `available()`. Everything downstream (engine, gate, kanban) was
+check in `available()`. Everything downstream (engine, gate, run inbox) was
 unchanged — the prediction held. The listener polls `get_notifications_async`
 on an interval and diffs ids (forward-only: the startup backlog is snapshotted,
 never replayed); the toast payload extractor is pure and unit-tested with fakes.
@@ -332,7 +332,7 @@ style = "Concise, professional. Acknowledge, state next step, no commitments."
   per-runnable / per-arg escalation in `_effective_tool_autonomy` still applies
   (most restrictive wins), so a `manual` runnable is still refused to the agent.
 - `post_to_chat` (default `false`) mirrors the trigger's run into the main chat
-  tab for visibility; otherwise the run lives only on its kanban card (§6, A2).
+  tab for visibility; otherwise the run lives only on its run card (§6, A2).
 - `once_per_thread` suppresses replies: the trigger fires for the **first** matching
   event in a conversation, then skips later messages in the same thread — so an
   email back-and-forth doesn't re-run the rule on every reply. Keyed on the event's
@@ -362,7 +362,7 @@ style = "Concise, professional. Acknowledge, state next step, no commitments."
    the main chat for visibility; the working context stays isolated either way.
 3. **Card-scoped `chat_id`** — the turn runs under the card's id so its
    `runspec:tool_start` / `runspec:tool_confirm` / `runspec:run_end` events are
-   attributable to the card on the board. The autonomy gate's `request_id`
+   attributable to the card in the run inbox. The autonomy gate's `request_id`
    mechanism is untouched; we just tag the card.
 
 This is a small refactor: extract the body of `send_chat`'s `run()` into a
@@ -371,15 +371,16 @@ the trigger path call it.
 
 ---
 
-## 7. Kanban surface
+## 7. Run inbox
 
-Columns map onto the lifecycle, and the human column **is** a parked gate:
+The lifecycle statuses below drive the run inbox, and the human status **is** a
+parked gate:
 
 ```
 Triggered → Triage (agent thinking) → Awaiting human → Running → Done / Failed
 ```
 
-- A card is one `Event` instance.
+- A run card is one `Event` instance.
 - "Awaiting human" = a pending `_register_confirm` (`runspec:tool_confirm`). The
   user approving the card's gate is the existing `resolve_tool_confirmation`.
 - New UI events on the existing `_dispatch` channel:
@@ -390,7 +391,7 @@ Triggered → Triage (agent thinking) → Awaiting human → Running → Done / 
     reused, tagged with `card_id`.
 - New `js_api` methods on the bridge: `list_triggers`, `save_trigger`,
   `set_trigger_enabled`, `get_trigger_board`, plus a card action to dismiss /
-  retry. (Frontend Kanban view is a separate step — see §9.)
+  retry. (Frontend run-inbox view is a separate step — see §9.)
 
 ---
 
@@ -475,13 +476,13 @@ change.
 6. **Tests** ✅ *done* — `match`, payload→arg mapping, engine routing +
    per-trigger serialisation with `FakeSource`, `post_to_chat`, `draft_reply`
    schema/gating, config round-trip. All platform-independent (COM mocked).
-7. **console-ui Kanban view** — *next*. The board, the per-event behaviour
+7. **console-ui run-inbox view** — *next*. The run inbox, the per-event behaviour
    tickboxes (`post_to_chat`, reply-draft), and an easy `match` editor for taming
    `reminder` (A2/A4). Backend contract is green and ready.
 
 **Source #2 (Notification Listener)** ✅ *done* — `sources/notifications.py` +
 the `winsdk` dep (`notifications` extra) + consent check + `register_source`. No
-engine/gate/kanban changes were needed, exactly as predicted.
+engine/gate/run-inbox changes were needed, exactly as predicted.
 
 ---
 
@@ -511,7 +512,7 @@ engine/gate/kanban changes were needed, exactly as predicted.
    (§4.1): `start()` subscribes to future occurrences and never replays backlog.
 2. **`post_to_chat` is configurable per trigger** (default `false`). Working
    context stays isolated; opting in mirrors the run into the main chat. The
-   kanban UI will expose this (and reply-draft) as per-event tickboxes.
+   run-inbox UI will expose this (and reply-draft) as per-event tickboxes.
 3. **Concurrency — small worker pool, serialised per trigger** (my recommended
    default), made configurable once there's usage experience.
 4. **`reminder` noise — handled by `match`, not a forced default.** `match`
