@@ -71,6 +71,7 @@ NON_RUNSPEC_SECTIONS = {
     "config_sync",
     "console",
     "llm",
+    "denylist",
 }
 
 

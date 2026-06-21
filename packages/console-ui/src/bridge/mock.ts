@@ -595,6 +595,29 @@ let _activeChat: { id: string; cancelled: boolean } | null = null
 export const mockApi: BridgeApi = {
   get_hosts: async () => MOCK_HOSTS,
 
+  manage_denylist: async (payload) => {
+    console.log('[mock] manage_denylist', payload)
+    const targets = payload.targets?.length ? payload.targets : MOCK_HOSTS.map(h => h.name)
+    return `runspec deny ${payload.action} — ${targets.length}/${targets.length} venv(s) ok across ${targets.length} host(s):\n` +
+      targets.map(t => `✓ ${t}/app: ok`).join('\n')
+  },
+
+  denylist_status: async (targets) => {
+    const names = targets?.length ? targets : MOCK_HOSTS.map(h => h.name)
+    return names.map(host => ({
+      host,
+      venv: 'app',
+      ok: true,
+      present: host === 'prod-1',
+      mode: 'enforce' as const,
+      disabled: false,
+      reason: '',
+      rules: host === 'prod-1'
+        ? [{ runnables: ['deploy'], users: ['*'], hosts: ['*'], reason: 'change freeze' }]
+        : [],
+    }))
+  },
+
   get_runnables: async (_host) => MOCK_RUNNABLES,
   list_dir: async (_host, path = '', _group, dirsOnly = false, _runnable, asServiceAccount = false) => {
     const home = asServiceAccount ? '/home/svc_app' : '/var/log/app'

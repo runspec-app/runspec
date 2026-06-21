@@ -1119,6 +1119,85 @@ This reservation protects the `RunSpec` metadata properties (`runspec_runnable`,
 
 ---
 
+## Denylist File
+
+A venv-scoped kill switch that disables runnables without uninstalling them or
+editing their `runspec.toml`. It is a **separate file** from `runspec.toml`
+(not part of a runnable's spec) read on every `parse()` — so it applies
+uniformly to direct CLI runs, installed entry points, and agent runs via
+`runspec serve`. A disabled runnable is refused with a uniform error and a
+non-zero exit.
+
+### Path resolution (two tiers, first match wins)
+
+1. `RUNSPEC_DENYLIST_FILE` environment variable — absolute escape hatch for testing
+2. `{sys.prefix}/runspec_denylist.toml` — default; silent skip if absent
+
+### File format
+
+```toml
+[denylist]
+mode = "enforce"          # "enforce" (default) | "warn" | "off"
+# disabled = true         # fast path: deny everything
+
+[[denylist.rule]]
+runnables = ["deploy"]    # omitted ⇒ ["*"] (all runnables)
+users = ["svc-batch"]     # omitted ⇒ ["*"] (all users)
+hosts = ["prod-*"]        # omitted ⇒ ["*"] (all hosts)
+reason = "change freeze"  # surfaced in the refusal message
+```
+
+### Matching semantics
+
+- A run is denied when **any** rule matches. Within a rule, the runnable name
+  AND the effective username AND the hostname must each match at least one glob
+  in their list; multiple rules OR together.
+- `runnables` / `users` / `hosts` are shell-style globs (`fnmatch`, `*`
+  wildcard). An omitted (or empty) dimension means "all".
+- `disabled = true` is a fast path equivalent to one all-`*` rule.
+- The **effective** user is matched (`pwd.getpwuid(os.geteuid())`, falling back
+  to `getpass.getuser()` on Windows) — the post-`run_as` identity the runnable
+  actually executes as. Hostname is `socket.gethostname()`, the same source the
+  `run_as` gate uses.
+
+### Enforcement mode
+
+`mode` lives in the denylist file and is **authoritative** — there is no
+per-runnable opt-out, so a runnable cannot exempt itself from an operator's
+denylist (unlike `enforce_run_as`, which a runnable declares).
+
+| `mode` | Behaviour |
+|---|---|
+| `enforce` (default) | Refuse the run; raise and exit non-zero. |
+| `warn` | Write a warning to stderr and continue. |
+| `off` | No enforcement (rules retained but inert). |
+
+### Exemptions
+
+- `--help` is handled before the gate, so a disabled runnable's help is still
+  readable.
+- Introspection (`load_spec`, used by `runspec local` / `runspec stubs`) is
+  never blocked.
+- The reserved name `runspec` (the core CLI dogfooding its own spec) is never
+  denied, so `runspec deny clear` / `runspec serve` / `runspec local` keep
+  working even under a deny-everything rule — the guaranteed re-enable path.
+
+### Manage with the CLI
+
+```
+runspec deny add --runnable deploy [--user G] [--host G] [--reason T]
+runspec deny all [--reason T]      # disable everything
+runspec deny list                  # show mode + rules
+runspec deny mode enforce|warn|off
+runspec deny clear                 # remove the file — re-enable everything
+runspec deny list --json           # structured status: {path, present, mode, disabled, reason, rules}
+```
+
+`runspec deny` is a core subcommand (not a runnable), so it is never subject to
+the denylist it edits.
+
+---
+
 ## Groups
 
 Groups define relationships between arguments.

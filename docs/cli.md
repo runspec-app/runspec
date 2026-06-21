@@ -520,6 +520,30 @@ the `.runspec_env` section of the format reference.
 
 ---
 
+## `runspec deny`
+
+Manage the venv **denylist** — a kill switch that disables runnables installed
+in this virtual environment, by name, user, and/or hostname. Edits
+`{sys.prefix}/runspec_denylist.toml`, which `parse()` reads on every run, so the
+effect is uniform across CLI runs, entry points, and `runspec serve`.
+
+```bash
+runspec deny add --runnable deploy                    # disable one runnable (all users/hosts)
+runspec deny add -r deploy -u svc-batch -H 'prod-*'   # disable deploy for svc-batch on prod hosts
+runspec deny all --reason "change freeze"             # disable every runnable in this venv
+runspec deny list                                     # show the current mode + rules
+runspec deny mode warn                                # warn instead of refusing (enforce|warn|off)
+runspec deny clear                                    # remove the denylist — re-enable everything
+```
+
+`--runnable`/`--user`/`--host` accept shell-style globs (`*`) and may be
+repeated; an omitted dimension means "all". `runspec deny` is a core subcommand,
+not a runnable, so it can never disable itself — `runspec deny clear` is the
+guaranteed re-enable path on any host. See the [denylist guide](denylist.md) for
+the file format and matching rules.
+
+---
+
 ## `runspec logs`
 
 View, prune, and compact per-invocation audit logs — the read and maintenance

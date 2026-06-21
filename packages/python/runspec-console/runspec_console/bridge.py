@@ -107,9 +107,11 @@ class _ParamikoDevHandler(logging.Handler):
 _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 
 # Built-in (not runnable-backed) agent tools. Names are intentionally free of
-# "__" so they never collide with the host__runnable scheme; both are
-# side-effecting file moves, so the autonomy gate prompts before running.
-_CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file"})
+# "__" so they never collide with the host__runnable scheme. download_file /
+# relay_file are side-effecting file moves; manage_denylist writes a host's venv
+# denylist (a kill switch) — all three prompt before running (the autonomy gate
+# treats every _CUSTOM_TOOL_NAMES entry as "confirm").
+_CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file", "manage_denylist"})
 
 # Read-only discovery meta-tools used by search mode (tool_mode = "search"). They
 # have no side effects, so the autonomy gate lets them run without a prompt; the
@@ -739,6 +741,67 @@ class Bridge:
                 }
             )
         return result
+
+    def manage_denylist(self, payload: dict[str, Any]) -> str:
+        """Public wrapper for the denylist kill switch (Settings → Denylist).
+
+        Runs ``runspec deny <action>`` across the selected fleet hosts (one call
+        per venv) and returns the aggregated per-host/per-venv summary. Same
+        handler the agent's ``manage_denylist`` tool uses. ``payload`` keys:
+        ``action`` (list|add|all|clear|mode), ``targets`` (host names; empty ⇒
+        all), ``runnable``/``user``/``host`` (globs, for add), ``reason``,
+        ``setting`` (for mode). It edits remote denylists via the core
+        ``runspec`` binary (exempt from its own denylist), so ``clear`` always
+        re-enables and the console can never be locked out.
+        """
+        return self._run_manage_denylist(dict(payload or {}))
+
+    def denylist_status(self, targets: list[str] | None = None) -> list[dict[str, Any]]:
+        """Structured denylist state per host/venv (Settings → Denylist table).
+
+        Runs ``runspec deny list --json`` on each selected host (one call per
+        venv) and parses it. ``targets`` selects host names (empty/None ⇒ all
+        hosts with a runspec path). Each row: ``{host, venv, ok, error?, path,
+        present, mode, disabled, reason, rules}``. Read-only — no prompt.
+        """
+        import json as _json
+        import shlex
+        import subprocess
+
+        wanted = {str(t) for t in (targets or [])}
+        hosts = [h for h in self._hosts if _paths(h)]
+        if wanted:
+            hosts = [h for h in hosts if h.get("name") in wanted]
+
+        rows: list[dict[str, Any]] = []
+        for h in hosts:
+            host_name = str(h.get("name"))
+            ssh = h.get("ssh")
+            idf = h.get("identityFile")
+            for rp in _paths(h):
+                venv = venv_name(rp)
+                argv = [rp, "deny", "list", "--json"]
+                row: dict[str, Any] = {"host": host_name, "venv": venv, "ok": False}
+                try:
+                    if ssh:
+                        cmd = " ".join(shlex.quote(p) for p in argv)
+                        code, out, err = self._ssh_run(
+                            ssh, cmd, identity_file=idf, timeout=20
+                        )
+                    else:
+                        proc = subprocess.run(
+                            argv, capture_output=True, text=True, timeout=20
+                        )
+                        code, out, err = proc.returncode, proc.stdout, proc.stderr
+                    if code != 0:
+                        row["error"] = (err or out or f"exit {code}").strip()
+                    else:
+                        row.update(_json.loads(out))
+                        row["ok"] = True
+                except Exception as exc:  # noqa: BLE001 — surface any failure as a row
+                    row["error"] = str(exc)
+                rows.append(row)
+        return rows
 
     def get_runnables(self, host: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -5522,9 +5585,15 @@ class Bridge:
         Host and filter names are surfaced as enums (with the filter descriptions)
         so the model picks valid values."""
         remote = [h["name"] for h in self._hosts if h.get("ssh")]
+        deny_tool = self._denylist_tool()  # available for local-only fleets too
         if not remote:
-            # No transfer tools (no remote hosts), but status + memory are local.
-            return [*self._status_tools(), *self._memory_tools()]
+            # No transfer tools (those need a remote), but status + memory are
+            # local and the denylist tool works against any host with a runspec path.
+            return [
+                *([deny_tool] if deny_tool else []),
+                *self._status_tools(),
+                *self._memory_tools(),
+            ]
         self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
         filter_names = [f["name"] for f in filters if f.get("name")]
@@ -5655,7 +5724,88 @@ class Bridge:
                 "required": ["path", "dest_host", "dest_dir"],
             },
         }
-        return [download, relay, *self._status_tools(), *self._memory_tools()]
+        return [
+            download,
+            relay,
+            *([deny_tool] if deny_tool else []),
+            *self._status_tools(),
+            *self._memory_tools(),
+        ]
+
+    def _denylist_tool(self) -> dict[str, Any] | None:
+        """Schema for the built-in ``manage_denylist`` tool — a fleet kill switch.
+
+        Runs ``runspec deny`` over SSH on the selected hosts (one call per venv),
+        writing each host's ``runspec_denylist.toml``. ``runspec`` is the core
+        binary (never disabled by its own denylist), so ``clear`` always
+        re-enables and this can never lock the console out. Returns ``None`` when
+        no host has a runspec path to act on."""
+        targets = [h["name"] for h in self._hosts if _paths(h)]
+        if not targets:
+            return None
+        return {
+            "name": "manage_denylist",
+            "description": (
+                "Inspect or change which runspec runnables are disabled on fleet "
+                "hosts — a kill switch. action='list' is READ-ONLY and runs "
+                "without a prompt: use it to see what's currently disabled (a run "
+                "you attempt may be refused by the denylist, so check here first "
+                "if a runnable is unexpectedly blocked). The mutating actions are "
+                "confirm-gated. It writes each host's venv denylist via `runspec "
+                "deny` over SSH — disabling the *runnables* on those hosts, not "
+                "the console — and re-enabling (action='clear') always works "
+                "because the core `runspec` binary is exempt from its own "
+                "denylist. Actions: 'list' (inspect), 'add' (disable specific "
+                "runnable/user/host globs), 'all' (disable every runnable), "
+                "'clear' (re-enable everything), 'mode' (set enforce|warn|off)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "all", "clear", "mode"],
+                        "description": "What to do to the denylist on each target host.",
+                    },
+                    "targets": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": targets},
+                        "description": (
+                            "Fleet hosts to apply to. Omit or leave empty to apply "
+                            "to ALL hosts. Each host's every venv is updated."
+                        ),
+                    },
+                    "runnable": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "action='add': runnable-name globs to disable (e.g. "
+                            "['deploy', 'restart-*']). Omit ⇒ all runnables."
+                        ),
+                    },
+                    "user": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "action='add': username globs the rule applies to. Omit ⇒ all users.",
+                    },
+                    "host": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "action='add': hostname globs the rule applies to. Omit ⇒ all hosts.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "action='add'/'all': reason recorded and shown on the refusal.",
+                    },
+                    "setting": {
+                        "type": "string",
+                        "enum": ["enforce", "warn", "off"],
+                        "description": "action='mode': enforcement level for the denylist.",
+                    },
+                },
+                "required": ["action"],
+            },
+        }
 
     def _status_tools(self) -> list[dict[str, Any]]:
         """Schema for the read-only ``console_status`` tool — lets the agent
@@ -5681,10 +5831,19 @@ class Bridge:
     def _run_status_tool(self, ti: dict[str, Any]) -> str:
         """Execute ``console_status`` — return the live rota + triggers + schedules
         snapshot (the autonomy gate has already let it run; it has no side effects)."""
-        return self._console_context() or (
+        snapshot = self._console_context() or (
             "Working-hours rota: OFF — automation runs at any time. No triggers or "
             "schedules are configured."
         )
+        # Zero-cost pointer (no fleet sweep): make the kill switch discoverable from
+        # the status tool so the agent knows where to look when a run is blocked.
+        if any(_paths(h) for h in self._hosts):
+            snapshot += (
+                "\n\nRunnables may also be disabled by the fleet denylist (a kill "
+                "switch). Call manage_denylist with action='list' to see what is "
+                "currently disabled, on which hosts."
+            )
+        return snapshot
 
     def _memory_tools(self) -> list[dict[str, Any]]:
         """Schemas for the persistent-memory / runbook tools. Always available (the
@@ -5853,6 +6012,8 @@ class Bridge:
         outcome (the autonomy gate has already approved it). Kicks off the normal
         transfer — so the user sees live progress in the transfer panel — then
         blocks on the result via ``_await_transfer``."""
+        if name == "manage_denylist":
+            return self._run_manage_denylist(ti)
         filter_name = str(ti.get("filter") or "")
         filter_value = ti.get("filter_value")
         dest_dir = ti.get("dest_dir")
@@ -5906,6 +6067,82 @@ class Bridge:
                 f"to {dest_dir}."
             )
         return f"✗ {label} failed: {detail.get('error') or 'unknown error'}"
+
+    def _run_manage_denylist(self, ti: dict[str, Any]) -> str:
+        """Run ``runspec deny <action>`` on the selected fleet hosts (one call per
+        venv), aggregating per-host/per-venv results. The autonomy gate has
+        already approved this call."""
+        import shlex
+        import subprocess
+
+        action = str(ti.get("action") or "").strip().lower()
+        valid = {"list", "add", "all", "clear", "mode"}
+        if action not in valid:
+            return f"Error: action must be one of {', '.join(sorted(valid))}."
+
+        # Build the tail of `runspec deny <action> ...` as an argv list.
+        tail: list[str] = []
+        if action == "add":
+            for flag, key in (("-r", "runnable"), ("-u", "user"), ("-H", "host")):
+                vals = ti.get(key) or []
+                if isinstance(vals, str):
+                    vals = [vals]
+                for v in vals:
+                    tail += [flag, str(v)]
+            if ti.get("reason"):
+                tail += ["--reason", str(ti["reason"])]
+        elif action == "all":
+            if ti.get("reason"):
+                tail += ["--reason", str(ti["reason"])]
+        elif action == "mode":
+            setting = str(ti.get("setting") or "").strip().lower()
+            if setting not in {"enforce", "warn", "off"}:
+                return "Error: action='mode' requires setting = enforce | warn | off."
+            tail += [setting]
+
+        # Select target hosts (omitted/empty ⇒ all hosts that have a runspec path).
+        wanted = ti.get("targets") or []
+        if isinstance(wanted, str):
+            wanted = [wanted]
+        wanted_set = {str(t) for t in wanted}
+        hosts = [h for h in self._hosts if _paths(h)]
+        if wanted_set:
+            hosts = [h for h in hosts if h.get("name") in wanted_set]
+        if not hosts:
+            return "Error: no matching fleet host has a runspec path to act on."
+
+        lines: list[str] = []
+        ok_count = 0
+        for h in hosts:
+            host_name = str(h.get("name"))
+            ssh = h.get("ssh")
+            idf = h.get("identityFile")
+            for rp in _paths(h):
+                argv = [rp, "deny", action, *tail]
+                venv = venv_name(rp)
+                try:
+                    if ssh:
+                        cmd = " ".join(shlex.quote(p) for p in argv)
+                        code, out, err = self._ssh_run(
+                            ssh, cmd, identity_file=idf, timeout=20
+                        )
+                    else:
+                        proc = subprocess.run(
+                            argv, capture_output=True, text=True, timeout=20
+                        )
+                        code, out, err = proc.returncode, proc.stdout, proc.stderr
+                except Exception as exc:  # noqa: BLE001 — report any failure per venv
+                    lines.append(f"✗ {host_name}/{venv}: {exc}")
+                    continue
+                body = (out or "").strip() or (err or "").strip() or f"exit {code}"
+                if code == 0:
+                    ok_count += 1
+                    lines.append(f"✓ {host_name}/{venv}: {body}")
+                else:
+                    lines.append(f"✗ {host_name}/{venv}: {body}")
+
+        header = f"runspec deny {action} — {ok_count}/{len(lines)} venv(s) ok across {len(hosts)} host(s):"
+        return header + "\n" + "\n".join(lines)
 
     def _resolve_tool_target(
         self, tool_name: str, tool_input: dict[str, Any]
@@ -5986,6 +6223,12 @@ class Bridge:
         """Autonomy the agent must honour for this call: the runnable's level,
         escalated by any provided arg's per-arg autonomy (most restrictive wins).
         Unknown runnable → 'confirm' (gated by default — never silently run)."""
+        if tool_name == "manage_denylist":
+            # Reading the denylist (action='list') is read-only — let the agent
+            # consult it freely so it always knows what's disabled; mutations
+            # (add/all/clear/mode) stay confirm-gated.
+            action = str((tool_input or {}).get("action") or "").lower()
+            return "autonomous" if action == "list" else "confirm"
         if tool_name in _CUSTOM_TOOL_NAMES:
             return "confirm"  # side-effecting file move — always prompt
         if tool_name in _READONLY_META:

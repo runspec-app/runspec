@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from runspec import errors
+from runspec import denylist, errors
 from runspec.become import resolve_run_as, verify_run_as_identity
 from runspec.env import apply_env_file
 from runspec.finder import find_config
@@ -26,7 +26,14 @@ from runspec.validator import raise_if_errors, validate_args, validate_groups
 
 
 def parse(
-    script_name: str | None = None, argv: list[str] | None = None, config_path: Path | None = None, *, _enforce_required_command: bool = True, _prompt_secrets: bool = True, _check_run_as: bool = True
+    script_name: str | None = None,
+    argv: list[str] | None = None,
+    config_path: Path | None = None,
+    *,
+    _enforce_required_command: bool = True,
+    _prompt_secrets: bool = True,
+    _check_run_as: bool = True,
+    _check_denylist: bool = True,
 ) -> RunSpec:
     """
     Parse arguments for the calling runnable.
@@ -44,7 +51,9 @@ def parse(
         RunSpec — the fully parsed, validated, coerced argument namespace.
     """
     try:
-        return _parse_impl(script_name, argv, config_path, enforce_required_command=_enforce_required_command, prompt_secrets=_prompt_secrets, check_run_as=_check_run_as)
+        return _parse_impl(
+            script_name, argv, config_path, enforce_required_command=_enforce_required_command, prompt_secrets=_prompt_secrets, check_run_as=_check_run_as, check_denylist=_check_denylist
+        )
     except errors.RunSpecError as e:
         print(str(e))
         sys.exit(1)
@@ -60,6 +69,7 @@ def _parse_impl(
     enforce_required_command: bool = True,
     prompt_secrets: bool = True,
     check_run_as: bool = True,
+    check_denylist: bool = True,
 ) -> RunSpec:
     """Internal: full parse pipeline. Raises on error — call parse() for CLI use."""
     # 1. Find config — explicit arg > RUNSPEC_CONFIG > caller's package > cwd.
@@ -158,6 +168,22 @@ def _parse_impl(
                 sys.stderr.write(f'⚠  {name}: {detail}. (enforce_run_as = "warn" — continuing)\n')
             elif level != "off":
                 raise errors.RunAsMismatch(errors.format_run_as_mismatch(name, detail))
+
+    # 6.45. Denylist kill switch — refuse runnables disabled in this venv's
+    # {sys.prefix}/runspec_denylist.toml (by name / effective user / hostname).
+    # A separate file from runspec.toml with no per-runnable opt-out, so it is
+    # authoritative. Runs after --help (so `<name> --help` stays readable) and is
+    # skipped for introspection (load_spec). The core `runspec` CLI is exempt
+    # inside check_denylist, so `runspec deny clear` always re-enables.
+    if check_denylist:
+        hit = denylist.check_denylist(name)
+        if hit:
+            mode, reason = hit
+            if mode == "warn":
+                suffix = f" ({reason})" if reason else ""
+                sys.stderr.write(f'⚠  {name}: disabled by the runspec denylist{suffix}. (mode = "warn" — continuing)\n')
+            elif mode != "off":
+                raise errors.RunnableDenied(errors.format_runnable_denied(name, reason, denylist.resolve_denylist_path()))
 
     # 6.5. Enforce require-command. The resolved leaf carries the deepest node's
     # own commands/require_command, so this single check enforces at every depth
@@ -275,10 +301,11 @@ def load_spec(script_name: str | None = None, config_path: Path | None = None) -
     require-command is not enforced here: introspection/emit must succeed even
     for a runnable that mandates a subcommand on the CLI. Secret prompting is
     also disabled — introspection must never block on an interactive prompt. The
-    run_as identity check is likewise skipped: emitting schemas and listing
-    runnables must never depend on who is running them.
+    run_as identity check and the denylist kill switch are likewise skipped:
+    emitting schemas and listing runnables must never depend on who is running
+    them or on whether the runnable is disabled for execution.
     """
-    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False, _prompt_secrets=False, _check_run_as=False)
+    return parse(script_name=script_name, argv=[], config_path=config_path, _enforce_required_command=False, _prompt_secrets=False, _check_run_as=False, _check_denylist=False)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

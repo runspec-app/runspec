@@ -344,6 +344,29 @@ MCP host config mirrors Ansible inventory:
 
 A registry service (`runspec-registry` on PyPI, archived at 0.1.1) was prototyped for **dynamic** environments where hosts spin up and down and tool availability changes at runtime. In practice the known-host SSH pattern covered every case we cared about, and the heartbeat-to-registry wiring was removed from `runspec serve` (see the "Released packages" table). The PyPI artifact remains for historical reference; the CLI no longer ships with the registry client.
 
+### Denylist — a venv-scoped kill switch
+
+Operators need to disable a runnable (or all runnables) in a deployed venv
+quickly, without uninstalling packages or editing each `runspec.toml`. Because
+every runnable depends on `runspec` and funnels through `parse()`, the core
+library is the one place a kill switch enforces uniformly across direct CLI
+runs, entry points, and agent runs (`runspec serve`).
+
+The denylist is a separate `{sys.prefix}/runspec_denylist.toml` (read on every
+`parse()`, next to `.runspec_env`), with rules matched by runnable name,
+effective user, and hostname — globs that combine, so one canonical file can be
+distributed across a fleet and still target only `prod-*`. It mirrors the
+`run_as` identity gate but, unlike `enforce_run_as`, is **authoritative with no
+per-runnable opt-out**: a kill switch a runnable could disarm would not be a
+kill switch.
+
+Two design choices keep it from locking an operator out: the editor is the core
+`runspec deny` subcommand (and, later, the console writing the file over its own
+SSH/SFTP channel) — **not** a runnable, which would be subject to its own
+denylist; and the reserved `runspec` name is exempt, so `runspec deny clear`
+always re-enables even under a deny-everything rule. The re-enable path is
+structurally out-of-band from the thing it controls.
+
 ---
 
 ## Implementation Strategy

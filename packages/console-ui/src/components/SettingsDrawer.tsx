@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill } from '../bridge'
+import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 
@@ -2185,6 +2185,223 @@ function SkillsTab() {
   )
 }
 
+// ── Denylist (fleet kill switch) ────────────────────────────────────────────
+
+export function DenylistTab() {
+  const [hosts, setHosts] = useState<Host[]>([])
+  const [targets, setTargets] = useState<string[]>([])
+  const [runnableGlobs, setRunnableGlobs] = useState<string[]>([])
+  const [userGlobs, setUserGlobs] = useState<string[]>([])
+  const [hostGlobs, setHostGlobs] = useState<string[]>([])
+  const [reason, setReason] = useState('')
+  const [mode, setMode] = useState<'enforce' | 'warn' | 'off'>('enforce')
+  const [result, setResult] = useState('')
+  const [busy, setBusy] = useState('')
+  const [status, setStatus] = useState<DenylistHostStatus[]>([])
+  const [loadingStatus, setLoadingStatus] = useState(false)
+
+  useEffect(() => { bridge.get_hosts().then(setHosts) }, [])
+
+  const scope = targets.length ? `${targets.length} selected host(s)` : 'ALL hosts'
+
+  const refresh = useCallback(async () => {
+    setLoadingStatus(true)
+    try {
+      setStatus(await bridge.denylist_status(targets))
+    } catch (err) {
+      message.error((err as Error)?.message || 'could not read denylist status')
+    } finally {
+      setLoadingStatus(false)
+    }
+  }, [targets])
+
+  // Show live state on open and whenever the host selection changes.
+  useEffect(() => { refresh() }, [refresh])
+
+  const run = async (payload: DenylistPayload, label: string) => {
+    setBusy(label)
+    try {
+      setResult(await bridge.manage_denylist({ ...payload, targets }))
+      await refresh()  // reflect the change in the table immediately
+    } catch (err) {
+      message.error((err as Error)?.message || 'denylist action failed')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const hostOptions = hosts.map(h => ({
+    value: h.name,
+    label: h.group ? `${h.name} (${h.group})` : h.name,
+  }))
+
+  const ruleSummary = (r: DenylistHostStatus): string => {
+    if (!r.ok) return r.error || 'unreachable'
+    if (r.disabled) return 'ALL disabled' + (r.reason ? ` (${r.reason})` : '')
+    if (!r.rules?.length) return 'none'
+    return r.rules
+      .map(rule => `${rule.runnables.join(',')} [users ${rule.users.join(',')}; hosts ${rule.hosts.join(',')}]${rule.reason ? ` — ${rule.reason}` : ''}`)
+      .join(' · ')
+  }
+
+  const statusColumns = [
+    { title: 'Host', dataIndex: 'host', key: 'host' },
+    { title: 'Venv', dataIndex: 'venv', key: 'venv' },
+    {
+      title: 'Mode',
+      key: 'mode',
+      render: (_: unknown, r: DenylistHostStatus) =>
+        !r.ok ? <Tag color="default">—</Tag>
+          : <Tag color={r.mode === 'off' ? 'default' : r.mode === 'warn' ? 'gold' : 'blue'}>{r.mode}</Tag>,
+    },
+    {
+      title: 'Disabled',
+      key: 'disabled',
+      render: (_: unknown, r: DenylistHostStatus) => {
+        if (!r.ok) return <Tag color="red">error</Tag>
+        if (r.disabled) return <Tag color="red">ALL</Tag>
+        if (r.rules?.length) return <Tag color="orange">{r.rules.length} rule{r.rules.length === 1 ? '' : 's'}</Tag>
+        return <Tag color="green">none</Tag>
+      },
+    },
+    {
+      title: 'Detail',
+      key: 'detail',
+      render: (_: unknown, r: DenylistHostStatus) => (
+        <Tooltip title={ruleSummary(r)}>
+          <Text style={{ fontSize: 12 }} ellipsis={{ tooltip: false }}>{ruleSummary(r)}</Text>
+        </Tooltip>
+      ),
+    },
+  ]
+
+  return (
+    <div>
+      <Alert
+        type="warning"
+        showIcon
+        icon={<WarningOutlined />}
+        style={{ marginBottom: 12 }}
+        message="Kill switch"
+        description={
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            Disable or re-enable runspec runnables across the fleet. This writes each
+            host's venv denylist via the core <Text code>runspec deny</Text> over SSH —
+            it stops the <em>runnables</em> on those hosts, never this console, and
+            “Re-enable all” always works. Remote hosts need <Text code>runspec ≥ 0.43.0</Text>.
+          </Text>
+        }
+      />
+
+      <div style={{ marginBottom: 8 }}>
+        <Text style={{ fontSize: 12 }}>Target hosts</Text>
+        <Select
+          mode="multiple"
+          allowClear
+          size="small"
+          style={{ width: '100%', marginTop: 4 }}
+          placeholder="All hosts (leave empty to apply to the whole fleet)"
+          value={targets}
+          onChange={setTargets}
+          options={hostOptions}
+        />
+      </div>
+
+      <Table<DenylistHostStatus>
+        size="small"
+        rowKey={r => `${r.host}/${r.venv}`}
+        columns={statusColumns}
+        dataSource={status}
+        loading={loadingStatus}
+        pagination={false}
+        style={{ marginBottom: 12 }}
+        locale={{ emptyText: 'No hosts with a runspec path.' }}
+      />
+
+      <Space wrap style={{ marginBottom: 12 }}>
+        <Button
+          size="small"
+          icon={loadingStatus ? <LoadingOutlined /> : <ReloadOutlined />}
+          loading={loadingStatus}
+          onClick={refresh}
+        >
+          Refresh status
+        </Button>
+        <Popconfirm
+          title="Disable ALL runnables?"
+          icon={<WarningOutlined style={{ color: '#faad14' }} />}
+          description={
+            <span style={{ fontSize: 12 }}>
+              Blocks every runnable on {scope}.<br />
+              Agent and manual runs are refused until you re-enable.
+            </span>
+          }
+          okText="Disable all"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => run({ action: 'all', reason }, 'all')}
+        >
+          <Button size="small" danger icon={<StopOutlined />} loading={busy === 'all'}>
+            Disable all
+          </Button>
+        </Popconfirm>
+        <Popconfirm
+          title="Re-enable everything?"
+          description={<span style={{ fontSize: 12 }}>Clears the denylist on {scope}.</span>}
+          okText="Re-enable"
+          onConfirm={() => run({ action: 'clear' }, 'clear')}
+        >
+          <Button size="small" icon={<ReloadOutlined />} loading={busy === 'clear'}>
+            Re-enable all (clear)
+          </Button>
+        </Popconfirm>
+      </Space>
+
+      <Divider style={{ margin: '8px 0' }} orientation="left" plain>
+        <Text type="secondary" style={{ fontSize: 12 }}>Disable specific runnables</Text>
+      </Divider>
+      <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }} size={6}>
+        <Select mode="tags" size="small" style={{ width: '100%' }} value={runnableGlobs} onChange={setRunnableGlobs} placeholder="Runnable name globs (e.g. deploy, restart-*) — empty = all" />
+        <Select mode="tags" size="small" style={{ width: '100%' }} value={userGlobs} onChange={setUserGlobs} placeholder="Username globs — empty = all users" />
+        <Select mode="tags" size="small" style={{ width: '100%' }} value={hostGlobs} onChange={setHostGlobs} placeholder="Hostname globs the rule applies to — empty = all hosts" />
+        <Input size="small" placeholder="Reason (shown on the refusal)" value={reason} onChange={e => setReason(e.target.value)} />
+        <Button
+          size="small"
+          icon={<StopOutlined />}
+          loading={busy === 'add'}
+          onClick={() => run({ action: 'add', runnable: runnableGlobs, user: userGlobs, host: hostGlobs, reason }, 'add')}
+        >
+          Add deny rule
+        </Button>
+      </Space>
+
+      <Divider style={{ margin: '8px 0' }} orientation="left" plain>
+        <Text type="secondary" style={{ fontSize: 12 }}>Enforcement mode</Text>
+      </Divider>
+      <Space style={{ marginBottom: 12 }}>
+        <Segmented
+          size="small"
+          value={mode}
+          onChange={v => setMode(v as 'enforce' | 'warn' | 'off')}
+          options={[
+            { label: 'Enforce', value: 'enforce' },
+            { label: 'Warn', value: 'warn' },
+            { label: 'Off', value: 'off' },
+          ]}
+        />
+        <Button size="small" loading={busy === 'mode'} onClick={() => run({ action: 'mode', setting: mode }, 'mode')}>
+          Apply mode
+        </Button>
+      </Space>
+
+      {result && (
+        <pre style={{ fontSize: 12, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 6, padding: 10, whiteSpace: 'pre-wrap', maxHeight: 240, overflow: 'auto' }}>
+          {result}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
@@ -2200,6 +2417,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'skills',    label: 'Skills',     children: <SkillsTab /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
+          { key: 'denylist',  label: 'Denylist',   children: <DenylistTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
           { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
           { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },

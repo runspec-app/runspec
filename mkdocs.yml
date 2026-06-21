@@ -34,6 +34,7 @@ nav:
   - Node Library: node.md
   - Deploying Node folders: node-deploy.md
   - CLI Reference: cli.md
+  - Denylist (kill switch): denylist.md
   - Agent Integration: agents.md
   - Jump Hosts: jump-hosts.md
   - Desktop Console: console.md

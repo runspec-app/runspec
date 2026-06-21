@@ -17,6 +17,7 @@ examples = [
   {cmd = "runspec jump user@host",          description = "List tools available on a remote host"},
   {cmd = "runspec env",                    description = "Show the resolved .runspec_env file"},
   {cmd = "runspec logs deploy",            description = "View merged per-invocation logs for a runnable"},
+  {cmd = "runspec deny add --runnable deploy", description = "Disable a runnable in this venv (kill switch)"},
 ]
 
 [runspec.commands.init]
@@ -106,6 +107,28 @@ examples = [
 
 [runspec.commands.env.args]
 runnable = {type = "str", description = "Runnable name to show env file for", position = 1, required = false}
+
+[runspec.commands.deny]
+description = "Disable runnables in this venv (kill switch) via runspec_denylist.toml"
+autonomy    = "confirm"
+
+examples = [
+  {cmd = "runspec deny list",                                   description = "Show the current denylist (mode + rules)"},
+  {cmd = "runspec deny add --runnable deploy",                  description = "Disable one runnable for all users/hosts"},
+  {cmd = "runspec deny add --runnable deploy --user svc-batch --host 'prod-*'", description = "Disable deploy for svc-batch on prod hosts"},
+  {cmd = "runspec deny all --reason 'change freeze'",           description = "Disable every runnable in this venv"},
+  {cmd = "runspec deny mode warn",                              description = "Warn instead of refusing (enforce | warn | off)"},
+  {cmd = "runspec deny clear",                                  description = "Remove the denylist — re-enable everything"},
+]
+
+[runspec.commands.deny.args]
+action   = {type = "str", description = "add | all | list | clear | mode", position = 1, required = false}
+setting  = {type = "str", description = "Value for 'mode': enforce | warn | off", position = 2, required = false}
+runnable = {type = "str", description = "Runnable name glob to deny (repeatable; default '*')", short = "-r", multiple = true, required = false}
+user     = {type = "str", description = "Username glob to deny (repeatable; default '*')", short = "-u", multiple = true, required = false}
+host     = {type = "str", description = "Hostname glob to deny (repeatable; default '*')", short = "-H", multiple = true, required = false}
+reason   = {type = "str", description = "Reason recorded and shown on refusal", required = false}
+json     = {type = "flag", description = "Emit the denylist as JSON (list/show)", default = false}
 
 [runspec.commands.jump]
 description = "List tools on a remote host or run a tool via SSH+MCP"

@@ -15,11 +15,12 @@ import runspec_console.config as cfg
 from runspec_console.bridge import Bridge
 
 
-def _stub(monkeypatch, *, rota, triggers, schedules):
+def _stub(monkeypatch, *, rota, triggers, schedules, hosts=None):
     monkeypatch.setattr(cfg, "read_rota", lambda: rota)
     monkeypatch.setattr(cfg, "read_triggers", lambda: triggers)
     ns = types.SimpleNamespace()
     ns._read_schedules = lambda: schedules
+    ns._hosts = hosts or []  # for _run_status_tool's denylist pointer
     ns._console_context = types.MethodType(Bridge._console_context, ns)
     return ns
 
@@ -107,6 +108,24 @@ def test_status_tool_fallback_when_unconfigured(monkeypatch):
     ns._run_status_tool = types.MethodType(Bridge._run_status_tool, ns)
     out = ns._run_status_tool({})
     assert "rota: OFF" in out  # non-empty even though _console_context() is ""
+    assert "manage_denylist" not in out  # no hosts ⇒ no denylist pointer
+
+
+def test_status_tool_points_at_denylist_when_hosts_present(monkeypatch):
+    # A host with a runspec path ⇒ the kill switch applies, so console_status
+    # mentions manage_denylist (zero-cost text pointer, no fleet sweep).
+    ns = _stub(
+        monkeypatch,
+        rota={},
+        triggers=[],
+        schedules=[],
+        hosts=[
+            {"name": "prod-1", "ssh": "x@prod-1", "runspec_paths": ["/v/bin/runspec"]}
+        ],
+    )
+    ns._run_status_tool = types.MethodType(Bridge._run_status_tool, ns)
+    out = ns._run_status_tool({})
+    assert "manage_denylist" in out and "action='list'" in out
 
 
 def test_status_tool_is_autonomous():

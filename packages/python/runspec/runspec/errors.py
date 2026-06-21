@@ -58,6 +58,10 @@ class RunAsMismatch(RunSpecError):
     """The process is not running as the user declared in run_as."""
 
 
+class RunnableDenied(RunSpecError):
+    """The runnable is disabled by the venv-root denylist (kill switch)."""
+
+
 def format_missing_required(name: str, arg_spec: dict[str, Any]) -> str:
     lines = [
         f"✗  Missing required argument: --{name}",
@@ -235,6 +239,15 @@ def format_run_as_mismatch(runnable_name: str, detail: str) -> str:
             '   or `runspec jump`), or relax the check with enforce_run_as = "warn" (or "off").',
         ]
     )
+
+
+def format_runnable_denied(runnable_name: str, reason: str, path: Any) -> str:
+    lines = [f"✗  Refusing to run '{runnable_name}': disabled by the runspec denylist."]
+    if reason:
+        lines.append(f"   Reason: {reason}")
+    lines.append(f"   Denylist: {path}")
+    lines.append("   An administrator can re-enable it with `runspec deny clear` (or by editing that file).")
+    return "\n".join(lines)
 
 
 def format_deprecated(name: str, message: str) -> str:

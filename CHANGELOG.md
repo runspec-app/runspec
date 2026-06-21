@@ -7,6 +7,48 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.43.0] — 2026-06-21
+
+### Added
+
+- **Denylist (kill switch).** A venv-scoped way to disable runnables — one, a
+  set, or all — without uninstalling packages or editing each `runspec.toml`.
+  `parse()` reads `{sys.prefix}/runspec_denylist.toml` (override with
+  `RUNSPEC_DENYLIST_FILE`) on every run, so the effect is uniform across direct
+  CLI runs, installed entry points, and agent runs via `runspec serve`. Rules
+  match by runnable name, **effective** user, and hostname as shell-style globs
+  that combine (an omitted dimension means "all"); multiple rules OR together.
+  `disabled = true` is a fast path that denies everything. `mode` (`enforce`
+  default / `warn` / `off`) lives in the file and is authoritative — there is no
+  per-runnable opt-out (unlike `enforce_run_as`), so a runnable can't disarm an
+  operator's kill switch. `--help` and introspection (`runspec local` /
+  `runspec stubs`) are never blocked, and the reserved `runspec` name is exempt
+  so the control plane always works. New module `runspec/denylist.py`; error
+  `RunnableDenied`. See `spec/SPEC.md` → "Denylist File" and `docs/denylist.md`.
+- **`runspec deny` CLI** — `add` / `all` / `list` / `clear` / `mode` edit the
+  venv denylist; `list --json` emits structured status (`{path, present, mode,
+  disabled, reason, rules}`). It is a core subcommand (not a runnable), so it can
+  never disable itself: `runspec deny clear` is the guaranteed re-enable path on
+  any SSH-reachable host.
+
+### runspec-console (0.106.0)
+
+- **Denylist fleet kill switch — Settings tab + agent tool.** A **Settings →
+  Denylist** tab (host picker, *Disable all* / *Re-enable all* danger buttons, an
+  add-rule form with runnable/user/host globs, and an enforce/warn/off toggle)
+  and a confirm-gated built-in agent tool, both running `runspec deny`
+  (`list`/`add`/`all`/`clear`/`mode`) across selected fleet hosts over their
+  existing SSH connections, once per venv. `targets` selects hosts (omit ⇒ all).
+  Because it shells out to the core `runspec` binary (exempt from its own
+  denylist), `clear` always re-enables — the console can never be locked out.
+  Remote hosts need `runspec >= 0.43.0`. The tab shows a **live status table**
+  per host/venv (via `denylist_status` parsing `runspec deny list --json`,
+  refreshed after each action), and the agent tool's read-only `action='list'`
+  is **autonomous** so the agent can check what's disabled without a prompt
+  (mutations stay confirm-gated).
+
+---
+
 ## [0.42.0] — 2026-06-19
 
 ### Added

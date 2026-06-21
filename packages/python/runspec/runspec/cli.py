@@ -8,6 +8,7 @@ Commands:
     runspec test   [--format text|json] [--runnable <name>]
     runspec serve
     runspec jump   [--list-jump-hosts] [<jump_host> [<tool>] [-- tool-args...]]
+    runspec deny   <add|all|list|clear|mode> [...]   (venv kill switch)
 
 Top-level options:
     --version, -V    Print the runspec package version and exit
@@ -67,6 +68,7 @@ def main() -> None:
         "jump": cmd_jump,
         "env": cmd_env,
         "logs": cmd_logs,
+        "deny": cmd_deny,
     }
 
     if command not in commands:
@@ -518,6 +520,112 @@ def cmd_env(args: list[str]) -> None:
     pad = max(len(k) for k in values)
     for key, value in values.items():
         print(f"  {key:<{pad}} = {value}")
+
+
+def cmd_deny(args: list[str]) -> None:
+    """Manage the venv denylist (kill switch): add / all / list / clear / mode.
+
+    Edits {sys.prefix}/runspec_denylist.toml, read on every parse() to refuse
+    disabled runnables. This is a core command (not a discovered runnable), so it
+    can never be self-disabled — the guaranteed re-enable path on any host.
+    """
+    from runspec.parser import parse as _parse
+
+    parsed = _parse(script_name="runspec", argv=["deny"] + args, config_path=_CLI_CONFIG)
+
+    from runspec import denylist as _dl
+
+    action = (parsed.action.value or "list").lower()
+    path = _dl.resolve_denylist_path()
+
+    if action in ("list", "show", "status"):
+        _deny_show(path, as_json=parsed.json.value)
+        return
+
+    if action == "clear":
+        if path.exists():
+            path.unlink()
+            print("✓  Cleared denylist — all runnables re-enabled.")
+            print(f"   Removed: {path}")
+        else:
+            print(f"No denylist present ({path}). Nothing to clear.")
+        return
+
+    if action == "mode":
+        setting = (parsed.setting.value or "").lower()
+        if setting not in ("enforce", "warn", "off"):
+            print("✗  mode requires one of: enforce | warn | off")
+            sys.exit(1)
+        section = _dl.load_denylist(path) or {}
+        section["mode"] = setting
+        _dl.write_denylist(section, path)
+        print(f"✓  Denylist mode set to {setting!r}.")
+        print(f"   {path}")
+        return
+
+    if action == "all":
+        section = _dl.load_denylist(path) or {}
+        section["disabled"] = True
+        if parsed.reason.value:
+            section["reason"] = parsed.reason.value
+        _dl.write_denylist(section, path)
+        print("✓  Disabled ALL runnables in this venv.")
+        print(f"   {path}")
+        return
+
+    if action == "add":
+        section = _dl.load_denylist(path) or {}
+        runnables = parsed.runnable.value or ["*"]
+        users = parsed.user.value or ["*"]
+        hosts = parsed.host.value or ["*"]
+        rule: dict[str, Any] = {"runnables": runnables, "users": users, "hosts": hosts}
+        if parsed.reason.value:
+            rule["reason"] = parsed.reason.value
+        rules = section.get("rule", [])
+        if isinstance(rules, dict):
+            rules = [rules]
+        rules.append(rule)
+        section["rule"] = rules
+        _dl.write_denylist(section, path)
+        print(f"✓  Added deny rule: runnables={runnables} users={users} hosts={hosts}")
+        print(f"   {path}")
+        return
+
+    print(f"✗  Unknown deny action: {action}")
+    print("   Available actions: add | all | list | clear | mode")
+    sys.exit(1)
+
+
+def _deny_show(path: Path, as_json: bool = False) -> None:
+    """Print the current denylist mode and rules (text, or structured JSON)."""
+    from runspec import denylist as _dl
+
+    info = _dl.status(path)
+    if as_json:
+        print(json.dumps(info, default=str))
+        return
+
+    print(f"Denylist: {path}")
+    if not info["present"]:
+        print("  Status: not present (all runnables enabled)")
+        return
+    print(f"  Mode:   {info['mode']}")
+    if info["disabled"]:
+        line = "  Disabled: ALL runnables"
+        if info["reason"]:
+            line += f"  (reason: {info['reason']})"
+        print(line)
+    for i, rule in enumerate(info["rules"], 1):
+        parts = [
+            f"runnables={rule['runnables']}",
+            f"users={rule['users']}",
+            f"hosts={rule['hosts']}",
+        ]
+        if rule["reason"]:
+            parts.append(f"reason={rule['reason']!r}")
+        print(f"  Rule {i}: " + " ".join(parts))
+    if not info["disabled"] and not info["rules"]:
+        print("  (no rules — nothing disabled)")
 
 
 def cmd_logs(args: list[str]) -> None:

@@ -633,8 +633,48 @@ export interface RoomDraft {
 }
 
 
+// Denylist kill switch (Settings → Denylist). `targets` empty ⇒ all hosts;
+// `runnable`/`user`/`host` are globs used by action 'add'; `setting` is for
+// action 'mode'. Returns the aggregated per-host/per-venv summary string.
+export interface DenylistPayload {
+  action: 'list' | 'add' | 'all' | 'clear' | 'mode'
+  targets?: string[]
+  runnable?: string[]
+  user?: string[]
+  host?: string[]
+  reason?: string
+  setting?: 'enforce' | 'warn' | 'off'
+}
+
+export interface DenylistRule {
+  runnables: string[]
+  users: string[]
+  hosts: string[]
+  reason: string
+}
+
+// One row per venv on a host, from denylist_status(). When `ok` is false the
+// host/venv couldn't be read (see `error`); otherwise the denylist fields apply.
+export interface DenylistHostStatus {
+  host: string
+  venv: string
+  ok: boolean
+  error?: string
+  path?: string
+  present?: boolean
+  mode?: 'enforce' | 'warn' | 'off'
+  disabled?: boolean
+  reason?: string
+  rules?: DenylistRule[]
+}
+
 export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
+  // Disable / re-enable runnables across fleet hosts (a kill switch). Edits each
+  // host's venv denylist via the core `runspec deny` over SSH.
+  manage_denylist: (payload: DenylistPayload) => Promise<string>
+  // Read-only structured denylist state per host/venv (Settings → Denylist table).
+  denylist_status: (targets?: string[]) => Promise<DenylistHostStatus[]>
   get_runnables: (host: string) => Promise<Runnable[]>
   get_history: (host: string, runnable?: string) => Promise<HistoryRecord[]>
   // History across every host (local + connected remotes) — the History tab uses

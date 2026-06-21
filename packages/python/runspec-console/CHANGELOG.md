@@ -8,6 +8,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.106.0] — 2026-06-21
+
+### Added
+- **Denylist fleet kill switch — Settings tab + agent tool.** A new
+  **Settings → Denylist** tab (host picker, *Disable all* / *Re-enable all*
+  danger buttons, an add-rule form with runnable/user/host globs + reason, and an
+  enforce/warn/off mode toggle), plus a built-in agent tool
+  (confirm-gated, like `download_file`/`relay_file`) that disables or
+  re-enables runspec runnables across fleet hosts by running `runspec deny`
+  (`list`/`add`/`all`/`clear`/`mode`) over each host's existing SSH connection,
+  once per venv (`runspec_paths`). `targets` selects hosts (omit ⇒ all); `add`
+  takes `runnable`/`user`/`host` globs + `reason`. It disables the *runnables* on
+  those hosts, not the console, and because it shells out to the core `runspec`
+  binary (exempt from its own denylist) `clear` always re-enables — the operator
+  can never be locked out. Pairs with the core denylist (runspec 0.43.0); remote
+  hosts need `runspec >= 0.43.0` for the tool to take effect. See
+  `runspec_console/bridge.py` (`_denylist_tool`, `_run_manage_denylist`).
+  - **Live status table.** The tab shows current state per host/venv (mode,
+    what's disabled, rule detail) via a new `denylist_status(targets)` bridge
+    method that parses `runspec deny list --json`; it refreshes after every
+    action.
+  - **Agent stays aware.** The agent tool's read-only `action='list'` is now
+    **autonomous** (no confirm prompt) so the agent can consult what's disabled
+    at any time — e.g. when a run is unexpectedly refused — while the mutating
+    actions remain confirm-gated. The read-only `console_status` tool (0.105.0)
+    also carries a zero-cost pointer to `manage_denylist` (no fleet sweep) so the
+    kill switch is discoverable from the one place the agent checks console state.
+
+
 ## [0.105.0] — 2026-06-21
 
 ### Added
