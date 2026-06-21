@@ -128,10 +128,18 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
 export function RotaView() {
   const isDark = useIsDark()
   const dim = isDark ? '#888' : '#999'
-  const [rota, setRota] = useState<Rota>({})
+  // null until the first load resolves. The panel is open by default, so the
+  // editor would otherwise mount with an empty rota and lock its useState
+  // initializers to the defaults before list_triggers() returns — showing
+  // defaults even when a rota is saved on disk. Gate the editor on a real load,
+  // and key it on the load count so a reload re-seeds from disk.
+  const [rota, setRota] = useState<Rota | null>(null)
+  const [loadSeq, setLoadSeq] = useState(0)
 
   const loadRota = () =>
-    bridge.list_triggers().then(cfg => setRota((cfg.rota ?? {}) as Rota)).catch(console.error)
+    bridge.list_triggers()
+      .then(cfg => { setRota((cfg.rota ?? {}) as Rota); setLoadSeq(s => s + 1) })
+      .catch(console.error)
 
   useEffect(() => { loadRota() }, [])
 
@@ -144,9 +152,11 @@ export function RotaView() {
         items={[{
           key: 'rota',
           label: (
-            <span><ClockCircleOutlined /> Working hours{rota.enabled ? '' : ' (off)'}</span>
+            <span><ClockCircleOutlined /> Working hours{rota?.enabled ? '' : ' (off)'}</span>
           ),
-          children: <WorkingHoursEditor rota={rota} onSaved={loadRota} />,
+          children: rota === null
+            ? <span style={{ color: dim, fontSize: 12 }}>Loading…</span>
+            : <WorkingHoursEditor key={loadSeq} rota={rota} onSaved={loadRota} />,
         }]}
       />
       <div style={{ color: dim, fontSize: 12, paddingLeft: 4 }}>

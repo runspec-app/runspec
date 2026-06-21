@@ -15,6 +15,7 @@ def _use_tmp(monkeypatch, tmp_path):
     monkeypatch.setattr(
         config, "triggers_path", lambda: tmp_path / "runspec_triggers.toml"
     )
+    monkeypatch.setattr(config, "rota_path", lambda: tmp_path / "runspec_rota.toml")
 
 
 def test_read_missing_returns_empty(monkeypatch, tmp_path):
@@ -32,6 +33,31 @@ def test_rota_round_trip(monkeypatch, tmp_path):
     }
     config.write_rota(rota)
     assert config.read_rota() == rota
+    # The rota lives in its own file now, not the triggers file.
+    assert config.rota_path().exists()
+    assert "rota" not in (config._read_trigger_file())
+
+
+def test_rota_migrates_from_legacy_triggers_file(monkeypatch, tmp_path):
+    """A pre-split install keeps its rota: read falls back to the legacy [rota]
+    in runspec_triggers.toml, and the next save moves it to runspec_rota.toml."""
+    _use_tmp(monkeypatch, tmp_path)
+    # Simulate the old layout: rota embedded in the triggers file, no rota file.
+    config.triggers_path().write_text(
+        "[rota]\nenabled = true\n[rota.mon]\non = true\nstart = '09:00'\nend = '17:00'\n",
+        encoding="utf-8",
+    )
+    assert not config.rota_path().exists()
+    # Read falls back to the legacy location.
+    assert config.read_rota() == {
+        "enabled": True,
+        "mon": {"on": True, "start": "09:00", "end": "17:00"},
+    }
+    # Editing a trigger migrates the rota out without losing it.
+    config.write_triggers([{"name": "t", "source": "outlook", "event": "new_mail"}])
+    assert config.rota_path().exists()
+    assert "rota" not in config._read_trigger_file()  # stripped from triggers file
+    assert config.read_rota()["enabled"] is True  # preserved
 
 
 def test_write_rota_preserves_triggers_and_vice_versa(monkeypatch, tmp_path):

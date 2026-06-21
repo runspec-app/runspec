@@ -4471,9 +4471,10 @@ class Bridge:
         """Merge pulled triggers by name (collection), preserving the operator's
         own triggers (names not in the repo).
 
-        The ``[rota]`` (working hours) is **never synced** — it's per-person, so a
-        pull keeps the local rota untouched and ignores any ``[rota]`` in the repo
-        file. Operators manage their own rota in Settings → Triggers."""
+        The working-hours rota is **never synced** — it's per-person and now lives
+        in its own ``runspec_rota.toml`` (managed on the Rota tab), so a pull keeps
+        the local rota untouched and ignores any legacy ``[rota]`` in the repo's
+        ``runspec_triggers.toml``."""
         from . import configmerge
         from .config import read_rota, read_triggers, write_triggers_file
 

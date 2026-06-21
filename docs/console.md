@@ -322,7 +322,9 @@ scheduled fire runs. On the Rota tab: a master switch, then per-day on/off with 
 start and end time (local machine time). Outside those windows, matching events
 are **ignored** (dropped, not queued — you won't get a backlog dump when the
 window opens). It's **off by default** (automation runs anytime until you set it
-up), and stored as `[rota]` in `runspec_triggers.toml`:
+up), and stored as `[rota]` in its own `runspec_rota.toml` (machine-local, not
+synced; installs from before the split are read from — and migrated out of — the
+legacy `[rota]` in `runspec_triggers.toml`):
 
 ```toml
 [rota]

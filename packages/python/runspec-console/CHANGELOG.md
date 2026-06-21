@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.104.0] — 2026-06-21
+
+### Changed
+- **The working-hours rota moved to its own `runspec_rota.toml`.** It now gates
+  **both** triggers and schedules, so it no longer belongs inside
+  `runspec_triggers.toml`. The move is transparent: `read_rota` falls back to the
+  legacy `[rota]` in `runspec_triggers.toml`, and the next save of either the rota
+  or a trigger migrates it across (and strips the stale `[rota]`). Like the mailbox
+  folder, the rota is machine/person-local and is **not** synced by Config Sync.
+
+### Fixed
+- **Rota tab showed defaults on restart even when working hours were saved.** The
+  rota *was* persisted and read back fine — but the Rota tab's panel is open by
+  default, so the working-hours editor mounted with an empty rota and froze its
+  initial field values to the defaults before `list_triggers()` returned. The
+  editor now waits for the first load and re-seeds from disk on every (re)load, so
+  saved hours appear after a restart.
+
 ## [0.103.0] — 2026-06-21
 
 The console is a **user tool, not an always-on automation system** — so both

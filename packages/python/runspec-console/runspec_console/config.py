@@ -79,6 +79,15 @@ def triggers_path() -> Path:
     return app_dir() / "runspec_triggers.toml"
 
 
+def rota_path() -> Path:
+    """The working-hours rota (`runspec_rota.toml`). Its own file since the rota
+    gates **both** triggers and schedules — it's no longer trigger-specific.
+    Machine/person-local, like the mailbox folder: **never** synced (not in
+    gitsync.KNOWN_FILES). Reads fall back to the legacy `[rota]` in
+    `runspec_triggers.toml` for installs that predate the split."""
+    return app_dir() / "runspec_rota.toml"
+
+
 def trigger_state_path() -> Path:
     """Durable per-trigger thread dedup state for ``once_per_thread`` (internal —
     not user-edited config). JSON, since it's just an id→bag map."""
@@ -146,35 +155,65 @@ def trigger_file_error() -> str | None:
     return None
 
 
+def _read_rota_file() -> dict[str, Any]:
+    """Full parse of ``runspec_rota.toml`` ({} on missing/unreadable)."""
+    path = rota_path()
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "rb") as f:
+            return dict(tomllib.load(f))
+    except Exception:
+        return {}
+
+
 def read_rota() -> dict[str, Any]:
-    """The ``[rota]`` working-hours table ({} when unset)."""
-    rota = _read_trigger_file().get("rota")
-    return dict(rota) if isinstance(rota, dict) else {}
+    """The ``[rota]`` working-hours table ({} when unset).
+
+    Prefers the dedicated ``runspec_rota.toml``; falls back to the legacy
+    ``[rota]`` in ``runspec_triggers.toml`` so installs from before the split keep
+    their working hours until the next save migrates them across."""
+    rota = _read_rota_file().get("rota")
+    if isinstance(rota, dict):
+        return dict(rota)
+    legacy = _read_trigger_file().get("rota")  # pre-split location
+    return dict(legacy) if isinstance(legacy, dict) else {}
 
 
-def _write_trigger_file(rota: dict[str, Any], triggers: list[dict[str, Any]]) -> None:
-    parts = []
-    if rota:
-        parts.append(_rota_to_toml(rota))
-    if triggers:
-        parts.append(_triggers_to_toml(triggers))
-    triggers_path().write_text("\n".join(parts), encoding="utf-8")
+def _write_rota_file(rota: dict[str, Any]) -> None:
+    rota_path().write_text(_rota_to_toml(rota) if rota else "", encoding="utf-8")
+
+
+def _write_triggers_only(triggers: list[dict[str, Any]]) -> None:
+    """Write the triggers file as triggers-only — the rota lives in its own file
+    now, so this also strips any legacy ``[rota]`` still embedded here."""
+    triggers_path().write_text(
+        _triggers_to_toml(triggers) if triggers else "", encoding="utf-8"
+    )
 
 
 def write_triggers(triggers: list[dict[str, Any]]) -> None:
-    """Save the named ``[triggers.<name>]`` tables, preserving the ``[rota]``."""
-    _write_trigger_file(read_rota(), triggers)
+    """Save the named ``[triggers.<name>]`` tables. Re-persists the current rota
+    to ``runspec_rota.toml`` first (migrating a legacy embedded one) so rewriting
+    the triggers file triggers-only can never drop the working hours."""
+    _write_rota_file(read_rota())
+    _write_triggers_only(triggers)
 
 
 def write_triggers_file(rota: dict[str, Any], triggers: list[dict[str, Any]]) -> None:
-    """Write both the ``[rota]`` and the ``[triggers.<name>]`` tables in one pass
-    (used by Config Sync, which merges both before writing)."""
-    _write_trigger_file(rota, triggers)
+    """Write both the rota (→ ``runspec_rota.toml``) and the ``[triggers.<name>]``
+    tables (→ ``runspec_triggers.toml``) in one pass (used by Config Sync, which
+    merges both before writing)."""
+    _write_rota_file(rota)
+    _write_triggers_only(triggers)
 
 
 def write_rota(rota: dict[str, Any]) -> None:
-    """Save the ``[rota]`` working-hours table, preserving the existing triggers."""
-    _write_trigger_file(rota, read_triggers())
+    """Save the ``[rota]`` working-hours table to its own ``runspec_rota.toml``
+    (it gates both triggers and schedules), keeping the triggers file
+    triggers-only — which also clears any legacy ``[rota]`` still embedded there."""
+    _write_rota_file(rota)
+    _write_triggers_only(read_triggers())
 
 
 def read_config() -> dict[str, Any]:
