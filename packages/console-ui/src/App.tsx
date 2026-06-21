@@ -14,6 +14,7 @@ import {
   NodeIndexOutlined,
   CodeOutlined,
   BellOutlined,
+  ClockCircleOutlined,
   KeyOutlined,
   LoadingOutlined,
   BugOutlined,
@@ -26,6 +27,7 @@ import { HistoryView } from './views/HistoryView'
 import { LogsView } from './views/LogsView'
 import { SchedulesView } from './views/SchedulesView'
 import { TriggersView } from './views/TriggersView'
+import { RotaView } from './views/RotaView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
@@ -41,7 +43,7 @@ import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type Runnable, type Skill } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'analytics' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -290,6 +292,7 @@ export default function App() {
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]}><BellOutlined /></Badge>
         : <BellOutlined />,
     },
+    { key: 'rota'      as ViewKey, label: 'Rota',      icon: <ClockCircleOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ]
 
@@ -524,6 +527,7 @@ export default function App() {
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} skills={skills} onOpenSkill={handleOpenSkill} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
+                    {view === 'rota'      && <RotaView />}
                     {view === 'dev'       && <DevView />}
                   </div>
                 )}

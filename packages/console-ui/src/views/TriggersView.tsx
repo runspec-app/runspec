@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Segmented, Input, Drawer, message } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined, ClockCircleOutlined, BellOutlined, SendOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons'
-import { bridge, type Rota, type RotaDay, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
-import { useIsDark } from '../ThemeContext'
+import { Table, Tag, Switch, Alert, Button, Tooltip, Empty, Space, Collapse, Input, Drawer, message } from 'antd'
+import { CheckOutlined, CloseOutlined, ReloadOutlined, BellOutlined, SendOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons'
+import { bridge, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
+import { useIsDark, textColor } from '../ThemeContext'
 import { Markdown } from '../components/Markdown'
 
 // A status counts as "in flight" (abortable) while the engine is still working
@@ -39,12 +39,7 @@ type QueueMsg = { sender?: string; text?: string; id?: string; ts?: number; kind
 const isChatCard = (c: TriggerCard) => c.source === 'chat'
 const visitorOf = (room: string) => room.split('/').slice(2).join('/') || room
 
-const DAYS: [string, string][] = [
-  ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
-  ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday'],
-]
-
-// Board columns, left → right. The engine drives triggered→…→done/failed; the
+// Run lifecycle statuses, in order. The engine drives triggered→…→done/failed; the
 // awaiting_human column is overlaid client-side from a card-scoped tool_confirm.
 const COLUMNS: { key: string; label: string }[] = [
   { key: 'triggered', label: 'Triggered' },
@@ -98,122 +93,6 @@ function describeToolInput(toolName: string, input: Record<string, unknown>): st
 function fmtTime(epochSeconds: number): string {
   if (!epochSeconds) return ''
   return new Date(epochSeconds * 1000).toLocaleTimeString()
-}
-
-// Working-hours rota editor: a master switch + a row per weekday (off / start /
-// end). Triggers only fire inside these windows, so a human is around for
-// confirms. Off by default — when disabled, triggers run anytime.
-// Primary text colour for raw (non-antd) elements, so they're readable in both
-// themes (a bare <div> otherwise defaults to black, invisible in dark mode).
-const textColor = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.88)')
-
-function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void }) {
-  const isDark = useIsDark()
-  const dim = isDark ? '#888' : '#999'
-
-  const dayOf = (k: string): RotaDay => {
-    const d = rota[k]
-    return (d && typeof d === 'object' ? d : {}) as RotaDay
-  }
-  const [enabled, setEnabled] = useState<boolean>(!!rota.enabled)
-  const [source, setSource] = useState<string>(rota.source === 'outlook' ? 'outlook' : 'console')
-  const [marker, setMarker] = useState<string>(rota.shift_marker || 'shift')
-  const [hold, setHold] = useState<boolean>(!!rota.hold_during_meetings)
-  const [days, setDays] = useState<Record<string, RotaDay>>(() =>
-    Object.fromEntries(DAYS.map(([k]) => {
-      const d = dayOf(k)
-      return [k, { on: d.on ?? false, start: d.start ?? '09:00', end: d.end ?? '17:00' }]
-    })),
-  )
-  const [saving, setSaving] = useState(false)
-
-  const setDay = (k: string, patch: Partial<RotaDay>) =>
-    setDays(prev => ({ ...prev, [k]: { ...prev[k], ...patch } }))
-
-  const save = async () => {
-    setSaving(true)
-    try {
-      await bridge.save_rota({
-        enabled, source, shift_marker: marker, hold_during_meetings: hold, ...days,
-      })
-      onSaved()
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const outlook = source === 'outlook'
-
-  return (
-    <div style={{ color: textColor(isDark) }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-        <Switch size="small" checked={enabled} onChange={setEnabled} />
-        <span>Only fire triggers during working hours</span>
-        <span style={{ color: dim, fontSize: 12 }}>
-          {enabled ? '(outside these, events are ignored)' : '(off — triggers run anytime)'}
-        </span>
-      </div>
-
-      <div style={{ opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <span style={{ width: 90 }}>Source</span>
-          <Segmented
-            size="small"
-            value={source}
-            onChange={v => setSource(String(v))}
-            options={[
-              { label: 'Console grid', value: 'console' },
-              { label: 'Outlook calendar', value: 'outlook' },
-            ]}
-          />
-        </div>
-
-        {outlook && (
-          <div style={{ marginBottom: 10, paddingLeft: 100 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span>On shift when a calendar event's subject contains</span>
-              <Input
-                size="small" value={marker} onChange={e => setMarker(e.target.value)}
-                style={{ width: 120, fontFamily: 'monospace' }} placeholder="shift"
-              />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <Switch size="small" checked={hold} onChange={setHold} />
-              <span>Hold while I'm in a meeting / OOO</span>
-            </div>
-            <div style={{ color: dim, fontSize: 12 }}>
-              The grid below is the fallback if Outlook can't be read.
-            </div>
-          </div>
-        )}
-
-        {DAYS.map(([k, label]) => (
-          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-            <span style={{ width: 90 }}>{label}</span>
-            <Switch size="small" checked={!!days[k].on} onChange={v => setDay(k, { on: v })} />
-            <input
-              type="time" value={days[k].start} disabled={!days[k].on}
-              onChange={e => setDay(k, { start: e.target.value })}
-              style={{ fontFamily: 'monospace' }}
-            />
-            <span style={{ color: dim }}>to</span>
-            <input
-              type="time" value={days[k].end} disabled={!days[k].on}
-              onChange={e => setDay(k, { end: e.target.value })}
-              style={{ fontFamily: 'monospace' }}
-            />
-            {!days[k].on && <span style={{ color: dim, fontSize: 12 }}>not working</span>}
-          </div>
-        ))}
-      </div>
-      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Button type="primary" size="small" onClick={save} loading={saving}>
-          Save working hours
-        </Button>
-        <span style={{ color: dim, fontSize: 12 }}>Changes take effect when you click Save.</span>
-      </div>
-    </div>
-  )
 }
 
 export function TriggersView() {
@@ -394,7 +273,6 @@ export function TriggersView() {
   const sources = config?.sources ?? []
   const triggers = config?.triggers ?? []
   const errors = config?.errors ?? []
-  const rota = config?.rota ?? {}
 
   // Only warn about an unavailable source that a configured trigger actually
   // uses — no point nagging about, say, the notifications source on a machine
@@ -512,19 +390,6 @@ export function TriggersView() {
               pagination={false}
             />
           ),
-        }]}
-      />
-
-      {/* Working-hours rota */}
-      <Collapse
-        size="small"
-        style={{ marginBottom: 20 }}
-        items={[{
-          key: 'rota',
-          label: (
-            <span><ClockCircleOutlined /> Working hours{rota.enabled ? '' : ' (off)'}</span>
-          ),
-          children: <WorkingHoursEditor rota={rota} onSaved={loadConfig} />,
         }]}
       />
 

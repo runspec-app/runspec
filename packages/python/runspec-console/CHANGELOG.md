@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.103.0.dev1] — 2026-06-21
+
+### Changed
+- **Working hours moved to its own Rota tab.** The working-hours editor that lived
+  inside the Triggers tab is now a first-class **Rota** tab. Same editor, same
+  behaviour (console grid or Outlook calendar source) — just promoted out, because
+  the rota is the single shared gate for *both* triggers and schedules: automation
+  only runs while someone's around to handle confirms, keeping the console a user
+  tool rather than an always-on automation system. (Pre-release dev build; the
+  Schedules/Triggers parity work that relies on this lands next.)
+
 ## [0.102.2] — 2026-06-20
 
 ### Fixed
