@@ -1,6 +1,6 @@
 [project]
 name = "runspec"
-version = "0.43.0"
+version = "0.43.1"
 description = "A language-agnostic, TOML-based interface specification for anything runnable"
 readme = "README.md"
 license = { file = "../../LICENSE" }
@@ -39,8 +39,8 @@ dev = [
 runspec = "runspec.cli:main"
 
 [project.urls]
-Homepage      = "https://JasonFinestone.github.io/runspec"
-Documentation = "https://JasonFinestone.github.io/runspec"
+Homepage      = "https://runspec.app"
+Documentation = "https://runspec.app"
 Repository    = "https://github.com/JasonFinestone/runspec"
 Issues        = "https://github.com/JasonFinestone/runspec/issues"
 Changelog     = "https://github.com/JasonFinestone/runspec/blob/main/CHANGELOG.md"

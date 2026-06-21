@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json
+#:schema https://runspec.app/runspec.schema.json
 
 # runspec-jsm — Jira Service Management (Data Center) service-desk runnables.
 # Auth is environment-variable driven (see the package README/CHANGELOG):

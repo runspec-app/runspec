@@ -754,7 +754,7 @@ def _init_runspec_toml(path: Path, name: str, example: bool = False) -> None:
         print(f"   Edit {path.name} directly to add more runnables.")
         sys.exit(1)
 
-    schema_line = "#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json\n\n"
+    schema_line = "#:schema https://runspec.app/runspec.schema.json\n\n"
     content = schema_line + (
         _build_example_toml()
         if example

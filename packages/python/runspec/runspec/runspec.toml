@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json
+#:schema https://runspec.app/runspec.schema.json
 
 # runspec itself is a developer CLI, not an agent tool. Suppress autonomy
 # inference so --help doesn't display a meaningless autonomy level on the

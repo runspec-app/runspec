@@ -22,6 +22,13 @@ markdown_extensions:
       base_path: ["."]
       check_paths: true
 
+# Publish the canonical JSON Schema at https://runspec.app/runspec.schema.json
+# (copied from schema/runspec.schema.json at build time — single source of
+# truth). This is the URL the #:schema line in generated runspec.toml files
+# points to, and what editor TOML validators fetch.
+hooks:
+  - hooks/copy_schema.py
+
 nav:
   - Home: index.md
   - Quickstart: quickstart.md

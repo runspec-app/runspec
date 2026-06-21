@@ -646,7 +646,7 @@ export const mockApi: BridgeApi = {
     // Dev mode pretends a newer release exists so the update indicator is visible.
     return { ok: true, current: '0.19.0', latest: '0.20.0', update_available: true }
   },
-  docs_url: async () => 'https://jasonfinestone.github.io/runspec/',
+  docs_url: async () => 'https://runspec.app/',
   open_docs: async () => { console.log('[mock] open_docs') },
   list_providers: async () => [
     { value: 'anthropic', label: 'Anthropic' },

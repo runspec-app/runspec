@@ -635,7 +635,7 @@ function initRunspecToml(filePath: string, name: string): void {
     console.log(`   Edit ${path.basename(filePath)} directly to add more runnables.`);
     process.exit(1);
   }
-  const content = `#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json\n\n[${name}]\ndescription = "Describe what ${name} does"\nautonomy    = "confirm"\n\n[${name}.args]\n# example = {type = "str", description = "An example argument"}\n`;
+  const content = `#:schema https://runspec.app/runspec.schema.json\n\n[${name}]\ndescription = "Describe what ${name} does"\nautonomy    = "confirm"\n\n[${name}.args]\n# example = {type = "str", description = "An example argument"}\n`;
   writeAndVerify(filePath, content, null);
   console.log(`  ✓  Created runspec.toml with [${name}] runnable`);
 }
@@ -647,7 +647,7 @@ function initExampleToml(filePath: string): void {
     process.exit(1);
   }
   const content = [
-    '#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json',
+    '#:schema https://runspec.app/runspec.schema.json',
     '',
     '[clean]',
     'description = "Find and optionally delete stale temporary files in a directory"',

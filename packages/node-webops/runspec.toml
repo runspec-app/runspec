@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json
+#:schema https://runspec.app/runspec.schema.json
 
 # runspec-webops — HTTPS/TLS certificate + web-endpoint checks.
 # All read-only network probes, so autonomy defaults to "autonomous".

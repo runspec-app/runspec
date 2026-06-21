@@ -7,7 +7,7 @@
 [![Node](https://img.shields.io/npm/v/runspec-node?label=npm%20install%20runspec-node)](https://www.npmjs.com/package/runspec-node)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/JasonFinestone/runspec/actions/workflows/python.yml/badge.svg)](https://github.com/JasonFinestone/runspec/actions)
-[![Docs](https://img.shields.io/badge/docs-mkdocs-blue)](https://JasonFinestone.github.io/runspec)
+[![Docs](https://img.shields.io/badge/docs-mkdocs-blue)](https://runspec.app)
 
 ---
 
@@ -117,7 +117,7 @@ This is a mono-repo containing all official runspec language packs:
 
 ## Documentation
 
-- [Documentation site](https://JasonFinestone.github.io/runspec) — full guides for CLI developers and agent integrators
+- [Documentation site](https://runspec.app) — full guides for CLI developers and agent integrators
 - [Format Specification](spec/SPEC.md) — canonical reference
 - [Changelog](CHANGELOG.md)
 - [Design Document](DESIGN.md)

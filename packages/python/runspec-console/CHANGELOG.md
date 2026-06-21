@@ -8,6 +8,14 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.106.1] — 2026-06-21
+
+### Changed
+- **Docs link now points at `https://runspec.app/`.** `DEFAULT_DOCS_URL` (the
+  in-app "Documentation" target, still overridable via `[console] docs_url`)
+  follows the docs site's move to the owned domain. README updated to match.
+
+
 ## [0.106.0] — 2026-06-21
 
 ### Added
@@ -55,6 +63,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   inside/outside working hours) plus the configured triggers/schedules — useful in
   a long session where the clock may have crossed a working-hours boundary since
   the turn began. Returns the same snapshot as the per-turn context block.
+
 
 ## [0.104.0] — 2026-06-21
 

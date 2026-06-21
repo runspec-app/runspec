@@ -221,7 +221,7 @@ runspec test --format json
 
 1. Find the package directory — locate runspec.toml or the source dir with __init__.py / index.ts. (Or run `runspec init` from inside it for the skeleton.)
 2. Add the runnable section to runspec.toml. If creating fresh, add the schema comment first:
-   #:schema https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json
+   #:schema https://runspec.app/runspec.schema.json
 3. Create the code stub in the package directory. Keep `main()` thin — delegate the real work to a plain function so it's directly testable.
 4. Wire the entry point in pyproject.toml or package.json.
 5. Add a test under the package's tests/ dir using `ParseHarness` (at least a `smoke()` call; assert on key arg coercion / validation).

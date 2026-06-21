@@ -7,6 +7,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.43.1] / [node-0.33.3] — 2026-06-21
+
+### Changed
+
+- **Canonical JSON Schema now served from the docs domain.** The schema is
+  published at `https://runspec.app/runspec.schema.json` (copied from
+  `schema/runspec.schema.json` into the MkDocs site at build time via a build
+  hook — single source of truth, no drift). The schema's own `$id` and the
+  `#:schema` line emitted by `runspec init` (Python and Node) now point there
+  instead of `raw.githubusercontent.com`, so editor TOML validation resolves
+  against the stable, owner-controlled domain. The old `raw.githubusercontent.com`
+  URL still works (the file remains in the repo), so existing `runspec.toml`
+  files keep validating.
+- **Project URLs point at `https://runspec.app`.** The `runspec` package's
+  Homepage/Documentation metadata and the README docs links follow the docs
+  site's move to the owned domain (away from `github.io`).
+
+
 ## [0.43.0] — 2026-06-21
 
 ### Added

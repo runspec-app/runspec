@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://raw.githubusercontent.com/JasonFinestone/runspec/main/schema/runspec.schema.json",
+  "$id": "https://runspec.app/runspec.schema.json",
   "title": "runspec.toml",
-  "description": "Interface specification for anything runnable — scripts, apps, MCP tools. See https://JasonFinestone.github.io/runspec",
+  "description": "Interface specification for anything runnable — scripts, apps, MCP tools. See https://runspec.app",
   "type": "object",
   "properties": {
     "config": { "$ref": "#/$defs/config" }

@@ -31,7 +31,7 @@ _CONFIG_LOCK = threading.RLock()
 
 # Where the in-app "Documentation" icon points. Overridable per-install via
 # `[console] docs_url` in config.toml so a fork / internal mirror can retarget it.
-DEFAULT_DOCS_URL = "https://jasonfinestone.github.io/runspec/"
+DEFAULT_DOCS_URL = "https://runspec.app/"
 
 # How many `<name>.bak-<ts>` backups Config Sync keeps per file before pruning the
 # oldest (`[config_sync] backups_keep`). 0 means keep all (never prune).

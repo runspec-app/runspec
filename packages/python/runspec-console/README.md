@@ -188,7 +188,7 @@ pip) simply shows the version with no update indicator; when a newer release
 exists, an `↑ <version>` chip appears next to it. The toolbar's docs icon (top
 right) opens the documentation site in your browser.
 
-The docs target defaults to <https://jasonfinestone.github.io/runspec/> and is
+The docs target defaults to <https://runspec.app/> and is
 overridable per-install in `%APPDATA%\runspec-console\config.toml`:
 
 ```toml
