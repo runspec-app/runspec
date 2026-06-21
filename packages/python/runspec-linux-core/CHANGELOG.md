@@ -1,5 +1,33 @@
 # runspec-linux-core Changelog
 
+## [0.3.2] — 2026-06-21
+
+Add `venvs.py` — the pure logic behind three new `runspec-linux` runnables for
+Python virtualenv management:
+
+- **`create_venv(python, dest, *, run_as=None, become_method="sudo", group=None,
+  system_site_packages=False, upgrade_deps=False, clear=False, prompt=None)`** —
+  build a venv at `dest` from a *specific* interpreter (no system default
+  fallback; `python` must be an executable file), always with `--symlinks`. Then
+  creates `<dest>/logs` mode `2775` (setgid, so audit logs inherit the group) and
+  optionally `chgrp -R`s the venv to a shared `group` — the shape a service
+  account needs for a venv shared between several consoles.
+- **`install_into_venv(venv, packages="", *, project=None, editable=False,
+  upgrade=False, no_cache_dir=False, force_reinstall=False, run_as=None,
+  become_method="sudo")`** — `pip install` named packages and/or a local `project`
+  (a `pyproject.toml` directory or a wheel/sdist; `editable` for `-e`) into the
+  venv's bundled python. Package names reuse the shared injection guard.
+- **`configure_pip(index_url, *, extra_index_url=None, trusted_host=None,
+  cert=None, timeout=None, retries=None, proxy=None, require_virtualenv=False,
+  scope="user", venv=None, run_as=None, become_method="sudo")`** — write a
+  validated `pip.conf` (`[global]`) at user (`~/.config/pip/pip.conf`) or venv
+  (`<venv>/pip.conf`) scope for private-PyPI access.
+
+All three take a **runtime** `run_as` user (the service account is chosen
+per-invocation, so escalation is internal — `sudo -n -u <user>` or, via
+`become_method`, `su` — not a declarative `run_as`) and raise `ValueError` on bad
+input / `CommandError` on a failed step.
+
 ## [0.3.1] — 2026-06-20
 
 Fix `enable_passwordless_sudo` failing with "visudo not installed" (and the same

@@ -438,3 +438,190 @@ default     = 0.3
 type        = "float"
 description = "Per-chunk socket read timeout in seconds"
 default     = 0.1
+
+# ── Python venvs ──────────────────────────────────────────────────────────────
+
+# These deliberately declare NO `run_as` key. The service account that owns a
+# shared venv is chosen per invocation, so each runnable takes a `run-as`
+# argument and escalates internally (`sudo -n -u <user>`, or `su` via
+# `become-method`). An empty `run-as` runs as the SSH login user (personal venv).
+
+[create-venv]
+serve       = ["local"]
+description = "Create a Python virtualenv (always --symlinks) from a specific interpreter, optionally as a service account, with a shared 2775 logs/ dir"
+autonomy    = "confirm"
+output      = "json"
+
+[create-venv.args.python]
+type        = "path"
+description = "Path to the Python interpreter to build the venv from (browse to a real binary — not the system default)"
+
+[create-venv.args.dest]
+type        = "path"
+short       = "-d"
+description = "Full path of the venv to create (name and location are free)"
+
+[create-venv.args.run-as]
+type        = "str"
+short       = "-u"
+description = "Service account to create the venv as (escalates via sudo/su); empty = the SSH login user"
+required    = false
+
+[create-venv.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+default     = "sudo"
+description = "How to escalate to run-as: sudo (passwordless, -n) or su"
+
+[create-venv.args.group]
+type        = "str"
+short       = "-g"
+description = "Optional shared group to chgrp the venv to (e.g. consoles), so every connected console can read/write"
+required    = false
+
+[create-venv.args.system-site-packages]
+type        = "flag"
+description = "Give the venv access to the system site-packages"
+default     = false
+
+[create-venv.args.upgrade-deps]
+type        = "flag"
+description = "Upgrade pip/setuptools to the latest in the new venv (--upgrade-deps)"
+default     = false
+
+[create-venv.args.clear]
+type        = "flag"
+description = "Delete the contents of the venv directory if it already exists (--clear)"
+default     = false
+
+[create-venv.args.prompt]
+type        = "str"
+short       = "-p"
+description = "Prompt prefix shown when the venv is activated (--prompt)"
+required    = false
+
+[install-into-venv]
+serve       = ["local"]
+description = "pip install named packages and/or a local project (pyproject dir or wheel/sdist) into an existing venv"
+autonomy    = "confirm"
+output      = "json"
+
+[install-into-venv.args.venv]
+type        = "path"
+short       = "-v"
+description = "Path to the venv to install into (its bundled python runs pip)"
+
+[install-into-venv.args.package]
+type        = "str"
+short       = "-p"
+description = "Package spec(s) to install (space-separated for several)"
+required    = false
+
+[install-into-venv.args.project]
+type        = "path"
+description = "Path to a local project to install — a directory with pyproject.toml, or a wheel/sdist"
+required    = false
+
+[install-into-venv.args.editable]
+type        = "flag"
+short       = "-e"
+description = "Install the project in editable mode (pip install -e); requires --project"
+default     = false
+
+[install-into-venv.args.upgrade]
+type        = "flag"
+short       = "-U"
+description = "Upgrade packages to the newest available version (pip install -U)"
+default     = false
+
+[install-into-venv.args.no-cache-dir]
+type        = "flag"
+description = "Disable the pip cache for this install (--no-cache-dir)"
+default     = false
+
+[install-into-venv.args.force-reinstall]
+type        = "flag"
+description = "Reinstall packages even if already up to date (--force-reinstall)"
+default     = false
+
+[install-into-venv.args.run-as]
+type        = "str"
+short       = "-u"
+description = "Service account that owns the venv (escalates via sudo/su); empty = the SSH login user"
+required    = false
+
+[install-into-venv.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+default     = "sudo"
+description = "How to escalate to run-as: sudo (passwordless, -n) or su"
+
+[configure-pip]
+serve       = ["local"]
+description = "Write a pip.conf (index-url and friends) at user or venv scope for private-PyPI access"
+autonomy    = "confirm"
+output      = "json"
+
+[configure-pip.args.index-url]
+type        = "str"
+short       = "-i"
+description = "Primary package index URL (index-url)"
+
+[configure-pip.args.extra-index-url]
+type        = "str"
+description = "Additional package index URL (extra-index-url)"
+required    = false
+
+[configure-pip.args.trusted-host]
+type        = "str"
+description = "Host to trust without TLS verification (trusted-host)"
+required    = false
+
+[configure-pip.args.cert]
+type        = "str"
+description = "Path to a CA bundle to verify the index's TLS certificate (cert)"
+required    = false
+
+[configure-pip.args.timeout]
+type        = "int"
+description = "Socket timeout in seconds (timeout)"
+required    = false
+
+[configure-pip.args.retries]
+type        = "int"
+description = "Number of retries for a failed connection (retries)"
+required    = false
+
+[configure-pip.args.proxy]
+type        = "str"
+description = "Proxy URL in [user:passwd@]proxy.server:port form (proxy)"
+required    = false
+
+[configure-pip.args.require-virtualenv]
+type        = "flag"
+description = "Refuse to install outside a virtualenv and silence the pip-version check (require-virtualenv + disable-pip-version-check)"
+default     = false
+
+[configure-pip.args.scope]
+type        = "choice"
+options     = ["user", "venv"]
+default     = "user"
+short       = "-s"
+description = "Where to write pip.conf: user (~/.config/pip/pip.conf) or venv (<venv>/pip.conf)"
+
+[configure-pip.args.venv]
+type        = "path"
+description = "Venv path for --scope venv (the file is written to <venv>/pip.conf)"
+required    = false
+
+[configure-pip.args.run-as]
+type        = "str"
+short       = "-u"
+description = "User who owns the target file (escalates via sudo/su); empty = the SSH login user"
+required    = false
+
+[configure-pip.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+default     = "sudo"
+description = "How to escalate to run-as: sudo (passwordless, -n) or su"

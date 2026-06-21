@@ -32,6 +32,7 @@ from runspec_linux_core.security import last_logins, who
 from runspec_linux_core.services import check_service, list_services, restart_service
 from runspec_linux_core.sudoers import enable_passwordless_sudo
 from runspec_linux_core.system import check_memory, disk_usage, list_processes, system_info
+from runspec_linux_core.venvs import configure_pip, create_venv, install_into_venv
 
 __all__ = [
     # errors
@@ -76,6 +77,10 @@ __all__ = [
     "reboot_host",
     # sudoers
     "enable_passwordless_sudo",
+    # venvs
+    "create_venv",
+    "install_into_venv",
+    "configure_pip",
     # tcp
     "nc_send",
 ]

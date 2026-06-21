@@ -1,5 +1,31 @@
 # runspec-linux Changelog
 
+## [0.4.2] — 2026-06-21
+
+Add 3 runnables for managing Python virtualenvs on a fleet host — thin wrappers
+over the new `runspec-linux-core` 0.3.2 helpers (dependency floor bumped to
+`>=0.3.2`). All three are `autonomy = "confirm"`.
+
+- **`create-venv`** — create a venv (always `--symlinks`) from a *specific*
+  interpreter (`--python` is a browsable `path` arg → pick the remote binary, not
+  the system default) at a free `--dest`. Creates a shared `<dest>/logs` dir mode
+  `2775` and can `--group` (chgrp) the venv to a shared group. Flags:
+  `--system-site-packages`, `--upgrade-deps`, `--clear`, `--prompt`.
+- **`install-into-venv`** — `pip install` named `--package`(s) and/or a local
+  `--project` (a `pyproject.toml` directory or wheel/sdist; `--editable` for
+  `-e`) into a venv. Flags: `--upgrade`/`-U`, `--no-cache-dir`,
+  `--force-reinstall`.
+- **`configure-pip`** — write a `pip.conf` (`--index-url` + `--extra-index-url`,
+  `--trusted-host`, `--cert`, `--timeout`, `--retries`, `--proxy`,
+  `--require-virtualenv`) at `--scope user` (`~/.config/pip/pip.conf`) or
+  `--scope venv` (`<venv>/pip.conf`) for private-PyPI access.
+
+Unlike the package/power runnables, these declare **no `run_as`** in
+`runspec.toml`. The service account that owns a shared venv is chosen per run, so
+each takes a **`--run-as`** argument (and a `--become-method` of `sudo` or `su`)
+and escalates internally — an empty `--run-as` runs as the SSH login user
+(personal venv).
+
 ## [0.4.1] — 2026-06-20
 
 Give `list-upgrades` `run_as = "root"`. It refreshes the package index
