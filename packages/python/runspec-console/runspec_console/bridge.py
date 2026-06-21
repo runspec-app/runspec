@@ -32,6 +32,7 @@ import time
 import uuid
 import webbrowser
 from collections.abc import Callable, Collection
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -505,6 +506,11 @@ class Bridge:
         # shared by every SSH path (refresh, discovery, history, logs,
         # invocation). None when [ssh] pool = false (legacy connect-per-call).
         self._ssh_pool: Any = self._build_ssh_pool()
+        # Rota "Take a break": an in-memory return time. While set, the rota gate
+        # treats automation as outside-hours; it auto-resumes once `now` passes it
+        # (the gate evaluates `now` live) and self-clears. Held only in memory so a
+        # break is naturally transient (lost on restart, which is fine).
+        self._break_until: datetime | None = None
         self._install_ssh_log_forwarder()
         self._reload_hosts()
         self._reload_filters()
@@ -8076,6 +8082,13 @@ class Bridge:
 
         lines: list[str] = ["## Console context (live automation state)"]
 
+        if self._break_until and datetime.now() < self._break_until:
+            lines.append(
+                f"On break until {self._break_until.strftime('%H:%M')} — triggers and "
+                "schedules are paused; they auto-resume then (held longer if the "
+                "operator's screen is still locked)."
+            )
+
         if not rota_on:
             lines.append(
                 "Working-hours rota: OFF — triggers and schedules run at any time."
@@ -8291,12 +8304,24 @@ class Bridge:
 
         from .config import read_rota
         from .triggers import _DAYS, within_rota
+        from .winlock import is_screen_locked
 
         rota = read_rota()
         grid_configured = any(isinstance(rota.get(d), dict) for d in _DAYS)
 
         def clock_ok() -> bool:
             now = datetime.now()
+            # Rota "Take a break": suspend while the break window is open, then
+            # auto-resume — unless the screen is still locked (operator still away),
+            # in which case hold until unlock. Self-clears so a *later* normal lock
+            # never re-suspends. `now` is live, so no timer/restart is needed.
+            bu = self._break_until
+            if bu is not None:
+                if now < bu:
+                    return False
+                if is_screen_locked():
+                    return False
+                self._break_until = None
             if not rota.get("enabled"):
                 return True
             if rota.get("source") == "outlook":
@@ -9302,6 +9327,11 @@ class Bridge:
             "sources": sources_info,
             "rota": read_rota(),
             "running": self._trigger_engine is not None,
+            # Active rota "Take a break" return time (ISO), or None — drives the
+            # Rota tab's on-break state.
+            "break_until": self._break_until.isoformat(timespec="seconds")
+            if self._break_until
+            else None,
         }
 
     def set_trigger_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
@@ -9397,6 +9427,49 @@ class Bridge:
         write_rota(dict(rota or {}))
         self.restart_triggers()
         self.restart_chat()
+        return {"ok": True}
+
+    def start_break(self, minutes: int = 60) -> dict[str, Any]:
+        """Rota "Take a break": suspend triggers/schedules for ``minutes``, then
+        auto-resume (the rota gate honours the in-memory return time live — no
+        restart). Also sets a best-effort Outlook reminder at the return time so
+        the operator is nudged to come back. Returns the return time + whether a
+        reminder was set."""
+        mins = max(1, int(minutes or 0))
+        until = datetime.now() + timedelta(minutes=mins)
+        self._break_until = until
+
+        reminder_set = False
+        from .sources import outlook as ol
+
+        if ol.outlook_available():
+            try:
+                ol.create_reminder("Break over — re-enable runspec automation", until)
+                reminder_set = True
+            except Exception:
+                logger.warning(
+                    "rota break: could not set Outlook reminder", exc_info=True
+                )
+
+        # Reflect the pause in chat presence immediately (same gate); the trigger
+        # engine reads the gate live, so no restart is needed.
+        try:
+            self.restart_chat()
+        except Exception:
+            logger.debug("rota break: chat refresh failed", exc_info=True)
+        return {
+            "break_until": until.isoformat(timespec="seconds"),
+            "reminder_set": reminder_set,
+        }
+
+    def cancel_break(self) -> dict[str, Any]:
+        """End an active break early (manual "I'm back"): clear the return time so
+        the rota resumes on the next event."""
+        self._break_until = None
+        try:
+            self.restart_chat()
+        except Exception:
+            logger.debug("rota break: chat refresh failed", exc_info=True)
         return {"ok": True}
 
     def test_trigger(

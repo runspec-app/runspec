@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.109.0] — 2026-06-21
+
+### Added
+- **Rota "Take a break" button.** On the Rota tab, pick minutes (presets 15/30/60
+  + custom, default 60; today's shift end is shown — you may break past it) and
+  the rota suspends, then **auto-resumes** at the return time so automation can't
+  be left off by accident. A best-effort **Outlook reminder** is set for the
+  return time as a nudge. Disabled when the rota is off; while on a break the tab
+  shows "On break until HH:MM" with an **End break now** button.
+  - **Honours the lock screen:** if the screen is still locked when the break
+    elapses, automation stays paused until you unlock (you're clearly still away).
+    Backed by a new minimal `winlock.is_screen_locked()` (Windows `OpenInputDesktop`,
+    best-effort; `False`/plain auto-resume elsewhere).
+  - Implemented in-memory on the bridge (`_break_until` + `start_break`/`cancel_break`);
+    the rota gate (`_build_clock_ok`) honours it **live** and self-clears — no timer,
+    no persisted state, no engine restart. The chat agent's per-turn context
+    (`_console_context`) notes an active break.
+  - New Outlook COM helper `create_reminder` (an appointment with a reminder) —
+    the file's first *create* calendar item; reading reminders + draft/send already
+    existed.
+
+The broader **lock auto-suspend** feature (an always-on opt-in "pause while my
+screen is locked" with an event-driven listener) remains a planned follow-up; this
+change ships only the minimal lock check the break needs.
+
+
 ## [0.108.0] — 2026-06-21
 
 ### Fixed

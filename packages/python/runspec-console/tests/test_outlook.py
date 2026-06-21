@@ -17,6 +17,7 @@ import pytest
 
 from runspec_console.sources.outlook import (
     OutlookSource,
+    _build_reminder_item,
     _compose_reply_draft,
     _connection_alive,
     _descend,
@@ -27,6 +28,7 @@ from runspec_console.sources.outlook import (
     _reminder_payload,
     _search_dasl,
     _split_categories,
+    create_reminder,
     list_messages,
     outlook_available,
     save_new_draft,
@@ -549,3 +551,51 @@ def test_read_and_compose_helpers_guard_non_windows():
     ):
         with pytest.raises(RuntimeError):
             fn()
+
+
+# ── create_reminder (first create-calendar-item helper) ───────────────────────
+
+
+class _FakeAppt:
+    def __init__(self) -> None:
+        self.Subject = ""
+        self.Start = None
+        self.Duration = None
+        self.ReminderSet = False
+        self.ReminderMinutesBeforeStart = None
+        self.EntryID = "APPT1"
+        self.saved = False
+
+    def Save(self) -> None:  # noqa: N802 — COM name
+        self.saved = True
+
+
+class _FakeAppForReminder:
+    def __init__(self) -> None:
+        self.appt = _FakeAppt()
+
+    def CreateItem(self, kind: int):  # noqa: N802 — COM name
+        assert kind == 1  # olAppointmentItem
+        return self.appt
+
+
+def test_build_reminder_item_sets_appointment_reminder():
+    from datetime import datetime
+
+    app = _FakeAppForReminder()
+    when = datetime(2026, 6, 21, 15, 0)
+    res = _build_reminder_item(app, "Break over", when)
+    assert app.appt.saved is True
+    assert app.appt.ReminderSet is True
+    assert app.appt.ReminderMinutesBeforeStart == 0
+    assert app.appt.Start == when
+    assert res == {"subject": "Break over", "entry_id": "APPT1"}
+
+
+def test_create_reminder_requires_windows():
+    if sys.platform == "win32":
+        return
+    from datetime import datetime
+
+    with pytest.raises(RuntimeError, match="Windows"):
+        create_reminder("x", datetime.now())

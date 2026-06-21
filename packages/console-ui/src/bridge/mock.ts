@@ -1176,6 +1176,15 @@ export const mockApi: BridgeApi = {
     console.log('mock: save_rota', rota)
     return { ok: true }
   },
+  start_break: async (minutes) => {
+    console.log('mock: start_break', minutes)
+    const until = new Date(Date.now() + minutes * 60_000).toISOString().slice(0, 19)
+    return { break_until: until, reminder_set: true }
+  },
+  cancel_break: async () => {
+    console.log('mock: cancel_break')
+    return { ok: true }
+  },
   get_trigger_board: async () => [
     {
       card_id: 'demo1', trigger: 'vip-outage-triage', source: 'outlook',

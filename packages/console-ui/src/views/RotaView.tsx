@@ -1,8 +1,89 @@
 import { useEffect, useState } from 'react'
-import { Switch, Button, Collapse, Segmented, Input } from 'antd'
-import { ClockCircleOutlined } from '@ant-design/icons'
+import { Switch, Button, Collapse, Segmented, Input, InputNumber, message } from 'antd'
+import { ClockCircleOutlined, CoffeeOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay } from '../bridge'
 import { useIsDark, textColor } from '../ThemeContext'
+
+// JS Date.getDay() (0=Sun) → rota day key.
+const DOW_KEY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+// "Take a break": suspend the rota for N minutes (auto-resumes; held while the
+// screen is locked) + a best-effort Outlook reminder at the return time.
+function BreakControl({ rota, breakUntil, onChanged }: { rota: Rota; breakUntil: string | null; onChanged: () => void }) {
+  const isDark = useIsDark()
+  const dim = isDark ? '#888' : '#999'
+  const [minutes, setMinutes] = useState<number>(60)
+  const [busy, setBusy] = useState(false)
+
+  const onBreak = !!breakUntil && new Date(breakUntil).getTime() > Date.now()
+
+  const today = rota[DOW_KEY[new Date().getDay()]]
+  const shiftEnd = today && typeof today === 'object' && (today as RotaDay).on ? (today as RotaDay).end : undefined
+
+  const take = async () => {
+    setBusy(true)
+    try {
+      const res = await bridge.start_break(minutes)
+      message.success(
+        res.reminder_set
+          ? `On break — automation resumes ~${res.break_until ? fmtTime(res.break_until) : `${minutes}m`}; Outlook reminder set.`
+          : `On break — automation resumes in ${minutes}m.`,
+      )
+      onChanged()
+    } catch (e) {
+      message.error((e as Error)?.message || 'could not start break')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const end = async () => {
+    setBusy(true)
+    try {
+      await bridge.cancel_break()
+      onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (onBreak) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
+        <CoffeeOutlined style={{ color: '#e8b339' }} />
+        <span>On break until <b>{fmtTime(breakUntil!)}</b> — automation resumes then (held while your screen is locked).</span>
+        <Button size="small" onClick={end} loading={busy}>End break now</Button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+      <CoffeeOutlined style={{ color: dim }} />
+      <span>Take a break for</span>
+      <Segmented
+        size="small"
+        value={[15, 30, 60].includes(minutes) ? minutes : 'custom'}
+        onChange={v => { if (v !== 'custom') setMinutes(Number(v)) }}
+        options={[{ label: '15m', value: 15 }, { label: '30m', value: 30 }, { label: '60m', value: 60 }, { label: 'Custom', value: 'custom' }]}
+      />
+      <InputNumber size="small" min={1} max={1440} value={minutes} onChange={v => setMinutes(Number(v) || 1)} style={{ width: 64 }} />
+      <span style={{ color: dim, fontSize: 12 }}>min</span>
+      <Button size="small" type="primary" icon={<CoffeeOutlined />} disabled={!rota.enabled} onClick={take} loading={busy}>
+        Take a break
+      </Button>
+      {!rota.enabled
+        ? <span style={{ color: dim, fontSize: 12 }}>(enable the rota to take a break)</span>
+        : shiftEnd
+          ? <span style={{ color: dim, fontSize: 12 }}>your shift ends {shiftEnd} — you can break past it</span>
+          : null}
+    </div>
+  )
+}
 
 const DAYS: [string, string][] = [
   ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
@@ -134,11 +215,12 @@ export function RotaView() {
   // defaults even when a rota is saved on disk. Gate the editor on a real load,
   // and key it on the load count so a reload re-seeds from disk.
   const [rota, setRota] = useState<Rota | null>(null)
+  const [breakUntil, setBreakUntil] = useState<string | null>(null)
   const [loadSeq, setLoadSeq] = useState(0)
 
   const loadRota = () =>
     bridge.list_triggers()
-      .then(cfg => { setRota((cfg.rota ?? {}) as Rota); setLoadSeq(s => s + 1) })
+      .then(cfg => { setRota((cfg.rota ?? {}) as Rota); setBreakUntil(cfg.break_until ?? null); setLoadSeq(s => s + 1) })
       .catch(console.error)
 
   useEffect(() => { loadRota() }, [])
@@ -156,7 +238,10 @@ export function RotaView() {
           ),
           children: rota === null
             ? <span style={{ color: dim, fontSize: 12 }}>Loading…</span>
-            : <WorkingHoursEditor key={loadSeq} rota={rota} onSaved={loadRota} />,
+            : <>
+                <WorkingHoursEditor key={loadSeq} rota={rota} onSaved={loadRota} />
+                <BreakControl rota={rota} breakUntil={breakUntil} onChanged={loadRota} />
+              </>,
         }]}
       />
       <div style={{ color: dim, fontSize: 12, paddingLeft: 4 }}>

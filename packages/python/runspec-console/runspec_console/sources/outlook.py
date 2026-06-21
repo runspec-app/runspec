@@ -809,6 +809,44 @@ def list_reminders(count: int = 20) -> list[dict[str, Any]] | None:
         return None
 
 
+def _build_reminder_item(app: Any, subject: str, when: datetime) -> dict[str, str]:
+    """Create a calendar appointment at ``when`` with a reminder that fires then
+    (testable core; duck-typed ``app``). The first *create* calendar item in this
+    file — existing helpers only read reminders or create mail (CreateItem(0))."""
+    appt = app.CreateItem(1)  # olAppointmentItem
+    appt.Subject = subject
+    appt.Start = when
+    appt.Duration = 0  # a point-in-time nudge, not a busy block
+    appt.ReminderSet = True
+    appt.ReminderMinutesBeforeStart = 0  # fire at Start
+    appt.Save()  # → default calendar
+    return {
+        "subject": _str(_attr(appt, "Subject")),
+        "entry_id": _str(_attr(appt, "EntryID")),
+    }
+
+
+def create_reminder(subject: str, when: datetime) -> dict[str, str]:
+    """Set an Outlook reminder (a calendar appointment) for ``when`` — used by the
+    Rota "Take a break" button to nudge the operator at the return time. Returns
+    {subject, entry_id}. Windows-only; win32 imports stay inside. Callers treat
+    this as best-effort (no Outlook ⇒ no reminder, the break still works)."""
+    if sys.platform != "win32":
+        raise RuntimeError("create_reminder requires Windows (Outlook COM)")
+    if not subject:
+        raise RuntimeError("create_reminder needs a subject")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        return _build_reminder_item(app, subject, when)
+    finally:
+        pythoncom.CoUninitialize()
+
+
 def save_new_draft(
     to: str, subject: str, body: str, cc: str = "", from_mailbox: str = ""
 ) -> dict[str, str]:

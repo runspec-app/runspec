@@ -543,6 +543,7 @@ export interface TriggerListResult {
   sources: TriggerSourceInfo[]
   rota: Rota                              // working-hours schedule ({} when unset)
   running: boolean
+  break_until?: string | null             // active "Take a break" return time (ISO), or null
 }
 
 
@@ -796,6 +797,10 @@ export interface BridgeApi {
   save_trigger: (trigger: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
   delete_trigger: (name: string) => Promise<{ ok: boolean }>
   save_rota: (rota: Rota) => Promise<{ ok: boolean }>
+  // Rota "Take a break": suspend automation for N minutes (auto-resumes; held
+  // while the screen is locked) + a best-effort Outlook reminder at the return time.
+  start_break: (minutes: number) => Promise<{ break_until: string | null; reminder_set: boolean }>
+  cancel_break: () => Promise<{ ok: boolean }>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>
   // Fire a trigger now with a synthetic event (the Triggers table's "Trigger now"

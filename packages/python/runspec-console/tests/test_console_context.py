@@ -21,6 +21,7 @@ def _stub(monkeypatch, *, rota, triggers, schedules, hosts=None):
     ns = types.SimpleNamespace()
     ns._read_schedules = lambda: schedules
     ns._hosts = hosts or []  # for _run_status_tool's denylist pointer
+    ns._break_until = None  # for the "on break" awareness line
     ns._console_context = types.MethodType(Bridge._console_context, ns)
     return ns
 
