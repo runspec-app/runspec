@@ -439,6 +439,36 @@ type        = "float"
 description = "Per-chunk socket read timeout in seconds"
 default     = 0.1
 
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+[which]
+serve       = ["local"]
+description = "Locate a command on the PATH and return its full path (like the `which` command) — handy for finding interpreter/binary paths to feed other runnables"
+autonomy    = "autonomous"
+output      = "json"
+
+examples = [
+  {cmd = "which python3",              description = "Resolve a command to its full path"},
+  {cmd = "which \"python3 pip3 git\"", description = "Resolve several commands at once (space-separated)"},
+  {cmd = "which python3 --all",        description = "Show every match on the PATH, not just the first"},
+]
+
+[which.args.name]
+type        = "str"
+position    = 1
+description = "Command name(s) to locate on the PATH (space-separated for several)"
+
+[which.args.all]
+type        = "flag"
+short       = "-a"
+description = "Return every match found on the PATH, not just the first"
+default     = false
+
+[which.args.path]
+type        = "str"
+description = "Override the search PATH to use (defaults to the host's $PATH)"
+required    = false
+
 # ── Python venvs ──────────────────────────────────────────────────────────────
 
 # These deliberately declare NO `run_as` key. The service account that owns a

@@ -1,5 +1,19 @@
 # runspec-linux-core Changelog
 
+## [0.3.3] — 2026-06-22
+
+Add `commands.py` — the pure logic behind the new `runspec-linux` `which`
+runnable:
+
+- **`which(names, *, all_matches=False, path=None)`** — locate executables on the
+  search PATH, like the `which` command. `names` is a single command or a list
+  (a string is split on whitespace, so `"python3 pip3"` resolves both).
+  `all_matches` returns every match across the PATH (not just the first that
+  would run); `path` overrides the search path (defaults to `$PATH`, falling back
+  to `os.defpath`). A name containing a path separator is checked directly rather
+  than searched. Returns `{path, all_found, results: [{name, found, path,
+  paths}]}` and raises `ValueError` when no name is given.
+
 ## [0.3.2] — 2026-06-21
 
 Add `venvs.py` — the pure logic behind three new `runspec-linux` runnables for

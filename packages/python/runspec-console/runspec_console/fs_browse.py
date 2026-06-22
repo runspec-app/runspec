@@ -25,8 +25,10 @@ import posixpath
 import shlex
 from typing import Any
 
-# Cap a single listing so a giant directory can't flood the bridge / UI.
-MAX_ENTRIES = 1000
+# Cap a single listing so a giant directory can't flood the bridge / UI. Set
+# comfortably above a full ``/usr/bin`` (~1k+ entries on a typical Linux box) so
+# common system dirs list in full; the UI filters/caps what it actually renders.
+MAX_ENTRIES = 5000
 
 # Per child: "<type>\t<size>\t<mtime_epoch>\t<name>". ``-L`` follows symlinks so a
 # symlinked directory reports its target type ('d') and stays navigable.

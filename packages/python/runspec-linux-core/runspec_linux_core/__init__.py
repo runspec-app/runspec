@@ -9,6 +9,7 @@ Each function does the work and returns plain data; failures raise (see
 ``runspec_linux_core.errors``).
 """
 
+from runspec_linux_core.commands import which
 from runspec_linux_core.containers import (
     container_logs,
     list_containers,
@@ -83,4 +84,6 @@ __all__ = [
     "configure_pip",
     # tcp
     "nc_send",
+    # commands
+    "which",
 ]

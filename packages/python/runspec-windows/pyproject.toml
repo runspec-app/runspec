@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-windows"
-version = "0.2.0"
+version = "0.3.0"
 requires-python = ">=3.10"
 description = "Windows system admin + Microsoft 365 (Outlook, Teams) runnables for runspec"
 dependencies = [
@@ -57,6 +57,8 @@ installed-software   = "runspec_windows.software:main_installed_software"
 # Sessions
 who                  = "runspec_windows.sessions:main_who"
 current-user         = "runspec_windows.sessions:main_current_user"
+# Commands
+which                = "runspec_windows.commands:main_which"
 # Web / TLS probes (runspec-webops-core; cross-platform)
 cert-check           = "runspec_windows.webops:main_cert_check"
 cert-chain           = "runspec_windows.webops:main_cert_chain"

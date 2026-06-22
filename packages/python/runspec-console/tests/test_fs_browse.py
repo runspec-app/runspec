@@ -108,6 +108,16 @@ def test_list_local_dirs_only(tmp_path):
     assert [e["name"] for e in result["entries"]] == ["sub"]
 
 
+def test_list_local_lists_large_dir_without_truncating(tmp_path):
+    # A directory the size of a full /usr/bin (~1k+ entries) must list in full —
+    # the cap sits well above it so common system dirs stay browsable.
+    for i in range(1100):
+        (tmp_path / f"f{i:04d}").write_text("x")
+    result = list_local(str(tmp_path))
+    assert len(result["entries"]) == 1100
+    assert result["truncated"] is False
+
+
 def test_list_local_not_a_directory(tmp_path):
     f = tmp_path / "file.txt"
     f.write_text("x")

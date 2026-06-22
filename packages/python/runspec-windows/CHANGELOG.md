@@ -1,5 +1,18 @@
 # runspec-windows Changelog
 
+## [0.3.0] — 2026-06-22
+
+### Added
+- A **`which`** runnable — locate a command on the PATH and return its full path,
+  like `which`/`where` (`autonomy = "autonomous"`, `output = "json"`). Mirrors the
+  `runspec-linux` `which` runnable so the console offers it on both fleets, e.g.
+  to find an interpreter/binary path to feed another runnable. It's a pure PATH
+  lookup (not Windows-gated) and is **PATHEXT-aware** on Windows, so `which python`
+  resolves `python.exe`. Positional `name` accepts several space-separated names;
+  `--all`/`-a` returns every match; `--path` overrides the search PATH. Prints
+  `{path, all_found, results: [{name, found, path, paths}]}` and exits non-zero
+  when any name was not found.
+
 ## [0.2.0] — 2026-06-22
 
 ### Added

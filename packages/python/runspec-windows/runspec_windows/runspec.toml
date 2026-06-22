@@ -426,6 +426,36 @@ short       = "-n"
 description = "Maximum number of messages to return"
 default     = 20
 
+# ── Commands (cross-platform) ─────────────────────────────────────────────────
+
+[which]
+serve       = ["local"]
+description = "Locate a command on the PATH and return its full path (like `which`/`where`) — handy for finding interpreter/binary paths to feed other runnables"
+autonomy    = "autonomous"
+output      = "json"
+
+examples = [
+  {cmd = "which python",            description = "Resolve a command to its full path"},
+  {cmd = "which \"python pip git\"", description = "Resolve several commands at once (space-separated)"},
+  {cmd = "which python --all",      description = "Show every match on the PATH, not just the first"},
+]
+
+[which.args.name]
+type        = "str"
+position    = 1
+description = "Command name(s) to locate on the PATH (space-separated for several)"
+
+[which.args.all]
+type        = "flag"
+short       = "-a"
+description = "Return every match found on the PATH, not just the first"
+default     = false
+
+[which.args.path]
+type        = "str"
+description = "Override the search PATH to use (defaults to the host's %PATH%)"
+required    = false
+
 # ── Web / TLS probes (runspec-webops-core; cross-platform, read-only) ──────────
 
 [cert-check]

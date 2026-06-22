@@ -1,5 +1,21 @@
 # runspec-linux Changelog
 
+## [0.6.0] — 2026-06-22
+
+Add a **`which`** runnable — locate a command on the PATH and return its full
+path, like the `which` command (`autonomy = "autonomous"`, `output = "json"`). A
+thin wrapper over the new `runspec_linux_core.which` helper (requires
+`runspec-linux-core >= 0.3.3`). Handy for finding an interpreter/binary path
+(e.g. `which python3`) to feed another runnable such as `create-venv`, without
+hunting through `/usr/bin` in the path browser.
+
+- Positional `name` accepts one command or several space-separated
+  (`which "python3 pip3 git"`).
+- `--all`/`-a` returns every match on the PATH, not just the first.
+- `--path` overrides the search PATH (defaults to the host's `$PATH`).
+- Prints `{path, all_found, results: [{name, found, path, paths}]}` and, mirroring
+  the `which` command, exits non-zero when any name was not found.
+
 ## [0.5.0] — 2026-06-22
 
 Add 8 cross-platform **web / TLS / API** runnables — thin wrappers over the new

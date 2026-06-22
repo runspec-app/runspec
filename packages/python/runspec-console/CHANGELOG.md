@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.112.0] — 2026-06-22
+
+### Fixed
+- **Path browser: large directories are now browsable.** The Forms path-picker
+  *Browse* modal (`PathInput`) gained a **filter-by-name box** and caps the rows
+  it actually renders (first 300 of the filtered set, with a "refine the filter"
+  hint). A directory like `/usr/bin` (~1k+ entries) previously rendered as one
+  unfiltered, un-virtualised list and was effectively unusable — you couldn't
+  type to find the binary you wanted (e.g. a `python3` interpreter for
+  `create-venv`), so it appeared you "couldn't browse" it. The backend listing
+  cap (`fs_browse.MAX_ENTRIES`) was also raised from 1000 to 5000 so common
+  system dirs list in full rather than silently truncating.
+
+
 ## [0.111.0] — 2026-06-22
 
 ### Added

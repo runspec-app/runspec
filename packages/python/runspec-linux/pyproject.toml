@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-linux"
-version = "0.5.0"
+version = "0.6.0"
 requires-python = ">=3.10"
 description = "Linux system admin runnables for runspec"
 dependencies = [
     "runspec>=0.27.0",
-    "runspec-linux-core>=0.3.2",
+    "runspec-linux-core>=0.3.3",
     "runspec-webops-core>=0.1.0",
 ]
 
@@ -45,6 +45,7 @@ create-venv       = "runspec_linux.venvs:main_create_venv"
 install-into-venv = "runspec_linux.venvs:main_install_into_venv"
 configure-pip     = "runspec_linux.venvs:main_configure_pip"
 nc-command        = "runspec_linux.nc_command:main"
+which             = "runspec_linux.commands:main_which"
 # Web / TLS probes (runspec-webops-core; cross-platform)
 cert-check        = "runspec_linux.webops:main_cert_check"
 cert-chain        = "runspec_linux.webops:main_cert_chain"

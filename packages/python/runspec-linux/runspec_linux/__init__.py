@@ -39,6 +39,7 @@ from runspec_linux_core import (
     system_info,
     tail_log,
     upgrade_packages,
+    which,
     who,
 )
 
@@ -74,5 +75,6 @@ __all__ = [
     "system_info",
     "tail_log",
     "upgrade_packages",
+    "which",
     "who",
 ]

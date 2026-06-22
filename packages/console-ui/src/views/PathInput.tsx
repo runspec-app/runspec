@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { AutoComplete, Button, Modal, List, Tag, Typography, Tooltip, Spin, Segmented, Checkbox } from 'antd'
+import { AutoComplete, Button, Modal, List, Tag, Typography, Tooltip, Spin, Segmented, Checkbox, Input } from 'antd'
 import { FolderOpenOutlined, FolderFilled, FileOutlined, ArrowUpOutlined, HomeOutlined } from '@ant-design/icons'
 import { bridge, type DirEntry, type DirListing } from '../bridge'
 
@@ -157,6 +157,9 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
   const [err, setErr] = useState<string | null>(null)
   const [asSvc, setAsSvc] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // Client-side filter so a big directory (e.g. /usr/bin, ~1k entries) stays
+  // browsable — type "python" to narrow it instead of scrolling.
+  const [filter, setFilter] = useState('')
 
   // The service-account view only applies to a remote host with a run_as set.
   const canSvc = !!runAs && host !== 'local'
@@ -164,6 +167,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
   const load = useCallback(async (path: string, svc: boolean) => {
     setLoading(true)
     setErr(null)
+    setFilter('')   // a fresh directory starts unfiltered
     try {
       const res = lister ? await lister(path, !!dirsOnly) : await bridge.list_dir(host, path, group, dirsOnly, runnable, svc)
       if (res.error) { setErr(res.error); setListing(null) }
@@ -203,6 +207,15 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
     }
     return out
   })()
+
+  // Filter then cap the rendered rows: the antd List has no virtualisation, so
+  // a 1k-entry directory rendered whole janks the modal. The filter narrows it;
+  // RENDER_CAP bounds the DOM even before the user types.
+  const RENDER_CAP = 300
+  const low = filter.trim().toLowerCase()
+  const visible = (listing?.entries ?? []).filter(e => !low || e.name.toLowerCase().includes(low))
+  const shown = visible.slice(0, RENDER_CAP)
+  const hidden = visible.length - shown.length
 
   const onEntry = (e: DirEntry) => {
     const full = joinPath(cwd, e.name, sep)
@@ -301,11 +314,20 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
       ) : loading ? (
         <div style={{ padding: 24, textAlign: 'center' }}><Spin size="small" /></div>
       ) : (
+        <>
+        <Input
+          size="small"
+          allowClear
+          placeholder="Filter by name…"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}
+        />
         <div style={{ maxHeight: 360, overflowY: 'auto' }}>
           <List
             size="small"
-            dataSource={listing?.entries ?? []}
-            locale={{ emptyText: 'Empty directory' }}
+            dataSource={shown}
+            locale={{ emptyText: low ? 'No matches' : 'Empty directory' }}
             renderItem={(e) => {
               const full = joinPath(cwd, e.name, sep)
               const checkable = multiSelect && e.type === 'file'
@@ -332,10 +354,16 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
               )
             }}
           />
+          {hidden > 0 && (
+            <Tag color="blue" style={{ fontSize: 10, marginTop: 6 }}>
+              {`showing first ${RENDER_CAP} of ${visible.length} — refine the filter`}
+            </Tag>
+          )}
           {listing?.truncated && (
             <Tag color="orange" style={{ fontSize: 10, marginTop: 6 }}>listing truncated</Tag>
           )}
         </div>
+        </>
       )}
     </Modal>
   )
