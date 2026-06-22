@@ -1,0 +1,83 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-claude — drive the Claude Code CLI (`claude`) headlessly from runspec.
+#
+# A single runnable, `claude-run`, with four verbs (subcommands) that mirror the
+# way you talk to Claude in a chat app:
+#
+#   claude-run ask      "<prompt>"            start a fresh headless turn / session
+#   claude-run continue "<prompt>"            continue the most recent session here
+#   claude-run resume   --session <id> "..."  continue a specific session by id
+#   claude-run sessions                       list recent sessions for this directory
+#
+# Each verb shells out to `claude -p ... --output-format json` and returns the
+# structured result (text + session id + cost + turns). Because `runspec serve`
+# exposes each leaf subcommand as its own MCP tool, the runspec-console agent
+# (itself Claude) can call these to delegate a bounded sub-task to a headless
+# Claude Code — "Claude driving Claude" — with a human confirm gate by default.
+
+[config]
+# Spawning an agent that can read/run/edit is a confirm-by-default action.
+autonomy-default = "confirm"
+
+[config.logging]
+# One log file per invocation — multi-writer safe for shared venvs.
+store = "per-run"
+
+[claude-run]
+description     = "Drive the Claude Code CLI headlessly (ask / continue / resume / sessions)"
+autonomy        = "confirm"
+output          = "json"
+require-command = true
+
+examples = [
+  {cmd = "claude-run ask 'summarise the failures in build.log'",            description = "One-shot headless turn (read-only by default)"},
+  {cmd = "claude-run --permission-mode acceptEdits ask 'fix the lint errors'", description = "Let the delegated run edit files + run safe commands"},
+  {cmd = "claude-run continue 'now write a test for that fix'",             description = "Continue the most recent session in this directory"},
+  {cmd = "claude-run resume --session 8f2c... 'and update the changelog'",  description = "Continue a specific prior session by id"},
+  {cmd = "claude-run sessions",                                             description = "List recent sessions you can resume"},
+]
+
+# ---- Global arguments (inherited by every subcommand) --------------------
+[claude-run.args]
+model               = {type = "str",    short = "-m", required = false, description = "Model for the headless run: an alias (sonnet, opus, haiku, fable, opusplan) or a full id like claude-opus-4-8. Default: the CLI's configured model."}
+dir                 = {type = "path",   short = "-C", required = false, description = "Working directory to run claude in (scopes file access, --continue, and the sessions list). Default: current directory."}
+add-dir             = {type = "path",                 required = false, description = "Extra directory to grant the run access to (passed to --add-dir)."}
+permission-mode     = {type = "choice", short = "-P", default = "default", options = ["default", "plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"], description = "How the headless run handles tool permissions. Safe 'default' blocks on edits/commands; opt up to acceptEdits/auto for autonomous work. 'bypassPermissions' skips all checks — use with care."}
+allowed-tools       = {type = "str",                  required = false, description = "Comma-separated tool allowlist passed to --allowedTools, e.g. 'Read,Bash(git diff *)'."}
+max-turns           = {type = "int",    short = "-t", default = 12, description = "Cap on agent turns before the run stops (bounds cost/runaway). 0 leaves it uncapped."}
+append-system-prompt = {type = "str",                 required = false, description = "Extra system-prompt text appended for this run (passed to --append-system-prompt)."}
+bare                = {type = "flag",                 default = false, description = "Reproducible run: skip auto-discovery of CLAUDE.md, hooks, skills, plugins, and MCP servers (--bare)."}
+
+# ---- ask: start a fresh headless turn ------------------------------------
+[claude-run.commands.ask]
+description = "Send a prompt to a fresh headless Claude Code run"
+autonomy    = "confirm"
+
+[claude-run.commands.ask.args]
+prompt = {type = "str", required = true, description = "The instruction/question for Claude Code."}
+
+# ---- continue: continue the most recent session in this directory --------
+[claude-run.commands.continue]
+description = "Continue the most recent session in this directory with a follow-up message"
+autonomy    = "confirm"
+
+[claude-run.commands.continue.args]
+prompt = {type = "str", required = true, description = "The follow-up message to send to the most recent session."}
+
+# ---- resume: continue a specific session by id ---------------------------
+[claude-run.commands.resume]
+description = "Resume a specific prior session by id and send a follow-up message"
+autonomy    = "confirm"
+
+[claude-run.commands.resume.args]
+session = {type = "str", short = "-s", required = true, description = "Session id to resume (see `claude-run sessions`)."}
+prompt  = {type = "str",              required = true, description = "The follow-up message to send to the resumed session."}
+
+# ---- sessions: list recent sessions for this directory -------------------
+[claude-run.commands.sessions]
+description = "List recent Claude Code sessions for this directory (ids, last-active time, best-effort title). Read-only; reads local transcript files."
+autonomy    = "autonomous"
+
+[claude-run.commands.sessions.args]
+limit = {type = "int", short = "-n", default = 20, description = "Maximum number of recent sessions to list."}

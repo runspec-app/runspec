@@ -450,6 +450,43 @@ def test_expand_tools_leaf_schema_has_args():
     assert "env" in arg_spec
 
 
+def test_expand_tools_inherits_global_args_into_leaves():
+    # Global args declared on the runnable must appear on every leaf tool —
+    # both in the JSON-Schema and in the exec arg_spec — so an agent can pass
+    # them even though they live at the parent level.
+    inferred = {
+        "description": "deploy",
+        "autonomy": "confirm",
+        "output": "json",
+        "args": {"region": {"type": "str", "required": True}},
+        "commands": {
+            "show": {**_LEAF_INFERRED, "args": {"symbol": {"type": "str", "required": True}}},
+        },
+    }
+    entries = _expand_tools("deploy", inferred, ["/bin/deploy"], None, "sudo", None)
+    _, schema, arg_spec, _ = entries[0]
+    props = schema["inputSchema"]["properties"]
+    assert "region" in props  # inherited global
+    assert "symbol" in props  # the command's own arg
+    assert "region" in arg_spec and "symbol" in arg_spec
+
+
+def test_expand_tools_command_arg_overrides_inherited_global():
+    # A subcommand arg of the same name as an inherited global wins (child-wins).
+    inferred = {
+        "description": "tool",
+        "autonomy": "confirm",
+        "output": "text",
+        "args": {"mode": {"type": "str", "default": "global"}},
+        "commands": {
+            "run": {**_LEAF_INFERRED, "args": {"mode": {"type": "str", "default": "local"}}},
+        },
+    }
+    entries = _expand_tools("tool", inferred, ["/bin/tool"], None, "sudo", None)
+    _, _, arg_spec, _ = entries[0]
+    assert arg_spec["mode"]["default"] == "local"
+
+
 # ── _server_name ──────────────────────────────────────────────────────────────
 
 

@@ -7,6 +7,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.44.0] — 2026-06-22
+
+### Changed
+
+- **`runspec serve` leaf tools now carry inherited global args.** When a
+  runnable defines subcommands, `runspec serve` expands each leaf subcommand
+  into its own MCP tool. Previously the leaf tool's JSON Schema advertised only
+  that subcommand's own args, hiding the runnable's global (inherited) args —
+  `model`, `permission-mode`, etc. — from agents, even though `parse()` accepts
+  them at runtime. Each leaf tool's schema (and its exec arg-spec) now exposes
+  the **effective** argument set: the inherited globals merged with the
+  command's own args, with a same-named command arg overriding the inherited
+  one (child-wins, matching `parse()`). Purely additive — no autonomy/confirm
+  behaviour changes, and flat runnables (no subcommands) are unaffected.
+  (`serve.py` `_expand_tools`; see `spec/SPEC.md` → Subcommands.)
+
 ## [0.43.1] / [node-0.33.3] — 2026-06-21
 
 ### Changed

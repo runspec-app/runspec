@@ -424,6 +424,7 @@ def _expand_tools(
     become_method: str,
     become_flags: str | None,
     config_path: str | None = None,
+    inherited_args: dict[str, Any] | None = None,
 ) -> list[tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]]:
     """Expand a runnable into flat MCP tool entries, recursing into subcommands.
 
@@ -433,11 +434,22 @@ def _expand_tools(
     e.g. portal_api.commands.orders_endpoint.commands.get_list →
          name="portal_api_orders_endpoint_get_list",
          base_cmd=["/path/to/portal_api", "orders_endpoint", "get_list"]
+
+    ``inherited_args`` carries the global args declared at ancestor levels down
+    into each leaf so the emitted tool schema matches the *effective* argument
+    set a subcommand is parsed with (globals + the command's own args, child
+    overriding parent). Without this a leaf tool would advertise only its own
+    args, hiding inherited globals (model, permission-mode, …) from agents even
+    though parse() accepts them at runtime.
     """
     from runspec.cli import _build_schema
 
+    inherited_args = inherited_args or {}
     commands = inferred.get("commands") or {}
     if commands:
+        # Globals accumulate as we descend; a command's own arg overrides an
+        # inherited global of the same name (matching parse()'s child-wins rule).
+        passed_down = {**inherited_args, **(inferred.get("args") or {})}
         result: list[tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
         for sub_name, sub_spec in commands.items():
             result.extend(
@@ -449,14 +461,17 @@ def _expand_tools(
                     become_method,
                     become_flags,
                     config_path,
+                    inherited_args=passed_down,
                 )
             )
         return result
+    effective_args = {**inherited_args, **(inferred.get("args") or {})}
+    leaf = {**inferred, "args": effective_args}
     return [
         (
             name,
-            _build_schema(name, inferred, "mcp"),
-            inferred.get("args", {}),
+            _build_schema(name, leaf, "mcp"),
+            effective_args,
             {
                 "command": base_cmd,
                 "run_as": run_as,

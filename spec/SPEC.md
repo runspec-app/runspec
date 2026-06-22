@@ -1352,7 +1352,10 @@ cluster node drain   # ok
 `require-command` is a static field, **not** an inferred one — it adds no row to
 the inference table. It is enforced only when parsing real CLI arguments;
 introspection via `load_spec()` (and therefore `emit`) is unaffected, and
-emitted MCP/JSON-Schema tool sets already expose only fully-pathed leaf commands.
+emitted MCP/JSON-Schema tool sets already expose only fully-pathed leaf
+commands. Each leaf tool's schema carries the **effective** argument set —
+the inherited global args merged with the command's own (child overriding
+parent of the same name) — matching what `parse()` accepts at runtime.
 
 ---
 
