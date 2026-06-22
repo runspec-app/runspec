@@ -446,6 +446,7 @@ class TriggerEngine:
         executor: Executor | None = None,
         max_workers: int = 2,
         clock_ok: Callable[[], bool] = lambda: True,
+        lock_ok: Callable[[], bool] = lambda: True,
         external_sources: set[str] | None = None,
         always_start: set[str] | None = None,
         thread_store: Any | None = None,
@@ -482,6 +483,13 @@ class TriggerEngine:
         # Returns True when triggers may fire now (the working-hours rota gate).
         # Default always-True = no gating.
         self._clock_ok = clock_ok
+        # Lock auto-suspend gate: True when the operator is present (screen
+        # unlocked). A **presence governance control** — unlike the rota it is
+        # absolute: ``ignore_rota`` does NOT bypass it, so no reactive trigger acts
+        # while the workstation is unattended. Events from the schedule source are
+        # exempt (a pre-authorised, time-based job is not a reaction-while-away).
+        # Default always-True = no gating.
+        self._lock_ok = lock_ok
         # Remembers which threads a once_per_thread trigger already fired for. The
         # default is process-local; the bridge injects a durable store so the dedup
         # survives a restart. Only needs ``already_fired(trigger, key) -> bool``.
@@ -606,11 +614,18 @@ class TriggerEngine:
                 logger.exception("trigger feed-gate failed")  # fail open — route
         last: Future[None] | None = None
         clock_ok = self._clock_ok()
+        # Lock auto-suspend is absolute (no ignore_rota bypass) and applies to
+        # reactive events only — schedule-sourced ticks are pre-authorised jobs.
+        lock_ok = self._lock_ok() or event.source == "schedule"
         matched: list[str] = []
         skipped: list[str] = []
         deduped: list[str] = []
         for trigger in self._triggers:
             if not trigger.matches(event):
+                continue
+            if not lock_ok:
+                skipped.append(trigger.name)
+                logger.info("trigger '%s' skipped: session locked", trigger.name)
                 continue
             if not clock_ok and not trigger.ignore_rota:
                 skipped.append(trigger.name)

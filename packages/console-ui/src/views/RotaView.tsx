@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Switch, Button, Collapse, Segmented, Input, InputNumber, message } from 'antd'
-import { ClockCircleOutlined, CoffeeOutlined } from '@ant-design/icons'
-import { bridge, type Rota, type RotaDay } from '../bridge'
+import { ClockCircleOutlined, CoffeeOutlined, LockOutlined, UnlockOutlined, QuestionCircleOutlined } from '@ant-design/icons'
+import { bridge, type Rota, type RotaDay, type LockState } from '../bridge'
 import { useIsDark, textColor } from '../ThemeContext'
 
 // JS Date.getDay() (0=Sun) → rota day key.
@@ -9,6 +9,31 @@ const DOW_KEY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+// Live screen-lock indicator for the lock auto-suspend control — polls the cheap
+// screen_state probe while mounted so the operator can see the gate working.
+function LockIndicator() {
+  const [state, setState] = useState<LockState | null>(null)
+  useEffect(() => {
+    let alive = true
+    const tick = () => bridge.screen_state().then(s => { if (alive) setState(s) }).catch(() => {})
+    tick()
+    const id = setInterval(tick, 5000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+  if (state === null) return null
+  const meta: Record<LockState, { icon: ReactNode; label: string; color: string }> = {
+    unlocked: { icon: <UnlockOutlined />, label: 'screen unlocked — present', color: '#3fb950' },
+    locked: { icon: <LockOutlined />, label: 'screen locked — triggers paused', color: '#e8b339' },
+    unknown: { icon: <QuestionCircleOutlined />, label: 'lock state unknown — paused (fail-safe)', color: '#e8b339' },
+  }
+  const m = meta[state]
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: m.color, fontSize: 12 }}>
+      {m.icon}{m.label}
+    </span>
+  )
 }
 
 // "Take a break": suspend the rota for N minutes (auto-resumes; held while the
@@ -105,6 +130,8 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
   const [source, setSource] = useState<string>(rota.source === 'outlook' ? 'outlook' : 'console')
   const [marker, setMarker] = useState<string>(rota.shift_marker || 'shift')
   const [hold, setHold] = useState<boolean>(!!rota.hold_during_meetings)
+  // Lock auto-suspend defaults ON (absent ⇒ true); independent of working hours.
+  const [lockSuspend, setLockSuspend] = useState<boolean>(rota.lock_suspend !== false)
   const [days, setDays] = useState<Record<string, RotaDay>>(() =>
     Object.fromEntries(DAYS.map(([k]) => {
       const d = dayOf(k)
@@ -120,7 +147,8 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
     setSaving(true)
     try {
       await bridge.save_rota({
-        enabled, source, shift_marker: marker, hold_during_meetings: hold, ...days,
+        enabled, source, shift_marker: marker, hold_during_meetings: hold,
+        lock_suspend: lockSuspend, ...days,
       })
       onSaved()
     } finally {
@@ -137,6 +165,25 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
         <span>Only run triggers and schedules during working hours</span>
         <span style={{ color: dim, fontSize: 12 }}>
           {enabled ? '(outside these, events are ignored)' : '(off — automation runs anytime)'}
+        </span>
+      </div>
+
+      {/* Lock auto-suspend — a presence control, independent of working hours, so
+          it sits outside the dimmed block above. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <Switch
+          size="small"
+          checked={lockSuspend}
+          onChange={setLockSuspend}
+          aria-label="Pause reactive triggers while my screen is locked"
+        />
+        <LockOutlined style={{ color: dim }} />
+        <span>Pause reactive triggers while my screen is locked</span>
+        <LockIndicator />
+        <span style={{ color: dim, fontSize: 12 }}>
+          {lockSuspend
+            ? '(scheduled jobs still run; uncertain reads pause — fail-safe)'
+            : '(off — triggers can run while you are away)'}
         </span>
       </div>
 

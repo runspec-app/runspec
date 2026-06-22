@@ -556,40 +556,88 @@ def test_read_and_compose_helpers_guard_non_windows():
 # ── create_reminder (first create-calendar-item helper) ───────────────────────
 
 
-class _FakeAppt:
-    def __init__(self) -> None:
+class _FakeItem:
+    def __init__(self, entry_id: str) -> None:
         self.Subject = ""
         self.Start = None
         self.Duration = None
         self.ReminderSet = False
         self.ReminderMinutesBeforeStart = None
-        self.EntryID = "APPT1"
+        self.StartDate = None
+        self.DueDate = None
+        self.ReminderTime = None
+        self.TaskStartDate = None
+        self.TaskDueDate = None
+        self.marked_as_task = None
+        self.EntryID = entry_id
         self.saved = False
+
+    def MarkAsTask(self, interval: int) -> None:  # noqa: N802 — COM name
+        self.marked_as_task = interval
 
     def Save(self) -> None:  # noqa: N802 — COM name
         self.saved = True
 
 
-class _FakeAppForReminder:
-    def __init__(self) -> None:
-        self.appt = _FakeAppt()
+class _FakeReminderApp:
+    """A fake Outlook.Application. ``fail_kinds`` is the set of olItemType ints
+    whose CreateItem raises — to exercise the appointment→task→mail fallback."""
+
+    def __init__(self, fail_kinds: frozenset[int] = frozenset()) -> None:
+        self.fail_kinds = fail_kinds
+        self.created: dict[int, _FakeItem] = {}
 
     def CreateItem(self, kind: int):  # noqa: N802 — COM name
-        assert kind == 1  # olAppointmentItem
-        return self.appt
+        if kind in self.fail_kinds:
+            raise RuntimeError(f"CreateItem({kind}) failed")
+        item = _FakeItem({0: "MAIL1", 1: "APPT1", 3: "TASK1"}[kind])
+        self.created[kind] = item
+        return item
 
 
-def test_build_reminder_item_sets_appointment_reminder():
+def test_build_reminder_item_prefers_appointment():
     from datetime import datetime
 
-    app = _FakeAppForReminder()
+    app = _FakeReminderApp()
     when = datetime(2026, 6, 21, 15, 0)
     res = _build_reminder_item(app, "Break over", when)
-    assert app.appt.saved is True
-    assert app.appt.ReminderSet is True
-    assert app.appt.ReminderMinutesBeforeStart == 0
-    assert app.appt.Start == when
-    assert res == {"subject": "Break over", "entry_id": "APPT1"}
+    appt = app.created[1]
+    assert appt.saved is True and appt.ReminderSet is True
+    assert appt.ReminderMinutesBeforeStart == 0 and appt.Start == when
+    assert res == {"subject": "Break over", "entry_id": "APPT1", "kind": "appointment"}
+    assert 3 not in app.created and 0 not in app.created  # no fallback needed
+
+
+def test_build_reminder_item_falls_back_to_task():
+    from datetime import datetime
+
+    app = _FakeReminderApp(fail_kinds=frozenset({1}))  # no calendar store
+    when = datetime(2026, 6, 21, 15, 0)
+    res = _build_reminder_item(app, "Break over", when)
+    task = app.created[3]
+    assert task.saved is True and task.ReminderSet is True and task.ReminderTime == when
+    assert res["kind"] == "task" and res["entry_id"] == "TASK1"
+
+
+def test_build_reminder_item_falls_back_to_flagged_mail():
+    # The IMAP/POP case: no calendar AND no tasks store, but mail works.
+    from datetime import datetime
+
+    app = _FakeReminderApp(fail_kinds=frozenset({1, 3}))
+    when = datetime(2026, 6, 21, 15, 0)
+    res = _build_reminder_item(app, "Break over", when)
+    mail = app.created[0]
+    assert mail.saved is True and mail.ReminderSet is True and mail.ReminderTime == when
+    assert mail.marked_as_task == 1  # flagged as a to-do
+    assert res["kind"] == "flagged_mail" and res["entry_id"] == "MAIL1"
+
+
+def test_build_reminder_item_raises_when_all_fail():
+    from datetime import datetime
+
+    app = _FakeReminderApp(fail_kinds=frozenset({0, 1, 3}))
+    with pytest.raises(RuntimeError, match="could not create any reminder"):
+        _build_reminder_item(app, "Break over", datetime(2026, 6, 21, 15, 0))
 
 
 def test_create_reminder_requires_windows():

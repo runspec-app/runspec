@@ -809,10 +809,11 @@ def list_reminders(count: int = 20) -> list[dict[str, Any]] | None:
         return None
 
 
-def _build_reminder_item(app: Any, subject: str, when: datetime) -> dict[str, str]:
-    """Create a calendar appointment at ``when`` with a reminder that fires then
-    (testable core; duck-typed ``app``). The first *create* calendar item in this
-    file — existing helpers only read reminders or create mail (CreateItem(0))."""
+def _build_appointment_reminder(
+    app: Any, subject: str, when: datetime
+) -> dict[str, str]:
+    """A calendar appointment (``CreateItem(1)``) with a reminder at ``when`` — the
+    nicest reminder (shows on the calendar), for Exchange/M365 profiles."""
     appt = app.CreateItem(1)  # olAppointmentItem
     appt.Subject = subject
     appt.Start = when
@@ -823,14 +824,81 @@ def _build_reminder_item(app: Any, subject: str, when: datetime) -> dict[str, st
     return {
         "subject": _str(_attr(appt, "Subject")),
         "entry_id": _str(_attr(appt, "EntryID")),
+        "kind": "appointment",
     }
 
 
+def _build_task_reminder(app: Any, subject: str, when: datetime) -> dict[str, str]:
+    """A task (``CreateItem(3)``) with a reminder — falls back here when the default
+    store has no usable calendar (e.g. some non-Exchange profiles)."""
+    task = app.CreateItem(3)  # olTaskItem
+    task.Subject = subject
+    task.StartDate = when
+    task.DueDate = when
+    task.ReminderSet = True
+    task.ReminderTime = when
+    task.Save()
+    return {
+        "subject": _str(_attr(task, "Subject")),
+        "entry_id": _str(_attr(task, "EntryID")),
+        "kind": "task",
+    }
+
+
+def _build_flagged_mail_reminder(
+    app: Any, subject: str, when: datetime
+) -> dict[str, str]:
+    """A draft mail (``CreateItem(0)``) flagged as a to-do with a reminder. The most
+    portable fallback: it uses the mail item, which works on **IMAP/POP** profiles
+    whose default store has no Calendar/Tasks folder (the case that breaks the
+    appointment + task paths). Saved to Drafts, never sent."""
+    mail = app.CreateItem(0)  # olMailItem
+    mail.Subject = subject
+    mail.MarkAsTask(1)  # olMarkToday — flag it as a to-do so a reminder can attach
+    mail.TaskStartDate = when
+    mail.TaskDueDate = when
+    mail.ReminderSet = True
+    mail.ReminderTime = when
+    mail.Save()  # → Drafts
+    return {
+        "subject": _str(_attr(mail, "Subject")),
+        "entry_id": _str(_attr(mail, "EntryID")),
+        "kind": "flagged_mail",
+    }
+
+
+def _build_reminder_item(app: Any, subject: str, when: datetime) -> dict[str, str]:
+    """Set a reminder at ``when`` using whichever item type the profile supports
+    (testable core; duck-typed ``app``). Tries the calendar appointment first
+    (best UX), then a task, then a flagged to-do mail — because a mail-only/IMAP
+    profile can have a default store with no Calendar/Tasks folder, so
+    ``CreateItem(1)``/``(3)`` fail there while ``CreateItem(0)`` (mail) works.
+    Raises only if *every* method fails."""
+    attempts = (
+        ("appointment", _build_appointment_reminder),
+        ("task", _build_task_reminder),
+        ("flagged_mail", _build_flagged_mail_reminder),
+    )
+    errors: list[str] = []
+    for name, build in attempts:
+        try:
+            result = build(app, subject, when)
+            if errors:
+                logger.info(
+                    "outlook: reminder via %s (after %s)", name, "; ".join(errors)
+                )
+            return result
+        except Exception as exc:  # noqa: BLE001 — try the next item type
+            errors.append(f"{name}: {exc}")
+    raise RuntimeError("could not create any reminder item — " + "; ".join(errors))
+
+
 def create_reminder(subject: str, when: datetime) -> dict[str, str]:
-    """Set an Outlook reminder (a calendar appointment) for ``when`` — used by the
-    Rota "Take a break" button to nudge the operator at the return time. Returns
-    {subject, entry_id}. Windows-only; win32 imports stay inside. Callers treat
-    this as best-effort (no Outlook ⇒ no reminder, the break still works)."""
+    """Set an Outlook reminder for ``when`` — used by the Rota "Take a break" button
+    to nudge the operator at the return time. Tries a calendar appointment, then a
+    task, then a flagged to-do mail (so it works on IMAP/POP profiles too). Returns
+    {subject, entry_id, kind}. Windows-only; win32 imports stay inside. Callers
+    treat this as best-effort (no Outlook ⇒ no reminder, the break still works)."""
     if sys.platform != "win32":
         raise RuntimeError("create_reminder requires Windows (Outlook COM)")
     if not subject:

@@ -358,6 +358,61 @@ def test_engine_clock_gate_skips_outside_hours():
     assert fired == ["a"]
 
 
+def test_engine_lock_gate_is_absolute_even_for_ignore_rota():
+    """Lock auto-suspend is a presence governance control: while the screen is
+    locked, NO reactive trigger fires — not even an ``ignore_rota`` one."""
+    fired: list[str] = []
+    recs: list[dict] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    gated = Trigger.from_config({"name": "g", "source": "outlook", "event": "new_mail"})
+    always = Trigger.from_config(
+        {"name": "a", "source": "outlook", "event": "new_mail", "ignore_rota": True}
+    )
+    engine, fake, _ = _engine(
+        [gated, always], handler, on_event=recs.append, lock_ok=lambda: False
+    )
+    engine.start()
+    fake.fire("new_mail", {"subject": "x"})
+    assert fired == []  # absolute — ignore_rota does not bypass the lock gate
+    assert set(recs[-1]["skipped"]) == {"g", "a"}
+
+
+def test_engine_lock_gate_exempts_scheduled_jobs():
+    """A pre-authorised schedule-sourced event still fires while locked — a 2am
+    job isn't a reaction-while-away."""
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    sched = Trigger.from_config(
+        {"name": "nightly", "source": "schedule", "event": "tick"}
+    )
+    engine, _, _ = _engine([sched], handler, lock_ok=lambda: False)
+    engine.start()
+    engine.feed(Event.new("schedule", "tick", {}))
+    assert fired == ["nightly"]  # exempt from the lock gate
+
+
+def test_engine_lock_gate_allows_when_unlocked():
+    fired: list[str] = []
+
+    def handler(card, trigger, event):
+        fired.append(trigger.name)
+        card.move(Column.DONE)
+
+    t = Trigger.from_config({"name": "g", "source": "outlook", "event": "new_mail"})
+    engine, fake, _ = _engine([t], handler, lock_ok=lambda: True)
+    engine.start()
+    fake.fire("new_mail", {"subject": "x"})
+    assert fired == ["g"]
+
+
 def test_fire_test_dispatches_one_trigger_bypassing_gates():
     """'Trigger now' fires exactly the named trigger, ignoring match/rota/dedup."""
     fired: list[str] = []

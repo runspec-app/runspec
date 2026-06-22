@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.110.0] — 2026-06-22
+
+### Added
+- **Lock auto-suspend (presence governance control).** Reactive triggers no
+  longer fire while the operator's workstation is **locked** — so a forgotten,
+  unattended console can't take autonomous action. A Rota-tab toggle ("Pause
+  reactive triggers while my screen is locked") with a **live presence indicator**
+  (unlocked / locked / unknown), plus the chat agent's context notes it.
+  - **Default ON** (absent `lock_suspend` ⇒ enabled) — safe-by-default, matching
+    the library's autonomy stance.
+  - **Fail-closed when on:** an *uncertain* probe (`unknown`) counts as locked, so
+    an unreadable lock state can't let automation run unattended. Non-Windows
+    reads `unlocked`, so the gate is a no-op there.
+  - **Absolute:** unlike the working-hours rota, `ignore_rota` does **not** bypass
+    it — there is no per-trigger override.
+  - **Scheduled jobs are exempt:** schedule-sourced events (e.g. a 2am batch job)
+    still run while locked — they're pre-authorised, not reactions-while-away.
+  - A suppressed fire is logged (`trigger '…' skipped: session locked`) and lands
+    in the per-event audit record — the evidence the control fired.
+  - New tri-state `winlock.screen_lock_state()` (builds on `is_screen_locked()`);
+    bridge `_build_lock_ok()` + `screen_state()`; engine gains a `lock_ok` gate.
+
+### Changed
+- **`create_reminder` is now profile-robust.** It tries a calendar **appointment**,
+  then a **task**, then a **flagged to-do mail** — so the "Take a break" reminder
+  works on **IMAP/POP** Outlook profiles whose default store has no Calendar/Tasks
+  folder (where `CreateItem(1)`/`(3)` fail but mail works). Returns a `kind`; the
+  successful method (after any fallback) is logged. Still best-effort.
+
+
 ## [0.109.0] — 2026-06-21
 
 ### Added

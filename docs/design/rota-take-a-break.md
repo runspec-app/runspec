@@ -55,11 +55,9 @@ draft/send already existed.
 - `console-ui/src/views/RotaView.tsx` — the break control
 - `console-ui/src/bridge/index.ts` + `mock.ts` — `start_break`/`cancel_break`, `break_until`
 
-## Follow-up — full lock auto-suspend
+## Follow-up — lock auto-suspend (shipped 0.110.0)
 
-An opt-in "Pause automation while my screen is locked" Rota toggle backed by an
-**event-driven** lock listener (a `windows_lock` EventSource / background poller
-reusing `winlock.is_screen_locked`), a transient `lock_ok` gate in
-`TriggerEngine` with a per-trigger `ignore_lock` escape hatch, and presence
-integration — with RDP/multi-session caveats. The break's minimal synchronous
-check here is the foundation it reuses.
+Now implemented — see **[lock-auto-suspend.md](lock-auto-suspend.md)**. It reuses
+this feature's synchronous probe (extended to a tri-state) rather than the
+event-driven listener originally sketched, and deliberately ships **no**
+per-trigger `ignore_lock` override.

@@ -1146,6 +1146,7 @@ export const mockApi: BridgeApi = {
       source: 'console',
       shift_marker: 'shift',
       hold_during_meetings: false,
+      lock_suspend: true,
       mon: { on: true, start: '09:00', end: '17:30' },
       tue: { on: true, start: '09:00', end: '17:30' },
       wed: { on: true, start: '09:00', end: '17:30' },
@@ -1155,6 +1156,7 @@ export const mockApi: BridgeApi = {
       sun: { on: false, start: '09:00', end: '17:00' },
     },
     running: true,
+    screen_state: 'unlocked',
   }),
   set_trigger_enabled: async (name: string, enabled: boolean) => {
     console.log('mock: set_trigger_enabled', name, enabled)
@@ -1185,6 +1187,7 @@ export const mockApi: BridgeApi = {
     console.log('mock: cancel_break')
     return { ok: true }
   },
+  screen_state: async () => 'unlocked' as const,
   get_trigger_board: async () => [
     {
       card_id: 'demo1', trigger: 'vip-outage-triage', source: 'outlook',

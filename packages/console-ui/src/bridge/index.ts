@@ -527,6 +527,7 @@ export interface Rota {
   source?: string                 // "console" | "outlook"
   shift_marker?: string           // outlook: subject keyword marking a shift
   hold_during_meetings?: boolean  // outlook: also pause while in a meeting/OOO
+  lock_suspend?: boolean          // pause reactive triggers while the screen is locked (default on)
   [day: string]: boolean | string | RotaDay | undefined
 }
 
@@ -544,7 +545,12 @@ export interface TriggerListResult {
   rota: Rota                              // working-hours schedule ({} when unset)
   running: boolean
   break_until?: string | null             // active "Take a break" return time (ISO), or null
+  screen_state?: LockState                // current screen-lock state (live presence indicator)
 }
+
+// Lock auto-suspend presence state. 'unknown' = the probe couldn't tell (treated
+// as locked / fail-closed by the gate when lock_suspend is on).
+export type LockState = 'locked' | 'unlocked' | 'unknown'
 
 
 // ── chat room (Rooms view) ───────────────────────────────────────────────────
@@ -801,6 +807,8 @@ export interface BridgeApi {
   // while the screen is locked) + a best-effort Outlook reminder at the return time.
   start_break: (minutes: number) => Promise<{ break_until: string | null; reminder_set: boolean }>
   cancel_break: () => Promise<{ ok: boolean }>
+  // Lock auto-suspend live indicator: current screen-lock state (cheap probe).
+  screen_state: () => Promise<LockState>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>
   // Fire a trigger now with a synthetic event (the Triggers table's "Trigger now"

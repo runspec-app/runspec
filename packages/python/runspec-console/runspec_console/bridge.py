@@ -8089,6 +8089,14 @@ class Bridge:
                 "operator's screen is still locked)."
             )
 
+        if rota.get("lock_suspend", True):
+            lines.append(
+                "Lock auto-suspend: ON — reactive triggers only fire while the "
+                "operator's screen is unlocked (present at the workstation). "
+                "Pre-scheduled jobs are exempt. This is absolute (no per-trigger "
+                "override)."
+            )
+
         if not rota_on:
             lines.append(
                 "Working-hours rota: OFF — triggers and schedules run at any time."
@@ -8221,6 +8229,7 @@ class Bridge:
             on_card=self._on_trigger_card,
             on_event=self._on_trigger_event,
             clock_ok=self._build_clock_ok(),
+            lock_ok=self._build_lock_ok(),
             # The chat source is owned by the always-on supervisor (start_chat),
             # not the engine — it pushes messages in via engine.feed(). Marking it
             # external stops the engine constructing/starting a second one. The
@@ -8339,6 +8348,35 @@ class Bridge:
             return within_rota(rota, now)
 
         return clock_ok
+
+    def _build_lock_ok(self) -> Callable[[], bool]:
+        """Build the lock auto-suspend gate: returns True when automation may fire
+        re: operator presence. A governance control — reactive triggers don't act
+        while the workstation is unattended (screen locked). **Default on** (absent
+        ``lock_suspend`` ⇒ enabled), and **fail-closed**: when enabled, an
+        ``unknown`` probe (Windows, but the probe raised) counts as locked so an
+        uncertain reading can't let automation run unattended. Non-Windows reads
+        ``unlocked`` so the gate is a no-op there. The enabled flag is captured at
+        build (toggling it goes through ``save_rota`` → restart); the lock *state*
+        is read live."""
+        from .config import read_rota
+        from .winlock import screen_lock_state
+
+        enabled = bool(read_rota().get("lock_suspend", True))
+
+        def lock_ok() -> bool:
+            if not enabled:
+                return True
+            return screen_lock_state() == "unlocked"
+
+        return lock_ok
+
+    def screen_state(self) -> str:
+        """Current screen-lock state (`"locked"`/`"unlocked"`/`"unknown"`) for the
+        Rota tab's live presence indicator. Cheap — a single desktop probe."""
+        from .winlock import screen_lock_state
+
+        return screen_lock_state()
 
     # ── always-on chat room membership ──────────────────────────────────────────
 
@@ -9332,6 +9370,8 @@ class Bridge:
             "break_until": self._break_until.isoformat(timespec="seconds")
             if self._break_until
             else None,
+            # Current screen-lock state for the Rota tab's live presence indicator.
+            "screen_state": self.screen_state(),
         }
 
     def set_trigger_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
