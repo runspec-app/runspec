@@ -563,16 +563,40 @@ def _triggers_to_toml(triggers: list[dict[str, Any]]) -> str:
             n += 1
         seen.add(key)
         lines = [f"[triggers.{_toml_str(key)}]"]
-        subtables = [(k, v) for k, v in t.items() if isinstance(v, dict)]
+        dict_subs = [(k, v) for k, v in t.items() if isinstance(v, dict)]
+        # A list whose items are all dicts is an array-of-tables (e.g. `actions`),
+        # emitted as repeated [[triggers.<key>.<name>]] blocks below. An empty or
+        # scalar list (e.g. `runnables`) is written inline as a normal scalar.
+        list_table_subs = [
+            (k, v)
+            for k, v in t.items()
+            if isinstance(v, list) and v and all(isinstance(x, dict) for x in v)
+        ]
+        list_table_keys = {k for k, _ in list_table_subs}
         for k, v in t.items():
-            if isinstance(v, dict) or v is None or k == "name":
+            if isinstance(v, dict) or v is None or k == "name" or k in list_table_keys:
                 continue
             lines.append(f"{k} = {_toml_scalar(v)}")
-        for sub_name, sub in subtables:
+        for sub_name, sub in dict_subs:
             lines.append(f"[triggers.{_toml_str(key)}.{sub_name}]")
             for kk, vv in sub.items():
                 if vv is not None:
                     lines.append(f"{kk} = {_toml_scalar(vv)}")
+        for sub_name, items in list_table_subs:
+            for item in items:
+                lines.append(f"[[triggers.{_toml_str(key)}.{sub_name}]]")
+                nested = [(k, v) for k, v in item.items() if isinstance(v, dict)]
+                for kk, vv in item.items():
+                    if isinstance(vv, dict) or vv is None:
+                        continue
+                    lines.append(f"{kk} = {_toml_scalar(vv)}")
+                # A nested table (e.g. an action's `map`) attaches to the most
+                # recent [[...]] element — valid TOML, reads back per-element.
+                for nname, nsub in nested:
+                    lines.append(f"[triggers.{_toml_str(key)}.{sub_name}.{nname}]")
+                    for kk, vv in nsub.items():
+                        if vv is not None:
+                            lines.append(f"{kk} = {_toml_scalar(vv)}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 

@@ -105,6 +105,30 @@ describe('OutputPanel autonomy-gate confirm', () => {
       autonomy: 'confirm',
     })
     await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
-    expect(resolveConfirm).toHaveBeenCalledWith('req-42', true)
+    // The run_runnable wrapper (display ≠ tool name) is NOT editable, so no edited
+    // input is sent.
+    expect(resolveConfirm).toHaveBeenCalledWith('req-42', true, undefined)
+  })
+
+  it('lets the operator edit args before approving a plain tool call', async () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('create_document')]} />)
+    // A plain tool: display_name === tool_name → editable. Args render as inputs.
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-7',
+      tool_name: 'create_document',
+      tool_input: { filename: 'note.md', dest: 'local' },
+      display_name: 'create_document',
+      display_input: { filename: 'note.md', dest: 'local' },
+      autonomy: 'confirm',
+    })
+    const filename = screen.getByDisplayValue('note.md')
+    await userEvent.clear(filename)
+    await userEvent.type(filename, 'edited.md')
+    await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
+    expect(resolveConfirm).toHaveBeenCalledWith('req-7', true, {
+      filename: 'edited.md',
+      dest: 'local',
+    })
   })
 })

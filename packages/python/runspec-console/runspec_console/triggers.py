@@ -37,6 +37,10 @@ logger = logging.getLogger("runspec.console.triggers")
 
 _VALID_MODES = frozenset({"agent", "rule"})
 _VALID_AUTONOMY = frozenset({"autonomous", "confirm", "supervised", "manual"})
+_VALID_ACTION_MODES = frozenset({"sequential", "parallel"})
+# A rule trigger's declarative action list is bounded on purpose — it's a flat
+# fire-and-collect list, never a workflow engine. The cap keeps it obviously so.
+_MAX_ACTIONS = 10
 
 # Trigger-level keys — if one of these turns up inside [triggers.match] it's
 # almost certainly a scalar written after the sub-table header (a TOML ordering
@@ -58,11 +62,32 @@ _TRIGGER_KEYS = frozenset(
         "map",
         "reply",
         "match",
+        "actions",
+        "action_mode",
+        "pre_turn",
+        "action_allow",
     }
 )
 
-# {{ field }} / {{field}} — single payload-key substitution in a rule map value.
-_TEMPLATE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+# {{ field }} / {{ ns.field }} — payload-key substitution in a rule map value. The
+# dotted form resolves one level into a nested dict (used for the optional LLM
+# pre-turn output, exposed under the ``_llm`` namespace).
+_TEMPLATE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
+
+
+def _render_template(tmpl: str, payload: dict[str, Any]) -> str:
+    """Substitute ``{{ field }}`` / ``{{ ns.field }}`` against ``payload``."""
+
+    def _sub(m: re.Match[str]) -> str:
+        key = m.group(1)
+        if "." in key:
+            head, _, tail = key.partition(".")
+            ns = payload.get(head)
+            return str(ns.get(tail, "")) if isinstance(ns, dict) else ""
+        return str(payload.get(key, ""))
+
+    return _TEMPLATE.sub(_sub, tmpl)
+
 
 # ── working-hours rota ────────────────────────────────────────────────────────
 # A global weekly schedule (in local time) that gates when triggers may fire, so
@@ -127,6 +152,16 @@ class ReplySettings:
     style: str = ""
 
 
+@dataclass(frozen=True)
+class ActionStep:
+    """One runnable call in a rule-mode trigger's declarative action list — a
+    ``[[triggers.<name>.actions]]`` entry: a ``run`` ("host__runnable") plus an
+    optional payload→arg ``map``."""
+
+    run: str
+    arg_map: dict[str, str] = field(default_factory=dict)
+
+
 # ── trigger model ───────────────────────────────────────────────────────────
 
 
@@ -159,6 +194,20 @@ class Trigger:
     # these tools. Each entry matches a runnable's bare name or its "host__name".
     runnables: list[str] = field(default_factory=list)
     arg_map: dict[str, str] = field(default_factory=dict)  # rule mode: payload→arg
+    # Rule mode: a bounded declarative list of runnable calls (the multi-runnable
+    # alternative to the single ``run``; mutually exclusive with it). ``action_mode``
+    # runs them all in order ("sequential") or all at once with one grouped confirm
+    # ("parallel"). This is fire-and-collect — no branching, no step-result piping —
+    # so it stays under the "no workflow engine" line (see console-triggers.md §1).
+    actions: list[ActionStep] = field(default_factory=list)
+    action_mode: str = "sequential"
+    # agent mode: an allowlist of built-in action tool names this trigger may use
+    # (e.g. "create_document", "outlook_draft"). Empty = the bridge default set.
+    action_allow: list[str] = field(default_factory=list)
+    # Optional single headless LLM pre-turn (rule mode) that interprets the event
+    # and fills action args; its output is exposed to the maps under {{ _llm.* }}.
+    # One model call, no runnable tools — it extracts, it does not act or branch.
+    pre_turn: str = ""
     reply: ReplySettings = field(default_factory=ReplySettings)
 
     # Compiled match patterns, filled in __post_init__.
@@ -228,8 +277,56 @@ class Trigger:
 
         run = str(data.get("run") or "").strip()
         arg_map = {str(k): str(v) for k, v in (data.get("map") or {}).items()}
-        if mode == "rule" and not run:
-            raise ValueError(f"trigger '{name}' uses mode='rule' but has no 'run'")
+
+        # Declarative multi-runnable list (rule mode): [[triggers.<name>.actions]].
+        actions_raw = data.get("actions")
+        actions: list[ActionStep] = []
+        if actions_raw is not None:
+            if not isinstance(actions_raw, list):
+                raise ValueError(
+                    f"trigger '{name}': 'actions' must be a list of {{run, map}} "
+                    "tables ([[triggers.<name>.actions]])."
+                )
+            for i, item in enumerate(actions_raw):
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"trigger '{name}': actions[{i}] must be a table with a 'run'."
+                    )
+                step_run = str(item.get("run") or "").strip()
+                if not step_run:
+                    raise ValueError(
+                        f"trigger '{name}': actions[{i}] is missing 'run'."
+                    )
+                step_map = {str(k): str(v) for k, v in (item.get("map") or {}).items()}
+                actions.append(ActionStep(run=step_run, arg_map=step_map))
+            if len(actions) > _MAX_ACTIONS:
+                raise ValueError(
+                    f"trigger '{name}': too many actions ({len(actions)}); the max "
+                    f"is {_MAX_ACTIONS}. A trigger fires one bounded action list, "
+                    "not a workflow."
+                )
+
+        action_mode = str(data.get("action_mode") or "sequential").strip()
+        if action_mode not in _VALID_ACTION_MODES:
+            raise ValueError(
+                f"trigger '{name}' has unknown action_mode '{action_mode}' "
+                f"(expected one of: {', '.join(sorted(_VALID_ACTION_MODES))})"
+            )
+        if actions and mode != "rule":
+            raise ValueError(
+                f"trigger '{name}': 'actions' is a rule-mode declarative list; "
+                "agent mode uses 'runnables' (a tool allowlist)."
+            )
+        if mode == "rule":
+            if run and actions:
+                raise ValueError(
+                    f"trigger '{name}': use either 'run' (one runnable) or 'actions' "
+                    "(a list), not both."
+                )
+            if not run and not actions:
+                raise ValueError(
+                    f"trigger '{name}' uses mode='rule' but has no 'run' or 'actions'"
+                )
 
         runnables_raw = data.get("runnables")
         if runnables_raw is None:
@@ -245,6 +342,16 @@ class Trigger:
             raise ValueError(
                 f"trigger '{name}': 'runnables' is an agent tool allowlist (mode="
                 "'agent'); rule mode runs the single runnable named by 'run'."
+            )
+
+        action_allow_raw = data.get("action_allow")
+        if action_allow_raw is None:
+            action_allow: list[str] = []
+        elif isinstance(action_allow_raw, list):
+            action_allow = [str(x).strip() for x in action_allow_raw if str(x).strip()]
+        else:
+            raise ValueError(
+                f"trigger '{name}': 'action_allow' must be a list of action tool names."
             )
 
         # Tri-state: absent → None (inherit the mailbox default); present → an
@@ -273,6 +380,10 @@ class Trigger:
             run=run,
             runnables=runnables,
             arg_map=arg_map,
+            actions=actions,
+            action_mode=action_mode,
+            action_allow=action_allow,
+            pre_turn=str(data.get("pre_turn") or ""),
             reply=reply,
         )
 
@@ -300,11 +411,19 @@ class Trigger:
         runnable actually runs (the existing runspec run path), so we don't
         duplicate the validator here.
         """
+        return {
+            arg: _render_template(tmpl, payload) for arg, tmpl in self.arg_map.items()
+        }
 
-        def _sub(m: re.Match[str]) -> str:
-            return str(payload.get(m.group(1), ""))
-
-        return {arg: _TEMPLATE.sub(_sub, tmpl) for arg, tmpl in self.arg_map.items()}
+    def render_action_args(
+        self, step: ActionStep, payload: dict[str, Any]
+    ) -> dict[str, str]:
+        """Render one declarative action step's ``map`` against the payload (which
+        may include the ``_llm`` namespace from a pre-turn). Same contract as
+        :meth:`render_args`."""
+        return {
+            arg: _render_template(tmpl, payload) for arg, tmpl in step.arg_map.items()
+        }
 
 
 # ── run card ──────────────────────────────────────────────────────────────────

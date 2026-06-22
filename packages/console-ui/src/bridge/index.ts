@@ -794,9 +794,20 @@ export interface BridgeApi {
     values?: Record<string, unknown>,
     extraInstructions?: string,
   ) => Promise<{ chat_id?: string; message?: string; error?: string }>
-  resolve_tool_confirmation: (requestId: string, approved: boolean) => Promise<void>
+  // Resolve a parked autonomy-gate confirm. `editedInput` (optional) replaces the
+  // agent's proposed tool_input when approving — the operator can tweak the args
+  // before the call runs (editable confirmations). Ignored on a deny.
+  resolve_tool_confirmation: (
+    requestId: string,
+    approved: boolean,
+    editedInput?: Record<string, unknown>,
+  ) => Promise<void>
   // ── event triggers ─────────────────────────────────────────────────────────
   list_triggers: () => Promise<TriggerListResult>
+  // The built-in action tools an agent-mode trigger may be allowed to use, for the
+  // Triggers editor's per-trigger allowlist ({name, label}; Outlook entries appear
+  // only when Outlook COM is reachable on the host).
+  list_action_tools: () => Promise<{ name: string; label: string }[]>
   set_trigger_enabled: (name: string, enabled: boolean) => Promise<{ ok: boolean }>
   // Add/update one [triggers.<name>] table (upsert by name) or remove it; both
   // restart the trigger engine. Re-read list_triggers after to refresh the view.

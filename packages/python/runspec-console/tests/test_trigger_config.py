@@ -299,3 +299,78 @@ def test_clean_trigger_requires_name_via_bridge_guard():
 
     out = Bridge._clean_trigger({"source": "outlook"}, "x")
     assert out["name"] == "x" and out["source"] == "outlook"
+
+
+def test_actions_array_of_tables_roundtrip():
+    """A declarative multi-runnable trigger serialises to [[triggers.x.actions]]
+    array-of-tables (with nested map) and parses back identically."""
+    from runspec_console import config
+    from runspec_console.bridge import Bridge
+
+    clean = Bridge._clean_trigger(
+        {
+            "name": "nightly",
+            "source": "schedule",
+            "event": "nightly_report",
+            "mode": "rule",
+            "action_mode": "parallel",
+            "pre_turn": "Find the host.",
+            "actions": [
+                {
+                    "run": "web01__check-memory",
+                    "map": {"threshold": "{{ _llm.level }}"},
+                },
+                {"run": "db01__check-disk", "map": {}},
+            ],
+        },
+        "nightly",
+    )
+    assert clean["action_mode"] == "parallel"
+    assert clean["pre_turn"] == "Find the host."
+    assert clean["actions"][0]["map"] == {"threshold": "{{ _llm.level }}"}
+    assert "map" not in clean["actions"][1]  # empty map dropped
+
+    config.write_triggers([clean])
+    raw = config.read_triggers()
+    trig = Trigger.from_config(raw[0])
+    assert trig.action_mode == "parallel"
+    assert trig.pre_turn == "Find the host."
+    assert [s.run for s in trig.actions] == ["web01__check-memory", "db01__check-disk"]
+    assert trig.actions[0].arg_map == {"threshold": "{{ _llm.level }}"}
+    assert trig.actions[1].arg_map == {}
+
+
+def test_clean_trigger_drops_blank_action_steps():
+    from runspec_console.bridge import Bridge
+
+    out = Bridge._clean_trigger(
+        {
+            "name": "t",
+            "source": "schedule",
+            "event": "a",
+            "mode": "rule",
+            "actions": [{"run": "  "}, {"run": "x__y"}],
+        },
+        "t",
+    )
+    assert [s["run"] for s in out["actions"]] == ["x__y"]
+
+
+def test_clean_trigger_action_allow_roundtrip():
+    from runspec_console import config
+    from runspec_console.bridge import Bridge
+
+    clean = Bridge._clean_trigger(
+        {
+            "name": "a",
+            "source": "outlook",
+            "event": "new_mail",
+            "mode": "agent",
+            "action_allow": ["create_document", "", "outlook_send"],
+        },
+        "a",
+    )
+    assert clean["action_allow"] == ["create_document", "outlook_send"]
+    config.write_triggers([clean])
+    trig = Trigger.from_config(config.read_triggers()[0])
+    assert trig.action_allow == ["create_document", "outlook_send"]

@@ -368,11 +368,11 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
     return () => window.removeEventListener('runspec:run_end', onEnd)
   }, [])
 
-  const answerConfirm = (approved: boolean) => {
+  const answerConfirm = (approved: boolean, editedInput?: Record<string, unknown>) => {
     setPendingConfirm(prev => {
       if (prev) {
-        console.log('[runspec] resolving tool_confirm', { request_id: prev.request_id, approved })
-        bridge.resolve_tool_confirmation(prev.request_id, approved)
+        console.log('[runspec] resolving tool_confirm', { request_id: prev.request_id, approved, edited: !!editedInput })
+        bridge.resolve_tool_confirmation(prev.request_id, approved, editedInput)
           .catch(err => console.error('[runspec] resolve_tool_confirmation failed', err))
       }
       return null
@@ -455,10 +455,29 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
   )
 }
 
+// Edit-buffer encoding for editable confirmations: a plain string stays bare
+// (so a path/text isn't shown wrapped in quotes), everything else is JSON.
+function jsonValue(v: unknown): string {
+  return typeof v === 'string' ? v : JSON.stringify(v)
+}
+
+// Parse an edited field back to a value: try JSON (so 42/true/[...] round-trip),
+// falling back to the raw string (the common case — a path, a name, free text).
+function parseEdited(s: string): unknown {
+  const t = s.trim()
+  if (t === '') return s
+  try {
+    return JSON.parse(t)
+  } catch {
+    return s
+  }
+}
+
 function ToolCallBlock({
   entry,
   awaiting,
   resolved,
+  editable,
   onAnswer,
 }: {
   entry: ToolCallEntry
@@ -468,12 +487,39 @@ function ToolCallBlock({
   // for search-mode `run_runnable` this is the unwrapped runnable + its real
   // args, so the approval panel shows that instead of the generic envelope.
   resolved?: { name: string; input: Record<string, unknown> } | null
-  onAnswer?: (approved: boolean) => void
+  // The operator may edit the args before approving (editable confirmations).
+  // Only when the displayed call equals the real call (a plain/direct tool, not
+  // the search-mode `run_runnable` wrapper whose display args would re-wrap lossily).
+  editable?: boolean
+  onAnswer?: (approved: boolean, editedInput?: Record<string, unknown>) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const args = Object.entries(entry.input)
   // Args shown in the approval panel: the resolved runnable's when we have it.
   const approveArgs = resolved ? Object.entries(resolved.input) : args
+  // Edit buffer: arg name → its JSON-encoded string, seeded from approveArgs and
+  // reset whenever a new gate parks here. null until the first parked render.
+  const [edits, setEdits] = useState<Record<string, string> | null>(null)
+  const seedKey = awaiting ? `${entry.name}:${approveArgs.map(([k]) => k).join(',')}` : ''
+  useEffect(() => {
+    if (awaiting && editable) {
+      setEdits(Object.fromEntries(approveArgs.map(([k, v]) => [k, jsonValue(v)])))
+    } else {
+      setEdits(null)
+    }
+    // Re-seed when a new confirm parks here (different tool/args); not on keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedKey, awaiting, editable])
+
+  const approve = () => {
+    if (editable && edits) {
+      const out: Record<string, unknown> = {}
+      for (const [k, s] of Object.entries(edits)) out[k] = parseEdited(s)
+      onAnswer?.(true, out)
+    } else {
+      onAnswer?.(true)
+    }
+  }
 
   return (
     <div style={{
@@ -523,7 +569,24 @@ function ToolCallBlock({
             {resolved ? ' ' : 'this '}— autonomy is{' '}
             <strong style={{ color: '#e6a23c' }}>{awaiting}</strong>, so it needs your go-ahead.
           </div>
-          {approveArgs.length > 0 && (
+          {approveArgs.length > 0 && editable && edits ? (
+            // Editable confirmations: let the operator tweak each arg before
+            // approving. One field per arg (JSON-encoded so a number/bool/string
+            // round-trips); the edited values run instead of the agent's proposal.
+            <div style={{ margin: '0 0 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {approveArgs.map(([k]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Text code style={{ fontSize: 11, flexShrink: 0, minWidth: 90 }}>{k}</Text>
+                  <Input
+                    size="small"
+                    value={edits[k] ?? ''}
+                    onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}
+                    style={{ fontFamily: 'monospace', fontSize: 11 }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : approveArgs.length > 0 ? (
             // The header preview ellipsises; show the full args here, wrapped, so
             // the operator can see exactly what they're approving — a many-arg
             // runnable used to push this (and the buttons) off-screen.
@@ -536,9 +599,9 @@ function ToolCallBlock({
             }}>
               {approveArgs.map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n')}
             </pre>
-          )}
+          ) : null}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={() => onAnswer?.(true)}>
+            <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={approve}>
               Approve &amp; run
             </Button>
             <Button size="small" danger onClick={() => onAnswer?.(false)}>Deny</Button>
@@ -916,6 +979,12 @@ function BlockCard({
                         pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running && pendingConfirm.display_name
                           ? { name: pendingConfirm.display_name, input: pendingConfirm.display_input ?? {} }
                           : null
+                      }
+                      editable={
+                        // Only when the shown call equals the real call — the
+                        // run_runnable wrapper (display ≠ tool name) stays read-only.
+                        !!pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
+                          && (pendingConfirm.display_name ?? pendingConfirm.tool_name) === pendingConfirm.tool_name
                       }
                       onAnswer={onAnswerConfirm}
                     />

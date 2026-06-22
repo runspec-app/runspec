@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Form, Modal, Input, Select, AutoComplete, Segmented, Switch, Button, Tag,
   Empty, Popconfirm, Typography, Tooltip, Alert, message,
@@ -19,6 +19,11 @@ const { Text } = Typography
 
 const AUTONOMY_OPTS = ['confirm', 'autonomous', 'supervised', 'manual']
 
+interface ActionRow {
+  run?: string
+  map: { arg: string; template: string }[]
+}
+
 interface TriggerForm {
   name: string
   source?: string
@@ -33,14 +38,24 @@ interface TriggerForm {
   runnables?: string[]
   run?: string
   map: { arg: string; template: string }[]
+  // Rule mode: single runnable vs a declarative list (UI-only switch, derived on
+  // load from whether `actions` is present).
+  rule_kind: 'single' | 'list'
+  action_mode: 'sequential' | 'parallel'
+  actions: ActionRow[]
+  // Optional LLM pre-turn (rule mode) that fills the action args.
+  pre_turn?: string
+  // Agent mode: which built-in action/Outlook tools the trigger may use.
+  action_allow?: string[]
   reply_draft: boolean
   reply_style?: string
 }
 
-const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
+export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
   const reply = (t.reply ?? {}) as { draft?: boolean; style?: string }
   const match = (t.match ?? {}) as Record<string, unknown>
   const map = (t.map ?? {}) as Record<string, unknown>
+  const actionsRaw = Array.isArray(t.actions) ? (t.actions as Record<string, unknown>[]) : []
   return {
     name: String(t.name ?? ''),
     source: t.source ? String(t.source) : undefined,
@@ -55,12 +70,20 @@ const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
     runnables: Array.isArray(t.runnables) ? (t.runnables as unknown[]).map(String) : [],
     run: t.run ? String(t.run) : '',
     map: Object.entries(map).map(([arg, template]) => ({ arg, template: String(template) })),
+    rule_kind: actionsRaw.length ? 'list' : 'single',
+    action_mode: t.action_mode === 'parallel' ? 'parallel' : 'sequential',
+    actions: actionsRaw.map(a => ({
+      run: a.run ? String(a.run) : '',
+      map: Object.entries((a.map ?? {}) as Record<string, unknown>).map(([arg, template]) => ({ arg, template: String(template) })),
+    })),
+    pre_turn: t.pre_turn ? String(t.pre_turn) : '',
+    action_allow: Array.isArray(t.action_allow) ? (t.action_allow as unknown[]).map(String) : [],
     reply_draft: !!reply.draft,
     reply_style: reply.style ? String(reply.style) : '',
   }
 }
 
-const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
+export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
   const matchObj: Record<string, string> = {}
   for (const m of v.match || []) if (m?.field?.trim()) matchObj[m.field.trim()] = (m.pattern ?? '').trim()
   const base: Record<string, unknown> = {
@@ -78,13 +101,26 @@ const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
   if (v.once_per_thread === 'on') base.once_per_thread = true
   else if (v.once_per_thread === 'off') base.once_per_thread = false
   if (v.mode === 'rule') {
-    const mapObj: Record<string, string> = {}
-    for (const m of v.map || []) if (m?.arg?.trim()) mapObj[m.arg.trim()] = (m.template ?? '').trim()
-    base.run = (v.run ?? '').trim()
-    base.map = mapObj
+    base.pre_turn = (v.pre_turn ?? '').trim()
+    if (v.rule_kind === 'list') {
+      base.action_mode = v.action_mode || 'sequential'
+      base.actions = (v.actions || [])
+        .filter(a => a?.run?.trim())
+        .map(a => {
+          const m: Record<string, string> = {}
+          for (const p of a.map || []) if (p?.arg?.trim()) m[p.arg.trim()] = (p.template ?? '').trim()
+          return { run: (a.run ?? '').trim(), map: m }
+        })
+    } else {
+      const mapObj: Record<string, string> = {}
+      for (const m of v.map || []) if (m?.arg?.trim()) mapObj[m.arg.trim()] = (m.template ?? '').trim()
+      base.run = (v.run ?? '').trim()
+      base.map = mapObj
+    }
   } else {
     base.rules = (v.rules ?? '').trim()
     base.runnables = (v.runnables ?? []).map(s => s.trim()).filter(Boolean)
+    base.action_allow = (v.action_allow ?? []).map(s => s.trim()).filter(Boolean)
   }
   return base
 }
@@ -184,12 +220,28 @@ export function TriggersEditor({
 
   const mode = Form.useWatch('mode', form)
   const source = Form.useWatch('source', form)
+  const ruleKind = Form.useWatch('rule_kind', form)
   const eventOpts = (sources.find(s => s.id === source)?.event_types ?? []).map(e => ({ value: e }))
+  // Reply drafting + once-per-thread only make sense for message-bearing sources;
+  // a schedule tick has nothing to reply to and no thread.
+  const threaded = source === 'outlook' || source === 'chat' || source === 'email'
+  const isChat = source === 'chat'
+
+  // The built-in action tools the agent allowlist offers (Outlook entries appear
+  // only when Outlook COM is reachable on the host).
+  const [actionTools, setActionTools] = useState<{ name: string; label: string }[]>([])
+  useEffect(() => {
+    bridge.list_action_tools().then(setActionTools).catch(() => setActionTools([]))
+  }, [])
 
   const startAdd = () => {
     setEditName(null); setErr('')
     form.resetFields()
-    form.setFieldsValue({ mode: 'agent', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default', runnables: [], map: [], reply_draft: false })
+    form.setFieldsValue({
+      mode: 'agent', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
+      runnables: [], map: [], reply_draft: false,
+      rule_kind: 'single', action_mode: 'sequential', actions: [], action_allow: [], pre_turn: '',
+    })
     setEditing(true)
   }
   const startEdit = (t: Record<string, unknown>) => {
@@ -227,6 +279,45 @@ export function TriggersEditor({
             </div>
           ))}
           <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add()} style={{ width: 'fit-content' }}>{addLabel}</Button>
+        </div>
+      )}
+    </Form.List>
+  )
+
+  // The declarative multi-runnable list (rule mode): each row is a runnable plus
+  // its own arg map (nested Form.List). Args may reference {{ _llm.* }} from the
+  // pre-turn as well as the event payload.
+  const actionsList = () => (
+    <Form.List name="actions">
+      {(fields, { add, remove: rm }) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+          {fields.map(f => (
+            <div key={f.key} style={{ border: '1px solid #2a2a2a', borderRadius: 6, padding: 8 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+                <Form.Item name={[f.name, 'run']} noStyle rules={[{ required: true, whitespace: true, message: 'Required' }]}>
+                  <Input size="small" placeholder="host__runnable" style={{ fontFamily: 'monospace' }} />
+                </Form.Item>
+                <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: '#666', cursor: 'pointer' }} />
+              </div>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>{'Arg map — arg → {{ field }} or {{ _llm.x }}'}</label>
+              <Form.List name={[f.name, 'map']}>
+                {(mfields, { add: madd, remove: mrm }) => (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {mfields.map(mf => (
+                      <div key={mf.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <Form.Item name={[mf.name, 'arg']} noStyle><Input size="small" placeholder="svc" style={{ fontFamily: 'monospace' }} /></Form.Item>
+                        <span style={{ color: '#666' }}>→</span>
+                        <Form.Item name={[mf.name, 'template']} noStyle><Input size="small" placeholder="{{ subject }}" style={{ fontFamily: 'monospace' }} /></Form.Item>
+                        <MinusCircleOutlined onClick={() => mrm(mf.name)} style={{ color: '#666', cursor: 'pointer' }} />
+                      </div>
+                    ))}
+                    <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => madd()} style={{ width: 'fit-content' }}>Add arg</Button>
+                  </div>
+                )}
+              </Form.List>
+            </div>
+          ))}
+          <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add({ run: '', map: [] })} style={{ width: 'fit-content' }}>Add runnable</Button>
         </div>
       )}
     </Form.List>
@@ -276,18 +367,39 @@ export function TriggersEditor({
           <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>Match — every field's regex must match the event payload (empty = any event of that source/type)</label>
           {pairRow('match', 'field', 'pattern', 'subject', '(?i)password', 'Add match')}
 
-          <Form.Item name="once_per_thread" label="Replies" style={{ marginBottom: 10 }}
-            help="Fire on the first message in a conversation, then ignore replies in that thread (keyed on the email/chat thread id, survives restarts). Default follows the mailbox setting.">
-            <Segmented options={[{ label: 'Mailbox default', value: 'default' }, { label: 'Once per thread', value: 'on' }, { label: 'Every message', value: 'off' }]} />
-          </Form.Item>
+          {threaded && (
+            <Form.Item name="once_per_thread" label="Replies" style={{ marginBottom: 10 }}
+              help="Fire on the first message in a conversation, then ignore replies in that thread (keyed on the email/chat thread id, survives restarts). Default follows the mailbox setting.">
+              <Segmented options={[{ label: 'Mailbox default', value: 'default' }, { label: 'Once per thread', value: 'on' }, { label: 'Every message', value: 'off' }]} />
+            </Form.Item>
+          )}
 
           {mode === 'rule' ? (
             <>
-              <Form.Item name="run" label="Run" rules={[{ required: true, whitespace: true, message: 'Required for rule mode' }]} help="host__runnable — the runnable to run.">
-                <Input placeholder="web01__reset-password" style={{ fontFamily: 'monospace' }} />
+              <Form.Item name="pre_turn" label="LLM pre-turn (optional)"
+                help={'A single LLM step that reads the event and fills the args below — reference its output as {{ _llm.<name> }}. It only extracts; it never decides which runnables run.'}>
+                <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="Extract the affected hostname and severity from the alert." />
               </Form.Item>
-              <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>{'Arg map — runnable arg → {{ payload field }}'}</label>
-              {pairRow('map', 'arg', 'template', 'user', '{{ from }}', 'Add arg')}
+              <Form.Item name="rule_kind" label="Action">
+                <Segmented options={[{ label: 'Single runnable', value: 'single' }, { label: 'Multiple runnables', value: 'list' }]} />
+              </Form.Item>
+              {ruleKind === 'list' ? (
+                <>
+                  <Form.Item name="action_mode" label="Run order"
+                    help="Sequential runs each in turn; parallel runs them at once behind a single grouped confirm.">
+                    <Segmented options={[{ label: 'Sequential', value: 'sequential' }, { label: 'Parallel', value: 'parallel' }]} />
+                  </Form.Item>
+                  {actionsList()}
+                </>
+              ) : (
+                <>
+                  <Form.Item name="run" label="Run" rules={[{ required: true, whitespace: true, message: 'Required for rule mode' }]} help="host__runnable — the runnable to run.">
+                    <Input placeholder="web01__reset-password" style={{ fontFamily: 'monospace' }} />
+                  </Form.Item>
+                  <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>{'Arg map — runnable arg → {{ payload field }}'}</label>
+                  {pairRow('map', 'arg', 'template', 'user', '{{ from }}', 'Add arg')}
+                </>
+              )}
             </>
           ) : (
             <>
@@ -297,17 +409,28 @@ export function TriggersEditor({
               <Form.Item name="runnables" label="Runnable allowlist (optional)" help="Tools the agent may call. Empty = any runnable.">
                 <Select mode="tags" tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder="reset-password, request-vm" />
               </Form.Item>
+              {actionTools.length > 0 && (
+                <Form.Item name="action_allow" label="Action tools (optional)"
+                  help="Built-in actions the agent may take (create document, run a skill, send mail, …). Empty = all available.">
+                  <Select mode="multiple" allowClear placeholder="Any available action"
+                    options={actionTools.map(a => ({ value: a.name, label: a.label }))} />
+                </Form.Item>
+              )}
             </>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px', alignItems: 'end' }}>
-            <Form.Item name="reply_draft" label="Draft a reply" valuePropName="checked" help="Offer a draft_reply tool (email triggers).">
-              <Switch size="small" />
-            </Form.Item>
-            <Form.Item name="reply_style" label="Reply style (optional)">
-              <Input placeholder="formal, concise…" />
-            </Form.Item>
-          </div>
+          {threaded && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0 12px' }}>
+              <Form.Item name="reply_draft" label={isChat ? 'Propose a reply' : 'Draft a reply'} valuePropName="checked"
+                help={isChat ? 'Offer a propose_reply tool — pre-fills the room composer for you to send.' : 'Offer a draft_reply tool — saves a draft for you to review and send (never sent automatically).'}>
+                <Switch size="small" />
+              </Form.Item>
+              <Form.Item name="reply_style" label="Actions on results"
+                help="What the agent should do with what the runnables return — e.g. summarise the failures, draft a concise reply, open a ticket if any are critical.">
+                <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="Summarise the findings; for mail, draft a concise reply." />
+              </Form.Item>
+            </div>
+          )}
 
           <Form.Item name="enabled" valuePropName="checked" style={{ marginBottom: 8 }}>
             <Switch size="small" /> <span style={{ fontSize: 12, color: '#888', marginLeft: 6 }}>Enabled</span>

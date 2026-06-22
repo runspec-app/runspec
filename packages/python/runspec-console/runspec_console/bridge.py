@@ -144,6 +144,15 @@ _OUTLOOK_READ_TOOLS = frozenset(
 _OUTLOOK_WRITE_TOOLS = frozenset({"outlook_draft", "outlook_send"})
 _OUTLOOK_TOOL_NAMES = _OUTLOOK_READ_TOOLS | _OUTLOOK_WRITE_TOOLS
 
+# Built-in "action" tools beyond running a runnable — write a markdown document,
+# follow a saved runbook, create a schedule, or emit an event into the trigger
+# engine. All four are side-effecting, so the autonomy gate prompts before each
+# (treated as "confirm" in _effective_tool_autonomy). Names are "__"-free so they
+# never collide with the host__runnable scheme.
+_ACTION_TOOL_NAMES = frozenset(
+    {"create_document", "run_skill", "create_schedule", "emit_event"}
+)
+
 # Cap on a single runnable's output handed to the model as a tool result. The
 # old 16 KB cap sliced data-heavy runnables (e.g. list-processes / list-containers
 # emitting one compact JSON line) *mid-JSON*, so the model received invalid,
@@ -172,6 +181,7 @@ class _BridgeTriggerOps:
         room: str | None = None,
         from_mailbox: str | None = None,
         allowed_runnables: list[str] | None = None,
+        action_allow: list[str] | None = None,
         record: Any = None,
         stage: Any = None,
         trigger: str = "",
@@ -185,6 +195,7 @@ class _BridgeTriggerOps:
             room=room,
             from_mailbox=from_mailbox,
             allowed_runnables=allowed_runnables,
+            action_allow=action_allow,
             record=record,
             stage=stage,
             trigger=trigger,
@@ -210,6 +221,19 @@ class _BridgeTriggerOps:
             return self._bridge._gated_run_tool(tool_name, tool_input, chat_id)
         finally:
             self._bridge._clear_run_origin(chat_id)
+
+    def run_rule_group(
+        self,
+        chat_id: str,
+        calls: list[tuple[str, dict[str, Any]]],
+        trigger: str = "",
+    ) -> list[str]:
+        return self._bridge._run_rule_group(chat_id, calls, trigger=trigger)
+
+    def run_pre_turn(
+        self, chat_id: str, instructions: str, event_text: str
+    ) -> dict[str, Any]:
+        return self._bridge._trigger_run_pre_turn(chat_id, instructions, event_text)
 
     def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
         # The Console tab renders this as a finished block matching the trigger
@@ -5611,6 +5635,7 @@ class Bridge:
                 *self._outlook_tools(),
                 *self._status_tools(),
                 *self._memory_tools(),
+                *self._action_tools(),
             ]
         self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
@@ -5749,6 +5774,7 @@ class Bridge:
             *self._outlook_tools(),
             *self._status_tools(),
             *self._memory_tools(),
+            *self._action_tools(),
         ]
 
     def _outlook_tools(self) -> list[dict[str, Any]]:
@@ -6233,6 +6259,296 @@ class Bridge:
             )
         return tools
 
+    def _action_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the built-in 'action' tools an agent-mode trigger (or chat)
+        uses to *act* beyond running runnables: write a markdown document, follow a
+        saved runbook, create a schedule, or emit an event into the trigger engine.
+        All four are side-effecting, so the autonomy gate prompts before each (see
+        ``_ACTION_TOOL_NAMES`` in ``_effective_tool_autonomy``)."""
+        from . import memory
+
+        remote = [h["name"] for h in self._hosts if h.get("ssh")]
+        tools: list[dict[str, Any]] = [
+            {
+                "name": "create_document",
+                "description": (
+                    "Write a markdown document to a file. Always saves a copy on "
+                    "the local console machine; when dest is a fleet host it also "
+                    "uploads it there. Use it to capture a summary, report, or note."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "filename": {
+                            "type": "string",
+                            "description": "File name, e.g. 'incident-2026-06-22.md'.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The markdown content to write.",
+                        },
+                        "dest": {
+                            "type": "string",
+                            "enum": ["local", *remote],
+                            "description": (
+                                "Where to write it: 'local' (the console machine) "
+                                "or a fleet host to also upload it to. Default local."
+                            ),
+                        },
+                        "dest_dir": {
+                            "type": "string",
+                            "description": (
+                                "Destination directory. Required for a remote host; "
+                                "optional locally (defaults to the console docs dir)."
+                            ),
+                        },
+                    },
+                    "required": ["filename", "content"],
+                },
+            }
+        ]
+
+        skills = memory.list_skills()
+        if skills:
+            menu = "; ".join(
+                f"'{s['id']}'" + (f" — {s['title']}" if s.get("title") else "")
+                for s in skills
+            )
+            tools.append(
+                {
+                    "name": "run_skill",
+                    "description": (
+                        "Load a saved runbook by id and follow its steps as part of "
+                        "this turn. Returns the runbook's rendered steps for you to "
+                        f"carry out with your other tools. Available: {menu}."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "skill_id": {
+                                "type": "string",
+                                "enum": [s["id"] for s in skills],
+                                "description": "Which runbook to run.",
+                            },
+                            "values": {
+                                "type": "object",
+                                "description": "Values for the runbook's {{name}} parameters.",
+                            },
+                            "extra_instructions": {
+                                "type": "string",
+                                "description": "Optional extra context to append.",
+                            },
+                        },
+                        "required": ["skill_id"],
+                    },
+                }
+            )
+
+        tools.append(
+            {
+                "name": "create_schedule",
+                "description": (
+                    "Create a recurring schedule that fires on a cron expression or "
+                    "a fixed interval. It either emits a matchable event into the "
+                    "trigger engine (action='event') or runs a runnable directly "
+                    "(action='runnable')."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Short id for the schedule.",
+                        },
+                        "action": {
+                            "type": "string",
+                            "enum": ["event", "runnable"],
+                            "description": "Emit an event, or run a runnable directly.",
+                        },
+                        "when": {
+                            "type": "object",
+                            "description": (
+                                "Timing: exactly one of cron='M H D M W' or "
+                                "every='15m', plus optional timezone (IANA name)."
+                            ),
+                            "properties": {
+                                "cron": {"type": "string"},
+                                "every": {"type": "string"},
+                                "timezone": {"type": "string"},
+                            },
+                        },
+                        "event": {
+                            "type": "string",
+                            "description": "Event name (action='event').",
+                        },
+                        "fields": {
+                            "type": "object",
+                            "description": "Event payload fields (action='event').",
+                        },
+                        "host": {
+                            "type": "string",
+                            "description": "Host to run on (action='runnable').",
+                        },
+                        "runnable": {
+                            "type": "string",
+                            "description": "Runnable name (action='runnable').",
+                        },
+                        "args": {
+                            "type": "object",
+                            "description": "Runnable args (action='runnable').",
+                        },
+                    },
+                    "required": ["id", "action", "when"],
+                },
+            }
+        )
+
+        tools.append(
+            {
+                "name": "emit_event",
+                "description": (
+                    "Emit a matchable event into the trigger engine now. Triggers "
+                    "with source='schedule' and a matching event type pick it up "
+                    "(fan-out) — use it to hand work to other triggers."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "event": {
+                            "type": "string",
+                            "description": "Event type name to emit.",
+                        },
+                        "fields": {
+                            "type": "object",
+                            "description": "Payload fields the event carries.",
+                        },
+                    },
+                    "required": ["event"],
+                },
+            }
+        )
+        return tools
+
+    def _run_action_tool(self, name: str, ti: dict[str, Any], chat_id: str = "") -> str:
+        """Execute a built-in action tool (the gate has already approved it).
+        ``create_document`` writes/uploads markdown; ``run_skill`` renders a saved
+        runbook inline (NOT a spawned sub-agent — keeps the turn single-level);
+        ``create_schedule``/``emit_event`` drive the scheduler + trigger engine."""
+        if name == "create_document":
+            return self._action_create_document(ti)
+        if name == "run_skill":
+            return self._action_run_skill(ti)
+        if name == "create_schedule":
+            return self._action_create_schedule(ti)
+        if name == "emit_event":
+            return self._action_emit_event(ti)
+        return f"Error: unknown tool '{name}'"
+
+    def _action_create_document(self, ti: dict[str, Any]) -> str:
+        content = str(ti.get("content") or "")
+        filename = os.path.basename(str(ti.get("filename") or "").strip())
+        if not filename:
+            return "Error: 'filename' is required."
+        if not content.strip():
+            return "Error: 'content' is empty — nothing to write."
+        dest = str(ti.get("dest") or "local").strip() or "local"
+        dest_dir = str(ti.get("dest_dir") or "").strip()
+        local_dir = (
+            dest_dir if (dest == "local" and dest_dir) else str(app_dir() / "documents")
+        )
+        try:
+            Path(local_dir).mkdir(parents=True, exist_ok=True)
+            local_path = Path(local_dir) / filename
+            local_path.write_text(content, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not write {filename} locally: {exc}"
+        if dest == "local":
+            return f"✓ Wrote {filename} to {local_dir}."
+        if not dest_dir:
+            return "Error: dest_dir is required when dest is a host."
+        # Upload the local copy to the host via the normal transfer path.
+        res = self.start_transfer("local", [str(local_path)], dest, dest_dir)
+        if res.get("error"):
+            return (
+                f"✗ Wrote {filename} locally, but could not start upload to "
+                f"{dest}: {res['error']}"
+            )
+        tid = res.get("id")
+        detail = self._await_transfer(tid) if tid else None
+        if detail is None:
+            return (
+                f"Wrote {filename} locally; upload to {dest} started (id {tid}) — "
+                "check the transfer panel for the result."
+            )
+        if detail.get("ok"):
+            return (
+                f"✓ Wrote {filename} to {local_dir} and uploaded it to {dest_dir} "
+                f"on {dest}."
+            )
+        return (
+            f"✓ Wrote {filename} locally, but upload to {dest} failed: "
+            f"{detail.get('error') or 'unknown error'}"
+        )
+
+    def _action_run_skill(self, ti: dict[str, Any]) -> str:
+        from . import memory, skillargs
+
+        skill = memory.load_skill(str(ti.get("skill_id") or ""))
+        if not skill:
+            return f"Error: no runbook with id '{ti.get('skill_id')}'."
+        vals = dict(ti.get("values") or {})
+        raw = skill.get("args") if isinstance(skill.get("args"), dict) else {}
+        errors = skillargs.validate_skill_values(raw, vals)
+        if errors:
+            return "Error: " + "; ".join(errors)
+        body = memory.render_skill_body(str(skill.get("steps") or ""), vals)
+        extra = str(ti.get("extra_instructions") or "").strip()
+        text = f"{body}\n\n{extra}".strip() if extra else body.strip()
+        if not text:
+            return "Error: this runbook has an empty body."
+        title = skill.get("title") or skill.get("id")
+        return f"Runbook '{title}' — follow these steps now using your tools:\n\n{text}"
+
+    def _action_create_schedule(self, ti: dict[str, Any]) -> str:
+        from .sources.schedule import parse_schedule_entry
+
+        sid = str(ti.get("id") or "").strip()
+        if not sid:
+            return "Error: 'id' is required."
+        data: dict[str, Any] = {
+            "id": sid,
+            "action": str(ti.get("action") or "").strip(),
+            "when": dict(ti.get("when") or {}),
+        }
+        for key in ("event", "fields", "host", "runnable", "args"):
+            if ti.get(key) is not None:
+                data[key] = ti[key]
+        try:
+            parse_schedule_entry(data)  # validate shape before persisting
+        except Exception as exc:  # noqa: BLE001
+            return f"Error: invalid schedule — {exc}"
+        try:
+            self.create_schedule(data)
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not create schedule: {exc}"
+        return f"✓ Created schedule '{sid}'."
+
+    def _action_emit_event(self, ti: dict[str, Any]) -> str:
+        from .events import Event
+
+        event = str(ti.get("event") or "").strip()
+        if not event:
+            return "Error: 'event' is required."
+        engine = self._trigger_engine
+        if engine is None:
+            return "✗ The trigger engine isn't running — can't emit the event now."
+        payload = {**dict(ti.get("fields") or {}), "event": event}
+        try:
+            engine.feed(Event.new("schedule", event, payload))
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not emit event: {exc}"
+        return f"✓ Emitted event '{event}' into the trigger engine."
+
     def _run_memory_tool(self, name: str, ti: dict[str, Any]) -> str:
         """Execute a memory/runbook tool against the local stores (the gate has
         already cleared it as autonomous). Returns a short string the model reads."""
@@ -6508,6 +6824,8 @@ class Bridge:
             return "autonomous"  # local memory/runbook store — no model-spend gate
         if tool_name in _STATUS_TOOL_NAMES:
             return "autonomous"  # read-only status report — no side effects
+        if tool_name in _ACTION_TOOL_NAMES:
+            return "confirm"  # side-effecting action tools — always prompt
         if tool_name == "run_runnable":
             # Resolve the inner runnable so the gate reflects what actually runs —
             # not the generic wrapper. The level + per-arg escalation come from the
@@ -6551,7 +6869,7 @@ class Bridge:
 
     def _register_confirm(
         self, chat_id: str, tool_name: str, tool_input: dict[str, Any], level: str
-    ) -> tuple[str, threading.Event, dict[str, bool]]:
+    ) -> tuple[str, threading.Event, dict[str, Any]]:
         """Register a pending confirmation and emit the UI prompt event.
 
         Returns (request_id, event, holder). The event is set by
@@ -6570,7 +6888,13 @@ class Bridge:
         card_tool, card_input = self._confirm_card_view(tool_name, tool_input)
         request_id = uuid.uuid4().hex
         event = threading.Event()
-        holder = {"approved": False, "cancelled": False}
+        # ``edited_input`` (Phase: editable confirmations) carries an operator-edited
+        # tool_input back from the UI — None means "run as proposed".
+        holder: dict[str, Any] = {
+            "approved": False,
+            "cancelled": False,
+            "edited_input": None,
+        }
         with self._lock:
             self._pending_confirms[request_id] = (chat_id, event, holder)
             self._pending_confirm_meta[request_id] = {
@@ -6765,8 +7089,12 @@ class Bridge:
         threading.Thread(target=_raise, name="notify-room", daemon=True).start()
 
     def _finish_confirm(
-        self, request_id: str, holder: dict[str, bool], timed_out: bool
-    ) -> bool:
+        self, request_id: str, holder: dict[str, Any], timed_out: bool
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Clean up a resolved confirm and return ``(approved, edited_input)``.
+
+        ``edited_input`` is the operator-edited tool_input (Phase: editable
+        confirmations) or ``None`` to run the call as the agent proposed it."""
         with self._lock:
             self._pending_confirms.pop(request_id, None)
             self._pending_confirm_meta.pop(request_id, None)
@@ -6782,7 +7110,8 @@ class Bridge:
                 request_id,
                 holder["approved"],
             )
-        return holder["approved"]
+        edited = holder.get("edited_input") if holder["approved"] else None
+        return holder["approved"], edited
 
     async def _gated_run_tool_async(
         self,
@@ -6812,7 +7141,7 @@ class Bridge:
                 chat_id, tool_name, tool_input, decision
             )
             timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
-            approved = self._finish_confirm(request_id, holder, timed_out)
+            approved, edited = self._finish_confirm(request_id, holder, timed_out)
             # Stop pressed while the dialog was up: don't run, and let the loop
             # halt at its next checkpoint (cancel flag is already set).
             if holder.get("cancelled"):
@@ -6826,6 +7155,9 @@ class Bridge:
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
+            # The operator may have edited the args before approving — run those.
+            if edited is not None:
+                tool_input = edited
         if stage is not None:
             stage("running")
         return await asyncio.to_thread(
@@ -6844,10 +7176,15 @@ class Bridge:
         if decision == "manual":
             return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
         if decision != "run":
-            if not self._await_confirmation(tool_name, tool_input, decision, chat_id):
+            approved, edited = self._await_confirmation(
+                tool_name, tool_input, decision, chat_id
+            )
+            if not approved:
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
+            if edited is not None:
+                tool_input = edited
         return self._run_tool_sync(tool_name, tool_input, chat_id)
 
     def _set_run_origin(
@@ -6872,25 +7209,40 @@ class Bridge:
 
     def _await_confirmation(
         self, tool_name: str, tool_input: dict[str, Any], level: str, chat_id: str
-    ) -> bool:
+    ) -> tuple[bool, dict[str, Any] | None]:
         """Ask the UI to approve an agent tool call; block (in a worker thread)
-        until resolve_tool_confirmation() fires. Times out as a deny."""
+        until resolve_tool_confirmation() fires. Times out as a deny. Returns
+        ``(approved, edited_input)``."""
         request_id, event, holder = self._register_confirm(
             chat_id, tool_name, tool_input, level
         )
         timed_out = not event.wait(timeout=self._CONFIRM_TIMEOUT_S)
         return self._finish_confirm(request_id, holder, timed_out)
 
-    def resolve_tool_confirmation(self, request_id: str, approved: bool) -> None:
-        """Frontend callback: resolve a pending agent tool-call confirmation."""
+    def resolve_tool_confirmation(
+        self,
+        request_id: str,
+        approved: bool,
+        edited_input: dict[str, Any] | None = None,
+    ) -> None:
+        """Frontend callback: resolve a pending agent tool-call confirmation.
+
+        ``edited_input`` (optional) is an operator-edited tool_input — when
+        approving, the call runs with these values instead of the agent's proposal
+        (Phase: editable confirmations). Ignored on a deny."""
         logger.info(
-            "autonomy gate: UI resolved request_id=%s approved=%s", request_id, approved
+            "autonomy gate: UI resolved request_id=%s approved=%s edited=%s",
+            request_id,
+            approved,
+            edited_input is not None,
         )
         with self._lock:
             entry = self._pending_confirms.get(request_id)
         if entry is not None:
             _chat_id, event, holder = entry
             holder["approved"] = bool(approved)
+            if approved and isinstance(edited_input, dict):
+                holder["edited_input"] = edited_input
             event.set()
         else:
             logger.warning(
@@ -6916,6 +7268,8 @@ class Bridge:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
         if tool_name in _STATUS_TOOL_NAMES:
             return self._run_status_tool(dict(tool_input or {}))
+        if tool_name in _ACTION_TOOL_NAMES:
+            return self._run_action_tool(tool_name, dict(tool_input or {}), chat_id)
         # Read-only discovery meta-tools (search mode) — no side effects, return JSON.
         if tool_name == "search_runnables":
             return self._run_search_tool(dict(tool_input or {}))
@@ -9418,13 +9772,34 @@ class Bridge:
             self.restart_triggers()
         return {"ok": len(kept) != len(raw)}
 
+    def list_action_tools(self) -> list[dict[str, str]]:
+        """The built-in action tools an agent-mode trigger can be allowed to use,
+        for the Triggers editor's per-trigger allowlist. The Outlook tools are
+        listed only when Outlook COM is reachable on this machine."""
+        items = [
+            {"name": "create_document", "label": "Create document"},
+            {"name": "run_skill", "label": "Run skill (runbook)"},
+            {"name": "create_schedule", "label": "Create schedule"},
+            {"name": "emit_event", "label": "Emit event"},
+        ]
+        if self._outlook_tools():
+            items += [
+                {"name": "outlook_inbox", "label": "Outlook: read inbox"},
+                {"name": "outlook_search", "label": "Outlook: search"},
+                {"name": "outlook_calendar", "label": "Outlook: calendar"},
+                {"name": "outlook_reminders", "label": "Outlook: reminders"},
+                {"name": "outlook_draft", "label": "Outlook: draft mail"},
+                {"name": "outlook_send", "label": "Outlook: send mail"},
+            ]
+        return items
+
     @staticmethod
     def _clean_trigger(trigger: dict[str, Any], name: str) -> dict[str, Any]:
         """Normalise a trigger dict from the UI into the on-disk shape: keep ``name``,
         drop blank scalars / empty sub-tables, coerce the sub-tables (``match`` / ``map``
         / ``reply``) and the ``runnables`` list."""
         out: dict[str, Any] = {"name": name}
-        for key in ("source", "event", "mode", "autonomy", "run", "rules"):
+        for key in ("source", "event", "mode", "autonomy", "run", "rules", "pre_turn"):
             val = str(trigger.get(key) or "").strip()
             if val:
                 out[key] = val
@@ -9450,6 +9825,39 @@ class Bridge:
                 }
                 if pairs:
                     out[sub] = pairs
+        # Declarative multi-runnable action list (rule mode): drop blank steps and
+        # empty maps; only emit action_mode when there's a list to qualify.
+        actions = trigger.get("actions")
+        if isinstance(actions, list):
+            cleaned_actions: list[dict[str, Any]] = []
+            for item in actions:
+                if not isinstance(item, dict):
+                    continue
+                run = str(item.get("run") or "").strip()
+                if not run:
+                    continue
+                step: dict[str, Any] = {"run": run}
+                amap = item.get("map")
+                if isinstance(amap, dict):
+                    pairs = {
+                        str(k).strip(): str(v).strip()
+                        for k, v in amap.items()
+                        if str(k).strip() and str(v).strip()
+                    }
+                    if pairs:
+                        step["map"] = pairs
+                cleaned_actions.append(step)
+            if cleaned_actions:
+                out["actions"] = cleaned_actions
+                am = str(trigger.get("action_mode") or "").strip()
+                if am in ("sequential", "parallel"):
+                    out["action_mode"] = am
+        # Agent-mode allowlist of built-in action tools this trigger may use.
+        action_allow = trigger.get("action_allow")
+        if isinstance(action_allow, list):
+            allow = [str(a).strip() for a in action_allow if str(a).strip()]
+            if allow:
+                out["action_allow"] = allow
         reply = trigger.get("reply")
         if isinstance(reply, dict) and (reply.get("draft") or reply.get("style")):
             rep: dict[str, Any] = {"draft": bool(reply.get("draft"))}
@@ -9642,6 +10050,7 @@ class Bridge:
         room: str | None = None,
         from_mailbox: str | None = None,
         allowed_runnables: list[str] | None = None,
+        action_allow: list[str] | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
         trigger: str = "",
@@ -9684,6 +10093,7 @@ class Bridge:
                     room=room if draft else None,
                     from_mailbox=from_mailbox if draft else None,
                     allowed_runnables=allowed_runnables,
+                    action_allow=action_allow,
                     record=record,
                     stage=stage,
                 )
@@ -9692,6 +10102,118 @@ class Bridge:
             self._clear_run_origin(chat_id)
             with self._lock:
                 self._chat_cancels.pop(chat_id, None)
+
+    def _run_rule_group(
+        self,
+        chat_id: str,
+        calls: list[tuple[str, dict[str, Any]]],
+        trigger: str = "",
+    ) -> list[str]:
+        """Run a rule-mode trigger's PARALLEL action list behind a single confirm.
+
+        Group autonomy is the most restrictive across the steps (a ``manual`` step
+        refuses the whole group); a single ``run_group`` confirm covers them all,
+        and the operator may edit the group's calls before approving. Approved (or
+        all-autonomous) steps run via ``_run_tool_sync`` WITHOUT re-gating (the
+        group confirm already authorised them). Returns one output per call."""
+        if not calls:
+            return []
+        ranks = [
+            _AUTONOMY_RANK.get(self._effective_tool_autonomy(n, i), 1) for n, i in calls
+        ]
+        rank = max(ranks)
+        level = next(k for k, v in _AUTONOMY_RANK.items() if v == rank)
+        if level == "manual":
+            return [
+                f"✗ '{n.split('__', 1)[-1]}' is manual-only — the parallel group "
+                "was not run (a manual step blocks the whole group)."
+                for n, _ in calls
+            ]
+        # A rule run is a deterministic (non-LLM) call — record agent=False with the
+        # causing event source as provenance for each runnable in the group.
+        self._set_run_origin(chat_id, trigger, agent=False)
+        try:
+            if level != "autonomous":
+                payload = {"calls": [{"name": n, "input": i} for n, i in calls]}
+                request_id, event, holder = self._register_confirm(
+                    chat_id, "run_group", payload, level
+                )
+                timed_out = not event.wait(timeout=self._CONFIRM_TIMEOUT_S)
+                approved, edited = self._finish_confirm(request_id, holder, timed_out)
+                if not approved:
+                    return [
+                        f"✗ The user declined to run the parallel group "
+                        f"(autonomy = {level})."
+                    ]
+                # Operator may have edited the group's calls before approving.
+                if edited is not None and isinstance(edited.get("calls"), list):
+                    edited_calls = [
+                        (str(c.get("name")), dict(c.get("input") or {}))
+                        for c in edited["calls"]
+                        if c.get("name")
+                    ]
+                    if edited_calls:
+                        calls = edited_calls
+            return [self._run_tool_sync(n, i, chat_id) for n, i in calls]
+        finally:
+            self._clear_run_origin(chat_id)
+
+    def _trigger_run_pre_turn(
+        self, chat_id: str, instructions: str, event_text: str
+    ) -> dict[str, Any]:
+        """BridgeOps: one headless LLM extract step ahead of a rule action.
+
+        It is given ONE output tool (``emit_params``) and NO runnable tools, so it
+        can only return inferred params — it cannot act, loop, or branch (this is
+        what keeps the pre-turn under the "no workflow engine" line). Returns the
+        flat params dict, or ``{}`` on any failure (the action runs regardless)."""
+        system = (
+            "You extract structured parameters from an event for an automated "
+            "action. Call emit_params exactly once with the values you infer from "
+            "the event. Do not take any other action.\n\n" + (instructions or "")
+        )
+        try:
+            adapter = self._get_adapter(system_override=system)
+        except Exception:  # noqa: BLE001
+            logger.debug("pre-turn: adapter unavailable", exc_info=True)
+            return {}
+        if adapter is None:
+            return {}
+        tool = {
+            "name": "emit_params",
+            "description": "Return the parameters you inferred from the event.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "params": {
+                        "type": "object",
+                        "description": "Flat map of param name → string value.",
+                    }
+                },
+                "required": ["params"],
+            },
+        }
+        history = [{"role": "user", "content": event_text}]
+
+        async def _once() -> dict[str, Any]:
+            response: Any = None
+            async for ev in adapter.stream_with_tools(history, [tool]):
+                if ev[0] == "done":
+                    response = ev[1]
+            if response is None or not getattr(response, "tool_calls", None):
+                return {}
+            for tc in response.tool_calls:
+                if tc.name == "emit_params":
+                    params = (tc.input or {}).get("params")
+                    if isinstance(params, dict):
+                        return {str(k): v for k, v in params.items()}
+            return {}
+
+        try:
+            return asyncio.run(_once())
+        except Exception:  # noqa: BLE001
+            logger.debug("pre-turn: extraction failed", exc_info=True)
+            return {}
 
     async def _run_isolated_agent_turn(
         self,
@@ -9702,6 +10224,7 @@ class Bridge:
         room: str | None = None,
         from_mailbox: str | None = None,
         allowed_runnables: list[str] | None = None,
+        action_allow: list[str] | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
     ) -> str:
@@ -9712,6 +10235,10 @@ class Bridge:
         built-in draft_reply tool is offered; when ``room`` is set the chat
         propose_reply tool is offered (both handled inline).
 
+        ``action_allow`` (non-empty) restricts the built-in action + Outlook tools
+        to that set — the operator's per-trigger choice of which actions this
+        trigger may take; runnable tools are still governed by ``allowed_runnables``.
+
         Returns a short summary (the model's closing reply + any tool actions)
         for display on the run card — trigger turns have no chat transcript,
         so this is where the agent's output becomes visible."""
@@ -9719,6 +10246,14 @@ class Bridge:
 
         start = time.monotonic()
         tools = self._runnables_to_tools(allow=allowed_runnables)
+        if action_allow:
+            # Keep every non-governed tool; among the governed built-in action /
+            # Outlook tools keep only the allowlisted ones.
+            governed = _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES
+            allow = set(action_allow)
+            tools = [
+                t for t in tools if t["name"] not in governed or t["name"] in allow
+            ]
         if allowed_runnables and not tools:
             # A non-empty allowlist that matched no installed runnable — the agent
             # would run tool-less. Surface it (a config typo / a host not yet
@@ -9849,7 +10384,7 @@ class Bridge:
             chat_id, "draft_reply", tool_input, "confirm"
         )
         timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
-        approved = self._finish_confirm(request_id, holder, timed_out)
+        approved, edited = self._finish_confirm(request_id, holder, timed_out)
         if holder.get("cancelled"):
             return "⏹ draft_reply was not run — you stopped the assistant."
         if not approved:
@@ -9858,6 +10393,9 @@ class Bridge:
             if stage is not None:
                 stage("running")
             return "✗ You declined to save the draft reply."
+        # The operator may have edited the reply body before approving.
+        if edited is not None and str(edited.get("body") or "").strip():
+            body = str(edited["body"]).strip()
         if stage is not None:
             stage("running")
         result = await asyncio.to_thread(
@@ -9902,7 +10440,7 @@ class Bridge:
             chat_id, "propose_reply", tool_input, "confirm"
         )
         timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
-        approved = self._finish_confirm(request_id, holder, timed_out)
+        approved, edited = self._finish_confirm(request_id, holder, timed_out)
         if holder.get("cancelled"):
             return "⏹ propose_reply was not run — you stopped the assistant."
         if not approved:
@@ -9911,6 +10449,9 @@ class Bridge:
             if stage is not None:
                 stage("running")
             return "✗ You declined to propose the reply."
+        # The operator may have edited the proposed text before approving.
+        if edited is not None and str(edited.get("text") or "").strip():
+            text = str(edited["text"]).strip()
         if stage is not None:
             stage("running")
         # Pre-fill the room composer; the human reviews and sends from the Rooms

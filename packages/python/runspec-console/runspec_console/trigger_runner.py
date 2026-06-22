@@ -41,6 +41,7 @@ class BridgeOps(Protocol):
         room: str | None = None,
         from_mailbox: str | None = None,
         allowed_runnables: list[str] | None = None,
+        action_allow: list[str] | None = None,
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
         trigger: str = "",
@@ -78,6 +79,26 @@ class BridgeOps(Protocol):
         """Run a single runnable through the autonomy gate, returning its output
         (or a gate-decline message). ``chat_id`` is the card id; ``trigger`` is the
         causing event source, recorded as the run's provenance."""
+        ...
+
+    def run_rule_group(
+        self,
+        chat_id: str,
+        calls: list[tuple[str, dict[str, Any]]],
+        trigger: str = "",
+    ) -> list[str]:
+        """Run several rule-mode runnables as one parallel group behind a SINGLE
+        confirm (most-restrictive autonomy across the steps; a ``manual`` step
+        refuses the whole group). Returns one output string per call, in order."""
+        ...
+
+    def run_pre_turn(
+        self, chat_id: str, instructions: str, event_text: str
+    ) -> dict[str, Any]:
+        """One headless LLM extract step: interpret the event per ``instructions``
+        and return a flat ``{param: value}`` dict (exposed to the action maps under
+        ``{{ _llm.* }}``). It has no runnable tools and cannot loop or branch — a
+        pure extract. Returns ``{}`` on any failure (the action still runs)."""
         ...
 
     def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
@@ -206,17 +227,62 @@ def make_handler(
 
     def handler(card: TriggerCard, trigger: Trigger, event: Event) -> None:
         if trigger.mode == "rule":
-            tool_input = trigger.render_args(event.payload)
-            card.move(Column.RUNNING, tool=trigger.run, args=tool_input)
-            output = ops.run_rule_tool(
-                card.id, trigger.run, tool_input, trigger=event.source
+            # Optional single LLM pre-turn: interpret the event and fill action
+            # params, exposed to the maps under the {{ _llm.* }} namespace. It only
+            # extracts — it never chooses steps or branches (cliff guard).
+            payload: dict[str, Any] = dict(event.payload)
+            if trigger.pre_turn.strip():
+                card.move(Column.TRIAGE)
+                llm = ops.run_pre_turn(card.id, trigger.pre_turn, render_event(event))
+                if llm:
+                    payload["_llm"] = llm
+                    card.log("pre-turn extracted: " + ", ".join(sorted(llm)))
+
+            if not trigger.actions:
+                # Single fixed runnable (the original rule path).
+                tool_input = trigger.render_args(payload)
+                card.move(Column.RUNNING, tool=trigger.run, args=tool_input)
+                output = ops.run_rule_tool(
+                    card.id, trigger.run, tool_input, trigger=event.source
+                )
+                card.move(Column.DONE, result=output[:_RESULT_CAP])
+                if trigger.post_to_chat:
+                    # Mirror as a standard slash-command run card.
+                    host, _, name = trigger.run.partition("__")
+                    label = f"/{name} on {host}" if name else f"/{trigger.run}"
+                    ops.mirror_to_chat(
+                        "run", f"{label}  (trigger: {trigger.name})", output
+                    )
+                return
+
+            # Declarative multi-runnable list (bounded — flat, no result piping).
+            calls = [
+                (step.run, trigger.render_action_args(step, payload))
+                for step in trigger.actions
+            ]
+            card.move(
+                Column.RUNNING,
+                tool=f"{len(calls)} runnables ({trigger.action_mode})",
             )
-            card.move(Column.DONE, result=output[:_RESULT_CAP])
+            if trigger.action_mode == "parallel":
+                # One grouped confirm covers the whole batch.
+                outputs = ops.run_rule_group(card.id, calls, trigger=event.source)
+            else:
+                outputs = [
+                    ops.run_rule_tool(card.id, run_name, args, trigger=event.source)
+                    for run_name, args in calls
+                ]
+            joined = "\n\n".join(
+                f"• {name.split('__', 1)[-1]}:\n{out}"
+                for (name, _), out in zip(calls, outputs)
+            )
+            card.move(Column.DONE, result=joined[:_RESULT_CAP])
             if trigger.post_to_chat:
-                # Mirror as a standard slash-command run card: "/runnable on host".
-                host, _, name = trigger.run.partition("__")
-                label = f"/{name} on {host}" if name else f"/{trigger.run}"
-                ops.mirror_to_chat("run", f"{label}  (trigger: {trigger.name})", output)
+                ops.mirror_to_chat(
+                    "run",
+                    f"{len(calls)} runnables (trigger: {trigger.name})",
+                    joined,
+                )
             return
 
         draft = draft_available and trigger.reply.draft
@@ -255,6 +321,8 @@ def make_handler(
             # An empty allowlist means "any runnable" (the bridge treats None/empty
             # the same); a non-empty one scopes the agent to those tools.
             allowed_runnables=trigger.runnables or None,
+            # Non-empty = restrict the built-in action/Outlook tools to this set.
+            action_allow=trigger.action_allow or None,
             record=card.log,  # per-tool/gate steps onto the card timeline
             stage=lambda col: card.move(col),  # awaiting_human → running stages
             trigger=event.source,  # provenance recorded on each runnable the agent runs

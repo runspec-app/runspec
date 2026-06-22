@@ -346,6 +346,66 @@ style = "Concise, professional. Acknowledge, state next step, no commitments."
 - `[triggers.reply] draft` (default `false`) turns on the built-in `draft_reply`
   tool. The draft is **saved, never sent** — the human reviews and sends (A5).
 
+### 5.1 Richer actions (0.111.0)
+
+A trigger's action vocabulary grew, while staying under the §1 "no workflow
+engine" cliff (one fire → one card → a flat action list, optionally one LLM
+pre-turn; no branching, no step-result piping, no cross-restart state).
+
+**Built-in agent action tools.** An agent-mode turn already saw every runnable
+plus the file-transfer / memory / Outlook tools; it now also gets four built-in
+**action** tools, all **confirm-gated** (`_ACTION_TOOL_NAMES` in `bridge.py`):
+
+| Tool | Effect |
+|---|---|
+| `create_document` | Write markdown to a local file, and optionally upload it to a fleet host (reuses `start_transfer`). |
+| `run_skill` | Render a saved runbook's steps **inline** and return them for the agent to follow with its other (gated) tools — *not* a spawned sub-agent. |
+| `create_schedule` | Add a cron/interval schedule (validated via `parse_schedule_entry`, then `create_schedule`). |
+| `emit_event` | Feed a matchable `Event` into the engine now (fan-out to `source="schedule"` triggers). Bounded: it does not wait on or branch over their results. |
+
+**`action_allow`** (agent mode) scopes which built-in action / Outlook tools the
+trigger may use — a parallel to the `runnables` allowlist, applied in
+`_run_isolated_agent_turn`. Empty = all available.
+
+**Declarative multi-runnable rule actions.** A `mode = "rule"` trigger may name
+**several** runnables instead of one, via an `actions` array-of-tables and an
+`action_mode` (`sequential` | `parallel`). Mutually exclusive with `run`; capped
+at 10; `actions` is rejected in agent mode.
+
+```toml
+[triggers.nightly]
+source = "schedule"
+event  = "nightly_report"
+mode   = "rule"
+action_mode = "parallel"          # or "sequential"
+pre_turn = "Find the affected host and severity."   # optional LLM extract step
+[[triggers.nightly.actions]]
+run = "web01__check-memory"
+[triggers.nightly.actions.map]
+threshold = "{{ _llm.level }}"    # {{ _llm.* }} = the pre-turn's output
+[[triggers.nightly.actions]]
+run = "db01__check-disk"
+```
+
+- **Sequential** runs each step in order through the normal per-runnable gate.
+  Each step's args come only from the event payload (+ the optional pre-turn) —
+  never a prior step's output. That boundary is what keeps it declarative.
+- **Parallel** runs the batch behind a **single grouped confirm** (`run_group`):
+  the group's autonomy is the most restrictive across the steps; a `manual` step
+  refuses the whole group; on approval each step runs without re-gating.
+
+**Optional LLM pre-turn** (`pre_turn`, rule mode): one headless model call with a
+single `emit_params` output tool and **no runnable tools**, so it can only extract
+— it cannot act, loop, or choose steps. Its `{param: value}` result is merged into
+the payload under `_llm` for the action arg maps (`{{ _llm.<name> }}`).
+
+**Editable confirmations (global).** At the autonomy gate the operator may edit a
+call's args before approving; the edited input runs instead of the agent's
+proposal. `resolve_tool_confirmation(request_id, approved, edited_input=None)` →
+`_finish_confirm` returns `(approved, edited_input)`, threaded into the post-gate
+execution in `_gated_run_tool_async` / `_gated_run_tool` / the reply gates /
+`_run_rule_group`.
+
 ---
 
 ## 6. Headless agent turn (trigger-driven)

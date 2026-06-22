@@ -8,6 +8,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.111.0] — 2026-06-22
+
+### Added
+- **Richer trigger actions (Outlook / documents / schedules / skills) + bounded
+  multi-runnable rules.** A trigger can now do far more than run one runnable or a
+  free-form agent turn:
+  - **New built-in agent action tools**, available to any agent-mode trigger (and
+    chat): `create_document` (write a markdown doc locally and/or upload it to a
+    fleet host), `run_skill` (follow a saved runbook *inline* — rendered, not a
+    spawned sub-agent), `create_schedule` (add a cron/interval schedule), and
+    `emit_event` (fire a matchable event into the engine for fan-out). All four are
+    **confirm-gated**. The six Outlook Classic COM tools (read inbox/search/
+    calendar/reminders + draft/send) were already reachable in a trigger turn and
+    are now surfaced per-trigger in the editor.
+  - **Per-trigger action allowlist** (`action_allow`): an agent trigger can be
+    scoped to just the built-in action/Outlook tools it's meant to use (empty =
+    all available), alongside the existing runnable allowlist.
+  - **Declarative multi-runnable rule actions** (`actions` + `action_mode`):
+    a `mode = "rule"` trigger can run **several** runnables `sequential` or
+    `parallel`, instead of a single `run`. A parallel batch is approved by **one
+    grouped confirm** (most-restrictive autonomy across the steps; any `manual`
+    step refuses the group). Bounded by design — a flat list (cap 10), no
+    branching, no step-result piping — so it stays under the "no workflow engine"
+    line in `docs/design/console-triggers.md`.
+  - **Optional LLM pre-turn** (`pre_turn`) ahead of a rule action: one headless
+    extract step (no runnable tools, can't loop or branch) whose output is exposed
+    to the action arg maps under `{{ _llm.<name> }}`.
+- **Editable confirmations (global).** At the autonomy gate the operator can now
+  **edit a tool call's arguments before approving** — the edited values run
+  instead of the agent's proposal. Applies to every gated tool call (chat, agent,
+  trigger) and to a draft/propose reply's body; the search-mode `run_runnable`
+  wrapper stays read-only (its display args would re-wrap lossily).
+  `resolve_tool_confirmation` gained an optional `edited_input` argument.
+
+
 ## [0.110.0] — 2026-06-22
 
 ### Added

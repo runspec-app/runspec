@@ -24,13 +24,19 @@ class FakeOps:
         tool_output: str = "ok",
         agent_summary: str = "agent reply",
         mailbox: str = "",
+        group_outputs: list[str] | None = None,
+        pre_turn_result: dict[str, Any] | None = None,
     ) -> None:
         self.agent_calls: list[dict[str, Any]] = []
         self.rule_calls: list[dict[str, Any]] = []
+        self.group_calls: list[dict[str, Any]] = []
+        self.pre_turn_calls: list[dict[str, Any]] = []
         self.chat_mirrors: list[dict[str, str]] = []
         self._tool_output = tool_output
         self._agent_summary = agent_summary
         self._mailbox = mailbox  # what queue_mailbox_for returns for a queue event
+        self._group_outputs = group_outputs
+        self._pre_turn_result = pre_turn_result or {}
 
     def run_agent_turn(
         self,
@@ -43,6 +49,7 @@ class FakeOps:
         room=None,
         from_mailbox=None,
         allowed_runnables=None,
+        action_allow=None,
         record=None,
         stage=None,
         trigger="",
@@ -57,6 +64,7 @@ class FakeOps:
                 "room": room,
                 "from_mailbox": from_mailbox,
                 "allowed_runnables": allowed_runnables,
+                "action_allow": action_allow,
                 "record_callable": callable(record),
                 "trigger": trigger,
             }
@@ -78,6 +86,24 @@ class FakeOps:
             }
         )
         return self._tool_output
+
+    def run_rule_group(self, chat_id, calls, trigger=""):
+        self.group_calls.append(
+            {"chat_id": chat_id, "calls": list(calls), "trigger": trigger}
+        )
+        if self._group_outputs is not None:
+            return self._group_outputs
+        return [self._tool_output for _ in calls]
+
+    def run_pre_turn(self, chat_id, instructions, event_text):
+        self.pre_turn_calls.append(
+            {
+                "chat_id": chat_id,
+                "instructions": instructions,
+                "event_text": event_text,
+            }
+        )
+        return dict(self._pre_turn_result)
 
     def mirror_to_chat(self, kind, label, text):
         self.chat_mirrors.append({"kind": kind, "label": label, "text": text})
@@ -309,6 +335,23 @@ def test_handler_no_allowlist_passes_none():
     card, _ = _card()
     make_handler(ops)(card, t, Event.new("outlook", "new_mail", {}))
     assert ops.agent_calls[0]["allowed_runnables"] is None
+    assert ops.agent_calls[0]["action_allow"] is None  # no action allowlist either
+
+
+def test_handler_passes_action_allow():
+    """An agent trigger's action_allow scopes the built-in action/Outlook tools."""
+    ops = FakeOps()
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "action_allow": ["create_document", "outlook_draft"],
+        }
+    )
+    card, _ = _card()
+    make_handler(ops)(card, t, Event.new("outlook", "new_mail", {}))
+    assert ops.agent_calls[0]["action_allow"] == ["create_document", "outlook_draft"]
 
 
 def test_handler_reply_to_none_without_entry_id():
@@ -422,3 +465,102 @@ def test_handler_rule_mode():
     # label mirrors "/runnable on host" from run="host__check"
     assert mirror["label"].startswith("/check on host")
     assert mirror["text"] == "exit 0\nall good"
+
+
+# ── handler: declarative multi-runnable actions (Phase 2) ──────────────────────
+
+
+def test_handler_rule_actions_sequential_runs_each_in_order():
+    ops = FakeOps(tool_output="done")
+    t = Trigger.from_config(
+        {
+            "name": "seq",
+            "source": "schedule",
+            "event": "nightly",
+            "mode": "rule",
+            "action_mode": "sequential",
+            "actions": [
+                {"run": "web01__check-memory", "map": {"svc": "{{ subject }}"}},
+                {"run": "db01__check-disk"},
+            ],
+        }
+    )
+    card, moves = _card("seq")
+    make_handler(ops)(card, t, Event.new("schedule", "nightly", {"subject": "web"}))
+
+    # Each step ran through the single-tool gate, in order, with rendered args.
+    assert [c["tool_name"] for c in ops.rule_calls] == [
+        "web01__check-memory",
+        "db01__check-disk",
+    ]
+    assert ops.rule_calls[0]["tool_input"] == {"svc": "web"}
+    assert ops.group_calls == []  # sequential never uses the group path
+    assert [c for c, _ in moves] == [Column.RUNNING, Column.DONE]
+
+
+def test_handler_rule_actions_parallel_uses_group():
+    ops = FakeOps(group_outputs=["a-out", "b-out"])
+    t = Trigger.from_config(
+        {
+            "name": "par",
+            "source": "schedule",
+            "event": "nightly",
+            "mode": "rule",
+            "action_mode": "parallel",
+            "actions": [
+                {"run": "web01__check-memory"},
+                {"run": "db01__check-disk"},
+            ],
+        }
+    )
+    card, moves = _card("par")
+    make_handler(ops)(card, t, Event.new("schedule", "nightly", {}))
+
+    # Parallel routes through the single grouped-confirm path, not per-tool gates.
+    assert ops.rule_calls == []
+    assert len(ops.group_calls) == 1
+    calls = ops.group_calls[0]["calls"]
+    assert [name for name, _ in calls] == ["web01__check-memory", "db01__check-disk"]
+    result = moves[-1][1]["result"]
+    assert "a-out" in result and "b-out" in result
+
+
+# ── handler: optional LLM pre-turn (Phase 3) ───────────────────────────────────
+
+
+def test_handler_pre_turn_feeds_action_args():
+    ops = FakeOps(pre_turn_result={"host": "web42"})
+    t = Trigger.from_config(
+        {
+            "name": "pre",
+            "source": "schedule",
+            "event": "alert",
+            "mode": "rule",
+            "pre_turn": "Find the affected host.",
+            "run": "restart-service",
+            "map": {"target": "{{ _llm.host }}"},
+        }
+    )
+    card, _ = _card("pre")
+    make_handler(ops)(card, t, Event.new("schedule", "alert", {"text": "x"}))
+
+    assert len(ops.pre_turn_calls) == 1
+    assert ops.pre_turn_calls[0]["instructions"] == "Find the affected host."
+    # The pre-turn output landed under {{ _llm.* }} and rendered into the args.
+    assert ops.rule_calls[0]["tool_input"] == {"target": "web42"}
+
+
+def test_handler_no_pre_turn_skips_extraction():
+    ops = FakeOps()
+    t = Trigger.from_config(
+        {
+            "name": "nopre",
+            "source": "schedule",
+            "event": "alert",
+            "mode": "rule",
+            "run": "restart-service",
+        }
+    )
+    card, _ = _card("nopre")
+    make_handler(ops)(card, t, Event.new("schedule", "alert", {}))
+    assert ops.pre_turn_calls == []

@@ -307,3 +307,59 @@ def test_get_pending_confirms_drops_finished_gate():
     assert len(b.get_pending_confirms()) == 1
     b._finish_confirm(rid, holder, timed_out=False)
     assert b.get_pending_confirms() == []  # leaves the snapshot when answered
+
+
+# ── editable confirmations ────────────────────────────────────────────────────
+
+
+def _drive_edit(b, tool_input, decision, edited_input=None):
+    """Like _drive but resolves with an operator-edited tool_input, and records
+    the input _run_tool_sync actually received."""
+    seen: dict = {}
+    b._run_tool_sync = lambda name, ti, chat_id="": seen.update(ti) or b._run_result
+    result = {}
+    t = threading.Thread(
+        target=lambda: result.__setitem__(
+            "out", b._gated_run_tool("local__flush-dns", tool_input, "chat1")
+        )
+    )
+    t.start()
+    for _ in range(400):
+        if b._dispatched:
+            break
+        time.sleep(0.005)
+    assert b._dispatched, "expected a tool_confirm dispatch"
+    _event, detail = b._dispatched[0]
+    b.resolve_tool_confirmation(detail["request_id"], decision, edited_input)
+    t.join(timeout=5)
+    return result["out"], seen
+
+
+def test_finish_confirm_returns_approved_and_edit():
+    b = _StubBridge(_runnable("confirm"))
+    rid, _, holder = b._register_confirm("c", "local__flush-dns", {"a": "1"}, "confirm")
+    holder["approved"] = True
+    holder["edited_input"] = {"a": "2"}
+    approved, edited = b._finish_confirm(rid, holder, timed_out=False)
+    assert approved is True and edited == {"a": "2"}
+
+
+def test_edited_input_used_for_execution():
+    b = _StubBridge(_runnable("confirm"))
+    out, seen = _drive_edit(b, {"a": "1"}, True, edited_input={"a": "2", "b": "9"})
+    assert out == "RAN"
+    assert seen == {"a": "2", "b": "9"}  # the edit, not the original
+
+
+def test_no_edit_runs_original_input():
+    b = _StubBridge(_runnable("confirm"))
+    out, seen = _drive_edit(b, {"a": "1"}, True, edited_input=None)
+    assert out == "RAN"
+    assert seen == {"a": "1"}
+
+
+def test_edit_ignored_on_deny():
+    b = _StubBridge(_runnable("confirm"))
+    out, seen = _drive_edit(b, {"a": "1"}, False, edited_input={"a": "2"})
+    assert "declined" in out
+    assert seen == {}  # never executed, edit discarded

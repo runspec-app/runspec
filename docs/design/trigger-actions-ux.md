@@ -1,10 +1,35 @@
 # Design: Trigger actions UX — beyond email/reply
 
-**Status:** Draft / for review. No code yet (UI-only when built). **Scope:** the
-**Triggers** settings form in `runspec-console` (`packages/console-ui/src/components/SettingsDrawer.tsx`,
-`TriggersEditor`). Goal: make the trigger *action* fields read sensibly for **all**
-event sources — `outlook` (mail), `schedule` (emitted events), and the eventual
-`chat`/notification/reminder sources — not just email replies.
+**Status:** ✅ Implemented (runspec-console 0.111.0) — and extended well beyond the
+original UI-only scope (see "What shipped" below). **Scope:** the **Triggers**
+settings form in `runspec-console` (`packages/console-ui/src/components/TriggersEditor.tsx`
+— the editor was extracted out of `SettingsDrawer.tsx`). Goal: make the trigger
+*action* fields read sensibly for **all** event sources — `outlook` (mail),
+`schedule` (emitted events), and the `chat`/notification/reminder sources — not
+just email replies.
+
+---
+
+## What shipped (0.111.0)
+
+The UI generalisation below landed, plus a larger "richer actions" change:
+
+- **Source-aware fields:** reply drafting + once-per-thread show only for threaded
+  sources (`outlook`/`chat`/`email`); the draft toggle relabels to "Propose a
+  reply" for `chat`. "Reply style" became the full-width **"Actions on results"**
+  field (still `reply.style` on disk — option (a)).
+- **Declarative multi-runnable rule actions:** a rule trigger can run several
+  runnables `sequential` or `parallel` (one grouped confirm for parallel), with an
+  optional **LLM pre-turn** (`pre_turn`) filling the action args via `{{ _llm.* }}`.
+- **Built-in action tools** in agent mode: `create_document`, `run_skill`,
+  `create_schedule`, `emit_event`, and the Outlook COM tools — scoped per trigger
+  by a new **action allowlist** (`action_allow`).
+- **Editable confirmations (global):** the operator can edit a gated call's args
+  before approving.
+
+See `docs/design/console-triggers.md` §5 for the trigger contract and the cliff
+guards that keep the multi-runnable list bounded. The rest of this doc is the
+original problem statement / rationale.
 
 See `docs/design/console-triggers.md` for the trigger model and engine. The
 runtime behaviour referenced here lives in

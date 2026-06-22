@@ -406,6 +406,7 @@ class _ToolBridge:
     _outlook_tools = Bridge._outlook_tools
     _memory_tools = Bridge._memory_tools
     _status_tools = Bridge._status_tools
+    _action_tools = Bridge._action_tools
     _run_custom_tool = Bridge._run_custom_tool
     _await_transfer = Bridge._await_transfer
     _emit_transfer_end = Bridge._emit_transfer_end

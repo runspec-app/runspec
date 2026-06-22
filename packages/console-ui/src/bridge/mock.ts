@@ -1014,8 +1014,8 @@ export const mockApi: BridgeApi = {
   // keyed by request_id; resolve_tool_confirmation (called by the UI's
   // Approve/Deny buttons) wakes it. Lets the browser mock exercise the real
   // autonomy modal instead of pretending every tool is autonomous.
-  resolve_tool_confirmation: async (requestId, approved) => {
-    console.log('[mock] resolve_tool_confirmation', requestId, approved)
+  resolve_tool_confirmation: async (requestId, approved, editedInput) => {
+    console.log('[mock] resolve_tool_confirmation', requestId, approved, editedInput)
     const resolve = _pendingConfirms.get(requestId)
     if (resolve) { _pendingConfirms.delete(requestId); resolve(approved) }
   },
@@ -1166,6 +1166,12 @@ export const mockApi: BridgeApi = {
     console.log('mock: save_trigger', trigger)
     return { ok: true }
   },
+  list_action_tools: async () => [
+    { name: 'create_document', label: 'Create document' },
+    { name: 'run_skill', label: 'Run skill (runbook)' },
+    { name: 'create_schedule', label: 'Create schedule' },
+    { name: 'emit_event', label: 'Emit event' },
+  ],
   test_trigger: async (name: string, body: string, fields: Record<string, string>) => {
     console.log('mock: test_trigger', name, body, fields)
     return { ok: true }

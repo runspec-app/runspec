@@ -888,3 +888,155 @@ def test_same_trigger_runs_serialised():
         f.result(timeout=5)
     engine.stop()
     assert max_active == 1  # never two runs of the same trigger at once
+
+
+# ── declarative multi-runnable actions + pre-turn (Phase 2/3) ──────────────────
+
+
+def test_actions_parse_and_render():
+    t = Trigger.from_config(
+        {
+            "name": "seq",
+            "source": "schedule",
+            "event": "nightly",
+            "mode": "rule",
+            "action_mode": "parallel",
+            "actions": [
+                {"run": "web01__check-memory", "map": {"svc": "{{ subject }}"}},
+                {"run": "db01__check-disk"},
+            ],
+        }
+    )
+    assert t.action_mode == "parallel"
+    assert [s.run for s in t.actions] == ["web01__check-memory", "db01__check-disk"]
+    rendered = t.render_action_args(t.actions[0], {"subject": "web"})
+    assert rendered == {"svc": "web"}
+
+
+def test_actions_dotted_llm_namespace():
+    t = Trigger.from_config(
+        {
+            "name": "p",
+            "source": "schedule",
+            "event": "a",
+            "mode": "rule",
+            "actions": [{"run": "x__y", "map": {"h": "{{ _llm.host }}"}}],
+        }
+    )
+    assert t.render_action_args(t.actions[0], {"_llm": {"host": "web9"}}) == {
+        "h": "web9"
+    }
+    # Missing namespace resolves to empty, never errors.
+    assert t.render_action_args(t.actions[0], {}) == {"h": ""}
+
+
+def test_actions_default_mode_is_sequential():
+    t = Trigger.from_config(
+        {
+            "name": "d",
+            "source": "schedule",
+            "event": "a",
+            "mode": "rule",
+            "actions": [{"run": "x__y"}],
+        }
+    )
+    assert t.action_mode == "sequential"
+
+
+def test_actions_unknown_mode_rejected():
+    import pytest
+
+    with pytest.raises(ValueError, match="action_mode"):
+        Trigger.from_config(
+            {
+                "name": "d",
+                "source": "schedule",
+                "event": "a",
+                "mode": "rule",
+                "action_mode": "fanout",
+                "actions": [{"run": "x__y"}],
+            }
+        )
+
+
+def test_actions_and_run_are_mutually_exclusive():
+    import pytest
+
+    with pytest.raises(ValueError, match="either 'run'"):
+        Trigger.from_config(
+            {
+                "name": "d",
+                "source": "schedule",
+                "event": "a",
+                "mode": "rule",
+                "run": "x__y",
+                "actions": [{"run": "a__b"}],
+            }
+        )
+
+
+def test_actions_rejected_in_agent_mode():
+    import pytest
+
+    with pytest.raises(ValueError, match="rule-mode declarative list"):
+        Trigger.from_config(
+            {
+                "name": "d",
+                "source": "schedule",
+                "event": "a",
+                "mode": "agent",
+                "actions": [{"run": "x__y"}],
+            }
+        )
+
+
+def test_actions_step_requires_run():
+    import pytest
+
+    with pytest.raises(ValueError, match="missing 'run'"):
+        Trigger.from_config(
+            {
+                "name": "d",
+                "source": "schedule",
+                "event": "a",
+                "mode": "rule",
+                "actions": [{"map": {"a": "b"}}],
+            }
+        )
+
+
+def test_actions_length_capped():
+    import pytest
+
+    with pytest.raises(ValueError, match="too many actions"):
+        Trigger.from_config(
+            {
+                "name": "d",
+                "source": "schedule",
+                "event": "a",
+                "mode": "rule",
+                "actions": [{"run": f"h__r{i}"} for i in range(11)],
+            }
+        )
+
+
+def test_rule_mode_needs_run_or_actions():
+    import pytest
+
+    with pytest.raises(ValueError, match="no 'run' or 'actions'"):
+        Trigger.from_config(
+            {"name": "d", "source": "schedule", "event": "a", "mode": "rule"}
+        )
+
+
+def test_action_allow_parsed():
+    t = Trigger.from_config(
+        {
+            "name": "a",
+            "source": "outlook",
+            "event": "new_mail",
+            "mode": "agent",
+            "action_allow": ["create_document", "outlook_draft", ""],
+        }
+    )
+    assert t.action_allow == ["create_document", "outlook_draft"]
