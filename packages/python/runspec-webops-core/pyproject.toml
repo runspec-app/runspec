@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-webops-core"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Pure-Python HTTPS/TLS certificate + web-endpoint helpers — the importable core behind the runspec web runnables (no runspec dependency, no runnables)"
+dependencies = []
+
+[project.optional-dependencies]
+# Optional: parse YAML OpenAPI/Swagger specs. JSON specs need no extra.
+yaml = [
+    "pyyaml>=6.0",
+]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest>=8.0",
+    "pyyaml>=6.0",
+    "types-pyyaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

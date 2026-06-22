@@ -1,5 +1,22 @@
 # runspec-windows Changelog
 
+## [0.2.0] — 2026-06-22
+
+### Added
+- 8 cross-platform **web / TLS / API** runnables — thin wrappers over the new
+  `runspec-webops-core` dependency: `cert-check`, `cert-chain`, `tls-info`,
+  `http-check`, `http-headers`, `redirect-trace`, `dns-lookup`, and `api-spec`
+  (an OpenAPI/Swagger reader that condenses an API's shape so an agent can write
+  or update the runnables that call it). All are read-only network probes
+  (`autonomy = "autonomous"`, `output = "json"`) built on the Python stdlib
+  (`ssl` / `socket` / `http.client`), so they behave identically here and in
+  `runspec-linux` (the same wrappers ship in both) and are **not** gated to
+  Windows. A Python port of the `runspec-webops` Node package plus four extras
+  (`http-headers`, `redirect-trace`, `dns-lookup`, `api-spec`), so a fleet that
+  can't run Node — and the runspec-console, which depends on `runspec-windows` —
+  still gets them. See the `runspec-linux` 0.5.0 changelog for the per-runnable
+  detail.
+
 ## [0.1.2] — 2026-06-04
 
 ### Changed

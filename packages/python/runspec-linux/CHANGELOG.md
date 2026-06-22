@@ -1,5 +1,39 @@
 # runspec-linux Changelog
 
+## [0.5.0] — 2026-06-22
+
+Add 8 cross-platform **web / TLS / API** runnables — thin wrappers over the new
+`runspec-webops-core` (a new dependency). All are read-only network probes
+(`autonomy = "autonomous"`, `output = "json"`) and use only the Python stdlib,
+so the same runnables ship in `runspec-windows` too. They are a Python port of
+the `runspec-webops` Node package (plus four extras), so a fleet that can't run
+Node still gets them.
+
+- **`cert-check`** — inspect a host's TLS certificate (days-to-expiry, issuer,
+  SANs, fingerprint, trust). Exits `1` when expiring/expired, `2` when
+  unreachable. Args: `--port`/`-p` (443), `--warn-days`/`-w` (30),
+  `--timeout`/`-t` (10).
+- **`cert-chain`** — print the full certificate chain (leaf → intermediates →
+  root), flagging the self-signed root.
+- **`tls-info`** — report the negotiated TLS protocol, cipher, and trust result.
+- **`http-check`** — probe an HTTP(S) URL (status, response time, redirect
+  target); `--expect-status`/`-e` exits non-zero on a mismatch; `--insecure`/`-k`
+  skips TLS verification.
+- **`http-headers`** — fetch response headers and flag missing security headers
+  (HSTS, CSP, X-Frame-Options, …); `--method`/`-m` (HEAD/GET).
+- **`redirect-trace`** — follow the redirect chain hop by hop with loop
+  detection; `--max-hops`/`-n` (10).
+- **`dns-lookup`** — resolve a hostname (A/AAAA + canonical name) or
+  reverse-resolve an IP; `--reverse`/`-r` also PTRs each resolved address.
+- **`api-spec`** — read an OpenAPI/Swagger spec (`source` = an http(s) URL or a
+  local file) and condense its shape to bounded JSON, so an agent can write or
+  update the runnables that call an internal API (and re-check when it drifts).
+  Default is an overview (info, servers, every operation), narrowable with
+  `--tag` / `--match`; `--operation`/`-o` (or `--path` + `--method`/`-X`) drills
+  into one operation's params, request body and responses with `$ref`s resolved.
+  OpenAPI 3.x and Swagger 2.0; JSON needs no extra, YAML needs
+  `runspec-webops-core[yaml]`.
+
 ## [0.4.3] — 2026-06-21
 
 - **`install-into-venv --venv` and `configure-pip --venv` are now marked

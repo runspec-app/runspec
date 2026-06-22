@@ -46,6 +46,7 @@ jobs:
       console: ${{ steps.filter.outputs.console }}
       console-room: ${{ steps.filter.outputs.console-room }}
       webops: ${{ steps.filter.outputs.webops }}
+      webops-core: ${{ steps.filter.outputs.webops-core }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v6
@@ -63,12 +64,14 @@ jobs:
             linux:
               - 'packages/python/runspec-linux/**'
               - 'packages/python/runspec-linux-core/**'
+              - 'packages/python/runspec-webops-core/**'
               - '.github/workflows/ci.yml'
             linux-core:
               - 'packages/python/runspec-linux-core/**'
               - '.github/workflows/ci.yml'
             windows:
               - 'packages/python/runspec-windows/**'
+              - 'packages/python/runspec-webops-core/**'
               - '.github/workflows/ci.yml'
             jsm:
               - 'packages/python/runspec-jsm/**'
@@ -95,6 +98,9 @@ jobs:
               - '.github/workflows/ci.yml'
             webops:
               - 'packages/node-webops/**'
+              - '.github/workflows/ci.yml'
+            webops-core:
+              - 'packages/python/runspec-webops-core/**'
               - '.github/workflows/ci.yml'
             docs:
               - 'docs/**'
@@ -258,10 +264,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        # runspec-linux-core is not published yet — install it from the sibling
-        # source so the runspec-linux dependency resolves locally.
+        # runspec-linux-core and runspec-webops-core aren't published yet — install
+        # them from the sibling sources so the runspec-linux deps resolve locally.
         run: |
           pip install -e ../runspec-linux-core
+          pip install -e ../runspec-webops-core
           pip install -e ".[dev]"
 
       - name: Lint
@@ -288,10 +295,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        # runspec-linux-core is not published yet — install it from the sibling
-        # source so the runspec-linux dependency resolves locally.
+        # runspec-linux-core and runspec-webops-core aren't published yet — install
+        # them from the sibling sources so the runspec-linux deps resolve locally.
         run: |
           pip install -e ../runspec-linux-core
+          pip install -e ../runspec-webops-core
           pip install -e ".[dev]"
 
       - name: Run tests
@@ -305,10 +313,11 @@ jobs:
       - name: Wheel smoke test
         run: |
           python -m venv /tmp/smoke
-          # Install the unpublished core dependency first, then the wheel under test.
-          /tmp/smoke/bin/pip install ../runspec-linux-core
+          # Install the unpublished core dependencies first, then the wheel under test.
+          /tmp/smoke/bin/pip install ../runspec-linux-core ../runspec-webops-core
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/system-info
+          /tmp/smoke/bin/cert-check --help
           /tmp/smoke/bin/python -c "
           from importlib.resources import files
           pkg = files('runspec_linux')
@@ -875,7 +884,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[dev,graph]"
+        # runspec-webops-core isn't published yet — install it from the sibling
+        # source so the runspec-windows dependency resolves locally.
+        run: |
+          pip install -e ../runspec-webops-core
+          pip install -e ".[dev,graph]"
 
       - name: Lint
         if: matrix.check == 'lint'
@@ -901,7 +914,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[dev,graph]"
+        # runspec-webops-core isn't published yet — install it from the sibling
+        # source so the runspec-windows dependency resolves locally.
+        run: |
+          pip install -e ../runspec-webops-core
+          pip install -e ".[dev,graph]"
 
       # Pure parsers + mocked Graph + the off-Windows platform-guard behaviour.
       - name: Run tests
@@ -937,6 +954,8 @@ jobs:
         shell: pwsh
         run: |
           python -m venv $env:TEMP\smoke
+          # Install the unpublished core dependency first, then the wheel under test.
+          & "$env:TEMP\smoke\Scripts\pip" install ..\runspec-webops-core
           & "$env:TEMP\smoke\Scripts\pip" install (Get-ChildItem dist\*.whl)[0].FullName
           $bin = "$env:TEMP\smoke\Scripts"
           foreach ($cmd in @("system-info", "list-processes", "disk-usage")) {
@@ -944,6 +963,9 @@ jobs:
             $out | ConvertFrom-Json | Out-Null
             Write-Host "$cmd -> OK"
           }
+          # The cross-platform web runnables run on Windows too.
+          & "$bin\cert-check" --help | Out-Null
+          Write-Host "cert-check -> OK"
           & "$env:TEMP\smoke\Scripts\python" -c "from importlib.resources import files; assert (files('runspec_windows') / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'; import runspec_windows; assert runspec_windows.graph_get and runspec_windows.get_token; print('Wheel contents OK')"
 
   # ── runspec-console ──────────────────────────────────────────────────────────
@@ -1108,6 +1130,84 @@ jobs:
       - name: Test
         run: npm test
 
+  # ── runspec-webops-core (Python web/TLS logic core) ──────────────────────────
+
+  webops-core-quality:
+    name: "webops-core quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.webops-core == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-webops-core
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  webops-core-test:
+    name: runspec-webops-core test
+    needs: changes
+    if: needs.changes.outputs.webops-core == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-webops-core
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Type check
+        run: mypy runspec_webops_core/
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke-core
+          /tmp/smoke-core/bin/pip install dist/*.whl
+          # The split's contract: importable helpers, but no runspec dependency,
+          # no runspec.toml, and no console scripts — so it surfaces no runnables.
+          /tmp/smoke-core/bin/python -c "
+          import importlib.metadata as m
+          from runspec_webops_core import connect_peer, probe, resolve
+          reqs = m.requires('runspec-webops-core') or []
+          assert not any(r.split()[0].lower().startswith('runspec') for r in reqs), f'core must not depend on runspec: {reqs}'
+          eps = m.entry_points()
+          scripts = [e.name for e in eps.select(group='console_scripts') if e.value.startswith('runspec_webops_core')]
+          assert not scripts, f'core must not ship console scripts: {scripts}'
+          print('core surface OK — importable, zero runnables')
+          "
+
   # ── Aggregator ───────────────────────────────────────────────────────────────
 
   docs-check:
@@ -1130,7 +1230,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, console-smoke, webops, docs-check]
+    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, console-smoke, webops, webops-core-quality, webops-core-test, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1172,6 +1272,8 @@ jobs:
           check "console-ui"      "${{ needs.console-ui.result }}"
           check "console-smoke"   "${{ needs.console-smoke.result }}"
           check "webops"          "${{ needs.webops.result }}"
+          check "webops-core-quality" "${{ needs.webops-core-quality.result }}"
+          check "webops-core-test"    "${{ needs.webops-core-test.result }}"
           check "docs-check"      "${{ needs.docs-check.result }}"
           if [[ $fail -eq 1 ]]; then
             echo "One or more checks failed."

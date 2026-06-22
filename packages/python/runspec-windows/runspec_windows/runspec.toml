@@ -425,3 +425,242 @@ type        = "int"
 short       = "-n"
 description = "Maximum number of messages to return"
 default     = 20
+
+# ── Web / TLS probes (runspec-webops-core; cross-platform, read-only) ──────────
+
+[cert-check]
+serve       = ["local"]
+description = "Inspect a host's TLS certificate — days-to-expiry, issuer, SANs, fingerprint, trust"
+autonomy    = "autonomous"
+output      = "json"
+
+[cert-check.args.host]
+type        = "str"
+position    = 1
+description = "Hostname to connect to"
+
+[cert-check.args.port]
+type        = "int"
+short       = "-p"
+description = "TLS port"
+default     = 443
+
+[cert-check.args.warn-days]
+type        = "int"
+short       = "-w"
+description = "Report 'expiring' when fewer than N days remain"
+default     = 30
+
+[cert-check.args.timeout]
+type        = "int"
+short       = "-t"
+description = "Connection timeout in seconds"
+default     = 10
+
+[cert-chain]
+serve       = ["local"]
+description = "Show the full TLS certificate chain (leaf -> intermediates -> root)"
+autonomy    = "autonomous"
+output      = "json"
+
+[cert-chain.args.host]
+type        = "str"
+position    = 1
+description = "Hostname to connect to"
+
+[cert-chain.args.port]
+type        = "int"
+short       = "-p"
+description = "TLS port"
+default     = 443
+
+[cert-chain.args.timeout]
+type        = "int"
+short       = "-t"
+description = "Connection timeout in seconds"
+default     = 10
+
+[tls-info]
+serve       = ["local"]
+description = "Report the negotiated TLS protocol, cipher, and trust result for a host"
+autonomy    = "autonomous"
+output      = "json"
+
+[tls-info.args.host]
+type        = "str"
+position    = 1
+description = "Hostname to connect to"
+
+[tls-info.args.port]
+type        = "int"
+short       = "-p"
+description = "TLS port"
+default     = 443
+
+[tls-info.args.timeout]
+type        = "int"
+short       = "-t"
+description = "Connection timeout in seconds"
+default     = 10
+
+[http-check]
+serve       = ["local"]
+description = "Probe an HTTP(S) URL — status code, response time, redirect target"
+autonomy    = "autonomous"
+output      = "json"
+
+[http-check.args.url]
+type        = "str"
+position    = 1
+description = "URL to request"
+
+[http-check.args.timeout]
+type        = "int"
+short       = "-t"
+description = "Request timeout in seconds"
+default     = 10
+
+[http-check.args.expect-status]
+type        = "int"
+short       = "-e"
+description = "Exit non-zero unless the response status matches this code"
+required    = false
+
+[http-check.args.insecure]
+type        = "flag"
+short       = "-k"
+description = "Skip TLS certificate verification"
+default     = false
+
+[http-headers]
+serve       = ["local"]
+description = "Fetch an endpoint's response headers and flag missing security headers"
+autonomy    = "autonomous"
+output      = "json"
+
+[http-headers.args.url]
+type        = "str"
+position    = 1
+description = "URL to request"
+
+[http-headers.args.method]
+type        = "choice"
+options     = ["HEAD", "GET"]
+short       = "-m"
+description = "HTTP method to use for the header probe"
+default     = "HEAD"
+
+[http-headers.args.timeout]
+type        = "int"
+short       = "-t"
+description = "Request timeout in seconds"
+default     = 10
+
+[http-headers.args.insecure]
+type        = "flag"
+short       = "-k"
+description = "Skip TLS certificate verification"
+default     = false
+
+[redirect-trace]
+serve       = ["local"]
+description = "Follow an HTTP redirect chain and list each hop with status and Location"
+autonomy    = "autonomous"
+output      = "json"
+
+[redirect-trace.args.url]
+type        = "str"
+position    = 1
+description = "URL to start from"
+
+[redirect-trace.args.timeout]
+type        = "int"
+short       = "-t"
+description = "Per-request timeout in seconds"
+default     = 10
+
+[redirect-trace.args.max-hops]
+type        = "int"
+short       = "-n"
+description = "Maximum number of redirects to follow"
+default     = 10
+
+[redirect-trace.args.insecure]
+type        = "flag"
+short       = "-k"
+description = "Skip TLS certificate verification"
+default     = false
+
+[dns-lookup]
+serve       = ["local"]
+description = "Resolve a hostname (A/AAAA + canonical name), or reverse-resolve an IP"
+autonomy    = "autonomous"
+output      = "json"
+
+[dns-lookup.args.host]
+type        = "str"
+position    = 1
+description = "Hostname to resolve, or an IP address to reverse-resolve"
+
+[dns-lookup.args.reverse]
+type        = "flag"
+short       = "-r"
+description = "Also reverse-resolve (PTR) each resolved address"
+default     = false
+
+[api-spec]
+serve       = ["local"]
+description = "Summarise an OpenAPI/Swagger spec (URL or file) — operations, params, schemas — to help write/update runnables for an API"
+autonomy    = "autonomous"
+output      = "json"
+
+examples = [
+  {cmd = "api-spec https://api.internal/openapi.json",                       description = "Overview: info, servers, and every operation"},
+  {cmd = "api-spec https://api.internal/openapi.json --tag orders",          description = "Only operations tagged 'orders'"},
+  {cmd = "api-spec ./openapi.json --operation createOrder",                  description = "Full detail for one operation (params, body, responses)"},
+  {cmd = "api-spec ./openapi.json --path /orders --method post",            description = "Drill into an operation by path + method"},
+]
+
+[api-spec.args.source]
+type        = "str"
+position    = 1
+description = "OpenAPI/Swagger spec — an http(s) URL or a local file path (JSON always; YAML needs the pyyaml extra)"
+
+[api-spec.args.operation]
+type        = "str"
+short       = "-o"
+description = "operationId to describe in full (params, request body, responses)"
+required    = false
+
+[api-spec.args.path]
+type        = "str"
+description = "API path to describe in full (pair with --method); alternative to --operation"
+required    = false
+
+[api-spec.args.method]
+type        = "str"
+short       = "-X"
+description = "HTTP method for --path (e.g. get, post)"
+required    = false
+
+[api-spec.args.tag]
+type        = "str"
+description = "Overview only: limit to operations carrying this tag"
+required    = false
+
+[api-spec.args.match]
+type        = "str"
+description = "Overview only: limit to operations whose path contains this substring"
+required    = false
+
+[api-spec.args.timeout]
+type        = "int"
+short       = "-t"
+description = "Fetch timeout in seconds (URL sources)"
+default     = 15
+
+[api-spec.args.insecure]
+type        = "flag"
+short       = "-k"
+description = "Skip TLS certificate verification when fetching the spec"
+default     = false

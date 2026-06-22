@@ -4,11 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-windows"
-version = "0.1.2"
+version = "0.2.0"
 requires-python = ">=3.10"
 description = "Windows system admin + Microsoft 365 (Outlook, Teams) runnables for runspec"
 dependencies = [
     "runspec>=0.27.0",
+    "runspec-webops-core>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -56,6 +57,15 @@ installed-software   = "runspec_windows.software:main_installed_software"
 # Sessions
 who                  = "runspec_windows.sessions:main_who"
 current-user         = "runspec_windows.sessions:main_current_user"
+# Web / TLS probes (runspec-webops-core; cross-platform)
+cert-check           = "runspec_windows.webops:main_cert_check"
+cert-chain           = "runspec_windows.webops:main_cert_chain"
+tls-info             = "runspec_windows.webops:main_tls_info"
+http-check           = "runspec_windows.webops:main_http_check"
+http-headers         = "runspec_windows.webops:main_http_headers"
+redirect-trace       = "runspec_windows.webops:main_redirect_trace"
+dns-lookup           = "runspec_windows.webops:main_dns_lookup"
+api-spec             = "runspec_windows.webops:main_api_spec"
 # Microsoft Graph — account
 graph-login          = "runspec_windows.graph.account:main_graph_login"
 graph-whoami         = "runspec_windows.graph.account:main_graph_whoami"
