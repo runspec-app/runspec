@@ -9,6 +9,14 @@ If you are migrating an existing `argparse` script, read
 [Migrating from argparse](migration.md) first — it maps each `add_argument` onto
 its TOML equivalent. This page assumes you are starting fresh.
 
+!!! tip "Use it as an agent skill"
+    The raw skill file is published here too — fetch it on any machine, no repo
+    access needed, and drop it in as a Claude Code skill:
+
+    ```bash
+    curl -O https://runspec.app/skills/add-runnable.md
+    ```
+
 ---
 
 ## Hard rules — do not deviate

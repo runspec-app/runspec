@@ -6,7 +6,8 @@ Add a runnable to this project: **$ARGUMENTS**
 
 > Published companion guide: <https://runspec.app/authoring/> (mirrors this skill;
 > link the human there). Typed args: <https://runspec.app/typed-args/>. Testing:
-> <https://runspec.app/testing/>.
+> <https://runspec.app/testing/>. This file is also downloadable raw at
+> <https://runspec.app/skills/add-runnable.md> (no repo access needed).
 
 ## Current project state
 
