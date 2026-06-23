@@ -9,13 +9,53 @@ Add a runnable to this project: **$ARGUMENTS**
 > <https://runspec.app/testing/>. This file is also downloadable raw at
 > <https://runspec.app/skills/add-runnable.md> (no repo access needed).
 
-## Current project state
+## First: survey the current project state
 
-Existing runspec.toml files:
-!`find . -name "runspec.toml" -not -path "*/.venv/*" -not -path "*/node_modules/*" -not -path "*/site-packages/*" 2>/dev/null`
+Before anything else, locate existing `runspec.toml` files with the **Glob** tool
+(pattern `**/runspec.toml`). Ignore matches under `.venv/`, `node_modules/`, or
+`site-packages/` — those belong to dependencies, not this project. **Read** the
+nearest remaining one to match its existing format and conventions; if there are
+none, you'll be creating the first (add the schema comment — see Steps). These
+are built-in, cross-platform tools, so this works on any OS / shell (the earlier
+`!`find …`` injections assumed a POSIX shell and broke on Windows without Git
+Bash).
 
-Contents of the nearest runspec.toml (if any):
-!`find . -name "runspec.toml" -not -path "*/.venv/*" -not -path "*/node_modules/*" -not -path "*/site-packages/*" 2>/dev/null | head -1 | xargs cat 2>/dev/null || echo "(none — will create)"`
+---
+
+## Then: grill out the requirements (don't guess them)
+
+A runnable *is* an interface, so a vague request yields a vague interface. If the
+ask is thin, **interview the user before scaffolding** — and ground every
+question in what you just surveyed, so you ask informed ones rather than generic
+ones (a "grill, with docs" approach):
+
+- the authoring + format reference — <https://runspec.app/authoring/>,
+  <https://runspec.app/format/> — for the real arg types, fields, autonomy
+  levels, and subcommand shape;
+- the nearest existing `runspec.toml` — to match house naming, autonomy
+  defaults, and layout.
+
+Grill until each of these is pinned down — ask 2–4 at a time with
+`AskUserQuestion`, and turn vague answers concrete ("fast" → what budget?
+"handle errors" → which, and do what?):
+
+- **Purpose & success** — what it does and what a correct run produces (one line
+  fit for `description`).
+- **Name** — the runnable / entry-point name (they must match).
+- **Args** — for each input: name, type, required-vs-default, options/range,
+  short flag, env var. Push for the *minimal* set, not every possible knob.
+- **Subcommands** — one action or several? If several, is a bare invocation
+  allowed, or is `require-command` set?
+- **Side effects & autonomy** — read-only, or does it change something? That
+  decides `autonomy` and whether a destructive flag needs an in-code agent gate.
+- **Failure modes** — what can go wrong, and what should happen (let it
+  propagate, or catch one specific case for a remediation hint).
+- **Verification** — how we'll know it works (the test's key assertions).
+
+Stop when the unknowns left are low-risk, then **play it back as a one-paragraph
+spec** — name, description, the arg table, autonomy, subcommands — and get a yes
+before scaffolding. If the request already spells all this out, skip the
+interview and just confirm the few genuine gaps; don't manufacture questions.
 
 ---
 
@@ -270,6 +310,7 @@ runspec test --format json
 
 ## Steps
 
+0. If the request is thin, **grill out the requirements first** (see "Then: grill out the requirements") and play back a one-paragraph spec for sign-off before scaffolding.
 1. Find the package directory — locate runspec.toml or the source dir with __init__.py / index.ts. (Or run `runspec init` from inside it for the skeleton.)
 2. Add the runnable section to runspec.toml. If creating fresh, add the schema comment first:
    #:schema https://runspec.app/runspec.schema.json

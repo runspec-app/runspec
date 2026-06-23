@@ -52,6 +52,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   ssh/refresh                → console `config.toml` ([ssh]/[refresh] tuning)
 #   triggers                   → console `runspec_triggers.toml` ([[triggers]])
 #   schedule                   → console `runspec_schedules.toml` ([[schedule]])
+#   skill                      → console `runspec_skills.toml` ([[skill]] runbooks)
 #   mailboxes                  → console `config.toml` email folder-watch list
 #   config_sync                → console `config.toml` Config Sync settings
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
@@ -66,6 +67,7 @@ NON_RUNSPEC_SECTIONS = {
     "refresh",
     "triggers",
     "schedule",
+    "skill",
     "rota",
     "mailboxes",
     "config_sync",
