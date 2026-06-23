@@ -46,6 +46,7 @@ The key material stays on disk (the paths are metadata); only an optional key
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,73 @@ _STR_FIELDS = (
 _LIST_FIELDS = ("scope_hosts", "scope_runnables")
 
 VALID_KINDS = ("userpass", "password", "token", "ssh-key")
+
+
+# ── name-derived environment variables ─────────────────────────────────────────
+#
+# A credential applied to a run (the form's bottom section, or an agent invoke)
+# is injected as **plain environment variables** whose names derive from the
+# credential's label and kind by a strict convention, so the operator names a
+# credential to match what the runnable reads from the environment:
+#
+#     label "Jira"      kind userpass  →  JIRA_USERNAME, JIRA_PASSWORD
+#     label "Jira Dev"  kind userpass  →  JIRA_DEV_USERNAME, JIRA_DEV_PASSWORD
+#     label "Deploy"    kind token     →  DEPLOY_TOKEN
+#
+# This is distinct from the ``RUNSPEC_*_ARG_*`` channel (executor.secret_env),
+# which binds a typed password arg to its value. ``ssh-key`` is not env-injected.
+
+# Which env var suffix(es) each kind emits, keyed by the credential field that
+# supplies the value ("username" → metadata, "secret" → keyring).
+_KIND_ENV_FIELDS: dict[str, dict[str, str]] = {
+    "userpass": {"username": "USERNAME", "secret": "PASSWORD"},
+    "password": {"secret": "PASSWORD"},
+    "token": {"secret": "TOKEN"},
+    "ssh-key": {},
+}
+
+
+def env_prefix(label: str) -> str:
+    """Normalise a credential label to an env var prefix.
+
+    Uppercase; every run of non-alphanumeric characters becomes a single ``_``;
+    leading/trailing underscores are stripped. Returns ``""`` when nothing usable
+    remains (such a credential emits no env vars)."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_").upper()
+
+
+def env_field_map(kind: str) -> dict[str, str]:
+    """The {field: suffix} map for a credential kind (empty for unknown/ssh-key)."""
+    return _KIND_ENV_FIELDS.get(kind, {})
+
+
+def env_var_names(label: str, kind: str) -> list[str]:
+    """The env var names a credential would set — for UI previews (no values)."""
+    prefix = env_prefix(label)
+    if not prefix:
+        return []
+    return [f"{prefix}_{suffix}" for suffix in env_field_map(kind).values()]
+
+
+def env_vars_for(entry: dict[str, Any], secret: str | None) -> dict[str, str]:
+    """The plain env vars a credential sets, given its (already-fetched) secret.
+
+    ``username`` comes from the entry metadata, the secret from the keyring (passed
+    in so this stays pure). Empty prefix, empty values, and the ``ssh-key`` kind
+    yield nothing."""
+    prefix = env_prefix(str(entry.get("label", "")))
+    if not prefix:
+        return {}
+    values = {
+        "username": str(entry.get("username", "") or ""),
+        "secret": str(secret or ""),
+    }
+    out: dict[str, str] = {}
+    for field, suffix in env_field_map(str(entry.get("kind", "userpass"))).items():
+        val = values.get(field, "")
+        if val:
+            out[f"{prefix}_{suffix}"] = val
+    return out
 
 
 # ── metadata store (TOML) ──────────────────────────────────────────────────────

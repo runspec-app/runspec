@@ -742,10 +742,10 @@ export interface BridgeApi {
   save_docs_config: (dest_dir: string) => Promise<void>
   generate_docs: (dest_dir?: string) => Promise<DocsGenResult>
   test_host: (name: string) => Promise<TestResult>
-  // `credentialId` (optional) applies a saved credential by id, overriding any
-  // in-scope credential that would auto-apply. In-scope credentials fill their
-  // bound args automatically even without it.
-  invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string, credentialId?: string) => Promise<string>
+  // `credentialIds` (optional) are saved credentials the operator chose to pass to
+  // this run as name-derived plain env vars (e.g. JIRA_USERNAME/JIRA_PASSWORD).
+  // Credentials are never copied into args on this human/form path.
+  invoke_runnable: (host: string, runnable: string, args: Record<string, unknown>, commandPath?: string[], group?: string, credentialIds?: string[]) => Promise<string>
   // List a directory on a host for the Forms path-picker. With asServiceAccount +
   // a runnable, the remote listing runs as that runnable's run_as (sudo/become).
   list_dir: (host: string, path?: string, group?: string, dirsOnly?: boolean, runnable?: string, asServiceAccount?: boolean) => Promise<DirListing>

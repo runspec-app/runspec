@@ -30,6 +30,7 @@ class _AgentBridge:
     _secret_arg_names = staticmethod(Bridge._secret_arg_names)
     _positionals_for = staticmethod(Bridge._positionals_for)
     _apply_credentials = Bridge._apply_credentials
+    _credential_env = Bridge._credential_env
     _scoped_credentials = Bridge._scoped_credentials
     _scope_matches = staticmethod(Bridge._scope_matches)
     _credential_entry = Bridge._credential_entry

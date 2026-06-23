@@ -4,6 +4,7 @@ import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckO
 import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
+import { credEnvNames } from '../views/FormsView'
 
 const { Text, Link } = Typography
 
@@ -1397,7 +1398,12 @@ function CredentialsTab() {
   const isEditing = editingId !== null
   const editingCred = editingId ? creds.find(c => c.id === editingId) : undefined
   const kind = Form.useWatch('kind', form)
+  const label = Form.useWatch('label', form)
   const isSshKey = kind === 'ssh-key'
+  // The plain env vars this credential will set when applied to a run (Forms'
+  // credential section / agent). Derived from the label by the same strict
+  // convention the run path uses.
+  const envNames = !isSshKey ? credEnvNames(label ?? '', kind ?? 'userpass') : []
 
   return (
     <div>
@@ -1460,9 +1466,22 @@ function CredentialsTab() {
                 <Form.Item name="secret" label="Secret" tooltip={editingId !== '' ? 'Leave blank to keep the stored secret.' : undefined}>
                   <Input.Password placeholder={editingId !== '' && editingCred?.has_secret ? '•••••••• (unchanged)' : 'password / token'} autoComplete="new-password" disabled={!backend?.available} />
                 </Form.Item>
+                <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 6, background: 'rgba(128,128,128,0.08)' }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                    The <b>label</b> drives the env var prefix. When this credential is passed to a run it sets:
+                  </Text>
+                  <div style={{ marginTop: 4 }}>
+                    {envNames.length
+                      ? envNames.map((n, i) => <span key={n}>{i > 0 && ' '}<code style={{ fontSize: 11 }}>{n}</code></span>)
+                      : <Text type="secondary" style={{ fontSize: 11 }}>— (give the credential a label)</Text>}
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+                    Name it to match what the runnable reads from the environment.
+                  </Text>
+                </div>
                 <Divider style={{ margin: '4px 0 12px' }} />
                 <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
-                  Binding — which runnable arguments these values fill, and where the credential may be applied (glob patterns; blank = any).
+                  Binding (agent only) — which runnable arguments these values fill for agent-driven runs, and where the credential may be applied (glob patterns; blank = any). The Forms path uses the env vars above, not these.
                 </Text>
                 <Form.Item name="username_arg" label="Username → argument" tooltip="Runnable arg name that receives the username (passed normally).">
                   <Input placeholder="service-username" style={{ fontFamily: 'monospace' }} autoComplete="off" />

@@ -258,6 +258,7 @@ def test_run_tool_sync_threads_command(monkeypatch):
         # Credential resolution is a no-op here (no credentials configured).
         _credentials: list = []
         _apply_credentials = Bridge._apply_credentials
+        _credential_env = Bridge._credential_env
         _scoped_credentials = Bridge._scoped_credentials
         _scope_matches = staticmethod(Bridge._scope_matches)
         _credential_entry = Bridge._credential_entry
@@ -321,6 +322,7 @@ def test_run_tool_sync_no_command_is_top_level(monkeypatch):
         # Credential resolution is a no-op here (no credentials configured).
         _credentials: list = []
         _apply_credentials = Bridge._apply_credentials
+        _credential_env = Bridge._credential_env
         _scoped_credentials = Bridge._scoped_credentials
         _scope_matches = staticmethod(Bridge._scope_matches)
         _credential_entry = Bridge._credential_entry

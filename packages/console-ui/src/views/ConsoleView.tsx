@@ -98,10 +98,10 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   // Invoked from the App-level command bar
   useEffect(() => {
     const onInvoke = async (e: Event) => {
-      const { runnable, args, commandPath = [], credentialId } = (e as CustomEvent).detail as { runnable: Runnable; args: Record<string, unknown>; commandPath?: string[]; credentialId?: string }
+      const { runnable, args, commandPath = [], credentialIds } = (e as CustomEvent).detail as { runnable: Runnable; args: Record<string, unknown>; commandPath?: string[]; credentialIds?: string[] }
       const cmd = commandPath.length > 0 ? `${runnable.name} ${commandPath.join(' ')}` : runnable.name
       const label = `/${cmd} on ${runnable.host}`
-      const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath, runnable.group, credentialId || undefined)
+      const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath, runnable.group, credentialIds && credentialIds.length ? credentialIds : undefined)
       addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args } })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }

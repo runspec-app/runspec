@@ -8,6 +8,44 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.114.0] — 2026-06-23
+
+### Changed
+- **Credentials: forms no longer copy secrets into arguments — they set
+  name-derived environment variables instead.** A credential applied to a run
+  from the Forms run dialog is now injected as plain env vars whose names derive
+  from its label + kind by a strict convention — a credential labelled `Jira`
+  (username + password) sets `JIRA_USERNAME`/`JIRA_PASSWORD`, `Jira Dev` sets
+  `JIRA_DEV_USERNAME`/`JIRA_DEV_PASSWORD`, a token credential `Deploy` sets
+  `DEPLOY_TOKEN`. Name a credential to match what the runnable reads from the
+  environment. **Multiple credentials per run** are supported (a multi-select).
+  This replaces the old single-credential, arg-binding behaviour on the form
+  path (`username_arg`/`secret_arg`/scope auto-fill); those bindings now drive
+  **agent** runs only.
+- **Forms block required arguments — including `password`-typed ones.** Because
+  credentials are no longer copied into args for humans, a required arg (secret
+  or not) must be typed in the form. For reusable credentials, read them as
+  environment variables (above) instead of declaring a required `password` arg.
+- **The agent invoke path also injects the name-derived env vars** (in-scope
+  credentials plus an explicit `credential_id`), on top of keeping its existing
+  arg-binding fill — so env-only runnables work when the agent runs them.
+- **Run form remembers your credential picks per runnable.** The selected
+  credentials are stored locally per runnable name (across hosts) — only the
+  credential *ids*, never secrets — and prefilled next time (stale ids are
+  dropped). The Settings → Credentials editor previews the env var names a
+  credential will set as you type its label.
+
+### Notes
+- Credentials are carried through `sudo`/`su` (`env(1)`) for `run_as` runnables,
+  the same as the secret channel. Most sudo runnables take no credential at all
+  (passwordless sudo), so they are unaffected.
+- **Known gap:** under the strict naming convention a credential named `Jsm`
+  emits `JSM_USERNAME`/`JSM_PASSWORD`/`JSM_TOKEN`, but the shipped `runspec-jsm`
+  reads `JSM_USER`/`JSM_PAT` and `runspec-snow` reads `SNOW_USER`/`SNOW_TOKEN`;
+  those packs need their env reads aligned to be wired by a conventionally-named
+  credential (tracked as a follow-up).
+
+
 ## [0.113.0] — 2026-06-23
 
 ### Fixed

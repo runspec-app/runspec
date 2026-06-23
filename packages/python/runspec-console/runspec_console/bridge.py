@@ -4676,7 +4676,7 @@ class Bridge:
         args: dict[str, Any],
         command_path: list[str] | None = None,
         group: str | None = None,
-        credential_id: str = "",
+        credential_ids: list[str] | None = None,
         operator: str | None = None,
         trigger: str = "",
         inv_id: str | None = None,
@@ -4717,24 +4717,20 @@ class Bridge:
         # injected as RUNSPEC_*_ARG_* env vars by the executor, never passed on
         # the command line. The stored/surfaced args record keeps only the
         # non-secret values so a secret never reaches the UI, history, or logs.
+        # NOTE: on the human/form path credentials are *never* copied into args —
+        # a required arg must be typed by the operator. The only way the form
+        # supplies a credential is the name-derived env-var channel below.
         secret_names = self._secret_arg_names(cached, cp)
         secrets = {
             k: v for k, v in args.items() if k in secret_names and v not in (None, "")
         }
         exec_args = {k: v for k, v in args.items() if k not in secret_names}
 
-        # Fill any bound credential's values (username into argv, secret into the
-        # env channel) from secure storage — in-scope ones auto-apply, an explicit
-        # credential_id overrides. Returns the ids applied, for the audit record.
-        applied_creds = self._apply_credentials(
-            host,
-            runnable,
-            exec_args,
-            secrets,
-            explicit_id=credential_id,
-            valid_args=self._declared_arg_names(cached, cp),
-            secret_args=secret_names,
-        )
+        # Inject the operator-selected credentials as plain, name-derived env vars
+        # (e.g. JIRA_USERNAME/JIRA_PASSWORD). Secrets are read from the keyring here
+        # and never reach the surfaced args record. Returns the ids applied, for
+        # the audit record.
+        cred_env, applied_creds = self._credential_env(host, runnable, credential_ids)
 
         with self._lock:
             self._in_flight[inv_id] = {
@@ -4809,6 +4805,7 @@ class Bridge:
                     session_factory=session_factory,
                     positionals=self._positionals_for(cached, cp),
                     secrets=secrets,
+                    cred_env=cred_env,
                     trigger=trigger,
                 )
             else:
@@ -4825,6 +4822,7 @@ class Bridge:
                     become_flags=become_flags,
                     positionals=self._positionals_for(cached, cp),
                     secrets=secrets,
+                    cred_env=cred_env,
                     trigger=trigger,
                 )
 
@@ -7349,8 +7347,9 @@ class Bridge:
             if k in secret_names and v not in (None, "")
         }
         exec_args = {k: v for k, v in call_args.items() if k not in secret_names}
-        # Fill bound credential values from secure storage (same resolver as the
-        # manual path): in-scope credentials auto-apply, credential_id overrides.
+        # Fill bound credential values into args from secure storage (the agent
+        # keeps arg-binding: in-scope credentials auto-apply, credential_id
+        # overrides). Unlike the human/form path, the agent may inject into args.
         self._apply_credentials(
             host,
             runnable,
@@ -7360,6 +7359,14 @@ class Bridge:
             valid_args=self._declared_arg_names(cached_r, command_path),
             secret_args=secret_names,
         )
+        # …and ALSO inject the name-derived plain env vars (e.g. JIRA_USERNAME) so
+        # env-only runnables (jsm/snow style) work for the agent. In-scope
+        # credentials apply automatically; an explicit credential_id is merged in
+        # (it may be out of scope).
+        cred_env, _ = self._credential_env(host, runnable, ids=None)
+        if credential_id:
+            explicit_env, _ = self._credential_env(host, runnable, [credential_id])
+            cred_env.update(explicit_env)
         # Run provenance for this turn (set by the trigger handler; absent → a
         # direct chat agent run). `agent` distinguishes an LLM turn (chat / agent
         # trigger) from a fixed rule run; `trigger` is the causing event source.
@@ -7389,6 +7396,7 @@ class Bridge:
                 become_flags=become_flags,
                 positionals=self._positionals_for(cached_r, command_path),
                 secrets=secrets,
+                cred_env=cred_env,
                 trigger=run_trigger,
                 skill=run_skill,
             )
@@ -7407,6 +7415,7 @@ class Bridge:
                 become_flags=become_flags,
                 positionals=self._positionals_for(cached_r, command_path),
                 secrets=secrets,
+                cred_env=cred_env,
                 trigger=run_trigger,
                 skill=run_skill,
             )
@@ -7981,6 +7990,51 @@ class Bridge:
         if not user and entry.get("username"):
             user = str(entry["username"])
         return user, cred.get_secret(str(credential_id))
+
+    def _credential_env(
+        self, host: str, runnable: str, ids: list[str] | None
+    ) -> tuple[dict[str, str], list[str]]:
+        """Plain, name-derived env vars for the credentials applied to a run.
+
+        ``ids`` selects credentials explicitly (the form's multi-select); when it
+        is ``None`` the in-scope set for ``(host, runnable)`` is used (the agent
+        path, where credentials auto-apply by scope). Each credential contributes
+        ``credentials.env_vars_for`` — e.g. a "Jira" userpass credential sets
+        ``JIRA_USERNAME``/``JIRA_PASSWORD``. Secrets are read from the keyring here
+        and never surfaced. Returns ``(env, applied_ids)``; on a name collision the
+        later credential wins (logged)."""
+        from . import credentials as cred
+
+        self._reload_credentials()
+        if ids is None:
+            entries = list(self._scoped_credentials(host, runnable))
+        else:
+            entries = []
+            for cid in ids:
+                entry = self._credential_entry(str(cid))
+                if entry is None:
+                    logger.warning("credential_id %r not found; ignoring", cid)
+                    continue
+                entries.append(entry)
+
+        env: dict[str, str] = {}
+        applied: list[str] = []
+        for entry in entries:
+            cid = str(entry.get("id", ""))
+            secret = cred.get_secret(cid) if cid else None
+            vars_ = cred.env_vars_for(entry, secret)
+            if not vars_:
+                continue
+            for k, v in vars_.items():
+                if k in env and env[k] != v:
+                    logger.warning(
+                        "credential env var %s set by more than one credential; "
+                        "the later one wins",
+                        k,
+                    )
+                env[k] = v
+            applied.append(cid)
+        return env, applied
 
     @staticmethod
     def _scope_matches(patterns: Any, value: str) -> bool:

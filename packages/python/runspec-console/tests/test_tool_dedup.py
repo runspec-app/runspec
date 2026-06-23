@@ -65,6 +65,7 @@ class _Bridge:
     _scope_matches = staticmethod(Bridge._scope_matches)
     _credential_entry = Bridge._credential_entry
     _apply_credentials = Bridge._apply_credentials
+    _credential_env = Bridge._credential_env
     _declared_arg_names = staticmethod(Bridge._declared_arg_names)
     _secret_arg_names = staticmethod(Bridge._secret_arg_names)
     _positionals_for = staticmethod(Bridge._positionals_for)

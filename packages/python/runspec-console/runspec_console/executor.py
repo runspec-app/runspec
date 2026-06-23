@@ -231,10 +231,17 @@ def run_local(
     become_flags: str | None = None,
     positionals: dict[str, int] | None = None,
     secrets: dict[str, Any] | None = None,
+    cred_env: dict[str, str] | None = None,
     trigger: str = "",
     skill: str = "",
 ) -> None:
-    """Execute a local runnable binary, streaming output via callbacks."""
+    """Execute a local runnable binary, streaming output via callbacks.
+
+    ``cred_env`` are plain environment variables derived from named credentials
+    (e.g. ``JIRA_USERNAME``/``JIRA_PASSWORD``) — final var names, unlike the
+    ``RUNSPEC_*_ARG_*`` channel ``secrets`` ride. They are merged into the child
+    environment the same way secrets are (and carried through ``env(1)`` on the
+    ``run_as`` path)."""
     bin_dir = Path(runspec_path).parent
     # On Windows a Node folder (`runspec bin`) ships .cmd shims alongside the
     # POSIX ones; a Python venv has .exe entry points. Prefer .exe, then .cmd/.bat.
@@ -253,6 +260,7 @@ def run_local(
     if sys.platform == "win32" and binary.suffix.lower() in (".cmd", ".bat"):
         cmd = ["cmd", "/c", *cmd]
     secrets_env = secret_env(runnable, secrets)
+    cred_env = cred_env or {}
     # Provenance of what caused this run → recorded in the runnable's run_summary
     # (extra.trigger = event source, extra.skill = the saved skill that drove it).
     # Both orthogonal to RUNSPEC_AGENT.
@@ -261,18 +269,19 @@ def run_local(
         prov_env["RUNSPEC_SKILL"] = skill
     extra_env: dict[str, str] = {}
     if run_as:
-        # sudo/su strip the environment — carry RUNSPEC_AGENT and any secret env
-        # vars through env(1) so they reach the target user's process. (These are
-        # argv tokens for the subprocess, not a shell, so no quoting is needed.)
+        # sudo/su strip the environment — carry RUNSPEC_AGENT and any secret/cred
+        # env vars through env(1) so they reach the target user's process. (These
+        # are argv tokens for the subprocess, not a shell, so no quoting is needed.)
         from runspec.become import build_become_argv
 
         env = {"RUNSPEC_AGENT": "1"} if agent else {}
         env.update(prov_env)
         env.update(secrets_env)
+        env.update(cred_env)
         cmd = build_become_argv(cmd, run_as, become_method, become_flags, env=env)
     else:
-        # No escalation — secrets go straight into the child process environment.
-        extra_env = {**secrets_env, **prov_env}
+        # No escalation — secrets/cred env vars go straight into the child process.
+        extra_env = {**secrets_env, **cred_env, **prov_env}
     _stream(
         cmd,
         on_line,
@@ -456,6 +465,7 @@ def run_remote(
     session_factory: Callable[[], tuple[Any, Callable[[], None]]] | None = None,
     positionals: dict[str, int] | None = None,
     secrets: dict[str, Any] | None = None,
+    cred_env: dict[str, str] | None = None,
     trigger: str = "",
     skill: str = "",
 ) -> None:
@@ -465,6 +475,11 @@ def run_remote(
     pooled transport — the connection is reused, only the channel is opened here,
     and ``release()`` (not a transport close) frees the channel slot afterward.
     Without it, a fresh client is connected and closed per invocation (legacy).
+
+    ``cred_env`` are plain environment variables derived from named credentials
+    (final var names like ``JIRA_PASSWORD``, distinct from the ``RUNSPEC_*_ARG_*``
+    channel ``secrets`` ride); they are merged into the command's environment the
+    same way secrets are, including through ``env(1)`` on the ``run_as`` path.
     """
     from runspec.become import build_become_argv
 
@@ -481,7 +496,8 @@ def run_remote(
         base_env["RUNSPEC_SKILL"] = skill
     # password-typed args ride the environment, never argv — see secret_env().
     secrets_env = secret_env(runnable, secrets)
-    all_env = {**base_env, **secrets_env}
+    # Credential-derived plain env vars (final names, e.g. JIRA_PASSWORD).
+    all_env = {**base_env, **secrets_env, **(cred_env or {})}
     cmd_argv = [remote_bin, *command_path, *argv]
     if run_as:
         # Escalated: env(1) after the become carries every var into the target
