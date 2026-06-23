@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.116.0] — 2026-06-23
+
+### Added
+- **Voice input affordance in the chat composer.** A small **Speak** mic button
+  now sits just above the `❯` prompt row. Clicking it focuses the composer so
+  **Windows 11 Voice access** dictates straight into the prompt box, with a
+  one-time inline hint for discoverability and an explanatory tooltip. Voice
+  input is therefore a pure input convenience — nothing is sent until you press
+  Enter, so it stays below the existing autonomy/confirm gates.
+- This is deliberately **engine-free**: the console adds **no** speech
+  dependency and drives no recognizer. It leans on Voice access — the on-device,
+  policy-permitted Windows dictation tool (where Win+H/online is often blocked by
+  org policy) — which types into whatever editable control has focus. Because the
+  console renders in WebView2 (Edge/Chromium) and the composer is a standard
+  `<textarea>`, dictation lands in it directly. See
+  `docs/design/console-voice-input.md`.
+
+
 ## [0.115.0] — 2026-06-23
 
 ### Added

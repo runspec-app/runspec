@@ -1,6 +1,6 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, Tooltip } from 'antd'
-import { SendOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
+import { SendOutlined, ThunderboltOutlined, StopOutlined, AudioOutlined } from '@ant-design/icons'
 import type { Runnable, Skill } from '../bridge'
 import { ThemeContext } from '../ThemeContext'
 
@@ -83,6 +83,22 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
   const [skillsIndex, setSkillsIndex] = useState(0)
   const [historyIndex, setHistoryIndex] = useState(-1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Voice input is handled by Windows 11 Voice access (on-device, policy-permitted
+  // where Win+H is blocked), which types into whatever editable control has focus.
+  // We don't — and can't — drive its listening from here; this affordance just
+  // focuses the composer so the operator can immediately speak, and surfaces a
+  // one-time hint so the capability is discoverable. No engine, no dependency.
+  const [voiceHintSeen, setVoiceHintSeen] = useState(
+    () => typeof localStorage !== 'undefined' && localStorage.getItem('runspec:voiceHintSeen') === '1',
+  )
+
+  const focusForVoice = () => {
+    inputRef.current?.focus()
+    if (!voiceHintSeen) {
+      try { localStorage.setItem('runspec:voiceHintSeen', '1') } catch { /* ignore */ }
+      setVoiceHintSeen(true)
+    }
+  }
 
   useLayoutEffect(() => {
     const el = inputRef.current
@@ -325,6 +341,33 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
           ))}
         </div>
       )}
+
+      {/* Voice-access affordance — sits above the ❯ input row. Clicking focuses
+          the composer so Windows Voice access dictates straight into it. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingLeft: 2 }}>
+        <Tooltip
+          title="Dictate with Windows Voice access — click to focus the box, then speak. (Voice access types into the focused field; nothing is sent until you press Enter.)"
+          placement="top"
+        >
+          <Button
+            type="text"
+            size="small"
+            icon={<AudioOutlined style={{ fontSize: 13 }} />}
+            onClick={focusForVoice}
+            style={{
+              color: isDark ? '#888' : '#888', height: 22, padding: '0 8px',
+              fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            Speak
+          </Button>
+        </Tooltip>
+        {!voiceHintSeen && (
+          <span style={{ fontSize: 11, color: '#777' }}>
+            Dictate with Windows Voice access — click, then talk
+          </span>
+        )}
+      </div>
 
       {/* Input row */}
       <div style={{
