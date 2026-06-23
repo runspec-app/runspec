@@ -363,43 +363,45 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
         </div>
       )}
 
-      {/* Voice-access affordance — sits above the ❯ input row. Clicking wakes
-          Windows Voice access (Alt+Shift+B, host-side) and focuses the box so
-          dictation lands here; sending (or a second click) sleeps it. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingLeft: 2 }}>
-        <Tooltip
-          title={voiceAwake
-            ? 'Listening with Windows Voice access — speak into the box. Click to stop, or just send (Enter) when done.'
-            : 'Dictate with Windows Voice access — click to start listening (Alt+Shift+B) and focus the box, then speak. Nothing is sent until you press Enter.'}
-          placement="top"
-        >
-          <Button
-            type="text"
-            size="small"
-            icon={<AudioOutlined style={{ fontSize: 13 }} />}
-            onClick={toggleVoice}
-            style={{
-              color: voiceAwake ? '#ff4d4f' : (isDark ? '#888' : '#888'),
-              height: 22, padding: '0 8px',
-              fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4,
-            }}
-          >
-            {voiceAwake ? 'Listening…' : 'Speak'}
-          </Button>
-        </Tooltip>
-        {!voiceHintSeen && (
-          <span style={{ fontSize: 11, color: '#777' }}>
-            Click to start Windows Voice access dictation, then talk
-          </span>
-        )}
-      </div>
-
-      {/* Input row */}
+      {/* Prompt window — the bordered box. The voice-access affordance lives
+          INSIDE it, just above the ❯ row. */}
       <div style={{
-        display: 'flex', gap: 8, alignItems: 'flex-end',
         background: '#1a1a1a', border: '1px solid #333',
         borderRadius: 8, padding: '8px 12px',
       }}>
+        {/* Voice-access affordance — clicking wakes Windows Voice access
+            (Alt+Shift+B, host-side) and focuses the box so dictation lands here;
+            sending (or a second click) sleeps it. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <Tooltip
+            title={voiceAwake
+              ? 'Listening with Windows Voice access — speak into the box. Click to stop, or just send (Enter) when done.'
+              : 'Dictate with Windows Voice access — click to start listening (Alt+Shift+B) and focus the box, then speak. Nothing is sent until you press Enter.'}
+            placement="top"
+          >
+            <Button
+              type="text"
+              size="small"
+              icon={<AudioOutlined style={{ fontSize: 13 }} />}
+              onClick={toggleVoice}
+              style={{
+                color: voiceAwake ? '#ff4d4f' : (isDark ? '#888' : '#888'),
+                height: 22, padding: '0 8px',
+                fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              {voiceAwake ? 'Listening…' : 'Speak'}
+            </Button>
+          </Tooltip>
+          {!voiceHintSeen && (
+            <span style={{ fontSize: 11, color: '#777' }}>
+              Click to start Windows Voice access dictation, then talk
+            </span>
+          )}
+        </div>
+
+        {/* Input row: ❯ + textarea + send controls */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
         <span style={{ color: '#555', fontSize: 14, paddingBottom: 2 }}>❯</span>
         <textarea
           ref={inputRef}
@@ -449,6 +451,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
               style={{ color: value.trim() ? '#1677ff' : (isDark ? '#444' : '#ccc'), padding: 4, transition: 'color 0.15s ease' }}
             />
           )}
+        </div>
         </div>
       </div>
     </div>

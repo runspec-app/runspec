@@ -8,6 +8,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.119.0] — 2026-06-23
+
+### Changed
+- **The Speak / Listening… affordance now sits *inside* the prompt box**, just
+  above the `❯` input row, rather than as a separate strip above the bordered
+  composer. Purely a layout move — the bordered box now wraps the voice strip and
+  the input row as one unit. No behaviour change.
+
+
 ## [0.118.0] — 2026-06-23
 
 ### Changed
