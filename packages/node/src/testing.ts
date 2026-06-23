@@ -27,7 +27,7 @@ import { loadRaw } from './loader';
 import { inferScript } from './inference';
 import { RunSpecError } from './errors';
 import * as become from './become';
-import type { ParsedArgs, ScriptSpec, ArgSpec } from './models';
+import type { ParsedArgs, ScriptSpec, ArgSpec, GroupSpec } from './models';
 
 export interface ParseHarnessOptions {
   scriptName: string;
@@ -303,9 +303,38 @@ export class ParseHarness {
     return merged;
   }
 
+  private mergedGroups(p: string[]): Record<string, GroupSpec> {
+    let node: ScriptSpec = this.spec;
+    const merged: Record<string, GroupSpec> = { ...(node.groups ?? {}) };
+    for (const part of p) {
+      node = (node.commands ?? {})[part];
+      Object.assign(merged, node.groups ?? {});
+    }
+    return merged;
+  }
+
+  // Build argv covering every required arg from `values`; null if a leaf can't
+  // be satisfied (a required arg has no value, or an exactly-one group has no
+  // supplied member). Group-aware: for an exclusive / exactly-one group, at most
+  // one member is included even when `values` supplies several, so a populated
+  // values map doesn't build a mutually-exclusive call the group would reject.
   private buildValidArgv(p: string[], values: Record<string, unknown>): string[] | null {
+    const merged = this.mergedArgs(p);
+    const drop = new Set<string>();
+    for (const g of Object.values(this.mergedGroups(p))) {
+      if (!(g.exclusive || g.exactlyOne)) continue;
+      const supplied = (g.args ?? []).filter((m) => values[m] !== undefined && values[m] !== null);
+      if (g.exactlyOne && supplied.length === 0) return null;
+      if (supplied.length > 1) {
+        // Keep a required member if there is one; drop the rest.
+        supplied.sort((a, b) => Number(!!merged[b]?.required) - Number(!!merged[a]?.required));
+        for (const m of supplied.slice(1)) drop.add(m);
+      }
+    }
+
     const argv: string[] = [];
-    for (const [name, a] of Object.entries(this.mergedArgs(p))) {
+    for (const [name, a] of Object.entries(merged)) {
+      if (drop.has(name)) continue;
       const supplied = values[name];
       if (supplied === undefined || supplied === null) {
         if (a.required) return null;

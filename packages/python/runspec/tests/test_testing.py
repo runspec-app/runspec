@@ -115,6 +115,43 @@ class TestSmoke:
         assert h.requires_command() is True
 
 
+# A subcommand whose two members form an exactly-one group, plus an exclusive
+# group, so smoke must include at most one member of each even when `values`
+# supplies all of them.
+GROUPED = textwrap.dedent("""\
+    [emit]
+    [emit.commands.run]
+    description = "emit output"
+    [emit.commands.run.args]
+    json = {type = "flag"}
+    yaml = {type = "flag"}
+    out  = {type = "str", required = false}
+    err  = {type = "str", required = false}
+    [emit.commands.run.groups.fmt]
+    exactly-one = true
+    args = ["json", "yaml"]
+    [emit.commands.run.groups.sink]
+    exclusive = true
+    args = ["out", "err"]
+""")
+
+
+class TestSmokeGroupAware:
+    def test_smoke_does_not_violate_exclusive_groups(self) -> None:
+        # Supplying *all* group members must not build a mutually-exclusive
+        # invocation — smoke includes at most one member of each group.
+        with harness("emit", toml=GROUPED) as h:
+            performed = h.smoke(values={"json": True, "yaml": True, "out": "a", "err": "b"})
+        assert "run (valid)" in performed  # the valid invocation actually ran
+
+    def test_exactly_one_group_with_no_member_skips_valid(self) -> None:
+        # No member supplied for the exactly-one group -> can't construct a
+        # valid call, so the valid-invocation check is skipped (not failed).
+        with harness("emit", toml=GROUPED) as h:
+            performed = h.smoke(values={"out": "a"})
+        assert "run (valid)" not in performed
+
+
 # ── Layer 2: the actual work — mock only the I/O boundary ──────────────────────
 
 

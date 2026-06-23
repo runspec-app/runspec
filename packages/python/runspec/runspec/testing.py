@@ -303,22 +303,54 @@ class ParseHarness:
             merged.update(self.args_for(acc))
         return merged
 
+    def _merged_groups(self, path: list[str]) -> dict[str, dict[str, Any]]:
+        """Groups visible at a leaf: runnable-level plus each node along the path."""
+        node = self._runnable()
+        merged: dict[str, dict[str, Any]] = dict(node.get("groups") or {})
+        for part in path:
+            node = (node.get("commands") or {})[part]
+            merged.update(node.get("groups") or {})
+        return merged
+
     def _build_valid_argv(self, path: list[str], values: dict[str, Any]) -> list[str] | None:
-        """Build argv covering every required arg from ``values``; None if a
-        required arg has no supplied value."""
+        """Build argv covering every required arg from ``values``; None if a leaf
+        can't be satisfied (a required arg has no value, or an ``exactly-one``
+        group has no supplied member).
+
+        Group-aware: for an ``exclusive`` / ``exactly-one`` group, at most one
+        member is included even when ``values`` supplies several — so a populated
+        ``values`` map doesn't build a mutually-exclusive invocation the group
+        would (correctly) reject. A required member is preferred when choosing
+        which one to keep.
+        """
+        merged = self._merged_args(path)
+        drop: set[str] = set()
+        for group in self._merged_groups(path).values():
+            if not (group.get("exclusive") or group.get("exactly_one")):
+                continue
+            supplied = [m for m in (group.get("args") or []) if values.get(m) is not None]
+            if group.get("exactly_one") and not supplied:
+                return None  # can't construct a valid call for this leaf
+            if len(supplied) > 1:
+                # Keep a required member if there is one; drop the rest.
+                supplied.sort(key=lambda m: not (merged.get(m) or {}).get("required"))
+                drop.update(supplied[1:])
+
         argv: list[str] = []
-        for name, a in self._merged_args(path).items():
-            supplied = values.get(name)
-            if supplied is None:
+        for name, a in merged.items():
+            if name in drop:
+                continue
+            supplied_value = values.get(name)
+            if supplied_value is None:
                 if a.get("required"):
                     return None
                 continue
             flag = "--" + name  # runspec keys the flag by the declared arg name
             if a.get("type") == "flag":
-                if supplied:
+                if supplied_value:
                     argv.append(flag)
             else:
-                argv += [flag, str(supplied)]
+                argv += [flag, str(supplied_value)]
         return argv
 
     @contextlib.contextmanager

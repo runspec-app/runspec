@@ -189,6 +189,34 @@ class TestPrintHelp:
         assert "greet --name Jason" in out
         assert "# Greet Jason" in out
 
+    def test_help_renders_group_constraints(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "runspec.toml").write_text(
+            textwrap.dedent("""\
+                [emit]
+                description = "Emit output"
+                [emit.args]
+                json = {type = "flag"}
+                yaml = {type = "flag"}
+                quiet = {type = "flag"}
+                verbose = {type = "flag"}
+                [emit.groups.fmt]
+                exactly-one = true
+                args = ["json", "yaml"]
+                [emit.groups.noise]
+                exclusive = true
+                args = ["quiet", "verbose"]
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="emit", argv=["--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert "Constraints:" in out
+        assert "exactly one of: --json, --yaml" in out
+        assert "at most one of: --quiet, --verbose" in out
+
     def test_help_renders_commands_section(self, tmp_path, monkeypatch, capsys):
         (tmp_path / "runspec.toml").write_text(
             textwrap.dedent("""\

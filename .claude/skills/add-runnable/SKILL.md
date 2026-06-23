@@ -135,6 +135,31 @@ Inside `main()`, `args.runspec_command` is the chosen subcommand name.
 
 ---
 
+## Groups (mutually-exclusive / co-required args)
+
+Declare relationships between args under `[<name>.groups.<group>]` with one of
+`exclusive` (at most one), `exactly-one`, `at-least-one`, `inclusive` (all or
+none), or `if`/`requires` (conditional). **Group members must be optional** —
+`required = false`, with no `default`/`env` — because runspec infers `required`
+for a no-default arg, and a defaulted/env member always counts as "provided",
+which breaks the constraint. `flag` args make ideal members.
+
+```toml
+[fetch.args]
+url  = {type = "str",  required = false}
+file = {type = "path", required = false}
+[fetch.groups.source]
+exactly-one = true
+args        = ["url", "file"]
+```
+
+`--help` lists these under a **Constraints:** section. When testing, `smoke()` is
+group-aware (includes at most one member of an exclusive/exactly-one group), but
+**supply only one member of the group in `values`** if you want the valid-path
+check to run for an `exactly-one` group, e.g. `h.smoke(values={"url": "x"})`.
+
+---
+
 ## Autonomy
 
 | Level | Use for |

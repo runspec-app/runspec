@@ -109,6 +109,19 @@ assert it actually exercised something. Args missing from `values` are simply
 omitted — a leaf with an unsupplied *required* arg skips only its valid-invocation
 check; its missing-required check still runs.
 
+`smoke()` is **group-aware**: when a leaf has an `exclusive` or `exactly-one`
+[group](format.md#groups), it includes **at most one** member when building the
+valid invocation, even if `values` supplies several — so you can list every
+member in `values` without the populated call tripping the mutual-exclusivity
+constraint. (For an `exactly-one` group, supply at least one member; if none is
+supplied, smoke skips that leaf's valid-invocation check rather than building a
+call the group would reject.)
+
+```python
+# emit run --json | --yaml  (exactly-one group)
+h.smoke(values={"json": True, "yaml": True})   # builds `run --json` — not both
+```
+
 Spec introspection is available directly too: `command_paths()`,
 `required_args(path)`, `requires_command(path)`, and `args_for(path)`.
 

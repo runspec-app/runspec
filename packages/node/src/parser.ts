@@ -10,7 +10,7 @@ import { validateArgs, validateGroups, raiseIfErrors } from './validator';
 import { resolveRunAs, verifyRunAsIdentity } from './become';
 import { RunSpecError, RunAsMismatch, formatMissingCommand, formatRunAsMismatch } from './errors';
 import { configureLogging, installExceptionHook } from './logging_setup';
-import type { ParsedArgs, ScriptSpec, ArgSpec } from './models';
+import type { ParsedArgs, ScriptSpec, ArgSpec, GroupSpec } from './models';
 
 export interface ParseOptions {
   scriptName?: string;
@@ -425,6 +425,22 @@ function coerceValues(parsed: Record<string, unknown>, argSpecs: Record<string, 
   return result;
 }
 
+// One-line human description of an argument group, for --help. Mirrors the
+// constraint validateGroups enforces (and Python's _group_constraint_text), so
+// --help advertises mutual-exclusivity / co-requirement.
+function groupConstraintText(g: GroupSpec): string {
+  const flags = (g.args ?? []).map((a) => `--${a}`).join(', ');
+  if (g.exactlyOne) return `exactly one of: ${flags}`;
+  if (g.exclusive) return `at most one of: ${flags}`;
+  if (g.atLeastOne) return `at least one of: ${flags}`;
+  if (g.inclusive) return `all or none of: ${flags}`;
+  if (g.condition) {
+    const req = (g.requires ?? []).map((a) => `--${a}`).join(', ');
+    return `if --${g.condition} is set, also required: ${req}`;
+  }
+  return flags;
+}
+
 export function printHelp(name: string, script: ScriptSpec, commandPath: string[] = []): void {
   const fullName = [name, ...commandPath].join(' ');
   const args = script.args ?? {};
@@ -485,6 +501,14 @@ export function printHelp(name: string, script: ScriptSpec, commandPath: string[
       const meta = `(${parts.join(', ')})`;
       if (spec.description) console.log(`${flag.padEnd(24)} ${spec.description}  ${meta}`);
       else console.log(`${flag.padEnd(24)} ${meta}`);
+    }
+  }
+
+  const groups = script.groups ?? {};
+  if (Object.keys(groups).length > 0) {
+    console.log('\nConstraints:');
+    for (const g of Object.values(groups)) {
+      console.log(`  ${groupConstraintText(g)}`);
     }
   }
 

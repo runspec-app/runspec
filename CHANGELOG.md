@@ -7,6 +7,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.45.0] / [node-0.34.0] — 2026-06-23
+
+### Added
+
+- **`--help` now lists argument-group constraints.** Groups (`exclusive`,
+  `exactly-one`, `at-least-one`, `inclusive`, conditional) are enforced at parse
+  time but were invisible in `--help`. The help renderer now prints a
+  **Constraints:** section — e.g. `exactly one of: --json, --yaml`,
+  `at most one of: --out, --err` — so a mutual-exclusivity / co-requirement
+  relationship is visible without triggering a validation error. Implemented in
+  both packs (`parser.py` `_group_constraint_text`; `parser.ts`
+  `groupConstraintText`).
+
+### Changed
+
+- **`ParseHarness.smoke()` is group-aware.** When a leaf has an `exclusive` or
+  `exactly-one` group, smoke now includes **at most one** member when building
+  the valid invocation, so listing every member in `values` no longer builds a
+  mutually-exclusive call the group (correctly) rejects. For an `exactly-one`
+  group with no supplied member, smoke skips that leaf's valid-invocation check
+  rather than failing it. Both packs (`testing.py` / `testing.ts`
+  `_build_valid_argv` / `buildValidArgv`, with a new `_merged_groups` /
+  `mergedGroups` helper). Docs: `docs/format.md` (group members must be
+  optional), `docs/testing.md`, and the `add-runnable` skill.
+
 ## [0.44.0] — 2026-06-22
 
 ### Changed

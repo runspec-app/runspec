@@ -86,6 +86,49 @@ test('smoke without values still does the structural checks', () => {
   harn.close();
 });
 
+// ── group-aware smoke + help constraints ────────────────────────────────────
+
+const GROUPED = `
+[emit]
+[emit.commands.run]
+description = "emit output"
+[emit.commands.run.args]
+json = {type = "flag"}
+yaml = {type = "flag"}
+out  = {type = "str", required = false}
+err  = {type = "str", required = false}
+[emit.commands.run.groups.fmt]
+exactly-one = true
+args = ["json", "yaml"]
+[emit.commands.run.groups.sink]
+exclusive = true
+args = ["out", "err"]
+`;
+
+test('smoke includes at most one member of an exclusive / exactly-one group', () => {
+  const harn = new ParseHarness({ scriptName: 'emit', toml: GROUPED });
+  // Supplying ALL members must not build a mutually-exclusive invocation.
+  const done = harn.smoke({ values: { json: true, yaml: true, out: 'a', err: 'b' } });
+  expect(done).toContain('run (valid)');
+  harn.close();
+});
+
+test('exactly-one group with no supplied member skips the valid check', () => {
+  const harn = new ParseHarness({ scriptName: 'emit', toml: GROUPED });
+  const done = harn.smoke({ values: { out: 'a' } });
+  expect(done).not.toContain('run (valid)');
+  harn.close();
+});
+
+test('--help renders group constraints', () => {
+  const harn = new ParseHarness({ scriptName: 'emit', toml: GROUPED });
+  const out = harn.expectExit(['run', '--help'], { code: 0 });
+  expect(out).toContain('Constraints:');
+  expect(out).toContain('exactly one of: --json, --yaml');
+  expect(out).toContain('at most one of: --out, --err');
+  harn.close();
+});
+
 // ── introspection ───────────────────────────────────────────────────────────
 
 test('command/leaf paths and arg introspection', () => {

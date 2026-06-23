@@ -328,6 +328,28 @@ def _format_flag_line(arg_name: str, spec: dict[str, Any]) -> str:
     return f"{flag:<28} ({', '.join(parts)})"
 
 
+def _group_constraint_text(group: dict[str, Any]) -> str:
+    """One-line human description of an argument group, for --help.
+
+    Mirrors the constraint validate_groups enforces, so --help advertises the
+    mutual-exclusivity / co-requirement that is otherwise only visible when a
+    parse fails.
+    """
+    flags = ", ".join(f"--{a}" for a in group.get("args", []))
+    if group.get("exactly_one"):
+        return f"exactly one of: {flags}"
+    if group.get("exclusive"):
+        return f"at most one of: {flags}"
+    if group.get("at_least_one"):
+        return f"at least one of: {flags}"
+    if group.get("inclusive"):
+        return f"all or none of: {flags}"
+    if group.get("condition"):
+        req = ", ".join(f"--{a}" for a in group.get("requires", []))
+        return f"if --{group['condition']} is set, also required: {req}"
+    return flags
+
+
 def _print_help(name: str, script: dict[str, Any], command_path: list[str] | None = None, global_arg_names: set[str] | None = None) -> None:
     """Print a human-readable help message for a runnable and exit.
 
@@ -447,6 +469,13 @@ def _print_help(name: str, script: dict[str, Any], command_path: list[str] | Non
             print(f"\n{header}")
             for arg_name, spec in flag_args:
                 print(_format_flag_line(arg_name, spec))
+
+    # ── Constraints (argument groups) ─────────────────────────────────────────
+    groups = script.get("groups") or {}
+    if groups:
+        print("\nConstraints:")
+        for group in groups.values():
+            print(f"  {_group_constraint_text(group)}")
 
     # ── Autonomy ──────────────────────────────────────────────────────────────
     autonomy = script.get("autonomy")

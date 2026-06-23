@@ -596,6 +596,41 @@ if       = "upload"
 requires = ["bucket", "region"]
 ```
 
+### Group members must be optional
+
+A group constraint governs *which combination* of its members is allowed, so each
+member must be an **optional** arg — `required = false`, with **no `default` and
+no `env`**. Two reasons:
+
+- runspec infers `required = true` for any arg with no default, so a bare member
+  would be individually required and fight the group.
+- group validation runs **after** defaults and env fallbacks are applied, and a
+  member counts as "provided" whenever its value is not unset — so a member with
+  a `default` (or a set `env` var) always counts, which breaks `exclusive` /
+  `exactly-one`.
+
+`flag` args are ideal members: they default to `false` and only count as provided
+when actually passed.
+
+```toml
+[fetch.args]
+url  = {type = "str",  required = false}
+file = {type = "path", required = false}
+
+[fetch.groups.source]
+exactly-one = true
+args        = ["url", "file"]
+```
+
+### Help and testing
+
+`--help` lists every group under a **Constraints:** section (e.g.
+`exactly one of: --url, --file`), so the relationship is visible without
+triggering a validation error. The [`ParseHarness.smoke()`](testing.md) helper is
+group-aware: it includes at most one member of an `exclusive` / `exactly-one`
+group when building a valid invocation, so a fully-populated `values` map doesn't
+trip the constraint.
+
 ---
 
 ## Subcommands
