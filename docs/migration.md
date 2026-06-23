@@ -1,4 +1,8 @@
-# Migrating from argparse
+# Leaving the old country
+
+*Act II · Learning the Craft — for travelers from argparse.*
+
+If you arrived carrying argparse, this is where you set down the old ways and pick up runspec's.
 
 If you have working `argparse` scripts, runspec replaces the boilerplate —
 `ArgumentParser`, every `add_argument`, the manual `if`-checks that call
@@ -378,3 +382,7 @@ agent interface — define the interface once.
 - [Logging](logging.md) — `[config.logging]`, rotation, redaction, `--debug`
 - [Agent Integration](agents.md) — `runspec serve` and MCP schemas
 - [CLI Reference](cli.md) — `init`, `local`, `serve`, `jump`, `env`
+
+---
+
+→ **Next:** [Lighting the way](logging.md) — leave an audit trail through the dark.

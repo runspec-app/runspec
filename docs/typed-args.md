@@ -1,4 +1,8 @@
-# Typed `parse()` with `runspec stubs`
+# Sharpening the blade
+
+*Act II · Learning the Craft — precise types, caught typos.*
+
+A sharp tool cuts true: `runspec stubs` types every arg precisely, so a slip is caught before it draws blood.
 
 `runspec stubs` makes your editor and type checker understand each runnable's
 arguments. After running it, `args = parse("deploy")` is precisely typed at the
@@ -189,3 +193,7 @@ regenerated. Run `runspec stubs`.
 **The editor shows `_StubsNotGenerated`.**
 That's the `runspec init` placeholder: you haven't generated real types yet. Run
 `runspec stubs` (or `runspec local` after installing the package).
+
+---
+
+→ **Next:** [Proving your mettle](testing.md) — prove every runnable worthy.

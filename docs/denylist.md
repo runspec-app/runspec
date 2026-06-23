@@ -1,4 +1,8 @@
-# Denylist (kill switch)
+# The wards
+
+*Act III · Toward the Kingdom — set the wards before you rule.*
+
+Power needs limits. The denylist is your ward: a kill switch that refuses a runnable by name, user, or host.
 
 The denylist is a fast, uniform way to **disable runnables** installed in a
 Python virtual environment — a single one, a set, or all of them — scoped by
@@ -122,3 +126,7 @@ environment variable (mirrors `RUNSPEC_ENV_FILE`):
 RUNSPEC_DENYLIST_FILE=/tmp/deny.toml runspec deny all
 RUNSPEC_DENYLIST_FILE=/tmp/deny.toml deploy   # refused
 ```
+
+---
+
+→ **Next:** [The Console kingdom](console.md) — claim your throne and command the fleet.

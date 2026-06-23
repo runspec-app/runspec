@@ -1,4 +1,8 @@
-# Desktop Console
+# The Console kingdom
+
+*Act IV · The Console Kingdom — command the fleet, runbooks and all.*
+
+You arrive as the hero: a desktop throne room where you and your companion run forms, triggers, and full runbooks across the whole fleet.
 
 `runspec-console` is a desktop application for running, scheduling, and
 monitoring your runspec runnables from a graphical UI. It's built on
@@ -512,3 +516,7 @@ runspec-console              # production (bundled UI)
 runspec-console --dev        # point pywebview at a running Vite dev server
 runspec-console --devtools   # enable the Chromium inspector in a prod build
 ```
+
+---
+
+→ **The hero's work:** [legendary runbooks across the fleet](console.md#runbooks-offline-runbook-docs) — where the journey has been leading all along.

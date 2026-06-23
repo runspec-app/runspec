@@ -1,4 +1,8 @@
-# Python Library
+# The Python tongue
+
+*Act II · Learning the Craft — runspec spoken in Python.*
+
+The reference implementation: parse, read `.value`, and learn where each value came from.
 
 The Python library is the reference implementation. Install it, call
 `parse()`, and you get a fully validated, type-coerced `RunSpec` object back.
@@ -590,3 +594,7 @@ def main():
             print(f"Ran as: {args.runspec_runnable} "
                   f"(autonomy={args.runspec_autonomy})")
 ```
+
+---
+
+→ **Next:** [The Node tongue](node.md) — the same craft in Node.

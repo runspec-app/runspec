@@ -13,6 +13,20 @@ and MCP-ready tool schemas — without writing argument-parsing code.
 
 ---
 
+## The path ahead
+
+This documentation is a journey. You arrive a pilgrim at the forest's edge with a
+single `runspec.toml`; you leave as the hero of the Console kingdom, running full
+runbooks across a fleet of machines beside your AI companion.
+
+- **Act I · Into the Forest** — write your first runnable and get a real CLI.
+- **Act II · Learning the Craft** — logging, typed args, testing, and the language packs.
+- **Act III · Toward the Kingdom** — meet your AI companion, reach across an SSH fleet, set the wards.
+- **Act IV · The Console Kingdom** — command the fleet from the desktop console, running legendary runbooks together.
+
+Follow the **→ Next** signpost at the foot of each page, or set out now with
+[your first steps](quickstart.md).
+
 ## Install
 
 === "Python"

@@ -1,4 +1,8 @@
-# Node Library
+# The Node tongue
+
+*Act II · Learning the Craft — the same craft, spoken in Node.*
+
+One interface, two tongues: `parse()`, validation, and MCP in Node, mirroring Python.
 
 The Node package (`runspec-node`) brings the same interface specification to
 Node.js and TypeScript projects. Same TOML format, same CLI, same MCP server
@@ -574,3 +578,7 @@ node dist/process.js --input data.csv --workers 8 --tag etl --tag prod
 
 Or from an agent via `runspec serve` — no code change needed. `__runspec_agent__`
 switches the output format automatically.
+
+---
+
+→ **Next:** [Packing the caravan](node-deploy.md) — ready your Node runnables for the road.

@@ -1,4 +1,8 @@
-# Logging
+# Lighting the way
+
+*Act II · Learning the Craft — an audit trail through the dark.*
+
+A runnable that logs leaves a trail you can follow back — and one your companion can read.
 
 A runnable that wants stdlib logging shouldn't have to wire up handlers,
 formatters, or rotation policies. Add `[config.logging]` to your
@@ -406,3 +410,7 @@ only with `--debug`, while the audit file always has the complete record.
 - [Node Library](node.md) — `getLogger` and ParsedArgs integration
 - [Agent Integration](agents.md) — how `[config.logging]` behaves when
   invoked via `runspec serve`
+
+---
+
+→ **Next:** [Sharpening the blade](typed-args.md) — precise types, typos caught early.

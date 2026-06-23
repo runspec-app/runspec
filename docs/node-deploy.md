@@ -1,4 +1,8 @@
-# Deploying a Node runnable folder
+# Packing the caravan
+
+*Act II · Learning the Craft — ready your Node runnables for the road.*
+
+Before the long road ahead, pack your Node runnables into a folder that travels well.
 
 A `runspec-node` runnable set deploys as a **self-contained folder** — no Python
 on the box, no global install. The folder *is* the unit: its own `runspec.toml`,
@@ -149,3 +153,7 @@ Schedule those from cron or a systemd timer (see
 - **One folder = one toolset.** Keep separate toolsets in separate folders
   (separate `runspec_paths` entries / groups), the same way you'd use separate
   Python venvs rather than one shared environment.
+
+---
+
+→ **Next:** [Tools of the trade](cli.md) — every command, for when you need one.

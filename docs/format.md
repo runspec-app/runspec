@@ -1,5 +1,7 @@
 # Format Reference
 
+*Act I · Into the Forest — the field guide to keep in your pack.*
+
 The runspec format is TOML. It is identical across Python and Node — only the
 install step differs. This page is the working reference; the canonical spec
 lives at [`spec/SPEC.md`](https://github.com/JasonFinestone/runspec/blob/main/spec/SPEC.md).
@@ -945,3 +947,7 @@ What it exercises, top to bottom:
 `runspec local --format mcp` against this spec emits two tools
 (`pipeline_run` and `pipeline_validate`) with full input schemas, autonomy
 levels, and the inclusive/exclusive constraints described inline.
+
+---
+
+→ **Next:** [Leaving the old country](migration.md) — arriving from argparse? Start here.

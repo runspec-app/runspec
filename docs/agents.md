@@ -1,4 +1,8 @@
-# Agent Integration
+# Meeting your companion
+
+*Act III · Toward the Kingdom — an AI companion joins the road.*
+
+Your runnables were built for hands and for minds alike: expose them over MCP and an AI companion can wield them beside you.
 
 runspec turns any runnable into something an agent can understand and safely
 use — without any extra code beyond defining your interface in TOML.
@@ -421,3 +425,7 @@ runnable without human help.
 !!! tip
     Run `runspec local` to see exactly which fields are missing. The output
     maps directly to gaps in what agents can infer.
+
+---
+
+→ **Next:** [Crossing the borderlands](jump-hosts.md) — reach across the SSH fleet.

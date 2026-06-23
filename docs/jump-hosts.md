@@ -1,4 +1,8 @@
-# Jump Hosts
+# Crossing the borderlands
+
+*Act III · Toward the Kingdom — reach across the SSH fleet.*
+
+The kingdom spans many machines; jump hosts let you run a runnable on any of them across a single SSH bridge.
 
 `runspec jump` runs a runspec tool on a remote machine over SSH+MCP. Pass the
 SSH connection string directly on the command line; connection details (user,
@@ -247,3 +251,7 @@ used by runspec — the protocol-level requirement is OpenSSH semantics.
 - [CLI Reference: `runspec jump`](cli.md#runspec-jump)
 - [Format Reference: Remote execution](format.md#remote-execution)
 - [Agent Integration](agents.md)
+
+---
+
+→ **Next:** [The wards](denylist.md) — set your defenses before you rule.

@@ -1,5 +1,7 @@
 # CLI Reference
 
+*Act II · Learning the Craft — every command, for when you need one.*
+
 The `runspec` binary ships with both `runspec` (Python) and `runspec-node`.
 It scaffolds new projects, validates configs, smoke-tests runnables for CI,
 emits agent schemas, runs a live MCP server, and executes tools on remote hosts.
@@ -685,3 +687,7 @@ runspec jump prod-app deploy -- --env prod
 To wire it into Claude Desktop, point the MCP server config at `runspec
 serve` (see the example above). The agent connects once at startup and
 calls tools as needed.
+
+---
+
+→ **Next:** [Meeting your companion](agents.md) — an AI companion joins the road.

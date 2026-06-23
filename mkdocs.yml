@@ -6,6 +6,9 @@ site_url: https://runspec.app
 
 theme:
   name: material
+  features:
+    - navigation.sections
+    - navigation.top
   palette:
     primary: indigo
 
@@ -30,22 +33,26 @@ hooks:
   - hooks/copy_schema.py
 
 nav:
-  - Home: index.md
-  - Quickstart: quickstart.md
-  - Authoring a runnable: authoring.md
-  - Migrating from argparse: migration.md
-  - Format Reference: format.md
-  - Logging: logging.md
-  - Python Library: python.md
-  - Typed args (runspec stubs): typed-args.md
-  - Testing runnables: testing.md
-  - Node Library: node.md
-  - Deploying Node folders: node-deploy.md
-  - CLI Reference: cli.md
-  - Denylist (kill switch): denylist.md
-  - Agent Integration: agents.md
-  - Jump Hosts: jump-hosts.md
-  - Desktop Console: console.md
+  - The trailhead: index.md
+  - "Act I · Into the Forest":
+    - First steps: quickstart.md
+    - Carving your first path: authoring.md
+    - The field guide: format.md
+  - "Act II · Learning the Craft":
+    - Leaving the old country: migration.md
+    - Lighting the way: logging.md
+    - Sharpening the blade: typed-args.md
+    - Proving your mettle: testing.md
+    - The Python tongue: python.md
+    - The Node tongue: node.md
+    - Packing the caravan: node-deploy.md
+    - Tools of the trade: cli.md
+  - "Act III · Toward the Kingdom":
+    - Meeting your companion: agents.md
+    - Crossing the borderlands: jump-hosts.md
+    - The wards: denylist.md
+  - "Act IV · The Console Kingdom":
+    - The Console kingdom: console.md
 
 # Files kept in the repo but NOT built into the published (public) site.
 # The published surface is usage docs only — internal design notes, the

@@ -1,4 +1,8 @@
-# Testing runnables
+# Proving your mettle
+
+*Act II · Learning the Craft — prove every runnable worthy.*
+
+Before you trust a runnable in the field, prove it: the harness walks the whole command tree so nothing untested slips through.
 
 runspec is designed to make runnables easy to test. `runspec.parse()` already
 takes `argv=` and `config_path=`, so you never have to monkeypatch `sys.argv`
@@ -455,3 +459,7 @@ import { withoutRunAsCheck } from 'runspec-node/testing';
 const code = withoutRunAsCheck(() => myPkg.main());
 ```
 
+
+---
+
+→ **Next:** [The Python tongue](python.md) — wield runspec in Python.

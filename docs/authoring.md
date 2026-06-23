@@ -1,4 +1,8 @@
-# Authoring a runnable
+# Carving your first path
+
+*Act I · Into the Forest — cutting a trail that lasts.*
+
+The quickstart showed the way; here you carve a runnable to last — args, types, autonomy, and a test that proves it.
 
 This is the end-to-end guide to adding a runnable to a project: the `runspec.toml`
 section, the code stub, the entry point, validation, and a test. It is the same
@@ -425,3 +429,7 @@ runspec test --format json
 8. **Validate** — run `runspec local` (confirm the runnable appears and is
    callable), then `runspec test` (confirm it passes the wiring gate), then
    `pytest` for your own tests.
+
+---
+
+→ **Next:** [The field guide](format.md) — every field and type, for when you need to look one up.
