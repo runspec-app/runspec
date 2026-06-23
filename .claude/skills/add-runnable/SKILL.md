@@ -129,6 +129,28 @@ Read an argument's value with `args.<name>.value` (e.g. `args.directory.value`)
 `name in args` / `args.get(name, default)` for args that only exist under some
 subcommands.
 
+**The `Arg` carries metadata you can use in code** (not just `.value`). Each arg
+is self-describing — `args.x.type`, `.default`, `.options`, `.range`, `.env`,
+`.meta` (your pass-through dict), and the rest of the spec. Most useful is
+**`.source`, the value's provenance**: where the value actually came from, one of
+`"cli"`, `"env"`, `"runspec_env"`, `"spec_default"`, `"not_set"` (resolution
+order cli → env → spec_default → not_set). Use it to react to *how* a value
+arrived:
+
+```python
+# Refuse a secret typed on the command line (leaks into shell history / ps):
+if args.api_key.source == "cli":
+    raise SystemExit("✗ Pass the key via the env var, not the command line")
+
+# Tell 'caller chose this value' apart from 'fell back to the default':
+if args.workers.source == "spec_default":
+    logger.info("workers not set — using default %d", args.workers.value)
+```
+
+Per-arg metadata is **Python-only** — the Node pack returns bare coerced values
+(`args.x` is the value itself, no `.value`/`.source`). Full field list +
+provenance table: <https://runspec.app/python/#arg>.
+
 pyproject.toml entry:
 ```toml
 [project.scripts]

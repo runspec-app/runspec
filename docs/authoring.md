@@ -142,9 +142,7 @@ if args.format == "json": # TypeError — compare args.format.value instead
 ```
 
 Arithmetic, `int()`, iteration, indexing, `os.fspath`, and attribute delegation
-are absent too — there is no path to a silently-wrong read. Metadata
-(`.type`, `.source`, `.meta`) and the `runspec_*` properties are read directly
-off the `Arg`.
+are absent too — there is no path to a silently-wrong read.
 
 For args whose presence depends on the active subcommand, use `name in args` or
 `args.get(name, default)` (which always returns an `Arg`) — no up-front guard
@@ -156,7 +154,39 @@ if "force" in args and args.force.value:
 limit = args.get("limit", default=None).value
 ```
 
-**Node** mirrors this — read `args.<name>.value` the same way.
+**Node:** `parse()` returns **bare coerced values** (`args.directory` *is* the
+string/number/array) — there is no `.value` and no per-arg metadata wrapper.
+
+### The `Arg` also carries metadata (Python)
+
+Beyond `.value`, each `Arg` is self-describing — it carries its full spec plus
+**where the value came from**, so a runnable can introspect its own inputs
+without re-deriving anything:
+
+```python
+args.workers.type      # 'int'        — declared type
+args.workers.default   # 4            — spec default
+args.format.options    # ['text', 'json']
+args.api_key.env       # 'PIPELINE_API_KEY'
+args.workers.source    # provenance — see below
+```
+
+**`source` is the value's provenance** — one of `"cli"`, `"env"`,
+`"runspec_env"`, `"spec_default"`, or `"not_set"` (resolution order
+cli → env → spec_default → not_set). Use it to react to *how* a value arrived:
+
+```python
+# Refuse a secret typed on the command line (leaks into shell history / ps):
+if args.api_key.source == "cli":
+    raise SystemExit("✗ Pass the key via PIPELINE_API_KEY, not the command line")
+
+# Tell 'caller chose this' apart from 'fell back to the default':
+if args.workers.source == "spec_default":
+    logger.info("workers not set — using default %d", args.workers.value)
+```
+
+Full field list and the provenance table: [Python Library → Arg](python.md#arg).
+(Per-arg metadata is Python-only; Node returns bare values.)
 
 ---
 
@@ -264,7 +294,7 @@ result. The plain function is directly unit-testable with ordinary values (see
     import { parse } from "runspec-node";
 
     const args = parse();
-    console.log(args.directory.value);
+    console.log(args.directory);   // bare coerced value — Node has no .value
     ```
 
     `package.json` entry:

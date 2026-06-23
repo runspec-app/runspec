@@ -295,16 +295,61 @@ Every `Arg` carries its full spec:
 | `env` | `str \| None` | Environment variable name |
 | `deprecated` | `str \| None` | Deprecation message |
 | `autonomy` | `str \| None` | Per-arg autonomy override |
+| `discoverable` | `bool \| list \| None` | Per-arg visitor-facing audiences (self-service forms) |
 | `ui` | `str \| None` | Form control hint |
+| `hint` | `str \| None` | UI placeholder/hint text (`str`/`path`/`password`) |
 | `meta` | `dict \| None` | Developer-defined pass-through metadata |
-| `source` | `str` | Where the value came from: `"cli"`, `"env"`, `"default"` |
+| `source` | `str` | Provenance of `value` — see [Value provenance](#value-provenance-source) |
 
 ```python
 print(args.format.options)      # ['json', 'csv', 'parquet']
 print(args.quality.range)       # (1, 100)
 print(args.api_key.env)         # 'PIPELINE_API_KEY'
-print(args.name.source)         # 'cli' | 'env' | 'default'
+print(args.name.source)         # 'cli' | 'env' | 'runspec_env' | 'spec_default' | 'not_set'
 ```
+
+### Value provenance — `source`
+
+Every `Arg` records **where its value came from** in `arg.source`. The parser
+resolves each arg through a fixed tier order and stamps `source` with the tier
+that supplied the value — so a runnable can react to provenance (warn when a
+secret was typed on the command line, distinguish "explicitly set" from
+"defaulted", or audit exactly how an invocation was configured) without
+re-deriving any of it. `source` is one of five strings:
+
+| `source` | The value came from | Tier |
+|---|---|---|
+| `"cli"` | The command line (argv), or an interactive password prompt | 1 |
+| `"env"` | A process environment variable — the automatic `RUNSPEC_<RUNNABLE>_ARG_<NAME>` key, or a declared `env =` alias | 2 |
+| `"runspec_env"` | A `.runspec_env` file loaded at parse time (same keys as `"env"`, but read from the file, not the live environment) | 2 |
+| `"spec_default"` | The arg's `default =` in `runspec.toml` | 3 |
+| `"not_set"` | No value from any tier — the arg is unset (its `.value` is `None`) | — |
+
+Resolution is **cli → env / runspec_env → spec_default → not_set**: the first
+tier to supply a non-`None` value wins, and `source` names that tier.
+
+```python
+args = runspec.parse()
+
+# Refuse a secret typed on the command line (it leaks into shell history / ps):
+if args.api_key.source == "cli":
+    raise SystemExit("✗ Pass the key via PIPELINE_API_KEY, not the command line")
+
+# Tell 'caller chose this value' apart from 'fell back to the default':
+if args.workers.source == "spec_default":
+    logger.info("workers not specified — using default %d", args.workers.value)
+
+# Audit how every arg was resolved:
+for name, arg in args._args.items():
+    logger.info("%s = %r (from %s)", name, arg.value, arg.source)
+```
+
+!!! note "Python only"
+    Per-arg metadata — `source`, `type`, `meta`, and the other `Arg` fields —
+    is a feature of the Python `Arg` object. The Node pack returns **bare
+    coerced values** (`args.name` is the string itself), so it has no per-arg
+    provenance; invocation-level metadata (`runspec_command`, …) is still
+    available there.
 
 ### `python_type` — effective value type
 

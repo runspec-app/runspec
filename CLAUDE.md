@@ -152,10 +152,15 @@ mypy runspec/
 transparent proxy. `if args.x:` and `args.x == y`/`!=` raise a guiding `TypeError`
 (those are the silently-wrong-without-`.value` cases); arithmetic / `int()` /
 iteration / indexing / `os.fspath` / attribute delegation are absent and raise.
-Metadata (`.type`, `.source`, `.meta`, …) and the `runspec_*` properties are
-unchanged. Use `name in args` / `args.get(name, default)` (always returns an
-`Arg`) for args whose presence depends on the active subcommand — no up-front
-guard needed. (Pre-0.38.0 `Arg` proxied ~30 dunders; the leak made `.value`
+Each `Arg` is self-describing: alongside `.value` it carries `.type`, `.default`,
+`.options`, `.range`, `.env`, `.meta`, and **`.source`** — the value's provenance,
+one of `"cli"`/`"env"`/`"runspec_env"`/`"spec_default"`/`"not_set"` (resolution
+order cli → env → spec_default → not_set). Use `.source` to react to *how* a
+value arrived (e.g. refuse a secret passed on the CLI). Per-arg metadata is
+**Python-only** — the Node pack returns bare coerced values (no `.value`/`.source`).
+Documented at `docs/python.md` → "Value provenance". Use `name in args` /
+`args.get(name, default)` (always returns an `Arg`) for args whose presence
+depends on the active subcommand — no up-front guard needed. (Pre-0.38.0 `Arg` proxied ~30 dunders; the leak made `.value`
 needed "sometimes but not always".)
 
 `[config.logging]` (0.10.0+): `logger = logging.getLogger(__name__)` just works.
