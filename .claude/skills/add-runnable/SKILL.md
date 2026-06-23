@@ -299,7 +299,7 @@ runspec ships a test harness that is **stdlib-only and pulls in no test framewor
 
 - `expect_ok(argv)` → returns the parsed `RunSpec`; fails the test if it exits.
 - `expect_exit(argv, code=1, contains=...)` → asserts a clean error exit; `contains` checks the message names the offending flag. `code=0` for `--help`.
-- `smoke(values={...})` → auto-covers the whole command tree in one call: `--help` exits 0, `require-command` is enforced, omitting required args exits 1, and (when `values` supplies arg values) a fully-populated invocation parses.
+- `smoke(values={...})` → auto-covers the whole command tree in one call: `--help` exits 0, `require-command` is enforced, omitting required args exits 1, and (when `values` supplies arg values) a fully-populated invocation parses. It's **group-aware** (includes at most one member of an exclusive/exactly-one group) and **choice-aware** — when the same arg name declares different `options` per subcommand, smoke picks a value valid for each leaf, so one shared `values` entry (or none) works tree-wide; no per-subcommand workaround needed.
 
 ```python
 # tests/test_myrule.py  — lives in the package's tests/ dir

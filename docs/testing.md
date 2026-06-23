@@ -122,6 +122,25 @@ call the group would reject.)
 h.smoke(values={"json": True, "yaml": True})   # builds `run --json` — not both
 ```
 
+`smoke()` is also **choice-aware**. `values` is one flat map keyed by arg name,
+but the same arg name can declare **different `options` on different
+subcommands** — so no single value is valid everywhere. For a `choice` arg smoke
+picks a value valid for *each* leaf: a shared value that isn't a valid choice on a
+given subcommand falls back to that subcommand's first option, and a `choice` arg
+you don't list in `values` at all is filled from each leaf's own options. So a
+repeated `status` choice "just works" tree-wide — you don't need a per-subcommand
+workaround:
+
+```python
+# open --status new|triage   ·   close --status done|wontfix
+h.smoke(values={"status": "new"})   # `new` used for open; `done` substituted for close
+h.smoke()                           # status filled per-leaf — no value needed
+```
+
+> The harness applies the same **inference** a real `parse()` does (so
+> `required_args()`, choice options, and the smoke builder match runtime
+> behaviour), which is what lets a choice arg with no default be auto-filled.
+
 Spec introspection is available directly too: `command_paths()`,
 `required_args(path)`, `requires_command(path)`, and `args_for(path)`.
 

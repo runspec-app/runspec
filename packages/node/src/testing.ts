@@ -314,10 +314,14 @@ export class ParseHarness {
   }
 
   // Build argv covering every required arg from `values`; null if a leaf can't
-  // be satisfied (a required arg has no value, or an exactly-one group has no
-  // supplied member). Group-aware: for an exclusive / exactly-one group, at most
-  // one member is included even when `values` supplies several, so a populated
-  // values map doesn't build a mutually-exclusive call the group would reject.
+  // be satisfied (a required non-choice arg has no value, or an exactly-one group
+  // has no supplied member). Group-aware: for an exclusive / exactly-one group,
+  // at most one member is included even when `values` supplies several, so a
+  // populated values map doesn't build a mutually-exclusive call the group would
+  // reject. Choice-aware: `values` is one flat map keyed by arg name, but the
+  // same name can declare different `options` on different subcommands; for a
+  // choice arg the value is validated against THIS leaf's options (falling back
+  // to its first option), so one value — or none — works across the whole tree.
   private buildValidArgv(p: string[], values: Record<string, unknown>): string[] | null {
     const merged = this.mergedArgs(p);
     const drop = new Set<string>();
@@ -335,10 +339,17 @@ export class ParseHarness {
     const argv: string[] = [];
     for (const [name, a] of Object.entries(merged)) {
       if (drop.has(name)) continue;
-      const supplied = values[name];
+      const options = a.options;
+      let supplied = values[name];
       if (supplied === undefined || supplied === null) {
-        if (a.required) return null;
-        continue;
+        if (a.required) {
+          if (!options || options.length === 0) return null; // required non-choice, no value
+          supplied = options[0]; // required choice -> fill from its own options
+        } else {
+          continue; // optional + unsupplied -> omit
+        }
+      } else if (options && options.length > 0 && !options.includes(supplied as string)) {
+        supplied = options[0]; // shared value invalid for THIS leaf -> a valid option
       }
       const flag = `--${name}`;
       if (a.type === 'flag') {

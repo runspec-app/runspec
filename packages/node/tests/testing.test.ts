@@ -129,6 +129,34 @@ test('--help renders group constraints', () => {
   harn.close();
 });
 
+// The same arg name (`status`, a choice) with DIFFERENT options per subcommand.
+const PER_CMD_CHOICES = `
+[tix]
+require-command = true
+[tix.commands.open]
+[tix.commands.open.args]
+status = {type = "choice", options = ["new", "triage"]}
+[tix.commands.close]
+[tix.commands.close.args]
+status = {type = "choice", options = ["done", "wontfix"]}
+`;
+
+test('smoke adapts a shared choice value to each subcommand', () => {
+  const harn = new ParseHarness({ scriptName: 'tix', toml: PER_CMD_CHOICES });
+  const done = harn.smoke({ values: { status: 'new' } }); // "new" only valid under `open`
+  expect(done).toContain('open (valid)');
+  expect(done).toContain('close (valid)');
+  harn.close();
+});
+
+test('smoke fills choice args from each leaf options when no value is given', () => {
+  const harn = new ParseHarness({ scriptName: 'tix', toml: PER_CMD_CHOICES });
+  const done = harn.smoke({ values: {} });
+  expect(done).toContain('open (valid)');
+  expect(done).toContain('close (valid)');
+  harn.close();
+});
+
 // ── introspection ───────────────────────────────────────────────────────────
 
 test('command/leaf paths and arg introspection', () => {

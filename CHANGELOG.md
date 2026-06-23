@@ -7,6 +7,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.46.0] / [node-0.35.0] — 2026-06-23
+
+### Changed
+
+- **`ParseHarness.smoke()` is choice-aware.** `smoke()`'s `values` is one flat
+  map keyed by arg name, but the same arg name can declare **different
+  `options`** on different subcommands — so a single shared value can't be a
+  valid choice everywhere. smoke now validates a `choice` arg's value against
+  *each leaf's own* options: a shared value that isn't valid on a given
+  subcommand falls back to that leaf's first option, and a `choice` arg absent
+  from `values` is filled from each leaf's options (so a repeated `status`-style
+  choice needs no per-subcommand workaround, and choice args need no value at
+  all). The Python harness now also applies the same **inference** a real
+  `parse()` does (Node already did), so `required_args()`, choice options, and
+  the smoke builder match runtime behaviour. (`testing.py` / `testing.ts`
+  `_build_valid_argv` / `buildValidArgv`.) Docs: `docs/testing.md`, the
+  `add-runnable` skill.
+
 ## [0.45.0] / [node-0.34.0] — 2026-06-23
 
 ### Added

@@ -152,6 +152,39 @@ class TestSmokeGroupAware:
         assert "run (valid)" not in performed
 
 
+# The same arg name (`status`, a choice) declares DIFFERENT options on each
+# subcommand — the classic case where one shared `values` entry can't be valid
+# everywhere.
+PER_CMD_CHOICES = textwrap.dedent("""\
+    [tix]
+    require-command = true
+    [tix.commands.open]
+    [tix.commands.open.args]
+    status = {type = "choice", options = ["new", "triage"]}
+    [tix.commands.close]
+    [tix.commands.close.args]
+    status = {type = "choice", options = ["done", "wontfix"]}
+""")
+
+
+class TestSmokeChoiceAware:
+    def test_shared_value_is_adapted_per_subcommand(self) -> None:
+        # "new" is only valid under `open`; smoke substitutes a valid option for
+        # `close` instead of failing.
+        with harness("tix", toml=PER_CMD_CHOICES) as h:
+            performed = h.smoke(values={"status": "new"})
+        assert "open (valid)" in performed
+        assert "close (valid)" in performed
+
+    def test_choice_args_need_no_value_at_all(self) -> None:
+        # With no value supplied, a (required) choice arg is filled from each
+        # leaf's own options, so both subcommands still get a valid invocation.
+        with harness("tix", toml=PER_CMD_CHOICES) as h:
+            performed = h.smoke(values={})
+        assert "open (valid)" in performed
+        assert "close (valid)" in performed
+
+
 # ── Layer 2: the actual work — mock only the I/O boundary ──────────────────────
 
 

@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import runspec
+from runspec.inference import infer_script
 from runspec.loader import load_raw
 
 __all__ = ["ParseHarness", "harness", "no_run_as_check"]
@@ -87,6 +88,11 @@ class ParseHarness:
             if script_name not in self._raw["runnables"]:
                 have = ", ".join(sorted(self._raw["runnables"]))
                 raise KeyError(f"runnable {script_name!r} not in {self.config_path} (have: {have})")
+            # Apply the same inference parse() does (fills type/required, recurses
+            # into subcommands) so the harness's view of the spec — required_args,
+            # the smoke valid-argv builder, choice options — matches a real parse.
+            autonomy_default = (self._raw.get("config") or {}).get("autonomy_default") or "confirm"
+            self._raw["runnables"][script_name] = infer_script(self._raw["runnables"][script_name], autonomy_default)
         except BaseException:
             # Tear the temp dir down synchronously so a failed construction does
             # not leave a TemporaryDirectory finalizer to fire later during GC.
@@ -314,14 +320,22 @@ class ParseHarness:
 
     def _build_valid_argv(self, path: list[str], values: dict[str, Any]) -> list[str] | None:
         """Build argv covering every required arg from ``values``; None if a leaf
-        can't be satisfied (a required arg has no value, or an ``exactly-one``
-        group has no supplied member).
+        can't be satisfied (a required non-choice arg has no value, or an
+        ``exactly-one`` group has no supplied member).
 
         Group-aware: for an ``exclusive`` / ``exactly-one`` group, at most one
         member is included even when ``values`` supplies several — so a populated
         ``values`` map doesn't build a mutually-exclusive invocation the group
         would (correctly) reject. A required member is preferred when choosing
         which one to keep.
+
+        Choice-aware: ``values`` is one flat map keyed by arg name, but the same
+        arg name can declare *different* ``options`` on different subcommands. For
+        a ``choice`` arg the value used is validated against *this* leaf's
+        options — a shared value that isn't valid here falls back to this leaf's
+        first option, and a required choice with no supplied value is filled from
+        its options. So one value (or none) for a repeated choice arg works across
+        the whole tree.
         """
         merged = self._merged_args(path)
         drop: set[str] = set()
@@ -340,17 +354,24 @@ class ParseHarness:
         for name, a in merged.items():
             if name in drop:
                 continue
-            supplied_value = values.get(name)
-            if supplied_value is None:
+            options = a.get("options")
+            value = values.get(name)
+            if value is None:
                 if a.get("required"):
-                    return None
-                continue
+                    if not options:
+                        return None  # required non-choice with no value -> skip leaf
+                    value = options[0]  # required choice -> fill from its own options
+                else:
+                    continue  # optional + unsupplied -> omit
+            elif options and value not in options:
+                value = options[0]  # shared value invalid for THIS leaf -> a valid option
+
             flag = "--" + name  # runspec keys the flag by the declared arg name
             if a.get("type") == "flag":
-                if supplied_value:
+                if value:
                     argv.append(flag)
             else:
-                argv += [flag, str(supplied_value)]
+                argv += [flag, str(value)]
         return argv
 
     @contextlib.contextmanager
