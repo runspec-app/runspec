@@ -32,6 +32,7 @@ hooks:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Authoring a runnable: authoring.md
   - Migrating from argparse: migration.md
   - Format Reference: format.md
   - Logging: logging.md

@@ -4,6 +4,10 @@ description: Add a new runspec runnable to the current project — TOML section,
 
 Add a runnable to this project: **$ARGUMENTS**
 
+> Published companion guide: <https://runspec.app/authoring/> (mirrors this skill;
+> link the human there). Typed args: <https://runspec.app/typed-args/>. Testing:
+> <https://runspec.app/testing/>.
+
 ## Current project state
 
 Existing runspec.toml files:
@@ -38,7 +42,7 @@ If runspec is already installed, prefer scaffolding the skeleton rather than han
 runspec init --name <name> --lang python      # also: typescript, javascript
 ```
 
-This writes the `[name]` TOML section, a code stub, and (with `--write-project`) a `pyproject.toml` whose `[project.scripts]` and `dev = ["pytest", "ruff"]` extra are already wired. Then edit the args and `main()` to taste. The steps below are the manual equivalent — use them to add a runnable to an existing spec, or when you need full control.
+This writes the `[name]` TOML section, a code stub, and (with `--write-project`) a `pyproject.toml` whose `[project.scripts]` and `dev = ["pytest", "ruff"]` extra are already wired. It also drops a placeholder typing stub plus the `runspec stubs` wiring (mypy path + pre-commit hook), so a parsed `RunSpec` types precisely from the first run. Then edit the args and `main()` to taste. The steps below are the manual equivalent — use them to add a runnable to an existing spec, or when you need full control.
 
 ---
 
@@ -145,6 +149,30 @@ package.json entry:
 
 ---
 
+## Typed args — `runspec stubs`
+
+`Arg.value` is typed `Any` by default, so a typo (`args.wrokers.value`) sails
+through the type checker. Once the package is installed, run `runspec stubs` and
+`parse("myrule")` becomes precisely typed at the call site — no annotation, no
+cast (`args.workers.value` → `int`, choices → `Literal[...]`, a typo'd attribute
+is a hard error, not silent `Any`).
+
+```bash
+runspec stubs          # generate types from the installed runnables
+runspec stubs --check  # CI / pre-commit: fail if missing or stale
+runspec stubs --off    # remove the stub, back to plain Any
+```
+
+It writes one committed artifact — `typings/runspec/__init__.pyi` — regenerated
+whenever a `runspec.toml` changes (commit it like a lock file). pyright/Pylance
+read `typings/` automatically; for mypy add `mypy_path = "typings"`
+(`runspec init --write-project` wires both). A stale stub never affects runtime —
+`parse()` reads the `runspec.toml`, not the stub — so treat regeneration as a
+convenience, not a correctness gate. After adding or retyping an arg, re-run
+`runspec stubs` and commit `typings/`. Full guide: <https://runspec.app/typed-args/>.
+
+---
+
 ## Error handling — let it propagate, don't wrap
 
 **Do not** wrap `parse()` or the body of `main()` in a blanket `try/except` that prints the error and calls `sys.exit(1)`. runspec already does this for you, better:
@@ -226,4 +254,5 @@ runspec test --format json
 4. Wire the entry point in pyproject.toml or package.json.
 5. Add a test under the package's tests/ dir using `ParseHarness` (at least a `smoke()` call; assert on key arg coercion / validation).
 6. Reinstall — pip install -e . or npm install.
-7. Validate — run `runspec local` (confirm the runnable appears and is callable), then `runspec test` (confirm it passes the wiring gate). Run `pytest` for your own tests.
+7. Generate stubs (Python) — `runspec stubs`, then commit `typings/`.
+8. Validate — run `runspec local` (confirm the runnable appears and is callable), then `runspec test` (confirm it passes the wiring gate). Run `pytest` for your own tests.
