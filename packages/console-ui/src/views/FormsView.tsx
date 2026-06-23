@@ -545,15 +545,6 @@ function RunnableCard({ runnable, hosts, onClick }: {
         <span style={{ fontSize: 9, color: connected ? '#52c41a' : '#595959', flexShrink: 0 }}>●</span>
         <Text style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600 }}>{runnable.name}</Text>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          {subCount > 0 && (
-            runnable.requireCommand ? (
-              <Tooltip title="A command is required — this runnable can't run without choosing one of its subcommands">
-                <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands · required</Tag>
-              </Tooltip>
-            ) : (
-              <Tag style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands</Tag>
-            )
-          )}
           {isInstant && (
             <Tooltip title="No arguments — runs immediately on click">
               <Tag color="gold" style={{ fontSize: 10, margin: 0 }}>⚡ instant</Tag>
@@ -575,6 +566,15 @@ function RunnableCard({ runnable, hosts, onClick }: {
           <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 10, margin: 0 }}>
             {argCount} arg{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
           </Tag>
+        )}
+        {subCount > 0 && (
+          runnable.requireCommand ? (
+            <Tooltip title="A command is required — this runnable can't run without choosing one of its subcommands">
+              <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands · required</Tag>
+            </Tooltip>
+          ) : (
+            <Tag style={{ fontSize: 10, margin: 0 }}>{subCount} subcommands</Tag>
+          )
         )}
         {runnable.runAs && (
           <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto' }}>
@@ -791,7 +791,7 @@ export function FormsView({
               </div>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
                 gap: 10,
               }}>
                 {filteredSkills.map(s => (
@@ -812,7 +812,7 @@ export function FormsView({
               </div>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
                 gap: 10,
               }}>
                 {groupRunnables.map(r => (

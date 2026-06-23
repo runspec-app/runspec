@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.113.0] — 2026-06-23
+
+### Fixed
+- **Forms: subcommands chip no longer squeezes the card title.** On a runnable
+  card with subcommands, the `N subcommands · required` chip sat in the header
+  next to the title and pushed the runnable name into a narrow left column. The
+  chip now lives in the bottom tag row alongside the host and arg-count chips,
+  and the card grid's minimum column width was bumped `210px → 250px` so cards
+  have a little more room.
+
+
 ## [0.112.0] — 2026-06-22
 
 ### Fixed
