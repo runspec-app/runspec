@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.117.0] — 2026-06-23
+
+### Changed
+- **The composer's Speak button now *starts* Voice access, not just focuses the
+  box.** Clicking it focuses the prompt `<textarea>` and asks the host to inject
+  Voice access's start chord (**Ctrl+Win+S**) via `SendInput`, so one click both
+  begins listening and aims dictation at the prompt box. JavaScript in the
+  WebView2 sandbox can't synthesize a Windows-key hotkey, so this goes through a
+  new `start_voice_dictation()` bridge method backed by `winkeys.py` (ctypes
+  `SendInput`, no new dependency). Fail-soft: a no-op off Windows / on failure —
+  the operator can still start Voice access from its own bar, and the box is
+  focused either way. The start chord is a single named constant
+  (`winkeys.VOICE_ACCESS_HOTKEY`) so it's a one-line change if a build documents a
+  different combo. Nothing is sent until you press Enter (unchanged).
+
+
 ## [0.116.0] — 2026-06-23
 
 ### Added

@@ -8827,6 +8827,17 @@ class Bridge:
 
         return screen_lock_state()
 
+    def start_voice_dictation(self) -> dict[str, bool]:
+        """Start Windows Voice access dictation by injecting its start chord
+        (Ctrl+Win+S) at the OS level — the composer's **Speak** button calls this
+        after focusing the prompt box, so speech lands in the focused field. The
+        WebView2 sandbox can't synthesize a Windows-key hotkey itself. Returns
+        ``{"ok": <bool>}``; a no-op (``False``) off Windows or on failure, leaving
+        the operator to start Voice access from its own bar."""
+        from .winkeys import send_voice_access_hotkey
+
+        return {"ok": send_voice_access_hotkey()}
+
     # ── always-on chat room membership ──────────────────────────────────────────
 
     def start_chat(self) -> None:

@@ -1,7 +1,7 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, Tooltip } from 'antd'
 import { SendOutlined, ThunderboltOutlined, StopOutlined, AudioOutlined } from '@ant-design/icons'
-import type { Runnable, Skill } from '../bridge'
+import { bridge, type Runnable, type Skill } from '../bridge'
 import { ThemeContext } from '../ThemeContext'
 
 interface SlashItem {
@@ -85,15 +85,19 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // Voice input is handled by Windows 11 Voice access (on-device, policy-permitted
   // where Win+H is blocked), which types into whatever editable control has focus.
-  // We don't — and can't — drive its listening from here; this affordance just
-  // focuses the composer so the operator can immediately speak, and surfaces a
-  // one-time hint so the capability is discoverable. No engine, no dependency.
+  // The button focuses the composer and asks the host to inject Voice access's
+  // start chord (Ctrl+Win+S) — JS can't synthesize a Windows-key hotkey itself —
+  // so one click both starts dictation and aims it at the prompt box. A one-time
+  // hint makes it discoverable. No speech engine, no dependency.
   const [voiceHintSeen, setVoiceHintSeen] = useState(
     () => typeof localStorage !== 'undefined' && localStorage.getItem('runspec:voiceHintSeen') === '1',
   )
 
   const focusForVoice = () => {
     inputRef.current?.focus()
+    // Fire-and-forget: a {ok:false} (non-Windows / blocked) just means the
+    // operator starts Voice access from its own bar — the box is still focused.
+    void bridge.start_voice_dictation().catch(() => {})
     if (!voiceHintSeen) {
       try { localStorage.setItem('runspec:voiceHintSeen', '1') } catch { /* ignore */ }
       setVoiceHintSeen(true)
@@ -343,10 +347,11 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
       )}
 
       {/* Voice-access affordance — sits above the ❯ input row. Clicking focuses
-          the composer so Windows Voice access dictates straight into it. */}
+          the composer and starts Windows Voice access (Ctrl+Win+S, host-side) so
+          dictation lands straight in the box. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingLeft: 2 }}>
         <Tooltip
-          title="Dictate with Windows Voice access — click to focus the box, then speak. (Voice access types into the focused field; nothing is sent until you press Enter.)"
+          title="Start dictation with Windows Voice access — click to focus the box and begin listening (Ctrl+Win+S), then speak. Nothing is sent until you press Enter."
           placement="top"
         >
           <Button
@@ -364,7 +369,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
         </Tooltip>
         {!voiceHintSeen && (
           <span style={{ fontSize: 11, color: '#777' }}>
-            Dictate with Windows Voice access — click, then talk
+            Click to start Windows Voice access dictation, then talk
           </span>
         )}
       </div>

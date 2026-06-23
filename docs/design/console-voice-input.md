@@ -33,11 +33,28 @@ code at all.**
 Two consequences that gut most of the build below:
 1. **Confirm with no release:** dictate into a text field in the **Edge browser**
    (same engine as WebView2). Works there ⇒ works in the console prompt box.
-2. **An in-app mic button can't drive Voice access** — it exposes no start/stop
-   listening API. A button could at most focus the textarea + hint "speak now". A
-   *true* programmatic record button means the WinRT/SAPI engine path, which needs a
-   Nexus release merely to test whether the policy allows it — to duplicate what
-   Voice access already does. Likely not worth it.
+2. **An in-app mic button can't *transcribe* via Voice access** — it exposes no
+   programmatic recognition API. But it *can* be **started by its hotkey**: Windows
+   documents **Ctrl+Win+S** to begin Voice access dictation. JS in the WebView2
+   sandbox can't synthesize a Windows-key chord, but the **Python host can**
+   (`SendInput`). So the shipped button focuses the prompt box and injects that
+   chord host-side — one click starts listening *and* aims it at the box. A *true*
+   in-app transcription engine (WinRT/SAPI/Whisper) remains a separate, heavier path
+   below.
+
+### Shipped: Speak button (0.116.0 affordance, 0.117.0 hotkey)
+- `console-ui/.../CommandInput.tsx` — a **Speak** mic button in the strip above the
+  `❯` row; `focusForVoice()` focuses the `<textarea>` then calls
+  `bridge.start_voice_dictation()`; one-time discoverability hint.
+- `runspec_console/winkeys.py` — `send_voice_access_hotkey()` injects
+  `VOICE_ACCESS_HOTKEY = Ctrl+Win+S` via ctypes `SendInput` (modifiers pressed
+  first, released in reverse so Win never fires alone → no Start menu). Windows-only,
+  fail-soft no-op elsewhere. **No new dependency.**
+- `runspec_console/bridge.py` — `start_voice_dictation() -> {"ok": bool}`.
+- Open verification (operator, on the box): confirm **Ctrl+Win+S** is the right
+  chord for *Voice access* (vs legacy WSR) on the target build, and whether it
+  **toggles** (a second click could stop listening). If the combo differs, it's a
+  one-line change to `VOICE_ACCESS_HOTKEY`.
 
 The SAPI/WinRT engine design below is retained as the fallback **only if** Voice
 access proves insufficient (e.g. operators want one-click in-composer capture

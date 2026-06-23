@@ -1198,6 +1198,7 @@ export const mockApi: BridgeApi = {
     return { ok: true }
   },
   screen_state: async () => 'unlocked' as const,
+  start_voice_dictation: async () => ({ ok: false }),
   get_trigger_board: async () => [
     {
       card_id: 'demo1', trigger: 'vip-outage-triage', source: 'outlook',
