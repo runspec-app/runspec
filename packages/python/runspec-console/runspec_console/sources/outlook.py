@@ -9,10 +9,11 @@ sidesteps the Conditional-Access wall that blocks the MSAL device-code flow.
 Two event types, both **forward-only** — they fire for occurrences that happen
 while we're running; we never scan for backlog:
 
-* ``new_mail`` — a **folder watch**: per ``[[mailboxes]]`` config entry, bind
-  ``Folder.Items.ItemAdd`` on each watched folder (+ a poll fallback for the bulk
-  moves ItemAdd misses, deduped by EntryID). ``NewMailEx`` is *not* used — it only
-  sees the default account's primary Inbox, not subfolders or other mailboxes.
+* ``new_mail`` — a **folder watch**: for the primary ``[mailbox]`` plus any
+  watch-only ``[[watch]]`` extras, bind ``Folder.Items.ItemAdd`` on each watched
+  folder (+ a poll fallback for the bulk moves ItemAdd misses, deduped by EntryID).
+  ``NewMailEx`` is *not* used — it only sees the default account's primary Inbox,
+  not subfolders or other mailboxes.
 * ``reminder`` — ``Application.Reminder``.
 
 Each ``new_mail`` is tagged with the ``mailbox``/``folder`` it came from so a
@@ -227,9 +228,10 @@ def _resolve_watch(namespace: Any, mailbox: str, folder: str) -> Any:
 class OutlookSource:
     """Forward-only Outlook event source (folder-watch). Satisfies ``EventSource``.
 
-    Reads the single configured ``[mailbox]`` from ``config.read_mailbox()`` and
-    binds an ``Items.ItemAdd`` sink to its resolved folder (+ a poll fallback for
-    the bulk moves ItemAdd can miss), plus the Application ``Reminder`` handler.
+    Reads the primary ``[mailbox]`` (``config.read_mailbox()``) plus any watch-only
+    ``[[watch]]`` extras (``config.read_watches()``) and binds an ``Items.ItemAdd``
+    sink to each resolved folder (+ a poll fallback for the bulk moves ItemAdd can
+    miss), plus the Application ``Reminder`` handler.
     Each ``new_mail`` event is tagged with the ``mailbox``/``folder`` it came from
     so triggers can scope to it. See docs/design/teams-and-email-monitoring.md."""
 
@@ -273,13 +275,29 @@ class OutlookSource:
     def _watches(self) -> list[dict[str, str]]:
         from .. import config
 
-        mailbox = config.read_mailbox()
-        if mailbox is None:
-            return []
-        # One configured inbox → one folder watch. The payload tags keep the
-        # ``mailbox``/``folder`` keys the bind/poll loops and trigger ``match``
-        # already use (mailbox = the configured address).
-        return [{"mailbox": mailbox["address"], "folder": mailbox["folder"]}]
+        # The primary ``[mailbox]`` (the room/helpdesk identity, when set) plus any
+        # watch-only ``[[watch]]`` extras (e.g. the operator's own Inbox alongside a
+        # shared helpdesk mailbox). Each becomes one folder watch; the payload tags
+        # keep the ``mailbox``/``folder`` keys the bind/poll loops and trigger
+        # ``match`` already use (mailbox = the configured address). Exact
+        # ``(address, folder)`` duplicates collapse so a watch that repeats the
+        # primary doesn't double-bind.
+        watches: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add(address: str, folder: str) -> None:
+            key = (address, folder)
+            if key in seen:
+                return
+            seen.add(key)
+            watches.append({"mailbox": address, "folder": folder})
+
+        primary = config.read_mailbox()
+        if primary is not None:
+            add(primary["address"], primary["folder"])
+        for extra in config.read_watches():
+            add(extra["address"], extra["folder"])
+        return watches
 
     def start(self, emit: EmitFn) -> None:
         ok, reason = self.available()

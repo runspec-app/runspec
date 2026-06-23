@@ -197,6 +197,17 @@ export interface Mailbox {
   once_per_thread?: boolean
 }
 
+// An additional watch-only mailbox/folder the Outlook source monitors, on top of
+// the primary [mailbox] — e.g. the operator's own Inbox alongside a shared
+// helpdesk mailbox. Same shape minus once_per_thread: these feed new_mail
+// triggers only and carry no room/verify-from role, so reply suppression is left
+// to each trigger's own once_per_thread. See read_watches() in config.py.
+export interface Watch {
+  address: string
+  folder: string
+  label: string
+}
+
 // A customer team (department) a visitor picks at sign-up. Lives in the helpdesk
 // room DB, managed from the console (Settings → Teams). `slug` is the stable id.
 export interface Team {
@@ -695,6 +706,10 @@ export interface BridgeApi {
   // watched folder; pass null to stop monitoring.
   get_mailbox: () => Promise<Mailbox | null>
   save_mailbox: (mailbox: Mailbox | null) => Promise<void>
+  // Additional watch-only mailboxes monitored on top of the primary [mailbox]
+  // (Settings → Mailbox). Saving restarts the trigger engine; pass [] to clear.
+  get_watches: () => Promise<Watch[]>
+  save_watches: (watches: Watch[]) => Promise<void>
   // ── version / docs ─────────────────────────────────────────────────────────
   app_title: () => Promise<string>
   app_version: () => Promise<string>

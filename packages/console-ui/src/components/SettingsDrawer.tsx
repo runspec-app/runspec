@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
+import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames } from '../views/FormsView'
@@ -1536,6 +1536,9 @@ function MailboxesTab() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [configDir, setConfigDir] = useState<string>('')
+  // Additional watch-only mailboxes (the [[watch]] extras) — e.g. the operator's
+  // own Inbox alongside the shared mailbox above. No room/verify-from role.
+  const [watches, setWatches] = useState<Watch[]>([])
 
   // Live address — drives the shared-mailbox warning (a non-default address).
   const address = Form.useWatch('address', form)
@@ -1551,7 +1554,13 @@ function MailboxesTab() {
       })
     }).catch(console.error)
   }, [form])
+  useEffect(() => { bridge.get_watches().then(setWatches).catch(console.error) }, [])
   useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
+
+  const setWatch = (i: number, patch: Partial<Watch>) =>
+    setWatches(ws => ws.map((w, j) => (j === i ? { ...w, ...patch } : w)))
+  const addWatch = () => setWatches(ws => [...ws, { address: '', folder: '', label: '' }])
+  const removeWatch = (i: number) => setWatches(ws => ws.filter((_, j) => j !== i))
 
   const save = async () => {
     setSaving(true)
@@ -1567,6 +1576,11 @@ function MailboxesTab() {
           once_per_thread: !!v.once_per_thread,
         })
       }
+      await bridge.save_watches(watches.map(w => ({
+        address: (w.address ?? '').trim(),
+        folder: (w.folder ?? '').trim() || 'Inbox',
+        label: (w.label ?? '').trim(),
+      })))
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -1629,7 +1643,45 @@ function MailboxesTab() {
         </Form>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+      <Divider style={{ margin: '16px 0 12px' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <MailOutlined style={{ color: '#666' }} />
+        <span style={{ fontSize: 13 }}>Also watch (optional)</span>
+      </div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+        Extra mailboxes/folders to monitor for <code>new_mail</code> alongside the one
+        above &mdash; e.g. your own Inbox next to a shared helpdesk mailbox. These feed
+        triggers only; the mailbox above stays the room / sign-up identity.
+      </Text>
+      {watches.map((w, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+          <Input
+            size="small"
+            placeholder="address (blank = my default account)"
+            value={w.address}
+            onChange={e => setWatch(i, { address: e.target.value })}
+            style={{ fontFamily: 'monospace', flex: 2 }}
+          />
+          <Input
+            size="small"
+            placeholder='folder (blank = "Inbox")'
+            value={w.folder}
+            onChange={e => setWatch(i, { folder: e.target.value })}
+            style={{ fontFamily: 'monospace', flex: 2 }}
+          />
+          <Input
+            size="small"
+            placeholder="label"
+            value={w.label}
+            onChange={e => setWatch(i, { label: e.target.value })}
+            style={{ flex: 1 }}
+          />
+          <Button size="small" type="text" danger onClick={() => removeWatch(i)}>Remove</Button>
+        </div>
+      ))}
+      <Button size="small" onClick={addWatch} style={{ marginTop: 2 }}>+ Add mailbox</Button>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
         <Button type="primary" size="small" loading={saving} onClick={save}>Save</Button>
         {saved && <Text type="success" style={{ fontSize: 12 }}>Saved</Text>}
       </div>

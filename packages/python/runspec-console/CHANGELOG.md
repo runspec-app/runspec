@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.115.0] — 2026-06-23
+
+### Added
+- **Watch more than one mailbox: a primary `[mailbox]` plus watch-only
+  `[[watch]]` extras.** The Outlook source can now monitor additional
+  mailboxes/folders for `new_mail` alongside the primary one — e.g. your own
+  Inbox next to a shared helpdesk mailbox. Each `[[watch]]` entry is
+  `{address, folder, label}` with the same normalisation as `[mailbox]`
+  (blank `address` = your default account; blank/`"inbox"` folder = the Inbox),
+  and is deduped against the primary so a repeat doesn't double-bind.
+  - **The extras are deliberately watch-only — they carry no room/helpdesk
+    role.** The room `hello` handshake and the email-verify "send-as" identity
+    stay tied to the primary `[mailbox]` alone, so the *shared* mailbox stays the
+    one used for the runspec-room connection while your personal Inbox is just
+    another `new_mail` feed. (Reply suppression is per-trigger on extras — no
+    per-watch `once_per_thread`.)
+  - `config.read_watches()` / `write_watches()`, bridge `get_watches` /
+    `save_watches`, and a **Settings → Mailbox → "Also watch"** editor (add/remove
+    rows). The trigger engine starts the Outlook source whenever a primary mailbox
+    *or* any extra is configured. The agent's Outlook tools' prompt names the
+    extra mailboxes so it can read them by passing `mailbox`/`folder`.
+
+
 ## [0.114.0] — 2026-06-23
 
 ### Changed

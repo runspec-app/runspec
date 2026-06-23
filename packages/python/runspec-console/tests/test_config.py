@@ -191,6 +191,107 @@ class TestWriteMailbox(unittest.TestCase):
         )
 
 
+class TestReadWatches(unittest.TestCase):
+    """The [[watch]] extras the Outlook source monitors on top of [mailbox]."""
+
+    def _read(self, raw: dict):
+        import runspec_console.config as cfg
+
+        orig = cfg.read_config
+        cfg.read_config = lambda: raw
+        try:
+            return cfg.read_watches()
+        finally:
+            cfg.read_config = orig
+
+    def test_absent_is_empty(self) -> None:
+        self.assertEqual(self._read({}), [])
+
+    def test_non_list_is_empty(self) -> None:
+        self.assertEqual(self._read({"watch": {"address": "x"}}), [])
+
+    def test_empty_entry_is_default_inbox(self) -> None:
+        # A bare [[watch]] entry = my own default account's Inbox.
+        self.assertEqual(
+            self._read({"watch": [{}]}),
+            [{"address": "", "folder": "Inbox", "label": ""}],
+        )
+
+    def test_fields_and_normalisation(self) -> None:
+        out = self._read(
+            {
+                "watch": [
+                    {"address": " a@corp ", "folder": "inbox", "label": " A "},
+                    {"address": "b@corp", "folder": "Tickets/Open"},
+                ]
+            }
+        )
+        self.assertEqual(
+            out,
+            [
+                {"address": "a@corp", "folder": "Inbox", "label": "A"},
+                {"address": "b@corp", "folder": "Tickets/Open", "label": ""},
+            ],
+        )
+
+    def test_non_dict_entries_skipped(self) -> None:
+        self.assertEqual(
+            self._read({"watch": ["nope", {}]}),
+            [{"address": "", "folder": "Inbox", "label": ""}],
+        )
+
+
+class TestWriteWatches(unittest.TestCase):
+    """write_watches replaces the [[watch]] array (or drops it), preserving the rest."""
+
+    def _roundtrip(self, watches, existing: dict | None = None) -> dict:
+        import runspec_console.config as cfg
+
+        captured: dict = {}
+        orig_read, orig_write = cfg.read_config, cfg.write_config
+        cfg.read_config = lambda: dict(existing or {})
+        cfg.write_config = lambda data: captured.update(data)
+        try:
+            cfg.write_watches(watches)
+        finally:
+            cfg.read_config, cfg.write_config = orig_read, orig_write
+        return captured
+
+    def test_empty_drops_section(self) -> None:
+        out = self._roundtrip([], existing={"watch": [{"address": "old@corp"}]})
+        self.assertNotIn("watch", out)
+        self.assertNotIn("watch", self._roundtrip(None, existing={"watch": [{}]}))
+
+    def test_default_inbox_is_empty_table(self) -> None:
+        out = self._roundtrip([{"address": "", "folder": "Inbox", "label": ""}])
+        self.assertEqual(out["watch"], [{}])
+
+    def test_fields_emitted_and_normalised(self) -> None:
+        out = self._roundtrip(
+            [{"address": " a@corp ", "folder": "inbox", "label": " A "}]
+        )
+        # folder "inbox" is the default → dropped; address/label trimmed + kept.
+        self.assertEqual(out["watch"], [{"address": "a@corp", "label": "A"}])
+
+    def test_other_sections_preserved(self) -> None:
+        out = self._roundtrip(
+            [{"address": "a@corp", "folder": "Inbox"}],
+            existing={"mailbox": {"address": "shared@corp"}},
+        )
+        self.assertEqual(out["mailbox"], {"address": "shared@corp"})
+        self.assertEqual(out["watch"], [{"address": "a@corp"}])
+
+    def test_round_trips_through_toml(self) -> None:
+        out = self._roundtrip(
+            [{}, {"address": "b@corp", "folder": "Tickets/Open", "label": "B"}]
+        )
+        parsed = _roundtrip(out)
+        self.assertEqual(
+            parsed["watch"],
+            [{}, {"address": "b@corp", "folder": "Tickets/Open", "label": "B"}],
+        )
+
+
 class TestTomlStringEscaper(unittest.TestCase):
     def test_plain_string_unchanged_apart_from_quotes(self) -> None:
         self.assertEqual(_toml_str("hello"), '"hello"')

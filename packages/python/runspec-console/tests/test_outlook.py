@@ -197,6 +197,53 @@ def test_event_types():
     assert OutlookSource().event_types() == ["new_mail", "reminder"]
 
 
+def test_watches_merges_primary_and_extras_and_dedupes(monkeypatch):
+    # _watches() = the primary [mailbox] (room identity) + [[watch]] extras, with
+    # exact (address, folder) duplicates collapsed so a repeat doesn't double-bind.
+    import runspec_console.config as cfg
+
+    monkeypatch.setattr(
+        cfg, "read_mailbox", lambda: {"address": "shared@corp", "folder": "Inbox"}
+    )
+    monkeypatch.setattr(
+        cfg,
+        "read_watches",
+        lambda: [
+            {"address": "", "folder": "Inbox", "label": ""},  # my own inbox
+            {
+                "address": "shared@corp",
+                "folder": "Inbox",
+                "label": "",
+            },  # dup of primary
+            {"address": "alerts@corp", "folder": "Ops", "label": ""},
+        ],
+    )
+    assert OutlookSource()._watches() == [
+        {"mailbox": "shared@corp", "folder": "Inbox"},
+        {"mailbox": "", "folder": "Inbox"},
+        {"mailbox": "alerts@corp", "folder": "Ops"},
+    ]
+
+
+def test_watches_extras_only_without_primary(monkeypatch):
+    # No primary [mailbox] but a watch-only extra still produces a watch.
+    import runspec_console.config as cfg
+
+    monkeypatch.setattr(cfg, "read_mailbox", lambda: None)
+    monkeypatch.setattr(
+        cfg, "read_watches", lambda: [{"address": "", "folder": "Inbox", "label": ""}]
+    )
+    assert OutlookSource()._watches() == [{"mailbox": "", "folder": "Inbox"}]
+
+
+def test_watches_empty_when_nothing_configured(monkeypatch):
+    import runspec_console.config as cfg
+
+    monkeypatch.setattr(cfg, "read_mailbox", lambda: None)
+    monkeypatch.setattr(cfg, "read_watches", lambda: [])
+    assert OutlookSource()._watches() == []
+
+
 def test_start_is_noop_when_unavailable(monkeypatch):
     # Guarantee the unavailable path regardless of host platform.
     monkeypatch.setattr(OutlookSource, "available", lambda self: (False, "nope"))

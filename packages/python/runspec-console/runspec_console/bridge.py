@@ -3099,6 +3099,28 @@ class Bridge:
         except Exception:
             logger.debug("restart_triggers after mailbox save failed", exc_info=True)
 
+    def get_watches(self) -> list[dict[str, Any]]:
+        """The additional **watch-only** mailboxes (Settings → Mailbox) the Outlook
+        source monitors on top of the primary ``[mailbox]``. Each is
+        ``{address, folder, label}``; ``[]`` when none. These feed ``new_mail``
+        triggers only — they carry no room/helpdesk or verify-from role."""
+        from .config import read_watches
+
+        return read_watches()
+
+    def save_watches(self, watches: list[dict[str, Any]] | None) -> None:
+        """Replace the ``[[watch]]`` extras and restart the trigger engine so the
+        Outlook source re-resolves its watched folders. Persisting always succeeds;
+        a restart failure (e.g. no Outlook on this machine) is logged, not
+        surfaced, so the config still saves."""
+        from .config import write_watches
+
+        write_watches(watches or None)
+        try:
+            self.restart_triggers()
+        except Exception:
+            logger.debug("restart_triggers after watches save failed", exc_info=True)
+
     # ── version / docs / branding ────────────────────────────────────────────
 
     def _get_branding(self) -> Any:
@@ -5780,7 +5802,7 @@ class Bridge:
         search / calendar / reminders (read-only, autonomous) and draft / send
         (confirm-gated). Offered only when Outlook COM is available (Windows +
         pywin32); empty list otherwise so non-Windows consoles are unaffected."""
-        from .config import read_mailbox
+        from .config import read_mailbox, read_watches
         from .sources import outlook as ol
 
         if not ol.outlook_available():
@@ -5793,6 +5815,19 @@ class Bridge:
             if mailbox
             else " Omit mailbox/folder to use your default account's Inbox."
         )
+
+        def _watch_name(w: dict[str, Any]) -> str:
+            addr = w.get("address") or "your default account"
+            folder = w.get("folder")
+            return f"{addr}/{folder}" if folder and folder != "Inbox" else addr
+
+        watches = read_watches()
+        if watches:
+            mbox_hint += (
+                " Also monitored (pass mailbox/folder to read these): "
+                + ", ".join(_watch_name(w) for w in watches)
+                + "."
+            )
         return [
             {
                 "name": "outlook_inbox",
@@ -8594,6 +8629,7 @@ class Bridge:
         from .config import (
             read_mailbox,
             read_triggers,
+            read_watches,
             trigger_file_error,
             trigger_state_path,
         )
@@ -8613,11 +8649,16 @@ class Bridge:
         # triggers (new_mail still flows in for any future trigger), so don't bail
         # on zero triggers when a mailbox is configured.
         mailbox = read_mailbox()
+        # Watch-only [[watch]] extras (the operator's own Inbox alongside a shared
+        # mailbox) also need the Outlook source running, even with no primary
+        # [mailbox] and no triggers — their new_mail still flows in for any future
+        # trigger.
+        watches = read_watches()
         # Schedules (Schedules tab) can run with no triggers at all — a
         # runnable-action schedule fires directly — so they keep the engine alive
         # too (event-action schedules still need it to route their events).
         schedules = self._read_schedules()
-        if not triggers and mailbox is None and not schedules:
+        if not triggers and mailbox is None and not watches and not schedules:
             return
         handler = make_handler(
             _BridgeTriggerOps(self),
@@ -8628,9 +8669,9 @@ class Bridge:
             draft_available=True,
         )
         # Start the Outlook source even without a mail/reminder trigger when a
-        # mailbox is configured, so its new_mail events flow in (the email channel;
-        # docs/design/teams-and-email-monitoring.md).
-        always_start = {"outlook"} if mailbox is not None else set()
+        # mailbox (primary or a watch-only extra) is configured, so its new_mail
+        # events flow in (the email channel; docs/design/teams-and-email-monitoring.md).
+        always_start = {"outlook"} if (mailbox is not None or watches) else set()
         engine = TriggerEngine(
             triggers,
             handler=handler,

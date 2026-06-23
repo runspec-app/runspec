@@ -374,6 +374,73 @@ def write_mailbox(mailbox: dict[str, Any] | None) -> None:
     update_config(mutate)
 
 
+def read_watches() -> list[dict[str, Any]]:
+    """Additional **watch-only** mailboxes/folders the Outlook source monitors, on
+    top of the primary ``[mailbox]`` (:func:`read_mailbox`). An array of tables::
+
+        [[watch]]                  # my own Inbox (blank address = default account)
+
+        [[watch]]
+        address = "alerts@corp.com"
+        folder  = "Inbox"
+        label   = "Alerts"
+
+    Each entry is normalised exactly like ``[mailbox]`` (``address`` blank/missing →
+    ``""`` = the default account; ``folder`` blank/missing/``"inbox"`` → ``"Inbox"``)
+    and returned as ``{address, folder, label}``.
+
+    These feed ``new_mail`` triggers **only** — they carry no room/helpdesk role:
+    the room handshake and the email-verify "send-as" identity stay tied to the
+    primary ``[mailbox]`` alone (see ``sources/chat.py`` ``_send_hello``). So a
+    person can watch their own Inbox here while the shared helpdesk mailbox remains
+    the room's identity. There is no per-watch ``once_per_thread`` — a trigger sets
+    its own override if it wants reply suppression on an extra folder.
+
+    Non-dict entries are skipped; ``[]`` when no ``[[watch]]`` is present."""
+    raw = read_config().get("watch")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        address = str(item.get("address") or "").strip()
+        folder = str(item.get("folder") or "").strip()
+        label = str(item.get("label") or "").strip()
+        if not folder or folder.lower() == "inbox":
+            folder = "Inbox"
+        out.append({"address": address, "folder": folder, "label": label})
+    return out
+
+
+def write_watches(watches: list[dict[str, Any]] | None) -> None:
+    """Replace the ``[[watch]]`` array of additional watch-only mailboxes (or drop
+    it when ``watches`` is empty/``None``), preserving every other section. Only
+    set fields are emitted per entry, so a bare "watch my own Inbox" entry
+    round-trips to an empty ``[[watch]]`` table."""
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        entries: list[dict[str, Any]] = []
+        for watch in watches or []:
+            address = str(watch.get("address") or "").strip()
+            folder = str(watch.get("folder") or "").strip()
+            label = str(watch.get("label") or "").strip()
+            entry: dict[str, Any] = {}
+            if address:
+                entry["address"] = address
+            if folder and folder.lower() != "inbox":
+                entry["folder"] = folder
+            if label:
+                entry["label"] = label
+            entries.append(entry)
+        if entries:
+            cfg["watch"] = entries
+        else:
+            cfg.pop("watch", None)
+
+    update_config(mutate)
+
+
 def read_docs_dir() -> str:
     """The ``[docs] dir`` — where ``generate_docs`` writes the runbook wiki ('' when
     unset; the bridge then defaults to ``app_dir()/docs``). Point it at a local

@@ -38,6 +38,37 @@ label   = "Helpdesk"            # optional display label
 Implemented: `config.read_mailbox()` / `write_mailbox()`, bridge `get_mailbox` /
 `save_mailbox`, the Settings → Triggers tab, Outlook source wired to the one mailbox.
 
+### 2a. Watch-only extras — a primary `[mailbox]` plus `[[watch]]` (console 0.115.0)
+
+The single `[mailbox]` stays **the helpdesk identity** (the room `hello` handshake
+and the email-verify send-as address read it via `read_mailbox()` only). On top of
+it the Outlook source can monitor **additional watch-only mailboxes/folders** — so
+an operator can watch their *own* Inbox alongside the shared mailbox above:
+
+```toml
+[mailbox]                       # shared = room identity + verify-from (unchanged)
+address = "helpdesk@corp.com"
+
+[[watch]]                       # my own Inbox (blank address = default account)
+
+[[watch]]
+address = "alerts@corp.com"
+folder  = "Inbox"
+label   = "Alerts"
+```
+
+- `config.read_watches()` / `write_watches()` parse/emit the `[[watch]]` array
+  (`{address, folder, label}`, same normalisation as `[mailbox]`); bridge
+  `get_watches` / `save_watches`; **Settings → Mailbox → "Also watch"** editor.
+- The Outlook source's `_watches()` merges the primary + extras and **dedupes**
+  exact `(address, folder)` pairs (a repeat of the primary doesn't double-bind).
+  The trigger engine starts the source whenever the primary **or** any extra is set.
+- **Extras have no room/queue role.** They feed `new_mail` triggers only; the room
+  connection keeps using the shared `[mailbox]`. There is no per-watch
+  `once_per_thread` — a trigger sets its own override for an extra folder. The
+  shared-mailbox no-claim caveat (`email-folder-watch.md` §6) still applies: don't
+  point two consoles at the same shared folder with reply-writing triggers.
+
 ---
 
 ## 3. Teams = a visitor attribute (v1-with-tag)
