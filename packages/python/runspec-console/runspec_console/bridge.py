@@ -8828,15 +8828,24 @@ class Bridge:
         return screen_lock_state()
 
     def start_voice_dictation(self) -> dict[str, bool]:
-        """Start Windows Voice access dictation by injecting its start chord
-        (Ctrl+Win+S) at the OS level — the composer's **Speak** button calls this
-        after focusing the prompt box, so speech lands in the focused field. The
-        WebView2 sandbox can't synthesize a Windows-key hotkey itself. Returns
+        """Wake Windows Voice access so it listens and dictates into the focused
+        prompt box — the composer's **Speak** button calls this after focusing the
+        textarea. Injects the Voice access wake/sleep chord (Alt+Shift+B) at the OS
+        level; the WebView2 sandbox can't synthesize a hotkey itself. Returns
         ``{"ok": <bool>}``; a no-op (``False``) off Windows or on failure, leaving
-        the operator to start Voice access from its own bar."""
-        from .winkeys import send_voice_access_hotkey
+        the operator to drive Voice access from its own bar."""
+        from .winkeys import send_voice_access_toggle
 
-        return {"ok": send_voice_access_hotkey()}
+        return {"ok": send_voice_access_toggle()}
+
+    def stop_voice_dictation(self) -> dict[str, bool]:
+        """Put Windows Voice access back to sleep — the composer calls this when the
+        operator sends. Injects the *same* wake/sleep chord (Alt+Shift+B); the UI
+        tracks the listening state and presses it to flip. Returns ``{"ok":
+        <bool>}``; a no-op (``False``) off Windows or on failure."""
+        from .winkeys import send_voice_access_toggle
+
+        return {"ok": send_voice_access_toggle()}
 
     # ── always-on chat room membership ──────────────────────────────────────────
 

@@ -835,10 +835,12 @@ export interface BridgeApi {
   cancel_break: () => Promise<{ ok: boolean }>
   // Lock auto-suspend live indicator: current screen-lock state (cheap probe).
   screen_state: () => Promise<LockState>
-  // Start Windows Voice access dictation (injects Ctrl+Win+S host-side). The
-  // composer's Speak button calls this after focusing the prompt box. {ok:false}
-  // off Windows / on failure — operator can start Voice access from its own bar.
+  // Wake/sleep Windows Voice access listening (injects Alt+Shift+B host-side —
+  // same chord both ways; the UI tracks state). Speak button wakes after focusing
+  // the box; sending sleeps. {ok:false} off Windows / on failure (operator can
+  // still drive Voice access from its own bar).
   start_voice_dictation: () => Promise<{ ok: boolean }>
+  stop_voice_dictation: () => Promise<{ ok: boolean }>
   get_trigger_board: () => Promise<TriggerCard[]>
   get_trigger_events: () => Promise<TriggerEvent[]>
   // Fire a trigger now with a synthetic event (the Triggers table's "Trigger now"

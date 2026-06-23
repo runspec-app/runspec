@@ -85,23 +85,39 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // Voice input is handled by Windows 11 Voice access (on-device, policy-permitted
   // where Win+H is blocked), which types into whatever editable control has focus.
-  // The button focuses the composer and asks the host to inject Voice access's
-  // start chord (Ctrl+Win+S) — JS can't synthesize a Windows-key hotkey itself —
-  // so one click both starts dictation and aims it at the prompt box. A one-time
-  // hint makes it discoverable. No speech engine, no dependency.
+  // The mic button focuses the composer and wakes Voice access (Alt+Shift+B, host-
+  // side — JS can't synthesize a hotkey); sending puts it back to sleep. Both use
+  // the same wake/sleep chord, so we track `voiceAwake` and press it to flip.
+  // A one-time hint makes it discoverable. No speech engine, no dependency.
   const [voiceHintSeen, setVoiceHintSeen] = useState(
     () => typeof localStorage !== 'undefined' && localStorage.getItem('runspec:voiceHintSeen') === '1',
   )
+  const [voiceAwake, setVoiceAwake] = useState(false)
 
-  const focusForVoice = () => {
+  // Mic click: toggle Voice access listening. Wake (and focus the box so dictation
+  // lands here) when asleep; sleep again on a second click — so there's a way to
+  // cancel without sending. Fire-and-forget: {ok:false} (non-Windows / blocked)
+  // just means the operator drives Voice access from its own bar.
+  const toggleVoice = () => {
     inputRef.current?.focus()
-    // Fire-and-forget: a {ok:false} (non-Windows / blocked) just means the
-    // operator starts Voice access from its own bar — the box is still focused.
-    void bridge.start_voice_dictation().catch(() => {})
+    if (voiceAwake) {
+      void bridge.stop_voice_dictation().catch(() => {})
+      setVoiceAwake(false)
+    } else {
+      void bridge.start_voice_dictation().catch(() => {})
+      setVoiceAwake(true)
+    }
     if (!voiceHintSeen) {
       try { localStorage.setItem('runspec:voiceHintSeen', '1') } catch { /* ignore */ }
       setVoiceHintSeen(true)
     }
+  }
+
+  // Sleep Voice access when the operator sends (any submit path), if we woke it.
+  const sleepVoiceIfAwake = () => {
+    if (!voiceAwake) return
+    void bridge.stop_voice_dictation().catch(() => {})
+    setVoiceAwake(false)
   }
 
   useLayoutEffect(() => {
@@ -194,6 +210,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
     // While a chat turn is in flight the primary action is Stop, not send —
     // ignore Enter/submit so we don't queue a second turn behind the lock.
     if (activeChatId) return
+    sleepVoiceIfAwake()  // done talking — put Voice access back to sleep
     onSendChat(trimmed)
     setValue('')
     setSlashOpen(false)
@@ -346,25 +363,28 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
         </div>
       )}
 
-      {/* Voice-access affordance — sits above the ❯ input row. Clicking focuses
-          the composer and starts Windows Voice access (Ctrl+Win+S, host-side) so
-          dictation lands straight in the box. */}
+      {/* Voice-access affordance — sits above the ❯ input row. Clicking wakes
+          Windows Voice access (Alt+Shift+B, host-side) and focuses the box so
+          dictation lands here; sending (or a second click) sleeps it. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingLeft: 2 }}>
         <Tooltip
-          title="Start dictation with Windows Voice access — click to focus the box and begin listening (Ctrl+Win+S), then speak. Nothing is sent until you press Enter."
+          title={voiceAwake
+            ? 'Listening with Windows Voice access — speak into the box. Click to stop, or just send (Enter) when done.'
+            : 'Dictate with Windows Voice access — click to start listening (Alt+Shift+B) and focus the box, then speak. Nothing is sent until you press Enter.'}
           placement="top"
         >
           <Button
             type="text"
             size="small"
             icon={<AudioOutlined style={{ fontSize: 13 }} />}
-            onClick={focusForVoice}
+            onClick={toggleVoice}
             style={{
-              color: isDark ? '#888' : '#888', height: 22, padding: '0 8px',
+              color: voiceAwake ? '#ff4d4f' : (isDark ? '#888' : '#888'),
+              height: 22, padding: '0 8px',
               fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4,
             }}
           >
-            Speak
+            {voiceAwake ? 'Listening…' : 'Speak'}
           </Button>
         </Tooltip>
         {!voiceHintSeen && (

@@ -34,27 +34,31 @@ Two consequences that gut most of the build below:
 1. **Confirm with no release:** dictate into a text field in the **Edge browser**
    (same engine as WebView2). Works there ⇒ works in the console prompt box.
 2. **An in-app mic button can't *transcribe* via Voice access** — it exposes no
-   programmatic recognition API. But it *can* be **started by its hotkey**: Windows
-   documents **Ctrl+Win+S** to begin Voice access dictation. JS in the WebView2
-   sandbox can't synthesize a Windows-key chord, but the **Python host can**
-   (`SendInput`). So the shipped button focuses the prompt box and injects that
-   chord host-side — one click starts listening *and* aims it at the box. A *true*
-   in-app transcription engine (WinRT/SAPI/Whisper) remains a separate, heavier path
-   below.
+   programmatic recognition API. But it *can* be **toggled by its hotkey**: Windows
+   documents **Alt+Shift+B** to wake/sleep Voice access listening (and Alt+Shift+C
+   for mic on/off). JS in the WebView2 sandbox can't synthesize a hotkey, but the
+   **Python host can** (`SendInput`). So the shipped button wakes Voice access and
+   focuses the prompt box — dictation lands in the box — and sleeps it again on
+   send. A *true* in-app transcription engine (WinRT/SAPI/Whisper) remains a
+   separate, heavier path below.
 
-### Shipped: Speak button (0.116.0 affordance, 0.117.0 hotkey)
+### Shipped: Speak button (0.116.0 affordance → 0.118.0 wake/sleep toggle)
 - `console-ui/.../CommandInput.tsx` — a **Speak** mic button in the strip above the
-  `❯` row; `focusForVoice()` focuses the `<textarea>` then calls
-  `bridge.start_voice_dictation()`; one-time discoverability hint.
-- `runspec_console/winkeys.py` — `send_voice_access_hotkey()` injects
-  `VOICE_ACCESS_HOTKEY = Ctrl+Win+S` via ctypes `SendInput` (modifiers pressed
-  first, released in reverse so Win never fires alone → no Start menu). Windows-only,
-  fail-soft no-op elsewhere. **No new dependency.**
-- `runspec_console/bridge.py` — `start_voice_dictation() -> {"ok": bool}`.
-- Open verification (operator, on the box): confirm **Ctrl+Win+S** is the right
-  chord for *Voice access* (vs legacy WSR) on the target build, and whether it
-  **toggles** (a second click could stop listening). If the combo differs, it's a
-  one-line change to `VOICE_ACCESS_HOTKEY`.
+  `❯` row. `toggleVoice()` focuses the `<textarea>` and wakes Voice access (button
+  shows *Listening…* in red); a second click or **sending** sleeps it
+  (`sleepVoiceIfAwake()` in `submit()`). The same chord toggles both ways, so the
+  UI tracks `voiceAwake` and presses it to flip. One-time discoverability hint.
+- `runspec_console/winkeys.py` — `send_voice_access_toggle()` injects
+  `VOICE_ACCESS_TOGGLE = Alt+Shift+B` via ctypes `SendInput` (modifiers pressed
+  first, released in reverse). Windows-only, fail-soft no-op elsewhere. **No new
+  dependency.** A one-line constant change if a build documents a different combo.
+- `runspec_console/bridge.py` — `start_voice_dictation()` (wake) /
+  `stop_voice_dictation()` (sleep), both `-> {"ok": bool}`, same toggle chord.
+- History: 0.117.0 first used **Ctrl+Win+S**, but that opens *legacy WSR* (with a
+  deprecation note), not Voice access — corrected to **Alt+Shift+B** in 0.118.0.
+- Open verification (operator, on the box): confirm Alt+Shift+B wakes Voice access
+  on the target build, and that the wake/sleep state stays in sync with the button
+  in normal use (manual Alt+Shift+B outside the UI would desync our `voiceAwake`).
 
 The SAPI/WinRT engine design below is retained as the fallback **only if** Voice
 access proves insufficient (e.g. operators want one-click in-composer capture

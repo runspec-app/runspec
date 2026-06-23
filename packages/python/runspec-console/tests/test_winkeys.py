@@ -14,15 +14,15 @@ import pytest
 from runspec_console import winkeys
 
 
-def test_voice_access_chord_is_ctrl_win_s():
-    # Ctrl, Win, S in that order — modifiers first so they're held over S.
-    assert winkeys.VOICE_ACCESS_HOTKEY == (0x11, 0x5B, 0x53)
+def test_voice_access_chord_is_alt_shift_b():
+    # Alt, Shift, B in that order — modifiers first so they're held over B.
+    assert winkeys.VOICE_ACCESS_TOGGLE == (0x12, 0x10, 0x42)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="non-Windows no-op path")
 def test_send_is_noop_off_windows():
     # Must never raise and must report it did nothing.
-    assert winkeys.send_voice_access_hotkey() is False
+    assert winkeys.send_voice_access_toggle() is False
 
 
 def test_empty_chord_is_noop():

@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.118.0] — 2026-06-23
+
+### Changed
+- **Speak button now toggles Windows Voice access listening with the correct
+  chord (Alt+Shift+B), wake-on-click / sleep-on-send.** The previous chord
+  (Ctrl+Win+S) actually opened legacy Windows Speech Recognition; the documented
+  Voice access wake/sleep shortcut is **Alt+Shift+B**. Clicking **Speak** now
+  wakes Voice access and focuses the prompt box (the button shows *Listening…* in
+  red); sending — or a second click — puts it back to sleep. The same chord
+  toggles both ways, so the UI tracks the state and presses it to flip
+  (`winkeys.VOICE_ACCESS_TOGGLE`, still a one-line change if a build differs;
+  Alt+Shift+C is mic on/off). New `stop_voice_dictation()` bridge method
+  alongside `start_voice_dictation()`; both inject the toggle via `SendInput`.
+  Still no new dependency, still fail-soft (no-op off Windows / on failure).
+
+
 ## [0.117.0] — 2026-06-23
 
 ### Changed
