@@ -4,7 +4,7 @@ import { CheckOutlined, CloseOutlined, ReloadOutlined, BellOutlined, SendOutline
 import { bridge, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark, textColor } from '../ThemeContext'
 import { Markdown } from '../components/Markdown'
-import { RunInbox } from '../components/RunInbox'
+import { RunInbox, type CardTranscript } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
 import { TriggersEditor } from '../components/TriggersEditor'
 import { CopyButton, COLUMN_COLOR } from '../components/runShared'
@@ -48,8 +48,13 @@ export function TriggersView() {
   const [cards, setCards] = useState<Record<string, TriggerCard>>({})
   const [pending, setPending] = useState<Record<string, PendingConfirm>>({})
   const [config, setConfig] = useState<TriggerListResult | null>(null)
-  // Streamed agent text per card id (its reasoning/reply as it arrives).
+  // Streamed agent text per card id (its reasoning/reply as it arrives). Kept as a
+  // flat string for copy + the finalised-result fallback.
   const [streams, setStreams] = useState<Record<string, string>>({})
+  // Rich per-card transcript: interleaved text + tool-call segments, built from the
+  // same token/tool_start/tool_end events the console uses, so a live agent
+  // interaction renders with its tool calls (not just flat prose).
+  const [transcripts, setTranscripts] = useState<Record<string, CardTranscript>>({})
   // The run whose detail drawer is open (card_id), or null.
   const [selected, setSelected] = useState<string | null>(null)
   // The queue conversation shown in the bottom pane (card_id), or null.
@@ -90,6 +95,54 @@ export function TriggersView() {
       const { id, token } = (e as CustomEvent).detail as { id: string; token: string }
       if (!cardIds.current.has(id)) return  // ignore main-chat tokens
       setStreams(s => ({ ...s, [id]: (s[id] ?? '') + token }))
+      setTranscripts(prev => {
+        const cur = prev[id] ?? { segments: [], currentText: '', done: false }
+        return { ...prev, [id]: { ...cur, currentText: cur.currentText + token } }
+      })
+    }
+    const onToolStart = (e: Event) => {
+      const { id, tool_name, tool_input } = (e as CustomEvent).detail as {
+        id: string; tool_name: string; tool_input: Record<string, unknown>
+      }
+      if (!cardIds.current.has(id)) return
+      setTranscripts(prev => {
+        const cur = prev[id] ?? { segments: [], currentText: '', done: false }
+        return {
+          ...prev,
+          [id]: {
+            ...cur,
+            segments: [
+              ...cur.segments,
+              ...(cur.currentText ? [{ kind: 'text' as const, text: cur.currentText }] : []),
+              { kind: 'tool' as const, entry: { name: tool_name, input: tool_input, running: true, startedAt: Date.now() } },
+            ],
+            currentText: '',
+          },
+        }
+      })
+    }
+    const onToolEnd = (e: Event) => {
+      const { id, tool_name, output } = (e as CustomEvent).detail as {
+        id: string; tool_name: string; output: string
+      }
+      if (!cardIds.current.has(id)) return
+      setTranscripts(prev => {
+        const cur = prev[id]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [id]: {
+            ...cur,
+            segments: cur.segments.map(seg => {
+              if (seg.kind === 'tool' && seg.entry.name === tool_name && seg.entry.running) {
+                const durationMs = seg.entry.startedAt ? Date.now() - seg.entry.startedAt : undefined
+                return { ...seg, entry: { ...seg.entry, output, running: false, durationMs } }
+              }
+              return seg
+            }),
+          },
+        }
+      })
     }
     const onConfirm = (e: Event) => {
       const { id, request_id, tool_name, tool_input, display_name, display_input } = (e as CustomEvent).detail as {
@@ -109,6 +162,19 @@ export function TriggersView() {
       setPending(p => {
         if (!p[id]) return p
         const next = { ...p }; delete next[id]; return next
+      })
+      // Flush the live tail into a committed text segment and mark the turn done.
+      setTranscripts(prev => {
+        const cur = prev[id]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [id]: {
+            segments: cur.currentText ? [...cur.segments, { kind: 'text', text: cur.currentText }] : cur.segments,
+            currentText: '',
+            done: true,
+          },
+        }
       })
     }
     const onStatus = () => loadConfig()
@@ -143,6 +209,8 @@ export function TriggersView() {
     }
     window.addEventListener('runspec:trigger_card', onCard)
     window.addEventListener('runspec:token', onToken)
+    window.addEventListener('runspec:tool_start', onToolStart)
+    window.addEventListener('runspec:tool_end', onToolEnd)
     window.addEventListener('runspec:tool_confirm', onConfirm)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:trigger_status', onStatus)
@@ -153,6 +221,8 @@ export function TriggersView() {
     return () => {
       window.removeEventListener('runspec:trigger_card', onCard)
       window.removeEventListener('runspec:token', onToken)
+      window.removeEventListener('runspec:tool_start', onToolStart)
+      window.removeEventListener('runspec:tool_end', onToolEnd)
       window.removeEventListener('runspec:tool_confirm', onConfirm)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:trigger_status', onStatus)
@@ -284,6 +354,7 @@ export function TriggersView() {
         onStop={id => bridge.cancel_chat(id).catch(console.error)}
         statusOf={statusOf}
         streams={streams}
+        transcripts={transcripts}
         emptyText="No trigger runs yet."
         renderRowExtra={card => (
           pending[card.card_id] ? (

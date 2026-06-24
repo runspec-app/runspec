@@ -4,7 +4,17 @@ import { StopOutlined } from '@ant-design/icons'
 import { type RunCard } from '../bridge'
 import { useIsDark, textColor } from '../ThemeContext'
 import { Markdown } from './Markdown'
+import { ChatTranscript, StructuredOutput, parseOutput, type BlockSegment } from './OutputPanel'
 import { StatusBadge, CopyButton, fmtTime, COLUMN_COLOR, RUNNING_STATUSES } from './runShared'
+
+// A live/finished agent transcript for one card: interleaved text + tool-call
+// segments (built by the Triggers view from token/tool_start/tool_end events), so
+// the panel can render the same rich interaction the console does.
+export interface CardTranscript {
+  segments: BlockSegment[]
+  currentText: string
+  done: boolean
+}
 
 // The run inbox: a newest-first list of run cards + a detail drawer (status,
 // agent/run output, timeline, Stop). Shared by the Triggers and Schedules tabs;
@@ -24,6 +34,10 @@ export interface RunInboxProps {
   // Live in-progress body keyed by card_id (Triggers: agent tokens; Schedules:
   // streamed output). The finalised body is read from card.detail.result.
   streams?: Record<string, string>
+  // Rich per-card transcript (interleaved text + tool calls). When present for a
+  // card, the drawer renders it via the shared ChatTranscript so an agent
+  // interaction shows its tool calls — same as the console. Schedules omit it.
+  transcripts?: Record<string, CardTranscript>
   emptyText?: string
   renderRowExtra?: (card: RunCard) => ReactNode
   renderDrawerExtra?: (card: RunCard) => ReactNode
@@ -36,6 +50,7 @@ export function RunInbox({
   onStop,
   statusOf,
   streams = {},
+  transcripts = {},
   emptyText = 'No runs yet.',
   renderRowExtra,
   renderDrawerExtra,
@@ -90,6 +105,16 @@ export function RunInbox({
           const result = card.detail?.result as string | undefined
           const error = card.detail?.error as string | undefined
           const body = result || streams[card.card_id]
+          // Prefer the rich transcript (tool calls + markdown) when we captured the
+          // agent interaction live this session; otherwise fall back to the finalised
+          // body string — as a structured table if it's JSON, else markdown.
+          const transcript = transcripts[card.card_id]
+          const hasTranscript = !!transcript && (transcript.segments.length > 0 || transcript.currentText.length > 0)
+          // Is the finalised body structured JSON (→ rich table) or plain prose (→ markdown)?
+          const bodyIsStructured = !!body && !hasTranscript &&
+            ['table', 'object', 'sections'].includes(
+              parseOutput(body.split('\n').map(line => ({ id: '', line, stream: 'stdout' as const }))).kind,
+            )
           return (
             <div style={{ fontSize: 13, color: textColor(isDark) }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
@@ -113,14 +138,24 @@ export function RunInbox({
                 <div style={{ color: COLUMN_COLOR.failed, marginBottom: 16, whiteSpace: 'pre-wrap' }}>{error}</div>
               )}
 
-              {body && (
+              {(hasTranscript || body) && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <span style={{ color: dim, fontSize: 12 }}>Output</span>
-                    <CopyButton text={body} title="Copy output" />
+                    {body && <CopyButton text={body} title="Copy output" />}
                   </div>
                   <div style={{ marginBottom: 16 }}>
-                    <Markdown color={textColor(isDark)}>{body}</Markdown>
+                    {hasTranscript ? (
+                      <ChatTranscript
+                        segments={transcript!.segments}
+                        currentText={transcript!.currentText}
+                        done={transcript!.done}
+                      />
+                    ) : bodyIsStructured ? (
+                      <StructuredOutput text={body!} />
+                    ) : (
+                      <Markdown color={textColor(isDark)}>{body!}</Markdown>
+                    )}
                   </div>
                 </>
               )}

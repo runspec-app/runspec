@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.124.0] — 2026-06-24
+
+### Changed
+- **Trigger-panel cards now render the same rich agent interaction as the console.**
+  Previously the Triggers panel showed an agent turn as flat markdown — no tool
+  calls, no structured output — so it felt "watered down." The chat-transcript and
+  structured-output renderers are now extracted from the console card into shared
+  components (`ChatTranscript`, `StructuredOutput` in `OutputPanel.tsx`), and the
+  Triggers panel (`RunInbox` drawer) uses them: a live agent turn shows its
+  **interleaved tool-call blocks** (inputs/outputs/durations) and a JSON result
+  renders as a **table**, exactly like the console.
+- `TriggersView` now builds a per-card transcript from the `tool_start`/`tool_end`/
+  `token` events the trigger agent already emits (with the card id) — so the tool
+  blocks appear live as the agent works. The console card is unchanged (now sourced
+  from the shared `ChatTranscript`). Schedules are unaffected (no transcript;
+  finalised JSON output now renders as a table there too).
+- **Known limitation:** the shared renderer uses the console's dark palette, so the
+  panel transcript looks best in dark mode; a light-theme pass is a follow-up.
+
+
 ## [0.123.0] — 2026-06-24
 
 ### Added

@@ -701,6 +701,77 @@ function ToolCallBlock({
   )
 }
 
+// Shared chat-transcript renderer: interleaved markdown text + tool-call blocks +
+// the live streaming tail. Used by the console BlockCard *and* the Triggers panel
+// (RunInbox) so an agent interaction looks identical in both. `pendingConfirm` is
+// optional — the console passes it to show the inline approve gate; the Triggers
+// panel omits it (it has its own Approve/Deny section) so tool blocks render plain.
+export function ChatTranscript({
+  segments,
+  currentText,
+  done,
+  pendingConfirm,
+  onAnswerConfirm,
+}: {
+  segments: BlockSegment[]
+  currentText: string
+  done: boolean
+  pendingConfirm?: PendingConfirm | null
+  onAnswerConfirm?: (approved: boolean, editedInput?: Record<string, unknown>) => void
+}) {
+  return (
+    <div style={{ padding: '10px 14px' }}>
+      {segments.map((seg, i) =>
+        seg.kind === 'text' ? (
+          <Markdown key={i}>{seg.text}</Markdown>
+        ) : (
+          <ToolCallBlock
+            key={i}
+            entry={seg.entry}
+            awaiting={
+              pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
+                ? pendingConfirm.autonomy
+                : null
+            }
+            resolved={
+              pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running && pendingConfirm.display_name
+                ? { name: pendingConfirm.display_name, input: pendingConfirm.display_input ?? {} }
+                : null
+            }
+            editable={
+              !!pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
+                && (pendingConfirm.display_name ?? pendingConfirm.tool_name) === pendingConfirm.tool_name
+            }
+            onAnswer={onAnswerConfirm}
+          />
+        )
+      )}
+      {(currentText || !done) && (
+        <pre style={{
+          margin: 0, padding: 0,
+          fontFamily: 'monospace', fontSize: 13,
+          color: '#d4d4d4', lineHeight: 1.6,
+          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+        }}>
+          {currentText}
+          {!done && <span style={{ color: '#555' }}>▌</span>}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+// Shared structured-output renderer: parse a result string and render the rich
+// JSON table / object / section views the run cards use. Returns null when the
+// text isn't structured JSON, so callers can fall back to markdown/plain text.
+export function StructuredOutput({ text }: { text: string }) {
+  const parsed = parseOutput(text.split('\n').map(line => ({ id: '', line, stream: 'stdout' as const })))
+  if (parsed.kind === 'table' && parsed.rows) return <JsonTable rows={parsed.rows} />
+  if (parsed.kind === 'sections' && parsed.sections) return <JsonSections meta={parsed.meta} sections={parsed.sections} />
+  if (parsed.kind === 'object' && parsed.obj) return <JsonObject obj={parsed.obj} />
+  return null
+}
+
 function BlockCard({
   block,
   onRerun,
@@ -1108,50 +1179,13 @@ function BlockCard({
 
             {/* chat block: interleaved text segments + tool call blocks */}
             {block.type === 'chat' && (
-              <div style={{ padding: '10px 14px' }}>
-                {block.segments.map((seg, i) =>
-                  seg.kind === 'text' ? (
-                    // Finalized assistant prose → markdown. The live streaming
-                    // tail (currentText, below) stays plain <pre> so half-emitted
-                    // markdown (an unclosed ``` ) doesn't flicker; it reflows to
-                    // markdown once the segment is committed.
-                    <Markdown key={i}>{seg.text}</Markdown>
-                  ) : (
-                    <ToolCallBlock
-                      key={i}
-                      entry={seg.entry}
-                      awaiting={
-                        pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
-                          ? pendingConfirm.autonomy
-                          : null
-                      }
-                      resolved={
-                        pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running && pendingConfirm.display_name
-                          ? { name: pendingConfirm.display_name, input: pendingConfirm.display_input ?? {} }
-                          : null
-                      }
-                      editable={
-                        // Only when the shown call equals the real call — the
-                        // run_runnable wrapper (display ≠ tool name) stays read-only.
-                        !!pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
-                          && (pendingConfirm.display_name ?? pendingConfirm.tool_name) === pendingConfirm.tool_name
-                      }
-                      onAnswer={onAnswerConfirm}
-                    />
-                  )
-                )}
-                {(block.currentText || !block.done) && (
-                  <pre style={{
-                    margin: 0, padding: 0,
-                    fontFamily: 'monospace', fontSize: 13,
-                    color: '#d4d4d4', lineHeight: 1.6,
-                    whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-                  }}>
-                    {block.currentText}
-                    {!block.done && <span style={{ color: '#555' }}>▌</span>}
-                  </pre>
-                )}
-              </div>
+              <ChatTranscript
+                segments={block.segments}
+                currentText={block.currentText}
+                done={block.done}
+                pendingConfirm={pendingConfirm}
+                onAnswerConfirm={onAnswerConfirm}
+              />
             )}
           </div>
         </Fragment>
