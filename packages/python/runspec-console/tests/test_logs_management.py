@@ -18,7 +18,7 @@ from runspec_console.bridge import Bridge
 
 def _make_bridge():
     with (
-        patch("runspec_console.bridge.load_hosts", return_value=[]),
+        patch("runspec_console.hosts.load_hosts", return_value=[]),
         patch.object(Bridge, "_start_refresh_watcher"),
     ):
         b = Bridge()

@@ -15,8 +15,8 @@ from unittest.mock import MagicMock, patch
 def _make_bridge():
     """Instantiate Bridge with all external I/O mocked."""
     with (
-        patch("runspec_console.bridge.load_hosts", return_value=[]),
-        patch("runspec_console.bridge.hosts_path", return_value=MagicMock()),
+        patch("runspec_console.hosts.load_hosts", return_value=[]),
+        patch("runspec_console.config.hosts_path", return_value=MagicMock()),
         patch("runspec_console.bridge.Bridge._start_refresh_watcher"),
     ):
         from runspec_console.bridge import Bridge
@@ -46,9 +46,11 @@ class TestLaunchTerminal(unittest.TestCase):
         putty_path = Path("C:/Program Files/PuTTY/putty.exe")
         idf = "C:/Users/jason/.ssh/runspec_ed25519"
         with (
-            patch("runspec_console.bridge._find_putty_exe", return_value=putty_path),
+            patch(
+                "runspec_console.bridge_utils._find_putty_exe", return_value=putty_path
+            ),
             patch.object(b, "get_config", return_value={"ssh": {"identityFile": idf}}),
-            patch("runspec_console.bridge.Path.exists", return_value=True),
+            patch("pathlib.Path.exists", return_value=True),
             patch("subprocess.Popen") as popen,
         ):
             b.launch_terminal("myhost")
@@ -67,9 +69,11 @@ class TestLaunchTerminal(unittest.TestCase):
         b = _make_bridge()
         putty_path = Path("C:/Program Files/PuTTY/putty.exe")
         with (
-            patch("runspec_console.bridge._find_putty_exe", return_value=putty_path),
+            patch(
+                "runspec_console.bridge_utils._find_putty_exe", return_value=putty_path
+            ),
             patch.object(b, "get_config", return_value={"ssh": {}}),
-            patch("runspec_console.bridge.Path.exists", return_value=True),
+            patch("pathlib.Path.exists", return_value=True),
             patch("subprocess.Popen") as popen,
         ):
             b.launch_terminal("no-key")
@@ -90,7 +94,7 @@ class TestLaunchTerminal(unittest.TestCase):
     def test_raises_when_putty_missing(self):
         b = _make_bridge()
         with (
-            patch("runspec_console.bridge._find_putty_exe", return_value=None),
+            patch("runspec_console.bridge_utils._find_putty_exe", return_value=None),
             patch("subprocess.Popen") as popen,
         ):
             with self.assertRaises(ValueError) as cm:

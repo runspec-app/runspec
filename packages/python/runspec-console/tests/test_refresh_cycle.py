@@ -58,7 +58,7 @@ class _Client:
 
 def _make_bridge():
     with (
-        patch("runspec_console.bridge.load_hosts", return_value=[]),
+        patch("runspec_console.hosts.load_hosts", return_value=[]),
         patch.object(Bridge, "_start_refresh_watcher"),
     ):
         return Bridge()
@@ -145,7 +145,7 @@ def test_refresh_does_not_start_before_window():
         started["n"] += 1
 
     with (
-        patch("runspec_console.bridge.load_hosts", return_value=[]),
+        patch("runspec_console.hosts.load_hosts", return_value=[]),
         patch.object(Bridge, "_start_refresh_watcher", fake_start),
     ):
         b = Bridge()
@@ -186,7 +186,7 @@ def test_pool_debug_events_gated_behind_dev_mode():
 
 def test_set_window_flushes_buffered_ssh_logs():
     with (
-        patch("runspec_console.bridge.load_hosts", return_value=[]),
+        patch("runspec_console.hosts.load_hosts", return_value=[]),
         patch.object(Bridge, "_start_refresh_watcher"),
     ):
         b = Bridge()

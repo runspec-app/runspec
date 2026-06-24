@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-import runspec_console.bridge as bridge_mod
 import runspec_console.credentials as cred_mod
 from runspec_console.bridge import Bridge
 from runspec_console.credentials import (
@@ -67,7 +66,9 @@ def kr(monkeypatch):
 
 @pytest.fixture
 def b(monkeypatch, tmp_path, kr):
-    monkeypatch.setattr(bridge_mod, "credentials_path", lambda: tmp_path / "creds.toml")
+    monkeypatch.setattr(
+        "runspec_console.config.credentials_path", lambda: tmp_path / "creds.toml"
+    )
     bridge = _CredBridge()
     bridge._tmp = tmp_path  # for assertions on the file
     return bridge
@@ -233,7 +234,9 @@ def test_backend_reports_available(b):
 
 def test_secret_save_fails_without_backend(monkeypatch, tmp_path):
     monkeypatch.setattr(cred_mod, "_keyring", lambda: None)
-    monkeypatch.setattr(bridge_mod, "credentials_path", lambda: tmp_path / "c.toml")
+    monkeypatch.setattr(
+        "runspec_console.config.credentials_path", lambda: tmp_path / "c.toml"
+    )
     bridge = _CredBridge()
     assert bridge.credentials_backend() == {"available": False, "backend": ""}
     res = bridge.save_credential({"label": "X", "secret": "s"})

@@ -9,7 +9,8 @@ from __future__ import annotations
 import threading
 
 from runspec_console import memory
-from runspec_console.bridge import _ACTION_TOOL_NAMES, Bridge
+from runspec_console.bridge import Bridge
+from runspec_console.bridge_const import _ACTION_TOOL_NAMES
 
 
 class _ActionBridge:

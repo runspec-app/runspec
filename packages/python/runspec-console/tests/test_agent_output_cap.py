@@ -13,8 +13,8 @@ from __future__ import annotations
 import json
 import threading
 
-import runspec_console.bridge as bridge_mod
-from runspec_console.bridge import Bridge, _AGENT_TOOL_OUTPUT_CAP
+from runspec_console.bridge import Bridge
+from runspec_console.bridge_const import _AGENT_TOOL_OUTPUT_CAP
 
 
 class _AgentBridge:
@@ -66,8 +66,10 @@ def _run_with_stdout(monkeypatch, line: str) -> str:
         on_line(line, "stdout")
         on_done(0, 1)
 
-    monkeypatch.setattr(bridge_mod, "run_local", fake_run_local)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda _e: ["/opt/app/runspec"])
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda _e: ["/opt/app/runspec"]
+    )
     b = _AgentBridge(entry={"name": "local"}, cached=_cached("local"))
     return b._run_tool_sync("local__list-processes", {})
 

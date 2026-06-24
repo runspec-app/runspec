@@ -25,7 +25,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import runspec_console.executor as executor
-from runspec_console.bridge import Bridge, _public_key_from_private
+from runspec_console.bridge import Bridge
+from runspec_console.bridge_utils import _public_key_from_private
 
 
 class FakeSSHClient:

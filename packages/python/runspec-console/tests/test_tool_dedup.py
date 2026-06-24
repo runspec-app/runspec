@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import threading
 
-import runspec_console.bridge as bridge_mod
 from runspec_console.bridge import Bridge
 
 
@@ -233,10 +232,12 @@ def test_dispatch_pops_host_and_targets_chosen_host(monkeypatch):
         captured["args"] = args
         on_done(0, 1)
 
-    monkeypatch.setattr(bridge_mod, "run_local", fake_run_local)
-    monkeypatch.setattr(bridge_mod, "run_remote", fake_run_remote)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda entry: ["/bin/runspec"])
-    monkeypatch.setattr(bridge_mod, "venv_name", lambda p: "fleet")
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr("runspec_console.executor.run_remote", fake_run_remote)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda entry: ["/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
 
     runnables = [
         _rn("h1local", "ping", args=[{"name": "count", "type": "int"}]),
@@ -258,9 +259,11 @@ def test_dispatch_renamed_selector_strips_underscore_host(monkeypatch):
         captured["args"] = args
         on_done(0, 1)
 
-    monkeypatch.setattr(bridge_mod, "run_local", fake_run_local)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda entry: ["/bin/runspec"])
-    monkeypatch.setattr(bridge_mod, "venv_name", lambda p: "fleet")
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda entry: ["/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
 
     runnables = [_rn("h1local", "conn", args=[{"name": "host", "type": "str"}])]
     b = _Bridge(runnables)

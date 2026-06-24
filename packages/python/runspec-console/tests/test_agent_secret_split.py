@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import threading
 
-import runspec_console.bridge as bridge_mod
 from runspec_console.bridge import Bridge
 
 
@@ -81,8 +80,10 @@ def test_run_tool_sync_local_splits_password(monkeypatch):
         captured["args"] = args
         captured["secrets"] = kw.get("secrets")
 
-    monkeypatch.setattr(bridge_mod, "run_local", fake_run_local)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda _e: ["/opt/app/runspec"])
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda _e: ["/opt/app/runspec"]
+    )
 
     b = _AgentBridge(
         entry={"name": "local"}, cached=_cached("local")
@@ -105,8 +106,10 @@ def test_run_tool_sync_remote_splits_password(monkeypatch):
         captured["args"] = args
         captured["secrets"] = kw.get("secrets")
 
-    monkeypatch.setattr(bridge_mod, "run_remote", fake_run_remote)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda _e: ["/opt/app/runspec"])
+    monkeypatch.setattr("runspec_console.executor.run_remote", fake_run_remote)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda _e: ["/opt/app/runspec"]
+    )
 
     entry = {"name": "prod", "ssh": "deploy@prod", "identityFile": "/k"}
     b = _AgentBridge(entry=entry, cached=_cached("prod"))

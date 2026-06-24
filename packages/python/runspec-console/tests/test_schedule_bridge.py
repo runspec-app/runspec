@@ -20,12 +20,14 @@ import types
 
 import pytest
 
-import runspec_console.bridge as bmod
-from runspec_console.bridge import Bridge, _write_schedules
+from runspec_console.bridge import Bridge
+from runspec_console.bridge_utils import _write_schedules
 
 
 def _stub(tmp_path, monkeypatch, *, engine=None):
-    monkeypatch.setattr(bmod, "hosts_path", lambda: tmp_path / "runspec_hosts.toml")
+    monkeypatch.setattr(
+        "runspec_console.config.hosts_path", lambda: tmp_path / "runspec_hosts.toml"
+    )
     ns = types.SimpleNamespace()
     for name in (
         "_read_schedules",

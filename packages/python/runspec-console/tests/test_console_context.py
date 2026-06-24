@@ -165,7 +165,7 @@ def test_status_tool_points_at_denylist_when_hosts_present(monkeypatch):
 
 
 def test_status_tool_is_autonomous():
-    from runspec_console.bridge import _STATUS_TOOL_NAMES
+    from runspec_console.bridge_const import _STATUS_TOOL_NAMES
 
     ns = types.SimpleNamespace()
     ns._effective_tool_autonomy = types.MethodType(Bridge._effective_tool_autonomy, ns)

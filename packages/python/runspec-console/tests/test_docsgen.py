@@ -9,7 +9,6 @@ loop depends on — the same input yields byte-identical output.
 
 from __future__ import annotations
 
-import runspec_console.bridge as bridge_mod
 import runspec_console.docsgen as docsgen
 from runspec_console.bridge import Bridge
 
@@ -226,8 +225,8 @@ def test_generate_docs_defaults_to_app_dir(monkeypatch, tmp_path):
     import runspec_console.memory as memory
 
     monkeypatch.setattr(memory, "load_skills", lambda: [])
-    monkeypatch.setattr(bridge_mod, "read_docs_dir", lambda: "")
-    monkeypatch.setattr(bridge_mod, "app_dir", lambda: tmp_path)
+    monkeypatch.setattr("runspec_console.config.read_docs_dir", lambda: "")
+    monkeypatch.setattr("runspec_console.config.app_dir", lambda: tmp_path)
     res = _DocsBridge([]).generate_docs()
     assert res["ok"] is True
     assert res["dir"] == str(tmp_path / "docs")

@@ -14,10 +14,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from runspec_console.bridge import (
-    _normalize_path,
-    _normalize_ssh_section,
-)
+from runspec_console.bridge_utils import _normalize_path, _normalize_ssh_section
 
 
 class TestNormalizePath(unittest.TestCase):
@@ -73,7 +70,7 @@ class TestNormalizeSshSection(unittest.TestCase):
 def _make_bridge():
     """Construct a Bridge with the I/O dependencies stubbed out."""
     with (
-        patch("runspec_console.bridge.load_hosts", return_value=[]),
+        patch("runspec_console.hosts.load_hosts", return_value=[]),
         patch.object(
             __import__("runspec_console.bridge", fromlist=["Bridge"]).Bridge,
             "_start_refresh_watcher",
@@ -87,7 +84,7 @@ def _make_bridge():
 class TestSaveConfigNormalisesPaths(unittest.TestCase):
     def test_save_config_writes_forward_slashes(self) -> None:
         b = _make_bridge()
-        with patch("runspec_console.bridge.write_config") as wc:
+        with patch("runspec_console.config.write_config") as wc:
             b.save_config(
                 {
                     "ssh": {
@@ -110,7 +107,7 @@ class TestSaveConfigNormalisesPaths(unittest.TestCase):
 
     def test_save_config_no_ssh_section_unaffected(self) -> None:
         b = _make_bridge()
-        with patch("runspec_console.bridge.write_config") as wc:
+        with patch("runspec_console.config.write_config") as wc:
             b.save_config({"llm": {"provider": "anthropic"}})
         wc.assert_called_once_with({"llm": {"provider": "anthropic"}})
 
@@ -119,7 +116,7 @@ class TestSaveJumpHostsNormalisesPaths(unittest.TestCase):
     def test_identity_file_and_runspec_paths_normalised(self) -> None:
         b = _make_bridge()
         with (
-            patch("runspec_console.bridge.save_hosts") as sh,
+            patch("runspec_console.hosts.save_hosts") as sh,
             patch.object(b, "_reload_hosts"),
             patch("threading.Thread"),
         ):

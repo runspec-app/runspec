@@ -22,7 +22,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from runspec_console.bridge import (
+from runspec_console.bridge_utils import (
     _aggregate_analytics,
     _log_globs,
     _parse_log,
@@ -303,7 +303,7 @@ class TestAggregate(unittest.TestCase):
 
 def _make_bridge():
     with (
-        patch("runspec_console.bridge.load_hosts", return_value=[]),
+        patch("runspec_console.hosts.load_hosts", return_value=[]),
         patch.object(
             __import__("runspec_console.bridge", fromlist=["Bridge"]).Bridge,
             "_start_refresh_watcher",
@@ -716,7 +716,7 @@ class TestHomeLogsFallback(unittest.TestCase):
             (home_logs / "backup.log").write_text(
                 _summary_line(run_id="r1", runnable="backup"), encoding="utf-8"
             )
-            with patch("runspec_console.bridge.Path.home", return_value=Path(home)):
+            with patch("pathlib.Path.home", return_value=Path(home)):
                 recs = b._collect_host_records(entry, None)
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0]["runnable"], "backup")
@@ -739,7 +739,7 @@ class TestHomeLogsFallback(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with patch("runspec_console.bridge.Path.home", return_value=Path(home)):
+            with patch("pathlib.Path.home", return_value=Path(home)):
                 recs = b.get_history("h", "backup")
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0]["runnable"], "backup")

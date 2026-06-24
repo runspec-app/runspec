@@ -60,8 +60,8 @@ class _SaveStub:
     _apply_ssh_config = Bridge._apply_ssh_config
 
 
-WRITE = "runspec_console.bridge.write_config"
-NORM = "runspec_console.bridge._normalize_ssh_section"
+WRITE = "runspec_console.config.write_config"
+NORM = "runspec_console.bridge_utils._normalize_ssh_section"
 
 
 def _run_save(old: dict[str, Any], new: dict[str, Any]) -> _SaveStub:

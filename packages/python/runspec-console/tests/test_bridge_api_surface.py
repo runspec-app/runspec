@@ -1,0 +1,152 @@
+"""
+test_bridge_api_surface.py — freeze the pywebview JS API contract.
+
+``bridge.py`` is composed from mixin modules (bridge_<area>.py). pywebview exposes
+every public (non-underscore) method of the Bridge instance as
+``window.pywebview.api.<name>``. This test pins that exact set so a refactor that
+moves methods between mixins — or accidentally drops/renames one — fails loudly
+instead of silently changing the frontend contract. Update EXPECTED only when you
+intend to add or remove a JS-callable method.
+"""
+
+from __future__ import annotations
+
+from runspec_console.bridge import Bridge
+
+EXPECTED = {
+    "add_team",
+    "app_title",
+    "app_version",
+    "browse_key_file",
+    "browse_ssh_binary",
+    "cancel_break",
+    "cancel_chat",
+    "cancel_invocation",
+    "cancel_transfer",
+    "check_dir_exists",
+    "check_for_update",
+    "clear_chat",
+    "close_adhoc",
+    "close_window",
+    "config_dir",
+    "copy_ssh_id",
+    "create_schedule",
+    "credentials_backend",
+    "credentials_for_runnable",
+    "delete_credential",
+    "delete_schedule",
+    "delete_trigger",
+    "denylist_status",
+    "docs_url",
+    "expand_targets",
+    "generate_docs",
+    "generate_ssh_key",
+    "get_analytics",
+    "get_config",
+    "get_docs_config",
+    "get_filters",
+    "get_groups",
+    "get_history",
+    "get_history_all",
+    "get_hosts",
+    "get_in_flight",
+    "get_jump_hosts",
+    "get_mailbox",
+    "get_pending_confirms",
+    "get_public_key",
+    "get_room_state",
+    "get_runnables",
+    "get_schedule_board",
+    "get_schedule_events",
+    "get_schedules",
+    "get_skills",
+    "get_sync_config",
+    "get_today",
+    "get_trigger_board",
+    "get_trigger_events",
+    "get_watches",
+    "import_filters",
+    "import_jump_hosts",
+    "invoke_runnable",
+    "is_debug_enabled",
+    "launch_local_terminal",
+    "launch_puttygen",
+    "launch_terminal",
+    "list_action_tools",
+    "list_credentials",
+    "list_dir",
+    "list_dir_adhoc",
+    "list_dir_unsaved",
+    "list_providers",
+    "list_sync_tags",
+    "list_teams",
+    "list_triggers",
+    "logs_compact",
+    "logs_prune",
+    "logs_status",
+    "logs_view",
+    "manage_denylist",
+    "minimize_window",
+    "move_window",
+    "open_devtools",
+    "open_docs",
+    "open_putty_url",
+    "puttygen_path",
+    "remove_team",
+    "rename_group",
+    "resize_window",
+    "resolve_tool_confirmation",
+    "restart_chat",
+    "restart_triggers",
+    "rotate_ssh_key",
+    "run_schedule_now",
+    "run_skill",
+    "save_config",
+    "save_credential",
+    "save_docs_config",
+    "save_filters",
+    "save_groups",
+    "save_jump_hosts",
+    "save_mailbox",
+    "save_rota",
+    "save_skills",
+    "save_sync_config",
+    "save_trigger",
+    "save_watches",
+    "screen_state",
+    "send_chat",
+    "send_room_message",
+    "send_trigger_draft",
+    "set_debug",
+    "set_trigger_enabled",
+    "set_window",
+    "set_window_title",
+    "start_break",
+    "start_chat",
+    "start_fanout",
+    "start_relay",
+    "start_transfer",
+    "start_triggers",
+    "start_voice_dictation",
+    "stop_chat",
+    "stop_triggers",
+    "stop_voice_dictation",
+    "sync_pull",
+    "test_host",
+    "test_room_connection",
+    "test_trigger",
+    "toggle_maximize_window",
+    "update_schedule",
+}
+
+
+def test_public_api_surface_is_frozen():
+    actual = {
+        m for m in dir(Bridge) if not m.startswith("_") and callable(getattr(Bridge, m))
+    }
+    missing = EXPECTED - actual
+    added = actual - EXPECTED
+    assert not missing, f"public JS API methods removed: {sorted(missing)}"
+    assert not added, (
+        f"new public JS API methods (update EXPECTED if intended): {sorted(added)}"
+    )

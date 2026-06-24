@@ -14,7 +14,6 @@ import types
 
 import pytest
 
-import runspec_console.bridge as bmod
 from runspec_console import configmerge, gitsync
 from runspec_console.bridge import Bridge
 from runspec_console.groups import (
@@ -66,7 +65,9 @@ def test_groups_file_is_synced_and_merges_by_name():
 
 
 def _stub(tmp_path, monkeypatch, *, hosts):
-    monkeypatch.setattr(bmod, "hosts_path", lambda: tmp_path / "runspec_hosts.toml")
+    monkeypatch.setattr(
+        "runspec_console.config.hosts_path", lambda: tmp_path / "runspec_hosts.toml"
+    )
     monkeypatch.setattr(
         "runspec_console.config.groups_path", lambda: tmp_path / "runspec_groups.toml"
     )

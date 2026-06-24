@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import threading
 
-import runspec_console.bridge as bridge_mod
 from runspec_console.bridge import Bridge
 
 
@@ -332,9 +331,11 @@ def test_run_runnable_dispatches_to_chosen_host(monkeypatch):
         captured.update(where="remote", ssh=ssh, args=args, runnable=runnable)
         on_done(0, 1)
 
-    monkeypatch.setattr(bridge_mod, "run_remote", fake_run_remote)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda e: ["/bin/runspec"])
-    monkeypatch.setattr(bridge_mod, "venv_name", lambda p: "fleet")
+    monkeypatch.setattr("runspec_console.executor.run_remote", fake_run_remote)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda e: ["/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
 
     runnables = [
         _rn("h1local", "ping", args=[{"name": "count", "type": "int"}]),
@@ -351,10 +352,12 @@ def test_run_runnable_dispatches_to_chosen_host(monkeypatch):
 def test_run_runnable_preflight_blocks_before_dispatch(monkeypatch):
     called = {"ran": False}
     monkeypatch.setattr(
-        bridge_mod, "run_local", lambda *a, **k: called.update(ran=True)
+        "runspec_console.executor.run_local", lambda *a, **k: called.update(ran=True)
     )
-    monkeypatch.setattr(bridge_mod, "_paths", lambda e: ["/bin/runspec"])
-    monkeypatch.setattr(bridge_mod, "venv_name", lambda p: "fleet")
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda e: ["/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
 
     runnables = [
         _rn(
@@ -375,9 +378,11 @@ def test_run_runnable_splits_password_into_secrets(monkeypatch):
         captured.update(args=args, secrets=kw.get("secrets"))
         on_done(0, 1)
 
-    monkeypatch.setattr(bridge_mod, "run_local", fake_run_local)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda e: ["/bin/runspec"])
-    monkeypatch.setattr(bridge_mod, "venv_name", lambda p: "fleet")
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda e: ["/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "fleet")
 
     runnables = [
         _rn(

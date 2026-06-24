@@ -1,0 +1,1560 @@
+"""bridge_agent_tools.py — AgentToolsMixin: extracted from bridge.py (behavior-preserving).
+
+Methods composed onto Bridge via mixin inheritance; they run on the full Bridge
+instance, so ``self`` carries all shared state.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from collections.abc import Collection
+from pathlib import Path
+from typing import Any
+
+
+from . import bridge_utils as utils_mod
+from . import config as config_mod
+from . import hosts as hosts_mod
+
+from .bridge_const import (
+    logger,
+)
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .bridge import Bridge  # noqa: F401
+
+
+class AgentToolsMixin:
+    def _tool_mode(self) -> str:
+        """Agent tool-list layout, from ``[llm] tool_mode``.
+
+        ``"dedup"`` (default) emits one tool per folder/runnable (named
+        ``group__name``) with a required ``host`` enum listing every host that has
+        it — collapsing the N identical per-host copies a uniform fleet produces
+        into a single definition, which is the bulk of the agent's context budget.
+        ``"per_host"`` restores the original one-tool-per-(host, runnable) layout
+        (``host__name``) as a zero-code escape hatch. ``"search"`` replaces the
+        per-runnable tools entirely with discovery meta-tools (search_runnables /
+        run_runnable / describe_runnable) — a constant ~3-tool footprint regardless
+        of how many distinct runnables the fleet installs."""
+        mode = str(self.get_config().get("llm", {}).get("tool_mode", "dedup")).strip()
+        return mode if mode in ("dedup", "per_host", "search") else "dedup"
+
+    @staticmethod
+    def _sanitize_tool_name(raw: str) -> str:
+        """Anthropic tool names allow only ``[a-zA-Z0-9_-]`` and cap at 64 chars."""
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", raw)[:64]
+
+    def _dedup_tool_name(self, r: dict[str, Any]) -> str:
+        """Folder-qualified tool name for dedup mode: sanitised ``group__name``
+        (the bare name when the runnable has no group)."""
+        group = str(r.get("group") or "")
+        name = str(r.get("name") or "")
+        return self._sanitize_tool_name(f"{group}__{name}" if group else name)
+
+    @staticmethod
+    def _declared_arg_name_set(r: dict[str, Any] | None) -> set[str]:
+        """Every arg name the runnable declares (globals + all subcommand args)."""
+        names: set[str] = set()
+        for a in (r or {}).get("args") or []:
+            if a.get("name"):
+                names.add(a["name"])
+        for cmd in ((r or {}).get("commands") or {}).values():
+            for a in cmd.get("args") or []:
+                if a.get("name"):
+                    names.add(a["name"])
+        return names
+
+    def _host_selector_key(self, r: dict[str, Any] | None) -> str:
+        """Property name for the injected host enum in dedup mode. Normally
+        ``"host"``; if the runnable already declares an arg named ``host`` (so the
+        selector would shadow a real input), fall back to ``_host`` / ``__host`` —
+        derived deterministically so build and dispatch agree without extra state."""
+        declared = self._declared_arg_name_set(r)
+        key = "host"
+        while key in declared:
+            key = "_" + key
+        return key
+
+    def _union_scoped_credentials(
+        self, hosts: list[str], runnable: str
+    ) -> list[dict[str, Any]]:
+        """Credentials in scope for ``runnable`` on *any* of ``hosts`` (dedup mode
+        offers one shared override enum; auto-apply still resolves per actual host
+        at dispatch). De-duplicated by id, first occurrence wins."""
+        seen: set[str] = set()
+        out: list[dict[str, Any]] = []
+        for h in hosts:
+            for c in self._scoped_credentials(h, runnable):
+                if c["id"] not in seen:
+                    seen.add(c["id"])
+                    out.append(c)
+        return out
+
+    def _allowed_hosts(
+        self, allowset: set[str], name: str, tool_name: str, hosts: list[str]
+    ) -> list[str]:
+        """Subset of ``hosts`` a dedup tool may target under a trigger allowlist.
+
+        A bare runnable ``name`` or the dedup ``tool_name`` admits every host; a
+        host-qualified entry (``host__name``, raw or sanitised) admits only that
+        host — so a trigger scoped to one host's runnable stays scoped even though
+        the deduped tool is shared across hosts."""
+        if name in allowset or tool_name in allowset:
+            return list(hosts)
+        out: list[str] = []
+        for h in hosts:
+            raw = f"{h}__{name}"
+            if raw in allowset or self._sanitize_tool_name(raw) in allowset:
+                out.append(h)
+        return out
+
+    def _build_input_schema(
+        self,
+        r: dict[str, Any],
+        scoped_creds: list[dict[str, Any]],
+        hosts: list[str] | None = None,
+        host_key: str = "host",
+    ) -> dict[str, Any]:
+        """Anthropic ``input_schema`` for one runnable.
+
+        ``hosts`` (dedup mode) prepends a required host enum under ``host_key``
+        naming the hosts that have this runnable; ``None`` (per-host mode) omits it
+        — the host is carried in the tool name instead. ``scoped_creds`` drives the
+        optional ``credential_id`` override enum."""
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+
+        if hosts is not None:
+            properties[host_key] = {
+                "type": "string",
+                "enum": list(hosts),
+                "description": "Host to run on. Options: " + ", ".join(hosts) + ".",
+            }
+            required.append(host_key)
+
+        def add_arg(arg: dict[str, Any], note: str = "") -> None:
+            """Add one spec arg as a JSON-schema property. ``note`` prefixes the
+            description (used to tag a subcommand's own args) and marks the arg
+            as conditional — never added to the tool's top-level ``required``."""
+            arg_name = arg.get("name", "")
+            if not arg_name or arg_name in properties:
+                return
+            # Secrets never become agent inputs — the agent must not see, type, or
+            # guess a password (a guess just yields an auth failure). A bound
+            # credential fills it from secure storage at run time (in-scope ones
+            # auto-apply; credential_id picks a specific one). Same rule as the
+            # visitor catalog (catalog.py) and the core's --format mcp emit.
+            if arg.get("type") == "password":
+                return
+            arg_type = arg.get("type", "str")
+            json_type = {
+                "int": "integer",
+                "float": "number",
+                "flag": "boolean",
+                "bool": "boolean",
+                "path": "string",
+            }.get(arg_type, "string")
+            prop: dict[str, Any] = {"type": json_type}
+            # Build description: optional note + user-facing text + default hint
+            # so the LLM knows what value will be used when the arg is omitted.
+            desc_parts: list[str] = []
+            if note:
+                desc_parts.append(note)
+            if arg.get("description") or arg.get("help"):
+                desc_parts.append(str(arg.get("description") or arg.get("help")))
+            default = arg.get("default")
+            if default is not None:
+                if isinstance(default, str) and default.startswith("$"):
+                    desc_parts.append(f"(default from env var {default})")
+                else:
+                    desc_parts.append(f"(default: {default})")
+            if desc_parts:
+                prop["description"] = " ".join(desc_parts)
+            if arg.get("options"):
+                prop["enum"] = arg["options"]
+            properties[arg_name] = prop
+            if arg.get("required") and not note:
+                required.append(arg_name)
+
+        for arg in r.get("args") or []:
+            add_arg(arg)
+
+        # Surface subcommands so the agent can pick one — and knows when it
+        # MUST. Without this the agent only saw the global args and had no way
+        # to name a command, so require-command runnables were unrunnable.
+        commands = r.get("commands") or {}
+        if commands:
+            cmd_names = list(commands.keys())
+            require_command = bool(r.get("requireCommand"))
+            summary = "; ".join(
+                f"'{cn}'"
+                + (
+                    f" — {commands[cn].get('description')}"
+                    if commands[cn].get("description")
+                    else ""
+                )
+                for cn in cmd_names
+            )
+            properties["command"] = {
+                "type": "string",
+                "enum": cmd_names,
+                "description": (
+                    f"Subcommand to run ({summary}). "
+                    + (
+                        "Required: this runnable cannot run without choosing "
+                        "one of these commands."
+                        if require_command
+                        else "Optional — omit to run the runnable at its top level."
+                    )
+                ),
+            }
+            if require_command:
+                required.append("command")
+            # Each command's own (non-inherited) args become optional inputs,
+            # tagged with the command they belong to. Globals already added above.
+            for cn in cmd_names:
+                for arg in commands[cn].get("args") or []:
+                    if arg.get("inherited"):
+                        continue
+                    add_arg(arg, note=f"(for the '{cn}' command)")
+
+        # Offer any in-scope credentials by id (override only — in-scope ones
+        # apply automatically). The agent picks an *id*, never sees the secret.
+        if scoped_creds:
+            cred_summary = "; ".join(
+                f"'{c['id']}'" + (f" — {c['label']}" if c.get("label") else "")
+                for c in scoped_creds
+            )
+            properties["credential_id"] = {
+                "type": "string",
+                "enum": [c["id"] for c in scoped_creds],
+                "description": (
+                    "Optional: apply a saved credential by id to fill its bound "
+                    "arguments from secure storage. The matching credential(s) "
+                    "already apply automatically — set this only to choose a "
+                    f"specific one. Options: {cred_summary}."
+                ),
+            }
+
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        return schema
+
+    def _runnables_to_tools(
+        self, allow: Collection[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Convert cached runnables to Anthropic-format tool schemas.
+
+        Layout follows ``_tool_mode()``: ``"dedup"`` (default) emits one tool per
+        ``(group, name)`` with a host enum; ``"per_host"`` emits one per
+        ``(host, name)``; ``"search"`` emits only the discovery meta-tools. ``allow``
+        (when non-empty) scopes the result to an allowlist — each entry matches a
+        runnable's bare ``name`` or its qualified ``host__name`` (raw or sanitised) —
+        so an agent-mode trigger can be limited to a curated set of tools (in dedup
+        mode a host-qualified entry also narrows the shared tool's host enum).
+        ``None``/empty = every runnable.
+
+        Search mode applies only to the unrestricted (manual chat) tool list: a
+        trigger that passes an ``allow`` set is already curated to a handful of
+        runnables, so it falls back to the dedup layout (scoped) — the search
+        interface would add nothing there.
+        """
+        allowset = {str(a).strip() for a in allow} if allow else None
+        self._reload_credentials()  # so per-runnable credential_id enums are current
+        mode = self._tool_mode()
+        if mode == "search" and allowset is None:
+            tools = self._search_mode_tools()
+            try:
+                tools.extend(self._custom_agent_tools())
+            except Exception:
+                logger.debug("custom agent tools unavailable", exc_info=True)
+            return tools
+        with self._lock:
+            runnables = list(self._runnables_cache)
+        tools: list[dict[str, Any]] = []
+        seen_tool_names: set[str] = set()
+
+        def _dup_warn(tool_name: str, name: str) -> None:
+            sys.stderr.write(
+                f"runspec-console: warning: duplicate tool name '{tool_name}' skipped"
+                f" ('{name}' defined in multiple installed packages)\n"
+            )
+            sys.stderr.flush()
+
+        if mode == "per_host":
+            for r in runnables:
+                host = r.get("host", "local")
+                name = r.get("name", "")
+                raw_name = f"{host}__{name}"
+                tool_name = self._sanitize_tool_name(raw_name)
+                if allowset is not None and not (
+                    name in allowset or raw_name in allowset or tool_name in allowset
+                ):
+                    continue  # scoped out by the trigger's runnables allowlist
+                if tool_name in seen_tool_names:
+                    _dup_warn(tool_name, name)
+                    continue
+                seen_tool_names.add(tool_name)
+                schema = self._build_input_schema(
+                    r, self._scoped_credentials(host, name)
+                )
+                tools.append(
+                    {
+                        "name": tool_name,
+                        "description": r.get("description") or f"Run {name} on {host}",
+                        "input_schema": schema,
+                    }
+                )
+        else:
+            # dedup: collapse the per-host copies of each (group, name). The first
+            # runnable seen for a key drives the schema (a uniform fleet runs an
+            # identical spec on every host); the host enum lists every host with it.
+            groups: dict[tuple[str, str], dict[str, Any]] = {}
+            order: list[tuple[str, str]] = []
+            for r in runnables:
+                key = (str(r.get("group") or ""), str(r.get("name") or ""))
+                g = groups.get(key)
+                if g is None:
+                    g = {"rep": r, "hosts": []}
+                    groups[key] = g
+                    order.append(key)
+                h = r.get("host", "local")
+                if h not in g["hosts"]:
+                    g["hosts"].append(h)
+            for key in order:
+                rep = groups[key]["rep"]
+                hosts = groups[key]["hosts"]
+                name = rep.get("name", "")
+                tool_name = self._dedup_tool_name(rep)
+                if allowset is not None:
+                    hosts = self._allowed_hosts(allowset, name, tool_name, hosts)
+                    if not hosts:
+                        continue  # no allowed host for this runnable
+                if tool_name in seen_tool_names:
+                    _dup_warn(tool_name, name)
+                    continue
+                seen_tool_names.add(tool_name)
+                schema = self._build_input_schema(
+                    rep,
+                    self._union_scoped_credentials(hosts, name),
+                    hosts=hosts,
+                    host_key=self._host_selector_key(rep),
+                )
+                tools.append(
+                    {
+                        "name": tool_name,
+                        "description": (
+                            rep.get("description") or f"Run {name} on a fleet host"
+                        ),
+                        "input_schema": schema,
+                    }
+                )
+        # Built-in file-transfer tools are additive — never let a problem building
+        # them strip the runnable tools the agent actually needs.
+        try:
+            tools.extend(self._custom_agent_tools())
+        except Exception:
+            logger.debug("custom agent tools unavailable", exc_info=True)
+        return tools
+
+    def _custom_agent_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the built-in file-transfer tools — download a file from a
+        remote host, or relay one host→host, each with an optional saved filter.
+        Host and filter names are surfaced as enums (with the filter descriptions)
+        so the model picks valid values."""
+        remote = [h["name"] for h in self._hosts if h.get("ssh")]
+        deny_tool = self._denylist_tool()  # available for local-only fleets too
+        if not remote:
+            # No transfer tools (those need a remote), but status + memory are
+            # local and the denylist tool works against any host with a runspec path.
+            return [
+                *([deny_tool] if deny_tool else []),
+                *self._outlook_tools(),
+                *self._status_tools(),
+                *self._memory_tools(),
+                *self._action_tools(),
+            ]
+        self._reload_credentials()  # for the relay source_credential enum
+        filters = self._filters
+        filter_names = [f["name"] for f in filters if f.get("name")]
+
+        def filter_props() -> dict[str, Any]:
+            if not filter_names:
+                return {}
+            lines = []
+            for f in filters:
+                line = f"'{f['name']}'"
+                if "{{arg}}" in (f.get("pipeline") or ""):
+                    line += f" (needs filter_value: {f.get('param_label') or 'value'})"
+                if f.get("description"):
+                    line += f" — {f['description']}"
+                lines.append(line)
+            return {
+                "filter": {
+                    "type": "string",
+                    "enum": filter_names,
+                    "description": (
+                        "Optional saved filter applied on the source host before "
+                        "transfer, so only matching output crosses the network "
+                        "(ideal for a few lines from a big log). Available: "
+                        + "; ".join(lines)
+                        + "."
+                    ),
+                },
+                "filter_value": {
+                    "type": "string",
+                    "description": "Value for a filter that needs one (its {{arg}} placeholder).",
+                },
+            }
+
+        download = {
+            "name": "download_file",
+            "description": (
+                "Download a file from a remote host to the local machine. Optionally "
+                "filter it on the remote host first — only the matching output is "
+                "transferred, so pulling a few relevant lines out of a multi-gigabyte "
+                "log is cheap."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string",
+                        "enum": remote,
+                        "description": "Remote host to download from.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path of the file on the remote host.",
+                    },
+                    "dest_dir": {
+                        "type": "string",
+                        "description": "Local destination directory.",
+                    },
+                    **filter_props(),
+                },
+                "required": ["host", "path", "dest_dir"],
+            },
+        }
+        cred_ids = [str(c.get("id")) for c in self._credentials if c.get("id")]
+        relay_source_props: dict[str, Any] = {
+            "source_host": {
+                "type": "string",
+                "enum": remote,
+                "description": (
+                    "Configured fleet host to read from. Omit when reading from an "
+                    "ad-hoc host via source_via + source_target instead."
+                ),
+            },
+            "source_via": {
+                "type": "string",
+                "enum": remote,
+                "description": (
+                    "To read from a host that is NOT in the fleet, the configured "
+                    "jump host to tunnel through. Use with source_target (and "
+                    "source_credential if the ad-hoc host needs a password)."
+                ),
+            },
+            "source_target": {
+                "type": "string",
+                "description": (
+                    "Hostname of the ad-hoc source reached through source_via."
+                ),
+            },
+        }
+        if cred_ids:
+            relay_source_props["source_credential"] = {
+                "type": "string",
+                "enum": cred_ids,
+                "description": (
+                    "Saved credential id providing the SSH password for the ad-hoc "
+                    "source (source_via + source_target). Its secret is read from "
+                    "secure storage at connect time — you never see the value. "
+                    f"Available: {', '.join(cred_ids)}."
+                ),
+            }
+        relay = {
+            "name": "relay_file",
+            "description": (
+                "Relay a file from one host to another through the console, "
+                "optionally filtering it on the source host first. The source is "
+                "either a configured fleet host (source_host) or an ad-hoc host "
+                "reached via a jump (source_via + source_target, with an optional "
+                "source_credential for password auth)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    **relay_source_props,
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path of the file on the source host.",
+                    },
+                    "dest_host": {
+                        "type": "string",
+                        "enum": remote,
+                        "description": "Host to write the file to.",
+                    },
+                    "dest_dir": {
+                        "type": "string",
+                        "description": "Destination directory on dest_host.",
+                    },
+                    **filter_props(),
+                },
+                "required": ["path", "dest_host", "dest_dir"],
+            },
+        }
+        return [
+            download,
+            relay,
+            *([deny_tool] if deny_tool else []),
+            *self._outlook_tools(),
+            *self._status_tools(),
+            *self._memory_tools(),
+            *self._action_tools(),
+        ]
+
+    def _outlook_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the Outlook Classic (desktop COM) tools — read inbox /
+        search / calendar / reminders (read-only, autonomous) and draft / send
+        (confirm-gated). Offered only when Outlook COM is available (Windows +
+        pywin32); empty list otherwise so non-Windows consoles are unaffected."""
+        from .config import read_mailbox, read_watches
+        from .sources import outlook as ol
+
+        if not ol.outlook_available():
+            return []
+        mailbox = read_mailbox() or {}
+        mbox_hint = (
+            f" The monitored mailbox is {mailbox.get('address') or 'your default account'}"
+            f"{('/' + mailbox['folder']) if mailbox.get('folder') else ''};"
+            " omit mailbox/folder to use it."
+            if mailbox
+            else " Omit mailbox/folder to use your default account's Inbox."
+        )
+
+        def _watch_name(w: dict[str, Any]) -> str:
+            addr = w.get("address") or "your default account"
+            folder = w.get("folder")
+            return f"{addr}/{folder}" if folder and folder != "Inbox" else addr
+
+        watches = read_watches()
+        if watches:
+            mbox_hint += (
+                " Also monitored (pass mailbox/folder to read these): "
+                + ", ".join(_watch_name(w) for w in watches)
+                + "."
+            )
+        return [
+            {
+                "name": "outlook_inbox",
+                "description": (
+                    "List recent messages from Outlook Classic (desktop COM, newest "
+                    "first), unread by default." + mbox_hint
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "unread_only": {
+                            "type": "boolean",
+                            "description": "Only unread messages (default true).",
+                        },
+                        "count": {
+                            "type": "integer",
+                            "description": "Max messages to return (default 20).",
+                        },
+                        "mailbox": {
+                            "type": "string",
+                            "description": "Mailbox address; omit for the monitored/default account.",
+                        },
+                        "folder": {
+                            "type": "string",
+                            "description": "Folder path (e.g. 'Tickets/Open'); omit for Inbox.",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "outlook_search",
+                "description": "Search an Outlook folder's messages by subject/body text (desktop COM)."
+                + mbox_hint,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Text to match in subject or body.",
+                        },
+                        "count": {
+                            "type": "integer",
+                            "description": "Max messages to return (default 20).",
+                        },
+                        "mailbox": {
+                            "type": "string",
+                            "description": "Mailbox address; omit for the monitored/default account.",
+                        },
+                        "folder": {
+                            "type": "string",
+                            "description": "Folder path; omit for Inbox.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "outlook_calendar",
+                "description": "List upcoming Outlook calendar events over the next N days (desktop COM).",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "days": {
+                            "type": "integer",
+                            "description": "Days ahead to include (default 1 = today).",
+                        },
+                        "count": {
+                            "type": "integer",
+                            "description": "Max events to return (default 20).",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "outlook_reminders",
+                "description": "List currently-active Outlook reminders (desktop COM).",
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "outlook_draft",
+                "description": (
+                    "Save a mail to the Outlook Drafts folder (never sent). Provide "
+                    "reply_to (a message entry_id) to draft a reply with the original "
+                    "quoted, or to/subject to draft a new message. from_mailbox sends "
+                    "as a shared mailbox (send-as/on-behalf)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "body": {
+                            "type": "string",
+                            "description": "Message body (your text; goes above the quoted original on a reply).",
+                        },
+                        "reply_to": {
+                            "type": "string",
+                            "description": "entry_id of the message to reply to (from outlook_inbox/search or a new_mail trigger).",
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "Recipient(s) for a new message (semicolon-separated).",
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Subject for a new message.",
+                        },
+                        "cc": {
+                            "type": "string",
+                            "description": "CC recipient(s) for a new message.",
+                        },
+                        "from_mailbox": {
+                            "type": "string",
+                            "description": "Shared mailbox to send as (optional).",
+                        },
+                    },
+                    "required": ["body"],
+                },
+            },
+            {
+                "name": "outlook_send",
+                "description": (
+                    "Send mail via Outlook Classic. Provide entry_id to send an "
+                    "existing draft, or to/subject/body to compose and send. This "
+                    "actually sends — it is confirm-gated, so the operator approves "
+                    "each send. from_mailbox sends as a shared mailbox."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of a saved draft to send.",
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "Recipient(s) when composing+sending (semicolon-separated).",
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Subject when composing+sending.",
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "Body when composing+sending.",
+                        },
+                        "cc": {"type": "string", "description": "CC recipient(s)."},
+                        "from_mailbox": {
+                            "type": "string",
+                            "description": "Shared mailbox to send as (optional).",
+                        },
+                    },
+                },
+            },
+        ]
+
+    def _run_outlook_tool(self, name: str, ti: dict[str, Any]) -> str:
+        """Execute an Outlook Classic tool via desktop COM and return a compact
+        result. Reads return JSON rows; draft/send return a one-line summary (the
+        autonomy gate has already approved a write)."""
+        import json as _json
+
+        from .sources import outlook as ol
+
+        try:
+            if name == "outlook_inbox":
+                rows = ol.list_messages(
+                    str(ti.get("mailbox") or ""),
+                    str(ti.get("folder") or ""),
+                    bool(ti.get("unread_only", True)),
+                    int(ti.get("count") or 20),
+                )
+                return _json.dumps({"messages": rows, "count": len(rows)}, default=str)
+            if name == "outlook_search":
+                query = str(ti.get("query") or "").strip()
+                if not query:
+                    return "Error: 'query' is required for outlook_search."
+                rows = ol.search_messages(
+                    query,
+                    str(ti.get("mailbox") or ""),
+                    str(ti.get("folder") or ""),
+                    int(ti.get("count") or 20),
+                )
+                return _json.dumps({"messages": rows, "count": len(rows)}, default=str)
+            if name == "outlook_calendar":
+                rows = ol.upcoming_events(
+                    int(ti.get("days") or 1), int(ti.get("count") or 20)
+                )
+                if rows is None:
+                    return "Could not read the Outlook calendar (is Outlook running?)."
+                return _json.dumps({"events": rows, "count": len(rows)}, default=str)
+            if name == "outlook_reminders":
+                rows = ol.list_reminders(int(ti.get("count") or 20))
+                if rows is None:
+                    return "Could not read Outlook reminders (is Outlook running?)."
+                return _json.dumps({"reminders": rows, "count": len(rows)}, default=str)
+            if name == "outlook_draft":
+                body = str(ti.get("body") or "")
+                fm = str(ti.get("from_mailbox") or "") or None
+                if ti.get("reply_to"):
+                    res = ol.save_reply_draft(str(ti["reply_to"]), body, fm)
+                else:
+                    to = str(ti.get("to") or "")
+                    if not to:
+                        return "Error: provide reply_to (an entry_id) or to (a recipient) for outlook_draft."
+                    res = ol.save_new_draft(
+                        to,
+                        str(ti.get("subject") or ""),
+                        body,
+                        str(ti.get("cc") or ""),
+                        fm or "",
+                    )
+                return f"✓ Draft saved to Drafts (entry_id {res.get('entry_id')}): to {res.get('to')} — {res.get('subject')}"
+            if name == "outlook_send":
+                if ti.get("entry_id"):
+                    res = ol.send_draft(str(ti["entry_id"]))
+                else:
+                    to = str(ti.get("to") or "")
+                    if not to:
+                        return "Error: provide entry_id (a saved draft) or to/subject/body for outlook_send."
+                    res = ol.send_new_mail(
+                        to,
+                        str(ti.get("subject") or ""),
+                        str(ti.get("body") or ""),
+                        str(ti.get("cc") or ""),
+                        str(ti.get("from_mailbox") or ""),
+                    )
+                return f"✓ Sent: to {res.get('to')} — {res.get('subject', '')}"
+        except Exception as exc:  # noqa: BLE001 — surface COM failures to the agent
+            return f"✗ Outlook {name} failed: {exc}"
+        return f"Error: unknown Outlook tool '{name}'."
+
+    def _denylist_tool(self) -> dict[str, Any] | None:
+        """Schema for the built-in ``manage_denylist`` tool — a fleet kill switch.
+
+        Runs ``runspec deny`` over SSH on the selected hosts (one call per venv),
+        writing each host's ``runspec_denylist.toml``. ``runspec`` is the core
+        binary (never disabled by its own denylist), so ``clear`` always
+        re-enables and this can never lock the console out. Returns ``None`` when
+        no host has a runspec path to act on."""
+        targets = [h["name"] for h in self._hosts if utils_mod._paths(h)]
+        if not targets:
+            return None
+        return {
+            "name": "manage_denylist",
+            "description": (
+                "Inspect or change which runspec runnables are disabled on fleet "
+                "hosts — a kill switch. action='list' is READ-ONLY and runs "
+                "without a prompt: use it to see what's currently disabled (a run "
+                "you attempt may be refused by the denylist, so check here first "
+                "if a runnable is unexpectedly blocked). The mutating actions are "
+                "confirm-gated. It writes each host's venv denylist via `runspec "
+                "deny` over SSH — disabling the *runnables* on those hosts, not "
+                "the console — and re-enabling (action='clear') always works "
+                "because the core `runspec` binary is exempt from its own "
+                "denylist. Actions: 'list' (inspect), 'add' (disable specific "
+                "runnable/user/host globs), 'all' (disable every runnable), "
+                "'clear' (re-enable everything), 'mode' (set enforce|warn|off)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "all", "clear", "mode"],
+                        "description": "What to do to the denylist on each target host.",
+                    },
+                    "targets": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": targets},
+                        "description": (
+                            "Fleet hosts to apply to. Omit or leave empty to apply "
+                            "to ALL hosts. Each host's every venv is updated."
+                        ),
+                    },
+                    "runnable": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "action='add': runnable-name globs to disable (e.g. "
+                            "['deploy', 'restart-*']). Omit ⇒ all runnables."
+                        ),
+                    },
+                    "user": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "action='add': username globs the rule applies to. Omit ⇒ all users.",
+                    },
+                    "host": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "action='add': hostname globs the rule applies to. Omit ⇒ all hosts.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "action='add'/'all': reason recorded and shown on the refusal.",
+                    },
+                    "setting": {
+                        "type": "string",
+                        "enum": ["enforce", "warn", "off"],
+                        "description": "action='mode': enforcement level for the denylist.",
+                    },
+                },
+                "required": ["action"],
+            },
+        }
+
+    def _status_tools(self) -> list[dict[str, Any]]:
+        """Schema for the read-only ``console_status`` tool — lets the agent
+        re-check the working-hours rota (and whether it's inside/outside hours
+        right now) plus the configured triggers/schedules on demand, e.g. before
+        running something in a long session where the clock may have crossed a
+        working-hours boundary since the turn began."""
+        return [
+            {
+                "name": "console_status",
+                "description": (
+                    "Report the live console automation state: the working-hours "
+                    "rota (on/off and whether it is currently INSIDE or OUTSIDE "
+                    "working hours), plus the configured triggers and schedules. "
+                    "Read-only. Use it to re-check working hours before running, "
+                    "scheduling, or triggering something — especially in a long "
+                    "conversation where the time may have crossed a rota boundary."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ]
+
+    def _run_status_tool(self, ti: dict[str, Any]) -> str:
+        """Execute ``console_status`` — return the live rota + triggers + schedules
+        snapshot (the autonomy gate has already let it run; it has no side effects)."""
+        snapshot = self._console_context() or (
+            "Working-hours rota: OFF — automation runs at any time. No triggers or "
+            "schedules are configured."
+        )
+        # Zero-cost pointer (no fleet sweep): make the kill switch discoverable from
+        # the status tool so the agent knows where to look when a run is blocked.
+        if any(utils_mod._paths(h) for h in self._hosts):
+            snapshot += (
+                "\n\nRunnables may also be disabled by the fleet denylist (a kill "
+                "switch). Call manage_denylist with action='list' to see what is "
+                "currently disabled, on which hosts."
+            )
+        return snapshot
+
+    def _memory_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the persistent-memory / runbook tools. Always available (the
+        stores are local) — so the agent accrues knowledge even with no remote hosts.
+        `load_skill`'s id is surfaced as an enum (with titles) so the model picks a
+        real runbook; it's omitted when none are saved."""
+        from . import memory
+
+        tools: list[dict[str, Any]] = [
+            {
+                "name": "remember",
+                "description": (
+                    "Save a durable fact about an application for future runs — where "
+                    "a log lives, what a recurring error means, which service to check. "
+                    "Cheap to call; it persists locally and is recalled later via "
+                    "search_memory. Set pin=true for a high-value fact you want folded "
+                    "into every future chat's context (use sparingly)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "fact": {
+                            "type": "string",
+                            "description": "The fact to remember, one sentence.",
+                        },
+                        "app": {
+                            "type": "string",
+                            "description": "Application/system this fact is about (groups related facts). Defaults to 'general'.",
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional keywords to aid later recall.",
+                        },
+                        "pin": {
+                            "type": "boolean",
+                            "description": "Pin into every future chat's context (only the most useful facts).",
+                        },
+                    },
+                    "required": ["fact"],
+                },
+            },
+            {
+                "name": "search_memory",
+                "description": (
+                    "Recall previously remembered facts about an application by keyword "
+                    "before investigating from scratch — saves re-deriving what a past "
+                    "run already learned. Returns the most relevant saved facts."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Keywords to search remembered facts for.",
+                        },
+                        "app": {
+                            "type": "string",
+                            "description": "Optional: restrict to one application's facts.",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "save_skill",
+                "description": (
+                    "Save a reusable runbook — a named procedure with the symptom it "
+                    "addresses and the ordered steps (which runnables to call). "
+                    "Shareable across the team via Config Sync."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Short id/slug (blank → derived from title).",
+                        },
+                        "title": {"type": "string", "description": "Human title."},
+                        "symptom": {
+                            "type": "string",
+                            "description": "When to use this runbook.",
+                        },
+                        "steps": {
+                            "type": "string",
+                            "description": "Ordered steps, naming which runnables to call.",
+                        },
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["title", "steps"],
+                },
+            },
+        ]
+        skills = memory.list_skills()
+        if skills:
+            ids = [s["id"] for s in skills]
+            menu = "; ".join(
+                f"'{s['id']}'" + (f" — {s['title']}" if s.get("title") else "")
+                for s in skills
+            )
+            tools.append(
+                {
+                    "name": "load_skill",
+                    "description": (
+                        "Load a saved runbook's full steps by id, to follow an "
+                        f"established procedure for a known symptom. Available: {menu}."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "enum": ids,
+                                "description": "Which runbook to load.",
+                            }
+                        },
+                        "required": ["id"],
+                    },
+                }
+            )
+        return tools
+
+    def _action_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the built-in 'action' tools an agent-mode trigger (or chat)
+        uses to *act* beyond running runnables: write a markdown document, follow a
+        saved runbook, create a schedule, or emit an event into the trigger engine.
+        All four are side-effecting, so the autonomy gate prompts before each (see
+        ``_ACTION_TOOL_NAMES`` in ``_effective_tool_autonomy``)."""
+        from . import memory
+
+        remote = [h["name"] for h in self._hosts if h.get("ssh")]
+        tools: list[dict[str, Any]] = [
+            {
+                "name": "create_document",
+                "description": (
+                    "Write a markdown document to a file. Always saves a copy on "
+                    "the local console machine; when dest is a fleet host it also "
+                    "uploads it there. Use it to capture a summary, report, or note."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "filename": {
+                            "type": "string",
+                            "description": "File name, e.g. 'incident-2026-06-22.md'.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The markdown content to write.",
+                        },
+                        "dest": {
+                            "type": "string",
+                            "enum": ["local", *remote],
+                            "description": (
+                                "Where to write it: 'local' (the console machine) "
+                                "or a fleet host to also upload it to. Default local."
+                            ),
+                        },
+                        "dest_dir": {
+                            "type": "string",
+                            "description": (
+                                "Destination directory. Required for a remote host; "
+                                "optional locally (defaults to the console docs dir)."
+                            ),
+                        },
+                    },
+                    "required": ["filename", "content"],
+                },
+            }
+        ]
+
+        skills = memory.list_skills()
+        if skills:
+            menu = "; ".join(
+                f"'{s['id']}'" + (f" — {s['title']}" if s.get("title") else "")
+                for s in skills
+            )
+            tools.append(
+                {
+                    "name": "run_skill",
+                    "description": (
+                        "Load a saved runbook by id and follow its steps as part of "
+                        "this turn. Returns the runbook's rendered steps for you to "
+                        f"carry out with your other tools. Available: {menu}."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "skill_id": {
+                                "type": "string",
+                                "enum": [s["id"] for s in skills],
+                                "description": "Which runbook to run.",
+                            },
+                            "values": {
+                                "type": "object",
+                                "description": "Values for the runbook's {{name}} parameters.",
+                            },
+                            "extra_instructions": {
+                                "type": "string",
+                                "description": "Optional extra context to append.",
+                            },
+                        },
+                        "required": ["skill_id"],
+                    },
+                }
+            )
+
+        tools.append(
+            {
+                "name": "create_schedule",
+                "description": (
+                    "Create a recurring schedule that fires on a cron expression or "
+                    "a fixed interval. It either emits a matchable event into the "
+                    "trigger engine (action='event') or runs a runnable directly "
+                    "(action='runnable')."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Short id for the schedule.",
+                        },
+                        "action": {
+                            "type": "string",
+                            "enum": ["event", "runnable"],
+                            "description": "Emit an event, or run a runnable directly.",
+                        },
+                        "when": {
+                            "type": "object",
+                            "description": (
+                                "Timing: exactly one of cron='M H D M W' or "
+                                "every='15m', plus optional timezone (IANA name)."
+                            ),
+                            "properties": {
+                                "cron": {"type": "string"},
+                                "every": {"type": "string"},
+                                "timezone": {"type": "string"},
+                            },
+                        },
+                        "event": {
+                            "type": "string",
+                            "description": "Event name (action='event').",
+                        },
+                        "fields": {
+                            "type": "object",
+                            "description": "Event payload fields (action='event').",
+                        },
+                        "host": {
+                            "type": "string",
+                            "description": "Host to run on (action='runnable').",
+                        },
+                        "runnable": {
+                            "type": "string",
+                            "description": "Runnable name (action='runnable').",
+                        },
+                        "args": {
+                            "type": "object",
+                            "description": "Runnable args (action='runnable').",
+                        },
+                    },
+                    "required": ["id", "action", "when"],
+                },
+            }
+        )
+
+        tools.append(
+            {
+                "name": "emit_event",
+                "description": (
+                    "Emit a matchable event into the trigger engine now. Triggers "
+                    "with source='schedule' and a matching event type pick it up "
+                    "(fan-out) — use it to hand work to other triggers."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "event": {
+                            "type": "string",
+                            "description": "Event type name to emit.",
+                        },
+                        "fields": {
+                            "type": "object",
+                            "description": "Payload fields the event carries.",
+                        },
+                    },
+                    "required": ["event"],
+                },
+            }
+        )
+        return tools
+
+    def _run_action_tool(self, name: str, ti: dict[str, Any], chat_id: str = "") -> str:
+        """Execute a built-in action tool (the gate has already approved it).
+        ``create_document`` writes/uploads markdown; ``run_skill`` renders a saved
+        runbook inline (NOT a spawned sub-agent — keeps the turn single-level);
+        ``create_schedule``/``emit_event`` drive the scheduler + trigger engine."""
+        if name == "create_document":
+            return self._action_create_document(ti)
+        if name == "run_skill":
+            return self._action_run_skill(ti)
+        if name == "create_schedule":
+            return self._action_create_schedule(ti)
+        if name == "emit_event":
+            return self._action_emit_event(ti)
+        return f"Error: unknown tool '{name}'"
+
+    def _action_create_document(self, ti: dict[str, Any]) -> str:
+        content = str(ti.get("content") or "")
+        filename = os.path.basename(str(ti.get("filename") or "").strip())
+        if not filename:
+            return "Error: 'filename' is required."
+        if not content.strip():
+            return "Error: 'content' is empty — nothing to write."
+        dest = str(ti.get("dest") or "local").strip() or "local"
+        dest_dir = str(ti.get("dest_dir") or "").strip()
+        local_dir = (
+            dest_dir
+            if (dest == "local" and dest_dir)
+            else str(config_mod.app_dir() / "documents")
+        )
+        try:
+            Path(local_dir).mkdir(parents=True, exist_ok=True)
+            local_path = Path(local_dir) / filename
+            local_path.write_text(content, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not write {filename} locally: {exc}"
+        if dest == "local":
+            return f"✓ Wrote {filename} to {local_dir}."
+        if not dest_dir:
+            return "Error: dest_dir is required when dest is a host."
+        # Upload the local copy to the host via the normal transfer path.
+        res = self.start_transfer("local", [str(local_path)], dest, dest_dir)
+        if res.get("error"):
+            return (
+                f"✗ Wrote {filename} locally, but could not start upload to "
+                f"{dest}: {res['error']}"
+            )
+        tid = res.get("id")
+        detail = self._await_transfer(tid) if tid else None
+        if detail is None:
+            return (
+                f"Wrote {filename} locally; upload to {dest} started (id {tid}) — "
+                "check the transfer panel for the result."
+            )
+        if detail.get("ok"):
+            return (
+                f"✓ Wrote {filename} to {local_dir} and uploaded it to {dest_dir} "
+                f"on {dest}."
+            )
+        return (
+            f"✓ Wrote {filename} locally, but upload to {dest} failed: "
+            f"{detail.get('error') or 'unknown error'}"
+        )
+
+    def _action_run_skill(self, ti: dict[str, Any]) -> str:
+        from . import memory, skillargs
+
+        skill = memory.load_skill(str(ti.get("skill_id") or ""))
+        if not skill:
+            return f"Error: no runbook with id '{ti.get('skill_id')}'."
+        vals = dict(ti.get("values") or {})
+        raw = skill.get("args") if isinstance(skill.get("args"), dict) else {}
+        errors = skillargs.validate_skill_values(raw, vals)
+        if errors:
+            return "Error: " + "; ".join(errors)
+        body = memory.render_skill_body(str(skill.get("steps") or ""), vals)
+        extra = str(ti.get("extra_instructions") or "").strip()
+        text = f"{body}\n\n{extra}".strip() if extra else body.strip()
+        if not text:
+            return "Error: this runbook has an empty body."
+        title = skill.get("title") or skill.get("id")
+        return f"Runbook '{title}' — follow these steps now using your tools:\n\n{text}"
+
+    def _action_create_schedule(self, ti: dict[str, Any]) -> str:
+        from .sources.schedule import parse_schedule_entry
+
+        sid = str(ti.get("id") or "").strip()
+        if not sid:
+            return "Error: 'id' is required."
+        data: dict[str, Any] = {
+            "id": sid,
+            "action": str(ti.get("action") or "").strip(),
+            "when": dict(ti.get("when") or {}),
+        }
+        for key in ("event", "fields", "host", "runnable", "args"):
+            if ti.get(key) is not None:
+                data[key] = ti[key]
+        try:
+            parse_schedule_entry(data)  # validate shape before persisting
+        except Exception as exc:  # noqa: BLE001
+            return f"Error: invalid schedule — {exc}"
+        try:
+            self.create_schedule(data)
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not create schedule: {exc}"
+        return f"✓ Created schedule '{sid}'."
+
+    def _action_emit_event(self, ti: dict[str, Any]) -> str:
+        from .events import Event
+
+        event = str(ti.get("event") or "").strip()
+        if not event:
+            return "Error: 'event' is required."
+        engine = self._trigger_engine
+        if engine is None:
+            return "✗ The trigger engine isn't running — can't emit the event now."
+        payload = {**dict(ti.get("fields") or {}), "event": event}
+        try:
+            engine.feed(Event.new("schedule", event, payload))
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not emit event: {exc}"
+        return f"✓ Emitted event '{event}' into the trigger engine."
+
+    def _run_memory_tool(self, name: str, ti: dict[str, Any]) -> str:
+        """Execute a memory/runbook tool against the local stores (the gate has
+        already cleared it as autonomous). Returns a short string the model reads."""
+        from . import memory
+
+        if name == "remember":
+            fact = str(ti.get("fact") or "").strip()
+            if not fact:
+                return "Error: 'fact' is required."
+            mid = memory.add_memory(
+                fact,
+                app=str(ti.get("app") or "general"),
+                tags=list(ti.get("tags") or []),
+                pin=bool(ti.get("pin")),
+            )
+            pinned = " (pinned into future context)" if ti.get("pin") else ""
+            return f"Remembered{pinned}. id={mid}"
+        if name == "search_memory":
+            app = str(ti.get("app") or "").strip() or None
+            hits = memory.search_memory(str(ti.get("query") or ""), app=app)
+            if not hits:
+                return "No matching memories."
+            return json.dumps({"memories": hits})
+        if name == "save_skill":
+            sid = memory.save_skill(
+                str(ti.get("id") or ""),
+                title=str(ti.get("title") or ""),
+                symptom=str(ti.get("symptom") or ""),
+                steps=str(ti.get("steps") or ""),
+                tags=list(ti.get("tags") or []),
+            )
+            if not sid:
+                return "Error: a skill needs a title (or an id) and steps."
+            return f"Saved runbook '{sid}'."
+        if name == "load_skill":
+            skill = memory.load_skill(str(ti.get("id") or ""))
+            if not skill:
+                return f"Error: no runbook with id '{ti.get('id')}'."
+            return json.dumps(skill)
+        return f"Error: unknown tool '{name}'"
+
+    def _run_custom_tool(self, name: str, ti: dict[str, Any]) -> str:
+        """Execute a built-in file-transfer tool synchronously and report the
+        outcome (the autonomy gate has already approved it). Kicks off the normal
+        transfer — so the user sees live progress in the transfer panel — then
+        blocks on the result via ``_await_transfer``."""
+        if name == "manage_denylist":
+            return self._run_manage_denylist(ti)
+        filter_name = str(ti.get("filter") or "")
+        filter_value = ti.get("filter_value")
+        dest_dir = ti.get("dest_dir")
+        if name == "download_file":
+            host, path = ti.get("host"), ti.get("path")
+            if not host or not path or not dest_dir:
+                return "Error: host, path and dest_dir are required."
+            res = self.start_transfer(
+                host, [path], "local", dest_dir, filter_name, filter_value
+            )
+            label = f"download of {os.path.basename(path)} from {host}"
+        elif name == "relay_file":
+            path, dh = ti.get("path"), ti.get("dest_host")
+            if not path or not dh or not dest_dir:
+                return "Error: path, dest_host and dest_dir are required."
+            sh = ti.get("source_host")
+            via, target = ti.get("source_via"), ti.get("source_target")
+            if via and target:
+                source: dict[str, Any] = {
+                    "kind": "adhoc",
+                    "host": target,
+                    "jump": via,
+                    "credential_id": ti.get("source_credential"),
+                }
+                src_label = f"{target} via {via}"
+            elif sh:
+                source = {"kind": "host", "host": sh}
+                src_label = str(sh)
+            else:
+                return (
+                    "Error: provide source_host (a fleet host), or source_via + "
+                    "source_target for an ad-hoc source."
+                )
+            res = self.start_relay(
+                source, [path], dh, dest_dir, filter_name, filter_value
+            )
+            label = f"relay of {os.path.basename(path)} from {src_label} to {dh}"
+        else:
+            return f"Error: unknown tool '{name}'"
+
+        if res.get("error"):
+            return f"✗ Could not start {label}: {res['error']}"
+        tid = res.get("id")
+        detail = self._await_transfer(tid) if tid else None
+        if detail is None:
+            return f"Started {label} (id {tid}); still running — check the transfer panel for the result."
+        if detail.get("ok"):
+            via = f" through filter '{filter_name}'" if filter_name else ""
+            return (
+                f"✓ Completed {label}{via}. Wrote {detail.get('files', 0)} file(s) "
+                f"to {dest_dir}."
+            )
+        return f"✗ {label} failed: {detail.get('error') or 'unknown error'}"
+
+    def _run_manage_denylist(self, ti: dict[str, Any]) -> str:
+        """Run ``runspec deny <action>`` on the selected fleet hosts (one call per
+        venv), aggregating per-host/per-venv results. The autonomy gate has
+        already approved this call."""
+        import shlex
+        import subprocess
+
+        action = str(ti.get("action") or "").strip().lower()
+        valid = {"list", "add", "all", "clear", "mode"}
+        if action not in valid:
+            return f"Error: action must be one of {', '.join(sorted(valid))}."
+
+        # Build the tail of `runspec deny <action> ...` as an argv list.
+        tail: list[str] = []
+        if action == "add":
+            for flag, key in (("-r", "runnable"), ("-u", "user"), ("-H", "host")):
+                vals = ti.get(key) or []
+                if isinstance(vals, str):
+                    vals = [vals]
+                for v in vals:
+                    tail += [flag, str(v)]
+            if ti.get("reason"):
+                tail += ["--reason", str(ti["reason"])]
+        elif action == "all":
+            if ti.get("reason"):
+                tail += ["--reason", str(ti["reason"])]
+        elif action == "mode":
+            setting = str(ti.get("setting") or "").strip().lower()
+            if setting not in {"enforce", "warn", "off"}:
+                return "Error: action='mode' requires setting = enforce | warn | off."
+            tail += [setting]
+
+        # Select target hosts (omitted/empty ⇒ all hosts that have a runspec path).
+        wanted = ti.get("targets") or []
+        if isinstance(wanted, str):
+            wanted = [wanted]
+        wanted_set = {str(t) for t in wanted}
+        hosts = [h for h in self._hosts if utils_mod._paths(h)]
+        if wanted_set:
+            hosts = [h for h in hosts if h.get("name") in wanted_set]
+        if not hosts:
+            return "Error: no matching fleet host has a runspec path to act on."
+
+        lines: list[str] = []
+        ok_count = 0
+        for h in hosts:
+            host_name = str(h.get("name"))
+            ssh = h.get("ssh")
+            idf = h.get("identityFile")
+            for rp in utils_mod._paths(h):
+                argv = [rp, "deny", action, *tail]
+                venv = hosts_mod.venv_name(rp)
+                try:
+                    if ssh:
+                        cmd = " ".join(shlex.quote(p) for p in argv)
+                        code, out, err = self._ssh_run(
+                            ssh, cmd, identity_file=idf, timeout=20
+                        )
+                    else:
+                        proc = subprocess.run(
+                            argv, capture_output=True, text=True, timeout=20
+                        )
+                        code, out, err = proc.returncode, proc.stdout, proc.stderr
+                except Exception as exc:  # noqa: BLE001 — report any failure per venv
+                    lines.append(f"✗ {host_name}/{venv}: {exc}")
+                    continue
+                body = (out or "").strip() or (err or "").strip() or f"exit {code}"
+                if code == 0:
+                    ok_count += 1
+                    lines.append(f"✓ {host_name}/{venv}: {body}")
+                else:
+                    lines.append(f"✗ {host_name}/{venv}: {body}")
+
+        header = f"runspec deny {action} — {ok_count}/{len(lines)} venv(s) ok across {len(hosts)} host(s):"
+        return header + "\n" + "\n".join(lines)
+
+    def _resolve_tool_target(
+        self, tool_name: str, tool_input: dict[str, Any]
+    ) -> tuple[str, str, dict[str, Any] | None, str | None] | str:
+        """Map an agent tool call back to its target, for both tool layouts.
+
+        Returns ``(host, name, cached_runnable, host_key)`` — where ``host_key`` is
+        the input key carrying the host (to pop before running), or ``None`` in
+        per-host mode where the host lives in the tool name. On a routing failure
+        returns an error string the agent can read and retry from.
+
+        ``per_host``: parse ``host__name`` from the tool name.
+        ``dedup``: recover the runnable by re-deriving each cached runnable's dedup
+        tool name (robust against the lossy name sanitiser, and guaranteed to agree
+        with the builder), then pick the host from the call's host argument."""
+        with self._lock:
+            runnables = list(self._runnables_cache)
+        if self._tool_mode() == "per_host":
+            if "__" not in tool_name:
+                return f"Error: invalid tool name '{tool_name}'"
+            host, name = tool_name.split("__", 1)
+            cached_r = next(
+                (
+                    r
+                    for r in runnables
+                    if r.get("host") == host and r.get("name") == name
+                ),
+                None,
+            )
+            return host, name, cached_r, None
+        # dedup: all runnables sharing this folder-qualified tool name
+        matches = [r for r in runnables if self._dedup_tool_name(r) == tool_name]
+        if not matches:
+            # Fall back to the explicit host__name form so internal callers that
+            # build a per-host tool name directly (e.g. the helpdesk portal enact
+            # path) keep working under dedup mode, and so do triggers whose calls
+            # name a specific host.
+            if "__" in tool_name:
+                host, name = tool_name.split("__", 1)
+                cached_r = next(
+                    (
+                        r
+                        for r in runnables
+                        if r.get("host") == host and r.get("name") == name
+                    ),
+                    None,
+                )
+                if cached_r is not None:
+                    return host, name, cached_r, None
+            return f"Error: unknown tool '{tool_name}'"
+        name = matches[0].get("name", "")
+        hosts: list[str] = []
+        for r in matches:
+            h = r.get("host", "local")
+            if h not in hosts:
+                hosts.append(h)
+        host_key = self._host_selector_key(matches[0])
+        host = str((tool_input or {}).get(host_key) or "")
+        if not host:
+            if len(hosts) == 1:
+                host = hosts[0]
+            else:
+                return (
+                    f"Error: '{name}' runs on multiple hosts — set the '{host_key}' "
+                    f"argument. Options: {', '.join(hosts)}."
+                )
+        if host not in hosts:
+            return (
+                f"Error: host '{host}' does not have '{name}'. "
+                f"Options: {', '.join(hosts)}."
+            )
+        cached_r = next((r for r in matches if r.get("host") == host), None)
+        return host, name, cached_r, host_key

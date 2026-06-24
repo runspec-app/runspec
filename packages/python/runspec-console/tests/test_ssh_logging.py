@@ -14,7 +14,8 @@ import logging
 import queue
 import threading
 
-from runspec_console.bridge import Bridge, _ParamikoDevHandler
+from runspec_console.bridge import Bridge
+from runspec_console.bridge_helpers import _ParamikoDevHandler
 
 
 class _FakeBridge:

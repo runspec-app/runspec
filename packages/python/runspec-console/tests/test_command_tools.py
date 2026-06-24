@@ -212,7 +212,6 @@ def test_allowlist_unknown_name_yields_no_tools():
 def test_run_tool_sync_threads_command(monkeypatch):
     """The agent's ``command`` input becomes the run's command path, and is
     stripped from the args so it isn't emitted as a ``--command`` flag."""
-    from runspec_console import bridge as bridge_mod
 
     captured: dict[str, Any] = {}
 
@@ -222,9 +221,11 @@ def test_run_tool_sync_threads_command(monkeypatch):
         captured["positionals"] = kw.get("positionals")
         on_done(0, 5)
 
-    monkeypatch.setattr(bridge_mod, "run_local", fake_run_local)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda entry: ["/fake/bin/runspec"])
-    monkeypatch.setattr(bridge_mod, "venv_name", lambda p: "grp")
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda entry: ["/fake/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "grp")
 
     runnables = _spec_to_runnables("cluster", SPEC, "local", "grp")
 
@@ -278,7 +279,6 @@ def test_run_tool_sync_threads_command(monkeypatch):
 
 def test_run_tool_sync_no_command_is_top_level(monkeypatch):
     """No ``command`` input → empty command path (runs at the top level)."""
-    from runspec_console import bridge as bridge_mod
 
     captured: dict[str, Any] = {}
 
@@ -286,9 +286,11 @@ def test_run_tool_sync_no_command_is_top_level(monkeypatch):
         captured["command_path"] = command_path
         on_done(0, 1)
 
-    monkeypatch.setattr(bridge_mod, "run_local", fake_run_local)
-    monkeypatch.setattr(bridge_mod, "_paths", lambda entry: ["/fake/bin/runspec"])
-    monkeypatch.setattr(bridge_mod, "venv_name", lambda p: "grp")
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda entry: ["/fake/bin/runspec"]
+    )
+    monkeypatch.setattr("runspec_console.hosts.venv_name", lambda p: "grp")
 
     runnables = _spec_to_runnables("flush", {"args": {}}, "local", "grp")
 

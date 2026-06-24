@@ -24,15 +24,16 @@ import threading
 import types
 from typing import Any
 
-from runspec_console.bridge import Bridge, _RotaPresenceWatcher
+from runspec_console.bridge import Bridge
+from runspec_console.bridge_helpers import _RotaPresenceWatcher
 from runspec_console.events import Event
+from runspec_console.hosts import load_hosts
 
 
 # ── save_jump_hosts preserves unmanaged keys (e.g. room_dest_host) ────────────
 
 
 def test_save_jump_hosts_preserves_unmanaged_keys(tmp_path, monkeypatch):
-    from runspec_console import bridge as bridge_mod
 
     hosts_file = tmp_path / "runspec_hosts.toml"
     hosts_file.write_text(
@@ -41,7 +42,7 @@ def test_save_jump_hosts_preserves_unmanaged_keys(tmp_path, monkeypatch):
         'runspec_paths = ["runspec"]\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(bridge_mod, "hosts_path", lambda: hosts_file)
+    monkeypatch.setattr("runspec_console.config.hosts_path", lambda: hosts_file)
 
     s = types.SimpleNamespace()
     s._MANAGED_HOST_KEYS = Bridge._MANAGED_HOST_KEYS
@@ -64,13 +65,13 @@ def test_save_jump_hosts_preserves_unmanaged_keys(tmp_path, monkeypatch):
         ]
     )
 
-    saved = {e["name"]: e for e in bridge_mod.load_hosts(hosts_file)}
+    saved = {e["name"]: e for e in load_hosts(hosts_file)}
     assert saved["web01"].get("room_dest_host") == "localhost"  # preserved, not dropped
     assert saved["web01"]["room"] == "ops" and saved["web01"]["room_port"] == 8765
 
 
 def _save_host_stub(bridge_mod, hosts_file, monkeypatch):
-    monkeypatch.setattr(bridge_mod, "hosts_path", lambda: hosts_file)
+    monkeypatch.setattr("runspec_console.config.hosts_path", lambda: hosts_file)
     s = types.SimpleNamespace()
     s._MANAGED_HOST_KEYS = Bridge._MANAGED_HOST_KEYS
     s._reload_hosts = lambda: None
@@ -102,7 +103,7 @@ def test_save_jump_hosts_writes_room_queue_and_catalog(tmp_path, monkeypatch):
         ]
     )
 
-    saved = {e["name"]: e for e in bridge_mod.load_hosts(hosts_file)}["web01"]
+    saved = {e["name"]: e for e in load_hosts(hosts_file)}["web01"]
     assert saved["room_queue"] == "it-support"
     assert saved["room_port"] == 8765
     assert "room" not in saved  # queue without a group-chat room
@@ -128,7 +129,7 @@ def test_save_jump_hosts_drops_queue_without_port(tmp_path, monkeypatch):
         ]
     )
 
-    saved = {e["name"]: e for e in bridge_mod.load_hosts(hosts_file)}["web01"]
+    saved = {e["name"]: e for e in load_hosts(hosts_file)}["web01"]
     assert "room_queue" not in saved and "room_port" not in saved
 
 
@@ -143,7 +144,7 @@ def test_get_jump_hosts_round_trips_queue(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     s = _save_host_stub(bridge_mod, hosts_file, monkeypatch)
-    s._hosts = bridge_mod.load_hosts(hosts_file)
+    s._hosts = load_hosts(hosts_file)
     s._reload_hosts = lambda: None
 
     entry = {e["name"]: e for e in s.get_jump_hosts()}["web01"]
@@ -177,6 +178,7 @@ def _event_stub(engine: Any = None):
     s._enact_assignment = lambda payload: s.enacted.append(payload)
     s._on_chat_event = types.MethodType(Bridge._on_chat_event, s)
     s._chat_event_for_engine = Bridge._chat_event_for_engine  # staticmethod
+    s._parse_queue_room = Bridge._parse_queue_room  # staticmethod
     s._touch_queue_card = types.MethodType(Bridge._touch_queue_card, s)
     s._evict_trigger_cards = types.MethodType(Bridge._evict_trigger_cards, s)
     return s
@@ -892,7 +894,7 @@ def test_propose_reply_rejects_empty_text():
 
 
 def test_chat_connect_hint_for_blocked_forwarding():
-    from runspec_console.bridge import _chat_connect_hint
+    from runspec_console.bridge_helpers import _chat_connect_hint
 
     exc = Exception("ChannelException(1, 'Administratively prohibited')")
     hint = _chat_connect_hint(exc, via="tunnel")
@@ -900,7 +902,7 @@ def test_chat_connect_hint_for_blocked_forwarding():
 
 
 def test_chat_connect_hint_none_in_exec_mode():
-    from runspec_console.bridge import _chat_connect_hint
+    from runspec_console.bridge_helpers import _chat_connect_hint
 
     # Already on exec → the prohibited-forwarding hint doesn't apply.
     exc = Exception("ChannelException(1, 'Administratively prohibited')")
@@ -908,13 +910,13 @@ def test_chat_connect_hint_none_in_exec_mode():
 
 
 def test_chat_connect_hint_none_for_other_errors():
-    from runspec_console.bridge import _chat_connect_hint
+    from runspec_console.bridge_helpers import _chat_connect_hint
 
     assert _chat_connect_hint(TimeoutError("timed out"), via="tunnel") is None
 
 
 def test_chat_connect_summary_room_server_down_is_quiet():
-    from runspec_console.bridge import _chat_connect_summary
+    from runspec_console.bridge_helpers import _chat_connect_summary
 
     # paramiko's ChannelException(2, 'Connect failed') when the room port isn't
     # listening (the room server is stopped) → concise, no traceback.
@@ -925,7 +927,7 @@ def test_chat_connect_summary_room_server_down_is_quiet():
 
 
 def test_chat_connect_summary_blocked_forwarding_reuses_hint():
-    from runspec_console.bridge import _chat_connect_summary
+    from runspec_console.bridge_helpers import _chat_connect_summary
 
     exc = Exception("ChannelException(1, 'Administratively prohibited')")
     message, want_traceback = _chat_connect_summary(exc, via="tunnel")
@@ -934,7 +936,7 @@ def test_chat_connect_summary_blocked_forwarding_reuses_hint():
 
 
 def test_chat_connect_summary_unknown_keeps_traceback():
-    from runspec_console.bridge import _chat_connect_summary
+    from runspec_console.bridge_helpers import _chat_connect_summary
 
     message, want_traceback = _chat_connect_summary(
         Exception("totally unexpected boom"), via="tunnel"
@@ -976,14 +978,14 @@ def test_chat_supervisor_logs_room_down_once_no_traceback(caplog):
 
 
 def test_classify_room_connection_success():
-    from runspec_console.bridge import _classify_room_connection
+    from runspec_console.bridge_helpers import _classify_room_connection
 
     r = _classify_room_connection(None, via="exec")
     assert r["ok"] and r["stage"] == "ok"
 
 
 def test_classify_room_connection_proxy_timeout():
-    from runspec_console.bridge import _classify_room_connection
+    from runspec_console.bridge_helpers import _classify_room_connection
 
     r = _classify_room_connection(TimeoutError("timed out"), via="exec")
     assert not r["ok"] and r["stage"] == "ssh"
@@ -991,7 +993,7 @@ def test_classify_room_connection_proxy_timeout():
 
 
 def test_classify_room_connection_blocked_forwarding():
-    from runspec_console.bridge import _classify_room_connection
+    from runspec_console.bridge_helpers import _classify_room_connection
 
     exc = Exception("ChannelException(1, 'Administratively prohibited')")
     r = _classify_room_connection(exc, via="tunnel")
@@ -1000,7 +1002,7 @@ def test_classify_room_connection_blocked_forwarding():
 
 
 def test_classify_room_connection_backoff():
-    from runspec_console.bridge import _classify_room_connection
+    from runspec_console.bridge_helpers import _classify_room_connection
 
     from runspec_console.ssh_pool import BackoffError
 
@@ -1011,7 +1013,7 @@ def test_classify_room_connection_backoff():
 
 
 def test_classify_room_connection_auth():
-    from runspec_console.bridge import _classify_room_connection
+    from runspec_console.bridge_helpers import _classify_room_connection
 
     r = _classify_room_connection(Exception("Authentication failed."), via="exec")
     assert not r["ok"] and r["stage"] == "ssh" and "identityFile" in r["message"]

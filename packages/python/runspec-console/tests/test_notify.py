@@ -253,7 +253,6 @@ class _RoomStubBridge:
 
 
 def _arm_room_notify(monkeypatch, *, enabled=True):
-    from runspec_console import bridge as bridge_mod
 
     built = []
     monkeypatch.setattr(notify, "available", lambda: (True, ""))
@@ -261,7 +260,9 @@ def _arm_room_notify(monkeypatch, *, enabled=True):
         notify, "build_room_message", lambda p: built.append(p) or ("T", "B")
     )
     monkeypatch.setattr(notify, "notify", lambda *a, **k: True)
-    monkeypatch.setattr(bridge_mod, "room_notifications_enabled", lambda: enabled)
+    monkeypatch.setattr(
+        "runspec_console.config.room_notifications_enabled", lambda: enabled
+    )
     return built
 
 

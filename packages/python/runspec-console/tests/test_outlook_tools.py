@@ -12,11 +12,8 @@ import json
 import types
 
 import runspec_console.config as cfg
-from runspec_console.bridge import (
-    Bridge,
-    _OUTLOOK_READ_TOOLS,
-    _OUTLOOK_WRITE_TOOLS,
-)
+from runspec_console.bridge import Bridge
+from runspec_console.bridge_const import _OUTLOOK_READ_TOOLS, _OUTLOOK_WRITE_TOOLS
 from runspec_console.sources import outlook as ol
 
 

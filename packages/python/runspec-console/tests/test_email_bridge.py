@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import types
 
-from runspec_console.bridge import _BridgeTriggerOps
+from runspec_console.bridge_helpers import _BridgeTriggerOps
 
 
 def _ops():

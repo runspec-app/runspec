@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import tomllib
 
-import runspec_console.bridge as bridge_mod
 import runspec_console.config as cfg
 import runspec_console.gitsync as gitsync
 from runspec_console.bridge import Bridge
@@ -128,9 +127,10 @@ def _wire_layers(
     """Like ``_wire`` but maps each layer subpath → its files, so a pull folds
     them. ``fetch_layers`` is mocked to return exactly the requested subpaths."""
     monkeypatch.setattr(cfg, "app_dir", lambda: tmp_path)
-    monkeypatch.setattr(bridge_mod, "app_dir", lambda: tmp_path)
+    monkeypatch.setattr("runspec_console.config.app_dir", lambda: tmp_path)
     monkeypatch.setattr(
-        bridge_mod, "credentials_path", lambda: tmp_path / "runspec_credentials.toml"
+        "runspec_console.config.credentials_path",
+        lambda: tmp_path / "runspec_credentials.toml",
     )
     monkeypatch.setattr(
         gitsync,
