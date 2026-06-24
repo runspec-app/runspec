@@ -265,15 +265,29 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
     }
   }
 
+  // Theme-aware palette for the composer + its menus (the prompt was hard-coded
+  // dark; now it follows the light/dark toggle like the rest of the chrome).
+  const surfaceBg = isDark ? '#1a1a1a' : '#f5f5f5'
+  const surfaceBorder = isDark ? '#333' : '#d9d9d9'
+  const menuBg = isDark ? '#1e1e1e' : '#ffffff'
+  const itemBorder = isDark ? '#222' : '#f0f0f0'
+  const itemHover = isDark ? '#2a2a2a' : '#eef1f5'
+  const promptChar = isDark ? '#555' : '#999'
+  const inputText = isDark ? '#d4d4d4' : '#222'
+  const dimText = isDark ? '#777' : '#999'
+  const groupText = isDark ? '#666' : '#888'
+  const nameCol = isDark ? '#4fc1ff' : '#0958d9'
+  const subCol = isDark ? '#89d4f5' : '#1677ff'
+
   return (
     <div style={{ position: 'relative' }}>
       {/* Skills dropdown ($) */}
       {skillsOpen && filteredSkills.length > 0 && (
         <div style={{
           position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 6,
-          background: '#1e1e1e', border: '1px solid #333', borderRadius: 8,
+          background: menuBg, border: `1px solid ${surfaceBorder}`, borderRadius: 8,
           maxHeight: 280, overflowY: 'auto', zIndex: 100,
-          boxShadow: '0 -4px 16px rgba(0,0,0,0.5)',
+          boxShadow: isDark ? '0 -4px 16px rgba(0,0,0,0.5)' : '0 -4px 16px rgba(0,0,0,0.12)',
         }}>
           {filteredSkills.map((skill, idx) => (
             <div
@@ -282,25 +296,25 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
               style={{
                 padding: '8px 14px',
                 cursor: 'pointer',
-                background: idx === skillsIndex ? '#2a2a2a' : 'transparent',
+                background: idx === skillsIndex ? itemHover : 'transparent',
                 display: 'flex', alignItems: 'baseline', gap: 10,
-                borderBottom: '1px solid #222',
+                borderBottom: `1px solid ${itemBorder}`,
               }}
             >
               <span style={{ fontSize: 13, minWidth: 180 }}>
                 <span style={{ color: '#bd93f9' }}>${skill.id}</span>
               </span>
               {skill.title && (
-                <span style={{ fontSize: 12, color: '#ccc', flexShrink: 0 }}>{skill.title}</span>
+                <span style={{ fontSize: 12, color: inputText, flexShrink: 0 }}>{skill.title}</span>
               )}
               {(skill.args ?? []).length > 0 && (
-                <span style={{ fontSize: 11, color: '#666', flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: groupText, flexShrink: 0 }}>
                   {(skill.args ?? []).map(a => a.name).join(' ')}
                 </span>
               )}
               {skill.symptom && (
                 <span style={{
-                  flex: 1, fontSize: 11, color: '#777',
+                  flex: 1, fontSize: 11, color: dimText,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   marginLeft: 10,
                 }}>
@@ -316,9 +330,9 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
       {slashOpen && filteredItems.length > 0 && (
         <div style={{
           position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 6,
-          background: '#1e1e1e', border: '1px solid #333', borderRadius: 8,
+          background: menuBg, border: `1px solid ${surfaceBorder}`, borderRadius: 8,
           maxHeight: 280, overflowY: 'auto', zIndex: 100,
-          boxShadow: '0 -4px 16px rgba(0,0,0,0.5)',
+          boxShadow: isDark ? '0 -4px 16px rgba(0,0,0,0.5)' : '0 -4px 16px rgba(0,0,0,0.12)',
         }}>
           {filteredItems.map((item, idx) => (
             <div
@@ -327,25 +341,25 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
               style={{
                 padding: '8px 14px',
                 cursor: 'pointer',
-                background: idx === slashIndex ? '#2a2a2a' : 'transparent',
+                background: idx === slashIndex ? itemHover : 'transparent',
                 display: 'flex', alignItems: 'baseline', gap: 10,
-                borderBottom: '1px solid #222',
+                borderBottom: `1px solid ${itemBorder}`,
               }}
             >
               <span style={{ fontSize: 13, minWidth: 180 }}>
-                <span style={{ color: '#666' }}>{item.topRunnable.group}/</span>
-                <span style={{ color: '#4fc1ff' }}>{item.topRunnable.name}</span>
+                <span style={{ color: groupText }}>{item.topRunnable.group}/</span>
+                <span style={{ color: nameCol }}>{item.topRunnable.name}</span>
                 {item.commandPath.map(seg => (
                   <span key={seg}>
-                    <span style={{ color: '#555' }}> › </span>
-                    <span style={{ color: '#89d4f5' }}>{seg}</span>
+                    <span style={{ color: dimText }}> › </span>
+                    <span style={{ color: subCol }}>{seg}</span>
                   </span>
                 ))}
               </span>
-              <span style={{ color: '#777', fontSize: 11 }}>{item.topRunnable.host}</span>
+              <span style={{ color: dimText, fontSize: 11 }}>{item.topRunnable.host}</span>
               {(item.leaf.args ?? []).length > 0 && (
                 <span style={{
-                  flex: 1, fontSize: 11, color: '#555', fontFamily: 'monospace',
+                  flex: 1, fontSize: 11, color: groupText, fontFamily: 'monospace',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   marginLeft: 10,
                 }}>
@@ -354,7 +368,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
               )}
               {item.leaf.description && (
                 <span style={{
-                  fontSize: 11, color: '#777', flexShrink: 0,
+                  fontSize: 11, color: dimText, flexShrink: 0,
                   marginLeft: 10, whiteSpace: 'nowrap',
                 }}>
                   {item.leaf.description}
@@ -368,10 +382,10 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
       {/* Input row */}
       <div style={{
         display: 'flex', gap: 8, alignItems: 'flex-end',
-        background: '#1a1a1a', border: '1px solid #333',
+        background: surfaceBg, border: `1px solid ${surfaceBorder}`,
         borderRadius: 8, padding: '8px 12px',
       }}>
-        <span style={{ color: '#555', fontSize: 14, paddingBottom: 2 }}>❯</span>
+        <span style={{ color: promptChar, fontSize: 14, paddingBottom: 2 }}>❯</span>
         <textarea
           ref={inputRef}
           value={value}
@@ -380,7 +394,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
           placeholder="Type / for runnables, $ for skills, or ask the LLM..."
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
-            color: '#d4d4d4', fontSize: 14, resize: 'none',
+            color: inputText, fontSize: 14, resize: 'none',
             lineHeight: 1.5, minHeight: '42px', overflowY: 'auto',
           }}
         />

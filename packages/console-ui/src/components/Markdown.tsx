@@ -1,6 +1,7 @@
 import { type CSSProperties } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 
 // Renders an assistant message as markdown. Only the model's natural-language
 // prose flows through here — runnable stdout / JSON / tool output stays in the
@@ -82,7 +83,9 @@ function components(color: string): Components {
 export function Markdown({ children, color = '#d4d4d4', fontSize = 13 }: MarkdownProps) {
   return (
     <div style={{ fontSize, lineHeight: 1.6, color, wordBreak: 'break-word' }}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components(color)}>
+      {/* remark-breaks: render a single newline as a line break (CommonMark
+          collapses them to spaces), so the agent's prose keeps its line breaks. */}
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components(color)}>
         {children}
       </ReactMarkdown>
     </div>

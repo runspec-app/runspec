@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.127.0] — 2026-06-24
+
+### Changed
+- **Output cards now follow the theme too — completing the light-theme pass.** The
+  card shell, header, JSON tables / structured views, tool-call blocks (incl. the
+  amber approval gate), raw-log view, and the streaming transcript were hard-coded
+  dark; they're now theme-aware via a shared `useCardTheme()` palette in
+  `OutputPanel.tsx`. This fixes the inconsistency where console cards stayed dark
+  but trigger-panel cards went light — now everything is theme-aware, nothing is
+  pinned to a single mode.
+
+
+## [0.126.0] — 2026-06-24
+
+### Changed
+- **Light-theme pass on the chrome that ignored the theme.** The composer (prompt
+  box + slash/skills menus), the top nav-tab labels, and the sidebar host-group
+  headers were hard-coded dark / washed-out grey; they now follow the light/dark
+  toggle. The prompt box was a deliberate dark element originally, but it now reads
+  correctly in light mode like the rest of the chrome. (Output cards were completed
+  in 0.127.0.)
+
+
+## [0.125.0] — 2026-06-24
+
+### Fixed
+- **Card bodies now keep the agent's line breaks.** The markdown renderer followed
+  CommonMark, where a single newline collapses to a space — so multi-line agent
+  prose ran together. Added `remark-breaks` so a single newline renders as a line
+  break. Applies everywhere markdown is shown (console + trigger panel).
+
+### Changed
+- **Wider Triggers detail drawer** — `min(1040px, 94vw)` (was `820px`), so the
+  richer transcript (tool blocks + tables) has more room.
+
+
 ## [0.124.0] — 2026-06-24
 
 ### Changed

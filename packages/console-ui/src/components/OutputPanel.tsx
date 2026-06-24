@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { Button, Input, Space, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
+import { useIsDark, textColor } from '../ThemeContext'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
@@ -12,6 +13,41 @@ import {
 const { Text } = Typography
 
 const TRUNCATE_AT = 20
+
+// Theme-aware palette for the output cards (header, body, tool blocks, tables).
+// The cards were hard-coded dark; this lets console + trigger cards follow the
+// light/dark toggle consistently. Returned by useCardTheme() per component.
+interface CardTheme {
+  isDark: boolean
+  cardBg: string; cardBorder: string; headerBg: string
+  text: string; dim: string; faint: string; caret: string; mono: string
+  rowAlt: string; tableHeadBorder: string; tableRowBorder: string; tableHead: string
+  codeBg: string; toolBg: string; toolBorder: string
+  link: string; sub: string
+}
+function useCardTheme(): CardTheme {
+  const isDark = useIsDark()
+  return {
+    isDark,
+    cardBg: isDark ? '#141414' : '#ffffff',
+    cardBorder: isDark ? '#2a2a2a' : '#e3e3e3',
+    headerBg: isDark ? '#1a1a1a' : '#f5f6f8',
+    text: textColor(isDark),
+    dim: isDark ? '#777' : '#8c8c8c',
+    faint: isDark ? '#555' : '#bbbbbb',
+    caret: isDark ? '#444' : '#bbbbbb',
+    mono: isDark ? '#d4d4d4' : '#1f1f1f',
+    rowAlt: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.025)',
+    tableHeadBorder: isDark ? '#2a2a2a' : '#e3e3e3',
+    tableRowBorder: isDark ? '#1a1a1a' : '#f0f0f0',
+    tableHead: isDark ? '#888' : '#888',
+    codeBg: isDark ? '#141414' : '#f5f5f5',
+    toolBg: isDark ? '#1a1a1a' : '#f5f6f8',
+    toolBorder: isDark ? '#2a2a2a' : '#e3e3e3',
+    link: isDark ? '#4fc1ff' : '#0958d9',
+    sub: isDark ? '#9ab' : '#5a6b7b',
+  }
+}
 
 /** Short elapsed string (e.g. "8s", "1m 04s") since an ISO timestamp. */
 function fmtElapsed(startedAt: string): string {
@@ -223,6 +259,7 @@ function sectionsToText(meta: Record<string, unknown> | undefined, sections: Tab
  *  nested object or array-of-objects as an expandable disclosure (sub-table or
  *  pretty JSON) so it never collapses to "[object Object]". */
 function JsonCell({ keyName, value }: { keyName: string; value: unknown }) {
+  const c = useCardTheme()
   const [open, setOpen] = useState(false)
   const isObj = typeof value === 'object' && value !== null
   const isScalarArray = Array.isArray(value)
@@ -234,12 +271,12 @@ function JsonCell({ keyName, value }: { keyName: string; value: unknown }) {
   const label = Array.isArray(value) ? `[${(value as unknown[]).length}]` : '{…}'
   return (
     <span>
-      <a onClick={() => setOpen(o => !o)} style={{ color: '#1677ff', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+      <a onClick={() => setOpen(o => !o)} style={{ color: c.link, cursor: 'pointer', whiteSpace: 'nowrap' }}>
         {open ? '▾' : '▸'} {label}
       </a>
       {open && (rowArray
         ? <JsonTable rows={value as Record<string, unknown>[]} />
-        : <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#9ab', fontSize: 11 }}>
+        : <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: c.sub, fontSize: 11 }}>
             {JSON.stringify(value, null, 2)}
           </pre>
       )}
@@ -248,21 +285,22 @@ function JsonCell({ keyName, value }: { keyName: string; value: unknown }) {
 }
 
 function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
+  const c = useCardTheme()
   if (!rows.length) return null
   const keys = Object.keys(rows[0])
   return (
     <div style={{ overflowX: 'auto', padding: '8px 14px' }}>
       <table style={{
         width: '100%', borderCollapse: 'collapse',
-        fontFamily: 'monospace', fontSize: 12, color: '#d4d4d4',
+        fontFamily: 'monospace', fontSize: 12, color: c.mono,
       }}>
         <thead>
           <tr>
             {keys.map(k => (
               <th key={k} style={{
                 textAlign: 'left', padding: '4px 10px 6px 0',
-                borderBottom: '1px solid #2a2a2a',
-                color: '#888', fontWeight: 600, whiteSpace: 'nowrap',
+                borderBottom: `1px solid ${c.tableHeadBorder}`,
+                color: c.tableHead, fontWeight: 600, whiteSpace: 'nowrap',
               }}>
                 {k.replace(/_/g, ' ')}
               </th>
@@ -271,11 +309,11 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)' }}>
+            <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : c.rowAlt }}>
               {keys.map(k => (
                 <td key={k} style={{
                   padding: '4px 10px 4px 0',
-                  borderBottom: '1px solid #1a1a1a',
+                  borderBottom: `1px solid ${c.tableRowBorder}`,
                   whiteSpace: 'nowrap',
                 }}>
                   <JsonCell keyName={k} value={row[k]} />
@@ -291,11 +329,12 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
 
 /** Key-value view for JSON objects. */
 function JsonObject({ obj }: { obj: Record<string, unknown> }) {
+  const c = useCardTheme()
   return (
     <div style={{ padding: '8px 14px', display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 16px', fontFamily: 'monospace', fontSize: 12 }}>
       {Object.entries(obj).map(([k, v]) => [
-        <span key={`k-${k}`} style={{ color: '#888', whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>,
-        <span key={`v-${k}`} style={{ color: '#d4d4d4' }}><JsonCell keyName={k} value={v} /></span>,
+        <span key={`k-${k}`} style={{ color: c.tableHead, whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>,
+        <span key={`v-${k}`} style={{ color: c.mono }}><JsonCell keyName={k} value={v} /></span>,
       ])}
     </div>
   )
@@ -304,32 +343,33 @@ function JsonObject({ obj }: { obj: Record<string, unknown> }) {
 /** Render a dict that wraps array(s)-of-objects: optional scalar caption, then
  *  one titled table per array (grouped tables / metadata + rows). */
 function JsonSections({ meta, sections }: { meta?: Record<string, unknown>; sections: TableSection[] }) {
+  const c = useCardTheme()
   const metaEntries = meta ? Object.entries(meta) : []
   return (
     <div style={{ padding: '8px 14px' }}>
       {metaEntries.length > 0 && (
-        <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#888', marginBottom: 8 }}>
+        <div style={{ fontFamily: 'monospace', fontSize: 12, color: c.dim, marginBottom: 8 }}>
           {metaEntries.map(([k, v]) => `${k.replace(/_/g, ' ')}: ${_humanVal(k, v)}`).join('   ')}
         </div>
       )}
       {sections.map((s, i) => (
         <div key={i} style={{ marginBottom: i < sections.length - 1 ? 14 : 0 }}>
           {s.title && (
-            <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#d4d4d4', fontWeight: 600 }}>
+            <div style={{ fontFamily: 'monospace', fontSize: 12, color: c.mono, fontWeight: 600 }}>
               {s.title.replace(/_/g, ' ')}
             </div>
           )}
           {s.rows.length > 0
             ? <JsonTable rows={s.rows} />
-            : <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#666', padding: '4px 14px' }}>(no rows)</div>}
+            : <div style={{ fontFamily: 'monospace', fontSize: 12, color: c.dim, padding: '4px 14px' }}>(no rows)</div>}
         </div>
       ))}
     </div>
   )
 }
 
-function _lineColor(l: OutputLine): string {
-  if (l.stream !== 'stderr') return '#d4d4d4'
+function _lineColor(l: OutputLine, mono: string): string {
+  if (l.stream !== 'stderr') return mono
   const m = l.line.match(/\((\d+) warnings?,\s*(\d+) errors?\)/)
   if (m) {
     const errors = parseInt(m[2])
@@ -403,6 +443,7 @@ interface PendingConfirm {
 }
 
 export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
+  const c = useCardTheme()
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const blockCountRef = useRef(0)
@@ -474,7 +515,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
 
   if (blocks.length === 0) {
     return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: c.dim }}>
         <div style={{ textAlign: 'center' }}>
           <ThunderboltOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
           <Text type="secondary">Type <Text code>/</Text> to run a runnable, or ask the LLM anything</Text>
@@ -512,9 +553,9 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
             icon={<VerticalAlignBottomOutlined />}
             onClick={scrollToBottom}
             style={{
-              background: '#1a1a1a', borderColor: '#333', color: '#888',
+              background: c.headerBg, borderColor: c.cardBorder, color: c.dim,
               fontSize: 11, height: 26, padding: '0 10px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+              boxShadow: c.isDark ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.15)',
             }}
           >
             latest
@@ -563,6 +604,7 @@ function ToolCallBlock({
   editable?: boolean
   onAnswer?: (approved: boolean, editedInput?: Record<string, unknown>) => void
 }) {
+  const c = useCardTheme()
   const [expanded, setExpanded] = useState(false)
   const args = Object.entries(entry.input)
   // Args shown in the approval panel: the resolved runnable's when we have it.
@@ -594,14 +636,14 @@ function ToolCallBlock({
   return (
     <div style={{
       margin: '6px 0',
-      border: `1px solid ${awaiting ? '#5a4a1a' : '#2a2a2a'}`,
+      border: `1px solid ${awaiting ? (c.isDark ? '#5a4a1a' : '#ffd591') : c.toolBorder}`,
       borderRadius: 6, overflow: 'hidden',
     }}>
       <div
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '6px 12px',
-          background: awaiting ? '#241f12' : '#1a1a1a',
+          background: awaiting ? (c.isDark ? '#241f12' : '#fff7e6') : c.toolBg,
           cursor: entry.output !== undefined ? 'pointer' : 'default',
           userSelect: 'none',
         }}
@@ -614,7 +656,7 @@ function ToolCallBlock({
             : <ApiOutlined style={{ color: '#52c41a', fontSize: 12 }} />}
         <Text code style={{ fontSize: 12, flexShrink: 0 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
         {args.length > 0 && (
-          <Text ellipsis style={{ flex: 1, minWidth: 0, color: '#555', fontSize: 11 }}>
+          <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 11 }}>
             {args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
           </Text>
         )}
@@ -622,25 +664,25 @@ function ToolCallBlock({
           <Text style={{ color: '#e6a23c', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>needs approval</Text>
         )}
         {!awaiting && entry.running && (
-          <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>running…</Text>
+          <Text style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>running…</Text>
         )}
         {!entry.running && entry.durationMs !== undefined && (
           <Tooltip title="Time this tool call took">
-            <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto', flexShrink: 0, fontFamily: 'monospace' }}>
+            <Text style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0, fontFamily: 'monospace' }}>
               {fmtDurationMs(entry.durationMs)}
             </Text>
           </Tooltip>
         )}
         {entry.output !== undefined && !entry.running && (
-          <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>
+          <Text style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>
             {expanded ? '▲ hide output' : '▼ show output'}
           </Text>
         )}
       </div>
 
       {awaiting && (
-        <div style={{ padding: '10px 12px', background: '#1c1810', borderTop: '1px solid #5a4a1a' }}>
-          <div style={{ fontSize: 12, color: '#bbb', marginBottom: 10 }}>
+        <div style={{ padding: '10px 12px', background: c.isDark ? '#1c1810' : '#fffbe6', borderTop: `1px solid ${c.isDark ? '#5a4a1a' : '#ffe7ba'}` }}>
+          <div style={{ fontSize: 12, color: c.isDark ? '#bbb' : '#595959', marginBottom: 10 }}>
             The assistant wants to run{' '}
             {resolved && <Text code style={{ fontSize: 11 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text>}
             {resolved ? ' ' : 'this '}— autonomy is{' '}
@@ -669,8 +711,8 @@ function ToolCallBlock({
             // runnable used to push this (and the buttons) off-screen.
             <pre style={{
               margin: '0 0 10px', padding: '8px 10px',
-              background: '#141414', borderRadius: 4,
-              fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: '#9aa5b1',
+              background: c.codeBg, borderRadius: 4,
+              fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: c.sub,
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               maxHeight: 180, overflowY: 'auto',
             }}>
@@ -690,9 +732,9 @@ function ToolCallBlock({
         <pre style={{
           margin: 0, padding: '8px 12px',
           fontFamily: 'monospace', fontSize: 12,
-          color: '#d4d4d4', lineHeight: 1.5,
+          color: c.mono, lineHeight: 1.5,
           whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-          background: '#141414',
+          background: c.codeBg,
         }}>
           {entry.output || '(no output)'}
         </pre>
@@ -719,11 +761,12 @@ export function ChatTranscript({
   pendingConfirm?: PendingConfirm | null
   onAnswerConfirm?: (approved: boolean, editedInput?: Record<string, unknown>) => void
 }) {
+  const c = useCardTheme()
   return (
     <div style={{ padding: '10px 14px' }}>
       {segments.map((seg, i) =>
         seg.kind === 'text' ? (
-          <Markdown key={i}>{seg.text}</Markdown>
+          <Markdown key={i} color={c.text}>{seg.text}</Markdown>
         ) : (
           <ToolCallBlock
             key={i}
@@ -750,11 +793,11 @@ export function ChatTranscript({
         <pre style={{
           margin: 0, padding: 0,
           fontFamily: 'monospace', fontSize: 13,
-          color: '#d4d4d4', lineHeight: 1.6,
+          color: c.mono, lineHeight: 1.6,
           whiteSpace: 'pre-wrap', wordBreak: 'break-all',
         }}>
           {currentText}
-          {!done && <span style={{ color: '#555' }}>▌</span>}
+          {!done && <span style={{ color: c.faint }}>▌</span>}
         </pre>
       )}
     </div>
@@ -785,6 +828,7 @@ function BlockCard({
   pendingConfirm?: PendingConfirm | null
   onAnswerConfirm?: (approved: boolean) => void
 }) {
+  const c = useCardTheme()
   const [isEditing, setIsEditing] = useState(false)
   const [editArgs, setEditArgs] = useState<Record<string, string>>({})
   const [collapsed, setCollapsed] = useState(false)
@@ -893,19 +937,19 @@ function BlockCard({
     : block.lines.length > 0
 
   return (
-    <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 8, overflow: 'hidden' }}>
+    <div style={{ background: c.cardBg, border: `1px solid ${c.cardBorder}`, borderRadius: 8, overflow: 'hidden' }}>
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 14px',
-        background: '#1a1a1a',
-        borderBottom: collapsed ? 'none' : '1px solid #2a2a2a',
+        background: c.headerBg,
+        borderBottom: collapsed ? 'none' : `1px solid ${c.cardBorder}`,
         userSelect: 'none',
       }}>
         {/* Collapse toggle */}
         <span
-          onClick={() => setCollapsed(c => !c)}
-          style={{ color: '#444', cursor: 'pointer', fontSize: 11, flexShrink: 0, width: 14 }}
+          onClick={() => setCollapsed(v => !v)}
+          style={{ color: c.caret, cursor: 'pointer', fontSize: 11, flexShrink: 0, width: 14 }}
         >
           {collapsed
             ? <RightOutlined style={{ fontSize: 10 }} />
@@ -914,12 +958,12 @@ function BlockCard({
 
         {statusIcon}
         <Text
-          style={{ color: '#d4d4d4', fontFamily: 'monospace', fontSize: 13, cursor: 'pointer', flex: 1 }}
-          onClick={() => setCollapsed(c => !c)}
+          style={{ color: c.text, fontFamily: 'monospace', fontSize: 13, cursor: 'pointer', flex: 1 }}
+          onClick={() => setCollapsed(v => !v)}
         >
           {block.label}
         </Text>
-        <Text style={{ color: '#555', fontSize: 11 }}>
+        <Text style={{ color: c.dim, fontSize: 11 }}>
           {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </Text>
         {/* Live elapsed clock while the turn runs (chat turns have no InFlightStrip row). */}
@@ -994,18 +1038,18 @@ function BlockCard({
               <Tooltip title="Edit args and rerun">
                 <EditOutlined
                   onClick={startEditing}
-                  style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
-                  onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
-                  onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+                  style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                  onMouseEnter={e => (e.currentTarget.style.color = c.text)}
+                  onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
                 />
               </Tooltip>
             )}
             <Tooltip title="Rerun with same args">
               <RedoOutlined
                 onClick={() => onRerun(block.rerunData!)}
-                style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
-                onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+                style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                onMouseEnter={e => (e.currentTarget.style.color = c.text)}
+                onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
               />
             </Tooltip>
           </Fragment>
@@ -1016,25 +1060,25 @@ function BlockCard({
             <Tooltip title="Copy this prompt">
               <CopyOutlined
                 onClick={(e) => { e.stopPropagation(); copyToClipboard(block.label) }}
-                style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
-                onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+                style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                onMouseEnter={e => (e.currentTarget.style.color = c.text)}
+                onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
               />
             </Tooltip>
             <Tooltip title="Edit & resend — load this prompt into the composer">
               <EditOutlined
                 onClick={(e) => { e.stopPropagation(); loadToComposer() }}
-                style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
-                onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+                style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                onMouseEnter={e => (e.currentTarget.style.color = c.text)}
+                onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
               />
             </Tooltip>
             <Tooltip title="Resend this prompt">
               <RedoOutlined
                 onClick={(e) => { e.stopPropagation(); resend() }}
-                style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
-                onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+                style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                onMouseEnter={e => (e.currentTarget.style.color = c.text)}
+                onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
               />
             </Tooltip>
           </Fragment>
@@ -1048,8 +1092,8 @@ function BlockCard({
           {isEditing && (
             <div style={{
               padding: '12px 14px',
-              borderBottom: '1px solid #2a2a2a',
-              background: 'rgba(255,255,255,0.02)',
+              borderBottom: `1px solid ${c.cardBorder}`,
+              background: c.rowAlt,
             }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {Object.entries(editArgs).map(([k, v]) => (
@@ -1081,7 +1125,7 @@ function BlockCard({
                   <Button
                     type="text" size="small" icon={<CopyOutlined />}
                     onClick={handleCopy}
-                    style={{ color: '#555', height: 22, padding: '0 5px' }}
+                    style={{ color: c.dim, height: 22, padding: '0 5px' }}
                   />
                 </Tooltip>
                 {onAskLlm && (
@@ -1089,7 +1133,7 @@ function BlockCard({
                     <Button
                       type="text" size="small" icon={<RobotOutlined />}
                       onClick={handleAskLlm}
-                      style={{ color: '#555', height: 22, padding: '0 5px' }}
+                      style={{ color: c.dim, height: 22, padding: '0 5px' }}
                     />
                   </Tooltip>
                 )}
@@ -1106,14 +1150,14 @@ function BlockCard({
                       <Button
                         type="text" size="small" icon={<TableOutlined />}
                         onClick={() => setViewRaw(false)}
-                        style={{ color: !viewRaw ? '#1677ff' : '#555', height: 22, padding: '0 5px' }}
+                        style={{ color: !viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
                       />
                     </Tooltip>
                     <Tooltip title="Raw output">
                       <Button
                         type="text" size="small" icon={<CodeOutlined />}
                         onClick={() => setViewRaw(true)}
-                        style={{ color: viewRaw ? '#1677ff' : '#555', height: 22, padding: '0 5px' }}
+                        style={{ color: viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
                       />
                     </Tooltip>
                   </div>
@@ -1139,15 +1183,15 @@ function BlockCard({
                   <pre style={{
                     margin: 0, padding: '10px 14px',
                     fontFamily: 'monospace', fontSize: 13,
-                    color: '#d4d4d4', lineHeight: 1.6,
+                    color: c.mono, lineHeight: 1.6,
                     whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                   }}>
                     {displayLines.map((l, i) => (
-                      <span key={i} style={{ color: _lineColor(l) }}>
+                      <span key={i} style={{ color: _lineColor(l, c.mono) }}>
                         {l.line}{'\n'}
                       </span>
                     ))}
-                    {!block.done && <span style={{ color: '#555' }}>▌</span>}
+                    {!block.done && <span style={{ color: c.faint }}>▌</span>}
                   </pre>
                 )}
 
@@ -1157,18 +1201,18 @@ function BlockCard({
                     {/* gradient fade */}
                     <div style={{
                       position: 'absolute', top: -40, left: 0, right: 0, height: 40,
-                      background: 'linear-gradient(transparent, #141414)',
+                      background: `linear-gradient(transparent, ${c.cardBg})`,
                       pointerEvents: 'none',
                     }} />
                     <div
                       onClick={() => setShowAll(true)}
                       style={{
                         padding: '5px 14px 10px',
-                        fontSize: 12, color: '#555', cursor: 'pointer',
+                        fontSize: 12, color: c.dim, cursor: 'pointer',
                         fontFamily: 'monospace',
                       }}
-                      onMouseEnter={e => (e.currentTarget.style.color = '#888')}
-                      onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+                      onMouseEnter={e => (e.currentTarget.style.color = c.text)}
+                      onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
                     >
                       ↓ {extraLines} more line{extraLines !== 1 ? 's' : ''} — click to expand
                     </div>

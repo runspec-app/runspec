@@ -97,7 +97,7 @@ export function RunInbox({
       <Drawer
         open={!!selectedCard}
         onClose={() => onSelect(null)}
-        width="min(820px, 92vw)"
+        width="min(1040px, 94vw)"
         title={selectedCard?.summary}
       >
         {selectedCard && (() => {

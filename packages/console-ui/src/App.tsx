@@ -308,7 +308,7 @@ export default function App() {
   const borderCol = isDark ? '#222'    : '#e0e0e0'
   const titleCol  = isDark ? '#4fc1ff' : '#0958d9'
   const contentBg = isDark ? '#111'    : '#ffffff'
-  const iconCol   = isDark ? '#888'    : '#999'
+  const iconCol   = isDark ? '#888'    : '#595959'
   const textCol   = isDark ? '#ccc'    : '#333'
 
   const navTabs = [
@@ -449,7 +449,7 @@ export default function App() {
                             style={{
                               display: 'flex', alignItems: 'center', gap: 6,
                               padding: '10px 14px 3px',
-                              fontSize: 10, color: isDark ? '#aaa' : '#999',
+                              fontSize: 10, color: isDark ? '#aaa' : '#737373',
                               textTransform: 'uppercase', letterSpacing: '0.08em',
                               userSelect: 'none', cursor: 'pointer',
                             }}
