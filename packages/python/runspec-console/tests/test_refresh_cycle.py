@@ -10,10 +10,11 @@ test_refresh_cycle.py — the #104 refresh rework at the Bridge level:
 from __future__ import annotations
 
 import json
+import threading
 from unittest.mock import patch
 
 from runspec_console.bridge import Bridge
-from runspec_console.ssh_pool import SSHConnectionPool, pool_settings
+from runspec_console.ssh_pool import SSHConnectionPool, pool_settings, refresh_settings
 
 
 # ── fake paramiko client (counts handshakes) ──────────────────────────────────
@@ -99,7 +100,7 @@ def test_cycle_opens_one_handshake_per_host_even_with_multiple_paths():
         # force jitter 0 so the cycle doesn't sleep
         patch(
             "runspec_console.ssh_pool.refresh_settings",
-            return_value={"interval": 30, "jitter": 0},
+            return_value={"interval": 30, "jitter": 0, "workers": 8},
         ),
     ):
         b._refresh_cycle()
@@ -127,7 +128,7 @@ def test_cycle_marks_unreachable_host_disconnected():
         patch.object(b, "get_config", return_value={}),
         patch(
             "runspec_console.ssh_pool.refresh_settings",
-            return_value={"interval": 30, "jitter": 0},
+            return_value={"interval": 30, "jitter": 0, "workers": 8},
         ),
     ):
         b._refresh_cycle()
@@ -211,3 +212,74 @@ def test_set_window_flushes_buffered_ssh_logs():
             break
         time.sleep(0.01)
     assert any("runspec:ssh" in js for js in dispatched)
+
+
+# ── phase-2: bounded worker pool ──────────────────────────────────────────────
+
+
+def test_refresh_settings_workers_resolution():
+    # explicit positive override wins
+    assert refresh_settings({"workers": 4})["workers"] == 4
+    # derived default = max(16, 2 * max_concurrent)
+    assert refresh_settings({}, max_concurrent=5)["workers"] == 16
+    assert refresh_settings({}, max_concurrent=20)["workers"] == 40
+    # garbage / non-positive → derived default
+    assert refresh_settings({"workers": "nope"}, max_concurrent=5)["workers"] == 16
+    assert refresh_settings({"workers": 0}, max_concurrent=10)["workers"] == 20
+
+
+def test_refresh_cycle_bounds_concurrency_and_orders_phases():
+    """The fan-out never runs more than `workers` tasks at once, and the whole
+    probe phase (+ hosts_updated) completes before discovery starts."""
+    b = _make_bridge()
+    hosts = [
+        {"name": f"h{i}", "ssh": f"u@h{i}", "runspec_paths": ["/v/bin/runspec"]}
+        for i in range(20)
+    ]
+    b._hosts = hosts
+
+    state = {"active": 0, "peak": 0}
+    lock = threading.Lock()
+    events: list[str] = []
+
+    def busy(kind: str):
+        with lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+            events.append(kind)
+        # tiny spin so tasks actually overlap under the pool
+        for _ in range(2000):
+            pass
+        with lock:
+            state["active"] -= 1
+
+    def fake_probe(h, *, jitter=0):
+        busy("probe")
+        with b._lock:
+            b._connected_cache[h["name"]] = True
+
+    def fake_discover(h):
+        busy("disc")
+        return []
+
+    with (
+        patch.object(b, "_reload_hosts"),
+        patch.object(b, "_local_host_entry", return_value={"name": "local"}),
+        patch.object(b, "_dispatch", side_effect=lambda ev, _d: events.append(ev)),
+        patch.object(b, "get_config", return_value={}),
+        patch.object(b, "_publish_catalogs"),
+        patch.object(b, "_probe_one", side_effect=fake_probe),
+        patch.object(b, "_discover_one", side_effect=fake_discover),
+        patch(
+            "runspec_console.ssh_pool.refresh_settings",
+            return_value={"interval": 30, "jitter": 0, "workers": 3},
+        ),
+    ):
+        b._refresh_cycle()
+
+    assert state["peak"] <= 3  # never more than `workers` concurrent tasks
+    # phase ordering: every probe + the hosts_updated dispatch precede any discover
+    first_disc = events.index("disc")
+    assert "runspec:hosts_updated" in events[:first_disc]
+    assert events[:first_disc].count("probe") == 20  # all probes done pre-discovery
+    assert "disc" not in events[: events.index("runspec:hosts_updated")]

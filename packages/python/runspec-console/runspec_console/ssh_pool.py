@@ -38,10 +38,23 @@ DEFAULT_BACKOFF_MAX = 300  # s; per-host backoff cap
 
 DEFAULT_REFRESH_INTERVAL = 30  # s between refresh cycles
 DEFAULT_REFRESH_JITTER = 3  # +/- s of per-host start jitter
+DEFAULT_REFRESH_WORKERS_FLOOR = 16  # min bounded workers for the refresh fan-out
 
 
-def refresh_settings(refresh_cfg: dict[str, Any] | None) -> dict[str, Any]:
-    """Resolve refresh-loop tunables from the ``[refresh]`` config section."""
+def refresh_settings(
+    refresh_cfg: dict[str, Any] | None,
+    *,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+) -> dict[str, Any]:
+    """Resolve refresh-loop tunables from the ``[refresh]`` config section.
+
+    ``workers`` bounds the OS-thread fan-out of the refresh cycle (probe +
+    discovery) so it stays a small constant regardless of fleet size — the
+    handshake cost is already capped by ``[ssh] max_concurrent``, so a worker
+    count a small multiple above it overlaps warm-transport discovery without
+    ever spawning one thread per host. Default: ``max(16, 2 * max_concurrent)``;
+    an explicit positive ``[refresh] workers`` overrides it.
+    """
     cfg = refresh_cfg or {}
 
     def _int(key: str, default: int) -> int:
@@ -50,9 +63,13 @@ def refresh_settings(refresh_cfg: dict[str, Any] | None) -> dict[str, Any]:
         except (TypeError, ValueError):
             return default
 
+    workers = _int("workers", 0)
+    if workers <= 0:
+        workers = max(DEFAULT_REFRESH_WORKERS_FLOOR, 2 * max(1, max_concurrent))
     return {
         "interval": max(1, _int("interval", DEFAULT_REFRESH_INTERVAL)),
         "jitter": max(0, _int("jitter", DEFAULT_REFRESH_JITTER)),
+        "workers": max(1, workers),
     }
 
 

@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.121.0] — 2026-06-24
+
+### Changed
+- **Refresh cycle uses a bounded worker pool (SSH connection pool phase 2).**
+  `_refresh_cycle` previously spawned one OS thread per host per phase (probe +
+  discovery) — ~2N short-lived threads every `[refresh] interval`, which became
+  the bottleneck at many hundreds / low thousands of hosts once the connection
+  pool removed the handshake storm. It now fans both phases out over a bounded
+  `ThreadPoolExecutor`, so the thread count is a small constant regardless of
+  fleet size. New `[refresh] workers` knob (default `max(16, 2 * [ssh]
+  max_concurrent)`); an explicit value overrides. Behaviour is identical for
+  small fleets (with `workers >= 2N` every host still runs concurrently) and
+  byte-for-byte equivalent in output (connected cache, deduped runnables, the
+  `hosts_updated`/`runnables_updated` events, catalog republish, reap). Probe and
+  discovery moved to `_probe_one`/`_discover_one` worker methods; per-host jitter
+  and per-op SSH timeouts (which bound a hung host to its own worker slot) are
+  unchanged. See `docs/design/refresh-cycle-thread-pool.md`.
+
+
 ## [0.120.0] — 2026-06-24
 
 ### Added

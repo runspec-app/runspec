@@ -416,6 +416,43 @@ class InternalsMixin:
 
         threading.Thread(target=_loop, daemon=True).start()
 
+    def _probe_one(self, h: dict[str, Any], *, jitter: float = 0) -> None:
+        """One host's connectivity probe (a refresh-cycle worker task): optional
+        start jitter to spread connects, then record the result in the cache."""
+        if jitter:
+            time.sleep(random.uniform(0, jitter))  # spread the connects
+        result = self._check_connected(h)
+        with self._lock:
+            self._connected_cache[h["name"]] = result
+
+    def _discover_one(self, h: dict[str, Any]) -> list[dict[str, Any]]:
+        """One host's runnable discovery (a refresh-cycle worker task). Returns the
+        discovered runnables (empty if the host was marked disconnected by the
+        probe phase), so the caller can flatten results without a shared lock."""
+        ssh = h.get("ssh")
+        name = h["name"]
+        with self._lock:
+            connected = self._connected_cache.get(name, ssh is None)
+        if not connected:
+            return []
+        runner = self._ssh_pool.run if self._ssh_pool is not None else None
+        idf = h.get("identityFile")
+        out: list[dict[str, Any]] = []
+        for rp in utils_mod._paths(h):
+            out.extend(
+                discover_remote(
+                    ssh,
+                    rp,
+                    name,
+                    idf,
+                    global_ssh_config=self.get_config().get("ssh"),
+                    runner=runner,
+                )
+                if ssh
+                else discover_local(rp, name)
+            )
+        return out
+
     def _refresh_cycle(self) -> None:
         """Probe connectivity, then discover runnables — reusing pooled connections.
 
@@ -426,72 +463,46 @@ class InternalsMixin:
         the same instant; the pool's global semaphore bounds how many connect at
         once; ``reap()`` closes transports gone idle.
         """
-        from .ssh_pool import refresh_settings
+        from concurrent.futures import ThreadPoolExecutor
+
+        from .ssh_pool import pool_settings, refresh_settings
 
         self._reload_hosts()
         local = self._local_host_entry()
         all_hosts = [local] + [h for h in self._hosts if h.get("name") != "local"]
-        jitter = refresh_settings(self.get_config().get("refresh"))["jitter"]
+        max_concurrent = pool_settings(self.get_config().get("ssh"))["max_concurrent"]
+        settings = refresh_settings(
+            self.get_config().get("refresh"), max_concurrent=max_concurrent
+        )
+        jitter = settings["jitter"]
+        # Bounded worker count for the fan-out — see refresh_settings. A patched
+        # refresh_settings (tests) may omit it; fall back to a safe default.
+        workers = max(1, int(settings.get("workers") or 16))
 
         # ── Phase 1: connectivity (warms the pooled transport) ─────────────────
+        # A bounded pool instead of one thread per host: at large fleets this
+        # holds a constant ~workers threads rather than ~N. Order is preserved —
+        # the whole probe phase completes before hosts_updated fires and before
+        # discovery (which skips hosts the probe marked disconnected) runs.
         with self._lock:
             self._connected_cache["local"] = True
 
-        def probe(h: dict[str, Any]) -> None:
-            if jitter:
-                time.sleep(random.uniform(0, jitter))  # spread the connects
-            result = self._check_connected(h)
-            with self._lock:
-                self._connected_cache[h["name"]] = result
-
-        probe_threads = [
-            threading.Thread(target=probe, args=(h,), daemon=True)
-            for h in all_hosts
-            if h.get("ssh")
-        ]
-        for t in probe_threads:
-            t.start()
-        for t in probe_threads:
-            t.join()
+        ssh_hosts = [h for h in all_hosts if h.get("ssh")]
+        if ssh_hosts:
+            with ThreadPoolExecutor(
+                max_workers=min(workers, len(ssh_hosts)),
+                thread_name_prefix="refresh-probe",
+            ) as ex:
+                list(ex.map(lambda h: self._probe_one(h, jitter=jitter), ssh_hosts))
         self._dispatch("runspec:hosts_updated", {})
 
         # ── Phase 2: runnables discovery (reuses the warm transport) ───────────
-        discovered: list[dict[str, Any]] = []
-        lock2 = threading.Lock()
-        runner = self._ssh_pool.run if self._ssh_pool is not None else None
-
-        def discover(h: dict[str, Any]) -> None:
-            paths = utils_mod._paths(h)
-            ssh = h.get("ssh")
-            idf = h.get("identityFile")
-            name = h["name"]
-            with self._lock:
-                connected = self._connected_cache.get(name, ssh is None)
-            if not connected:
-                return
-            for rp in paths:
-                items = (
-                    discover_remote(
-                        ssh,
-                        rp,
-                        name,
-                        idf,
-                        global_ssh_config=self.get_config().get("ssh"),
-                        runner=runner,
-                    )
-                    if ssh
-                    else discover_local(rp, name)
-                )
-                with lock2:
-                    discovered.extend(items)
-
-        disc_threads = [
-            threading.Thread(target=discover, args=(h,), daemon=True) for h in all_hosts
-        ]
-        for t in disc_threads:
-            t.start()
-        for t in disc_threads:
-            t.join()
+        with ThreadPoolExecutor(
+            max_workers=min(workers, len(all_hosts)),
+            thread_name_prefix="refresh-disc",
+        ) as ex:
+            results = list(ex.map(self._discover_one, all_hosts))
+        discovered: list[dict[str, Any]] = [item for sub in results for item in sub]
 
         seen_keys: set[tuple[str, str]] = set()
         deduped: list[dict[str, Any]] = []

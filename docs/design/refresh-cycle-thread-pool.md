@@ -1,6 +1,6 @@
 # runspec-console: bounded refresh-cycle worker pool (phase 2)
 
-Status: **proposed** (not implemented)
+Status: **implemented** (runspec-console 0.121.0)
 Follows up on [`ssh-connection-pool.md`](./ssh-connection-pool.md) (issue #104,
 implemented) and the soft-ceiling analysis in
 [`../console-ssh-capacity.md`](../console-ssh-capacity.md).
