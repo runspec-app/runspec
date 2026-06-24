@@ -72,14 +72,18 @@ auth_timeout    = 30
 [refresh]
 interval = 30   # seconds between refresh cycles
 jitter   = 3    # +/- seconds of per-host start jitter
+workers  = 16   # bounded worker count for the refresh fan-out
+                # (default max(16, 2 * [ssh] max_concurrent))
 ```
 
 !!! note "Where each knob lives"
     `max_concurrent`, `backoff_base`, and `backoff_max` are resolved from the
-    `[ssh]` section (`pool_settings`), **not** `[refresh]` — only `interval` and
-    `jitter` come from `[refresh]` (`refresh_settings`). At large fleet sizes the
-    refresh-cycle thread fan-out, not SSH, is the binding constraint; raising
-    `[refresh] interval` is the highest-leverage knob.
+    `[ssh]` section (`pool_settings`), **not** `[refresh]` — only `interval`,
+    `jitter`, and `workers` come from `[refresh]` (`refresh_settings`). The
+    refresh loop fans both phases out over a **bounded worker pool** (default
+    `max(16, 2 × max_concurrent)`), so its thread count stays constant regardless
+    of fleet size; see [SSH host capacity](console-ssh-capacity.md) for tuning by
+    fleet size.
 
 !!! tip "Behind a corporate proxy / middlebox"
     If a connection error mentions *"the remote sent non-SSH data on connect"*,

@@ -32,40 +32,51 @@ On the SSH side this design comfortably handles **dozens to low hundreds of
 hosts** — the handshake rate is bounded by `max_concurrent` regardless of fleet
 size.
 
-## The actual soft ceiling: refresh-loop thread fan-out
+## The refresh loop: a bounded worker pool
 
-The binding constraint is not SSH — it is the refresh loop's **thread fan-out**.
-Every cycle (`[refresh] interval`, default 30 s), `Bridge._refresh_cycle`
-(`bridge.py`) spawns:
+The refresh loop used to be the binding constraint, not SSH. Every cycle
+(`[refresh] interval`, default 30 s), `Bridge._refresh_cycle`
+(`bridge_internals.py`) ran two phases — a connectivity probe (Phase 1, which
+*warms* the pooled transport) and runnable discovery (Phase 2, which *reuses* it)
+— and the original implementation spawned **one thread per host per phase**, i.e.
+roughly **2N** short-lived OS threads every cycle. That was fine at
+dozens-to-hundreds of hosts but became the bottleneck at many hundreds / low
+thousands: scheduler/memory pressure from the thread fan-out.
 
-1. one thread per SSH host for connectivity probing (Phase 1, which *warms* the
-   pooled transport), then
-2. one thread per host for runnable discovery (Phase 2, which *reuses* that warm
-   transport).
+As of runspec-console **0.121.0** both phases fan out over a **bounded
+`ThreadPoolExecutor`** instead (the [phase-2 worker
+pool](design/refresh-cycle-thread-pool.md)). The refresh loop now holds a small
+*constant* thread count regardless of fleet size, set by **`[refresh] workers`**
+(default `max(16, 2 × [ssh] max_concurrent)`). Behaviour is identical for small
+fleets — with `workers >= 2N` every host still runs concurrently, exactly as
+before — and the cap only becomes visible once N exceeds `workers`. The remaining
+steady-state cost at scale is resource use, not threads: roughly one socket +
+~100 KB per transport (≈1000 FDs and ~100 MB at 1000 hosts).
 
-So each cycle briefly creates roughly **2N OS threads**. That is fine at
-dozens-to-hundreds of hosts, but at **many hundreds / low thousands** the
-thread-per-host-per-cycle pattern — not the SSH layer — becomes the bottleneck:
-scheduler/memory pressure from the thread fan-out, plus N persistent paramiko
-transports each holding file descriptors.
+> A hung host occupies one worker slot for at most the per-op SSH timeout
+> (`connect`/`banner`/`auth` for the probe, `ssh_run` timeout for discovery), and
+> per-host backoff makes known-dead hosts fail fast — so worst-case cycle latency
+> is bounded by `ceil(N / workers) × timeout`, tunable via `workers`.
 
 ## Practical guidance
 
 | Fleet size | Behaviour |
 |---|---|
-| Tens of hosts | Designed sweet spot. The pool keeps things calm; near-zero handshakes once warm. |
-| Low hundreds | Works well. SSH stays bounded by `max_concurrent`; watch refresh-cycle thread count. |
-| Many hundreds / low thousands | The per-cycle thread fan-out (~2N threads) becomes the bottleneck, not SSH. |
+| Tens of hosts | Designed sweet spot. The pool keeps things calm; near-zero handshakes once warm. The worker pool runs every host concurrently (`workers >= 2N`). |
+| Low hundreds | Works well. SSH stays bounded by `max_concurrent`; the refresh fan-out is bounded by `workers`. |
+| Many hundreds / low thousands | Refresh threads stay constant at ~`workers`; SSH stays bounded by `max_concurrent`. The real pressure point is steady-state resource use (FDs/memory per transport), not the fan-out. |
 
 **If you need to push capacity:**
 
 - Raise `[ssh] max_concurrent` *cautiously* — it trades directly against the
-  bastion's `MaxStartups` / rate limits.
-- Lengthen `[refresh] interval` to reduce how often the thread fan-out happens.
-- Beyond low thousands, the refresh loop would need reworking (e.g. a bounded
-  worker pool instead of thread-per-host-per-cycle) rather than any SSH-side
-  change. That rework is specified in
-  [`docs/design/refresh-cycle-thread-pool.md`](design/refresh-cycle-thread-pool.md).
+  bastion's `MaxStartups` / rate limits. (The `workers` default scales with it.)
+- Raise `[refresh] workers` if you want more discovery overlap than the derived
+  default gives — though warm-transport discovery is itself bounded per host by
+  `[ssh] max_sessions`, so a couple× `max_concurrent` is usually enough.
+- Lengthen `[refresh] interval` to reduce how often the cycle runs at all.
+- Beyond low thousands, the next lever is steady-state transport resource use
+  (longer `idle_ttl` reaping, fewer hosts per console) rather than the fan-out,
+  which no longer grows with fleet size.
 
 ### Tuning by fleet size
 
@@ -81,15 +92,17 @@ take effect on the next refresh cycle without a restart (the pool rebuilds when
 | `max_sessions` | `[ssh]` | `8` | `8` | `12–16` | Channels per transport. Raise only if rooms/long runs compete with discovery on the same host; keep below the server's `sshd MaxSessions`. |
 | `keepalive` | `[ssh]` | `30` | `30` | `60–120` | At 1000 hosts a 30 s keepalive is ~33 packets/s leaving the console. Stretching it cuts bastion-side noise; don't disable over NAT/VPN. |
 | `idle_ttl` | `[ssh]` | `300` | `300` | `600` | How long an unused transport is kept before reaping. Longer is more forgiving on flaky links at the cost of holding more idle FDs. |
-| `interval` | `[refresh]` | `30` | `30–45` | `60–120` | **Highest-leverage knob.** Directly sets how often the ~2N-thread fan-out happens. Longer interval = fewer thread storms and less discovery chatter. |
+| `interval` | `[refresh]` | `30` | `30–45` | `60–120` | How often the cycle runs. Longer = less discovery chatter and fewer connects per minute. |
 | `jitter` | `[refresh]` | `3` | `5` | `10–15` | Spreads per-host handshakes across the window so `max_concurrent` isn't the startup bottleneck. |
+| `workers` | `[refresh]` | `max(16, 2×max_concurrent)` | default | `2–4 × max_concurrent` | Bounded thread count for the refresh fan-out. The default scales with `max_concurrent`; raise for more discovery overlap, but `[ssh] max_sessions` bounds per-host discovery anyway, so a couple× `max_concurrent` is usually plenty. |
 
-At 1000+ hosts the two real pressure points are the **per-cycle thread fan-out**
-(~2N short-lived OS threads every `interval`) and steady-state resource use
-(roughly one socket + ~100 KB per transport ⇒ ~1000 FDs and ~100 MB at 1000
-hosts). Raising `interval`/`jitter` and `max_concurrent` is the highest-leverage
-config-only change; removing the thread fan-out entirely is the
-[phase-2 refresh-cycle thread pool](design/refresh-cycle-thread-pool.md).
+At 1000+ hosts the refresh fan-out no longer grows with fleet size — it holds a
+constant ~`workers` threads. The remaining real pressure point is steady-state
+resource use (roughly one socket + ~100 KB per transport ⇒ ~1000 FDs and ~100 MB
+at 1000 hosts). Raising `interval` and `max_concurrent` is the highest-leverage
+config-only change; the bounded fan-out is the
+[phase-2 refresh-cycle worker pool](design/refresh-cycle-thread-pool.md)
+(shipped in 0.121.0).
 
 ## Relevant config (`config.toml`)
 
@@ -106,4 +119,6 @@ backoff_max    = 300    # s; per-host backoff cap
 [refresh]
 interval = 30   # s between refresh cycles
 jitter   = 3    # +/- s of per-host start jitter
+workers  = 16   # bounded worker count for the refresh fan-out
+                # (default max(16, 2 * [ssh] max_concurrent); explicit value wins)
 ```
