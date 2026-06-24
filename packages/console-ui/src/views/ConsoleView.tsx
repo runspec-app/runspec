@@ -220,7 +220,21 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
       <InFlightStrip inFlight={inFlight} />
       {blocks.length > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+          <Button
+            size="small" type="text"
+            onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: true } }))}
+            style={{ fontSize: 11, color: '#888' }}
+          >
+            Collapse all
+          </Button>
+          <Button
+            size="small" type="text"
+            onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: false } }))}
+            style={{ fontSize: 11, color: '#888' }}
+          >
+            Expand all
+          </Button>
           <Tooltip title="Clear the transcript and the assistant's memory of this conversation">
             <Button size="small" icon={<PlusOutlined />} onClick={handleNewChat}>
               New chat

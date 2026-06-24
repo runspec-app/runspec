@@ -13,6 +13,72 @@ const { Text } = Typography
 
 const TRUNCATE_AT = 20
 
+/** Short elapsed string (e.g. "8s", "1m 04s") since an ISO timestamp. */
+function fmtElapsed(startedAt: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`
+}
+
+/** Compact duration for a tool call (ms → "120ms" / "1.2s" / "1m 5s"). */
+function fmtDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(1)}s`
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`
+}
+
+// Approximate Anthropic list prices (USD per million tokens), matched by a
+// substring of the model id. Cache reads bill ~0.1× input, cache writes ~1.25×.
+// Rates drift — this is a labelled *estimate*; unknown models show no cost.
+const PRICING: Array<{ match: RegExp; in: number; out: number }> = [
+  { match: /opus/i, in: 15, out: 75 },
+  { match: /sonnet/i, in: 3, out: 15 },
+  { match: /haiku/i, in: 1, out: 5 },
+]
+
+/** Estimated USD cost for a turn, or null when the model isn't in the table. */
+function estimateCostUsd(
+  model: string | undefined,
+  u: { input: number; output: number; cacheRead: number; cacheCreation: number },
+): number | null {
+  if (!model) return null
+  const p = PRICING.find(x => x.match.test(model))
+  if (!p) return null
+  const m = 1_000_000
+  return (
+    (u.input * p.in + u.cacheRead * p.in * 0.1 + u.cacheCreation * p.in * 1.25 + u.output * p.out) / m
+  )
+}
+
+/** Format a small USD amount (e.g. "$0.0021", "$1.34"). */
+function fmtUsd(v: number): string {
+  if (v < 0.01) return `$${v.toFixed(4)}`
+  return `$${v.toFixed(2)}`
+}
+
+/** Copy text to the clipboard with an execCommand fallback for WebView2 / file://
+ *  contexts where the async clipboard API may be absent. */
+function copyToClipboard(text: string): void {
+  const viaExec = () => {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0'
+    document.body.appendChild(el)
+    el.select()
+    document.execCommand('copy')
+    document.body.removeChild(el)
+  }
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => message.success('Copied to clipboard'))
+      .catch(() => { viaExec(); message.success('Copied to clipboard') })
+  } else {
+    viaExec()
+    message.success('Copied to clipboard')
+  }
+}
+
 // ── Smart output detection ────────────────────────────────────────────────────
 
 interface TableSection {
@@ -292,6 +358,8 @@ export interface ToolCallEntry {
   input: Record<string, unknown>
   output?: string
   running: boolean
+  startedAt?: number   // epoch ms when the tool call began (for per-tool duration)
+  durationMs?: number  // set when the tool call finishes
 }
 
 export type BlockSegment =
@@ -307,9 +375,11 @@ export interface InvocationBlock {
   segments: BlockSegment[]   // for chat blocks — interleaved text + tool calls
   currentText: string        // currently-streaming text (chat blocks only)
   done: boolean
+  stopped?: boolean   // chat turn was halted by the user (distinct from error)
   exitCode?: number
   durationMs?: number
   rerunData?: RerunData
+  model?: string      // model the chat turn ran on (for cost estimate)
   tokenUsage?: { input: number; output: number; cacheRead: number; cacheCreation: number }
 }
 
@@ -554,6 +624,13 @@ function ToolCallBlock({
         {!awaiting && entry.running && (
           <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>running…</Text>
         )}
+        {!entry.running && entry.durationMs !== undefined && (
+          <Tooltip title="Time this tool call took">
+            <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto', flexShrink: 0, fontFamily: 'monospace' }}>
+              {fmtDurationMs(entry.durationMs)}
+            </Text>
+          </Tooltip>
+        )}
         {entry.output !== undefined && !entry.running && (
           <Text style={{ color: '#555', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>
             {expanded ? '▲ hide output' : '▼ show output'}
@@ -643,6 +720,28 @@ function BlockCard({
   const [showAll, setShowAll] = useState(false)
   const [viewRaw, setViewRaw] = useState(false)
 
+  // Tick once a second while this block is still running, so the header's live
+  // elapsed timer updates (chat turns aren't in the InFlightStrip, so without
+  // this there's no running clock for an agent turn).
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    if (block.done) return
+    const t = setInterval(() => forceTick(n => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [block.done])
+
+  const toolCount = block.type === 'chat' ? block.segments.filter(s => s.kind === 'tool').length : 0
+  // Edit & resend / resend act on a user chat prompt (the block label).
+  const loadToComposer = () => window.dispatchEvent(new CustomEvent('runspec:load_composer', { detail: { text: block.label } }))
+  const resend = () => window.dispatchEvent(new CustomEvent('runspec:send_chat', { detail: { message: block.label } }))
+
+  // Collapse-all / expand-all from the transcript header broadcasts to every card.
+  useEffect(() => {
+    const onCollapseAll = (e: Event) => setCollapsed(!!(e as CustomEvent).detail?.collapsed)
+    window.addEventListener('runspec:collapse_all', onCollapseAll)
+    return () => window.removeEventListener('runspec:collapse_all', onCollapseAll)
+  }, [])
+
   const args = block.rerunData?.args ?? {}
   const hasArgs = Object.keys(args).length > 0
 
@@ -654,11 +753,13 @@ function BlockCard({
   const shouldTruncate = block.type === 'run' && block.done && !showAll && extraLines > 0
   const displayLines = shouldTruncate ? block.lines.slice(0, TRUNCATE_AT) : block.lines
 
-  const statusIcon = block.done
-    ? block.exitCode === 0
-      ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
-      : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
-    : <LoadingOutlined style={{ color: '#1677ff' }} />
+  const statusIcon = !block.done
+    ? <LoadingOutlined style={{ color: '#1677ff' }} />
+    : block.stopped
+      ? <PauseCircleOutlined style={{ color: '#8c8c8c' }} />
+      : block.exitCode === 0
+        ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
+        : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
 
   const startEditing = () => {
     setEditArgs(Object.fromEntries(Object.entries(args).map(([k, v]) => [k, String(v)])))
@@ -750,6 +851,15 @@ function BlockCard({
         <Text style={{ color: '#555', fontSize: 11 }}>
           {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </Text>
+        {/* Live elapsed clock while the turn runs (chat turns have no InFlightStrip row). */}
+        {!block.done && (
+          <Text style={{ color: '#1677ff', fontSize: 11, fontFamily: 'monospace' }}>{fmtElapsed(block.startedAt)}</Text>
+        )}
+        {toolCount > 0 && (
+          <Tooltip title={`${toolCount} tool call${toolCount !== 1 ? 's' : ''} this turn`}>
+            <Tag style={{ fontSize: 11, marginLeft: 4 }}><ApiOutlined style={{ fontSize: 10 }} /> {toolCount}</Tag>
+          </Tooltip>
+        )}
         {block.type === 'chat' && !block.done && (
           <Tooltip title="Stop — halt the assistant; no further steps or tool runs">
             <Button
@@ -762,8 +872,11 @@ function BlockCard({
           </Tooltip>
         )}
         {block.done && block.durationMs !== undefined && (
-          <Tag style={{ marginLeft: 4, fontSize: 11 }} color={block.exitCode === 0 ? 'green' : 'red'}>
-            {block.exitCode === 0 ? 'ok' : 'error'} · {(block.durationMs / 1000).toFixed(2)}s
+          <Tag
+            style={{ marginLeft: 4, fontSize: 11 }}
+            color={block.stopped ? 'default' : block.exitCode === 0 ? 'green' : 'red'}
+          >
+            {block.stopped ? 'stopped' : block.exitCode === 0 ? 'ok' : 'error'} · {(block.durationMs / 1000).toFixed(2)}s
           </Tag>
         )}
         {block.tokenUsage && (() => {
@@ -771,6 +884,7 @@ function BlockCard({
           const promptTotal = input + cacheRead + cacheCreation
           const cached = cacheRead + cacheCreation
           const hitPct = promptTotal > 0 ? Math.round((cacheRead / promptTotal) * 100) : 0
+          const cost = estimateCostUsd(block.model, block.tokenUsage!)
           return (
             <>
               <Tooltip title={
@@ -793,6 +907,13 @@ function BlockCard({
                   </Tag>
                 </Tooltip>
               )}
+              {cost !== null && (
+                <Tooltip title={`Estimated cost at approximate list prices${block.model ? ` · ${block.model}` : ''}. Rates drift — treat as a guide.`}>
+                  <Tag style={{ fontSize: 11, fontFamily: 'monospace', cursor: 'default', marginLeft: 4 }}>
+                    ~{fmtUsd(cost)}
+                  </Tag>
+                </Tooltip>
+              )}
             </>
           )
         })()}
@@ -811,6 +932,35 @@ function BlockCard({
             <Tooltip title="Rerun with same args">
               <RedoOutlined
                 onClick={() => onRerun(block.rerunData!)}
+                style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
+                onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+              />
+            </Tooltip>
+          </Fragment>
+        )}
+        {/* Chat turns: copy / edit / resend the original prompt. */}
+        {block.type === 'chat' && block.done && block.label && (
+          <Fragment>
+            <Tooltip title="Copy this prompt">
+              <CopyOutlined
+                onClick={(e) => { e.stopPropagation(); copyToClipboard(block.label) }}
+                style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
+                onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+              />
+            </Tooltip>
+            <Tooltip title="Edit & resend — load this prompt into the composer">
+              <EditOutlined
+                onClick={(e) => { e.stopPropagation(); loadToComposer() }}
+                style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
+                onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
+                onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+              />
+            </Tooltip>
+            <Tooltip title="Resend this prompt">
+              <RedoOutlined
+                onClick={(e) => { e.stopPropagation(); resend() }}
                 style={{ color: '#555', cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
                 onMouseEnter={e => (e.currentTarget.style.color = '#d4d4d4')}
                 onMouseLeave={e => (e.currentTarget.style.color = '#555')}
@@ -1046,7 +1196,7 @@ export function useInvocationBlocks() {
         const newSegs: BlockSegment[] = [
           ...b.segments,
           ...(b.currentText ? [{ kind: 'text' as const, text: b.currentText }] : []),
-          { kind: 'tool' as const, entry: { name: tool_name, input: tool_input, running: true } },
+          { kind: 'tool' as const, entry: { name: tool_name, input: tool_input, running: true, startedAt: Date.now() } },
         ]
         return { ...b, segments: newSegs, currentText: '' }
       }))
@@ -1060,7 +1210,8 @@ export function useInvocationBlocks() {
         if (b.id !== id) return b
         const newSegs = b.segments.map(seg => {
           if (seg.kind === 'tool' && seg.entry.name === tool_name && seg.entry.running) {
-            return { ...seg, entry: { ...seg.entry, output, running: false } }
+            const durationMs = seg.entry.startedAt ? Date.now() - seg.entry.startedAt : undefined
+            return { ...seg, entry: { ...seg.entry, output, running: false, durationMs } }
           }
           return seg
         })
@@ -1069,7 +1220,7 @@ export function useInvocationBlocks() {
     }
 
     const onEnd = (e: Event) => {
-      const { id, exit_code, duration_ms } = (e as CustomEvent).detail as { id: string; exit_code: number; duration_ms: number }
+      const { id, exit_code, duration_ms, stopped } = (e as CustomEvent).detail as { id: string; exit_code: number; duration_ms: number; stopped?: boolean }
       setBlocks(prev => prev.map(b => {
         if (b.id !== id) return b
         if (b.type === 'chat' && b.currentText) {
@@ -1077,21 +1228,21 @@ export function useInvocationBlocks() {
             ...b,
             segments: [...b.segments, { kind: 'text', text: b.currentText }],
             currentText: '',
-            done: true, exitCode: exit_code, durationMs: duration_ms,
+            done: true, exitCode: exit_code, durationMs: duration_ms, stopped: !!stopped,
           }
         }
-        return { ...b, done: true, exitCode: exit_code, durationMs: duration_ms }
+        return { ...b, done: true, exitCode: exit_code, durationMs: duration_ms, stopped: !!stopped }
       }))
     }
 
     const onChatUsage = (e: Event) => {
-      const { id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens } =
+      const { id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens } =
         (e as CustomEvent).detail as {
-          id: string; input_tokens: number; output_tokens: number
+          id: string; model?: string; input_tokens: number; output_tokens: number
           cache_read_tokens?: number; cache_creation_tokens?: number
         }
       setBlocks(prev => prev.map(b =>
-        b.id === id ? { ...b, tokenUsage: {
+        b.id === id ? { ...b, model: model || b.model, tokenUsage: {
           input: input_tokens, output: output_tokens,
           cacheRead: cache_read_tokens ?? 0, cacheCreation: cache_creation_tokens ?? 0,
         } } : b

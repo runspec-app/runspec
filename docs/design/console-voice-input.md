@@ -1,5 +1,39 @@
 # In-app voice input (dictation into the prompt box)
 
+## Status: SHELVED (button removed in 0.122.0) — plumbing kept dormant
+
+The Voice-access approach was tried end-to-end and **abandoned**. The composer
+**Speak/Listening… button was removed** because driving Windows Voice access from
+the app proved unreliable: the documented wake/sleep chord (Alt+Shift+B) works
+from a physical keyboard but **the injected keystroke does not wake Voice access**
+— even after making the injection mimic real hardware (per-key events, holds,
+`MapVirtualKey` scan codes). The most likely cause is that Voice access, as an
+accessibility app, **ignores synthetic/injected input** (the injected-input flag /
+UIPI integrity barrier), which `SendInput` fundamentally cannot defeat. Chasing it
+further was diminishing returns.
+
+**What was removed:** only the **UI** — the button + its state/handlers in
+`CommandInput.tsx`.
+
+**What was deliberately kept (dormant, no UI caller):**
+- `runspec_console/winkeys.py` — the (now scan-code-correct) chord injector.
+- `bridge_triggers.py` `start_voice_dictation()` / `stop_voice_dictation()` bridge
+  methods (still in the frozen JS API surface) + their `index.ts`/`mock.ts` types.
+
+So re-enabling Voice access (a new button calling the existing bridge methods) is a
+small change if the injection barrier is ever solved — but the **intended next step
+is a real local STT engine**, not Voice access.
+
+### Future engine: hard constraint — no runtime model download
+
+When picking this back up with **faster-whisper / Vosk / sherpa-onnx**, note that on
+the target fleet **outbound HuggingFace access is blocked**, so the model **cannot
+be downloaded at first run**. The model file must be **vendored** — bundled into the
+wheel or served from the internal index/mirror — and the engine pointed at that
+local path (e.g. faster-whisper `model_size_or_path=<local dir>`, download disabled).
+Treat "ship the model artifact through the internal channel" as part of the work,
+not an afterthought. See "The realistic menu" / engine notes below.
+
 ## Why
 
 Operators run the console hands-on all day; some of what they send the agent is

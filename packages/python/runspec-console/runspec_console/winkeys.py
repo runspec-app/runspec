@@ -14,9 +14,12 @@ drive Voice access from its own bar). The chord is a single named constant so
 it's a one-line change if a build documents a different combo (e.g. Alt+Shift+C
 for mic on/off).
 
-Mechanism: ``user32.SendInput`` with paired key-down then key-up events. The
-modifiers are pressed first and released last, so the action key fires while
-they're held.
+Mechanism: ``user32.SendInput``, sent **one event at a time with a short hold
+between them** and tagged with each key's **hardware scan code**
+(``MapVirtualKey``) so it mimics a real keypress. An instantaneous six-event
+batch with no scan codes is honoured by *some* listeners but not by Voice access
+(manual Alt+Shift+B works; a raw batch did not). Modifiers are pressed first and
+released last, so the action key fires while they're held.
 """
 
 from __future__ import annotations
@@ -39,11 +42,12 @@ def send_voice_access_toggle() -> bool:
     return _send_chord(VOICE_ACCESS_TOGGLE)
 
 
-def _send_chord(vks: tuple[int, ...]) -> bool:
+def _send_chord(vks: tuple[int, ...], *, hold_ms: int = 30) -> bool:
     if sys.platform != "win32" or not vks:
         return False
     try:
         import ctypes
+        import time
         from ctypes import wintypes
 
         user32 = ctypes.windll.user32
@@ -51,6 +55,7 @@ def _send_chord(vks: tuple[int, ...]) -> bool:
         ULONG_PTR = ctypes.c_size_t  # UINT_PTR — 32/64-bit safe
         _INPUT_KEYBOARD = 1
         _KEYEVENTF_KEYUP = 0x0002
+        _MAPVK_VK_TO_VSC = 0
 
         class _KEYBDINPUT(ctypes.Structure):
             _fields_ = [
@@ -73,16 +78,25 @@ def _send_chord(vks: tuple[int, ...]) -> bool:
             ctypes.c_int,
         )
         user32.SendInput.restype = wintypes.UINT
+        user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
+        user32.MapVirtualKeyW.restype = wintypes.UINT
 
-        def _key(vk: int, *, up: bool) -> _INPUT:
-            ki = _KEYBDINPUT(vk, 0, _KEYEVENTF_KEYUP if up else 0, 0, 0)
-            return _INPUT(_INPUT_KEYBOARD, _INPUTUNION(ki=ki))
+        def _send_one(vk: int, *, up: bool) -> int:
+            # Tag with the hardware scan code so listeners that key off scan codes
+            # (Voice access among them) see a real-looking keypress.
+            scan = user32.MapVirtualKeyW(vk, _MAPVK_VK_TO_VSC)
+            ki = _KEYBDINPUT(vk, scan, _KEYEVENTF_KEYUP if up else 0, 0, 0)
+            inp = _INPUT(_INPUT_KEYBOARD, _INPUTUNION(ki=ki))
+            return user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
 
-        # Press in order, release in reverse — modifiers held over the action key.
-        events = [_key(vk, up=False) for vk in vks]
-        events += [_key(vk, up=True) for vk in reversed(vks)]
-        arr = (_INPUT * len(events))(*events)
-        sent = user32.SendInput(len(events), arr, ctypes.sizeof(_INPUT))
-        return sent == len(events)
+        # Press in order, release in reverse — modifiers held over the action key —
+        # one event at a time with a brief hold between, so the combo registers
+        # like real typing rather than a single instantaneous batch.
+        seq = [(vk, False) for vk in vks] + [(vk, True) for vk in reversed(vks)]
+        sent = 0
+        for vk, up in seq:
+            sent += _send_one(vk, up=up)
+            time.sleep(hold_ms / 1000.0)
+        return sent == len(seq)
     except Exception:
         return False

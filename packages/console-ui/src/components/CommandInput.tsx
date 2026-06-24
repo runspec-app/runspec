@@ -1,7 +1,7 @@
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, Tooltip } from 'antd'
-import { SendOutlined, ThunderboltOutlined, StopOutlined, AudioOutlined } from '@ant-design/icons'
-import { bridge, type Runnable, type Skill } from '../bridge'
+import { SendOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
+import type { Runnable, Skill } from '../bridge'
 import { ThemeContext } from '../ThemeContext'
 
 interface SlashItem {
@@ -72,7 +72,12 @@ function flattenToSlashItems(runnables: Runnable[]): SlashItem[] {
 
 export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onOpenSkill, onSendChat, activeChatId, onStopChat, history, autoSwitch, onToggleAutoSwitch }: CommandInputProps) {
   const isDark = useContext(ThemeContext)
-  const [value, setValue] = useState('')
+  // Draft persistence: restore a half-typed prompt across tab switches and app
+  // restarts (localStorage), so an in-progress message is never lost. Cleared on
+  // send (setValue('') writes through below).
+  const [value, setValue] = useState(() => {
+    try { return localStorage.getItem('runspec:composerDraft') ?? '' } catch { return '' }
+  })
   const [slashItems, setSlashItems] = useState<SlashItem[]>([])
   const [slashOpen, setSlashOpen] = useState(false)
   const [slashFilter, setSlashFilter] = useState('')
@@ -83,49 +88,47 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
   const [skillsIndex, setSkillsIndex] = useState(0)
   const [historyIndex, setHistoryIndex] = useState(-1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  // Voice input is handled by Windows 11 Voice access (on-device, policy-permitted
-  // where Win+H is blocked), which types into whatever editable control has focus.
-  // The mic button focuses the composer and wakes Voice access (Alt+Shift+B, host-
-  // side — JS can't synthesize a hotkey); sending puts it back to sleep. Both use
-  // the same wake/sleep chord, so we track `voiceAwake` and press it to flip.
-  // A one-time hint makes it discoverable. No speech engine, no dependency.
-  const [voiceHintSeen, setVoiceHintSeen] = useState(
-    () => typeof localStorage !== 'undefined' && localStorage.getItem('runspec:voiceHintSeen') === '1',
-  )
-  const [voiceAwake, setVoiceAwake] = useState(false)
 
-  // Mic click: toggle Voice access listening. Wake (and focus the box so dictation
-  // lands here) when asleep; sleep again on a second click — so there's a way to
-  // cancel without sending. Fire-and-forget: {ok:false} (non-Windows / blocked)
-  // just means the operator drives Voice access from its own bar.
-  const toggleVoice = () => {
-    inputRef.current?.focus()
-    if (voiceAwake) {
-      void bridge.stop_voice_dictation().catch(() => {})
-      setVoiceAwake(false)
-    } else {
-      void bridge.start_voice_dictation().catch(() => {})
-      setVoiceAwake(true)
-    }
-    if (!voiceHintSeen) {
-      try { localStorage.setItem('runspec:voiceHintSeen', '1') } catch { /* ignore */ }
-      setVoiceHintSeen(true)
-    }
-  }
-
-  // Sleep Voice access when the operator sends (any submit path), if we woke it.
-  const sleepVoiceIfAwake = () => {
-    if (!voiceAwake) return
-    void bridge.stop_voice_dictation().catch(() => {})
-    setVoiceAwake(false)
-  }
-
-  useLayoutEffect(() => {
+  // Auto-grow the textarea to fit its content, growing *upward* over the
+  // transcript (the composer is anchored at the bottom of a flex column, so extra
+  // height pushes its top edge up). Cap at ~45% of the viewport, then scroll
+  // internally — recomputed on window resize so the cap tracks the window.
+  const resizeTextarea = useCallback(() => {
     const el = inputRef.current
     if (!el) return
+    const cap = Math.max(160, Math.round(window.innerHeight * 0.45))
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 240)}px`
+    el.style.height = `${Math.min(el.scrollHeight, cap)}px`
+    el.style.maxHeight = `${cap}px`
+  }, [])
+
+  useLayoutEffect(() => { resizeTextarea() }, [value, resizeTextarea])
+
+  useEffect(() => {
+    window.addEventListener('resize', resizeTextarea)
+    return () => window.removeEventListener('resize', resizeTextarea)
+  }, [resizeTextarea])
+
+  // Persist the draft on every change so it survives a tab switch / restart.
+  useEffect(() => {
+    try { localStorage.setItem('runspec:composerDraft', value) } catch { /* ignore */ }
   }, [value])
+
+  // Load a message into the composer for editing (Edit & resend on a chat card
+  // dispatches this with the original prompt). We focus so the operator can tweak
+  // and press Enter.
+  useEffect(() => {
+    const onLoad = (e: Event) => {
+      const { text } = (e as CustomEvent).detail as { text: string }
+      setValue(text)
+      setSlashOpen(false)
+      setSkillsOpen(false)
+      setHistoryIndex(-1)
+      requestAnimationFrame(() => inputRef.current?.focus())
+    }
+    window.addEventListener('runspec:load_composer', onLoad)
+    return () => window.removeEventListener('runspec:load_composer', onLoad)
+  }, [])
 
   useEffect(() => {
     setSlashItems(flattenToSlashItems(runnables))
@@ -210,7 +213,6 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
     // While a chat turn is in flight the primary action is Stop, not send —
     // ignore Enter/submit so we don't queue a second turn behind the lock.
     if (activeChatId) return
-    sleepVoiceIfAwake()  // done talking — put Voice access back to sleep
     onSendChat(trimmed)
     setValue('')
     setSlashOpen(false)
@@ -363,45 +365,12 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
         </div>
       )}
 
-      {/* Prompt window — the bordered box. The voice-access affordance lives
-          INSIDE it, just above the ❯ row. */}
+      {/* Input row */}
       <div style={{
+        display: 'flex', gap: 8, alignItems: 'flex-end',
         background: '#1a1a1a', border: '1px solid #333',
         borderRadius: 8, padding: '8px 12px',
       }}>
-        {/* Voice-access affordance — clicking wakes Windows Voice access
-            (Alt+Shift+B, host-side) and focuses the box so dictation lands here;
-            sending (or a second click) sleeps it. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <Tooltip
-            title={voiceAwake
-              ? 'Listening with Windows Voice access — speak into the box. Click to stop, or just send (Enter) when done.'
-              : 'Dictate with Windows Voice access — click to start listening (Alt+Shift+B) and focus the box, then speak. Nothing is sent until you press Enter.'}
-            placement="top"
-          >
-            <Button
-              type="text"
-              size="small"
-              icon={<AudioOutlined style={{ fontSize: 13 }} />}
-              onClick={toggleVoice}
-              style={{
-                color: voiceAwake ? '#ff4d4f' : (isDark ? '#888' : '#888'),
-                height: 22, padding: '0 8px',
-                fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4,
-              }}
-            >
-              {voiceAwake ? 'Listening…' : 'Speak'}
-            </Button>
-          </Tooltip>
-          {!voiceHintSeen && (
-            <span style={{ fontSize: 11, color: '#777' }}>
-              Click to start Windows Voice access dictation, then talk
-            </span>
-          )}
-        </div>
-
-        {/* Input row: ❯ + textarea + send controls */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
         <span style={{ color: '#555', fontSize: 14, paddingBottom: 2 }}>❯</span>
         <textarea
           ref={inputRef}
@@ -412,7 +381,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
             color: '#d4d4d4', fontSize: 14, resize: 'none',
-            lineHeight: 1.5, minHeight: '42px', maxHeight: '240px', overflowY: 'auto',
+            lineHeight: 1.5, minHeight: '42px', overflowY: 'auto',
           }}
         />
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flexShrink: 0 }}>
@@ -451,7 +420,6 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
               style={{ color: value.trim() ? '#1677ff' : (isDark ? '#444' : '#ccc'), padding: 4, transition: 'color 0.15s ease' }}
             />
           )}
-        </div>
         </div>
       </div>
     </div>

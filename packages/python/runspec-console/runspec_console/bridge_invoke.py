@@ -666,13 +666,20 @@ class InvokeMixin:
             self._dispatch("runspec:token", {"id": chat_id, "token": "\n⏹ Stopped."})
         self._dispatch(
             "runspec:run_end",
-            {"id": chat_id, "exit_code": 0, "duration_ms": duration_ms},
+            {
+                "id": chat_id,
+                "exit_code": 0,
+                "duration_ms": duration_ms,
+                "stopped": stopped,
+            },
         )
         if any(usage_total.values()):
             self._dispatch(
                 "runspec:chat_usage",
                 {
                     "id": chat_id,
+                    # The model the turn ran on, so the UI can show an estimated cost.
+                    "model": getattr(adapter, "model", "") or "",
                     # input_tokens is the uncached remainder (full price); the cached
                     # portion is reported separately so the UI can show cache savings.
                     "input_tokens": usage_total["input"],

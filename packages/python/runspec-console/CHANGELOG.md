@@ -8,6 +8,62 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.123.0] — 2026-06-24
+
+### Added
+- **Composer grows upward as you type.** The prompt textarea auto-expands to fit
+  multi-line input, growing up over the transcript (it's bottom-anchored), capped
+  at ~45% of the window height before it scrolls — up from the old fixed 240px, and
+  recomputed on window resize.
+- **Draft persistence.** A half-typed prompt now survives tab switches and app
+  restarts (localStorage), so an in-progress message is never lost.
+- **Edit & resend on chat turns.** Each finished chat card gets two actions: *edit
+  & resend* (loads the original prompt back into the composer to tweak) and *resend*
+  (fires it again as-is).
+- **Live elapsed clock on running turns.** A chat turn's card header now shows a
+  ticking elapsed timer while the agent works (chat turns don't appear in the
+  in-flight strip, so there was no running clock before).
+- **Tool-call count on chat cards.** A small badge shows how many tool calls a turn
+  made.
+- **Stopped vs error status.** A user-halted turn now shows a neutral *stopped*
+  status (grey pause icon + tag) instead of a misleading green "ok" / red "error" —
+  the backend now tags `run_end` with `stopped`.
+- **Copy the prompt.** A copy action on each chat card copies the original prompt
+  text.
+- **Per-tool durations (tool timeline).** Each tool call now shows how long it took,
+  so a slow turn's time is attributable.
+- **Estimated cost.** A `~$x` tag (and the token tooltip) shows an approximate USD
+  cost from the turn's tokens + model (Anthropic list prices; omitted for unknown
+  models — a labelled estimate, `chat_usage` now carries the model id).
+- **Collapse all / Expand all.** Transcript-header controls fold or unfold every
+  card at once.
+
+(Smart auto-scroll with a "jump to latest" pill already existed and is unchanged.
+Anchor/permalink-to-a-card was dropped — URLs don't fit a desktop window; the
+collapse/expand + existing jump pill cover navigation.)
+
+
+## [0.122.0] — 2026-06-24
+
+### Removed
+- **The composer's Speak / Listening… voice button is removed.** Driving Windows
+  Voice access from the app proved unreliable — the Alt+Shift+B wake/sleep chord
+  works from a physical keyboard but the *injected* keystroke doesn't wake Voice
+  access, even after making the injection mimic real hardware (per-key events +
+  holds + `MapVirtualKey` scan codes). The likely cause is Voice access ignoring
+  synthetic input (injected-input flag / UIPI), which `SendInput` can't defeat.
+
+### Kept (dormant, no UI caller)
+- `winkeys.py` (now with the scan-code-correct injection) and the
+  `start_voice_dictation`/`stop_voice_dictation` bridge methods (in
+  `bridge_triggers.py`, still in the frozen JS API surface) are retained so a
+  future re-enable — or, more likely, a real local STT engine
+  (faster-whisper/Vosk) — can reuse the plumbing. **Note for that work:** outbound
+  HuggingFace is blocked on the target fleet, so the model must be **vendored**
+  (bundled / internal mirror), not downloaded at first run. See
+  `docs/design/console-voice-input.md`.
+
+
 ## [0.121.0] — 2026-06-24
 
 ### Changed
