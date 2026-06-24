@@ -239,6 +239,14 @@ export interface Host {
   group?: string                  // sidebar display group label, joined from JumpHost config
 }
 
+// An entry in the canonical host-group registry (runspec_groups.toml). The
+// registry pins the legal group NAMES (shared via Config Sync); membership lives
+// on each host's `group` field.
+export interface HostGroup {
+  name: string
+  description?: string
+}
+
 export interface JumpHost {
   name: string        // identifier — displayed and used as SSH host alias
   hostname: string
@@ -293,8 +301,10 @@ export interface Schedule {
   enabled?: boolean
   action: 'runnable' | 'event'
   when: ScheduleWhen
-  // action === 'runnable'
+  // action === 'runnable' — exactly one of host / group (group fans the run out
+  // across every member of the host group).
   host?: string
+  group?: string
   runnable?: string
   args?: Record<string, unknown>
   // action === 'event'
@@ -728,6 +738,11 @@ export interface BridgeApi {
   get_jump_hosts: () => Promise<JumpHost[]>
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
+  // Canonical host-group registry (runspec_groups.toml) — the controlled
+  // vocabulary the host editor's group dropdown is populated from (synced).
+  get_groups: () => Promise<HostGroup[]>
+  save_groups: (groups: HostGroup[]) => Promise<void>
+  rename_group: (oldName: string, newName: string) => Promise<void>
   // Named source-side stream filters (Settings → Filters), selectable by name in
   // the Relay and Download dialogs.
   get_filters: () => Promise<Filter[]>

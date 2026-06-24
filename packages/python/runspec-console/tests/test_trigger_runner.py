@@ -95,6 +95,13 @@ class FakeOps:
             return self._group_outputs
         return [self._tool_output for _ in calls]
 
+    def expand_targets(self, run):
+        # Default: identity (plain host__runnable). Tests that exercise group
+        # fan-out set self._expand to a custom map.
+        if getattr(self, "_expand", None) is not None:
+            return list(self._expand.get(run, [run]))
+        return [run]
+
     def run_pre_turn(self, chat_id, instructions, event_text):
         self.pre_turn_calls.append(
             {
@@ -523,6 +530,81 @@ def test_handler_rule_actions_parallel_uses_group():
     assert [name for name, _ in calls] == ["web01__check-memory", "db01__check-disk"]
     result = moves[-1][1]["result"]
     assert "a-out" in result and "b-out" in result
+
+
+# ── handler: host-group fan-out targets ───────────────────────────────────────
+
+
+def test_handler_rule_run_group_fans_out_via_grouped_confirm():
+    ops = FakeOps(group_outputs=["m1-out", "m2-out"])
+    ops._expand = {"group:Prod__restart": ["web01__restart", "web02__restart"]}
+    t = Trigger.from_config(
+        {
+            "name": "g",
+            "source": "schedule",
+            "event": "nightly",
+            "mode": "rule",
+            "run": "group:Prod__restart",
+            "post_to_chat": True,
+        }
+    )
+    card, moves = _card("g")
+    make_handler(ops)(card, t, Event.new("schedule", "nightly", {}))
+
+    # A single grouped confirm covers both members; no per-tool gate.
+    assert ops.rule_calls == []
+    assert len(ops.group_calls) == 1
+    assert [n for n, _ in ops.group_calls[0]["calls"]] == [
+        "web01__restart",
+        "web02__restart",
+    ]
+    result = moves[-1][1]["result"]
+    assert "── web01 ──\nm1-out" in result and "── web02 ──\nm2-out" in result
+    # Mirrored as a group run card.
+    assert ops.chat_mirrors[0]["label"].startswith("/restart on group:Prod")
+
+
+def test_handler_rule_run_group_empty_reports_no_member():
+    ops = FakeOps()
+    ops._expand = {"group:Prod__restart": []}  # no member carries the runnable
+    t = Trigger.from_config(
+        {
+            "name": "g",
+            "source": "schedule",
+            "event": "nightly",
+            "mode": "rule",
+            "run": "group:Prod__restart",
+        }
+    )
+    card, moves = _card("g")
+    make_handler(ops)(card, t, Event.new("schedule", "nightly", {}))
+    assert ops.group_calls == []
+    assert "No host in group 'Prod'" in moves[-1][1]["result"]
+
+
+def test_handler_rule_actions_expand_group_step():
+    ops = FakeOps(group_outputs=["a", "b", "c"])
+    ops._expand = {"group:Prod__check": ["web01__check", "web02__check"]}
+    t = Trigger.from_config(
+        {
+            "name": "par",
+            "source": "schedule",
+            "event": "nightly",
+            "mode": "rule",
+            "action_mode": "parallel",
+            "actions": [
+                {"run": "group:Prod__check"},  # expands to 2
+                {"run": "db01__check-disk"},  # plain host
+            ],
+        }
+    )
+    card, _ = _card("par")
+    make_handler(ops)(card, t, Event.new("schedule", "nightly", {}))
+    assert [n for n, _ in ops.group_calls[0]["calls"]] == [
+        "web01__check",
+        "web02__check",
+        "db01__check-disk",
+    ]
 
 
 # ── handler: optional LLM pre-turn (Phase 3) ───────────────────────────────────

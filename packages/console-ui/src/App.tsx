@@ -20,6 +20,8 @@ import {
   BugOutlined,
   FileTextOutlined,
   ReadOutlined,
+  DownOutlined,
+  RightOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -53,6 +55,20 @@ export default function App() {
   const [analyticsVisited, setAnalyticsVisited] = useState(false)
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
+  // Which sidebar host groups are collapsed (group name → true). Persisted so the
+  // layout survives reloads; a group absent from the map is expanded.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('runspec.sidebar.collapsedGroups') || '{}')
+    } catch {
+      return {}
+    }
+  })
+  const toggleGroup = (g: string) => setCollapsedGroups(prev => {
+    const next = { ...prev, [g]: !prev[g] }
+    localStorage.setItem('runspec.sidebar.collapsedGroups', JSON.stringify(next))
+    return next
+  })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
   const [relayOpen, setRelayOpen] = useState(false)
@@ -421,19 +437,40 @@ export default function App() {
 
                 return (
                   <>
-                    {sortedGroupKeys.map(g => (
-                      <div key={g || '__hosts__'}>
-                        <div style={{
-                          padding: '10px 14px 3px',
-                          fontSize: 10, color: isDark ? '#aaa' : '#999',
-                          textTransform: 'uppercase', letterSpacing: '0.08em',
-                          userSelect: 'none',
-                        }}>
-                          {g || 'Hosts'}
+                    {sortedGroupKeys.map(g => {
+                      const members = groupMap.get(g)!
+                      const collapsed = !!collapsedGroups[g]
+                      const up = members.filter(m => m.connected).length
+                      const down = members.length - up
+                      return (
+                        <div key={g || '__hosts__'}>
+                          <div
+                            onClick={() => toggleGroup(g)}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 6,
+                              padding: '10px 14px 3px',
+                              fontSize: 10, color: isDark ? '#aaa' : '#999',
+                              textTransform: 'uppercase', letterSpacing: '0.08em',
+                              userSelect: 'none', cursor: 'pointer',
+                            }}
+                          >
+                            {collapsed
+                              ? <RightOutlined style={{ fontSize: 8 }} />
+                              : <DownOutlined style={{ fontSize: 8 }} />}
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {g || 'Hosts'}
+                            </span>
+                            {collapsed && (
+                              <span style={{ display: 'flex', alignItems: 'center', gap: 6, letterSpacing: 0 }}>
+                                <span style={{ color: '#52c41a' }}>● {up}</span>
+                                {down > 0 && <span style={{ color: '#595959' }}>● {down}</span>}
+                              </span>
+                            )}
+                          </div>
+                          {!collapsed && members.map(hostRow)}
                         </div>
-                        {groupMap.get(g)!.map(hostRow)}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </>
                 )
               })()}

@@ -240,8 +240,11 @@ def save_skill(
 ) -> str:
     """Create or replace a runbook by id (slugified from title when blank). Returns
     the id. ``steps`` is the body/prompt template (free text naming which runnables
-    to call, with ``{{name}}`` placeholders that map to ``args``). ``args`` is an
-    optional ``[skill.args]`` table using the exact runspec arg grammar — see
+    to call, with ``{{name}}`` placeholders that map to ``args``). A step may name a
+    **host group** instead of a single host (e.g. "run restart-service on the
+    Production group") — the agent passes the group name as ``run_runnable``'s host
+    to fan the run out across every member behind one grouped confirm. ``args`` is
+    an optional ``[skill.args]`` table using the exact runspec arg grammar — see
     ``skillargs.py`` for how it is parsed/validated/rendered (the same core machinery
     runnable forms use)."""
     skill_id = (skill_id or "").strip() or _slug(title)

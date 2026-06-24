@@ -8,6 +8,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.120.0] — 2026-06-24
+
+### Added
+- **Host groups are now a first-class targeting concept.** A host's `group`
+  (in `runspec_hosts.toml`) was previously only a sidebar label; a group name can
+  now run a runnable on **every host in the group at once**:
+  - **Agent**: `run_runnable`'s `host` may be a group name — it fans out to every
+    member that carries the runnable behind **one grouped confirm** (most-restrictive
+    autonomy wins; a `manual` member refuses the whole group; args editable before
+    approve). A literal host name wins on a host/group name collision. The chat
+    agent is also made **group-aware** via a bounded "Host groups" block in the
+    per-turn console context (group → connected/total + member names).
+  - **Triggers**: a rule `run` or an `actions[].run` may be written
+    `group:<group>__<runnable>` to fan out (single grouped confirm; the
+    post-expansion action total is bounded).
+  - **Schedules**: a runnable-action schedule takes a `group` field as an
+    alternative to `host` (exactly one of the two), fanning out autonomously
+    (pre-authorised, one run card per host).
+  - **Skills**: inherit group support — a runbook step can name a group; the agent
+    passes it as the `host`.
+  - Resolver is the single source of truth `hosts.group_members` / `groups_map`
+    (bridge wrappers `_group_members` / `_groups_map`), reused everywhere.
+- **Canonical host-group registry (`runspec_groups.toml`).** Group names are no
+  longer free-form: a new synced registry file (`groups.py`; added to Config Sync
+  `KNOWN_FILES` + `COLLECTION_FILES`, merged by `name`) is the controlled
+  vocabulary the host editor's **required group dropdown** is populated from, so a
+  group referenced by a shared runbook resolves to the same group on every
+  console. Membership still lives on the host's `group` field (also synced);
+  "Ungrouped" is an explicit choice. The registry is self-healing — `get_groups`
+  absorbs any in-use host group not yet registered (migrates pre-registry
+  free-form groups). A Settings → Jump Hosts → **Manage groups** dialog
+  adds/renames/deletes groups (`save_groups` resets orphaned hosts to Ungrouped;
+  `rename_group` re-points member hosts).
+- **Sidebar host groups are now collapsible.** Each group header toggles
+  (chevron, state persisted in `localStorage`); collapsed it shows a green
+  connected count and a grey disconnected count. The ungrouped "Hosts" section
+  collapses the same way.
+
+
 ## [0.119.0] — 2026-06-23
 
 ### Changed

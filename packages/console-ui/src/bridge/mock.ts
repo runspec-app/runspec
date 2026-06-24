@@ -673,6 +673,13 @@ export const mockApi: BridgeApi = {
 
   save_jump_hosts: async (hosts) => { console.log('[mock] save_jump_hosts', hosts) },
 
+  get_groups: async () => [
+    { name: 'Production', description: 'Prod fleet' },
+    { name: 'Staging', description: '' },
+  ],
+  save_groups: async (groups) => { console.log('[mock] save_groups', groups) },
+  rename_group: async (oldName, newName) => { console.log('[mock] rename_group', oldName, newName) },
+
   get_filters: async () => [
     { name: 'id-lines', pipeline: 'grep -F -- {{arg}} | cut -d, -f1,4', description: 'Lines containing the txn id, keep cols 1 & 4', param_label: 'transaction id' },
     { name: 'errors', pipeline: 'grep -i error' },

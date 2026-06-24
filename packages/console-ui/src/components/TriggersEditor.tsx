@@ -295,7 +295,7 @@ export function TriggersEditor({
             <div key={f.key} style={{ border: '1px solid #2a2a2a', borderRadius: 6, padding: 8 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
                 <Form.Item name={[f.name, 'run']} noStyle rules={[{ required: true, whitespace: true, message: 'Required' }]}>
-                  <Input size="small" placeholder="host__runnable" style={{ fontFamily: 'monospace' }} />
+                  <Input size="small" placeholder="host__runnable  or  group:<group>__runnable" style={{ fontFamily: 'monospace' }} />
                 </Form.Item>
                 <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: '#666', cursor: 'pointer' }} />
               </div>
@@ -393,8 +393,8 @@ export function TriggersEditor({
                 </>
               ) : (
                 <>
-                  <Form.Item name="run" label="Run" rules={[{ required: true, whitespace: true, message: 'Required for rule mode' }]} help="host__runnable — the runnable to run.">
-                    <Input placeholder="web01__reset-password" style={{ fontFamily: 'monospace' }} />
+                  <Form.Item name="run" label="Run" rules={[{ required: true, whitespace: true, message: 'Required for rule mode' }]} help="host__runnable — or group:<group>__runnable to run on every host in a group (one grouped confirm).">
+                    <Input placeholder="web01__reset-password  or  group:Production__reset-password" style={{ fontFamily: 'monospace' }} />
                   </Form.Item>
                   <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>{'Arg map — runnable arg → {{ payload field }}'}</label>
                   {pairRow('map', 'arg', 'template', 'user', '{{ from }}', 'Add arg')}

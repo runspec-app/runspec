@@ -21,10 +21,23 @@ from __future__ import annotations
 from typing import Any, Callable, Protocol
 
 from .events import Event
-from .triggers import Column, Handler, Trigger, TriggerCard
+from .triggers import Column, Handler, Trigger, TriggerCard, parse_target
 
 # Cap the result text we attach to a card / mirror into chat.
 _RESULT_CAP = 2000
+
+# A declarative action list may fan groups out into many concrete calls. The list
+# itself is capped at _MAX_ACTIONS (10) declared steps in triggers.py; this bounds
+# the post-expansion total so a few group steps can't turn into a huge matrix —
+# it stays a flat fire-and-collect batch, not a workflow.
+_MAX_FANOUT_CALLS = 100
+
+
+def _fanout_block(targets: list[str], outputs: list[str]) -> str:
+    """Join per-host fan-out outputs with a host header per section."""
+    return "\n\n".join(
+        f"── {t.split('__', 1)[0]} ──\n{out}" for t, out in zip(targets, outputs)
+    )
 
 
 class BridgeOps(Protocol):
@@ -90,6 +103,13 @@ class BridgeOps(Protocol):
         """Run several rule-mode runnables as one parallel group behind a SINGLE
         confirm (most-restrictive autonomy across the steps; a ``manual`` step
         refuses the whole group). Returns one output string per call, in order."""
+        ...
+
+    def expand_targets(self, run: str) -> list[str]:
+        """Expand a rule/action ``run`` target to concrete ``host__runnable`` tool
+        names. A plain ``host__runnable`` returns itself; a
+        ``group:<group>__<runnable>`` target expands to one entry per group member
+        that carries the runnable (empty when none do)."""
         ...
 
     def run_pre_turn(
@@ -239,27 +259,64 @@ def make_handler(
                     card.log("pre-turn extracted: " + ", ".join(sorted(llm)))
 
             if not trigger.actions:
-                # Single fixed runnable (the original rule path).
+                # Single fixed runnable (the original rule path) — or, when `run`
+                # names a host group ("group:<group>__<runnable>"), a fan-out over
+                # every group member behind one grouped confirm.
                 tool_input = trigger.render_args(payload)
-                card.move(Column.RUNNING, tool=trigger.run, args=tool_input)
-                output = ops.run_rule_tool(
-                    card.id, trigger.run, tool_input, trigger=event.source
-                )
+                kind, gtarget, gname = parse_target(trigger.run)
+                if kind == "host":
+                    card.move(Column.RUNNING, tool=trigger.run, args=tool_input)
+                    output = ops.run_rule_tool(
+                        card.id, trigger.run, tool_input, trigger=event.source
+                    )
+                    label = (
+                        f"/{gname} on {trigger.run.partition('__')[0]}"
+                        if gname
+                        else f"/{trigger.run}"
+                    )
+                else:
+                    targets = ops.expand_targets(trigger.run)
+                    label = f"/{gname} on group:{gtarget}"
+                    card.move(
+                        Column.RUNNING,
+                        tool=f"{label} ({len(targets)} hosts)",
+                        args=tool_input,
+                    )
+                    if not targets:
+                        output = f"✗ No host in group '{gtarget}' has '{gname}'."
+                    else:
+                        calls = [(t, dict(tool_input)) for t in targets]
+                        outputs = ops.run_rule_group(
+                            card.id, calls, trigger=event.source
+                        )
+                        output = _fanout_block(targets, outputs)
                 card.move(Column.DONE, result=output[:_RESULT_CAP])
                 if trigger.post_to_chat:
                     # Mirror as a standard slash-command run card.
-                    host, _, name = trigger.run.partition("__")
-                    label = f"/{name} on {host}" if name else f"/{trigger.run}"
                     ops.mirror_to_chat(
                         "run", f"{label}  (trigger: {trigger.name})", output
                     )
                 return
 
             # Declarative multi-runnable list (bounded — flat, no result piping).
-            calls = [
-                (step.run, trigger.render_action_args(step, payload))
-                for step in trigger.actions
-            ]
+            # Each step's run may target a host group, expanded to one call per
+            # member here; the post-expansion total is bounded so a few group steps
+            # can't balloon into a workflow-sized matrix.
+            calls = []
+            for step in trigger.actions:
+                args = trigger.render_action_args(step, payload)
+                for t in ops.expand_targets(step.run):
+                    calls.append((t, dict(args)))
+            if len(calls) > _MAX_FANOUT_CALLS:
+                card.move(
+                    Column.FAILED,
+                    error=(
+                        f"action list expands to {len(calls)} runs across the "
+                        f"targeted host groups; the max is {_MAX_FANOUT_CALLS}. "
+                        "Narrow the groups or split the trigger."
+                    ),
+                )
+                return
             card.move(
                 Column.RUNNING,
                 tool=f"{len(calls)} runnables ({trigger.action_mode})",

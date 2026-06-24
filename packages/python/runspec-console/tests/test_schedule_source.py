@@ -297,10 +297,12 @@ def test_fire_event_emits_matchable_event():
 
 
 def test_fire_runnable_calls_run_runnable():
-    ran: list[tuple[str, str, str, dict]] = []
-    src = _source_with_jobs(run_runnable=lambda s, h, r, a: ran.append((s, h, r, a)))
+    ran: list[tuple[str, str, str, dict, str]] = []
+    src = _source_with_jobs(
+        run_runnable=lambda s, h, r, a, g: ran.append((s, h, r, a, g))
+    )
     src._fire("r1")
-    assert ran == [("r1", "h", "backup", {"db": "main"})]
+    assert ran == [("r1", "h", "backup", {"db": "main"}, "")]
 
 
 def test_fire_unknown_id_is_noop():

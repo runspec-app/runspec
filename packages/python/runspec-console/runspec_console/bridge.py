@@ -60,7 +60,7 @@ from .config import (
 )
 from .discovery import discover_local, discover_remote
 from .executor import run_local, run_remote
-from .hosts import load_hosts, save_hosts, venv_name
+from .hosts import group_members, groups_map, load_hosts, save_hosts, venv_name
 from .trace import jsonsafe_messages, trace_path, write_trace
 
 logger = logging.getLogger(__name__)
@@ -234,6 +234,9 @@ class _BridgeTriggerOps:
         self, chat_id: str, instructions: str, event_text: str
     ) -> dict[str, Any]:
         return self._bridge._trigger_run_pre_turn(chat_id, instructions, event_text)
+
+    def expand_targets(self, run: str) -> list[str]:
+        return self._bridge.expand_targets(run)
 
     def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
         # The Console tab renders this as a finished block matching the trigger
@@ -2927,13 +2930,13 @@ class Bridge:
             self._record_schedule_fire(job)
             return {"action": "event", "event": job.event}
         inv_id = self._invoke_scheduled(
-            job.host, job.runnable, dict(job.args), schedule_id=job.id
+            job.host, job.runnable, dict(job.args), schedule_id=job.id, group=job.group
         )
         self._record_schedule_fire(job)
         return {
             "action": "runnable",
             "inv_id": inv_id,
-            "host": job.host,
+            "host": job.host or f"group:{job.group}",
             "runnable": job.runnable,
         }
 
@@ -2945,7 +2948,8 @@ class Bridge:
             etype, summary = job.event, f"emit {job.event}"
         else:
             etype = job.runnable or "runnable"
-            summary = f"/{job.runnable} on {job.host}"
+            where = f"group:{job.group}" if job.group else job.host
+            summary = f"/{job.runnable} on {where}"
         self._on_schedule_event(
             {
                 "id": uuid.uuid4().hex[:12],
@@ -2959,13 +2963,22 @@ class Bridge:
         )
 
     def _run_scheduled(
-        self, schedule_id: str, host: str, runnable: str, args: dict[str, Any]
+        self,
+        schedule_id: str,
+        host: str,
+        runnable: str,
+        args: dict[str, Any],
+        group: str = "",
     ) -> None:
         """Run a runnable-action schedule on the timer: fire it directly and
         autonomously — no agent, no confirm gate (scheduling it is the
-        authorization). The callback ignores the return; the manual *Run now*
-        path uses :meth:`_invoke_scheduled` so it can surface the in-flight id."""
-        self._invoke_scheduled(host, runnable, args, schedule_id=schedule_id)
+        authorization). A ``group``-targeted schedule fans the run out across every
+        member of the host group (one run card per host). The callback ignores the
+        return; the manual *Run now* path uses :meth:`_invoke_scheduled` so it can
+        surface the in-flight id."""
+        self._invoke_scheduled(
+            host, runnable, args, schedule_id=schedule_id, group=group
+        )
 
     def _invoke_scheduled(
         self,
@@ -2973,6 +2986,7 @@ class Bridge:
         runnable: str,
         args: dict[str, Any],
         schedule_id: str = "",
+        group: str = "",
     ) -> str:
         """Invoke a runnable as the scheduler would and return its in-flight
         ``inv_id`` (``""`` on failure). Labelled as the 'Scheduled Task' operator
@@ -2980,7 +2994,32 @@ class Bridge:
         History/Analytics whether the timer or *Run now* started it. Reuses the
         normal invoke path (SSH/local exec + the runnable's own run_summary), and
         builds a run card for the Schedules-tab inbox from the invoke lifecycle —
-        a ``running`` card up front, finalised to ``done``/``failed`` on exit."""
+        a ``running`` card up front, finalised to ``done``/``failed`` on exit.
+
+        When ``group`` is set the run fans out across every member of the host
+        group that carries the runnable — each member gets its own run card (same
+        autonomous, pre-authorised path); the first member's ``inv_id`` is
+        returned."""
+        if group:
+            members = [
+                m
+                for m in self._group_members(group)
+                if self._host_has_runnable(m, runnable)
+            ]
+            if not members:
+                logger.warning(
+                    "schedule: group %r has no host carrying %r — nothing run",
+                    group,
+                    runnable,
+                )
+                return ""
+            inv_ids = [
+                self._invoke_scheduled(
+                    m, runnable, dict(args or {}), schedule_id=schedule_id
+                )
+                for m in members
+            ]
+            return inv_ids[0] if inv_ids else ""
         inv_id = uuid.uuid4().hex[:12]
         created = time.time()
         # card_id == inv_id so runspec:output / runspec:run_end route to this card.
@@ -4048,6 +4087,84 @@ class Bridge:
         self.restart_chat()  # re-join rooms with the updated host config
         threading.Thread(target=self._refresh_cycle, daemon=True).start()
 
+    # ── host-group registry (runspec_groups.toml) ─────────────────────────────
+
+    def get_groups(self) -> list[dict[str, Any]]:
+        """The canonical host-group registry — ``[{name, description}]`` in
+        registry order — that the host editor's group dropdown is populated from.
+
+        Self-healing: any group a host currently references that isn't registered
+        yet is **absorbed** into the registry (and persisted, so it syncs). This
+        migrates pre-registry free-form groups and guarantees the dropdown always
+        offers every in-use group."""
+        from .config import groups_path
+        from .groups import load_groups, normalise_groups
+        from .groups import save_groups as _save
+
+        registry = normalise_groups(load_groups(groups_path()))
+        known = {g["name"].casefold() for g in registry}
+        added = False
+        for entry in self._all_host_entries():
+            g = str(entry.get("group") or "").strip()
+            if g and g.casefold() not in known:
+                registry.append({"name": g, "description": ""})
+                known.add(g.casefold())
+                added = True
+        if added:
+            _save(groups_path(), registry)
+        return registry
+
+    def save_groups(self, groups: list[dict[str, Any]]) -> None:
+        """Replace the registry (add / edit description / delete / reorder). On a
+        **delete**, any host whose group is no longer registered is reset to
+        Ungrouped so membership never dangles. Use :meth:`rename_group` to rename
+        (it preserves membership; a delete+add here would orphan it)."""
+        from .config import groups_path
+        from .groups import normalise_groups
+        from .groups import save_groups as _save
+
+        norm = normalise_groups(groups)
+        _save(groups_path(), norm)
+        legal = {g["name"].casefold() for g in norm}
+        self._reload_hosts()
+        changed = False
+        for h in self._hosts:
+            g = str(h.get("group") or "").strip()
+            if g and g.casefold() not in legal:
+                h.pop("group", None)
+                changed = True
+        if changed:
+            save_hosts(hosts_path(), self._hosts)
+            self._reload_hosts()
+        self._dispatch("runspec:hosts_updated", {})
+
+    def rename_group(self, old: str, new: str) -> None:
+        """Rename a group in the registry AND re-point every host assigned to it,
+        so membership is preserved across the rename."""
+        old_s = str(old or "").strip()
+        new_s = str(new or "").strip()
+        if not old_s or not new_s:
+            raise ValueError("rename needs both the old and new group name")
+        from .config import groups_path
+        from .groups import load_groups, normalise_groups
+        from .groups import save_groups as _save
+
+        registry = load_groups(groups_path())
+        for g in registry:
+            if str(g.get("name") or "").strip().casefold() == old_s.casefold():
+                g["name"] = new_s
+        _save(groups_path(), normalise_groups(registry))
+        self._reload_hosts()
+        changed = False
+        for h in self._hosts:
+            if str(h.get("group") or "").strip().casefold() == old_s.casefold():
+                h["group"] = new_s
+                changed = True
+        if changed:
+            save_hosts(hosts_path(), self._hosts)
+            self._reload_hosts()
+        self._dispatch("runspec:hosts_updated", {})
+
     def get_filters(self) -> list[dict[str, Any]]:
         """Named source-side stream filters, for the Settings tab and pickers."""
         self._reload_filters()
@@ -4570,6 +4687,14 @@ class Bridge:
                 load_hosts(hosts_path()), parsed.get("host", []), "name", preserve
             )
             save_hosts(hosts_path(), merged)
+        elif name == "runspec_groups.toml":
+            from .config import groups_path
+            from .groups import load_groups, save_groups
+
+            merged = configmerge.merge_collection(
+                load_groups(groups_path()), parsed.get("group", []), "name", preserve
+            )
+            save_groups(groups_path(), merged)
         elif name == "runspec_filters.toml":
             from .filters_store import load_filters, save_filters
 
@@ -7162,6 +7287,16 @@ class Bridge:
 
         ``stage`` (trigger turns only) reports the card stage: "awaiting_human"
         while a confirm is pending, then "running" once it actually executes."""
+        if tool_name == "run_runnable":
+            fan = self._group_fanout_calls(tool_input)
+            if fan is not None:
+                group, name, calls = fan
+                if not calls:
+                    return f"✗ No host in group '{group}' has '{name}'."
+                outs = await self._grouped_confirm_run_async(
+                    chat_id, calls, noun=f"group '{group}' run", stage=stage
+                )
+                return self._format_group_output(group, name, calls, outs)
         decision = self._confirm_decision(tool_name, tool_input)
         display = self._confirm_card_view(tool_name, tool_input)[0].split("__", 1)[-1]
         logger.info("autonomy gate: tool=%s decision=%s", tool_name, decision)
@@ -7204,6 +7339,16 @@ class Bridge:
 
         autonomous → run; confirm/supervised → ask the user (Approve/Deny);
         manual → refuse (human-only; the user must use the Run button)."""
+        if tool_name == "run_runnable":
+            fan = self._group_fanout_calls(tool_input)
+            if fan is not None:
+                group, name, calls = fan
+                if not calls:
+                    return f"✗ No host in group '{group}' has '{name}'."
+                outs = self._grouped_confirm_run_sync(
+                    chat_id, calls, noun=f"group '{group}' run"
+                )
+                return self._format_group_output(group, name, calls, outs)
         decision = self._confirm_decision(tool_name, tool_input)
         display = self._confirm_card_view(tool_name, tool_input)[0].split("__", 1)[-1]
         if decision == "manual":
@@ -7507,7 +7652,9 @@ class Bridge:
                     "Run a runnable found via search_runnables. Pass its id, the host "
                     "to run on, and arguments by name (per the row's args). Arguments "
                     "are validated before execution; a clear error comes back if "
-                    "anything is missing or wrong."
+                    "anything is missing or wrong. The host may instead be a host "
+                    "GROUP name (see Console context) to run on every host in that "
+                    "group at once, behind a single grouped confirm."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -7518,7 +7665,11 @@ class Bridge:
                         },
                         "host": {
                             "type": "string",
-                            "description": "Which host to run on (from the row's hosts).",
+                            "description": (
+                                "Which host to run on (from the row's hosts), OR a "
+                                "host group name to fan out to every host in that "
+                                "group at once."
+                            ),
                         },
                         "args": {
                             "type": "object",
@@ -7606,6 +7757,75 @@ class Bridge:
             )
         cached_r = next(r for r in matches if r.get("host", "local") == host)
         return host, name, cached_r
+
+    def _group_fanout_calls(
+        self, tool_input: dict[str, Any]
+    ) -> tuple[str, str, list[tuple[str, dict[str, Any]]]] | None:
+        """If ``run_runnable``'s ``host`` names a host GROUP (not a literal host),
+        expand it to one ``(host__name, args)`` call per group member that carries
+        the runnable. Returns ``(group, name, calls)``; ``None`` when ``host`` is
+        not a group (the normal single-host path handles it).
+
+        A literal host name wins on a host/group name collision — if a real host
+        is named the same as a group, ``host`` addresses that host, not the group.
+        Members that lack the runnable are skipped (groups are heterogeneous), so
+        ``calls`` may be shorter than the membership — and empty when no member
+        carries it."""
+        ti = dict(tool_input or {})
+        host = str(ti.get("host") or "").strip()
+        if not host:
+            return None
+        members = self._groups_map().get(host)
+        if not members:
+            return None
+        if self._host_entry(host) is not None:
+            return None  # host name wins on collision
+        matches = self._runnables_for_id(str(ti.get("id") or ""))
+        if not matches:
+            return None  # let the normal path surface the unknown-id error
+        name = matches[0].get("name", "")
+        present = {r.get("host", "local") for r in matches}
+        base = dict(ti.get("args") or {})
+        if ti.get("command"):
+            base["command"] = ti["command"]
+        if ti.get("credential_id"):
+            base["credential_id"] = ti["credential_id"]
+        calls = [(f"{h}__{name}", dict(base)) for h in members if h in present]
+        return host, name, calls
+
+    @staticmethod
+    def _format_group_output(
+        group: str,
+        name: str,
+        calls: list[tuple[str, dict[str, Any]]],
+        outputs: list[str],
+    ) -> str:
+        """Join per-host fan-out outputs into one agent-readable block with a host
+        header per section."""
+        n = len(calls)
+        header = f"Ran '{name}' on group '{group}' ({n} host{'' if n == 1 else 's'}):"
+        blocks = [
+            f"── {tool_name.split('__', 1)[0]} ──\n{out}"
+            for (tool_name, _), out in zip(calls, outputs)
+        ]
+        return header + "\n\n" + "\n\n".join(blocks)
+
+    def expand_targets(self, run: str) -> list[str]:
+        """BridgeOps: expand a trigger/action ``run`` target to concrete
+        ``host__runnable`` names. A ``group:<group>__<runnable>`` target expands to
+        every group member that has the runnable; a plain ``host__runnable``
+        returns itself unchanged. Empty when a named group has no member carrying
+        the runnable (the caller surfaces that on the card)."""
+        from .triggers import parse_target
+
+        kind, target, runnable = parse_target(run)
+        if kind != "group":
+            return [run]
+        return [
+            f"{h}__{runnable}"
+            for h in self._group_members(target)
+            if self._host_has_runnable(h, runnable)
+        ]
 
     @staticmethod
     def _node_at(
@@ -8245,6 +8465,31 @@ class Bridge:
             return self._local_host_entry()
         return next((h for h in self._hosts if h.get("name") == host), None)
 
+    def _all_host_entries(self) -> list[dict[str, Any]]:
+        """The full host set (local first, then the configured remotes) — the one
+        definition shared by ``get_hosts``, the refresh cycle, and the group
+        resolvers below. Reloads from disk so callers see the current file."""
+        self._reload_hosts()
+        local = self._local_host_entry()
+        return [local] + [h for h in self._hosts if h.get("name") != "local"]
+
+    def _group_members(self, group: str) -> list[str]:
+        """Host names in ``group`` (see :func:`hosts.group_members`)."""
+        return group_members(self._all_host_entries(), group)
+
+    def _groups_map(self) -> dict[str, list[str]]:
+        """``{group: [host names]}`` over the live host set."""
+        return groups_map(self._all_host_entries())
+
+    def _host_has_runnable(self, host: str, name: str) -> bool:
+        """Whether ``host`` has a cached runnable named ``name`` (used to skip
+        group members that don't carry the runnable in a fan-out)."""
+        with self._lock:
+            return any(
+                r.get("host") == host and r.get("name") == name
+                for r in self._runnables_cache
+            )
+
     def _start_refresh_watcher(self) -> None:
         """Run a full refresh cycle, then repeat every ``[refresh] interval`` s."""
         from .ssh_pool import refresh_settings
@@ -8519,8 +8764,15 @@ class Bridge:
         triggers = read_triggers()
         schedules = self._read_schedules()
         mailbox = read_mailbox() if ol.outlook_available() else None
+        host_groups = self._groups_map()
         rota_on = bool(rota.get("enabled"))
-        if not rota_on and not triggers and not schedules and not mailbox:
+        if (
+            not rota_on
+            and not triggers
+            and not schedules
+            and not mailbox
+            and not host_groups
+        ):
             return ""  # nothing to say — keep the cached system prefix
 
         lines: list[str] = ["## Console context (live automation state)"]
@@ -8597,11 +8849,34 @@ class Bridge:
                 if str(s.get("action") or "runnable") == "event":
                     target = f"emit {s.get('event')}"
                 else:
-                    target = f"run /{s.get('runnable')} on {s.get('host')}"
+                    where = (
+                        f"group:{s.get('group')}" if s.get("group") else s.get("host")
+                    )
+                    target = f"run /{s.get('runnable')} on {where}"
                 state = "" if s.get("enabled", True) else " [disabled]"
                 lines.append(f"- {s.get('id')}: {target} · {when_txt}{state}")
             if len(schedules) > 20:
                 lines.append(f"- … and {len(schedules) - 20} more")
+
+        if host_groups:
+            with self._lock:
+                connected = dict(self._connected_cache)
+            lines.append("")
+            lines.append(
+                f"Host groups ({len(host_groups)}) — use a group name as the `host` "
+                "value of run_runnable to fan out to EVERY host in it at once (one "
+                "grouped confirm, most-restrictive autonomy wins):"
+            )
+            for gname, members in list(host_groups.items())[:8]:
+                up = sum(1 for m in members if connected.get(m, False))
+                shown = members[:8]
+                more = f", +{len(members) - 8} more" if len(members) > 8 else ""
+                lines.append(
+                    f"- {gname}: {up}/{len(members)} connected — "
+                    f"{', '.join(shown)}{more}"
+                )
+            if len(host_groups) > 8:
+                lines.append(f"- … and {len(host_groups) - 8} more")
 
         if mailbox:
             lines.append("")
@@ -10218,6 +10493,118 @@ class Bridge:
             with self._lock:
                 self._chat_cancels.pop(chat_id, None)
 
+    def _group_calls_level(self, calls: list[tuple[str, dict[str, Any]]]) -> str:
+        """The autonomy a batch of calls must honour: the most restrictive across
+        the steps (a ``manual`` step makes the whole group manual). Empty → run."""
+        if not calls:
+            return "autonomous"
+        rank = max(
+            _AUTONOMY_RANK.get(self._effective_tool_autonomy(n, i), 1) for n, i in calls
+        )
+        return next(k for k, v in _AUTONOMY_RANK.items() if v == rank)
+
+    @staticmethod
+    def _apply_group_edit(
+        edited: dict[str, Any] | None,
+        calls: list[tuple[str, dict[str, Any]]],
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Replace ``calls`` with an operator-edited ``run_group`` payload's calls
+        (when the UI returned one); otherwise keep the proposed calls."""
+        if edited is not None and isinstance(edited.get("calls"), list):
+            edited_calls = [
+                (str(c.get("name")), dict(c.get("input") or {}))
+                for c in edited["calls"]
+                if c.get("name")
+            ]
+            if edited_calls:
+                return edited_calls
+        return calls
+
+    def _grouped_confirm_run_sync(
+        self, chat_id: str, calls: list[tuple[str, dict[str, Any]]], *, noun: str
+    ) -> list[str]:
+        """Most-restrictive grouped confirm, then run each ``(tool_name, input)``
+        via ``_run_tool_sync`` WITHOUT re-gating (the one confirm authorises them
+        all). Returns one output per call. Does NOT manage run provenance — the
+        caller sets it. ``noun`` names the batch in the decline/refuse messages."""
+        if not calls:
+            return []
+        level = self._group_calls_level(calls)
+        if level == "manual":
+            return [
+                f"✗ '{n.split('__', 1)[-1]}' is manual-only — the {noun} "
+                "was not run (a manual step blocks the whole group)."
+                for n, _ in calls
+            ]
+        if level != "autonomous":
+            payload = {"calls": [{"name": n, "input": i} for n, i in calls]}
+            request_id, event, holder = self._register_confirm(
+                chat_id, "run_group", payload, level
+            )
+            timed_out = not event.wait(timeout=self._CONFIRM_TIMEOUT_S)
+            approved, edited = self._finish_confirm(request_id, holder, timed_out)
+            if not approved:
+                return [f"✗ The user declined to run the {noun} (autonomy = {level})."]
+            calls = self._apply_group_edit(edited, calls)
+        return self._run_calls_parallel(calls, chat_id)
+
+    def _run_calls_parallel(
+        self, calls: list[tuple[str, dict[str, Any]]], chat_id: str
+    ) -> list[str]:
+        """Run a batch of authorised ``(tool_name, input)`` calls and return their
+        outputs in order. A single call runs inline; a batch fans out over a
+        bounded thread pool (each host reuses its own pooled SSH transport, so the
+        cap just bounds concurrent channels — not a new handshake per call)."""
+        if len(calls) <= 1:
+            return [self._run_tool_sync(n, i, chat_id) for n, i in calls]
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(
+            max_workers=min(len(calls), 8), thread_name_prefix="fanout"
+        ) as ex:
+            return list(
+                ex.map(lambda c: self._run_tool_sync(c[0], c[1], chat_id), calls)
+            )
+
+    async def _grouped_confirm_run_async(
+        self,
+        chat_id: str,
+        calls: list[tuple[str, dict[str, Any]]],
+        *,
+        noun: str,
+        stage: Callable[[str], None] | None = None,
+    ) -> list[str]:
+        """Async sibling of :meth:`_grouped_confirm_run_sync` for the chat agent
+        loop. The confirm prompt is registered on the event-loop thread (dispatch
+        from a worker thread is unreliable — see :meth:`_gated_run_tool_async`);
+        only the blocking wait and the runs are offloaded."""
+        if not calls:
+            return []
+        level = self._group_calls_level(calls)
+        if level == "manual":
+            return [
+                f"✗ '{n.split('__', 1)[-1]}' is manual-only — the {noun} "
+                "was not run (a manual step blocks the whole group)."
+                for n, _ in calls
+            ]
+        if level != "autonomous":
+            if stage is not None:
+                stage("awaiting_human")
+            payload = {"calls": [{"name": n, "input": i} for n, i in calls]}
+            request_id, event, holder = self._register_confirm(
+                chat_id, "run_group", payload, level
+            )
+            timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
+            approved, edited = self._finish_confirm(request_id, holder, timed_out)
+            if holder.get("cancelled"):
+                return [f"⏹ The {noun} was not run — you stopped the assistant."]
+            if not approved:
+                return [f"✗ The user declined to run the {noun} (autonomy = {level})."]
+            calls = self._apply_group_edit(edited, calls)
+        if stage is not None:
+            stage("running")
+        return await asyncio.to_thread(self._run_calls_parallel, calls, chat_id)
+
     def _run_rule_group(
         self,
         chat_id: str,
@@ -10231,45 +10618,11 @@ class Bridge:
         and the operator may edit the group's calls before approving. Approved (or
         all-autonomous) steps run via ``_run_tool_sync`` WITHOUT re-gating (the
         group confirm already authorised them). Returns one output per call."""
-        if not calls:
-            return []
-        ranks = [
-            _AUTONOMY_RANK.get(self._effective_tool_autonomy(n, i), 1) for n, i in calls
-        ]
-        rank = max(ranks)
-        level = next(k for k, v in _AUTONOMY_RANK.items() if v == rank)
-        if level == "manual":
-            return [
-                f"✗ '{n.split('__', 1)[-1]}' is manual-only — the parallel group "
-                "was not run (a manual step blocks the whole group)."
-                for n, _ in calls
-            ]
         # A rule run is a deterministic (non-LLM) call — record agent=False with the
         # causing event source as provenance for each runnable in the group.
         self._set_run_origin(chat_id, trigger, agent=False)
         try:
-            if level != "autonomous":
-                payload = {"calls": [{"name": n, "input": i} for n, i in calls]}
-                request_id, event, holder = self._register_confirm(
-                    chat_id, "run_group", payload, level
-                )
-                timed_out = not event.wait(timeout=self._CONFIRM_TIMEOUT_S)
-                approved, edited = self._finish_confirm(request_id, holder, timed_out)
-                if not approved:
-                    return [
-                        f"✗ The user declined to run the parallel group "
-                        f"(autonomy = {level})."
-                    ]
-                # Operator may have edited the group's calls before approving.
-                if edited is not None and isinstance(edited.get("calls"), list):
-                    edited_calls = [
-                        (str(c.get("name")), dict(c.get("input") or {}))
-                        for c in edited["calls"]
-                        if c.get("name")
-                    ]
-                    if edited_calls:
-                        calls = edited_calls
-            return [self._run_tool_sync(n, i, chat_id) for n, i in calls]
+            return self._grouped_confirm_run_sync(chat_id, calls, noun="parallel group")
         finally:
             self._clear_run_origin(chat_id)
 

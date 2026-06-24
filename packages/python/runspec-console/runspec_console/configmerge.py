@@ -131,6 +131,7 @@ def merge_collection(
 # the triggers file's named [triggers.*] / [rota] tables) folds by deep_overlay.
 COLLECTION_FILES: dict[str, tuple[str, str]] = {
     "runspec_hosts.toml": ("host", "name"),
+    "runspec_groups.toml": ("group", "name"),
     "runspec_filters.toml": ("filter", "name"),
     "runspec_credentials.toml": ("credential", "id"),
     "runspec_skills.toml": ("skill", "id"),

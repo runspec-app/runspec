@@ -50,6 +50,14 @@ def hosts_path() -> Path:
     return app_dir() / "runspec_hosts.toml"
 
 
+def groups_path() -> Path:
+    """Canonical host-group registry (`runspec_groups.toml`) — the controlled
+    vocabulary of group names shared across consoles via Config Sync. Host→group
+    membership lives on the host entry; this file just pins the legal names so a
+    shared runbook targeting a group behaves the same on every console."""
+    return app_dir() / "runspec_groups.toml"
+
+
 def filters_path() -> Path:
     return app_dir() / "runspec_filters.toml"
 

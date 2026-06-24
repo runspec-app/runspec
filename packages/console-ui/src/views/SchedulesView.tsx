@@ -24,6 +24,7 @@ const CRON_PRESETS = [
 
 type Action = 'runnable' | 'event'
 type WhenKind = 'cron' | 'every'
+type Target = 'host' | 'group'
 
 interface ScheduleModalProps {
   open: boolean
@@ -38,6 +39,7 @@ interface ScheduleModalProps {
 function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel, onSaved }: ScheduleModalProps) {
   const [form] = Form.useForm()
   const [action, setAction] = useState<Action>('runnable')
+  const [target, setTarget] = useState<Target>('host')
   const [whenKind, setWhenKind] = useState<WhenKind>('cron')
   const [selectedRunnable, setSelectedRunnable] = useState<Runnable | null>(null)
   const [cronPreset, setCronPreset] = useState<string>('')
@@ -45,13 +47,24 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [submitting, setSubmitting] = useState(false)
   const isDark = useIsDark()
 
+  // Distinct host groups (from each host's `group` field), for group targeting.
+  const groupNames = [...new Set(hosts.map(h => h.group).filter((g): g is string => !!g))].sort()
   const hostName: string = Form.useWatch('host', form) ?? defaultHost
-  const hostRunnables = runnables.filter(r => r.host === hostName)
+  const groupName: string = Form.useWatch('group', form) ?? ''
+  // The runnable picker offers what the chosen target can run: a single host's
+  // runnables, or (group mode) every runnable present on any group member.
+  const groupMemberNames = new Set(hosts.filter(h => h.group === groupName).map(h => h.name))
+  const hostRunnables = target === 'group'
+    ? [...new Map(
+        runnables.filter(r => groupMemberNames.has(r.host)).map(r => [r.name, r]),
+      ).values()]
+    : runnables.filter(r => r.host === hostName)
   const isEdit = !!editing
 
   const resetAll = () => {
     form.resetFields()
     setAction('runnable')
+    setTarget('host')
     setWhenKind('cron')
     setCronPreset('')
     setCustomCron('')
@@ -69,6 +82,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       return
     }
     setAction(editing.action)
+    setTarget(editing.group ? 'group' : 'host')
     const kind: WhenKind = editing.when.every ? 'every' : 'cron'
     setWhenKind(kind)
     if (kind === 'cron') {
@@ -84,10 +98,13 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       setCronPreset('')
       setCustomCron('')
     }
-    const r = runnables.find(x => x.host === editing.host && x.name === editing.runnable) ?? null
+    const r = editing.group
+      ? runnables.find(x => x.name === editing.runnable && hosts.some(h => h.group === editing.group && h.name === x.host)) ?? null
+      : runnables.find(x => x.host === editing.host && x.name === editing.runnable) ?? null
     setSelectedRunnable(r)
     const fv: Record<string, unknown> = {
       host: editing.host ?? defaultHost,
+      group: editing.group ?? '',
       runnable: editing.runnable,
       timezone: editing.when.timezone ?? '',
       cron: editing.when.cron ?? '',
@@ -112,6 +129,14 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
 
   const handleHostChange = () => {
     form.setFieldValue('runnable', undefined)
+    setSelectedRunnable(null)
+  }
+
+  const handleTargetChange = (t: Target) => {
+    setTarget(t)
+    // Switching host↔group invalidates the chosen runnable (the available set
+    // differs), so clear it.
+    form.setFieldsValue({ runnable: undefined })
     setSelectedRunnable(null)
   }
 
@@ -149,7 +174,13 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         const v = values[`arg_${a.name}`]
         if (v !== undefined && v !== '') args[a.name] = v
       }
-      base.host = values.host
+      if (target === 'group') {
+        const group = String(values.group ?? '').trim()
+        if (!group) { form.setFields([{ name: 'group', errors: ['Required'] }]); return }
+        base.group = group
+      } else {
+        base.host = values.host
+      }
       base.runnable = values.runnable
       base.args = args
       if (!base.id) base.id = `rs-${values.runnable}-${Date.now()}`
@@ -281,18 +312,53 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         {/* ── Runnable action ── */}
         {action === 'runnable' && (
           <>
-            <Form.Item name="host" label="Host" rules={[{ required: true }]}>
-              <Select onChange={handleHostChange}>
-                {hosts.map(h => (
-                  <Select.Option key={h.name} value={h.name}>
-                    <Space size={6}>
-                      <span style={{ fontSize: 9, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
-                      {h.name}
-                    </Space>
-                  </Select.Option>
-                ))}
-              </Select>
+            <Form.Item label="Target">
+              <Segmented
+                value={target}
+                onChange={v => handleTargetChange(v as Target)}
+                options={[
+                  { label: 'One host', value: 'host' },
+                  { label: 'Host group', value: 'group', disabled: groupNames.length === 0 },
+                ]}
+              />
+              <div style={{ ...labelStyle, marginTop: 4 }}>
+                {target === 'group'
+                  ? 'Runs the runnable on every host in the group (one run card per host).'
+                  : 'Runs the runnable on a single host.'}
+              </div>
             </Form.Item>
+
+            {target === 'host' ? (
+              <Form.Item name="host" label="Host" rules={[{ required: true }]}>
+                <Select onChange={handleHostChange}>
+                  {hosts.map(h => (
+                    <Select.Option key={h.name} value={h.name}>
+                      <Space size={6}>
+                        <span style={{ fontSize: 9, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
+                        {h.name}
+                      </Space>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            ) : (
+              <Form.Item name="group" label="Group" rules={[{ required: true }]}>
+                <Select onChange={handleHostChange} placeholder="Select a host group">
+                  {groupNames.map(g => {
+                    const members = hosts.filter(h => h.group === g)
+                    const up = members.filter(h => h.connected).length
+                    return (
+                      <Select.Option key={g} value={g}>
+                        <Space size={6}>
+                          {g}
+                          <span style={{ ...labelStyle }}>{up}/{members.length} connected</span>
+                        </Space>
+                      </Select.Option>
+                    )
+                  })}
+                </Select>
+              </Form.Item>
+            )}
 
             <Form.Item name="runnable" label="Runnable" rules={[{ required: true }]}>
               <Select
@@ -500,7 +566,11 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
       title: 'Where',
       key: 'where',
       render: (_: unknown, s: Schedule) =>
-        s.action === 'runnable' && s.host ? <Tag>{s.host}</Tag> : <span style={{ color: dimCol }}>—</span>,
+        s.action === 'runnable'
+          ? (s.group
+              ? <Tag color="geekblue">group: {s.group}</Tag>
+              : (s.host ? <Tag>{s.host}</Tag> : <span style={{ color: dimCol }}>—</span>))
+          : <span style={{ color: dimCol }}>—</span>,
     },
     {
       title: 'Schedule',

@@ -56,10 +56,13 @@ large fleets, high-latency proxies):
 ```toml
 [ssh]
 # Connection reuse (issue #104). Set false for legacy connect-per-call.
-pool         = true
-keepalive    = 30     # seconds; transport keepalive (0 disables)
-max_sessions = 8      # max concurrent channels per connection (< sshd MaxSessions)
-idle_ttl     = 300    # seconds before an unused connection is closed
+pool           = true
+keepalive      = 30   # seconds; transport keepalive (0 disables)
+max_sessions   = 8    # max concurrent channels per connection (< sshd MaxSessions)
+idle_ttl       = 300  # seconds before an unused connection is closed
+max_concurrent = 5    # max simultaneous NEW handshakes across the whole fleet
+backoff_base   = 5    # seconds; per-host exponential backoff after a failure
+backoff_max    = 300  # seconds cap
 
 # Connect-phase timeouts (raise these behind slow proxies / VPNs).
 connect_timeout = 10
@@ -67,12 +70,16 @@ banner_timeout  = 30
 auth_timeout    = 30
 
 [refresh]
-interval       = 30   # seconds between refresh cycles
-max_concurrent = 5    # max simultaneous NEW handshakes across the whole fleet
-jitter         = 3    # +/- seconds of per-host start jitter
-backoff_base   = 5    # seconds; per-host exponential backoff after a failure
-backoff_max    = 300  # seconds cap
+interval = 30   # seconds between refresh cycles
+jitter   = 3    # +/- seconds of per-host start jitter
 ```
+
+!!! note "Where each knob lives"
+    `max_concurrent`, `backoff_base`, and `backoff_max` are resolved from the
+    `[ssh]` section (`pool_settings`), **not** `[refresh]` — only `interval` and
+    `jitter` come from `[refresh]` (`refresh_settings`). At large fleet sizes the
+    refresh-cycle thread fan-out, not SSH, is the binding constraint; raising
+    `[refresh] interval` is the highest-leverage knob.
 
 !!! tip "Behind a corporate proxy / middlebox"
     If a connection error mentions *"the remote sent non-SSH data on connect"*,

@@ -9,19 +9,26 @@ a bare stub so we dodge Bridge.__init__.
 
 from __future__ import annotations
 
+import threading
 import types
 
 import runspec_console.config as cfg
 from runspec_console.bridge import Bridge
 
 
-def _stub(monkeypatch, *, rota, triggers, schedules, hosts=None):
+def _stub(monkeypatch, *, rota, triggers, schedules, hosts=None, connected=None):
     monkeypatch.setattr(cfg, "read_rota", lambda: rota)
     monkeypatch.setattr(cfg, "read_triggers", lambda: triggers)
     ns = types.SimpleNamespace()
     ns._read_schedules = lambda: schedules
     ns._hosts = hosts or []  # for _run_status_tool's denylist pointer
     ns._break_until = None  # for the "on break" awareness line
+    # Host-group awareness block: derive the map from the supplied host entries.
+    from runspec_console.hosts import groups_map as _gm
+
+    ns._groups_map = lambda: _gm(hosts or [])
+    ns._connected_cache = dict(connected or {})
+    ns._lock = threading.Lock()
     ns._console_context = types.MethodType(Bridge._console_context, ns)
     return ns
 
@@ -39,6 +46,34 @@ _ALWAYS_OFF = {
 def test_empty_when_nothing_configured(monkeypatch):
     """Rota off + no triggers/schedules → no block, so the cached prefix stands."""
     ns = _stub(monkeypatch, rota={}, triggers=[], schedules=[])
+    assert ns._console_context() == ""
+
+
+def test_host_groups_block_listed_with_connected_counts(monkeypatch):
+    ns = _stub(
+        monkeypatch,
+        rota={},
+        triggers=[],
+        schedules=[],
+        hosts=[
+            {"name": "web01", "group": "Production"},
+            {"name": "web02", "group": "Production"},
+            {"name": "db01", "group": "Production"},
+        ],
+        connected={"web01": True, "web02": True},  # db01 down
+    )
+    out = ns._console_context()
+    assert "Host groups (1)" in out
+    assert "Production: 2/3 connected — web01, web02, db01" in out
+    # Even with rota off + no triggers, the groups block alone keeps the context.
+    assert out != ""
+
+
+def test_no_host_groups_keeps_cached_prefix(monkeypatch):
+    # Ungrouped hosts alone are not a group → no block, empty context.
+    ns = _stub(
+        monkeypatch, rota={}, triggers=[], schedules=[], hosts=[{"name": "solo"}]
+    )
     assert ns._console_context() == ""
 
 

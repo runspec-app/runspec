@@ -49,8 +49,10 @@ _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _INTERVAL_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 # What a runnable-action schedule calls to run its runnable:
-# (schedule_id, host, runnable, args). The id lets the bridge label the run card.
-RunFn = Callable[[str, str, str, dict[str, Any]], None]
+# (schedule_id, host, runnable, args, group). The id lets the bridge label the run
+# card; ``group`` is non-empty for a group-targeted schedule (then ``host`` is "")
+# and the bridge fans the run out across the group's members.
+RunFn = Callable[[str, str, str, dict[str, Any], str], None]
 
 # Working-hours gate (no args → True/False): whether the rota currently permits a
 # fire. None means "no gate" (always fire).
@@ -91,8 +93,10 @@ class ScheduleJob:
     # action == "event"
     event: str = ""
     fields: dict[str, str] = field(default_factory=dict)
-    # action == "runnable"
+    # action == "runnable" — exactly one of host / group is set (group fans the
+    # run out across every member of the host group).
     host: str = ""
+    group: str = ""
     runnable: str = ""
     args: dict[str, Any] = field(default_factory=dict)
 
@@ -146,8 +150,8 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
 
     Raises ``ValueError`` with a human-first message on bad config. The ``when``
     block is required; ``action`` defaults to ``"runnable"``. An ``"event"``
-    schedule needs an ``event`` name; a ``"runnable"`` schedule needs ``host`` and
-    ``runnable``.
+    schedule needs an ``event`` name; a ``"runnable"`` schedule needs ``runnable``
+    plus exactly one of ``host`` (one host) or ``group`` (fan out to a host group).
     """
     sid = str(data.get("id") or "").strip()
     if not sid:
@@ -165,6 +169,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     event = ""
     fields: dict[str, str] = {}
     host = ""
+    group = ""
     runnable = ""
     args: dict[str, Any] = {}
     if action == "event":
@@ -176,11 +181,16 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         fields = {str(k): str(v) for k, v in (data.get("fields") or {}).items()}
     else:  # runnable
         host = str(data.get("host") or "").strip()
+        group = str(data.get("group") or "").strip()
         runnable = str(data.get("runnable") or "").strip()
-        if not host or not runnable:
+        if not runnable:
             raise ValueError(
-                f"schedule '{sid}' uses action='runnable' but is missing "
-                "'host' and/or 'runnable'"
+                f"schedule '{sid}' uses action='runnable' but is missing 'runnable'"
+            )
+        if bool(host) == bool(group):
+            raise ValueError(
+                f"schedule '{sid}' (action='runnable') needs exactly one of 'host' "
+                "(a single host) or 'group' (a host group to fan out across)"
             )
         args = dict(data.get("args") or {})
 
@@ -193,6 +203,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         event=event,
         fields=fields,
         host=host,
+        group=group,
         runnable=runnable,
         args=args,
     )
@@ -378,7 +389,9 @@ class ScheduleSource:
                         )
                     )
             elif self._run_runnable is not None:
-                self._run_runnable(job.id, job.host, job.runnable, dict(job.args))
+                self._run_runnable(
+                    job.id, job.host, job.runnable, dict(job.args), job.group
+                )
             self._record(job, skipped=False)
         except Exception:
             logger.exception("schedule: fire failed for %r", job_id)
@@ -394,7 +407,8 @@ class ScheduleSource:
             etype, summary = job.event, f"emit {job.event}"
         else:
             etype = job.runnable or "runnable"
-            summary = f"/{job.runnable} on {job.host}"
+            where = f"group:{job.group}" if job.group else job.host
+            summary = f"/{job.runnable} on {where}"
         try:
             self._on_event(
                 {

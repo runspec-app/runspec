@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames } from '../views/FormsView'
@@ -820,6 +820,109 @@ function downloadToml(content: string, filename = 'jump_hosts.toml') {
   URL.revokeObjectURL(url)
 }
 
+// Manage the canonical host-group registry (runspec_groups.toml). Names are the
+// controlled vocabulary the host editor picks from; a rename re-points member
+// hosts, and a delete resets affected hosts to Ungrouped (handled in the bridge).
+function GroupsManager({
+  open,
+  groups,
+  onClose,
+  onChanged,
+}: {
+  open: boolean
+  groups: HostGroup[]
+  onClose: () => void
+  onChanged: () => void
+}) {
+  const [rows, setRows] = useState<HostGroup[]>([])
+  const [newName, setNewName] = useState('')
+
+  useEffect(() => {
+    if (open) { setRows(groups.map(g => ({ ...g }))); setNewName('') }
+  }, [open, groups])
+
+  const addGroup = async () => {
+    const n = newName.trim()
+    if (!n) return
+    if (rows.some(r => r.name.toLowerCase() === n.toLowerCase())) {
+      message.warning('A group with that name already exists'); return
+    }
+    await bridge.save_groups([...rows, { name: n, description: '' }])
+    setNewName(''); onChanged()
+  }
+
+  const removeGroup = async (name: string) => {
+    await bridge.save_groups(rows.filter(r => r.name !== name))
+    onChanged()
+  }
+
+  const commitRename = async (oldName: string, nextName: string) => {
+    const nn = nextName.trim()
+    if (!nn || nn === oldName) { setRows(groups.map(g => ({ ...g }))); return }
+    if (rows.some(r => r.name.toLowerCase() === nn.toLowerCase() && r.name !== oldName)) {
+      message.warning('A group with that name already exists')
+      setRows(groups.map(g => ({ ...g }))); return
+    }
+    await bridge.rename_group(oldName, nn)
+    onChanged()
+  }
+
+  const commitDescription = async () => {
+    await bridge.save_groups(rows)
+    onChanged()
+  }
+
+  return (
+    <Modal open={open} title="Host groups" onCancel={onClose} footer={null} width={520}>
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        Groups are shared across consoles (Config Sync) so a runbook targeting a
+        group behaves the same everywhere. Hosts pick their group from this list.
+      </Text>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        {rows.map((g, i) => (
+          <Space key={g.name} align="baseline" style={{ display: 'flex' }}>
+            <Input
+              size="small"
+              style={{ width: 150, fontFamily: 'monospace' }}
+              value={g.name}
+              onChange={e => setRows(r => r.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+              onBlur={e => commitRename(groups[i]?.name ?? g.name, e.target.value)}
+              onPressEnter={e => (e.target as HTMLInputElement).blur()}
+            />
+            <Input
+              size="small"
+              style={{ width: 220 }}
+              placeholder="description (optional)"
+              value={g.description ?? ''}
+              onChange={e => setRows(r => r.map((x, j) => j === i ? { ...x, description: e.target.value } : x))}
+              onBlur={commitDescription}
+            />
+            <Popconfirm
+              title={`Delete group "${g.name}"?`}
+              description="Hosts in it become Ungrouped."
+              onConfirm={() => removeGroup(g.name)}
+            >
+              <MinusCircleOutlined style={{ color: '#666', cursor: 'pointer' }} />
+            </Popconfirm>
+          </Space>
+        ))}
+        {rows.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No groups yet" />}
+        <Space.Compact style={{ marginTop: 4 }}>
+          <Input
+            size="small"
+            style={{ width: 200, fontFamily: 'monospace' }}
+            placeholder="New group name"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onPressEnter={addGroup}
+          />
+          <Button size="small" icon={<PlusOutlined />} onClick={addGroup}>Add group</Button>
+        </Space.Compact>
+      </div>
+    </Modal>
+  )
+}
+
 function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [hosts, setHosts] = useState<JumpHost[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -828,6 +931,10 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [testingHost, setTestingHost] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
+  const [groups, setGroups] = useState<HostGroup[]>([])
+  const [groupsOpen, setGroupsOpen] = useState(false)
+
+  const loadGroups = useCallback(() => { bridge.get_groups().then(setGroups) }, [])
 
   // Live connection details of the host being added/edited — drive the runspec-
   // path browser so it lists the host straight from the form (before it's saved).
@@ -852,7 +959,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
 
   useEffect(() => {
     bridge.get_jump_hosts().then(setHosts)
-  }, [])
+    loadGroups()
+  }, [loadGroups])
 
   // Tear down any browse connection opened from the add/edit form on unmount.
   useEffect(() => () => { bridge.close_adhoc().catch(() => {}) }, [])
@@ -866,7 +974,9 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const startAdd = () => { form.resetFields(); setEditingKey('') }
 
   const startEdit = (h: JumpHost) => {
-    form.setFieldsValue({ ...h, runspec_paths: h.runspec_paths ?? [] })
+    // group defaults to "" (Ungrouped) so the required Select has a valid value
+    // for a host that predates the registry.
+    form.setFieldsValue({ ...h, runspec_paths: h.runspec_paths ?? [], group: h.group ?? '' })
     setEditingKey(h.name)
   }
 
@@ -991,6 +1101,12 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   return (
     <div>
       <input ref={fileInputRef} type="file" accept=".toml" style={{ display: 'none' }} onChange={handleImport} />
+      <GroupsManager
+        open={groupsOpen}
+        groups={groups}
+        onClose={() => setGroupsOpen(false)}
+        onChanged={() => { loadGroups(); bridge.get_jump_hosts().then(setHosts); onHostsChanged?.() }}
+      />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
           Saved to <code>jump_hosts.toml</code>. Hosts are probed on startup.
@@ -1055,8 +1171,34 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 )}
               </Form.List>
             </Form.Item>
-            <Form.Item name="group" label="Group">
-              <Input placeholder="e.g. Production, Staging (optional)" />
+            <Form.Item
+              name="group"
+              label={
+                <Space size={6}>
+                  Group
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                    onClick={() => setGroupsOpen(true)}
+                  >
+                    Manage groups…
+                  </Button>
+                </Space>
+              }
+              // Required *selection* — pick from the shared registry rather than
+              // typing a free-form name (which would diverge across consoles and
+              // break shared runbooks). "Ungrouped" is the explicit no-group pick.
+              rules={[{ required: true, message: 'Pick a group (or Ungrouped)' }]}
+              initialValue=""
+            >
+              <Select
+                placeholder="Select a group"
+                options={[
+                  { value: '', label: 'Ungrouped' },
+                  ...groups.map(g => ({ value: g.name, label: g.name })),
+                ]}
+              />
             </Form.Item>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
               <Form.Item

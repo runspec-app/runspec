@@ -48,6 +48,37 @@ def save_hosts(path: Path, hosts: list[dict[str, Any]]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def group_members(hosts: list[dict[str, Any]], group: str) -> list[str]:
+    """Host names whose ``group`` equals ``group`` (exact, case-insensitive), in
+    config order. The single source of truth for "which hosts are in this group",
+    reused by the agent, triggers, schedules, and the fan-out executor.
+
+    An empty/blank ``group`` returns ``[]`` (the ungrouped "Hosts" section is not
+    a targetable group). Hosts whose own ``group`` is empty never match.
+    """
+    want = str(group or "").strip().casefold()
+    if not want:
+        return []
+    out: list[str] = []
+    for h in hosts:
+        hg = str(h.get("group") or "").strip()
+        if hg and hg.casefold() == want and h.get("name"):
+            out.append(str(h["name"]))
+    return out
+
+
+def groups_map(hosts: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """``{group name: [host names]}`` over all hosts that declare a non-empty
+    ``group``, preserving first-seen group order and member config order."""
+    out: dict[str, list[str]] = {}
+    for h in hosts:
+        hg = str(h.get("group") or "").strip()
+        if not hg or not h.get("name"):
+            continue
+        out.setdefault(hg, []).append(str(h["name"]))
+    return out
+
+
 def venv_root(runspec_path: str) -> Path:
     """Derive the venv root from the runspec binary path."""
     return Path(runspec_path).parent.parent

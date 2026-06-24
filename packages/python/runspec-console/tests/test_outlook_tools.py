@@ -167,6 +167,7 @@ def _ctx_stub(monkeypatch, *, mailbox, available=True):
     monkeypatch.setattr(ol, "outlook_available", lambda: available)
     ns = types.SimpleNamespace()
     ns._read_schedules = lambda: []
+    ns._groups_map = lambda: {}
     ns._break_until = None
     ns._console_context = types.MethodType(Bridge._console_context, ns)
     return ns

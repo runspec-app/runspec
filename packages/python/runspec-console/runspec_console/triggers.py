@@ -155,11 +155,34 @@ class ReplySettings:
 @dataclass(frozen=True)
 class ActionStep:
     """One runnable call in a rule-mode trigger's declarative action list — a
-    ``[[triggers.<name>.actions]]`` entry: a ``run`` ("host__runnable") plus an
-    optional payload→arg ``map``."""
+    ``[[triggers.<name>.actions]]`` entry: a ``run`` ("host__runnable", or
+    "group:<group>__<runnable>" to fan out to a host group) plus an optional
+    payload→arg ``map``."""
 
     run: str
     arg_map: dict[str, str] = field(default_factory=dict)
+
+
+# A rule/action ``run`` may target a host GROUP instead of one host, written as
+# ``group:<group>__<runnable>``. The host resolution lives in the bridge (it owns
+# the host list); this pure classifier just splits the string for the runner and
+# for labels/validation.
+_GROUP_PREFIX = "group:"
+
+
+def parse_target(run: str) -> tuple[str, str, str]:
+    """Classify a rule/action ``run`` target into ``(kind, target, runnable)``.
+
+    ``"group:<group>__<runnable>"`` → ``("group", "<group>", "<runnable>")`` (fan
+    out to every member of the host group). Anything else is a plain single host:
+    ``"<host>__<runnable>"`` → ``("host", "<run>", "<runnable>")`` where ``target``
+    is the unchanged tool-name string and ``runnable`` is the tail (for labels)."""
+    s = str(run or "").strip()
+    if s.startswith(_GROUP_PREFIX):
+        group, _, runnable = s[len(_GROUP_PREFIX) :].partition("__")
+        return "group", group.strip(), runnable.strip()
+    _, _, runnable = s.partition("__")
+    return "host", s, runnable.strip()
 
 
 # ── trigger model ───────────────────────────────────────────────────────────

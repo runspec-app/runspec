@@ -35,6 +35,15 @@ That symmetry is the test for whether this stays runspec-shaped:
 If a feature request can only be satisfied by a persistent multi-step
 state machine, it belongs in a workflow engine downstream of runspec, not here.
 
+**Host-group fan-out stays under the cliff.** A rule `run` (or an `actions[].run`)
+may target a host group as `group:<group>__<runnable>`, which the runner expands
+to one `host__runnable` call per group member (see `docs/design/host-groups-targeting.md`).
+This is still **one runnable across N hosts** — a flat fire-and-collect batch
+behind a single grouped confirm, with no branching, no step-result piping, and no
+cross-restart state. The declarative `actions` list keeps its 10-step cap, and the
+post-expansion total is bounded (`_MAX_FANOUT_CALLS`) so a few group steps can't
+balloon into a workflow-sized matrix.
+
 ---
 
 ## 2. The loop

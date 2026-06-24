@@ -64,7 +64,32 @@ transports each holding file descriptors.
 - Lengthen `[refresh] interval` to reduce how often the thread fan-out happens.
 - Beyond low thousands, the refresh loop would need reworking (e.g. a bounded
   worker pool instead of thread-per-host-per-cycle) rather than any SSH-side
-  change.
+  change. That rework is specified in
+  [`docs/design/refresh-cycle-thread-pool.md`](design/refresh-cycle-thread-pool.md).
+
+### Tuning by fleet size
+
+Defaults are tuned for tens of hosts. The table below is a starting point for
+larger fleets — measure, then adjust. Every value is in `config.toml` and most
+take effect on the next refresh cycle without a restart (the pool rebuilds when
+`[ssh]` changes).
+
+| Setting | Section | Default | ~100 hosts | ~1000+ hosts | Why |
+|---|---|---|---|---|---|
+| `pool` | `[ssh]` | `true` | `true` | `true` | Connection reuse is the whole point — never disable at scale. |
+| `max_concurrent` | `[ssh]` | `5` | `8–10` | `15–25` | Global cap on *new* handshakes. Higher = faster recovery after a mass outage; raise only as far as the bastion's `MaxStartups` / rate limits tolerate. |
+| `max_sessions` | `[ssh]` | `8` | `8` | `12–16` | Channels per transport. Raise only if rooms/long runs compete with discovery on the same host; keep below the server's `sshd MaxSessions`. |
+| `keepalive` | `[ssh]` | `30` | `30` | `60–120` | At 1000 hosts a 30 s keepalive is ~33 packets/s leaving the console. Stretching it cuts bastion-side noise; don't disable over NAT/VPN. |
+| `idle_ttl` | `[ssh]` | `300` | `300` | `600` | How long an unused transport is kept before reaping. Longer is more forgiving on flaky links at the cost of holding more idle FDs. |
+| `interval` | `[refresh]` | `30` | `30–45` | `60–120` | **Highest-leverage knob.** Directly sets how often the ~2N-thread fan-out happens. Longer interval = fewer thread storms and less discovery chatter. |
+| `jitter` | `[refresh]` | `3` | `5` | `10–15` | Spreads per-host handshakes across the window so `max_concurrent` isn't the startup bottleneck. |
+
+At 1000+ hosts the two real pressure points are the **per-cycle thread fan-out**
+(~2N short-lived OS threads every `interval`) and steady-state resource use
+(roughly one socket + ~100 KB per transport ⇒ ~1000 FDs and ~100 MB at 1000
+hosts). Raising `interval`/`jitter` and `max_concurrent` is the highest-leverage
+config-only change; removing the thread fan-out entirely is the
+[phase-2 refresh-cycle thread pool](design/refresh-cycle-thread-pool.md).
 
 ## Relevant config (`config.toml`)
 
