@@ -28,6 +28,7 @@
   const titleEl = $("title");
   const catalogPanel = $("catalog-panel");
   const catalogList = $("catalog");
+  const catalogSearch = $("catalog-search");
   const reqForm = $("reqform");
 
   let ws = null;
@@ -252,22 +253,51 @@
     catalogList.append(li);
   }
 
+  function appendCatalogNote(text) {
+    const li = document.createElement("li");
+    li.className = "cat-empty";
+    li.textContent = text;
+    catalogList.append(li);
+  }
+
+  // Free-text filter over an entry's label, description, and (for a fleet runnable)
+  // its hosts — the same fields shown in the list, so what you read is what you match.
+  function catalogMatches(tool, q) {
+    if (!q) return true;
+    const hay = [
+      toolLabel(tool),
+      tool.description || "",
+      (tool["x-hosts"] || []).join(" "),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(q);
+  }
+
   function renderCatalog() {
     catalogPanel.hidden = false;
     reqForm.hidden = true;
     catalogList.hidden = false;
     catalogList.innerHTML = "";
+    // The search box is only useful (and only shown) when there's a catalogue.
+    catalogSearch.hidden = !catalog.length;
     if (!catalog.length) {
-      const li = document.createElement("li");
-      li.className = "cat-empty";
-      li.textContent = "Nothing available — no operator may be on shift.";
-      catalogList.append(li);
+      appendCatalogNote("Nothing available — no operator may be on shift.");
       return;
     }
-    // Runnables first, then a Runbooks section (operator-only). A heading is shown
-    // only when both kinds are present, so a visitor's plain list is unchanged.
-    const runnables = catalog.filter((t) => t["x-kind"] !== "skill");
-    const skills = catalog.filter((t) => t["x-kind"] === "skill");
+    const q = (catalogSearch.value || "").trim().toLowerCase();
+    // Runnables first, then a Runbooks section. A heading is shown only when both
+    // kinds are present, so a visitor's plain list is unchanged.
+    const runnables = catalog.filter(
+      (t) => t["x-kind"] !== "skill" && catalogMatches(t, q),
+    );
+    const skills = catalog.filter(
+      (t) => t["x-kind"] === "skill" && catalogMatches(t, q),
+    );
+    if (!runnables.length && !skills.length) {
+      appendCatalogNote(`No matches for “${q}”.`);
+      return;
+    }
     if (runnables.length && skills.length) appendCatalogHeading("Runnables");
     for (const tool of runnables) appendCatalogItem(tool);
     if (skills.length) {
@@ -275,6 +305,10 @@
       for (const tool of skills) appendCatalogItem(tool);
     }
   }
+
+  // Re-filter as the operator types. The value persists across catalogue refreshes
+  // (the poll re-renders but never clears the box).
+  catalogSearch.addEventListener("input", renderCatalog);
 
   // Generate a form from the tool's inputSchema (JSON Schema): enum → select,
   // boolean → checkbox, integer/number → number input, anything else → text.

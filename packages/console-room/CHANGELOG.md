@@ -4,6 +4,19 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.31.0]
+
+### Added
+- **Search box over the catalogue.** The room form's catalogue now has a search
+  field (shown whenever there's a catalogue) that filters entries as you type —
+  case-insensitive over each entry's label, description, and (for a fleet runnable)
+  its hosts. It filters the Runnables and Runbooks sections together and shows a
+  "No matches" note when nothing matches; the value persists across catalogue
+  refreshes. Frontend-only (`web/frontend/`), no protocol change. Helps when an
+  operator's full catalogue spans a lot of runnables.
+
+  *(0.30.0 is reserved for the host-picker change on a separate branch; this lands
+  as 0.31.0 to avoid a version collision.)*
 ## [0.30.0]
 
 ### Added
