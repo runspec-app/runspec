@@ -65,9 +65,10 @@ per runnable, tagged with the broadest audience it qualifies for:
 `catalog.build_skill_catalog(skills)` appends published runbooks as
 `skill:<id>` entries, with `inputSchema` built from each skill's `[skill.args]` via the
 shared `skillargs.parse_skill_args`. A runbook opts in via a `discoverable` audience
-field on its `[[skill]]` entry (**default empty — not published**). For now published
-runbooks are tagged `operator` (operator-only); a future change tags self-service-marked
-skills as `self-service` to open them to visitors.
+field on its `[[skill]]` entry (**default empty — not published**), and is tagged with
+the **broadest** audience it qualifies for, mirroring runnables: `self-service` when
+self-service-marked (visible to visitors), else `operator` (runspec-console 0.132.0;
+operator-only in 0.131.0).
 
 `bridge_triggers._publish_catalog` merges runnables + skills into one channel, keeps
 `_catalog_index[ns]` (runnable name → discovered runnable) and `_skill_index[ns]`
@@ -97,8 +98,9 @@ Runnables list and a Runbooks section (entries with `x-kind === "skill"`, shown 
 
 - **Operator = explicit allowlist** (not "email == queue mailbox", which is a shared,
   often-unattended address, nor an "operator team", which is self-selected at login).
-- **Runbooks operator-only for now** — the audience plumbing makes visitor-facing
-  self-service skills a one-flag change later.
+- **Runbooks are opt-in per audience** — `discoverable = ["operator"]` keeps a
+  runbook operator-only; `["self-service"]` opens it to visitors (0.132.0). The
+  audience plumbing is the same one runnables use.
 - **Skills opt-in** via a `discoverable` field on the skill (default off — safer for
   runbooks than runnables, which default to operator).
 - **`done` on turn completion**, via the portal lifecycle, not on hand-off.

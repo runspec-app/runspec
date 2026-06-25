@@ -240,3 +240,24 @@ def test_build_skill_catalog_includes_only_opt_in():
     )
     assert [t["name"] for t in tools] == ["skill:restart"]
     assert index == {"skill:restart": "restart"}
+
+
+def test_build_skill_catalog_tags_broadest_audience():
+    tools, _ = build_skill_catalog(
+        [
+            _skill("reset-pw", discoverable=["self-service"]),  # visitor-facing
+            _skill("both", discoverable=["operator", "self-service"]),  # broadest wins
+            _skill("restart", discoverable=["operator"]),  # operator-only
+        ]
+    )
+    by = {t["name"]: t["x-audience"] for t in tools}
+    assert by == {
+        "skill:reset-pw": "self-service",
+        "skill:both": "self-service",
+        "skill:restart": "operator",
+    }
+
+
+def test_skill_entry_explicit_self_service_audience():
+    entry = skill_to_catalog_entry(_skill("reset-pw"), audience="self-service")
+    assert entry["x-audience"] == "self-service" and entry["x-kind"] == "skill"

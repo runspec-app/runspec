@@ -321,6 +321,41 @@ def test_operator_can_request_operator_tool():
     assert store.appended and store.appended[0].kind == "request"
 
 
+def test_visitor_can_request_self_service_skill():
+    # A runbook the team published self-service is a normal self-service entry: a
+    # visitor sees it and may submit it as a kind="skill" request.
+    store = FakeStore()
+    catalog = [
+        {
+            "name": "skill:reset-pw",
+            "x-audience": "self-service",
+            "x-kind": "skill",
+            "x-title": "Reset my password",
+            "inputSchema": {"type": "object", "properties": {}},
+        }
+    ]
+    hub = Hub(store)
+    hub.publish_catalog(_SeedAgent("agent@web01", "helpdesk/it"), catalog)
+    with TestClient(create_app(hub)) as client:
+        # The visitor sees it without operator access…
+        tools = client.get("/catalog?queue=it").json()["tools"]
+        assert [t["name"] for t in tools] == ["skill:reset-pw"]
+        # …and submitting it lands as a request the console will enact as a skill.
+        with client.websocket_connect("/ws?queue=it&user=alice@corp") as alice:
+            alice.send_json(
+                {
+                    "type": "request",
+                    "tool": "skill:reset-pw",
+                    "args": {},
+                    "kind": "skill",
+                }
+            )
+            got = alice.receive_json()
+            assert got["type"] == "message" and got["kind"] == "request"
+            assert got["data"]["tool"] == "skill:reset-pw"
+    assert store.appended and store.appended[0].kind == "request"
+
+
 def test_visitor_request_over_ws_lands_and_auto_assigns():
     store = FakeStore()
     with _client_with_catalog(store) as client:

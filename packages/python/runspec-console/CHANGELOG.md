@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.132.0] — 2026-06-25
+
+### Added
+- **Visitor-facing self-service runbooks.** A `[[skill]]` runbook can now be opened
+  to ordinary email-verified visitors, not just operators, by tagging it
+  `discoverable = ["self-service"]`. Published skills are now stamped with the
+  **broadest** audience they qualify for (self-service when self-service-marked, else
+  operator), mirroring how runnables are tagged — so a self-service runbook appears
+  as a form in a visitor's Runbooks section and a `kind="skill"` request routes to an
+  operator console, which renders the body and runs it as the same autonomy-gated
+  agent turn (every runnable it reaches still parks at the per-runnable confirm gate).
+  Operator-only runbooks (`discoverable = ["operator"]`) are unchanged. The room and
+  frontend were already audience-generic; this is a one-field change in
+  `catalog.build_skill_catalog` / `skill_to_catalog_entry`. Requires runspec-room
+  ≥ 0.29.0.
+
+
 ## [0.131.1] — 2026-06-25
 
 ### Fixed
