@@ -119,10 +119,11 @@ class Bridge(
         # Helpdesk agent mode (a host entry with room_queue). Agent namespaces
         # we're connected under → our display user there (the identity the hub
         # records as the assignee when it routes a request to us). Catalog index:
-        # namespace → bare tool name → the discovered runnable, so a portal request
-        # the hub assigns us can be mapped back to (host, runnable) and enacted.
+        # namespace → bare tool name → {host → discovered runnable}, so a portal
+        # request the hub assigns us maps back to (host, runnable) — on the host the
+        # requester picked when a fleet exposes the runnable on several — and enacts.
         self._agent_rooms: dict[str, str] = {}
-        self._catalog_index: dict[str, dict[str, dict[str, Any]]] = {}
+        self._catalog_index: dict[str, dict[str, dict[str, dict[str, Any]]]] = {}
         # namespace → published skill catalog name (``skill:<id>``) → skill id, so a
         # skill request the hub assigns us maps back to the runbook to render + run.
         self._skill_index: dict[str, dict[str, str]] = {}

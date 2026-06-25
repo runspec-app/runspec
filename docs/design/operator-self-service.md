@@ -71,9 +71,28 @@ self-service-marked (visible to visitors), else `operator` (runspec-console 0.13
 operator-only in 0.131.0).
 
 `bridge_triggers._publish_catalog` merges runnables + skills into one channel, keeps
-`_catalog_index[ns]` (runnable name → discovered runnable) and `_skill_index[ns]`
-(`skill:<id>` → skill id) for enactment, and sends one (unchanged-shape) `catalog`
-frame.
+`_catalog_index[ns]` (runnable name → `{host: discovered runnable}`) and
+`_skill_index[ns]` (`skill:<id>` → skill id) for enactment, and sends one
+(unchanged-shape) `catalog` frame.
+
+### Host targeting (runspec-console 0.133.0 / runspec-room 0.30.0)
+
+A fleet often exposes the same runnable on many hosts (e.g. `check-disk` on every
+Linux box). The catalogue must collapse those to one form, but an operator needs to
+target a *specific* host. So `build_full_catalog` keeps one entry per name and stamps
+it with **`x-hosts`** — every host the runnable was discovered on (discovery order,
+deduped) — while the enactment index becomes `name → {host: discovered runnable}`.
+
+The room form shows a **Host** picker to operator sessions when an entry has more than
+one host (a "Runs on `<host>`" caption when it has exactly one); runbooks carry no host
+(they run on the console and target hosts from inside the body). The chosen host rides
+the request as a first-class `host` field (parallel to `kind`) —
+`submit_request(…, host=…)` → `Request.host` → `assignment_frame` — opaque to the room.
+`_run_assignment(…, host=…)` resolves it against the per-host index (falling back to
+the first host when none was named) and fails clearly if the assignee console can't
+reach the named host. **Known limitation:** with several consoles staffing one queue
+the room routes by name and may pick a console without the chosen host — fine for the
+common single-console-per-queue deployment; the request fails recoverably otherwise.
 
 ### Console: enacting a request
 

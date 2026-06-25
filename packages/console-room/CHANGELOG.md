@@ -4,6 +4,19 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.30.0]
+
+### Added
+- **Portal requests carry a target host.** A portal `request` (and the `assignment`
+  frame the hub routes to an operator console) now carries an optional `host` — the
+  operator's chosen target when a fleet exposes the same runnable on several boxes
+  (e.g. "check disk space" on a specific host). It's threaded through
+  `submit_request(…, host=…)` → `Request.host` → `assignment_frame`, and is opaque to
+  the room — the enacting console resolves it. Backward compatible: a request with no
+  `host` (every existing client) enacts on the console's first discovered host as
+  before. Pairs with runspec-console ≥ 0.133.0, which publishes each entry's hosts as
+  `x-hosts` and renders the picker.
+
 ## [0.29.0]
 
 ### Added

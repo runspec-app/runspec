@@ -104,9 +104,17 @@ class BrowserConnection:
             req_kind = (
                 "skill" if str(frame.get("kind") or "") == "skill" else "runnable"
             )
+            # The operator's chosen target host for a fleet runnable (opaque to the
+            # room — passed straight through to the enacting console). Blank ⇒ the
+            # console picks the first discovered host.
+            req_host = str(frame.get("host") or "").strip()
             if tool:
                 await hub.submit_request(
-                    self, tool, args if isinstance(args, dict) else {}, req_kind
+                    self,
+                    tool,
+                    args if isinstance(args, dict) else {},
+                    req_kind,
+                    req_host,
                 )
         elif kind == PAGE:
             # The visitor's "Page the team" action on a still-unassigned request of

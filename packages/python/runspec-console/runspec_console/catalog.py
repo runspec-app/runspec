@@ -149,33 +149,39 @@ def build_full_catalog(
     runnables: list[dict[str, Any]],
     *,
     self_service_allowlist: list[str] | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, dict[str, Any]]]]:
     """The combined catalog for a queue: ``(tools, index)`` covering **both**
     audiences in one tagged list (the channel the room filters per session).
 
-    Each runnable yields **one** entry, tagged with the broadest audience it
+    Each runnable name yields **one** entry, tagged with the broadest audience it
     qualifies for: ``"self-service"`` when it is self-service-marked *and* passes the
     optional ``self_service_allowlist`` (the ``room_catalog`` visitor-narrowing
     knob) — visible to everyone; otherwise ``"operator"`` when it is
     operator-discoverable (the default audience) — visible only to operator sessions.
     A runnable discoverable to nobody (``discoverable = false``) is dropped. One
-    entry per name avoids a name collision in the room's name-keyed dedup; the
-    operator set is deliberately *not* narrowed by the self-service allowlist.
+    entry per name keeps the room's name-keyed dedup stable; the operator set is
+    deliberately *not* narrowed by the self-service allowlist.
+
+    The **same runnable on several hosts** (a fleet) is collapsed to one entry whose
+    ``x-hosts`` lists every host it was discovered on (discovery order, deduped) — so
+    an operator can see where it would run and pick the target when it matters (e.g.
+    "check disk space" on a specific box). The audience + form schema come from the
+    first discovered host. ``index`` maps each name to ``{host: discovered runnable}``
+    so a request naming a host enacts on that host (falling back to the first when a
+    request names none).
 
     Same flat-form constraints as :func:`build_catalog`: subcommand-requiring
-    runnables are skipped and password args are omitted. Names collide across hosts
-    on a fleet; first discovered wins. ``index`` maps every published name back to
-    its discovered runnable for enactment."""
+    runnables are skipped and password args are omitted."""
     allowed = (
         set(self_service_allowlist) if self_service_allowlist is not None else None
     )
-    tools: list[dict[str, Any]] = []
-    index: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    audience_of: dict[str, str] = {}
+    first_of: dict[str, dict[str, Any]] = {}
+    by_host: dict[str, dict[str, dict[str, Any]]] = {}
     for runnable in runnables:
         name = str(runnable.get("name") or "")
-        if not name or name in index:
-            continue
-        if runnable.get("requireCommand"):
+        if not name or runnable.get("requireCommand"):
             continue
         raw = runnable.get("rawSpec")
         audiences = discoverable_audiences(
@@ -190,9 +196,22 @@ def build_full_catalog(
             audience = OPERATOR
         else:
             continue  # discoverable to nobody
-        tools.append(runnable_to_catalog_entry(runnable, audience=audience))
-        index[name] = runnable
-    return tools, index
+        if name not in first_of:
+            order.append(name)
+            audience_of[name] = audience
+            first_of[name] = runnable
+            by_host[name] = {}
+        # Keep one discovered record per host (first wins on a per-host collision).
+        # A hostless local runnable lands under the "" key so it stays enactable.
+        by_host[name].setdefault(str(runnable.get("host") or ""), runnable)
+    tools: list[dict[str, Any]] = []
+    for name in order:
+        entry = runnable_to_catalog_entry(first_of[name], audience=audience_of[name])
+        hosts = [h for h in by_host[name] if h]  # drop the hostless "" placeholder
+        if hosts:
+            entry["x-hosts"] = hosts
+        tools.append(entry)
+    return tools, by_host
 
 
 # ── skills (published runbooks) ──────────────────────────────────────────────

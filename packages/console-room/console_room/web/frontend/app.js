@@ -296,6 +296,35 @@
       reqForm.append(p);
     }
 
+    // Operators can see — and, on a fleet, pick — which host a runnable lands on
+    // (e.g. "check disk space" on a specific box). >1 hosts → a required picker;
+    // exactly 1 → a caption so they still see where it runs. Runbooks run on the
+    // console (they target hosts from inside the runbook), so they carry no host.
+    const hosts =
+      tool["x-kind"] !== "skill" && Array.isArray(tool["x-hosts"])
+        ? tool["x-hosts"]
+        : [];
+    if (operator && hosts.length > 1) {
+      const label = document.createElement("label");
+      const caption = document.createElement("span");
+      caption.textContent = "Host *";
+      label.append(caption);
+      const sel = document.createElement("select");
+      for (const hn of hosts) {
+        const o = document.createElement("option");
+        o.value = o.textContent = String(hn);
+        sel.append(o);
+      }
+      sel.dataset.host = "1";
+      label.append(sel);
+      reqForm.append(label);
+    } else if (operator && hosts.length === 1) {
+      const cap = document.createElement("p");
+      cap.className = "cat-desc";
+      cap.textContent = `Runs on ${hosts[0]}`;
+      reqForm.append(cap);
+    }
+
     const schema = tool.inputSchema || {};
     const props = schema.properties || {};
     const required = new Set(schema.required || []);
@@ -372,7 +401,10 @@
         }
       }
       const kind = tool["x-kind"] === "skill" ? "skill" : "runnable";
-      ws.send(JSON.stringify({ type: "request", tool: tool.name, args, kind }));
+      const hostEl = reqForm.querySelector("[data-host]");
+      const frame = { type: "request", tool: tool.name, args, kind };
+      if (hostEl && hostEl.value) frame.host = hostEl.value;
+      ws.send(JSON.stringify(frame));
       renderCatalog(); // back to the list; the echo lands in the transcript
     };
   }

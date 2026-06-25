@@ -167,6 +167,28 @@ def test_full_catalog_tags_broadest_audience():
     }
     assert "secret" not in by  # dropped entirely
     assert set(index) == {"reset-password", "rotate-key", "list-tickets"}
+    # index is name → {host: discovered runnable}
+    assert index["reset-password"]["web01"]["host"] == "web01"
+
+
+def test_full_catalog_collapses_fleet_hosts_into_x_hosts():
+    tools, index = build_full_catalog(
+        [
+            _runnable("check-disk", discoverable=True, host="web01"),
+            _runnable("check-disk", discoverable=True, host="web02"),
+            _runnable("check-disk", discoverable=True, host="web01"),  # dup host
+        ]
+    )
+    # One entry listing every host it was discovered on (order-preserving, deduped).
+    assert len(tools) == 1
+    assert tools[0]["x-hosts"] == ["web01", "web02"]
+    # The index maps the name to a per-host discovered record for enactment.
+    assert set(index["check-disk"]) == {"web01", "web02"}
+
+
+def test_full_catalog_single_host_still_lists_it():
+    tools, _ = build_full_catalog([_runnable("check-disk", discoverable=True)])
+    assert tools[0]["x-hosts"] == ["web01"]
 
 
 def test_full_catalog_allowlist_narrows_self_service_only():

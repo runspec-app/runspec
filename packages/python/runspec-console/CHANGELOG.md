@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.133.0] — 2026-06-25
+
+### Added
+- **Operator room: see and pick which host a runnable runs on.** A fleet often
+  exposes the same runnable on several hosts (e.g. `check-disk` on every Linux box),
+  but the catalogue deduped by name and silently ran it on the first discovered host
+  — so an operator couldn't target *that* server. `build_full_catalog` now collapses
+  same-named runnables into one entry whose **`x-hosts`** lists every host it was
+  discovered on, and keeps a per-host enactment index (`name → {host: runnable}`). In
+  the room form, an operator session gets a **Host** picker when a runnable has more
+  than one host (and a "Runs on `<host>`" caption when it has one); the chosen host
+  rides the request (`kind="runnable"` requests gain a `host`) to the enacting
+  console, which runs it there (`_run_assignment(…, host=…)`), failing clearly if that
+  console can't reach the named host. Visitors and runbooks are unchanged (a runbook
+  runs on the console and targets hosts from inside its body). Requires runspec-room
+  ≥ 0.30.0.
+
+  *(0.132.0 is reserved for the visitor-facing-runbooks change on a separate branch;
+  this lands as 0.133.0 to avoid a version collision.)*
 ## [0.132.0] — 2026-06-25
 
 ### Added

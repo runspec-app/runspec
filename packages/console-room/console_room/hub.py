@@ -665,7 +665,12 @@ class Hub:
         return True
 
     async def submit_request(
-        self, p: Participant, tool: str, args: dict[str, Any], kind: str = "runnable"
+        self,
+        p: Participant,
+        tool: str,
+        args: dict[str, Any],
+        kind: str = "runnable",
+        host: str = "",
     ) -> Request | None:
         """A session submits a portal request from their conversation. Validated
         against the **live catalogue** (some connected console must hold ``tool`` —
@@ -673,11 +678,12 @@ class Hub:
         budget. **Authorization is visibility**: an operator-audience entry is only
         requestable by an operator session (``p.operator``), so a visitor can never
         submit what they can't see. ``kind`` distinguishes a runnable request from a
-        ``skill`` (runbook) one — it rides onto the request for the console to
-        dispatch. Persists the request as a ``request``-kind thread message, then
-        **auto-assigns** to an on-shift holder (round-robin) or holds it
-        ``unassigned`` for a page. Returns the :class:`Request` (with its resolved
-        state), or ``None`` when refused."""
+        ``skill`` (runbook) one; ``host`` is the operator's chosen target host for a
+        fleet runnable (opaque here — the enacting console resolves it). Both ride
+        onto the request for the console to dispatch. Persists the request as a
+        ``request``-kind thread message, then **auto-assigns** to an on-shift holder
+        (round-robin) or holds it ``unassigned`` for a page. Returns the
+        :class:`Request` (with its resolved state), or ``None`` when refused."""
         parsed = parse_conversation_room(p.room)
         if parsed is None:
             logger.warning("room: portal request from non-conversation room %r", p.room)
@@ -720,6 +726,7 @@ class Hub:
             visitor_name=visitor_name,
             team=team,
             kind=kind,
+            host=host,
         )
         # Record the ask on the thread (links to the lifecycle record via id).
         msg = Message.new(

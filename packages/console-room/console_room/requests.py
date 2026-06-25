@@ -66,13 +66,16 @@ class Request:
     # (``runnable`` then carries the ``skill:<id>`` catalog name). The console
     # dispatches enactment on it.
     kind: str = "runnable"
+    # The operator's chosen target host for a fleet runnable (blank ⇒ the console
+    # enacts on the first discovered host). Opaque to the room.
+    host: str = ""
     state: str = UNASSIGNED
     assignee: str | None = None
     error: str | None = None
 
     def assignment_fields(
         self,
-    ) -> tuple[str, str, str, dict[str, Any], str, str, str, str]:
+    ) -> tuple[str, str, str, dict[str, Any], str, str, str, str, str]:
         """The payload an assigned operator's console needs to enact the request."""
         return (
             self.id,
@@ -83,6 +86,7 @@ class Request:
             self.visitor_name,
             self.team,
             self.kind,
+            self.host,
         )
 
     def status_fields(self) -> tuple[str, str, str, str | None, str | None]:
@@ -117,6 +121,7 @@ class RequestRegistry:
         visitor_name: str = "",
         team: str = "",
         kind: str = "runnable",
+        host: str = "",
     ) -> Request:
         """Record a fresh request (``unassigned``) and return it. The id is
         server-assigned so the thread message and the lifecycle record agree."""
@@ -131,6 +136,7 @@ class RequestRegistry:
             visitor_name=visitor_name,
             team=team,
             kind=kind,
+            host=host,
         )
         self._requests[req.id] = req
         return req

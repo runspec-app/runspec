@@ -644,6 +644,10 @@ class TriggersMixin:
         raw_args = payload.get("args")
         args = dict(raw_args) if isinstance(raw_args, dict) else {}
         kind = "skill" if str(payload.get("kind") or "") == "skill" else "runnable"
+        # The host the requester picked (a fleet runnable may live on several); blank
+        # ⇒ enact on the first discovered host. Skills carry none — they run on the
+        # console and target hosts from inside the runbook.
+        host = str(payload.get("host") or "")
         namespace = self._namespace_of(room)
         if not (request_id and room and runnable and namespace):
             logger.warning("portal: ignoring malformed assignment %r", payload)
@@ -657,12 +661,14 @@ class TriggersMixin:
         team = str(payload.get("team") or "")
         # A skill's wire name is ``skill:<id>``; show the bare id on the card.
         label = runnable.split("skill:", 1)[-1] if kind == "skill" else runnable
+        note = f"assigned · {label}" + (f" on {host}" if host else "")
         # Surface the assignment in the Triggers inbox right away (before the
         # possibly-gated run), so the operator sees it land.
         self._portal_card(
             request_id,
             runnable=label,
             args=args,
+            host=host,
             visitor=visitor,
             visitor_name=visitor_name,
             team=team,
@@ -670,14 +676,20 @@ class TriggersMixin:
             queue=queue,
             state="assigned",
             column="triggered",
-            note=f"assigned · {label}",
+            note=note,
         )
-        target = self._run_skill_assignment if kind == "skill" else self._run_assignment
+        # Run off the recv loop so a (possibly confirm-gated) run never blocks it. A
+        # skill carries no host (it runs on the console); a runnable carries the
+        # operator's chosen target host.
+        worker: Callable[..., None]
+        if kind == "skill":
+            args_tuple: tuple[Any, ...] = (request_id, room, runnable, args, namespace)
+            worker = self._run_skill_assignment
+        else:
+            args_tuple = (request_id, room, runnable, args, namespace, host)
+            worker = self._run_assignment
         threading.Thread(
-            target=target,
-            args=(request_id, room, runnable, args, namespace),
-            name="portal-enact",
-            daemon=True,
+            target=worker, args=args_tuple, name="portal-enact", daemon=True
         ).start()
 
     def _run_assignment(
@@ -687,29 +699,42 @@ class TriggersMixin:
         runnable: str,
         args: dict[str, Any],
         namespace: str,
+        host: str = "",
     ) -> None:
-        """Worker: resolve the runnable, run it through the autonomy gate, deliver
-        the result on the thread, and report the request done/failed."""
+        """Worker: resolve the runnable (on the requested ``host`` when given, else
+        the first discovered), run it through the autonomy gate, deliver the result
+        on the thread, and report the request done/failed."""
         with self._lock:
             source = self._chat_sources.get(namespace)
-            disc = self._catalog_index.get(namespace, {}).get(runnable)
+            by_host = dict(self._catalog_index.get(namespace, {}).get(runnable) or {})
         if source is None:
             logger.warning(
                 "portal: no chat source for %r — cannot enact %r", namespace, runnable
             )
             self._portal_fail(request_id, None, "operator offline — cannot enact")
             return
-        if disc is None:
+        if not by_host:
             self._portal_fail(
                 request_id, source, f"'{runnable}' is no longer available"
             )
             return
-        host = str(disc.get("host") or "")
-        name = str(disc.get("name") or runnable)
-        if not host:
+        # Pick the requested host; fall back to the first discovered when none was
+        # named. A named host this console can't reach is a clear, recoverable error.
+        if host and host not in by_host:
+            self._portal_fail(
+                request_id,
+                source,
+                f"'{runnable}' is not available on {host} from this operator "
+                f"(have: {', '.join(h for h in by_host if h) or 'none'})",
+            )
+            return
+        disc = by_host.get(host) if host else next(iter(by_host.values()))
+        resolved_host = str((disc or {}).get("host") or "")
+        name = str((disc or {}).get("name") or runnable)
+        if not resolved_host:
             self._portal_fail(request_id, source, f"'{runnable}' has no host")
             return
-        tool_name = f"{host}__{name}"
+        tool_name = f"{resolved_host}__{name}"
         source.send_request_start(request_id)
         self._portal_card(
             request_id, state="in_progress", column="running", note="enacting…"
@@ -859,6 +884,7 @@ class TriggersMixin:
         *,
         runnable: str | None = None,
         args: dict[str, Any] | None = None,
+        host: str | None = None,
         visitor: str | None = None,
         visitor_name: str | None = None,
         team: str | None = None,
@@ -894,6 +920,7 @@ class TriggersMixin:
             for key, val in (
                 ("runnable", runnable),
                 ("args", args),
+                ("host", host),
                 ("visitor", visitor),
                 ("visitor_name", visitor_name),
                 ("team", team),

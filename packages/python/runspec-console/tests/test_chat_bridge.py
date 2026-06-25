@@ -300,6 +300,8 @@ class _PortalSource:
 
 
 _DISC = {"host": "web01", "name": "reset-password"}
+# The portal index is namespace → name → {host: discovered runnable}.
+_INDEX = {_NS: {"reset-password": {"web01": _DISC}}}
 
 
 def _enact_stub(source, index, *, output="done ✓", raises=None):
@@ -338,7 +340,7 @@ def _card(s):
 
 def test_run_assignment_happy_path():
     src = _PortalSource()
-    s = _enact_stub(src, {_NS: {"reset-password": _DISC}}, output="all good")
+    s = _enact_stub(src, _INDEX, output="all good")
     s._run_assignment("r1", _THREAD, "reset-password", {"user": "alice"}, _NS)
     # Ran the right tool through the gate (chat_id == the portal card id, so the
     # gate's Approve/Deny attaches to the card), posted the result, marked it done.
@@ -356,7 +358,7 @@ def test_run_assignment_happy_path():
 
 def test_run_assignment_failure_output_marks_failed():
     src = _PortalSource()
-    s = _enact_stub(src, {_NS: {"reset-password": _DISC}}, output="[exit 1]\nboom")
+    s = _enact_stub(src, _INDEX, output="[exit 1]\nboom")
     s._run_assignment("r1", _THREAD, "reset-password", {}, _NS)
     assert src.messages == [("[exit 1]\nboom", _THREAD)]
     rid, error = src.completes[0]
@@ -379,12 +381,36 @@ def test_run_assignment_unknown_runnable_completes_with_error():
 
 def test_run_assignment_gate_exception_completes_with_error():
     src = _PortalSource()
-    s = _enact_stub(
-        src, {_NS: {"reset-password": _DISC}}, raises=RuntimeError("ssh down")
-    )
+    s = _enact_stub(src, _INDEX, raises=RuntimeError("ssh down"))
     s._run_assignment("r1", _THREAD, "reset-password", {}, _NS)
     assert src.starts == ["r1"]
     assert src.completes == [("r1", "ssh down")]
+
+
+def test_run_assignment_picks_requested_host():
+    src = _PortalSource()
+    index = {
+        _NS: {
+            "check-disk": {
+                "web01": {"host": "web01", "name": "check-disk"},
+                "web02": {"host": "web02", "name": "check-disk"},
+            }
+        }
+    }
+    s = _enact_stub(src, index, output="ok")
+    # Operator picked web02 → the gate runs web02__check-disk, not the first host.
+    s._run_assignment("r1", _THREAD, "check-disk", {}, _NS, "web02")
+    assert s.gated_calls == [("web02__check-disk", {}, "portal:r1")]
+
+
+def test_run_assignment_unknown_host_fails():
+    src = _PortalSource()
+    index = {_NS: {"check-disk": {"web01": {"host": "web01", "name": "check-disk"}}}}
+    s = _enact_stub(src, index)
+    s._run_assignment("r1", _THREAD, "check-disk", {}, _NS, "web09")
+    assert s.gated_calls == [] and src.starts == []
+    rid, error = src.completes[0]
+    assert rid == "r1" and "not available on web09" in error
 
 
 def _skill_enact_stub(source, skill_index, *, summary="ran ✓"):

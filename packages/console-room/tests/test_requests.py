@@ -56,8 +56,8 @@ def test_visitor_name_defaults_empty_and_is_stored():
     )
     assert named.visitor_name == "Alice Smith" and named.team == "sales"
     # …and both ride the assignment payload (visitor_name, then team) ahead of the
-    # trailing kind for the card.
-    assert named.assignment_fields()[-3:] == ("Alice Smith", "sales", "runnable")
+    # trailing kind + host for the card.
+    assert named.assignment_fields()[-4:] == ("Alice Smith", "sales", "runnable", "")
 
 
 # ── round-robin assignment ────────────────────────────────────────────────────

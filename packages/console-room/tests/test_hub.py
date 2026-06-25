@@ -511,6 +511,26 @@ def test_operator_skill_request_routes_with_kind():
     assert assignment["args"] == {"svc": "nginx"}
 
 
+def test_request_carries_chosen_host_to_operator():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(
+            agent, [{"name": "check-disk", "x-hosts": ["web01", "web02"]}]
+        )
+        agent.frames.clear()
+        req = await hub.submit_request(alice, "check-disk", {}, "runnable", "web02")
+        return agent, req
+
+    agent, req = run(scenario())
+    assert req is not None and req.host == "web02"
+    assignment = next(f for f in agent.frames if f["type"] == "assignment")
+    assert assignment["host"] == "web02"  # the operator's target rides to the console
+
+
 def test_visitor_cannot_request_operator_skill():
     async def scenario():
         hub = Hub(FakeStore())
