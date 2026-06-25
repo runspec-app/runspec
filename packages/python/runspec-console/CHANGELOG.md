@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.131.1] — 2026-06-25
+
+### Fixed
+- **Triggers editor: the rule-mode runnable picker stayed empty.** The editor
+  fetched hosts + runnables once on mount, but runnable discovery finishes
+  asynchronously (after the SSH connect that the host list doesn't wait on), so an
+  editor mounted before discovery completed showed an empty runnable dropdown even
+  though the host/group selector worked. `TriggersEditor` now refreshes on the same
+  `runspec:hosts_updated` / `runspec:runnables_updated` events App listens for, so
+  the runnable list fills in as soon as discovery lands.
+
 ## [0.131.0] — 2026-06-25
 
 ### Added

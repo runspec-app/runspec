@@ -427,11 +427,22 @@ export function TriggersEditor({
   }, [])
 
   // Hosts + every discovered runnable, for the rule-mode Run picker / arg editor.
+  // Runnables arrive asynchronously (SSH discovery finishes after the host list is
+  // known), so refresh on the same events App does — otherwise the runnable picker
+  // is empty whenever the editor mounted before discovery completed.
   const [hosts, setHosts] = useState<Host[]>([])
   const [runnables, setRunnables] = useState<Runnable[]>([])
   useEffect(() => {
-    bridge.get_hosts().then(setHosts).catch(() => {})
-    bridge.get_runnables('all').then(setRunnables).catch(() => {})
+    const loadHosts = () => bridge.get_hosts().then(setHosts).catch(() => {})
+    const loadRunnables = () => bridge.get_runnables('all').then(setRunnables).catch(() => {})
+    loadHosts()
+    loadRunnables()
+    window.addEventListener('runspec:hosts_updated', loadHosts)
+    window.addEventListener('runspec:runnables_updated', loadRunnables)
+    return () => {
+      window.removeEventListener('runspec:hosts_updated', loadHosts)
+      window.removeEventListener('runspec:runnables_updated', loadRunnables)
+    }
   }, [])
 
   const startAdd = () => {
