@@ -2,7 +2,7 @@
 sources/schedule.py — the time-based (cron / interval) event source.
 
 A *schedule* is configured in the **Schedules tab** (``runspec_schedules.toml``),
-not as a trigger. When it fires it does one of two things, chosen by ``action``:
+not as a trigger. When it fires it does one of four things, chosen by ``action``:
 
   - ``action = "event"`` → emit a rich, matchable :class:`~runspec_console.events.Event`
     into the trigger engine, exactly like a new mail arriving. Triggers with
@@ -16,11 +16,23 @@ not as a trigger. When it fires it does one of two things, chosen by ``action``:
     the authorization), fully audited like any other run. The bridge supplies the
     run via the ``run_runnable`` callback.
 
-The source reads the schedule list, builds one APScheduler job per *enabled*
-schedule, and on each fire calls the right path. It is **bridge-owned and marked
-external** on the engine (it needs the schedule list and the run path, which the
-zero-arg registry factory can't supply) and is still ``register_source``'d so the
-Triggers UI lists "schedule" in the source dropdown.
+  - ``action = "prompt"`` → run a headless **agent turn** with a fixed prompt, so
+    the human (or the agent itself) can schedule something to *check or do later*
+    in natural language — "every morning, check disk usage on the web hosts and
+    flag anything over 80%". The agent has the same toolset and per-tool autonomy
+    gate as a reactive trigger turn.
+
+  - ``action = "skill"`` → run a saved **skill runbook** (by id) as an agent turn:
+    the runbook body is rendered (with any ``values`` filling its ``{{placeholders}}``)
+    and handed to the agent as its instructions. Schedule a reusable runbook to run
+    on a cadence without re-typing it.
+
+The ``prompt`` and ``skill`` actions both run an agent turn via the bridge's
+``run_agent`` callback. The source reads the schedule list, builds one APScheduler
+job per *enabled* schedule, and on each fire calls the right path. It is
+**bridge-owned and marked external** on the engine (it needs the schedule list and
+the run paths, which the zero-arg registry factory can't supply) and is still
+``register_source``'d so the Triggers UI lists "schedule" in the source dropdown.
 
 APScheduler is an optional dependency (the ``schedule`` extra). The pure helpers
 (``parse_when`` / ``parse_schedule_entry`` / ``_parse_every`` / ``event_payload``)
@@ -49,10 +61,17 @@ _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _INTERVAL_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 # What a runnable-action schedule calls to run its runnable:
-# (schedule_id, host, runnable, args, group). The id lets the bridge label the run
-# card; ``group`` is non-empty for a group-targeted schedule (then ``host`` is "")
-# and the bridge fans the run out across the group's members.
-RunFn = Callable[[str, str, str, dict[str, Any], str], None]
+# (schedule_id, host, runnable, args, group, hosts). The id lets the bridge label
+# the run card; ``group`` is non-empty for a group-targeted schedule (then ``host``
+# is "") and the bridge fans the run out across the group's members; ``hosts`` is a
+# non-empty candidate list for an "any one of these" schedule (the bridge picks the
+# first connected one at fire time).
+RunFn = Callable[[str, str, str, dict[str, Any], str, list[str]], None]
+
+# What a prompt/skill-action schedule calls to run a headless agent turn. The
+# bridge gets the whole parsed job (it needs the prompt / skill id + values to
+# render the agent's first message) and runs it on its own thread.
+AgentFn = Callable[["ScheduleJob"], None]
 
 # Working-hours gate (no args → True/False): whether the rota currently permits a
 # fire. None means "no gate" (always fire).
@@ -79,8 +98,10 @@ class When:
 class ScheduleJob:
     """A parsed ``[[schedule]]`` entry from ``runspec_schedules.toml``.
 
-    ``action`` is ``"event"`` (emit a matchable event) or ``"runnable"`` (run a
-    specific runnable directly). The other-action fields are simply empty.
+    ``action`` is ``"event"`` (emit a matchable event), ``"runnable"`` (run a
+    specific runnable directly), ``"prompt"`` (run an agent turn on a fixed
+    prompt), or ``"skill"`` (run a saved runbook as an agent turn). The
+    other-action fields are simply empty.
     """
 
     id: str
@@ -93,12 +114,19 @@ class ScheduleJob:
     # action == "event"
     event: str = ""
     fields: dict[str, str] = field(default_factory=dict)
-    # action == "runnable" — exactly one of host / group is set (group fans the
-    # run out across every member of the host group).
+    # action == "runnable" — exactly one of host / group / hosts is set. ``group``
+    # fans the run out across every member of the host group; ``hosts`` is a
+    # candidate list and the bridge runs it on the first connected one (failover).
     host: str = ""
     group: str = ""
+    hosts: list[str] = field(default_factory=list)
     runnable: str = ""
     args: dict[str, Any] = field(default_factory=dict)
+    # action == "prompt" — the fixed instruction handed to the agent turn.
+    prompt: str = ""
+    # action == "skill" — the saved runbook id, plus values for its {{placeholders}}.
+    skill: str = ""
+    values: dict[str, Any] = field(default_factory=dict)
 
 
 def _parse_every(every: str) -> dict[str, int]:
@@ -151,17 +179,19 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     Raises ``ValueError`` with a human-first message on bad config. The ``when``
     block is required; ``action`` defaults to ``"runnable"``. An ``"event"``
     schedule needs an ``event`` name; a ``"runnable"`` schedule needs ``runnable``
-    plus exactly one of ``host`` (one host) or ``group`` (fan out to a host group).
+    plus exactly one of ``host`` (one host) or ``group`` (fan out to a host group);
+    a ``"prompt"`` schedule needs a ``prompt``; a ``"skill"`` schedule needs a
+    ``skill`` id.
     """
     sid = str(data.get("id") or "").strip()
     if not sid:
         raise ValueError("schedule is missing an 'id'")
 
     action = str(data.get("action") or "runnable").strip()
-    if action not in ("event", "runnable"):
+    if action not in ("event", "runnable", "prompt", "skill"):
         raise ValueError(
             f"schedule '{sid}' has unknown action '{action}' "
-            "(expected 'event' or 'runnable')"
+            "(expected 'event', 'runnable', 'prompt' or 'skill')"
         )
 
     when = parse_when(data.get("when") or {})
@@ -170,8 +200,12 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     fields: dict[str, str] = {}
     host = ""
     group = ""
+    hosts: list[str] = []
     runnable = ""
     args: dict[str, Any] = {}
+    prompt = ""
+    skill = ""
+    values: dict[str, Any] = {}
     if action == "event":
         event = str(data.get("event") or "").strip()
         if not event:
@@ -179,20 +213,38 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
                 f"schedule '{sid}' uses action='event' but has no 'event' name"
             )
         fields = {str(k): str(v) for k, v in (data.get("fields") or {}).items()}
-    else:  # runnable
+    elif action == "runnable":
         host = str(data.get("host") or "").strip()
         group = str(data.get("group") or "").strip()
+        hosts = [str(h).strip() for h in (data.get("hosts") or []) if str(h).strip()]
         runnable = str(data.get("runnable") or "").strip()
         if not runnable:
             raise ValueError(
                 f"schedule '{sid}' uses action='runnable' but is missing 'runnable'"
             )
-        if bool(host) == bool(group):
+        # Exactly one targeting mode: a single host, a group (fan out to all), or a
+        # candidate list (run on the first connected one).
+        modes = sum((bool(host), bool(group), bool(hosts)))
+        if modes != 1:
             raise ValueError(
                 f"schedule '{sid}' (action='runnable') needs exactly one of 'host' "
-                "(a single host) or 'group' (a host group to fan out across)"
+                "(a single host), 'group' (a host group to fan out across), or 'hosts' "
+                "(a candidate list to run on the first connected one)"
             )
         args = dict(data.get("args") or {})
+    elif action == "prompt":
+        prompt = str(data.get("prompt") or "").strip()
+        if not prompt:
+            raise ValueError(
+                f"schedule '{sid}' uses action='prompt' but has no 'prompt' text"
+            )
+    else:  # skill
+        skill = str(data.get("skill") or "").strip()
+        if not skill:
+            raise ValueError(
+                f"schedule '{sid}' uses action='skill' but has no 'skill' id"
+            )
+        values = dict(data.get("values") or {})
 
     return ScheduleJob(
         id=sid,
@@ -204,8 +256,12 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         fields=fields,
         host=host,
         group=group,
+        hosts=hosts,
         runnable=runnable,
         args=args,
+        prompt=prompt,
+        skill=skill,
+        values=values,
     )
 
 
@@ -288,6 +344,7 @@ class ScheduleSource:
         schedules: list[dict[str, Any]] | None = None,
         *,
         run_runnable: RunFn | None = None,
+        run_agent: AgentFn | None = None,
         clock_ok: ClockFn | None = None,
         on_event: ScheduleEventFn | None = None,
     ) -> None:
@@ -304,6 +361,8 @@ class ScheduleSource:
             if job.enabled:
                 self._jobs.append(job)
         self._run_runnable = run_runnable
+        # Prompt/skill schedules run a headless agent turn through this callback.
+        self._run_agent = run_agent
         # Working-hours gate + per-fire audit hook (both bridge-owned). When
         # clock_ok is set and returns False, a fire is skipped (unless the job sets
         # ignore_rota) — so schedules honour the same rota as triggers.
@@ -388,9 +447,17 @@ class ScheduleSource:
                             "schedule", job.event, event_payload(job, datetime.now())
                         )
                     )
+            elif job.action in ("prompt", "skill"):
+                if self._run_agent is not None:
+                    self._run_agent(job)
             elif self._run_runnable is not None:
                 self._run_runnable(
-                    job.id, job.host, job.runnable, dict(job.args), job.group
+                    job.id,
+                    job.host,
+                    job.runnable,
+                    dict(job.args),
+                    job.group,
+                    list(job.hosts),
                 )
             self._record(job, skipped=False)
         except Exception:
@@ -405,9 +472,19 @@ class ScheduleSource:
             return
         if job.action == "event":
             etype, summary = job.event, f"emit {job.event}"
+        elif job.action == "prompt":
+            etype = "prompt"
+            summary = f"prompt: {job.prompt[:60]}"
+        elif job.action == "skill":
+            etype = "skill"
+            summary = f"skill: {job.skill}"
         else:
             etype = job.runnable or "runnable"
-            where = f"group:{job.group}" if job.group else job.host
+            where = (
+                f"group:{job.group}"
+                if job.group
+                else (f"any:{','.join(job.hosts)}" if job.hosts else job.host)
+            )
             summary = f"/{job.runnable} on {where}"
         try:
             self._on_event(

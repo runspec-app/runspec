@@ -768,8 +768,13 @@ class InternalsMixin:
                     if when.get("every")
                     else str(when.get("cron", "?"))
                 )
-                if str(s.get("action") or "runnable") == "event":
+                action = str(s.get("action") or "runnable")
+                if action == "event":
                     target = f"emit {s.get('event')}"
+                elif action == "prompt":
+                    target = f"agent prompt: {str(s.get('prompt') or '')[:50]}"
+                elif action == "skill":
+                    target = f"agent runbook {s.get('skill')}"
                 else:
                     where = (
                         f"group:{s.get('group')}" if s.get("group") else s.get("host")
@@ -779,6 +784,12 @@ class InternalsMixin:
                 lines.append(f"- {s.get('id')}: {target} · {when_txt}{state}")
             if len(schedules) > 20:
                 lines.append(f"- … and {len(schedules) - 20} more")
+            lines.append(
+                "You can add schedules with the create_schedule tool — including "
+                "action='prompt' (run an agent turn on a fixed instruction, to "
+                "check or do something later) and action='skill' (run a saved "
+                "runbook on a cadence)."
+            )
 
         if host_groups:
             with self._lock:

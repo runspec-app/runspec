@@ -195,19 +195,41 @@ an event happens. Scheduling inside the console (rather than the OS task
 scheduler) is what gives a scheduled run the console's audit record, history, and
 — for the event path — the full agent/confirm-gate machinery.
 
-When a schedule fires it does one of two things, chosen by `action`:
+When a schedule fires it does one of four things, chosen by `action`:
 
 - **`action = "event"`** — emit a rich, matchable `Event` into the trigger
   engine, exactly like a new mail arriving. Triggers with `source = "schedule"`
   pick it up by `event` type + `match` rules, so a **single** scheduled emit can
   fan out to **many** triggers, each with its own autonomy / agent-or-rule /
   match. The clock becomes just another event source, reusing the whole email
-  mental model (and a scheduled *agent turn* is simply an `action="event"`
-  schedule with a `mode="agent"` trigger listening for it).
+  mental model (and a scheduled *agent turn* can also be done this way — an
+  `action="event"` schedule with a `mode="agent"` trigger listening for it).
 - **`action = "runnable"`** — run a specific runnable on a host with fixed args,
   **directly and autonomously**: no agent, no confirm gate (scheduling it *is*
   the authorization), audited as the `Scheduled Task` operator via the normal
-  `invoke_runnable` path.
+  `invoke_runnable` path. Targeting is exactly one of: a single `host`; a `group`
+  (fan out to every member, one run card each); or a `hosts` candidate list —
+  run on the **first connected** host in the list (failover, one run; bridge
+  `_pick_connected_host`).
+- **`action = "prompt"`** — run a headless **agent turn** on a fixed `prompt`
+  string. This is the direct way to schedule "the assistant checks/does something
+  later" in natural language, without standing up an event + trigger pair. The
+  turn is the same isolated, autonomy-gated loop a reactive agent-mode trigger
+  uses (`_trigger_run_agent_turn`), so a destructive tool the agent reaches for
+  still parks at the confirm gate.
+- **`action = "skill"`** — run a saved **skill runbook** (`skill` = its id) as an
+  agent turn: the runbook body is rendered (its `{{placeholders}}` filled from the
+  `values` table, validated against `[skill.args]` the same way the `run_skill`
+  action tool does) and handed to the agent as its instructions. Re-run an
+  existing runbook on a cadence without re-typing it.
+
+The `prompt`/`skill` paths run on the bridge's `run_agent` callback
+(`_invoke_scheduled_agent`), which builds a Schedules-tab run card up front and
+runs the turn on its own daemon thread, so the timer (and the *Run now* button)
+return immediately while the agent works. The agent itself can create any of
+these via the `create_schedule` action tool (its `action` enum now includes
+`prompt` and `skill`), and the per-turn console-context block lists prompt/skill
+schedules so the agent knows they exist.
 
 The timing lives in a `when` table — exactly one of `cron = "30 17 * * mon-fri"`
 (5-field crontab) or `every = "15m"` (interval, `<n>` + `s`/`m`/`h`/`d`), plus an
@@ -230,6 +252,29 @@ host = "prod-1"
 runnable = "log-rotate"
 when = { cron = "0 3 * * 0" }
 args = { keep = "7" }
+
+# action = "prompt" — a scheduled agent turn on a fixed instruction
+[[schedule]]
+id = "morning-disk-check"
+action = "prompt"
+prompt = "Check disk usage on the web hosts and flag anything over 80%."
+when = { cron = "0 8 * * mon-fri" }
+
+# action = "skill" — run a saved runbook as an agent turn
+[[schedule]]
+id = "weekly-billing-report"
+action = "skill"
+skill = "build-billing-report"
+values = { scope = "prod" }
+when = { cron = "0 9 * * 1" }
+
+# action = "runnable" with a candidate list — run on the first connected host
+[[schedule]]
+id = "health-check-any"
+action = "runnable"
+hosts = ["web01", "web02", "web03"]
+runnable = "health-check"
+when = { every = "10m" }
 ```
 
 And the trigger that reacts to the event is an ordinary trigger — no schedule

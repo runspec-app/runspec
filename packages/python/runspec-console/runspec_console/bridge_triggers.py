@@ -130,6 +130,9 @@ class TriggersMixin:
             src = ScheduleSource(
                 schedules,
                 run_runnable=self._run_scheduled,
+                # Prompt/skill schedules run a headless agent turn (isolated, same
+                # autonomy gate as a reactive agent-mode trigger).
+                run_agent=self._run_scheduled_agent,
                 # Same working-hours gate the engine uses, so schedules and
                 # triggers honour one shared rota; plus the Schedules event-log hook.
                 clock_ok=self._build_clock_ok(),
@@ -1868,6 +1871,16 @@ class TriggersMixin:
 
         start = time.monotonic()
         tools = self._runnables_to_tools(allow=allowed_runnables)
+        # Search mode hides runnables behind search_runnables; fold the same
+        # always-on menu the chat turn gets so an unrestricted trigger/schedule
+        # agent turn discovers what exists identically. Only when search mode is
+        # actually active for this turn (no allowlist — an allow-scoped turn falls
+        # back to dedup, which carries full schemas inline).
+        index_text = (
+            self._build_catalog_index()
+            if (self._tool_mode() == "search" and not allowed_runnables)
+            else ""
+        )
         if action_allow:
             # Keep every non-governed tool; among the governed built-in action /
             # Outlook tools keep only the allowlisted ones.
@@ -1902,7 +1915,10 @@ class TriggersMixin:
             response: Any = None
             assistant_text = ""
             try:
-                async for event in adapter.stream_with_tools(history, tools):
+                # A per-call copy with the catalog index folded into the first user
+                # message (search mode only); the stored history stays clean.
+                model_messages = self._fold_catalog_index(history, index_text)
+                async for event in adapter.stream_with_tools(model_messages, tools):
                     if cancel.is_set():
                         stopped = True
                         break

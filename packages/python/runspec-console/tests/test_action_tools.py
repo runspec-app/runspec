@@ -27,8 +27,9 @@ class _ActionBridge:
     _action_emit_event = Bridge._action_emit_event
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
 
-    def __init__(self, hosts=None):
+    def __init__(self, hosts=None, runnables=None):
         self._hosts = hosts or []
+        self._runnables_cache = runnables or []
         self._filters = []
         self._credentials = []
         self._lock = threading.Lock()
@@ -168,6 +169,84 @@ def test_create_schedule_persists(monkeypatch):
     )
     assert out.startswith("✓")
     assert b.created_schedules and b.created_schedules[0]["id"] == "nightly"
+
+
+def test_create_schedule_prompt_persists(monkeypatch):
+    b = _ActionBridge()
+    out = b._run_action_tool(
+        "create_schedule",
+        {
+            "id": "morning-check",
+            "action": "prompt",
+            "prompt": "Check disk usage and flag anything over 80%.",
+            "when": {"cron": "0 8 * * *"},
+        },
+    )
+    assert out.startswith("✓")
+    saved = b.created_schedules[0]
+    assert saved["action"] == "prompt" and saved["prompt"].startswith("Check disk")
+
+
+def test_create_schedule_skill_persists(monkeypatch):
+    b = _ActionBridge()
+    out = b._run_action_tool(
+        "create_schedule",
+        {
+            "id": "weekly-report",
+            "action": "skill",
+            "skill": "build-report",
+            "values": {"scope": "prod"},
+            "when": {"every": "1d"},
+        },
+    )
+    assert out.startswith("✓")
+    saved = b.created_schedules[0]
+    assert saved["action"] == "skill" and saved["skill"] == "build-report"
+    assert saved["values"] == {"scope": "prod"}
+
+
+def test_create_schedule_action_enum_includes_prompt_and_skill(monkeypatch):
+    monkeypatch.setattr(memory, "list_skills", lambda: [{"id": "build-report"}])
+    b = _ActionBridge()
+    cs = next(t for t in b._action_tools() if t["name"] == "create_schedule")
+    enum = cs["input_schema"]["properties"]["action"]["enum"]
+    assert {"event", "runnable", "prompt", "skill"} == set(enum)
+    # The skill field offers the saved runbook ids as an enum.
+    assert cs["input_schema"]["properties"]["skill"]["enum"] == ["build-report"]
+
+
+def test_create_schedule_runnable_and_host_are_selectors(monkeypatch):
+    b = _ActionBridge(
+        hosts=[{"name": "web01"}, {"name": "web02"}],
+        runnables=[
+            {"name": "backup", "host": "web01"},
+            {"name": "backup", "host": "web02"},
+            {"name": "restart", "host": "web01"},
+        ],
+    )
+    cs = next(t for t in b._action_tools() if t["name"] == "create_schedule")
+    props = cs["input_schema"]["properties"]
+    # The runnable "tool" is an enum of distinct names.
+    assert props["runnable"]["enum"] == ["backup", "restart"]
+    # host is a selector; hosts is an array of the same selector (any-one).
+    assert props["host"]["enum"] == ["web01", "web02"]
+    assert props["hosts"]["items"]["enum"] == ["web01", "web02"]
+
+
+def test_create_schedule_hosts_list_persists():
+    b = _ActionBridge(hosts=[{"name": "web01"}, {"name": "web02"}])
+    out = b._run_action_tool(
+        "create_schedule",
+        {
+            "id": "any-backup",
+            "action": "runnable",
+            "runnable": "backup",
+            "hosts": ["web01", "web02"],
+            "when": {"every": "1h"},
+        },
+    )
+    assert out.startswith("✓")
+    assert b.created_schedules[0]["hosts"] == ["web01", "web02"]
 
 
 def test_create_schedule_invalid_shape():

@@ -164,6 +164,89 @@ def test_parse_entry_runnable_requires_host_and_runnable():
         )
 
 
+def test_parse_entry_runnable_hosts_list():
+    job = parse_schedule_entry(
+        {
+            "id": "x",
+            "action": "runnable",
+            "hosts": ["web01", "web02"],
+            "runnable": "backup",
+            "when": {"every": "5m"},
+        }
+    )
+    assert job.hosts == ["web01", "web02"] and not job.host and not job.group
+
+
+def test_parse_entry_runnable_rejects_two_targets():
+    with pytest.raises(ValueError):
+        parse_schedule_entry(
+            {
+                "id": "x",
+                "action": "runnable",
+                "host": "h",
+                "hosts": ["a", "b"],
+                "runnable": "r",
+                "when": {"every": "5m"},
+            }
+        )
+
+
+def test_fire_runnable_hosts_passed_through():
+    ran: list = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "r1",
+                "action": "runnable",
+                "hosts": ["web01", "web02"],
+                "runnable": "backup",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_runnable=lambda s, h, r, a, g, hs: ran.append((h, g, hs)),
+    )
+    src._fire("r1")
+    assert ran == [("", "", ["web01", "web02"])]
+
+
+def test_parse_entry_prompt():
+    job = parse_schedule_entry(
+        {
+            "id": "morning-check",
+            "action": "prompt",
+            "prompt": "Check disk usage and flag anything over 80%.",
+            "when": {"cron": "0 8 * * *"},
+        }
+    )
+    assert job.action == "prompt"
+    assert job.prompt == "Check disk usage and flag anything over 80%."
+
+
+def test_parse_entry_prompt_requires_prompt():
+    with pytest.raises(ValueError):
+        parse_schedule_entry({"id": "x", "action": "prompt", "when": {"every": "5m"}})
+
+
+def test_parse_entry_skill():
+    job = parse_schedule_entry(
+        {
+            "id": "weekly-report",
+            "action": "skill",
+            "skill": "build-report",
+            "values": {"scope": "prod"},
+            "when": {"cron": "0 9 * * 1"},
+        }
+    )
+    assert job.action == "skill"
+    assert job.skill == "build-report"
+    assert job.values == {"scope": "prod"}
+
+
+def test_parse_entry_skill_requires_skill_id():
+    with pytest.raises(ValueError):
+        parse_schedule_entry({"id": "x", "action": "skill", "when": {"every": "5m"}})
+
+
 # ── event_payload ─────────────────────────────────────────────────────────────
 
 
@@ -297,12 +380,47 @@ def test_fire_event_emits_matchable_event():
 
 
 def test_fire_runnable_calls_run_runnable():
-    ran: list[tuple[str, str, str, dict, str]] = []
+    ran: list[tuple[str, str, str, dict, str, list]] = []
     src = _source_with_jobs(
-        run_runnable=lambda s, h, r, a, g: ran.append((s, h, r, a, g))
+        run_runnable=lambda s, h, r, a, g, hs: ran.append((s, h, r, a, g, hs))
     )
     src._fire("r1")
-    assert ran == [("r1", "h", "backup", {"db": "main"}, "")]
+    assert ran == [("r1", "h", "backup", {"db": "main"}, "", [])]
+
+
+def test_fire_prompt_calls_run_agent():
+    ran: list = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "p1",
+                "action": "prompt",
+                "prompt": "Check disk usage.",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_agent=ran.append,
+    )
+    src._fire("p1")
+    assert len(ran) == 1
+    assert ran[0].action == "prompt" and ran[0].prompt == "Check disk usage."
+
+
+def test_fire_skill_calls_run_agent():
+    ran: list = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "s1",
+                "action": "skill",
+                "skill": "build-report",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_agent=ran.append,
+    )
+    src._fire("s1")
+    assert len(ran) == 1 and ran[0].skill == "build-report"
 
 
 def test_fire_unknown_id_is_noop():

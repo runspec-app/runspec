@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -150,14 +151,33 @@ class SchedulesMixin:
             )
             self._record_schedule_fire(job)
             return {"action": "event", "event": job.event}
+        if job.action in ("prompt", "skill"):
+            inv_id = self._invoke_scheduled_agent(job)
+            self._record_schedule_fire(job)
+            return {
+                "action": job.action,
+                "inv_id": inv_id,
+                "runnable": job.skill if job.action == "skill" else "(prompt)",
+                "host": "agent",
+            }
         inv_id = self._invoke_scheduled(
-            job.host, job.runnable, dict(job.args), schedule_id=job.id, group=job.group
+            job.host,
+            job.runnable,
+            dict(job.args),
+            schedule_id=job.id,
+            group=job.group,
+            hosts=list(job.hosts),
         )
         self._record_schedule_fire(job)
+        where = (
+            f"group:{job.group}"
+            if job.group
+            else (f"any:{','.join(job.hosts)}" if job.hosts else job.host)
+        )
         return {
             "action": "runnable",
             "inv_id": inv_id,
-            "host": job.host or f"group:{job.group}",
+            "host": where,
             "runnable": job.runnable,
         }
 
@@ -167,9 +187,17 @@ class SchedulesMixin:
         which deliberately bypasses the rota gate)."""
         if job.action == "event":
             etype, summary = job.event, f"emit {job.event}"
+        elif job.action == "prompt":
+            etype, summary = "prompt", f"prompt: {job.prompt[:60]}"
+        elif job.action == "skill":
+            etype, summary = "skill", f"skill: {job.skill}"
         else:
             etype = job.runnable or "runnable"
-            where = f"group:{job.group}" if job.group else job.host
+            where = (
+                f"group:{job.group}"
+                if job.group
+                else (f"any:{','.join(job.hosts)}" if job.hosts else job.host)
+            )
             summary = f"/{job.runnable} on {where}"
         self._on_schedule_event(
             {
@@ -190,16 +218,152 @@ class SchedulesMixin:
         runnable: str,
         args: dict[str, Any],
         group: str = "",
+        hosts: list[str] | None = None,
     ) -> None:
         """Run a runnable-action schedule on the timer: fire it directly and
         autonomously — no agent, no confirm gate (scheduling it is the
         authorization). A ``group``-targeted schedule fans the run out across every
-        member of the host group (one run card per host). The callback ignores the
-        return; the manual *Run now* path uses :meth:`_invoke_scheduled` so it can
-        surface the in-flight id."""
+        member of the host group (one run card per host); a ``hosts`` candidate list
+        runs on the first connected one (failover). The callback ignores the return;
+        the manual *Run now* path uses :meth:`_invoke_scheduled` so it can surface
+        the in-flight id."""
         self._invoke_scheduled(
-            host, runnable, args, schedule_id=schedule_id, group=group
+            host, runnable, args, schedule_id=schedule_id, group=group, hosts=hosts
         )
+
+    def _pick_connected_host(self, hosts: list[str]) -> str:
+        """The first host in ``hosts`` that is currently connected (failover), else
+        the first host in the list, else ``""``. A host with no SSH (local) counts
+        as connected, mirroring the host-list connectivity default elsewhere."""
+        candidates = [h for h in (hosts or []) if h]
+        if not candidates:
+            return ""
+        with self._lock:
+            connected = dict(self._connected_cache)
+        for h in candidates:
+            entry = self._host_entry(h)
+            default = entry is not None and not entry.get("ssh")
+            if connected.get(h, default):
+                return h
+        return candidates[0]
+
+    def _run_scheduled_agent(self, job: Any) -> None:
+        """Run a prompt/skill-action schedule on the timer (ScheduleSource's
+        ``run_agent`` callback). The manual *Run now* path uses
+        :meth:`_invoke_scheduled_agent` directly so it can surface the card id."""
+        self._invoke_scheduled_agent(job)
+
+    def _scheduled_agent_message(self, job: Any) -> str:
+        """The agent's first user turn for a prompt/skill schedule, or ``""`` if a
+        skill can't be rendered (missing id, bad values, empty body).
+
+        A ``prompt`` schedule hands its text straight through. A ``skill`` schedule
+        renders the saved runbook (its ``{{placeholders}}`` filled from ``values``)
+        the same way the ``run_skill`` action tool does, so a scheduled runbook and
+        an agent-invoked one read identically."""
+        if job.action == "prompt":
+            return str(job.prompt or "").strip()
+        from . import memory, skillargs
+
+        skill = memory.load_skill(str(job.skill or ""))
+        if not skill:
+            logger.warning("schedule '%s': no runbook with id %r", job.id, job.skill)
+            return ""
+        vals = dict(job.values or {})
+        raw = skill.get("args") if isinstance(skill.get("args"), dict) else {}
+        errors = skillargs.validate_skill_values(raw, vals)
+        if errors:
+            logger.warning(
+                "schedule '%s': skill %r values invalid — %s",
+                job.id,
+                job.skill,
+                "; ".join(errors),
+            )
+            return ""
+        body = memory.render_skill_body(str(skill.get("steps") or ""), vals)
+        if not body.strip():
+            return ""
+        title = skill.get("title") or skill.get("id")
+        return f"Runbook '{title}' — follow these steps now using your tools:\n\n{body}"
+
+    def _invoke_scheduled_agent(self, job: Any) -> str:
+        """Run a prompt/skill schedule as a headless **agent turn** and return its
+        card id (``""`` on failure). Builds a Schedules-tab run card up front, then
+        runs the turn on its own daemon thread — the same isolated, autonomy-gated
+        loop a reactive agent-mode trigger uses (``_trigger_run_agent_turn``), so a
+        destructive tool the agent reaches for still parks at the confirm gate. The
+        turn is non-blocking: the timer thread (or the *Run now* dispatch) returns
+        immediately while the agent works."""
+        card_id = uuid.uuid4().hex[:12]
+        created = time.time()
+        if job.action == "prompt":
+            summary = f"prompt: {job.prompt[:80]}"
+            detail: dict[str, Any] = {"action": "prompt", "prompt": job.prompt}
+        else:
+            summary = f"skill: {job.skill}"
+            detail = {"action": "skill", "skill": job.skill, "values": dict(job.values)}
+        detail["schedule_id"] = job.id
+        card: dict[str, Any] = {
+            "card_id": card_id,
+            "trigger": job.id,
+            "source": "schedule",
+            "event_type": job.action,
+            "summary": summary,
+            "column": "triage",
+            "detail": detail,
+            "created_at": created,
+            "timeline": [{"ts": created, "text": "triage"}],
+        }
+        self._on_schedule_card(card)
+
+        message = self._scheduled_agent_message(job)
+        if not message:
+            now = time.time()
+            card["column"] = "failed"
+            card["detail"] = {
+                **card["detail"],
+                "error": "could not build the agent prompt (empty prompt or "
+                "missing/invalid skill runbook)",
+            }
+            card["timeline"] = [*card["timeline"], {"ts": now, "text": "failed"}]
+            self._on_schedule_card(card)
+            return ""
+
+        def record(note: str) -> None:
+            card["timeline"] = [*card["timeline"], {"ts": time.time(), "text": note}]
+            self._on_schedule_card(card)
+
+        def stage(col: str) -> None:
+            card["column"] = col
+            self._on_schedule_card(card)
+
+        def work() -> None:
+            try:
+                summary_text = self._trigger_run_agent_turn(
+                    card_id,
+                    self._base_system(),
+                    message,
+                    draft=False,
+                    record=record,
+                    stage=stage,
+                    trigger="schedule",
+                )
+            except Exception:
+                logger.exception("schedule: agent turn failed for %r", job.id)
+                now = time.time()
+                card["column"] = "failed"
+                card["detail"] = {**card["detail"], "error": "the agent turn failed"}
+                card["timeline"] = [*card["timeline"], {"ts": now, "text": "failed"}]
+                self._on_schedule_card(card)
+                return
+            now = time.time()
+            card["column"] = "done"
+            card["detail"] = {**card["detail"], "result": (summary_text or "")[:2000]}
+            card["timeline"] = [*card["timeline"], {"ts": now, "text": "done"}]
+            self._on_schedule_card(card)
+
+        threading.Thread(target=work, name=f"sched-agent-{job.id}", daemon=True).start()
+        return card_id
 
     def _invoke_scheduled(
         self,
@@ -208,6 +372,7 @@ class SchedulesMixin:
         args: dict[str, Any],
         schedule_id: str = "",
         group: str = "",
+        hosts: list[str] | None = None,
     ) -> str:
         """Invoke a runnable as the scheduler would and return its in-flight
         ``inv_id`` (``""`` on failure). Labelled as the 'Scheduled Task' operator
@@ -220,7 +385,16 @@ class SchedulesMixin:
         When ``group`` is set the run fans out across every member of the host
         group that carries the runnable — each member gets its own run card (same
         autonomous, pre-authorised path); the first member's ``inv_id`` is
-        returned."""
+        returned. When ``hosts`` is a candidate list the run goes to a single host —
+        the first connected one (failover)."""
+        if hosts:
+            chosen = self._pick_connected_host(list(hosts))
+            if not chosen:
+                logger.warning("schedule: no candidate host in %r — nothing run", hosts)
+                return ""
+            return self._invoke_scheduled(
+                chosen, runnable, dict(args or {}), schedule_id=schedule_id
+            )
         if group:
             members = [
                 m

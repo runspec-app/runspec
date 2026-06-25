@@ -8,6 +8,53 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.129.0] — 2026-06-25
+
+### Added
+- **Schedule a prompt or a skill runbook (Schedules tab).** A schedule's `action`
+  now has two new options beyond `runnable` / `event`:
+  - **`action = "prompt"`** runs a headless **agent turn** on a fixed instruction
+    when it fires — so a human (or the agent itself) can schedule something to
+    *check or do later* in natural language, e.g. *"every morning, check disk usage
+    on the web hosts and flag anything over 80%."*
+  - **`action = "skill"`** runs a saved **skill runbook** (by id) as an agent turn:
+    the runbook body is rendered with any `values` filling its `{{placeholders}}`,
+    then handed to the agent as its instructions — re-run a runbook on a cadence
+    without re-typing it.
+
+  Both run the same isolated, autonomy-gated loop a reactive agent-mode trigger
+  uses (`_trigger_run_agent_turn`), so a destructive tool the agent reaches for
+  still parks at the confirm gate; the turn runs on its own thread (non-blocking)
+  and surfaces a run card + event-log entry in the Schedules tab like any other
+  fire. New `ScheduleJob` fields `prompt` / `skill` / `values`; `parse_schedule_entry`
+  validates them; `ScheduleSource` gets a `run_agent` callback wired to the bridge's
+  `_run_scheduled_agent` / `_invoke_scheduled_agent`.
+- **The agent can create these schedules and is aware of them.** The built-in
+  `create_schedule` action tool's `action` enum now offers `prompt` and `skill`
+  (with the saved-runbook ids as a `skill` enum), and the per-turn console-context
+  block renders prompt/skill schedules and tells the agent it can schedule a
+  prompt or runbook to run later. The Schedules-tab modal gains "Run a prompt"
+  and "Run a skill" actions.
+- **Run-on-any-one-host schedules + selectors in `create_schedule`.** A
+  runnable-action schedule can now target a **candidate host list** (`hosts`) as a
+  third option beside a single `host` and a `group`: at fire time it runs on the
+  **first connected** host in the list (failover), one run. The Schedules-tab modal
+  gains an "Any of hosts" target (multi-select); the agent's `create_schedule` tool
+  now exposes its targets as **selectors** — `runnable` is an enum of the fleet's
+  distinct runnable names, `host` / `group` are enums, and `hosts` is an array of
+  the host enum — so the agent picks valid values instead of guessing a string.
+  New `ScheduleJob.hosts`; bridge `_pick_connected_host`.
+
+### Changed
+- **Trigger/schedule agent turns reach discovery parity with chat (search mode).**
+  In `[llm] tool_mode = "search"`, an unrestricted trigger or schedule agent turn
+  now gets the same always-on **catalog index** (the full `id — description` menu)
+  that the chat turn already folds in, so it discovers what runnables exist
+  identically. Allow-scoped triggers are unaffected (they fall back to the dedup
+  layout, which carries full schemas inline). `_run_isolated_agent_turn` folds
+  `_build_catalog_index` into a per-call copy of its history (the stored history
+  stays clean), matching `_agentic_chat_turn`.
+
 ## [0.128.1] — 2026-06-25
 
 ### Fixed

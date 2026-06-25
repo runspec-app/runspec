@@ -289,8 +289,10 @@ export interface HistoryRecord {
 }
 
 // A schedule (Schedules tab). When it fires it either emits a matchable event
-// (action 'event') that source="schedule" triggers pick up like mail, or runs a
-// runnable directly (action 'runnable'). Timing lives in `when` (cron or every).
+// (action 'event') that source="schedule" triggers pick up like mail, runs a
+// runnable directly (action 'runnable'), runs an agent turn on a fixed prompt
+// (action 'prompt'), or runs a saved runbook as an agent turn (action 'skill').
+// Timing lives in `when` (cron or every).
 export interface ScheduleWhen {
   cron?: string
   every?: string
@@ -299,17 +301,24 @@ export interface ScheduleWhen {
 export interface Schedule {
   id: string
   enabled?: boolean
-  action: 'runnable' | 'event'
+  action: 'runnable' | 'event' | 'prompt' | 'skill'
   when: ScheduleWhen
-  // action === 'runnable' — exactly one of host / group (group fans the run out
-  // across every member of the host group).
+  // action === 'runnable' — exactly one of host / group / hosts. group fans the
+  // run out across every member of the host group; hosts is a candidate list and
+  // the run goes to the first connected one (failover).
   host?: string
   group?: string
+  hosts?: string[]
   runnable?: string
   args?: Record<string, unknown>
   // action === 'event'
   event?: string
   fields?: Record<string, string>
+  // action === 'prompt' — the instruction the agent turn runs on.
+  prompt?: string
+  // action === 'skill' — the saved runbook id + values for its {{placeholders}}.
+  skill?: string
+  values?: Record<string, unknown>
   nextRun?: string
 }
 
@@ -738,7 +747,7 @@ export interface BridgeApi {
   delete_schedule: (id: string) => Promise<void>
   // Fire a schedule immediately — runs the runnable (returns inv_id) or emits the
   // event (returns event), regardless of the schedule's enabled flag.
-  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event'; inv_id?: string; event?: string; host?: string; runnable?: string }>
+  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event' | 'prompt' | 'skill'; inv_id?: string; event?: string; host?: string; runnable?: string }>
   get_jump_hosts: () => Promise<JumpHost[]>
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>

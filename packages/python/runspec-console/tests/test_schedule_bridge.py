@@ -38,7 +38,11 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
         "delete_schedule",
         "run_schedule_now",
         "_invoke_scheduled",
+        "_invoke_scheduled_agent",
+        "_pick_connected_host",
         "_run_scheduled",
+        "_run_scheduled_agent",
+        "_scheduled_agent_message",
         "_record_schedule_fire",
         "_on_schedule_event",
         "_on_schedule_card",
@@ -265,3 +269,124 @@ def test_run_now_unknown_id_raises(tmp_path, monkeypatch):
     _seed(tmp_path, [])
     with pytest.raises(ValueError):
         ns.run_schedule_now("nope")
+
+
+# ── prompt / skill schedules: agent-turn path ─────────────────────────────────
+
+
+def test_run_now_prompt_routes_to_agent(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    # Capture the agent invoke (the real one spawns a thread + needs an adapter).
+    captured = []
+    ns._invoke_scheduled_agent = lambda job: captured.append(job) or "card-1"
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "p1",
+                "action": "prompt",
+                "prompt": "Check disk usage and flag anything over 80%.",
+                "when": {"cron": "0 8 * * *"},
+                "enabled": False,  # ignored — running now is the authorization
+            }
+        ],
+    )
+    res = ns.run_schedule_now("p1")
+    assert res["action"] == "prompt" and res["inv_id"] == "card-1"
+    assert captured[0].prompt.startswith("Check disk usage")
+    # The fire is recorded in the Schedules event log.
+    events = ns.get_schedule_events()
+    assert len(events) == 1 and events[0]["type"] == "prompt"
+
+
+def test_run_now_skill_routes_to_agent(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    captured = []
+    ns._invoke_scheduled_agent = lambda job: captured.append(job) or "card-2"
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "s1",
+                "action": "skill",
+                "skill": "build-report",
+                "values": {"scope": "prod"},
+                "when": {"every": "1h"},
+            }
+        ],
+    )
+    res = ns.run_schedule_now("s1")
+    assert res["action"] == "skill" and res["inv_id"] == "card-2"
+    assert captured[0].skill == "build-report"
+    assert ns.get_schedule_events()[0]["type"] == "skill"
+
+
+def test_pick_connected_host_prefers_connected(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    ns._connected_cache = {"web01": False, "web02": True}
+    ns._host_entry = lambda name: {"name": name, "ssh": "deploy@" + name}
+    assert ns._pick_connected_host(["web01", "web02"]) == "web02"
+
+
+def test_pick_connected_host_falls_back_to_first(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    ns._connected_cache = {"web01": False, "web02": False}
+    ns._host_entry = lambda name: {"name": name, "ssh": "deploy@" + name}
+    # None connected → fall back to the first candidate (still attempt it).
+    assert ns._pick_connected_host(["web01", "web02"]) == "web01"
+
+
+def test_run_now_hosts_list_runs_on_first_connected(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    ns._connected_cache = {"web01": False, "web02": True}
+    ns._host_entry = lambda name: {"name": name, "ssh": "deploy@" + name}
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "h1",
+                "action": "runnable",
+                "hosts": ["web01", "web02"],
+                "runnable": "backup",
+                "when": {"every": "5m"},
+            }
+        ],
+    )
+    res = ns.run_schedule_now("h1")
+    assert res["action"] == "runnable" and res["host"] == "any:web01,web02"
+    # The actual run targeted the first connected candidate.
+    host, runnable, _, _ = ns.runs[0]
+    assert (host, runnable) == ("web02", "backup")
+
+
+def test_scheduled_agent_message_prompt(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    job = types.SimpleNamespace(action="prompt", prompt="  Do the thing.  ")
+    assert ns._scheduled_agent_message(job) == "Do the thing."
+
+
+def test_scheduled_agent_message_skill_renders_body(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "runspec_console.memory.load_skill",
+        lambda sid: {"id": sid, "title": "Build report", "steps": "Run {{scope}}"},
+    )
+    monkeypatch.setattr(
+        "runspec_console.skillargs.validate_skill_values", lambda raw, vals: []
+    )
+    monkeypatch.setattr(
+        "runspec_console.memory.render_skill_body",
+        lambda steps, vals: steps.replace("{{scope}}", vals.get("scope", "")),
+    )
+    job = types.SimpleNamespace(
+        action="skill", skill="build-report", values={"scope": "prod"}, id="s1"
+    )
+    msg = ns._scheduled_agent_message(job)
+    assert "Build report" in msg and "Run prod" in msg
+
+
+def test_scheduled_agent_message_skill_missing_is_empty(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    monkeypatch.setattr("runspec_console.memory.load_skill", lambda sid: None)
+    job = types.SimpleNamespace(action="skill", skill="nope", values={}, id="s1")
+    assert ns._scheduled_agent_message(job) == ""

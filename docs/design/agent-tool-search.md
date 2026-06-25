@@ -441,8 +441,12 @@ for arguments + hosts. Restores discoverability at ~1/10th the full-schema cost.
   **per-call copy** of the history — provider-agnostic (no adapter-interface change,
   preserving the public `stream_with_tools` plugin contract) and leaving the cached
   tools+system prefix intact (§9). The stored `_chat_history` is never mutated.
-- Wired only into `_agentic_chat_turn` when `_tool_mode() == "search"`; dedup/per_host
-  and allow-scoped triggers are untouched. Tests in `tests/test_catalog_index.py`.
+- Wired into `_agentic_chat_turn` **and** (since 0.129.0) `_run_isolated_agent_turn`
+  when `_tool_mode() == "search"` and the turn is unrestricted (no `allow` set) — so
+  an unrestricted agent-mode **trigger or schedule** turn discovers runnables the
+  same way chat does. dedup/per_host and allow-scoped triggers are untouched (an
+  allow-scoped turn already falls back to dedup, which carries full schemas inline).
+  Tests in `tests/test_catalog_index.py`.
 
 This is the recommended primary remedy for discovery misses; §14 (dynamic schema
 injection) remains the separate, still-deferred remedy for *construction* misses.

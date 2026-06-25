@@ -1101,14 +1101,37 @@ class AgentToolsMixin:
                 }
             )
 
+        # Selectors for the schedule's targets, so the agent picks valid values
+        # (the runnable "tool", the host, and the host group) rather than guessing
+        # a string. Distinct runnable names across the fleet; current host names;
+        # configured group names. Best-effort — an empty list just omits the enum.
+        try:
+            with self._lock:
+                runnable_names = sorted(
+                    {str(r.get("name")) for r in self._runnables_cache if r.get("name")}
+                )
+        except Exception:
+            runnable_names = []
+        host_names = [str(h.get("name")) for h in self._hosts if h.get("name")]
+        try:
+            group_names = sorted(self._groups_map().keys())
+        except Exception:
+            group_names = []
         tools.append(
             {
                 "name": "create_schedule",
                 "description": (
                     "Create a recurring schedule that fires on a cron expression or "
-                    "a fixed interval. It either emits a matchable event into the "
-                    "trigger engine (action='event') or runs a runnable directly "
-                    "(action='runnable')."
+                    "a fixed interval. Pick an action: emit a matchable event into "
+                    "the trigger engine (action='event'); run a runnable directly "
+                    "(action='runnable'); run an agent turn on a fixed prompt so you "
+                    "(the assistant) check or do something later (action='prompt'); "
+                    "or run a saved runbook as an agent turn (action='skill'). Use "
+                    "'prompt' to schedule a reminder-to-act in natural language, and "
+                    "'skill' to re-run an existing runbook on a cadence. For a "
+                    "runnable, target exactly one of: a single 'host', a 'group' "
+                    "(runs on every member), or 'hosts' (a candidate list — runs on "
+                    "the first connected one)."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -1119,8 +1142,12 @@ class AgentToolsMixin:
                         },
                         "action": {
                             "type": "string",
-                            "enum": ["event", "runnable"],
-                            "description": "Emit an event, or run a runnable directly.",
+                            "enum": ["event", "runnable", "prompt", "skill"],
+                            "description": (
+                                "event = emit an event; runnable = run a runnable; "
+                                "prompt = run an agent turn on 'prompt'; skill = run "
+                                "the saved runbook named by 'skill' as an agent turn."
+                            ),
                         },
                         "when": {
                             "type": "object",
@@ -1144,15 +1171,61 @@ class AgentToolsMixin:
                         },
                         "host": {
                             "type": "string",
-                            "description": "Host to run on (action='runnable').",
+                            **({"enum": host_names} if host_names else {}),
+                            "description": (
+                                "Single host to run on (action='runnable'). Use one "
+                                "of host / group / hosts."
+                            ),
+                        },
+                        "group": {
+                            "type": "string",
+                            **({"enum": group_names} if group_names else {}),
+                            "description": (
+                                "Host group to run on every member of "
+                                "(action='runnable'). Use one of host / group / hosts."
+                            ),
+                        },
+                        "hosts": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                **({"enum": host_names} if host_names else {}),
+                            },
+                            "description": (
+                                "Candidate hosts — runs on the first connected one "
+                                "(failover, action='runnable'). Use one of host / "
+                                "group / hosts."
+                            ),
                         },
                         "runnable": {
                             "type": "string",
+                            **({"enum": runnable_names} if runnable_names else {}),
                             "description": "Runnable name (action='runnable').",
                         },
                         "args": {
                             "type": "object",
                             "description": "Runnable args (action='runnable').",
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": (
+                                "The instruction the agent turn runs on "
+                                "(action='prompt'). Write it as a task to do later, "
+                                "e.g. 'Check disk usage on the web hosts and flag "
+                                "anything over 80%.'"
+                            ),
+                        },
+                        "skill": {
+                            "type": "string",
+                            **({"enum": [s["id"] for s in skills]} if skills else {}),
+                            "description": "Saved runbook id to run (action='skill').",
+                        },
+                        "values": {
+                            "type": "object",
+                            "description": (
+                                "Values for the runbook's {{name}} parameters "
+                                "(action='skill')."
+                            ),
                         },
                     },
                     "required": ["id", "action", "when"],
@@ -1279,7 +1352,18 @@ class AgentToolsMixin:
             "action": str(ti.get("action") or "").strip(),
             "when": dict(ti.get("when") or {}),
         }
-        for key in ("event", "fields", "host", "runnable", "args"):
+        for key in (
+            "event",
+            "fields",
+            "host",
+            "group",
+            "hosts",
+            "runnable",
+            "args",
+            "prompt",
+            "skill",
+            "values",
+        ):
             if ti.get(key) is not None:
                 data[key] = ti[key]
         try:

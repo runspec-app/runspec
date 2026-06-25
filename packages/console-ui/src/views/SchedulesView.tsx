@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen, type RunCard, type TriggerEvent } from '../bridge'
+import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen, type Skill, type RunCard, type TriggerEvent } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
@@ -22,9 +22,9 @@ const CRON_PRESETS = [
   { label: 'Custom…',          value: '__custom__' },
 ]
 
-type Action = 'runnable' | 'event'
+type Action = 'runnable' | 'event' | 'prompt' | 'skill'
 type WhenKind = 'cron' | 'every'
-type Target = 'host' | 'group'
+type Target = 'host' | 'group' | 'anyhost'
 
 interface ScheduleModalProps {
   open: boolean
@@ -45,18 +45,34 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [cronPreset, setCronPreset] = useState<string>('')
   const [customCron, setCustomCron] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [skills, setSkills] = useState<Skill[]>([])
   const isDark = useIsDark()
+
+  // Saved runbooks, for the "Run a skill" action's picker. Loaded once per open.
+  useEffect(() => {
+    if (!open) return
+    bridge.get_skills().then(setSkills).catch(console.error)
+  }, [open])
 
   // Distinct host groups (from each host's `group` field), for group targeting.
   const groupNames = [...new Set(hosts.map(h => h.group).filter((g): g is string => !!g))].sort()
   const hostName: string = Form.useWatch('host', form) ?? defaultHost
   const groupName: string = Form.useWatch('group', form) ?? ''
+  const hostsList: string[] = Form.useWatch('hosts', form) ?? []
+  // The chosen runbook (derived from the form's `skill` id) drives the value
+  // inputs, so it survives the async skills load with no extra state.
+  const skillId: string = Form.useWatch('skill', form) ?? ''
+  const selectedSkill = skills.find(s => s.id === skillId) ?? null
   // The runnable picker offers what the chosen target can run: a single host's
-  // runnables, or (group mode) every runnable present on any group member.
+  // runnables, or (group / any-of-hosts mode) every runnable present on any of the
+  // targeted hosts.
   const groupMemberNames = new Set(hosts.filter(h => h.group === groupName).map(h => h.name))
-  const hostRunnables = target === 'group'
+  const targetedHosts = target === 'group' ? groupMemberNames
+    : target === 'anyhost' ? new Set(hostsList)
+    : null
+  const hostRunnables = targetedHosts
     ? [...new Map(
-        runnables.filter(r => groupMemberNames.has(r.host)).map(r => [r.name, r]),
+        runnables.filter(r => targetedHosts.has(r.host)).map(r => [r.name, r]),
       ).values()]
     : runnables.filter(r => r.host === hostName)
   const isEdit = !!editing
@@ -82,7 +98,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       return
     }
     setAction(editing.action)
-    setTarget(editing.group ? 'group' : 'host')
+    setTarget(editing.group ? 'group' : (editing.hosts?.length ? 'anyhost' : 'host'))
     const kind: WhenKind = editing.when.every ? 'every' : 'cron'
     setWhenKind(kind)
     if (kind === 'cron') {
@@ -105,14 +121,18 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     const fv: Record<string, unknown> = {
       host: editing.host ?? defaultHost,
       group: editing.group ?? '',
+      hosts: editing.hosts ?? [],
       runnable: editing.runnable,
       timezone: editing.when.timezone ?? '',
       cron: editing.when.cron ?? '',
       every: editing.when.every ?? '',
       event: editing.event ?? '',
+      prompt: editing.prompt ?? '',
+      skill: editing.skill ?? undefined,
       fields: Object.entries(editing.fields ?? {}).map(([key, value]) => ({ key, value })),
     }
     for (const [k, v] of Object.entries(editing.args ?? {})) fv[`arg_${k}`] = String(v)
+    for (const [k, v] of Object.entries(editing.values ?? {})) fv[`val_${k}`] = String(v)
     form.setFieldsValue(fv)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing])
@@ -168,6 +188,22 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       base.event = event
       base.fields = fields
       if (!base.id) base.id = `rs-${event}-${Date.now()}`
+    } else if (action === 'prompt') {
+      const prompt = String(values.prompt ?? '').trim()
+      if (!prompt) { form.setFields([{ name: 'prompt', errors: ['Required'] }]); return }
+      base.prompt = prompt
+      if (!base.id) base.id = `rs-prompt-${Date.now()}`
+    } else if (action === 'skill') {
+      const skill = String(values.skill ?? '').trim()
+      if (!skill) { form.setFields([{ name: 'skill', errors: ['Required'] }]); return }
+      const vals: Record<string, unknown> = {}
+      for (const a of selectedSkill?.args ?? []) {
+        const v = values[`val_${a.name}`]
+        if (v !== undefined && v !== '') vals[a.name] = v
+      }
+      base.skill = skill
+      base.values = vals
+      if (!base.id) base.id = `rs-${skill}-${Date.now()}`
     } else {
       const args: Record<string, unknown> = {}
       for (const a of selectedRunnable?.args ?? []) {
@@ -178,6 +214,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         const group = String(values.group ?? '').trim()
         if (!group) { form.setFields([{ name: 'group', errors: ['Required'] }]); return }
         base.group = group
+      } else if (target === 'anyhost') {
+        const list = (values.hosts ?? []) as string[]
+        if (list.length === 0) { form.setFields([{ name: 'hosts', errors: ['Pick at least one host'] }]); return }
+        base.hosts = list
       } else {
         base.host = values.host
       }
@@ -222,12 +262,18 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
             onChange={v => setAction(v as Action)}
             options={[
               { label: 'Run a runnable', value: 'runnable' },
+              { label: 'Run a prompt', value: 'prompt' },
+              { label: 'Run a skill', value: 'skill' },
               { label: 'Emit an event', value: 'event' },
             ]}
           />
           <div style={{ ...labelStyle, marginTop: 6 }}>
             {action === 'runnable'
               ? 'Runs the chosen runnable directly (no agent, no confirm gate).'
+              : action === 'prompt'
+              ? 'Runs an agent turn on a fixed instruction — schedule the assistant to check or do something later. It still confirms before anything destructive.'
+              : action === 'skill'
+              ? 'Runs a saved runbook as an agent turn on this cadence. It still confirms before anything destructive.'
               : 'Emits a matchable event — set up Triggers (source = schedule) to react to it, like email.'}
           </div>
         </Form.Item>
@@ -309,6 +355,60 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
           </>
         )}
 
+        {/* ── Prompt action ── */}
+        {action === 'prompt' && (
+          <Form.Item name="prompt" label="Prompt"
+            rules={[{ required: true, whitespace: true, message: 'Required' }]}
+            help="What the agent should do when this fires — written as a task, e.g. “Check disk usage on the web hosts and flag anything over 80%.”">
+            <Input.TextArea rows={4} placeholder="Check disk usage and flag anything over 80%." />
+          </Form.Item>
+        )}
+
+        {/* ── Skill action ── */}
+        {action === 'skill' && (
+          <>
+            <Form.Item name="skill" label="Runbook" rules={[{ required: true, message: 'Required' }]}
+              help={skills.length === 0 ? 'No saved runbooks yet — create one in Settings → Skills.' : undefined}>
+              <Select placeholder="Select a runbook" showSearch
+                filterOption={(input, opt) => (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())}>
+                {skills.map(s => (
+                  <Select.Option key={s.id} value={s.id}>
+                    <code>{s.id}</code>
+                    {s.title && <span style={{ ...labelStyle, marginLeft: 8 }}>{s.title}</span>}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+            {selectedSkill && selectedSkill.args.length > 0 && (
+              <>
+                <div style={{ ...labelStyle, marginBottom: 8, marginTop: 4 }}>Parameters</div>
+                {selectedSkill.args.map(a => (
+                  <Form.Item
+                    key={a.name}
+                    name={`val_${a.name}`}
+                    label={<span style={{ fontFamily: 'monospace' }}>{a.name}</span>}
+                    rules={a.required ? [{ required: true, message: `${a.name} is required` }] : []}
+                    initialValue={a.default !== undefined ? String(a.default) : undefined}
+                  >
+                    {a.options ? (
+                      <Select>
+                        {a.options.map(o => (
+                          <Select.Option key={o} value={o}>{o}</Select.Option>
+                        ))}
+                      </Select>
+                    ) : (
+                      <Input
+                        placeholder={a.default !== undefined ? String(a.default) : undefined}
+                        style={{ fontFamily: 'monospace' }}
+                      />
+                    )}
+                  </Form.Item>
+                ))}
+              </>
+            )}
+          </>
+        )}
+
         {/* ── Runnable action ── */}
         {action === 'runnable' && (
           <>
@@ -318,12 +418,15 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 onChange={v => handleTargetChange(v as Target)}
                 options={[
                   { label: 'One host', value: 'host' },
+                  { label: 'Any of hosts', value: 'anyhost' },
                   { label: 'Host group', value: 'group', disabled: groupNames.length === 0 },
                 ]}
               />
               <div style={{ ...labelStyle, marginTop: 4 }}>
                 {target === 'group'
                   ? 'Runs the runnable on every host in the group (one run card per host).'
+                  : target === 'anyhost'
+                  ? 'Runs on the first connected host from the list (failover) — one run.'
                   : 'Runs the runnable on a single host.'}
               </div>
             </Form.Item>
@@ -331,6 +434,22 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
             {target === 'host' ? (
               <Form.Item name="host" label="Host" rules={[{ required: true }]}>
                 <Select onChange={handleHostChange}>
+                  {hosts.map(h => (
+                    <Select.Option key={h.name} value={h.name}>
+                      <Space size={6}>
+                        <span style={{ fontSize: 9, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
+                        {h.name}
+                      </Space>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            ) : target === 'anyhost' ? (
+              <Form.Item name="hosts" label="Hosts (any one — first connected)"
+                rules={[{ required: true, message: 'Pick at least one host' }]}
+                help="At fire time it runs on the first connected host in this list.">
+                <Select mode="multiple" onChange={handleHostChange} placeholder="Pick candidate hosts"
+                  optionFilterProp="value">
                   {hosts.map(h => (
                     <Select.Option key={h.name} value={h.name}>
                       <Space size={6}>
@@ -505,6 +624,8 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     try {
       const res = await bridge.run_schedule_now(s.id)
       if (res.action === 'event') message.success(`Emitted event “${res.event}”`)
+      else if (res.action === 'prompt') message.success('Running the scheduled prompt…')
+      else if (res.action === 'skill') message.success(`Running runbook ${res.runnable}…`)
       else message.success(`Running /${res.runnable} on ${res.host}…`)
     } catch (e) {
       message.error(String(e))
@@ -519,7 +640,10 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
   }
 
   const detailFor = (s: Schedule): Record<string, unknown> =>
-    s.action === 'event' ? (s.fields ?? {}) : (s.args ?? {})
+    s.action === 'event' ? (s.fields ?? {})
+      : s.action === 'skill' ? (s.values ?? {})
+      : s.action === 'prompt' ? {}
+      : (s.args ?? {})
 
   // Inline summary of the args/fields — first couple of entries as tiny tags,
   // with a "+N" overflow. Full set stays in the expandable row.
@@ -527,7 +651,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     const entries = Object.entries(detailFor(s))
     if (entries.length === 0) return <span style={{ color: dimCol }}>—</span>
     const shown = entries.slice(0, 2)
-    const prefix = s.action === 'event' ? '' : '--'
+    const prefix = s.action === 'runnable' ? '--' : ''
     return (
       <Space size={4} wrap>
         {shown.map(([k, v]) => (
@@ -560,6 +684,10 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
       render: (_: unknown, s: Schedule) =>
         s.action === 'event'
           ? <Space size={6}><Tag color="purple">event</Tag><code>{s.event}</code></Space>
+          : s.action === 'prompt'
+          ? <Space size={6}><Tag color="cyan">prompt</Tag><span style={{ color: dimCol, fontSize: 12 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
+          : s.action === 'skill'
+          ? <Space size={6}><Tag color="gold">skill</Tag><code>{s.skill}</code></Space>
           : <Space size={6}><Tag>run</Tag><code>/{s.runnable}</code></Space>,
     },
     {
@@ -569,7 +697,11 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
         s.action === 'runnable'
           ? (s.group
               ? <Tag color="geekblue">group: {s.group}</Tag>
-              : (s.host ? <Tag>{s.host}</Tag> : <span style={{ color: dimCol }}>—</span>))
+              : (s.hosts?.length
+                  ? <Tag color="geekblue">any: {s.hosts.join(', ')}</Tag>
+                  : (s.host ? <Tag>{s.host}</Tag> : <span style={{ color: dimCol }}>—</span>)))
+          : (s.action === 'prompt' || s.action === 'skill')
+          ? <Tag color="cyan">agent</Tag>
           : <span style={{ color: dimCol }}>—</span>,
     },
     {
@@ -631,7 +763,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
             {Object.entries(detailFor(s)).map(([k, v]) => (
               <span key={k} style={{ marginRight: 12 }}>
                 <span style={{ color: keyCol }}>
-                  {s.action === 'event' ? k : `--${k}`}
+                  {s.action === 'runnable' ? `--${k}` : k}
                 </span>={String(v)}
               </span>
             ))}
