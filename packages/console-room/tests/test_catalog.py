@@ -8,7 +8,7 @@ two questions — what a visitor sees, and who a request routes to.
 
 from __future__ import annotations
 
-from console_room.catalog import LiveCatalog
+from console_room.catalog import LiveCatalog, entry_audience, visible_to
 
 IT = "helpdesk/it"
 HR = "helpdesk/hr"
@@ -140,3 +140,48 @@ def test_withdraw_is_idempotent():
     cat.withdraw(IT, "a@web01")  # no crash on an already-gone agent
     cat.withdraw("helpdesk/unknown", "ghost")  # unknown namespace, no crash
     assert cat.live(IT) == []
+
+
+# ── audience filtering (operator view vs visitor) ─────────────────────────────
+
+
+def test_entry_audience_defaults_to_self_service():
+    assert entry_audience(tool("a")) == "self-service"  # untagged → self-service
+    assert entry_audience(tool("a", **{"x-audience": "operator"})) == "operator"
+
+
+def test_visible_to_operator_sees_all_visitor_sees_self_service():
+    op_only = tool("rotate-key", **{"x-audience": "operator"})
+    ss = tool("reset-password", **{"x-audience": "self-service"})
+    assert visible_to(op_only, operator=True) and visible_to(ss, operator=True)
+    assert visible_to(ss, operator=False)
+    assert not visible_to(op_only, operator=False)
+
+
+def test_live_filters_by_operator_flag():
+    cat = LiveCatalog()
+    cat.publish(
+        IT,
+        "a@web01",
+        [
+            tool("reset-password", **{"x-audience": "self-service"}),
+            tool("rotate-key", **{"x-audience": "operator"}),
+            tool("skill:restart", **{"x-audience": "operator", "x-kind": "skill"}),
+        ],
+    )
+    # A visitor sees only the self-service entry; an operator sees everything.
+    assert _names(cat.live(IT)) == ["reset-password"]
+    assert _names(cat.live(IT, operator=True)) == [
+        "reset-password",
+        "rotate-key",
+        "skill:restart",
+    ]
+
+
+def test_entry_for_spans_connected_agents():
+    cat = LiveCatalog()
+    cat.publish(IT, "a@web01", [tool("rotate-key", **{"x-audience": "operator"})])
+    cat.set_presence(IT, "a@web01", False)  # off shift, still connected
+    entry = cat.entry_for(IT, "rotate-key")
+    assert entry is not None and entry["x-audience"] == "operator"
+    assert cat.entry_for(IT, "nope") is None

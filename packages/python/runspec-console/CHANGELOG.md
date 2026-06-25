@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.131.0] — 2026-06-25
+
+### Added
+- **Operator self-service + runbooks in the console-room.** The console now
+  publishes one **audience-tagged** catalogue to each queue's room instead of just
+  the self-service subset: every entry carries `x-audience`
+  (`self-service` | `operator`) and `x-kind` (`runnable` | `skill`). A new
+  `build_full_catalog` emits each runnable once, tagged with the broadest audience
+  it qualifies for — self-service when it's self-service-marked *and* passes the
+  `room_catalog` visitor allowlist (visible to everyone), otherwise operator
+  (visible only to operator sessions; the operator set is deliberately *not*
+  narrowed by the visitor allowlist). The room filters per session, so an operator
+  who logs into a queue's room sees and can run the **full operator catalogue** as
+  forms. (`catalog.py`, `bridge_triggers.py` `_publish_catalog`.)
+- **Self-service runbook skills (operator-only).** A `[[skill]]` runbook can now opt
+  into a queue's catalogue via a `discoverable` audience field (default empty —
+  runbooks aren't published unless marked). Published runbooks appear as
+  `skill:<id>` catalogue entries whose form `inputSchema` is built from the skill's
+  `[skill.args]` (the same machinery the Forms tab uses). Submitting one routes a
+  `kind="skill"` portal request to an operator console, which renders the body with
+  the submitted values and runs it as an **autonomy-gated agent turn** (reusing the
+  trigger/schedule isolated-turn path) — every runnable the runbook reaches still
+  parks at the per-runnable confirm gate, and the request reports `done` only when
+  the whole turn finishes. (`catalog.skill_to_catalog_entry`/`build_skill_catalog`,
+  `bridge_triggers._run_skill_assignment`, `memory.save_skill` `discoverable`.)
+
+
 ## [0.130.0] — 2026-06-25
 
 ### Changed

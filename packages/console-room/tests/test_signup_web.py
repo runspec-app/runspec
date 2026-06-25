@@ -141,6 +141,7 @@ def test_me_reports_auth_enabled():
         "user": "",
         "name": "",
         "team": "",
+        "operator": False,
         "queue": "helpdesk",
     }
 
@@ -269,6 +270,7 @@ def test_verify_enrolls_and_sets_session():
         "user": "jane@corp.com",
         "name": "Jane Doe",
         "team": "",
+        "operator": False,  # not in the operator allowlist → a plain visitor
         "queue": "helpdesk",
     }
     assert client.get("/", follow_redirects=False).status_code == 200
@@ -297,6 +299,37 @@ def test_session_cookie_carries_access_ttl():
         c for c in r.headers.get_list("set-cookie") if c.startswith("session=")
     ][0]
     assert "Max-Age=120" in session_cookie
+
+
+def test_verify_marks_operator_when_allowlisted():
+    # An operator-allowlisted email verifies → the session carries operator=True, so
+    # /me reports it and the elevated view unlocks. A non-operator stays a visitor.
+    enrollment = EnrollmentStore(":memory:")
+    cfg = EmailVerifyConfig(
+        session_secret=SECRET,
+        public_url="http://room.test",
+        operators=("ops@corp.com",),
+    )
+    hub = Hub(
+        FakeStore(),
+        enrollment=enrollment,
+        email_verify=cfg,
+        mailbox="helpdesk@corp.com",
+    )
+    client = TestClient(create_app(hub, email_verify=cfg))
+
+    enrollment.add_pending(
+        PendingSignup(
+            nonce="op1",
+            email="ops@corp.com",
+            name="Op One",
+            queue="helpdesk",
+            created_at=0.0,
+        )
+    )
+    token = sign_verify_token(SECRET, {"nonce": "op1"})
+    client.get(f"/verify?token={token}", follow_redirects=False)
+    assert client.get("/me").json()["operator"] is True
 
 
 def test_verify_is_single_use():

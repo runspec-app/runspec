@@ -62,13 +62,17 @@ class Request:
     visitor_name: str = ""
     # The visitor's chosen team/department (email-verify signup). Display-only.
     team: str = ""
+    # What ``runnable`` names: a "runnable" (the default) or a "skill" runbook
+    # (``runnable`` then carries the ``skill:<id>`` catalog name). The console
+    # dispatches enactment on it.
+    kind: str = "runnable"
     state: str = UNASSIGNED
     assignee: str | None = None
     error: str | None = None
 
     def assignment_fields(
         self,
-    ) -> tuple[str, str, str, dict[str, Any], str, str, str]:
+    ) -> tuple[str, str, str, dict[str, Any], str, str, str, str]:
         """The payload an assigned operator's console needs to enact the request."""
         return (
             self.id,
@@ -78,6 +82,7 @@ class Request:
             self.visitor,
             self.visitor_name,
             self.team,
+            self.kind,
         )
 
     def status_fields(self) -> tuple[str, str, str, str | None, str | None]:
@@ -111,6 +116,7 @@ class RequestRegistry:
         args: dict[str, Any],
         visitor_name: str = "",
         team: str = "",
+        kind: str = "runnable",
     ) -> Request:
         """Record a fresh request (``unassigned``) and return it. The id is
         server-assigned so the thread message and the lifecycle record agree."""
@@ -124,6 +130,7 @@ class RequestRegistry:
             args=dict(args),
             visitor_name=visitor_name,
             team=team,
+            kind=kind,
         )
         self._requests[req.id] = req
         return req

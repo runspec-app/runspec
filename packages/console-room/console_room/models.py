@@ -208,13 +208,15 @@ def assignment_frame(
     visitor: str,
     visitor_name: str = "",
     team: str = "",
+    kind: str = "runnable",
 ) -> dict[str, Any]:
     """A server → operator ``assignment`` frame: a portal request routed to one
     operator's console (its inbox item). Carries everything needed to enact it —
     the runnable, the visitor's args, and the thread ``room`` to reply on.
     ``visitor_name`` is the requester's display name (email-verify signup) and
     ``team`` their chosen department, both shown on the operator card beside the
-    verified ``visitor`` email; absent → just the email."""
+    verified ``visitor`` email; absent → just the email. ``kind`` is ``"runnable"``
+    or ``"skill"`` (a runbook) — the console dispatches enactment on it."""
     return {
         "type": ASSIGNMENT,
         "id": _str(request_id),
@@ -224,6 +226,7 @@ def assignment_frame(
         "visitor": _str(visitor),
         "visitor_name": _str(visitor_name),
         "team": _str(team),
+        "kind": _str(kind) or "runnable",
     }
 
 

@@ -14,11 +14,13 @@ from console_room.signup import (
     domain_allowed,
     email_domain,
     email_verify_from_env,
+    is_operator,
     login_domains,
     make_nonce,
     make_team_slug,
     normalize_domain,
     parse_domains,
+    parse_emails,
     read_auth_mode,
     read_verify_token,
     sign_verify_token,
@@ -185,6 +187,21 @@ def test_parse_domains_splits_normalizes_and_dedupes():
     ]
     assert parse_domains("") == []
     assert parse_domains("   ") == []
+
+
+def test_parse_emails_splits_normalizes_and_dedupes():
+    raw = "Alice@Corp.com, bob@corp.com  bob@corp.com, not-an-email"
+    assert parse_emails(raw) == ["alice@corp.com", "bob@corp.com"]
+    assert parse_emails("") == []
+    assert parse_emails("   ") == []
+
+
+def test_is_operator_exact_lowercased_match():
+    ops = ["alice@corp.com", "bob@corp.com"]
+    assert is_operator("Alice@Corp.com", ops) is True
+    assert is_operator("carol@corp.com", ops) is False
+    assert is_operator("", ops) is False
+    assert is_operator("alice@corp.com", []) is False  # empty allowlist → nobody
 
 
 def test_login_domains_mailbox_first_then_extras():

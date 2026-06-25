@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .signup import Team, make_team_slug, parse_domains
+from .signup import Team, make_team_slug, parse_domains, parse_emails
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -151,6 +151,10 @@ def apply_config_to_env(config: dict[str, Any]) -> None:
         domains = config_allowed_domains(config)
         if domains:
             os.environ["CONSOLE_ROOM_ALLOWED_DOMAINS"] = ",".join(domains)
+    if "CONSOLE_ROOM_OPERATORS" not in os.environ:
+        operators = config_operators(config)
+        if operators:
+            os.environ["CONSOLE_ROOM_OPERATORS"] = ",".join(operators)
 
 
 def config_allowed_domains(config: dict[str, Any]) -> list[str]:
@@ -167,6 +171,21 @@ def config_allowed_domains(config: dict[str, Any]) -> list[str]:
         return parse_domains(raw)
     if isinstance(raw, (list, tuple)):
         return parse_domains(",".join(str(item) for item in raw))
+    return []
+
+
+def config_operators(config: dict[str, Any]) -> list[str]:
+    """The operator allowlist from ``[auth] operators`` — a TOML array
+    (``["alice@corp.com", "bob@corp.com"]``) or a comma/space-separated string.
+    Normalized (lowercased, deduped, ``local@domain`` only); ``[]`` when unset.
+    These emails get the elevated operator room view (full catalogue + runbooks)."""
+    raw = (config.get("auth") or {}).get("operators")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return parse_emails(raw)
+    if isinstance(raw, (list, tuple)):
+        return parse_emails(",".join(str(item) for item in raw))
     return []
 
 

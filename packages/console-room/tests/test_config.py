@@ -12,6 +12,7 @@ import pytest
 from console_room.config import (
     apply_config_to_env,
     config_allowed_domains,
+    config_operators,
     config_teams,
     find_config_path,
     load_config,
@@ -178,6 +179,29 @@ def test_apply_config_sets_allowed_domains(tmp_path, monkeypatch):
     import os
 
     assert os.environ["CONSOLE_ROOM_ALLOWED_DOMAINS"] == "company1.com,company2.com"
+
+
+def test_config_operators_array_and_string(tmp_path):
+    array = load_config(
+        _write(tmp_path, '[auth]\noperators = ["Ops@corp.com", "ops@corp.com"]\n')
+    )
+    assert config_operators(array) == ["ops@corp.com"]
+    string = load_config(
+        _write(tmp_path, '[auth]\noperators = "a@corp.com b@corp.com"\n')
+    )
+    assert config_operators(string) == ["a@corp.com", "b@corp.com"]
+    assert config_operators(load_config(_write(tmp_path, "[server]\n"))) == []
+
+
+def test_apply_config_sets_operators(tmp_path, monkeypatch):
+    monkeypatch.delenv("CONSOLE_ROOM_OPERATORS", raising=False)
+    config = load_config(
+        _write(tmp_path, '[auth]\noperators = ["a@corp.com", "b@corp.com"]\n')
+    )
+    apply_config_to_env(config)
+    import os
+
+    assert os.environ["CONSOLE_ROOM_OPERATORS"] == "a@corp.com,b@corp.com"
 
 
 def test_apply_config_does_not_clobber_allowed_domains_env(tmp_path, monkeypatch):

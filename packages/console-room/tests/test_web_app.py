@@ -63,6 +63,7 @@ def test_me_in_dev_mode_has_no_session_error():
             "user": "",
             "name": "",
             "team": "",
+            "operator": False,
             "queue": "helpdesk",
         }
 
@@ -181,10 +182,18 @@ def test_dev_visitor_team_param_rides_onto_the_card(monkeypatch):
     captured: dict[str, str] = {}
     real_init = app_mod.BrowserConnection.__init__
 
-    def spy(self, ws, *, user, room, display_name="", team=""):
+    def spy(self, ws, *, user, room, display_name="", team="", operator=False):
         captured["user"] = user
         captured["team"] = team
-        real_init(self, ws, user=user, room=room, display_name=display_name, team=team)
+        real_init(
+            self,
+            ws,
+            user=user,
+            room=room,
+            display_name=display_name,
+            team=team,
+            operator=operator,
+        )
 
     monkeypatch.setattr(app_mod.BrowserConnection, "__init__", spy)
     with _client() as client:
@@ -244,6 +253,72 @@ def test_catalog_endpoint_requires_valid_queue():
     with _client_with_catalog() as client:
         assert client.get("/catalog").status_code == 400
         assert client.get("/catalog?queue=a/b").status_code == 400
+
+
+# An operator-only runnable + an operator runbook beside the self-service one.
+MIXED_CATALOG = [
+    {"name": "reset-password", "x-audience": "self-service", "x-kind": "runnable"},
+    {"name": "rotate-root-key", "x-audience": "operator", "x-kind": "runnable"},
+    {
+        "name": "skill:restart",
+        "x-audience": "operator",
+        "x-kind": "skill",
+        "x-title": "Restart a service",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+]
+
+
+def _client_with_mixed_catalog(store=None):
+    hub = Hub(store or FakeStore())
+    hub.publish_catalog(_SeedAgent("agent@web01", "helpdesk/it"), MIXED_CATALOG)
+    return TestClient(create_app(hub))
+
+
+def test_catalog_filters_operator_entries_for_visitors():
+    with _client_with_mixed_catalog() as client:
+        # Dev mode visitor (no ?operator=1): only the self-service entry.
+        visitor = client.get("/catalog?queue=it").json()["tools"]
+        assert [t["name"] for t in visitor] == ["reset-password"]
+        # Operator (?operator=1): the full catalogue + the runbook.
+        op = client.get("/catalog?queue=it&operator=1").json()["tools"]
+        assert [t["name"] for t in op] == [
+            "reset-password",
+            "rotate-root-key",
+            "skill:restart",
+        ]
+
+
+def test_me_reports_operator_in_dev_mode():
+    with _client_with_mixed_catalog() as client:
+        assert client.get("/me").json()["operator"] is False
+        assert client.get("/me?operator=1").json()["operator"] is True
+
+
+def test_visitor_cannot_request_operator_tool():
+    store = FakeStore()
+    with _client_with_mixed_catalog(store) as client:
+        # A visitor submitting an operator-only tool is refused — nothing lands; a
+        # normal message after it is the next (and only) frame back.
+        with client.websocket_connect("/ws?queue=it&user=alice@corp") as alice:
+            alice.send_json({"type": "request", "tool": "rotate-root-key", "args": {}})
+            alice.send_json({"type": "message", "text": "hello?"})
+            got = alice.receive_json()
+            assert got["type"] == "message" and got["text"] == "hello?"
+    assert all(m.kind == "chat" for m in store.appended)
+
+
+def test_operator_can_request_operator_tool():
+    store = FakeStore()
+    with _client_with_mixed_catalog(store) as client:
+        # The same operator-only tool is accepted for an operator session — it lands
+        # as a structured request-kind message.
+        with client.websocket_connect("/ws?queue=it&user=ops@corp&operator=1") as ops:
+            ops.send_json({"type": "request", "tool": "rotate-root-key", "args": {}})
+            got = ops.receive_json()
+            assert got["type"] == "message" and got["kind"] == "request"
+            assert got["data"]["tool"] == "rotate-root-key"
+    assert store.appended and store.appended[0].kind == "request"
 
 
 def test_visitor_request_over_ws_lands_and_auto_assigns():

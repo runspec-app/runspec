@@ -16,7 +16,7 @@ import json
 import logging
 from typing import Any, Protocol, runtime_checkable
 
-from .catalog import LiveCatalog
+from .catalog import LiveCatalog, visible_to
 from .conversation import (
     DEFAULT_QUEUE,
     namespace_matches,
@@ -308,10 +308,14 @@ class Hub:
             for req in self._requests.unassigned_under(agent.namespace):
                 await self._try_assign(req)
 
-    def live_catalog(self, namespace: str) -> list[dict[str, Any]]:
-        """The runnables a visitor of ``namespace`` can request right now — the
-        deduplicated union of the on-shift consoles' published catalogues."""
-        return self._live.live(namespace)
+    def live_catalog(
+        self, namespace: str, *, operator: bool = False
+    ) -> list[dict[str, Any]]:
+        """The entries a session of ``namespace`` can request right now — the
+        deduplicated union of the on-shift consoles' published catalogues, filtered
+        to what the session may see: a visitor (``operator=False``) gets only the
+        self-service subset; an operator gets the full catalogue plus runbooks."""
+        return self._live.live(namespace, operator=operator)
 
     def runnable_holders(self, namespace: str, tool: str) -> list[str]:
         """The on-shift consoles that hold ``tool`` — the routing candidates for a
@@ -661,12 +665,16 @@ class Hub:
         return True
 
     async def submit_request(
-        self, p: Participant, tool: str, args: dict[str, Any]
+        self, p: Participant, tool: str, args: dict[str, Any], kind: str = "runnable"
     ) -> Request | None:
-        """A visitor submits a portal request from their conversation. Validated
+        """A session submits a portal request from their conversation. Validated
         against the **live catalogue** (some connected console must hold ``tool`` —
         on shift or, tolerating the off-shift race, at least pageable) and the args
-        budget. Persists the request as a ``request``-kind thread message, then
+        budget. **Authorization is visibility**: an operator-audience entry is only
+        requestable by an operator session (``p.operator``), so a visitor can never
+        submit what they can't see. ``kind`` distinguishes a runnable request from a
+        ``skill`` (runbook) one — it rides onto the request for the console to
+        dispatch. Persists the request as a ``request``-kind thread message, then
         **auto-assigns** to an on-shift holder (round-robin) or holds it
         ``unassigned`` for a page. Returns the :class:`Request` (with its resolved
         state), or ``None`` when refused."""
@@ -676,9 +684,18 @@ class Hub:
             return None
         queue, visitor = parsed
         ns = queue_namespace(queue)
-        if not self._live.connected_holders(ns, tool):
+        entry = self._live.entry_for(ns, tool)
+        if entry is None:
             logger.warning(
                 "room: %r requested %r — no connected console holds it in %r",
+                p.user,
+                tool,
+                ns,
+            )
+            return None
+        if not visible_to(entry, operator=bool(getattr(p, "operator", False))):
+            logger.warning(
+                "room: %r requested operator-only %r without operator access in %r",
                 p.user,
                 tool,
                 ns,
@@ -694,7 +711,15 @@ class Hub:
         visitor_name = str(getattr(p, "display_name", "") or "")
         team = str(getattr(p, "team", "") or "")
         req = self._requests.create(
-            p.room, queue, ns, visitor, tool, args, visitor_name=visitor_name, team=team
+            p.room,
+            queue,
+            ns,
+            visitor,
+            tool,
+            args,
+            visitor_name=visitor_name,
+            team=team,
+            kind=kind,
         )
         # Record the ask on the thread (links to the lifecycle record via id).
         msg = Message.new(

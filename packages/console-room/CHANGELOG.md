@@ -4,6 +4,32 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.29.0]
+
+### Added
+- **Operator self-service in the browser.** A login email can now be recognised as
+  an **operator** — a member of staff who gets the elevated room view (the full
+  operator catalogue plus published runbooks) rather than just the self-service
+  subset. Recognition is an explicit allowlist: `CONSOLE_ROOM_OPERATORS`
+  (comma/space-separated emails, `[auth] operators` in the config file as a TOML
+  array or string, precedence **defaults < config < env < CLI**). At `/verify` the
+  verified email is checked against it and the result is stamped on the signed
+  session (`operator`); `/me` reports it, and the WebSocket/`/catalog` doors read it.
+  In dev mode the flag rides `?operator=1` so the feature is testable without auth.
+- **Audience-tagged catalogue, filtered per session.** The catalogue stays one
+  published channel, but each entry now carries an `x-audience`
+  (`self-service` | `operator`) and an `x-kind` (`runnable` | `skill`). `/catalog`
+  and request submission filter by the session: a visitor sees and may request only
+  `self-service` entries; an operator sees and may request everything. **Authorization
+  is visibility** — `submit_request` validates the requested tool against exactly what
+  the session can see, so a visitor can never request an operator-only entry. An entry
+  with no `x-audience` defaults to `self-service`, so an older console leaks nothing.
+- **Skill (runbook) requests.** A portal request now carries a `kind`
+  (`runnable` | `skill`, on the request + the `assignment` frame). A `skill` request
+  names a runbook (`skill:<id>` catalog entry) and is routed like any other; the
+  operator console renders + runs it. Visitor-facing self-service skills are not
+  enabled yet — runbooks are operator-only for now.
+
 ## [0.28.0]
 
 ### Added

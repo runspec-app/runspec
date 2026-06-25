@@ -78,8 +78,15 @@ def arg_to_property(arg: dict[str, Any]) -> dict[str, Any]:
     return prop
 
 
-def runnable_to_catalog_entry(runnable: dict[str, Any]) -> dict[str, Any]:
-    """One discovered runnable → a catalog tool entry (visitor-form contract)."""
+def runnable_to_catalog_entry(
+    runnable: dict[str, Any], *, audience: str = SELF_SERVICE
+) -> dict[str, Any]:
+    """One discovered runnable → a catalog tool entry (visitor-form contract).
+
+    ``audience`` stamps the entry's ``x-audience`` (``"self-service"`` | ``"operator"``)
+    so the room can serve operator-only entries to operator sessions and the
+    self-service subset to visitors. ``x-kind`` is ``"runnable"`` — the room and
+    frontend tell runnables and skills apart by it."""
     properties: dict[str, Any] = {}
     required: list[str] = []
     for arg in runnable.get("args", []):
@@ -98,6 +105,8 @@ def runnable_to_catalog_entry(runnable: dict[str, Any]) -> dict[str, Any]:
         "name": str(runnable.get("name")),
         "description": str(runnable.get("description") or ""),
         "x-autonomy": str(runnable.get("autonomy") or "confirm"),
+        "x-kind": "runnable",
+        "x-audience": audience,
         "inputSchema": schema,
     }
 
@@ -133,4 +142,133 @@ def build_catalog(
             continue
         tools.append(runnable_to_catalog_entry(runnable))
         index[name] = runnable
+    return tools, index
+
+
+def build_full_catalog(
+    runnables: list[dict[str, Any]],
+    *,
+    self_service_allowlist: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """The combined catalog for a queue: ``(tools, index)`` covering **both**
+    audiences in one tagged list (the channel the room filters per session).
+
+    Each runnable yields **one** entry, tagged with the broadest audience it
+    qualifies for: ``"self-service"`` when it is self-service-marked *and* passes the
+    optional ``self_service_allowlist`` (the ``room_catalog`` visitor-narrowing
+    knob) — visible to everyone; otherwise ``"operator"`` when it is
+    operator-discoverable (the default audience) — visible only to operator sessions.
+    A runnable discoverable to nobody (``discoverable = false``) is dropped. One
+    entry per name avoids a name collision in the room's name-keyed dedup; the
+    operator set is deliberately *not* narrowed by the self-service allowlist.
+
+    Same flat-form constraints as :func:`build_catalog`: subcommand-requiring
+    runnables are skipped and password args are omitted. Names collide across hosts
+    on a fleet; first discovered wins. ``index`` maps every published name back to
+    its discovered runnable for enactment."""
+    allowed = (
+        set(self_service_allowlist) if self_service_allowlist is not None else None
+    )
+    tools: list[dict[str, Any]] = []
+    index: dict[str, dict[str, Any]] = {}
+    for runnable in runnables:
+        name = str(runnable.get("name") or "")
+        if not name or name in index:
+            continue
+        if runnable.get("requireCommand"):
+            continue
+        raw = runnable.get("rawSpec")
+        audiences = discoverable_audiences(
+            raw.get("discoverable") if isinstance(raw, dict) else None
+        )
+        self_service = SELF_SERVICE in audiences and (
+            allowed is None or name in allowed
+        )
+        if self_service:
+            audience = SELF_SERVICE
+        elif OPERATOR in audiences:
+            audience = OPERATOR
+        else:
+            continue  # discoverable to nobody
+        tools.append(runnable_to_catalog_entry(runnable, audience=audience))
+        index[name] = runnable
+    return tools, index
+
+
+# ── skills (published runbooks) ──────────────────────────────────────────────
+
+
+def skill_audiences(skill: dict[str, Any]) -> list[str]:
+    """The audiences a runbook is published to, from its ``discoverable`` field.
+
+    Unlike a runnable, a skill is **opt-in**: absent / ``False`` / unknown → ``[]``
+    (not published), so an ordinary runbook never lands in a queue's catalog by
+    accident. ``True`` → ``["operator"]``; a list of strings → itself."""
+    value = skill.get("discoverable")
+    if value is True:
+        return [OPERATOR]
+    if isinstance(value, list):
+        return [a for a in value if isinstance(a, str)]
+    return []
+
+
+def skill_to_catalog_entry(skill: dict[str, Any]) -> dict[str, Any]:
+    """One runbook → a catalog tool entry, the same visitor-form contract a runnable
+    uses so the room/frontend render it identically. The wire ``name`` is
+    ``skill:<id>`` — namespaced so it can never collide with a runnable name in the
+    room's name-keyed dedup/holder logic; ``x-title`` is the human label and
+    ``x-kind`` is ``"skill"``. ``inputSchema`` is built from the skill's
+    ``[skill.args]`` table via the shared arg machinery, so a runbook's inputs behave
+    exactly like a runnable's. Served operator-only for now (``x-audience`` =
+    ``operator``)."""
+    from .skillargs import parse_skill_args
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for arg in parse_skill_args(skill.get("args")):
+        if str(arg.get("type")) == "password":
+            continue
+        name = str(arg.get("name"))
+        properties[name] = arg_to_property(arg)
+        if arg.get("required"):
+            required.append(name)
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    title = str(skill.get("title") or skill.get("id") or "")
+    return {
+        "name": "skill:" + str(skill.get("id") or ""),
+        "x-title": title,
+        "description": str(skill.get("symptom") or title),
+        "x-autonomy": "confirm",
+        "x-kind": "skill",
+        "x-audience": OPERATOR,
+        "inputSchema": schema,
+    }
+
+
+def build_skill_catalog(
+    skills: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """The publishable runbooks for a queue: ``(tools, index)``.
+
+    ``tools`` are skill catalog entries (operator audience); ``index`` maps each
+    entry's ``skill:<id>`` wire name back to the bare skill id so an assigned skill
+    request can be rendered + run. A skill is included only if it opts in via its
+    ``discoverable`` audience (``operator`` or ``self-service``) — runbooks are not
+    published by default. First id wins on a duplicate."""
+    tools: list[dict[str, Any]] = []
+    index: dict[str, str] = {}
+    for skill in skills:
+        sid = str(skill.get("id") or "")
+        if not sid:
+            continue
+        audiences = set(skill_audiences(skill))
+        if not audiences & {OPERATOR, SELF_SERVICE}:
+            continue  # not published — opt-in only
+        name = "skill:" + sid
+        if name in index:
+            continue
+        tools.append(skill_to_catalog_entry(skill))
+        index[name] = sid
     return tools, index

@@ -56,3 +56,18 @@ def session_team(conn: Any) -> str:
         return ""
     team = session.get("team")
     return team if isinstance(team, str) else ""
+
+
+def session_operator(conn: Any) -> bool:
+    """Whether the signed-in user is an **operator** (``conn.session['operator']``),
+    i.e. their login email was in the room's operator allowlist — so they get the
+    elevated view (full catalogue + runbooks). Set by the email-verify door at verify
+    time; ``False`` for a visitor or any connection without a session. Guarded like
+    :func:`session_user`."""
+    try:
+        session = getattr(conn, "session", None)
+    except Exception:
+        return False
+    if not isinstance(session, dict):
+        return False
+    return bool(session.get("operator"))

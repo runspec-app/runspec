@@ -54,6 +54,12 @@ class EmailVerifyConfig:
     #: domain (which is always allowed). For shops whose people sit on a few
     #: variants of one domain while a single mailbox is the monitored connector.
     allowed_domains: tuple[str, ...] = field(default_factory=tuple)
+    #: Emails whose login is recognised as an **operator** — a member of staff who
+    #: gets the elevated room view (the full operator catalogue + published
+    #: runbooks), not just the self-service subset. An explicit allowlist: an
+    #: operator logs in with their own email and is matched here. Empty → nobody is
+    #: an operator (everyone is a visitor), the prior behaviour.
+    operators: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def secure_cookies(self) -> bool:
@@ -94,6 +100,7 @@ def email_verify_from_env() -> EmailVerifyConfig | None:
         token_ttl=ttl,
         session_ttl=session_ttl,
         allowed_domains=tuple(parse_domains(_env("CONSOLE_ROOM_ALLOWED_DOMAINS"))),
+        operators=tuple(parse_emails(_env("CONSOLE_ROOM_OPERATORS"))),
     )
 
 
@@ -139,6 +146,28 @@ def parse_domains(raw: str) -> list[str]:
         if domain and domain not in out:
             out.append(domain)
     return out
+
+
+def parse_emails(raw: str) -> list[str]:
+    """Parse a comma/whitespace-separated operator list into normalized emails,
+    order-preserving and deduped: lowercased, trimmed, only entries that look like a
+    single ``local@domain``. ``"A@x.com, b@x.com  b@x.com"`` → ``["a@x.com",
+    "b@x.com"]``. ``[]`` for blank input."""
+    out: list[str] = []
+    for part in re.split(r"[,\s]+", (raw or "").strip()):
+        email = part.strip().lower()
+        if email and email_domain(email) and email not in out:
+            out.append(email)
+    return out
+
+
+def is_operator(email: str, operators: Iterable[str] = ()) -> bool:
+    """True if ``email`` is in the room's operator allowlist (exact, lowercased
+    match) — i.e. this login gets the elevated operator view rather than the
+    self-service visitor one. A blank email or an empty allowlist is never an
+    operator."""
+    addr = (email or "").strip().lower()
+    return bool(addr) and addr in {e.strip().lower() for e in operators}
 
 
 def login_domains(queue_email: str, allowed_domains: Iterable[str] = ()) -> list[str]:

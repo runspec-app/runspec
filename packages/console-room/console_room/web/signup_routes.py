@@ -35,6 +35,7 @@ from ..signup import (
     Team,
     domain_allowed,
     email_domain,
+    is_operator,
     login_domains,
 )
 
@@ -172,6 +173,9 @@ def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
         request.session["user"] = member.email
         request.session["name"] = member.name
         request.session["team"] = member.team
+        # Whether this verified email is an operator (allowlisted) — unlocks the full
+        # catalogue + runbooks. Stamped once at verify so the gate reads it cheaply.
+        request.session["operator"] = is_operator(member.email, email_verify.operators)
         response = RedirectResponse(url=f"/?queue={member.queue}", status_code=303)
         # Remember the proven email so next time they log in with one click.
         response.set_cookie(

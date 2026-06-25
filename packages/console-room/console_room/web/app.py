@@ -52,7 +52,7 @@ from ..conversation import (
 from ..hub import Hub
 from ..ndjson_server import serve_ndjson
 from ..signup import EmailVerifyConfig
-from .auth import session_name, session_team, session_user
+from .auth import session_name, session_operator, session_team, session_user
 from .connection import BrowserConnection
 from .signup_routes import login_routes
 
@@ -151,6 +151,19 @@ def create_app(
     # Where an unauthenticated / expired visitor is sent (email-verify mode).
     login_path = "/login"
 
+    def is_operator(conn: Any) -> bool:
+        """Whether this request/WS is an operator session — the elevated view (full
+        catalogue + runbooks). In a verified server it's the signed-session flag the
+        email-verify door stamped from the operator allowlist; in dev mode it's an
+        explicit ``?operator=1`` so the feature is exercisable without auth."""
+        if gated:
+            return session_operator(conn)
+        return (conn.query_params.get("operator") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
     # ── WebSocket door ────────────────────────────────────────────────────────
     async def ws_room(websocket: WebSocket) -> None:
         if gated:
@@ -216,6 +229,7 @@ def create_app(
             room=room,
             display_name=display_name,
             team=team,
+            operator=is_operator(websocket),
         ).run(hub)
 
     # ── app shell + identity ──────────────────────────────────────────────────
@@ -235,21 +249,29 @@ def create_app(
                 "user": session_user(request),
                 "name": session_name(request) if gated else "",
                 "team": session_team(request) if gated else "",
+                "operator": is_operator(request),
                 "queue": DEFAULT_QUEUE,
             }
         )
 
     async def catalog(request: Any) -> JSONResponse:
-        """The live self-service catalogue for a queue — the union of the runnables
-        the *on-shift* agent consoles have published. Gated like the WS: in an
-        authenticated mode you must be signed in."""
+        """The live catalogue for a queue — the union of what the *on-shift* agent
+        consoles have published, filtered to what this session may see: a visitor
+        gets only the self-service subset; an operator gets the full catalogue plus
+        runbooks. Gated like the WS: in an authenticated mode you must be signed
+        in."""
         if gated and not session_user(request):
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         queue = (request.query_params.get("queue") or "").strip()
         if not valid_token(queue):
             return JSONResponse({"error": "queue required"}, status_code=400)
         return JSONResponse(
-            {"queue": queue, "tools": hub.live_catalog(queue_namespace(queue))}
+            {
+                "queue": queue,
+                "tools": hub.live_catalog(
+                    queue_namespace(queue), operator=is_operator(request)
+                ),
+            }
         )
 
     async def healthz(_request: Any) -> JSONResponse:

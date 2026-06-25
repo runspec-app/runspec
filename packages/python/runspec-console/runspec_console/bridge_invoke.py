@@ -366,6 +366,7 @@ class InvokeMixin:
                 "symptom": s.get("symptom", ""),
                 "steps": s.get("steps", ""),
                 "tags": list(s.get("tags", []) or []),
+                "discoverable": list(s.get("discoverable", []) or []),
                 "updated": s.get("updated", ""),
                 "argsRaw": raw,
             }
@@ -413,6 +414,13 @@ class InvokeMixin:
             }
             if raw:
                 entry["args"] = dict(raw)
+            # The publish audience (which queue catalogs offer this runbook); opt-in,
+            # stored only when set so an ordinary runbook stays out of every catalog.
+            aud = [
+                str(a).strip() for a in (r.get("discoverable") or []) if str(a).strip()
+            ]
+            if aud:
+                entry["discoverable"] = aud
             normalised.append(entry)
         memory.save_skills(normalised)
         return {"ok": True, "count": len(normalised)}

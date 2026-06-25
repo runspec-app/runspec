@@ -487,6 +487,46 @@ def test_submit_request_carries_visitor_name_to_operator_card():
     assert assignment["visitor_name"] == "Alice Smith"
 
 
+def test_operator_skill_request_routes_with_kind():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        ops = FakeP("ops@corp", ALICE)
+        ops.operator = True  # an operator session may request operator-audience tools
+        await hub.join_agent(agent)
+        await hub.join(ops)
+        hub.publish_catalog(
+            agent,
+            [{"name": "skill:restart", "x-audience": "operator", "x-kind": "skill"}],
+        )
+        agent.frames.clear()
+        req = await hub.submit_request(ops, "skill:restart", {"svc": "nginx"}, "skill")
+        return agent, req
+
+    agent, req = run(scenario())
+    assert req is not None and req.kind == "skill" and req.runnable == "skill:restart"
+    assignment = next(f for f in agent.frames if f["type"] == "assignment")
+    assert assignment["kind"] == "skill"
+    assert assignment["runnable"] == "skill:restart"
+    assert assignment["args"] == {"svc": "nginx"}
+
+
+def test_visitor_cannot_request_operator_skill():
+    async def scenario():
+        hub = Hub(FakeStore())
+        agent = FakeAgent("agent@web01", IT)
+        alice = FakeP("alice@corp", ALICE)  # a plain visitor (no .operator)
+        await hub.join_agent(agent)
+        await hub.join(alice)
+        hub.publish_catalog(
+            agent,
+            [{"name": "skill:restart", "x-audience": "operator", "x-kind": "skill"}],
+        )
+        return await hub.submit_request(alice, "skill:restart", {}, "skill")
+
+    assert run(scenario()) is None  # refused — operator-only, no request created
+
+
 def test_submit_request_blank_visitor_name_without_session_name():
     async def scenario():
         hub = Hub(FakeStore())
@@ -872,7 +912,11 @@ def test_afk_reassigns_to_a_different_holder():
         hub.publish_catalog(b, [{"name": "reset-password"}])
         req = await hub.submit_request(alice, "reset-password", {})
         first = hub._requests.get(req.id).assignee  # round-robin → a@web01
-        await asyncio.sleep(0.15)  # a never starts → AFK → re-assign excluding a
+        # Sleep into the window after the *first* AFK release (one timeout, 0.05s)
+        # but before a second could fire (two timeouts, 0.10s): with only two holders
+        # each timeout oscillates the assignee a↔b, so land squarely on the single
+        # reassignment this asserts. a never starts → AFK → reassign excluding a → b.
+        await asyncio.sleep(0.08)
         return hub, req, first
 
     hub, req, first = run(scenario())

@@ -123,6 +123,9 @@ class Bridge(
         # the hub assigns us can be mapped back to (host, runnable) and enacted.
         self._agent_rooms: dict[str, str] = {}
         self._catalog_index: dict[str, dict[str, dict[str, Any]]] = {}
+        # namespace → published skill catalog name (``skill:<id>``) → skill id, so a
+        # skill request the hub assigns us maps back to the runbook to render + run.
+        self._skill_index: dict[str, dict[str, str]] = {}
         # namespace → last catalog actually published, so the periodic refresh
         # only re-sends (and logs) when the contents change. Cleared on disconnect
         # so the next subscribe republishes from scratch.

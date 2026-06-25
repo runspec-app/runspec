@@ -504,24 +504,30 @@ class TriggersMixin:
     def _publish_catalog(
         self, spec: dict[str, Any], source: Any, *, force: bool = False
     ) -> None:
-        """Build and publish one queue's self-service catalog from the discovery
-        cache. **Idempotent**: the catalog is only sent (and logged) when its
-        contents changed since the last publish for this namespace — so the
-        periodic discovery refresh doesn't re-emit an unchanged catalog every
-        cycle. ``force`` overrides the diff (the subscribe path always sends, as
-        a fresh connection's hub has no catalog yet). Best-effort — a failed
-        publish never breaks the connection; the next refresh or reconnect
-        republishes."""
-        from .catalog import build_catalog
+        """Build and publish one queue's catalog from the discovery cache — the
+        combined, audience-tagged channel the room filters per session: the
+        self-service subset for visitors, the full operator catalogue plus published
+        runbooks for operators. **Idempotent**: the catalog is only sent (and logged)
+        when its contents changed since the last publish for this namespace — so the
+        periodic discovery refresh doesn't re-emit an unchanged catalog every cycle.
+        ``force`` overrides the diff (the subscribe path always sends, as a fresh
+        connection's hub has no catalog yet). Best-effort — a failed publish never
+        breaks the connection; the next refresh or reconnect republishes."""
+        from .catalog import build_full_catalog
 
         try:
             key = spec["room"]
             with self._lock:
                 runnables = list(self._runnables_cache)
             allowlist = spec.get("catalog_allowlist")
-            tools, index = build_catalog(runnables, allowlist=allowlist)
+            tools, index = build_full_catalog(
+                runnables, self_service_allowlist=allowlist
+            )
+            skill_tools, skill_index = self._build_room_skills()
+            tools = tools + skill_tools
             with self._lock:
-                self._catalog_index[key] = index  # enactment map — keep current
+                self._catalog_index[key] = index  # runnable enactment map
+                self._skill_index[key] = skill_index  # skill enactment map (name→id)
                 unchanged = not force and self._published_catalogs.get(key) == tools
                 if not unchanged:
                     self._published_catalogs[key] = tools
@@ -531,6 +537,22 @@ class TriggersMixin:
             logger.info("chat: published %d tool(s) to %r catalog", len(tools), key)
         except Exception:
             logger.exception("chat: catalog publish for %r failed", spec.get("room"))
+
+    def _build_room_skills(self) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """The publishable runbooks for the catalog: ``(tools, index)`` where
+        ``tools`` are skill catalog entries (``skill:<id>`` names, operator audience)
+        and ``index`` maps each catalog name back to the skill id for enactment.
+        Skills opt in via their ``discoverable`` audience (default off), so an
+        ordinary runbook never lands in the catalog by accident."""
+        from . import memory
+        from .catalog import build_skill_catalog
+
+        try:
+            skills = memory.load_skills()
+        except Exception:
+            logger.exception("chat: loading skills for catalog failed")
+            return [], {}
+        return build_skill_catalog(skills)
 
     def _publish_catalogs(self) -> None:
         """Republish every connected agent queue's catalog — called after a
@@ -621,6 +643,7 @@ class TriggersMixin:
         runnable = str(payload.get("runnable") or "")
         raw_args = payload.get("args")
         args = dict(raw_args) if isinstance(raw_args, dict) else {}
+        kind = "skill" if str(payload.get("kind") or "") == "skill" else "runnable"
         namespace = self._namespace_of(room)
         if not (request_id and room and runnable and namespace):
             logger.warning("portal: ignoring malformed assignment %r", payload)
@@ -632,11 +655,13 @@ class TriggersMixin:
         # on the card beside the email; blank in dev mode.
         visitor_name = str(payload.get("visitor_name") or "")
         team = str(payload.get("team") or "")
+        # A skill's wire name is ``skill:<id>``; show the bare id on the card.
+        label = runnable.split("skill:", 1)[-1] if kind == "skill" else runnable
         # Surface the assignment in the Triggers inbox right away (before the
         # possibly-gated run), so the operator sees it land.
         self._portal_card(
             request_id,
-            runnable=runnable,
+            runnable=label,
             args=args,
             visitor=visitor,
             visitor_name=visitor_name,
@@ -645,10 +670,11 @@ class TriggersMixin:
             queue=queue,
             state="assigned",
             column="triggered",
-            note=f"assigned · {runnable}",
+            note=f"assigned · {label}",
         )
+        target = self._run_skill_assignment if kind == "skill" else self._run_assignment
         threading.Thread(
-            target=self._run_assignment,
+            target=target,
             args=(request_id, room, runnable, args, namespace),
             name="portal-enact",
             daemon=True,
@@ -713,6 +739,101 @@ class TriggersMixin:
             column="failed" if failed else "done",
             result=output,
             error=output[:500] if failed else None,
+            note="failed" if failed else "done",
+        )
+
+    def _run_skill_assignment(
+        self,
+        request_id: str,
+        room: str,
+        wire_name: str,
+        values: dict[str, Any],
+        namespace: str,
+    ) -> None:
+        """Worker: enact an assigned **skill** (runbook) request. A skill is not a
+        single runnable but an agent turn — we render its body with the visitor's
+        form ``values`` and run it through the same isolated, autonomy-gated loop a
+        trigger/schedule uses (``_trigger_run_agent_turn``), so every runnable the
+        runbook reaches still parks at the per-runnable confirm gate on this card. The
+        turn is run to completion here (this worker is already off the recv loop), and
+        only when it ends do we deliver the summary on the thread and report the
+        request done/failed — the visitor sees the real outcome, not a hand-off."""
+        from . import memory, skillargs
+
+        with self._lock:
+            source = self._chat_sources.get(namespace)
+            skill_id = self._skill_index.get(namespace, {}).get(wire_name)
+        label = wire_name.split("skill:", 1)[-1]
+        if source is None:
+            logger.warning(
+                "portal: no chat source for %r — cannot enact runbook %r",
+                namespace,
+                label,
+            )
+            self._portal_fail(request_id, None, "operator offline — cannot enact")
+            return
+        if not skill_id:
+            self._portal_fail(
+                request_id, source, f"runbook '{label}' is no longer available"
+            )
+            return
+        skill = memory.load_skill(skill_id)
+        if not skill:
+            self._portal_fail(request_id, source, f"runbook '{label}' no longer exists")
+            return
+        raw = skill.get("args") if isinstance(skill.get("args"), dict) else {}
+        errors = skillargs.validate_skill_values(raw, values)
+        if errors:
+            self._portal_fail(request_id, source, "; ".join(errors))
+            return
+        body = memory.render_skill_body(str(skill.get("steps") or ""), values)
+        if not body.strip():
+            self._portal_fail(
+                request_id, source, f"runbook '{label}' has an empty body"
+            )
+            return
+        title = skill.get("title") or skill_id
+        message = (
+            f"Runbook '{title}' — follow these steps now using your tools:\n\n{body}"
+        )
+        source.send_request_start(request_id)
+        self._portal_card(
+            request_id, state="in_progress", column="running", note="enacting runbook…"
+        )
+        card_id = self._portal_card_id(request_id)
+
+        def record(note: str) -> None:
+            self._portal_card(request_id, note=note)
+
+        try:
+            # The card id doubles as the agent turn's chat_id, so each runnable's
+            # autonomy-gate Approve/Deny prompt renders on this portal card.
+            summary = self._trigger_run_agent_turn(
+                card_id,
+                self._base_system(),
+                message,
+                draft=False,
+                record=record,
+                trigger="portal-skill",
+            )
+        except Exception as exc:  # noqa: BLE001 — surface failure to the visitor
+            logger.exception("portal: enacting runbook %r failed", label)
+            self._portal_fail(request_id, source, str(exc))
+            return
+        failed = summary.startswith("⚠") or summary.startswith("✗")
+        try:
+            source.send_message(summary, room=room)  # deliver the result on the thread
+        except Exception:
+            logger.exception("portal: posting runbook result for %r failed", label)
+        source.send_request_complete(
+            request_id, error=(summary[:500] if failed else None)
+        )
+        self._portal_card(
+            request_id,
+            state="failed" if failed else "done",
+            column="failed" if failed else "done",
+            result=summary,
+            error=summary[:500] if failed else None,
             note="failed" if failed else "done",
         )
 

@@ -387,6 +387,113 @@ def test_run_assignment_gate_exception_completes_with_error():
     assert src.completes == [("r1", "ssh down")]
 
 
+def _skill_enact_stub(source, skill_index, *, summary="ran ✓"):
+    s = types.SimpleNamespace()
+    s._lock = threading.Lock()
+    s._chat_sources = {_NS: source} if source is not None else {}
+    s._skill_index = skill_index
+    s.turns: list[tuple[str, str]] = []
+
+    def trigger_turn(card_id, system, message, *, draft, record=None, trigger=""):
+        s.turns.append((card_id, message))
+        if record is not None:
+            record("working")
+        return summary
+
+    s._trigger_run_agent_turn = trigger_turn
+    s._base_system = lambda: "SYS"
+    s._namespace_of = Bridge._namespace_of
+    s._portal_card_id = Bridge._portal_card_id
+    s._trigger_cards = {}
+    s.cards: list[dict] = []
+    s._dispatch = lambda ev, detail: (
+        ev == "runspec:trigger_card" and s.cards.append(detail)
+    )
+    s._evict_trigger_cards = types.MethodType(Bridge._evict_trigger_cards, s)
+    s._portal_card = types.MethodType(Bridge._portal_card, s)
+    s._portal_fail = types.MethodType(Bridge._portal_fail, s)
+    s._run_skill_assignment = types.MethodType(Bridge._run_skill_assignment, s)
+    return s
+
+
+def test_run_skill_assignment_renders_and_runs_agent_turn(monkeypatch):
+    from runspec_console import memory, skillargs
+
+    monkeypatch.setattr(
+        memory,
+        "load_skill",
+        lambda sid: {"id": "restart", "title": "Restart", "steps": "do {{svc}}"},
+    )
+    monkeypatch.setattr(skillargs, "validate_skill_values", lambda raw, vals: [])
+    src = _PortalSource()
+    s = _skill_enact_stub(src, {_NS: {"skill:restart": "restart"}}, summary="done ✓")
+    s._run_skill_assignment("r1", _THREAD, "skill:restart", {"svc": "nginx"}, _NS)
+    # The runbook body was rendered with the visitor's values and run as one agent
+    # turn keyed to the portal card; the summary was posted + the request completed.
+    assert len(s.turns) == 1
+    card_id, message = s.turns[0]
+    assert card_id == "portal:r1" and "do nginx" in message
+    assert src.starts == ["r1"]
+    assert src.messages == [("done ✓", _THREAD)]
+    assert src.completes == [("r1", None)]
+    assert _card(s)["column"] == "done"
+
+
+def test_run_skill_assignment_unknown_skill_fails(monkeypatch):
+    src = _PortalSource()
+    s = _skill_enact_stub(src, {_NS: {}})  # nothing in the skill index
+    s._run_skill_assignment("r1", _THREAD, "skill:gone", {}, _NS)
+    assert s.turns == [] and src.starts == []
+    rid, error = src.completes[0]
+    assert rid == "r1" and "no longer available" in error
+    assert _card(s)["column"] == "failed"
+
+
+def test_run_skill_assignment_invalid_values_fail(monkeypatch):
+    from runspec_console import memory, skillargs
+
+    monkeypatch.setattr(
+        memory, "load_skill", lambda sid: {"id": "restart", "steps": "x", "args": {}}
+    )
+    monkeypatch.setattr(
+        skillargs, "validate_skill_values", lambda raw, vals: ["svc is required"]
+    )
+    src = _PortalSource()
+    s = _skill_enact_stub(src, {_NS: {"skill:restart": "restart"}})
+    s._run_skill_assignment("r1", _THREAD, "skill:restart", {}, _NS)
+    assert s.turns == []  # never ran the agent turn
+    rid, error = src.completes[0]
+    assert rid == "r1" and "svc is required" in error
+
+
+def test_enact_assignment_dispatches_skill_kind(monkeypatch):
+    # An assignment with kind="skill" routes to the skill worker, not the runnable
+    # one. We stub both workers to record which fired.
+    s = _enact_stub(_PortalSource(), {_NS: {}})
+    fired: list[str] = []
+    s._run_assignment = lambda *a, **k: fired.append("runnable")
+    s._run_skill_assignment = lambda *a, **k: fired.append("skill")
+    s._enact_assignment(
+        {
+            "id": "r1",
+            "room": _THREAD,
+            "runnable": "skill:restart",
+            "args": {},
+            "kind": "skill",
+        }
+    )
+    # Give the worker thread a moment to run.
+    import time as _t
+
+    for _ in range(50):
+        if fired:
+            break
+        _t.sleep(0.005)
+    assert fired == ["skill"]
+    # The card shows the bare skill id, not the skill:<id> wire name.
+    assert _card(s)["detail"]["runnable"] == "restart"
+
+
 def test_enact_assignment_ignores_malformed_payload():
     src = _PortalSource()
     s = _enact_stub(src, {_NS: {"reset-password": _DISC}})
@@ -717,8 +824,10 @@ def _catalog_stub(runnables: list[dict[str, Any]]):
     s._lock = threading.Lock()
     s._runnables_cache = runnables
     s._catalog_index = {}
+    s._skill_index = {}
     s._published_catalogs = {}
     s._publish_catalog = types.MethodType(Bridge._publish_catalog, s)
+    s._build_room_skills = types.MethodType(Bridge._build_room_skills, s)
     return s
 
 

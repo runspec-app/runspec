@@ -237,6 +237,7 @@ def save_skill(
     steps: str = "",
     tags: list[str] | tuple[str, ...] = (),
     args: dict[str, Any] | None = None,
+    discoverable: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     """Create or replace a runbook by id (slugified from title when blank). Returns
     the id. ``steps`` is the body/prompt template (free text naming which runnables
@@ -262,6 +263,12 @@ def save_skill(
     # TOML free of empty `[skill.args]` tables.
     if args:
         entry["args"] = dict(args)
+    # The publish audience (``discoverable``) — which queue catalogs this runbook is
+    # offered in (e.g. ``["operator"]``). Opt-in: only persisted when non-empty, so an
+    # ordinary runbook stays out of every catalog. Mirrors a runnable's H0 field.
+    aud = [str(a).strip() for a in (discoverable or []) if str(a).strip()]
+    if aud:
+        entry["discoverable"] = aud
     with _LOCK:
         rows = _load(skills_path(), "skill")
         rows = [s for s in rows if s.get("id") != skill_id]

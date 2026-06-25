@@ -34,6 +34,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+#: The audience tags a published catalog entry may carry in ``x-audience``. A
+#: visitor sees only ``self-service`` entries; an operator sees everything. An entry
+#: with no tag defaults to ``self-service`` (an older console that predates the
+#: operator view) — so nothing operator-only ever leaks to a visitor by omission.
+SELF_SERVICE = "self-service"
+OPERATOR = "operator"
+
+
 def _tool_name(tool: Any) -> str:
     """The runnable name of a published tool entry (``""`` if malformed)."""
     if isinstance(tool, dict):
@@ -41,6 +49,22 @@ def _tool_name(tool: Any) -> str:
         if isinstance(name, str):
             return name.strip()
     return ""
+
+
+def entry_audience(tool: Any) -> str:
+    """The audience a published entry is tagged for (``x-audience``), defaulting to
+    ``self-service`` when absent or malformed."""
+    if isinstance(tool, dict):
+        aud = tool.get("x-audience")
+        if isinstance(aud, str) and aud.strip():
+            return aud.strip()
+    return SELF_SERVICE
+
+
+def visible_to(tool: Any, *, operator: bool) -> bool:
+    """Whether a session may see/request ``tool``: an operator sees every entry; a
+    visitor only ``self-service``-tagged ones."""
+    return operator or entry_audience(tool) == SELF_SERVICE
 
 
 @dataclass
@@ -101,21 +125,40 @@ class LiveCatalog:
         """The connected agents in ``namespace`` the rota currently has on shift."""
         return [a for a, e in self._agents.get(namespace, {}).items() if e.on_shift]
 
-    def live(self, namespace: str) -> list[dict[str, Any]]:
-        """The deduplicated union of the runnables held by the on-shift agents of
-        ``namespace`` — the catalogue a visitor browses. Deduped by runnable name,
-        first holder wins (its schema is the one shown); unnamed entries skipped."""
+    def live(self, namespace: str, *, operator: bool = False) -> list[dict[str, Any]]:
+        """The deduplicated union of the entries held by the on-shift agents of
+        ``namespace`` — the catalogue a session browses. Deduped by name, first
+        holder wins (its schema is the one shown); unnamed entries skipped. With
+        ``operator=False`` (a visitor) only ``self-service``-tagged entries are
+        returned; an operator session (``operator=True``) sees every entry — the
+        full runnable catalogue plus published runbooks. Filtering happens before
+        the dedup so a hidden operator entry never masks a later self-service one of
+        the same name."""
         seen: set[str] = set()
         union: list[dict[str, Any]] = []
         for entry in self._agents.get(namespace, {}).values():
             if not entry.on_shift:
                 continue
             for tool in entry.tools:
+                if not visible_to(tool, operator=operator):
+                    continue
                 name = _tool_name(tool)
                 if name and name not in seen:
                     seen.add(name)
                     union.append(tool)
         return union
+
+    def entry_for(self, namespace: str, tool: str) -> dict[str, Any] | None:
+        """The published entry for ``tool`` among the *connected* agents of
+        ``namespace`` (first holder wins, on or off shift), or ``None`` if no
+        connected console holds it. Used to read an entry's ``x-audience`` when
+        authorising a request (a request may target an off-shift-but-pageable
+        holder, so this spans the connected set, not just on-shift)."""
+        for entry in self._agents.get(namespace, {}).values():
+            for tool_entry in entry.tools:
+                if _tool_name(tool_entry) == tool:
+                    return tool_entry
+        return None
 
     def holders(self, namespace: str, tool: str) -> list[str]:
         """The on-shift agents in ``namespace`` that hold ``tool`` — the routing

@@ -36,7 +36,8 @@
   let room = ""; // legacy group-chat room (?room= deep-link)
   let queue = ""; // the single helpdesk queue this room serves (from /me)
   let authed = false; // verified server (email-verify) — name + team are locked
-  let catalog = []; // the queue's published tools
+  let operator = false; // operator session — sees the full catalogue + runbooks
+  let catalog = []; // the queue's published tools (and runbooks, for operators)
   const present = new Map(); // user -> status
   const requests = new Map(); // request_id -> { status node } for live lifecycle
 
@@ -48,6 +49,7 @@
     try {
       const info = await (await fetch("/me")).json();
       authed = !!info.auth;
+      operator = !!info.operator; // elevated view: full catalogue + runbooks
       if (info.queue) queue = info.queue; // the single helpdesk queue
       if (authed) {
         if (info.name || info.user) $("user").value = info.name || info.user;
@@ -223,6 +225,33 @@
     renderCatalog();
   }
 
+  // The label shown for a catalog entry: a runbook carries a human x-title (its
+  // wire name is the collision-proof `skill:<id>`); a runnable is its bare name.
+  function toolLabel(tool) {
+    return tool["x-kind"] === "skill" ? tool["x-title"] || tool.name : tool.name;
+  }
+
+  function appendCatalogItem(tool) {
+    const li = document.createElement("li");
+    li.className = "cat-item";
+    const name = document.createElement("span");
+    name.className = "cat-name";
+    name.textContent = toolLabel(tool);
+    const desc = document.createElement("span");
+    desc.className = "cat-desc";
+    desc.textContent = tool.description || "";
+    li.append(name, desc);
+    li.addEventListener("click", () => renderForm(tool));
+    catalogList.append(li);
+  }
+
+  function appendCatalogHeading(text) {
+    const li = document.createElement("li");
+    li.className = "cat-heading";
+    li.textContent = text;
+    catalogList.append(li);
+  }
+
   function renderCatalog() {
     catalogPanel.hidden = false;
     reqForm.hidden = true;
@@ -231,22 +260,19 @@
     if (!catalog.length) {
       const li = document.createElement("li");
       li.className = "cat-empty";
-      li.textContent = "No runnables available — no operator may be on shift.";
+      li.textContent = "Nothing available — no operator may be on shift.";
       catalogList.append(li);
       return;
     }
-    for (const tool of catalog) {
-      const li = document.createElement("li");
-      li.className = "cat-item";
-      const name = document.createElement("span");
-      name.className = "cat-name";
-      name.textContent = tool.name;
-      const desc = document.createElement("span");
-      desc.className = "cat-desc";
-      desc.textContent = tool.description || "";
-      li.append(name, desc);
-      li.addEventListener("click", () => renderForm(tool));
-      catalogList.append(li);
+    // Runnables first, then a Runbooks section (operator-only). A heading is shown
+    // only when both kinds are present, so a visitor's plain list is unchanged.
+    const runnables = catalog.filter((t) => t["x-kind"] !== "skill");
+    const skills = catalog.filter((t) => t["x-kind"] === "skill");
+    if (runnables.length && skills.length) appendCatalogHeading("Runnables");
+    for (const tool of runnables) appendCatalogItem(tool);
+    if (skills.length) {
+      appendCatalogHeading("Runbooks");
+      for (const tool of skills) appendCatalogItem(tool);
     }
   }
 
@@ -261,7 +287,7 @@
     reqForm.innerHTML = "";
 
     const h = document.createElement("h3");
-    h.textContent = tool.name;
+    h.textContent = toolLabel(tool);
     reqForm.append(h);
     if (tool.description) {
       const p = document.createElement("p");
@@ -345,7 +371,8 @@
                 : el.value;
         }
       }
-      ws.send(JSON.stringify({ type: "request", tool: tool.name, args }));
+      const kind = tool["x-kind"] === "skill" ? "skill" : "runnable";
+      ws.send(JSON.stringify({ type: "request", tool: tool.name, args, kind }));
       renderCatalog(); // back to the list; the echo lands in the transcript
     };
   }

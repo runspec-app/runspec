@@ -51,6 +51,7 @@ class BrowserConnection:
         room: str,
         display_name: str = "",
         team: str = "",
+        operator: bool = False,
     ) -> None:
         self._ws = ws
         self.user = user
@@ -60,6 +61,10 @@ class BrowserConnection:
         # Empty otherwise.
         self.display_name = display_name
         self.team = team
+        # Whether this login is an operator (allowlisted) — gates which catalogue
+        # entries it may request (operator-only vs self-service). The hub reads it
+        # off the participant when authorising a submission.
+        self.operator = operator
 
     async def send(self, frame: dict[str, Any]) -> None:
         await self._ws.send_json(frame)
@@ -88,15 +93,20 @@ class BrowserConnection:
         elif kind == PRESENCE:
             await hub.on_presence(self, normalize_status(frame.get("status")))
         elif kind == REQUEST:
-            # A catalogue submission from this visitor's form. The hub validates the
-            # runnable against the live catalogue, auto-assigns it to an on-shift
-            # holder (or holds it unassigned + pages), and is a no-op outside a
-            # conversation room — so a group-chat browser can't smuggle requests.
+            # A catalogue submission from this session's form. The hub validates the
+            # tool against the live catalogue *and* this session's audience
+            # (operator-only entries need operator access), auto-assigns it to an
+            # on-shift holder (or holds it unassigned + pages), and is a no-op outside
+            # a conversation room — so a group-chat browser can't smuggle requests.
+            # ``req_kind`` distinguishes a runnable submission from a skill (runbook).
             tool = str(frame.get("tool") or "").strip()
             args = frame.get("args")
+            req_kind = (
+                "skill" if str(frame.get("kind") or "") == "skill" else "runnable"
+            )
             if tool:
                 await hub.submit_request(
-                    self, tool, args if isinstance(args, dict) else {}
+                    self, tool, args if isinstance(args, dict) else {}, req_kind
                 )
         elif kind == PAGE:
             # The visitor's "Page the team" action on a still-unassigned request of
