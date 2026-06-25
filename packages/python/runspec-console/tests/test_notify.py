@@ -17,6 +17,14 @@ from runspec_console import notify
 from runspec_console.bridge import Bridge
 
 
+def _join_notify_threads():
+    """Wait for the offloaded notify-* daemon threads so we can assert what they
+    did (flash/sound fire in a worker thread, after the synchronous build)."""
+    for t in threading.enumerate():
+        if t.name.startswith("notify-"):
+            t.join(timeout=2)
+
+
 # ── pure message building ─────────────────────────────────────────────────────
 
 
@@ -157,6 +165,8 @@ class _StubBridge:
         self._pending_confirm_meta = {}
         self._dispatched = []
         self._enabled = enabled
+        self._flashed = False
+        self._sounds = []
 
     def _dispatch(self, event, detail):
         self._dispatched.append((event, detail))
@@ -165,10 +175,13 @@ class _StubBridge:
         return self._enabled
 
     def _flash_window(self):  # no win32 off-Windows
-        pass
+        self._flashed = True
 
     def _focus_window(self):
         pass
+
+    def _play_sound(self, category, *, force=False):
+        self._sounds.append(category)
 
     _confirm_card_view = Bridge._confirm_card_view
     _register_confirm = Bridge._register_confirm
@@ -217,7 +230,13 @@ def test_notify_confirm_skips_when_unavailable(monkeypatch):
     b = _StubBridge(enabled=True)
     b._notify_confirm("local__flush-dns", {}, "confirm")
 
-    assert built == []  # unavailable → no work, no thread
+    # Toast unavailable → no toast message is built …
+    assert built == []
+    # … but the taskbar flash + sound still fire (decoupled from the toast extra,
+    # which is the whole point — pywin32 flash + winsound need no winrt).
+    _join_notify_threads()
+    assert b._flashed is True
+    assert b._sounds == ["confirm"]
 
 
 def test_notify_confirm_never_raises(monkeypatch):
@@ -239,6 +258,7 @@ class _RoomStubBridge:
     def __init__(self, *, foreground=False):
         self._foreground = foreground
         self._flashed = False
+        self._sounds = []
 
     def _window_is_foreground(self):
         return self._foreground
@@ -248,6 +268,9 @@ class _RoomStubBridge:
 
     def _focus_window(self):
         pass
+
+    def _play_sound(self, category, *, force=False):
+        self._sounds.append(category)
 
     _notify_room_message = Bridge._notify_room_message
 
@@ -293,7 +316,11 @@ def test_notify_room_skips_when_unavailable(monkeypatch):
     monkeypatch.setattr(notify, "available", lambda: (False, "nope"))
     b = _RoomStubBridge(foreground=False)
     b._notify_room_message({"room": "ops", "text": "hi"})
+    # Toast unavailable → no toast built, but the flash + sound still fire.
     assert built == []
+    _join_notify_threads()
+    assert b._flashed is True
+    assert b._sounds == ["message"]
 
 
 def test_notify_room_never_raises(monkeypatch):

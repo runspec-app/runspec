@@ -183,6 +183,10 @@ class InvokeMixin:
                     "runspec:run_end",
                     {"id": inv_id, "exit_code": exit_code, "duration_ms": duration_ms},
                 )
+                # Audio cue for the run outcome (best-effort; muted unless enabled).
+                self._play_sound(
+                    "completion_success" if exit_code == 0 else "completion_error"
+                )
                 if on_progress is not None:
                     on_progress(
                         "done", {"exit_code": exit_code, "duration_ms": duration_ms}
@@ -673,6 +677,13 @@ class InvokeMixin:
                 "stopped": stopped,
             },
         )
+        # Audio cue: "reply ready" when the agent finishes and the console isn't
+        # foreground (you're elsewhere); a quiet "stopped" cue if you halted it.
+        # Suppressed when you're watching, so a normal back-and-forth stays silent.
+        if stopped:
+            self._play_sound("completion_stopped")
+        elif not self._window_is_foreground():
+            self._play_sound("reply")
         if any(usage_total.values()):
             self._dispatch(
                 "runspec:chat_usage",

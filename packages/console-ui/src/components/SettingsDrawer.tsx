@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type HostGroup, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
@@ -48,6 +48,129 @@ const TOOL_MODE_OPTIONS = [
   { value: 'per_host', label: 'Per-host — one tool per host × runnable' },
   { value: 'search', label: 'Search — discovery meta-tools (best for large, multi-package fleets)' },
 ]
+
+// ── Sounds & Notifications tab ───────────────────────────────────────────────
+
+// Category → display label + default synthesized token (mirrors
+// config.DEFAULT_SOUND_MAP in the backend).
+const SOUND_CATEGORIES: { key: string; label: string; def: string }[] = [
+  { key: 'confirm', label: 'Confirmation waiting (urgent)', def: 'synth:confirm' },
+  { key: 'trigger', label: 'Trigger fired', def: 'synth:trigger' },
+  { key: 'completion_success', label: 'Run succeeded', def: 'synth:success' },
+  { key: 'completion_error', label: 'Run failed', def: 'synth:error' },
+  { key: 'completion_stopped', label: 'Run stopped', def: 'synth:stopped' },
+  { key: 'reply', label: 'Agent reply ready (unfocused)', def: 'synth:reply' },
+  { key: 'message', label: 'Chat / helpdesk message', def: 'synth:message' },
+]
+// Valid winsound SND_ALIAS names offered as alternatives to the synth set.
+const SYSTEM_SOUND_ALIASES = ['SystemAsterisk', 'SystemExclamation', 'SystemHand', 'SystemQuestion', 'SystemDefault']
+const soundOptions = (def: string) => [
+  { value: def, label: 'Default (synthesized)' },
+  ...SYSTEM_SOUND_ALIASES.map(a => ({ value: `system:${a}`, label: `Windows: ${a}` })),
+  { value: 'off', label: 'Off' },
+]
+
+export function SoundsTab() {
+  const [enabled, setEnabled] = useState(true)
+  const [choices, setChoices] = useState<Record<string, string>>({})
+  const [confirmNotif, setConfirmNotif] = useState(true)
+  const [roomNotif, setRoomNotif] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [test, setTest] = useState<{ toast_available: boolean; toast_reason: string; sound_available: boolean; window_found: boolean } | null>(null)
+
+  useEffect(() => {
+    bridge.get_config().then(cfg => {
+      const con = (cfg.console ?? {}) as Record<string, unknown>
+      const sounds = (con.sounds ?? {}) as Record<string, unknown>
+      setEnabled(sounds.enabled !== false)
+      const ch: Record<string, string> = {}
+      for (const c of SOUND_CATEGORIES) {
+        const v = sounds[c.key]
+        ch[c.key] = typeof v === 'string' && v ? v : c.def
+      }
+      setChoices(ch)
+      setConfirmNotif(con.confirm_notifications !== false)
+      setRoomNotif(con.room_notifications !== false)
+    })
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const cfg = await bridge.get_config()
+      const con: Record<string, unknown> = { ...((cfg.console as Record<string, unknown>) ?? {}) }
+      con.sounds = { enabled, ...choices }
+      con.confirm_notifications = confirmNotif
+      con.room_notifications = roomNotif
+      await bridge.save_config({ ...cfg, console: con })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const runTest = async () => {
+    setTesting(true)
+    try { setTest(await bridge.test_notification()) }
+    finally { setTesting(false) }
+  }
+
+  const row = (label: string, control: ReactNode) => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+      <span style={{ fontSize: 13 }}>{label}</span>
+      {control}
+    </div>
+  )
+
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        Audio cues + desktop alerts so you stay aware while the console is minimized or in the background.
+        Sounds play from the app, so they work even when minimized. The desktop <em>toast</em> needs the
+        optional notifications extra (<Typography.Text code>pip install runspec-console[notifications]</Typography.Text>),
+        but the <em>taskbar flash</em> and <em>sounds</em> do not.
+      </Typography.Paragraph>
+
+      {row('Enable sounds', <Switch checked={enabled} onChange={setEnabled} />)}
+      <Divider style={{ margin: '8px 0' }} />
+      {SOUND_CATEGORIES.map(c => row(
+        c.label,
+        <Select
+          size="small"
+          disabled={!enabled}
+          value={choices[c.key] ?? c.def}
+          onChange={v => setChoices(prev => ({ ...prev, [c.key]: v }))}
+          options={soundOptions(c.def)}
+          style={{ width: 230 }}
+        />,
+      ))}
+
+      <Divider style={{ margin: '12px 0 8px' }} />
+      <Typography.Text strong style={{ fontSize: 13 }}>Desktop notifications</Typography.Text>
+      <div style={{ marginTop: 8 }}>
+        {row('Toast + flash when a confirmation is waiting', <Switch checked={confirmNotif} onChange={setConfirmNotif} />)}
+        {row('Toast + flash on a chat / helpdesk message', <Switch checked={roomNotif} onChange={setRoomNotif} />)}
+      </div>
+
+      <Space style={{ marginTop: 8 }}>
+        <Button type="primary" onClick={handleSave} loading={saving}>Save</Button>
+        {saved && <Typography.Text type="success"><CheckOutlined /> Saved</Typography.Text>}
+        <Button onClick={runTest} loading={testing}>Test notification &amp; sound</Button>
+      </Space>
+
+      {test && (
+        <pre style={{ marginTop: 12, fontSize: 12, background: 'rgba(127,127,127,0.12)', padding: 10, borderRadius: 6, whiteSpace: 'pre-wrap' }}>
+{`Sound:  ${test.sound_available ? 'available' : 'unavailable (not Windows?)'}
+Toast:  ${test.toast_available ? 'available' : `unavailable — ${test.toast_reason}`}
+Flash:  ${test.window_found ? 'window found' : 'window NOT found — title mismatch'}`}
+        </pre>
+      )}
+    </div>
+  )
+}
 
 // ── LLM tab ───────────────────────────────────────────────────────────────────
 
@@ -2634,6 +2757,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
           { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
           { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },
+          { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
         ]}
       />
     </Drawer>

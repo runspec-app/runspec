@@ -800,14 +800,14 @@ class TriggersMixin:
         ``_notify_room_message`` (skip when foreground / opted out); always
         swallowed on error."""
         try:
-            ok, _ = notify.available()
-            if not ok or self._window_is_foreground():
+            if self._window_is_foreground():
                 return
             try:
                 if not config_mod.room_notifications_enabled():
                     return
             except Exception:
                 pass
+            toast_ok, _ = notify.available()
             runnable = str(payload.get("runnable") or "a runnable")
             visitor = str(
                 payload.get("visitor_name") or payload.get("visitor") or "Someone"
@@ -818,8 +818,11 @@ class TriggersMixin:
             logger.debug("notify_page setup failed", exc_info=True)
             return
         try:
-            notify.notify(title, body, on_click=self._focus_window)
+            # Toast needs the [notifications] extra; flash + sound don't.
+            if toast_ok:
+                notify.notify(title, body, on_click=self._focus_window)
             self._flash_window()
+            self._play_sound("message")
         except Exception:
             logger.debug("desktop page notify failed", exc_info=True)
 
@@ -1524,6 +1527,7 @@ class TriggersMixin:
         from a source / worker thread."""
         detail = card.to_dict()
         with self._lock:
+            prev = self._trigger_cards.get(detail["card_id"], {}).get("column")
             self._trigger_cards[detail["card_id"]] = detail
             # Bound the board so a long session can't grow without limit.
             if len(self._trigger_cards) > 200:
@@ -1534,6 +1538,12 @@ class TriggersMixin:
                 for old in oldest:
                     self._trigger_cards.pop(old["card_id"], None)
         self._dispatch("runspec:trigger_card", detail)
+        # Audio cue once per trigger fire: only on the transition *into* the
+        # "triggered" column (a new fire — something happened while you were away).
+        # Approval is covered by the confirm cue and completion by the run-outcome
+        # cues, so this stays one ping per fire (no per-mutation spam).
+        if detail.get("column") == "triggered" and prev != "triggered":
+            self._play_sound("trigger")
 
     # ── schedule run inbox + event log (mirrors the trigger hooks) ──────────────
 

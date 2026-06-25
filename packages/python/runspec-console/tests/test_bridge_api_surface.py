@@ -121,6 +121,7 @@ EXPECTED = {
     "set_trigger_enabled",
     "set_window",
     "set_window_title",
+    "test_notification",
     "start_break",
     "start_chat",
     "start_fanout",

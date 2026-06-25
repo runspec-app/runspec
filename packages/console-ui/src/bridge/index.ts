@@ -728,6 +728,10 @@ export interface BridgeApi {
   open_docs: () => Promise<void>
   list_providers: () => Promise<{ value: string; label: string }[]>
   save_config: (data: Record<string, unknown>) => Promise<void>
+  // Fire a test toast + taskbar flash + confirm sound; reports which channels are
+  // available (Settings → Sounds & Notifications). window_found surfaces the
+  // flash/focus title-match prerequisite.
+  test_notification: () => Promise<{ toast_available: boolean; toast_reason: string; sound_available: boolean; window_found: boolean }>
   create_schedule: (data: Record<string, unknown>) => Promise<void>
   // Replace a schedule in place (edit dialog, inline enable/disable). Keeps the id.
   update_schedule: (id: string, data: Record<string, unknown>) => Promise<void>

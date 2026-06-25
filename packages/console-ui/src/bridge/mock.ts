@@ -661,6 +661,8 @@ export const mockApi: BridgeApi = {
 
   save_config: async (data) => { console.log('[mock] save_config', data) },
 
+  test_notification: async () => ({ toast_available: false, toast_reason: 'mock', sound_available: false, window_found: false }),
+
   get_mailbox: async () => ({ address: 'helpdesk@corp.com', folder: 'Tickets/Open', label: 'Helpdesk', once_per_thread: true }),
 
   save_mailbox: async (mailbox) => { console.log('[mock] save_mailbox', mailbox) },

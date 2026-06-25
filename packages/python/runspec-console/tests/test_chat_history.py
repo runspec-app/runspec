@@ -36,6 +36,14 @@ class _StubBridge:
     def _dispatch(self, event, detail):
         self.dispatched.append((event, detail))
 
+    # Audio cue + window-focus helpers the chat turn calls (run-outcome / reply
+    # cues); no-ops in these unit tests.
+    def _play_sound(self, category, *, force=False):
+        pass
+
+    def _window_is_foreground(self):
+        return False
+
     def _runnables_to_tools(self):
         return []
 

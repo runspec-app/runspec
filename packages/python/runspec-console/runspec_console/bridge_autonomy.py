@@ -20,6 +20,7 @@ from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
 from . import notify
+from . import sounds
 from .config import (
     confirm_notifications_enabled,
 )
@@ -219,30 +220,47 @@ class AutonomyMixin:
         except Exception:
             return True
 
+    def _play_sound(self, category: str, *, force: bool = False) -> bool:
+        """Best-effort audio cue — never raises, no-op off Windows / when muted."""
+        try:
+            return sounds.play(category, force=force)
+        except Exception:
+            logger.debug("play sound failed (category=%s)", category, exc_info=True)
+            return False
+
     def _notify_confirm(
         self, tool_name: str, tool_input: dict[str, Any], level: str
     ) -> None:
-        """Best-effort desktop toast + taskbar flash for a pending confirm.
+        """Best-effort desktop toast + taskbar flash + audio cue for a pending
+        confirm.
 
-        Gates (availability, opt-out) and message-building run synchronously; the
-        actual toast/flash is offloaded so the event-loop thread that streams
-        tokens isn't blocked. Any failure is swallowed — a missed notification
-        must never disturb the confirmation flow."""
+        The opt-out gate runs synchronously; the toast/flash/sound is offloaded so
+        the token-streaming thread isn't blocked. **The toast depends on the
+        ``[notifications]`` extra (winrt), but the taskbar flash (pywin32, a core
+        dep) and the audio cue do NOT** — so they fire even when toasts are
+        unavailable. Any failure is swallowed — a missed cue must never disturb the
+        confirmation flow."""
         try:
-            ok, _ = notify.available()
-            if not ok:
-                return
             if not self._confirm_notifications_enabled():
                 return
-            title, body = notify.build_confirm_message(tool_name, tool_input)
+            toast_ok, _ = notify.available()
+            # Only build the toast text when we can actually show one; the flash +
+            # sound below don't need it.
+            title, body = (
+                notify.build_confirm_message(tool_name, tool_input)
+                if toast_ok
+                else ("", "")
+            )
         except Exception:
             logger.debug("notify_confirm setup failed", exc_info=True)
             return
 
         def _raise() -> None:
             try:
-                notify.notify(title, body, on_click=self._focus_window)
+                if toast_ok:
+                    notify.notify(title, body, on_click=self._focus_window)
                 self._flash_window()
+                self._play_sound("confirm")
             except Exception:
                 logger.debug("desktop notify failed", exc_info=True)
 
@@ -259,6 +277,10 @@ class AutonomyMixin:
 
             hwnd = win32gui.FindWindow(None, self._window_title)
             if not hwnd:
+                # The native window title didn't match self._window_title — flash
+                # (and focus) can't locate the window. Surfaced by the Settings
+                # "Test" button's window_found=False.
+                logger.debug("flash window: no window titled %r", self._window_title)
                 return
             # FLASHW_ALL (0x3) | FLASHW_TIMERNOFG (0xC): flash until foreground.
             win32gui.FlashWindowEx(hwnd, 0x0000000F, 0, 0)
@@ -309,9 +331,6 @@ class AutonomyMixin:
         flow. The server drops the console's own echo, so every event here is
         from someone else."""
         try:
-            ok, _ = notify.available()
-            if not ok:
-                return
             if self._window_is_foreground():
                 return
             try:
@@ -319,19 +338,65 @@ class AutonomyMixin:
                     return
             except Exception:
                 pass  # config unreadable → default to notifying
-            title, body = notify.build_room_message(payload)
+            toast_ok, _ = notify.available()
+            title, body = notify.build_room_message(payload) if toast_ok else ("", "")
         except Exception:
             logger.debug("notify_room setup failed", exc_info=True)
             return
 
         def _raise() -> None:
             try:
-                notify.notify(title, body, on_click=self._focus_window)
+                # Toast needs the [notifications] extra; flash + sound don't.
+                if toast_ok:
+                    notify.notify(title, body, on_click=self._focus_window)
                 self._flash_window()
+                self._play_sound("message")
             except Exception:
                 logger.debug("desktop room notify failed", exc_info=True)
 
         threading.Thread(target=_raise, name="notify-room", daemon=True).start()
+
+    def _window_found(self) -> bool:
+        """Whether the native window can be located by title (the flash/focus
+        prerequisite). Windows-only; False elsewhere / on error."""
+        if sys.platform != "win32":
+            return False
+        try:
+            import win32gui
+
+            return bool(win32gui.FindWindow(None, self._window_title))
+        except Exception:
+            return False
+
+    def test_notification(self) -> dict[str, Any]:
+        """Fire a test toast + taskbar flash + confirm sound so the operator can
+        verify each attention channel from Settings → Sounds & Notifications.
+        Returns which channels are available; ``window_found`` surfaces the
+        title-match prerequisite for the flash/focus. Best-effort; never raises."""
+        toast_available, toast_reason = notify.available()
+        sound_available, _ = sounds.available()
+        window_found = self._window_found()
+
+        def _raise() -> None:
+            try:
+                if toast_available:
+                    notify.notify(
+                        self._window_title or "runspec console",
+                        "Test notification — if you can see this, toasts work.",
+                        on_click=self._focus_window,
+                    )
+                self._flash_window()
+                self._play_sound("confirm", force=True)
+            except Exception:
+                logger.debug("test notification failed", exc_info=True)
+
+        threading.Thread(target=_raise, name="notify-test", daemon=True).start()
+        return {
+            "toast_available": toast_available,
+            "toast_reason": toast_reason,
+            "sound_available": sound_available,
+            "window_found": window_found,
+        }
 
     def _finish_confirm(
         self, request_id: str, holder: dict[str, Any], timed_out: bool

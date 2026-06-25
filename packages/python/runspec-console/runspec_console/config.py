@@ -586,6 +586,48 @@ def room_notifications_enabled() -> bool:
     return True
 
 
+# Built-in default sound mapping (category -> token). A token is one of
+# "synth:<name>" (bundled wav), "system:<Alias>" (Windows system sound), or
+# "off". The Settings UI lets the operator override per category; an unset or
+# garbage value falls back to these. Kept here so sounds.py stays config-free.
+DEFAULT_SOUND_MAP = {
+    "confirm": "synth:confirm",
+    "trigger": "synth:trigger",
+    "completion_success": "synth:success",
+    "completion_error": "synth:error",
+    "completion_stopped": "synth:stopped",
+    "reply": "synth:reply",
+    "message": "synth:message",
+}
+
+
+def sounds_config() -> dict[str, Any]:
+    """The `[console.sounds]` table (or `{}` if unset)."""
+    console = read_config().get("console")
+    if isinstance(console, dict):
+        sounds = console.get("sounds")
+        if isinstance(sounds, dict):
+            return sounds
+    return {}
+
+
+def sound_enabled() -> bool:
+    """`[console.sounds] enabled` master toggle — play audio cues for confirm
+    gates, run outcomes, triggers, and messages. Defaults to True (on)."""
+    val = sounds_config().get("enabled")
+    return val if isinstance(val, bool) else True
+
+
+def sound_choice(category: str) -> str:
+    """The configured sound token for a category (`"synth:<name>"` /
+    `"system:<Alias>"` / `"off"`), falling back to the built-in default. Never
+    raises; an unknown/garbage value yields the default for that category."""
+    val = sounds_config().get(category)
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return DEFAULT_SOUND_MAP.get(category, "off")
+
+
 def _toml_str(v: str) -> str:
     """Escape a Python string as a TOML basic string literal.
 
