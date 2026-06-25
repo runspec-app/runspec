@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.128.1] — 2026-06-25
+
+### Fixed
+- **Wheel build failed (`A second file is being added to the wheel archive at the
+  same path: runspec_console/sounds/__init__.py`).** The bundled sounds package was
+  added to `[tool.hatch.build.targets.wheel.force-include]` even though it lives
+  inside the `runspec_console` package and is already VCS-tracked, so hatchling
+  included every `sounds/` file twice. Removed the redundant force-include — the
+  `.wav` cues and module ship via the normal package selection. force-include is
+  now only the gitignored Vite `dist` and `runspec.toml`.
+
+
 ## [0.128.0] — 2026-06-25
 
 ### Added
