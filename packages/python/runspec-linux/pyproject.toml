@@ -58,7 +58,7 @@ api-spec          = "runspec_linux.webops:main_api_spec"
 
 [project.optional-dependencies]
 dev = [
-    "ruff",
+    "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
 ]

@@ -15,7 +15,7 @@ yaml = [
     "pyyaml>=6.0",
 ]
 dev = [
-    "ruff",
+    "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
     "pyyaml>=6.0",

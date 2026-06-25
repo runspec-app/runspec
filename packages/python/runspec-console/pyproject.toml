@@ -81,7 +81,7 @@ all = [
     "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule]",
 ]
 dev = [
-    "ruff",
+    "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
     "httpx>=0.27",

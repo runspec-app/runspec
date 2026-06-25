@@ -19,7 +19,7 @@ graph = [
     "httpx>=0.27",
 ]
 dev = [
-    "ruff",
+    "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
     "msal>=1.28",

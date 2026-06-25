@@ -19,7 +19,7 @@ bundle-digest = "runspec_logops.bundle:main_bundle_digest"
 
 [project.optional-dependencies]
 dev = [
-    "ruff",
+    "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
 ]

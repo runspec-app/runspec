@@ -993,7 +993,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install tools
-        run: pip install ruff
+        run: pip install "ruff==0.15.20"
 
       - name: Lint
         if: matrix.check == 'lint'

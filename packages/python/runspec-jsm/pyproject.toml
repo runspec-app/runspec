@@ -24,7 +24,7 @@ jsm-list-fields        = "runspec_jsm.forms:main_list_fields"
 
 [project.optional-dependencies]
 dev = [
-    "ruff",
+    "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
 ]

@@ -24,7 +24,7 @@ snow-list-variables     = "runspec_snow.catalog:main_list_variables"
 
 [project.optional-dependencies]
 dev = [
-    "ruff",
+    "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
 ]
