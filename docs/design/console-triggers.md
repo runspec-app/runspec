@@ -460,6 +460,20 @@ proposal. `resolve_tool_confirmation(request_id, approved, edited_input=None)` �
 execution in `_gated_run_tool_async` / `_gated_run_tool` / the reply gates /
 `_run_rule_group`.
 
+**Run-target picker (editor UX, 0.130.0).** In `TriggersEditor.tsx` the rule
+`run` target — for the single "Run" field *and* every action-list row — is a
+**Host/Group toggle + target selector + runnable selector** (the same shape as the
+Schedules modal), not a free-text `host__runnable` box. Picking a runnable
+**auto-lists its declared args** as labelled rows (required flagged, type/options
+shown as a placeholder). The values stay **template-capable** — plain text fields
+that take a literal *or* a `{{ payload field }}` / `{{ _llm.x }}` template — because
+trigger args are templated from the event (this is the deliberate difference from
+the schedule modal's typed inputs). Map entries not in the runnable's spec remain
+editable "custom arg" rows. The picker is purely an editor convenience: it composes
+the exact same `run` string + `map` table described above, so the on-disk
+`runspec_triggers.toml` format is unchanged. Pure helpers
+`parseRun`/`composeRun`/`argsForRun` are unit-tested in `TriggersEditor.test.tsx`.
+
 ---
 
 ## 6. Headless agent turn (trigger-driven)

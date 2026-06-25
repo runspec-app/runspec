@@ -5,7 +5,8 @@
  */
 import { describe, it, expect } from 'vitest'
 
-import { triggerToForm, formToTrigger } from './TriggersEditor'
+import { triggerToForm, formToTrigger, parseRun, composeRun, argsForRun } from './TriggersEditor'
+import type { Runnable } from '../bridge'
 
 describe('TriggersEditor form mapping', () => {
   it('derives rule_kind=list and maps actions/action_mode/pre_turn from a trigger', () => {
@@ -83,5 +84,45 @@ describe('TriggersEditor form mapping', () => {
     expect(out.action_allow).toEqual(['create_document', 'outlook_draft'])
     expect(out.actions).toBeUndefined()
     expect(out.run).toBeUndefined()
+  })
+})
+
+describe('run-target picker helpers', () => {
+  it('parseRun splits a host target', () => {
+    expect(parseRun('web01__reset-password')).toEqual({
+      kind: 'host', target: 'web01', runnable: 'reset-password',
+    })
+  })
+
+  it('parseRun splits a group target', () => {
+    expect(parseRun('group:Production__reset-password')).toEqual({
+      kind: 'group', target: 'Production', runnable: 'reset-password',
+    })
+  })
+
+  it('parseRun tolerates an incomplete value', () => {
+    expect(parseRun('web01')).toEqual({ kind: 'host', target: 'web01', runnable: '' })
+    expect(parseRun('')).toEqual({ kind: 'host', target: '', runnable: '' })
+  })
+
+  it('composeRun is the inverse and empty until complete', () => {
+    expect(composeRun('host', 'web01', 'backup')).toBe('web01__backup')
+    expect(composeRun('group', 'Prod', 'backup')).toBe('group:Prod__backup')
+    expect(composeRun('host', 'web01', '')).toBe('') // runnable missing → invalid
+    expect(composeRun('host', '', 'backup')).toBe('')
+  })
+
+  it('argsForRun resolves the declared args of the chosen runnable', () => {
+    const runnables: Runnable[] = [
+      { name: 'backup', group: 'g', host: 'web01', args: [{ name: 'db', type: 'str', required: true }] },
+      { name: 'backup', group: 'g', host: 'web02', args: [{ name: 'db', type: 'str', required: true }] },
+      { name: 'other', group: 'g', host: 'web01', args: [] },
+    ]
+    expect(argsForRun('web01__backup', runnables).map(a => a.name)).toEqual(['db'])
+    // group target resolves by name from any member
+    expect(argsForRun('group:Prod__backup', runnables).map(a => a.name)).toEqual(['db'])
+    // unknown / incomplete → no args
+    expect(argsForRun('web01__nope', runnables)).toEqual([])
+    expect(argsForRun('', runnables)).toEqual([])
   })
 })

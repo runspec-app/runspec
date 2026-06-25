@@ -7,7 +7,7 @@ import {
   PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined,
   ThunderboltOutlined, CheckOutlined, CloseOutlined, PlayCircleOutlined,
 } from '@ant-design/icons'
-import { bridge, type TriggerSourceInfo } from '../bridge'
+import { bridge, type TriggerSourceInfo, type Host, type Runnable, type ArgDef } from '../bridge'
 
 const { Text } = Typography
 
@@ -125,6 +125,194 @@ export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
   return base
 }
 
+// ── Run-target picker + arg editor (rule mode) ──────────────────────────────
+// A rule `run` target is a string: "host__runnable" or "group:<group>__runnable".
+// parseRun splits it into pieces for the picker; composeRun is the inverse and
+// returns "" until both a target and a runnable are chosen (so the required-field
+// rule fires on a half-made selection).
+
+type RunKind = 'host' | 'group'
+
+export function parseRun(run: string): { kind: RunKind; target: string; runnable: string } {
+  const s = (run || '').trim()
+  if (s.startsWith('group:')) {
+    const rest = s.slice('group:'.length)
+    const i = rest.indexOf('__')
+    return i < 0
+      ? { kind: 'group', target: rest, runnable: '' }
+      : { kind: 'group', target: rest.slice(0, i), runnable: rest.slice(i + 2) }
+  }
+  const i = s.indexOf('__')
+  return i < 0
+    ? { kind: 'host', target: s, runnable: '' }
+    : { kind: 'host', target: s.slice(0, i), runnable: s.slice(i + 2) }
+}
+
+export function composeRun(kind: RunKind, target: string, runnable: string): string {
+  if (!target || !runnable) return ''
+  return kind === 'group' ? `group:${target}__${runnable}` : `${target}__${runnable}`
+}
+
+// The declared args of the runnable a `run` target names (top-level args; for a
+// group target any member carries the same spec). [] when nothing is resolvable.
+export function argsForRun(run: string | undefined, runnables: Runnable[]): ArgDef[] {
+  const p = parseRun(run || '')
+  if (!p.runnable) return []
+  const r = runnables.find(
+    x => x.name === p.runnable && (p.kind === 'group' || x.host === p.target),
+  )
+  return r?.args ?? []
+}
+
+// A controlled form input for a rule `run` target: a Host/Group toggle, a target
+// selector, and a runnable selector filtered to that target. Holds the parsed
+// pieces locally so picking a host before a runnable doesn't wipe the selection,
+// and re-seeds only when an externally-set value (opening another trigger) differs.
+function RunPicker({
+  value, onChange, hosts, runnables,
+}: {
+  value?: string
+  onChange?: (v: string) => void
+  hosts: Host[]
+  runnables: Runnable[]
+}) {
+  const p = parseRun(value || '')
+  const [kind, setKind] = useState<RunKind>(p.kind)
+  const [target, setTarget] = useState(p.target)
+  const [runnable, setRunnable] = useState(p.runnable)
+
+  useEffect(() => {
+    if ((value || '') !== composeRun(kind, target, runnable)) {
+      const q = parseRun(value || '')
+      setKind(q.kind); setTarget(q.target); setRunnable(q.runnable)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+
+  const groups = [...new Set(hosts.map(h => h.group).filter((g): g is string => !!g))].sort()
+  const runnablesFor = (k: RunKind, t: string): Runnable[] => {
+    if (!t) return []
+    if (k === 'group') {
+      const members = new Set(hosts.filter(h => h.group === t).map(h => h.name))
+      return [...new Map(runnables.filter(r => members.has(r.host)).map(r => [r.name, r])).values()]
+    }
+    return runnables.filter(r => r.host === t)
+  }
+
+  const emit = (k: RunKind, t: string, r: string) => onChange?.(composeRun(k, t, r))
+  const onKind = (k: RunKind) => { setKind(k); setTarget(''); setRunnable(''); emit(k, '', '') }
+  const onTarget = (t: string) => {
+    setTarget(t)
+    const keep = runnablesFor(kind, t).some(r => r.name === runnable) ? runnable : ''
+    setRunnable(keep); emit(kind, t, keep)
+  }
+  const onRunnable = (r: string) => { setRunnable(r); emit(kind, target, r) }
+
+  // Always include the current selection as an option, even if the host/runnable
+  // is offline or undiscovered, so editing an existing trigger never loses it.
+  const withCurrent = (opts: string[], cur: string) =>
+    (cur && !opts.includes(cur) ? [cur, ...opts] : opts)
+  const targetNames = withCurrent(kind === 'group' ? groups : hosts.map(h => h.name), target)
+  const runnableNames = withCurrent(runnablesFor(kind, target).map(r => r.name), runnable)
+  const dot = (name: string) => {
+    const up = hosts.find(h => h.name === name)?.connected
+    return <span style={{ fontSize: 9, color: up ? '#52c41a' : '#595959', marginRight: 6 }}>●</span>
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+      <Segmented
+        size="small" value={kind} onChange={v => onKind(v as RunKind)}
+        options={[{ label: 'Host', value: 'host' }, { label: 'Group', value: 'group', disabled: groups.length === 0 }]}
+      />
+      <Select
+        size="small" showSearch style={{ minWidth: 150 }} placeholder={kind === 'group' ? 'group' : 'host'}
+        value={target || undefined} onChange={onTarget}
+        options={targetNames.map(t => ({ value: t, label: kind === 'host' ? <span>{dot(t)}{t}</span> : t }))}
+      />
+      <span style={{ color: '#666' }}>/</span>
+      <Select
+        size="small" showSearch style={{ minWidth: 170 }} placeholder="runnable" disabled={!target}
+        value={runnable || undefined} onChange={onRunnable}
+        options={runnableNames.map(r => ({ value: r, label: <code>/{r}</code> }))}
+      />
+    </div>
+  )
+}
+
+// A controlled form input for a rule arg map ({arg, template}[]). The chosen
+// runnable's declared args auto-list as labelled rows (required flagged, type/
+// options shown as placeholder); each value is free text so it can be a literal
+// OR a {{ payload field }} / {{ _llm.x }} template. Any map entry whose arg isn't
+// in the spec stays as an editable "custom" row, and an Add custom arg button
+// covers anything extra.
+function ArgMapEditor({
+  value, onChange, declaredArgs,
+}: {
+  value?: { arg: string; template: string }[]
+  onChange?: (v: { arg: string; template: string }[]) => void
+  declaredArgs: ArgDef[]
+}) {
+  const rows = value || []
+  const declaredNames = new Set(declaredArgs.map(a => a.name))
+  const declaredEntries = rows.filter(r => declaredNames.has(r.arg))
+  const customRows = rows.filter(r => !declaredNames.has(r.arg))
+  const templateOf = (name: string) => rows.find(r => r.arg === name)?.template ?? ''
+
+  const setDeclared = (name: string, template: string) => {
+    const others = rows.filter(r => r.arg !== name)
+    onChange?.(template ? [...others, { arg: name, template }] : others)
+  }
+  const commitCustom = (next: { arg: string; template: string }[]) =>
+    onChange?.([...declaredEntries, ...next])
+  const setCustom = (i: number, field: 'arg' | 'template', val: string) => {
+    const next = customRows.map((r, j) => (j === i ? { ...r, [field]: val } : r))
+    commitCustom(next)
+  }
+  const addCustom = () => onChange?.([...rows, { arg: '', template: '' }])
+  const removeCustom = (i: number) => commitCustom(customRows.filter((_, j) => j !== i))
+
+  const hintFor = (a: ArgDef): string =>
+    a.options?.length ? `one of ${a.options.join(' | ')}  (or {{ field }})`
+      : a.type === 'flag' || a.type === 'bool' ? 'true / false  (or {{ field }})'
+      : a.default !== undefined ? `default ${String(a.default)}  (or {{ field }})`
+      : '{{ field }}'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {declaredArgs.map(a => (
+        <div key={a.name} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 110, textAlign: 'right', color: '#aaa' }}>
+            {a.name}{a.required ? <span style={{ color: '#cf5b5b' }}> *</span> : ''}
+          </span>
+          <span style={{ color: '#666' }}>→</span>
+          <Input
+            size="small" style={{ fontFamily: 'monospace' }} placeholder={hintFor(a)}
+            value={templateOf(a.name)} onChange={e => setDeclared(a.name, e.target.value)}
+          />
+        </div>
+      ))}
+      {customRows.map((r, i) => (
+        <div key={`c${i}`} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <Input
+            size="small" style={{ fontFamily: 'monospace', minWidth: 110, maxWidth: 116 }} placeholder="arg"
+            value={r.arg} onChange={e => setCustom(i, 'arg', e.target.value)}
+          />
+          <span style={{ color: '#666' }}>→</span>
+          <Input
+            size="small" style={{ fontFamily: 'monospace' }} placeholder="{{ field }}"
+            value={r.template} onChange={e => setCustom(i, 'template', e.target.value)}
+          />
+          <MinusCircleOutlined onClick={() => removeCustom(i)} style={{ color: '#666', cursor: 'pointer' }} />
+        </div>
+      ))}
+      <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={addCustom} style={{ width: 'fit-content' }}>
+        Add custom arg
+      </Button>
+    </div>
+  )
+}
+
 // "Trigger now" — fire a trigger immediately with a synthetic event so it can be
 // tested without waiting for a real one. A pasted message block (→ the `body`
 // payload key) plus optional key=value fields the trigger's match/rules can use.
@@ -221,6 +409,10 @@ export function TriggersEditor({
   const mode = Form.useWatch('mode', form)
   const source = Form.useWatch('source', form)
   const ruleKind = Form.useWatch('rule_kind', form)
+  // The single-run target + the action-list rows, watched so the arg editor can
+  // resolve the chosen runnable's declared args live.
+  const runVal = Form.useWatch('run', form)
+  const actionsVal = Form.useWatch('actions', form)
   const eventOpts = (sources.find(s => s.id === source)?.event_types ?? []).map(e => ({ value: e }))
   // Reply drafting + once-per-thread only make sense for message-bearing sources;
   // a schedule tick has nothing to reply to and no thread.
@@ -232,6 +424,14 @@ export function TriggersEditor({
   const [actionTools, setActionTools] = useState<{ name: string; label: string }[]>([])
   useEffect(() => {
     bridge.list_action_tools().then(setActionTools).catch(() => setActionTools([]))
+  }, [])
+
+  // Hosts + every discovered runnable, for the rule-mode Run picker / arg editor.
+  const [hosts, setHosts] = useState<Host[]>([])
+  const [runnables, setRunnables] = useState<Runnable[]>([])
+  useEffect(() => {
+    bridge.get_hosts().then(setHosts).catch(() => {})
+    bridge.get_runnables('all').then(setRunnables).catch(() => {})
   }, [])
 
   const startAdd = () => {
@@ -295,26 +495,14 @@ export function TriggersEditor({
             <div key={f.key} style={{ border: '1px solid #2a2a2a', borderRadius: 6, padding: 8 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
                 <Form.Item name={[f.name, 'run']} noStyle rules={[{ required: true, whitespace: true, message: 'Required' }]}>
-                  <Input size="small" placeholder="host__runnable  or  group:<group>__runnable" style={{ fontFamily: 'monospace' }} />
+                  <RunPicker hosts={hosts} runnables={runnables} />
                 </Form.Item>
                 <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: '#666', cursor: 'pointer' }} />
               </div>
-              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>{'Arg map — arg → {{ field }} or {{ _llm.x }}'}</label>
-              <Form.List name={[f.name, 'map']}>
-                {(mfields, { add: madd, remove: mrm }) => (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {mfields.map(mf => (
-                      <div key={mf.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <Form.Item name={[mf.name, 'arg']} noStyle><Input size="small" placeholder="svc" style={{ fontFamily: 'monospace' }} /></Form.Item>
-                        <span style={{ color: '#666' }}>→</span>
-                        <Form.Item name={[mf.name, 'template']} noStyle><Input size="small" placeholder="{{ subject }}" style={{ fontFamily: 'monospace' }} /></Form.Item>
-                        <MinusCircleOutlined onClick={() => mrm(mf.name)} style={{ color: '#666', cursor: 'pointer' }} />
-                      </div>
-                    ))}
-                    <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => madd()} style={{ width: 'fit-content' }}>Add arg</Button>
-                  </div>
-                )}
-              </Form.List>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>{'Args — literal or {{ field }} / {{ _llm.x }} template'}</label>
+              <Form.Item name={[f.name, 'map']} noStyle>
+                <ArgMapEditor declaredArgs={argsForRun(actionsVal?.[f.name]?.run, runnables)} />
+              </Form.Item>
             </div>
           ))}
           <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add({ run: '', map: [] })} style={{ width: 'fit-content' }}>Add runnable</Button>
@@ -393,11 +581,13 @@ export function TriggersEditor({
                 </>
               ) : (
                 <>
-                  <Form.Item name="run" label="Run" rules={[{ required: true, whitespace: true, message: 'Required for rule mode' }]} help="host__runnable — or group:<group>__runnable to run on every host in a group (one grouped confirm).">
-                    <Input placeholder="web01__reset-password  or  group:Production__reset-password" style={{ fontFamily: 'monospace' }} />
+                  <Form.Item name="run" label="Run" rules={[{ required: true, whitespace: true, message: 'Pick a host/group and runnable' }]} help="Runs this runnable when the trigger matches. Group runs it on every host in the group (one grouped confirm).">
+                    <RunPicker hosts={hosts} runnables={runnables} />
                   </Form.Item>
-                  <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>{'Arg map — runnable arg → {{ payload field }}'}</label>
-                  {pairRow('map', 'arg', 'template', 'user', '{{ from }}', 'Add arg')}
+                  <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>{'Args — value can be a literal or a {{ payload field }} / {{ _llm.x }} template'}</label>
+                  <Form.Item name="map" noStyle>
+                    <ArgMapEditor declaredArgs={argsForRun(runVal, runnables)} />
+                  </Form.Item>
                 </>
               )}
             </>

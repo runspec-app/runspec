@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.130.0] — 2026-06-25
+
+### Changed
+- **Triggers editor: rule "Run" is now a host/group + runnable picker with an
+  arg list (was free text).** A rule-mode trigger's target — both the single
+  "Run" field and every row of the "Multiple runnables" action list — is now a
+  **Host/Group toggle + target selector + runnable selector** (mirroring the
+  Schedules modal) instead of a hand-typed `host__runnable` string. Picking a
+  runnable **auto-lists its declared args** as labelled rows (required ones
+  flagged, type/options shown as a placeholder hint). Crucially the values stay
+  **template-capable** — each is free text, so a literal *or* a `{{ payload field }}`
+  / `{{ _llm.x }}` template both work (templating is the whole point of trigger
+  args, so they are not typed inputs like the schedule's). Anything not in the
+  spec is kept as an editable "custom arg" row, with an *Add custom arg* button
+  for extras. The current selection always renders even if the host is offline or
+  the runnable undiscovered, so editing an existing trigger never loses its target.
+  Pure helpers `parseRun`/`composeRun`/`argsForRun` are unit-tested.
+
 ## [0.129.0] — 2026-06-25
 
 ### Added
