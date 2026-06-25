@@ -379,6 +379,9 @@ def _parse_log_by_run_id(
             "ts": ts_raw,
             "args": extra.get("args", {}),
             "argSources": extra.get("arg_sources", {}),
+            # Subcommand path (empty for a plain runnable) — needed so a History
+            # rerun reconstructs the original subcommand invocation.
+            "commandPath": list(extra.get("command_path") or []),
             "logLines": g["lines"],
             "initiatedBy": "llm" if extra.get("agent") else "user",
             # Provenance: the event source that caused the run ("schedule"/…), or

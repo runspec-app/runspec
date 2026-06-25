@@ -102,7 +102,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       const cmd = commandPath.length > 0 ? `${runnable.name} ${commandPath.join(' ')}` : runnable.name
       const label = `/${cmd} on ${runnable.host}`
       const id = await bridge.invoke_runnable(runnable.host, runnable.name, args, commandPath, runnable.group, credentialIds && credentialIds.length ? credentialIds : undefined)
-      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args } })
+      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host: runnable.host, runnable: runnable.name, args, commandPath } })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:invoke_runnable', onInvoke)
@@ -185,10 +185,11 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   // Rerun dispatched by History → App → here
   useEffect(() => {
     const onRerun = async (e: Event) => {
-      const { host, runnable, args } = (e as CustomEvent).detail as RerunData
-      const label = `/${runnable} on ${host} (rerun)`
-      const id = await bridge.invoke_runnable(host, runnable, args)
-      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host, runnable, args } })
+      const { host, runnable, args, commandPath = [] } = (e as CustomEvent).detail as RerunData
+      const cmd = commandPath.length > 0 ? `${runnable} ${commandPath.join(' ')}` : runnable
+      const label = `/${cmd} on ${host} (rerun)`
+      const id = await bridge.invoke_runnable(host, runnable, args, commandPath)
+      addBlockRef.current({ id, type: 'run', label, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false, rerunData: { host, runnable, args, commandPath } })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
     window.addEventListener('runspec:rerun', onRerun)

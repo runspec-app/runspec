@@ -129,6 +129,13 @@ class TestParserIncludeExtra(unittest.TestCase):
         self.assertEqual(extra["exception"]["type"], "ValueError")
         # And the lean record still reflects the agent flag.
         self.assertEqual(rec["initiatedBy"], "llm")
+        # The subcommand path surfaces on the lean record so a History rerun can
+        # reconstruct the original subcommand invocation.
+        self.assertEqual(rec["commandPath"], ["sub"])
+
+    def test_command_path_defaults_empty(self) -> None:
+        rec = _parse_log_text("backup", _summary_line(run_id="r1"), "local")[0]
+        self.assertEqual(rec["commandPath"], [])
 
     def test_trigger_provenance_surfaced(self) -> None:
         # A scheduled run that is also an LLM turn: both axes are independent and

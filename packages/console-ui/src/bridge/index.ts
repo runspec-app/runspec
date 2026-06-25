@@ -282,6 +282,7 @@ export interface HistoryRecord {
   ts: string
   args: Record<string, unknown>      // arguments used for this invocation (from run_summary)
   argSources?: Record<string, string> // provenance of each arg: "cli" | "env" | "runspec_env" | "spec_default" | "not_set"
+  commandPath?: string[]             // subcommand path ([] for a plain runnable) — drives rerun reconstruction
   logLines: HistoryLogLine[]         // log records belonging to this invocation
   initiatedBy?: 'llm' | 'user'      // 'llm' when triggered by the agentic chat loop
   trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive/manual

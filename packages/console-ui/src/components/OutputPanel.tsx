@@ -391,6 +391,7 @@ export interface RerunData {
   host: string
   runnable: string
   args: Record<string, unknown>
+  commandPath?: string[]
 }
 
 export interface ToolCallEntry {

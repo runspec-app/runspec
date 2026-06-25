@@ -190,7 +190,7 @@ export default function App() {
     setHistorySearch(record.runnable)
     setView('console')
     window.dispatchEvent(new CustomEvent('runspec:rerun', {
-      detail: { host: record.host, runnable: record.runnable, args: record.args },
+      detail: { host: record.host, runnable: record.runnable, args: record.args, commandPath: record.commandPath },
     }))
   }
 
