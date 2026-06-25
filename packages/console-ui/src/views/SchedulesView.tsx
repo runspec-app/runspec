@@ -252,7 +252,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       onOk={handleSubmit}
       okText={isEdit ? 'Save' : 'Create'}
       confirmLoading={submitting}
-      width={480}
+      width={560}
       destroyOnClose
     >
       <Form form={form} layout="vertical" initialValues={{ host: defaultHost, fields: [] }}>
