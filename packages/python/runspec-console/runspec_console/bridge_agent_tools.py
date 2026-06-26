@@ -1459,7 +1459,7 @@ class AgentToolsMixin:
     def _memory_tools(self) -> list[dict[str, Any]]:
         """Schemas for the persistent-memory / runbook tools. Always available (the
         stores are local) — so the agent accrues knowledge even with no remote hosts.
-        `load_skill`'s id is surfaced as an enum (with titles) so the model picks a
+        `load_runbook`'s id is surfaced as an enum (with titles) so the model picks a
         real runbook; it's omitted when none are saved."""
         from . import memory
 
@@ -1520,18 +1520,24 @@ class AgentToolsMixin:
                 },
             },
             {
-                "name": "save_skill",
+                "name": "save_runbook",
                 "description": (
                     "Save a reusable runbook — a named procedure with the symptom it "
                     "addresses and the ordered steps (which runnables to call). "
-                    "Shareable across the team via Config Sync."
+                    "Shareable across the team via Config Sync. This both creates and "
+                    "edits: saving with an existing id overwrites that runbook, so to "
+                    "edit one, load_runbook it, change the fields, and save_runbook "
+                    "with the same id."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "id": {
                             "type": "string",
-                            "description": "Short id/slug (blank → derived from title).",
+                            "description": (
+                                "Short id/slug (blank → derived from title). Reuse an "
+                                "existing id to edit/overwrite that runbook."
+                            ),
                         },
                         "title": {"type": "string", "description": "Human title."},
                         "symptom": {
@@ -1548,16 +1554,16 @@ class AgentToolsMixin:
                 },
             },
         ]
-        skills = memory.list_skills()
-        if skills:
-            ids = [s["id"] for s in skills]
+        runbooks = memory.list_runbooks()
+        if runbooks:
+            ids = [s["id"] for s in runbooks]
             menu = "; ".join(
                 f"'{s['id']}'" + (f" — {s['title']}" if s.get("title") else "")
-                for s in skills
+                for s in runbooks
             )
             tools.append(
                 {
-                    "name": "load_skill",
+                    "name": "load_runbook",
                     "description": (
                         "Load a saved runbook's full steps by id, to follow an "
                         f"established procedure for a known symptom. Available: {menu}."
@@ -1626,15 +1632,15 @@ class AgentToolsMixin:
             }
         ]
 
-        skills = memory.list_skills()
-        if skills:
+        runbooks = memory.list_runbooks()
+        if runbooks:
             menu = "; ".join(
                 f"'{s['id']}'" + (f" — {s['title']}" if s.get("title") else "")
-                for s in skills
+                for s in runbooks
             )
             tools.append(
                 {
-                    "name": "run_skill",
+                    "name": "run_runbook",
                     "description": (
                         "Load a saved runbook by id and follow its steps as part of "
                         "this turn. Returns the runbook's rendered steps for you to "
@@ -1643,9 +1649,9 @@ class AgentToolsMixin:
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "skill_id": {
+                            "runbook_id": {
                                 "type": "string",
-                                "enum": [s["id"] for s in skills],
+                                "enum": [s["id"] for s in runbooks],
                                 "description": "Which runbook to run.",
                             },
                             "values": {
@@ -1657,7 +1663,7 @@ class AgentToolsMixin:
                                 "description": "Optional extra context to append.",
                             },
                         },
-                        "required": ["skill_id"],
+                        "required": ["runbook_id"],
                     },
                 }
             )
@@ -1687,9 +1693,9 @@ class AgentToolsMixin:
                     "the trigger engine (action='event'); run a runnable directly "
                     "(action='runnable'); run an agent turn on a fixed prompt so you "
                     "(the assistant) check or do something later (action='prompt'); "
-                    "or run a saved runbook as an agent turn (action='skill'). Use "
+                    "or run a saved runbook as an agent turn (action='runbook'). Use "
                     "'prompt' to schedule a reminder-to-act in natural language, and "
-                    "'skill' to re-run an existing runbook on a cadence. For a "
+                    "'runbook' to re-run an existing runbook on a cadence. For a "
                     "runnable, target exactly one of: a single 'host', a 'group' "
                     "(runs on every member), or 'hosts' (a candidate list — runs on "
                     "the first connected one)."
@@ -1703,11 +1709,11 @@ class AgentToolsMixin:
                         },
                         "action": {
                             "type": "string",
-                            "enum": ["event", "runnable", "prompt", "skill"],
+                            "enum": ["event", "runnable", "prompt", "runbook"],
                             "description": (
                                 "event = emit an event; runnable = run a runnable; "
-                                "prompt = run an agent turn on 'prompt'; skill = run "
-                                "the saved runbook named by 'skill' as an agent turn."
+                                "prompt = run an agent turn on 'prompt'; runbook = run "
+                                "the saved runbook named by 'runbook' as an agent turn."
                             ),
                         },
                         "when": {
@@ -1776,16 +1782,20 @@ class AgentToolsMixin:
                                 "anything over 80%.'"
                             ),
                         },
-                        "skill": {
+                        "runbook": {
                             "type": "string",
-                            **({"enum": [s["id"] for s in skills]} if skills else {}),
-                            "description": "Saved runbook id to run (action='skill').",
+                            **(
+                                {"enum": [s["id"] for s in runbooks]}
+                                if runbooks
+                                else {}
+                            ),
+                            "description": "Saved runbook id to run (action='runbook').",
                         },
                         "values": {
                             "type": "object",
                             "description": (
                                 "Values for the runbook's {{name}} parameters "
-                                "(action='skill')."
+                                "(action='runbook')."
                             ),
                         },
                     },
@@ -1822,13 +1832,13 @@ class AgentToolsMixin:
 
     def _run_action_tool(self, name: str, ti: dict[str, Any], chat_id: str = "") -> str:
         """Execute a built-in action tool (the gate has already approved it).
-        ``create_document`` writes/uploads markdown; ``run_skill`` renders a saved
+        ``create_document`` writes/uploads markdown; ``run_runbook`` renders a saved
         runbook inline (NOT a spawned sub-agent — keeps the turn single-level);
         ``create_schedule``/``emit_event`` drive the scheduler + trigger engine."""
         if name == "create_document":
             return self._action_create_document(ti)
-        if name == "run_skill":
-            return self._action_run_skill(ti)
+        if name == "run_runbook":
+            return self._action_run_runbook(ti)
         if name == "create_schedule":
             return self._action_create_schedule(ti)
         if name == "emit_event":
@@ -1883,23 +1893,23 @@ class AgentToolsMixin:
             f"{detail.get('error') or 'unknown error'}"
         )
 
-    def _action_run_skill(self, ti: dict[str, Any]) -> str:
-        from . import memory, skillargs
+    def _action_run_runbook(self, ti: dict[str, Any]) -> str:
+        from . import memory, runbookargs
 
-        skill = memory.load_skill(str(ti.get("skill_id") or ""))
-        if not skill:
-            return f"Error: no runbook with id '{ti.get('skill_id')}'."
+        runbook = memory.load_runbook(str(ti.get("runbook_id") or ""))
+        if not runbook:
+            return f"Error: no runbook with id '{ti.get('runbook_id')}'."
         vals = dict(ti.get("values") or {})
-        raw = skill.get("args") if isinstance(skill.get("args"), dict) else {}
-        errors = skillargs.validate_skill_values(raw, vals)
+        raw = runbook.get("args") if isinstance(runbook.get("args"), dict) else {}
+        errors = runbookargs.validate_runbook_values(raw, vals)
         if errors:
             return "Error: " + "; ".join(errors)
-        body = memory.render_skill_body(str(skill.get("steps") or ""), vals)
+        body = memory.render_runbook_body(str(runbook.get("steps") or ""), vals)
         extra = str(ti.get("extra_instructions") or "").strip()
         text = f"{body}\n\n{extra}".strip() if extra else body.strip()
         if not text:
             return "Error: this runbook has an empty body."
-        title = skill.get("title") or skill.get("id")
+        title = runbook.get("title") or runbook.get("id")
         return f"Runbook '{title}' — follow these steps now using your tools:\n\n{text}"
 
     def _action_create_schedule(self, ti: dict[str, Any]) -> str:
@@ -1922,7 +1932,7 @@ class AgentToolsMixin:
             "runnable",
             "args",
             "prompt",
-            "skill",
+            "runbook",
             "values",
         ):
             if ti.get(key) is not None:
@@ -1976,8 +1986,8 @@ class AgentToolsMixin:
             if not hits:
                 return "No matching memories."
             return json.dumps({"memories": hits})
-        if name == "save_skill":
-            sid = memory.save_skill(
+        if name == "save_runbook":
+            sid = memory.save_runbook(
                 str(ti.get("id") or ""),
                 title=str(ti.get("title") or ""),
                 symptom=str(ti.get("symptom") or ""),
@@ -1985,17 +1995,17 @@ class AgentToolsMixin:
                 tags=list(ti.get("tags") or []),
             )
             if not sid:
-                return "Error: a skill needs a title (or an id) and steps."
-            # Refresh the `$` menu / Forms tab / Skills editor live, the same way
-            # the Settings editor does — otherwise an agent-saved skill only shows
-            # up after a console restart (when get_skills re-reads the file).
-            self._dispatch("runspec:skills_changed", {"id": sid})
+                return "Error: a runbook needs a title (or an id) and steps."
+            # Refresh the `$` menu / Forms tab / Runbooks editor live, the same way
+            # the Settings editor does — otherwise an agent-saved runbook only shows
+            # up after a console restart (when get_runbooks re-reads the file).
+            self._dispatch("runspec:runbooks_changed", {"id": sid})
             return f"Saved runbook '{sid}'."
-        if name == "load_skill":
-            skill = memory.load_skill(str(ti.get("id") or ""))
-            if not skill:
+        if name == "load_runbook":
+            runbook = memory.load_runbook(str(ti.get("id") or ""))
+            if not runbook:
                 return f"Error: no runbook with id '{ti.get('id')}'."
-            return json.dumps(skill)
+            return json.dumps(runbook)
         return f"Error: unknown tool '{name}'"
 
     def _run_custom_tool(self, name: str, ti: dict[str, Any]) -> str:

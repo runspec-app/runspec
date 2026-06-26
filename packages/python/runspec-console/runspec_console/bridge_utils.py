@@ -270,7 +270,7 @@ def _summary_extra(extra: dict[str, Any]) -> dict[str, Any]:
         "autonomy": extra.get("autonomy"),
         "agent": bool(extra.get("agent")),
         "trigger": extra.get("trigger", "") or "",
-        "skill": extra.get("skill", "") or "",
+        "runbook": extra.get("runbook", "") or "",
         "exception": extra.get("exception"),
         "events": extra.get("events", {}),
         "command_path": extra.get("command_path", []),
@@ -387,8 +387,8 @@ def _parse_log_by_run_id(
             # Provenance: the event source that caused the run ("schedule"/…), or
             # "" for an interactive/manual run. Drives the History/Analytics badges.
             "trigger": extra.get("trigger", "") or "",
-            # The saved skill that drove the run ("" otherwise) — History "Skill" column.
-            "skill": extra.get("skill", "") or "",
+            # The saved runbook that drove the run ("" otherwise) — History "Runbook" column.
+            "runbook": extra.get("runbook", "") or "",
         }
         exc = g["exc"]
         if exc:
@@ -433,7 +433,7 @@ def _parse_log_sequential(
                 "logLines": lines,
                 "initiatedBy": "llm" if extra.get("agent") else "user",
                 "trigger": extra.get("trigger", "") or "",
-                "skill": extra.get("skill", "") or "",
+                "runbook": extra.get("runbook", "") or "",
             }
             if include_extra:
                 record["extra"] = _summary_extra(extra)
@@ -480,7 +480,7 @@ def _aggregate_analytics(
     groups_seen: set[str] = set()
     runnables_seen: set[str] = set()
     operators_seen: set[str] = set()
-    skills_seen: set[str] = set()
+    runbooks_seen: set[str] = set()
     all_durations: list[float] = []
     total = success = failure = 0
 
@@ -497,7 +497,7 @@ def _aggregate_analytics(
         initiated = r.get("initiatedBy", "user")
         extra = r.get("extra", {}) or {}
         autonomy = extra.get("autonomy") or ""
-        skill = r.get("skill", "") or extra.get("skill", "") or ""
+        runbook = r.get("runbook", "") or extra.get("runbook", "") or ""
 
         total += 1
         success += 1 if ok else 0
@@ -509,8 +509,8 @@ def _aggregate_analytics(
         runnables_seen.add(run)
         if operator:
             operators_seen.add(operator)
-        if skill:
-            skills_seen.add(skill)
+        if runbook:
+            runbooks_seen.add(runbook)
 
         d = daily.setdefault(
             day, {"total": 0, "success": 0, "failure": 0, "durations": []}
@@ -520,7 +520,7 @@ def _aggregate_analytics(
         d["failure"] += 0 if ok else 1
         d["durations"].append(dur)
 
-        bkey = (day, host, group, run, operator, initiated, autonomy, skill)
+        bkey = (day, host, group, run, operator, initiated, autonomy, runbook)
         b = buckets.get(bkey)
         if b is None:
             b = {
@@ -531,7 +531,7 @@ def _aggregate_analytics(
                 "operator": operator,
                 "initiatedBy": initiated,
                 "autonomy": autonomy,
-                "skill": skill,
+                "runbook": runbook,
                 "total": 0,
                 "success": 0,
                 "failure": 0,
@@ -630,7 +630,7 @@ def _aggregate_analytics(
             "runnables": sorted(runnables_seen),
             "operators": sorted(operators_seen),
             "initiatedBy": ["user", "llm"],
-            "skills": sorted(skills_seen),
+            "runbooks": sorted(runbooks_seen),
         },
         "partial": partial,
         "errors": errors or [],

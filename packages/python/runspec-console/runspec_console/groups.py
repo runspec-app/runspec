@@ -4,7 +4,7 @@ groups.py — read and write runspec_groups.toml, the host-group registry.
 A host's *membership* lives on its entry in ``runspec_hosts.toml`` (the ``group``
 key). This file is the **canonical list of legal group names** — the controlled
 vocabulary the host editor's group dropdown is populated from, shared across
-consoles via Config Sync so a runbook/skill targeting a group ("run X on the
+consoles via Config Sync so a runbook/runbook targeting a group ("run X on the
 Production group") resolves to the same group everywhere. Free-form group names
 were a consistency hazard; this registry removes it.
 
@@ -16,7 +16,7 @@ A group entry:
 
 The registry is intentionally minimal: it pins names (+ an optional description),
 not membership. It is an array-of-tables so Config Sync merges it by ``name`` like
-the other collection files (hosts/filters/credentials/skills).
+the other collection files (hosts/filters/credentials/runbooks).
 """
 
 from __future__ import annotations

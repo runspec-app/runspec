@@ -22,12 +22,12 @@ not as a trigger. When it fires it does one of four things, chosen by ``action``
     flag anything over 80%". The agent has the same toolset and per-tool autonomy
     gate as a reactive trigger turn.
 
-  - ``action = "skill"`` → run a saved **skill runbook** (by id) as an agent turn:
+  - ``action = "runbook"`` → run a saved **runbook runbook** (by id) as an agent turn:
     the runbook body is rendered (with any ``values`` filling its ``{{placeholders}}``)
     and handed to the agent as its instructions. Schedule a reusable runbook to run
     on a cadence without re-typing it.
 
-The ``prompt`` and ``skill`` actions both run an agent turn via the bridge's
+The ``prompt`` and ``runbook`` actions both run an agent turn via the bridge's
 ``run_agent`` callback. The source reads the schedule list, builds one APScheduler
 job per *enabled* schedule, and on each fire calls the right path. It is
 **bridge-owned and marked external** on the engine (it needs the schedule list and
@@ -68,8 +68,8 @@ _INTERVAL_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 # first connected one at fire time).
 RunFn = Callable[[str, str, str, dict[str, Any], str, list[str]], None]
 
-# What a prompt/skill-action schedule calls to run a headless agent turn. The
-# bridge gets the whole parsed job (it needs the prompt / skill id + values to
+# What a prompt/runbook-action schedule calls to run a headless agent turn. The
+# bridge gets the whole parsed job (it needs the prompt / runbook id + values to
 # render the agent's first message) and runs it on its own thread.
 AgentFn = Callable[["ScheduleJob"], None]
 
@@ -100,7 +100,7 @@ class ScheduleJob:
 
     ``action`` is ``"event"`` (emit a matchable event), ``"runnable"`` (run a
     specific runnable directly), ``"prompt"`` (run an agent turn on a fixed
-    prompt), or ``"skill"`` (run a saved runbook as an agent turn). The
+    prompt), or ``"runbook"`` (run a saved runbook as an agent turn). The
     other-action fields are simply empty.
     """
 
@@ -124,8 +124,8 @@ class ScheduleJob:
     args: dict[str, Any] = field(default_factory=dict)
     # action == "prompt" — the fixed instruction handed to the agent turn.
     prompt: str = ""
-    # action == "skill" — the saved runbook id, plus values for its {{placeholders}}.
-    skill: str = ""
+    # action == "runbook" — the saved runbook id, plus values for its {{placeholders}}.
+    runbook: str = ""
     values: dict[str, Any] = field(default_factory=dict)
 
 
@@ -180,18 +180,22 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     block is required; ``action`` defaults to ``"runnable"``. An ``"event"``
     schedule needs an ``event`` name; a ``"runnable"`` schedule needs ``runnable``
     plus exactly one of ``host`` (one host) or ``group`` (fan out to a host group);
-    a ``"prompt"`` schedule needs a ``prompt``; a ``"skill"`` schedule needs a
-    ``skill`` id.
+    a ``"prompt"`` schedule needs a ``prompt``; a ``"runbook"`` schedule needs a
+    ``runbook`` id.
     """
     sid = str(data.get("id") or "").strip()
     if not sid:
         raise ValueError("schedule is missing an 'id'")
 
     action = str(data.get("action") or "runnable").strip()
-    if action not in ("event", "runnable", "prompt", "skill"):
+    # Back-compat: runbooks were called "skills" before the rename. Accept a legacy
+    # action="skill" schedule and treat it as a runbook.
+    if action == "skill":
+        action = "runbook"
+    if action not in ("event", "runnable", "prompt", "runbook"):
         raise ValueError(
             f"schedule '{sid}' has unknown action '{action}' "
-            "(expected 'event', 'runnable', 'prompt' or 'skill')"
+            "(expected 'event', 'runnable', 'prompt' or 'runbook')"
         )
 
     when = parse_when(data.get("when") or {})
@@ -204,7 +208,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     runnable = ""
     args: dict[str, Any] = {}
     prompt = ""
-    skill = ""
+    runbook = ""
     values: dict[str, Any] = {}
     if action == "event":
         event = str(data.get("event") or "").strip()
@@ -238,11 +242,12 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
             raise ValueError(
                 f"schedule '{sid}' uses action='prompt' but has no 'prompt' text"
             )
-    else:  # skill
-        skill = str(data.get("skill") or "").strip()
-        if not skill:
+    else:  # runbook
+        # Read the new `runbook` key, falling back to the legacy `skill` key.
+        runbook = str(data.get("runbook") or data.get("skill") or "").strip()
+        if not runbook:
             raise ValueError(
-                f"schedule '{sid}' uses action='skill' but has no 'skill' id"
+                f"schedule '{sid}' uses action='runbook' but has no 'runbook' id"
             )
         values = dict(data.get("values") or {})
 
@@ -260,7 +265,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         runnable=runnable,
         args=args,
         prompt=prompt,
-        skill=skill,
+        runbook=runbook,
         values=values,
     )
 
@@ -361,7 +366,7 @@ class ScheduleSource:
             if job.enabled:
                 self._jobs.append(job)
         self._run_runnable = run_runnable
-        # Prompt/skill schedules run a headless agent turn through this callback.
+        # Prompt/runbook schedules run a headless agent turn through this callback.
         self._run_agent = run_agent
         # Working-hours gate + per-fire audit hook (both bridge-owned). When
         # clock_ok is set and returns False, a fire is skipped (unless the job sets
@@ -447,7 +452,7 @@ class ScheduleSource:
                             "schedule", job.event, event_payload(job, datetime.now())
                         )
                     )
-            elif job.action in ("prompt", "skill"):
+            elif job.action in ("prompt", "runbook"):
                 if self._run_agent is not None:
                     self._run_agent(job)
             elif self._run_runnable is not None:
@@ -475,9 +480,9 @@ class ScheduleSource:
         elif job.action == "prompt":
             etype = "prompt"
             summary = f"prompt: {job.prompt[:60]}"
-        elif job.action == "skill":
-            etype = "skill"
-            summary = f"skill: {job.skill}"
+        elif job.action == "runbook":
+            etype = "runbook"
+            summary = f"runbook: {job.runbook}"
         else:
             etype = job.runnable or "runnable"
             where = (

@@ -5,11 +5,11 @@
 In runspec-console a host's `group` (in `runspec_hosts.toml`) was only a **sidebar
 label** — hosts with the same `group` rendered under one header. Nothing in
 execution knew about it: the agent's `run_runnable`, triggers (`host__runnable`),
-schedules (`host`), and skills (free-text) all targeted exactly **one** host. To
+schedules (`host`), and runbooks (free-text) all targeted exactly **one** host. To
 run the same runnable across a fleet you cloned the trigger/schedule per host.
 
 This change makes the group name a real targeting unit: "run this runnable on
-**every host in group X**" from the agent, skills, triggers, and schedules — and
+**every host in group X**" from the agent, runbooks, triggers, and schedules — and
 makes the agent aware that groups exist. It deliberately reuses the existing
 fan-out and grouped-confirm machinery rather than adding a workflow engine
 (see `console-triggers.md` §1).
@@ -17,7 +17,7 @@ fan-out and grouped-confirm machinery rather than adding a workflow engine
 ## The group registry (`runspec_groups.toml`)
 
 Group **names** are a controlled vocabulary, not free-form, because they are
-referenced by shared runbooks/skills and synced across consoles — a typo or a
+referenced by shared runbooks/runbooks and synced across consoles — a typo or a
 divergent name ("Prod" vs "Production") would make the same runbook behave
 differently per operator.
 
@@ -31,7 +31,7 @@ description = "Prod fleet"   # optional
 
 It is in Config Sync `KNOWN_FILES` (`gitsync.py`) and `COLLECTION_FILES`
 (`configmerge.py`, merged by `name`), so the vocabulary is shared like
-hosts/skills. The registry pins **names only** — host→group **membership** stays
+hosts/runbooks. The registry pins **names only** — host→group **membership** stays
 on the host entry's `group` field (in the already-synced `runspec_hosts.toml`).
 
 Bridge CRUD (`get_groups` / `save_groups` / `rename_group`):
@@ -109,7 +109,7 @@ fans out across members (one autonomous run card per host — scheduling *is* th
 authorization, so no confirm). `runspec_schedules.toml` is **not** in Config Sync,
 so the new field has no sync concern.
 
-**Skills** — no structural change. A runbook step naming a group (e.g. "run
+**Runbooks** — no structural change. A runbook step naming a group (e.g. "run
 restart-service on the Production group") works once the agent is group-aware,
 because the agent passes the group name as `run_runnable`'s `host`.
 

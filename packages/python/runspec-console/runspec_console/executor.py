@@ -233,7 +233,7 @@ def run_local(
     secrets: dict[str, Any] | None = None,
     cred_env: dict[str, str] | None = None,
     trigger: str = "",
-    skill: str = "",
+    runbook: str = "",
 ) -> None:
     """Execute a local runnable binary, streaming output via callbacks.
 
@@ -262,11 +262,11 @@ def run_local(
     secrets_env = secret_env(runnable, secrets)
     cred_env = cred_env or {}
     # Provenance of what caused this run → recorded in the runnable's run_summary
-    # (extra.trigger = event source, extra.skill = the saved skill that drove it).
+    # (extra.trigger = event source, extra.runbook = the saved runbook that drove it).
     # Both orthogonal to RUNSPEC_AGENT.
     prov_env = {"RUNSPEC_TRIGGER": trigger} if trigger else {}
-    if skill:
-        prov_env["RUNSPEC_SKILL"] = skill
+    if runbook:
+        prov_env["RUNSPEC_RUNBOOK"] = runbook
     extra_env: dict[str, str] = {}
     if run_as:
         # sudo/su strip the environment — carry RUNSPEC_AGENT and any secret/cred
@@ -467,7 +467,7 @@ def run_remote(
     secrets: dict[str, Any] | None = None,
     cred_env: dict[str, str] | None = None,
     trigger: str = "",
-    skill: str = "",
+    runbook: str = "",
 ) -> None:
     """Execute a remote runnable via paramiko SSH, streaming output via callbacks.
 
@@ -488,12 +488,12 @@ def run_remote(
     argv = args_to_argv(args, positionals)
     base_env = {"RUNSPEC_AGENT": "1"} if agent else {}
     # Provenance of what caused this run → recorded in the runnable's run_summary
-    # (extra.trigger = event source, extra.skill = the saved skill that drove it).
+    # (extra.trigger = event source, extra.runbook = the saved runbook that drove it).
     # Both orthogonal to RUNSPEC_AGENT.
     if trigger:
         base_env["RUNSPEC_TRIGGER"] = trigger
-    if skill:
-        base_env["RUNSPEC_SKILL"] = skill
+    if runbook:
+        base_env["RUNSPEC_RUNBOOK"] = runbook
     # password-typed args ride the environment, never argv — see secret_env().
     secrets_env = secret_env(runnable, secrets)
     # Credential-derived plain env vars (final names, e.g. JIRA_PASSWORD).

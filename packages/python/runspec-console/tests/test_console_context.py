@@ -208,7 +208,7 @@ def test_lists_schedules(monkeypatch):
     assert "tick: emit ping · every 5m [disabled]" in out
 
 
-def test_lists_prompt_and_skill_schedules(monkeypatch):
+def test_lists_prompt_and_runbook_schedules(monkeypatch):
     ns = _stub(
         monkeypatch,
         rota={"enabled": False},
@@ -222,8 +222,8 @@ def test_lists_prompt_and_skill_schedules(monkeypatch):
             },
             {
                 "id": "weekly-report",
-                "action": "skill",
-                "skill": "build-report",
+                "action": "runbook",
+                "runbook": "build-report",
                 "when": {"every": "1d"},
             },
         ],
@@ -231,5 +231,5 @@ def test_lists_prompt_and_skill_schedules(monkeypatch):
     out = ns._console_context()
     assert "morning-check: agent prompt: Check disk usage" in out
     assert "weekly-report: agent runbook build-report · every 1d" in out
-    # The agent is told it can schedule prompts and skills.
+    # The agent is told it can schedule prompts and runbooks.
     assert "create_schedule" in out and "action='prompt'" in out

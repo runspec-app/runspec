@@ -1,6 +1,6 @@
-"""Skill params are runspec args — parsed/validated by the same core machinery."""
+"""Runbook params are runspec args — parsed/validated by the same core machinery."""
 
-from runspec_console import skillargs
+from runspec_console import runbookargs
 
 
 def _table():
@@ -17,7 +17,7 @@ def _table():
 
 
 def test_parse_applies_inference_and_keeps_ui():
-    by_name = {d["name"]: d for d in skillargs.parse_skill_args(_table())}
+    by_name = {d["name"]: d for d in runbookargs.parse_runbook_args(_table())}
     # options → choice; numeric default → int; required inferred from no default.
     assert by_name["filter"]["type"] == "choice"
     assert by_name["filter"]["options"] == ["errors-only", "since-midnight"]
@@ -28,13 +28,13 @@ def test_parse_applies_inference_and_keeps_ui():
 
 
 def test_parse_empty_table():
-    assert skillargs.parse_skill_args(None) == []
-    assert skillargs.parse_skill_args({}) == []
+    assert runbookargs.parse_runbook_args(None) == []
+    assert runbookargs.parse_runbook_args({}) == []
 
 
 def test_validate_ok():
     assert (
-        skillargs.validate_skill_values(
+        runbookargs.validate_runbook_values(
             _table(),
             {
                 "app": "web",
@@ -49,30 +49,30 @@ def test_validate_ok():
 
 
 def test_validate_required_missing():
-    errs = skillargs.validate_skill_values(_table(), {"filter": "errors-only"})
+    errs = runbookargs.validate_runbook_values(_table(), {"filter": "errors-only"})
     joined = "\n".join(errs)
     assert "--app" in joined and "--host" in joined and "--logpath" in joined
 
 
 def test_validate_bad_choice():
-    errs = skillargs.validate_skill_values(
+    errs = runbookargs.validate_runbook_values(
         _table(), {"app": "x", "host": "h", "logpath": "/p", "filter": "nope"}
     )
     assert any("filter" in e for e in errs)
 
 
 def test_validate_out_of_range():
-    errs = skillargs.validate_skill_values(
+    errs = runbookargs.validate_runbook_values(
         _table(), {"app": "x", "host": "h", "logpath": "/p", "count": 99}
     )
     assert any("range" in e.lower() for e in errs)
 
 
 def test_validate_skips_path_coercion():
-    """A skill `path` is usually a *remote* path — it must not be resolved against
+    """A runbook `path` is usually a *remote* path — it must not be resolved against
     the local console filesystem, so any non-empty string passes."""
     assert (
-        skillargs.validate_skill_values(
+        runbookargs.validate_runbook_values(
             _table(),
             {"app": "x", "host": "h", "logpath": "/srv/prod/web/logs/today.log"},
         )

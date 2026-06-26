@@ -43,7 +43,7 @@ def _summary_line(
     autonomy: str = "confirm",
     user: str = "alice",
     trigger: str = "",
-    skill: str = "",
+    runbook: str = "",
     events: dict | None = None,
     exception: dict | None = None,
     command_path: list | None = None,
@@ -58,7 +58,7 @@ def _summary_line(
         "exit_code": exit_code,
         "agent": agent,
         "trigger": trigger,
-        "skill": skill,
+        "runbook": runbook,
         "autonomy": autonomy,
         "exception": exception,
         "events": events
@@ -150,16 +150,16 @@ class TestParserIncludeExtra(unittest.TestCase):
         rec = _parse_log_text("backup", _summary_line(run_id="r1"), "local")[0]
         self.assertEqual(rec["trigger"], "")
 
-    def test_skill_provenance_surfaced(self) -> None:
-        # The saved skill that drove the run surfaces on the lean record and in extra.
-        text = _summary_line(run_id="r1", skill="fetch-and-process-log")
+    def test_runbook_provenance_surfaced(self) -> None:
+        # The saved runbook that drove the run surfaces on the lean record and in extra.
+        text = _summary_line(run_id="r1", runbook="fetch-and-process-log")
         rec = _parse_log_text("backup", text, "local", include_extra=True)[0]
-        self.assertEqual(rec["skill"], "fetch-and-process-log")
-        self.assertEqual(rec["extra"]["skill"], "fetch-and-process-log")
+        self.assertEqual(rec["runbook"], "fetch-and-process-log")
+        self.assertEqual(rec["extra"]["runbook"], "fetch-and-process-log")
 
-    def test_skill_defaults_empty_for_manual_run(self) -> None:
+    def test_runbook_defaults_empty_for_manual_run(self) -> None:
         rec = _parse_log_text("backup", _summary_line(run_id="r1"), "local")[0]
-        self.assertEqual(rec["skill"], "")
+        self.assertEqual(rec["runbook"], "")
 
 
 # ── 2. percentile + aggregate fold ───────────────────────────────────────────
@@ -189,7 +189,7 @@ def _rec(
     operator="alice",
     initiated="user",
     autonomy="confirm",
-    skill="",
+    runbook="",
     events=None,
     exception=None,
 ):
@@ -202,7 +202,7 @@ def _rec(
         "runnable": runnable,
         "operator": operator,
         "initiatedBy": initiated,
-        "skill": skill,
+        "runbook": runbook,
         "extra": {"autonomy": autonomy, "events": events or {}, "exception": exception},
     }
     return r
@@ -243,18 +243,18 @@ class TestAggregate(unittest.TestCase):
         self.assertEqual(out["dimensions"]["runnables"], ["backup"])
         self.assertEqual(out["dimensions"]["initiatedBy"], ["user", "llm"])
 
-    def test_skill_dimension_and_bucket(self) -> None:
-        # Runs driven by a skill split into their own bucket and the skill name
+    def test_runbook_dimension_and_bucket(self) -> None:
+        # Runs driven by a runbook split into their own bucket and the runbook name
         # surfaces in the dimensions so the Analytics tab can filter by it.
         records = [
-            _rec("2026-06-01T01:00:00Z", skill="fetch-log"),
-            _rec("2026-06-01T02:00:00Z", skill="fetch-log"),
-            _rec("2026-06-01T03:00:00Z"),  # manual — no skill
+            _rec("2026-06-01T01:00:00Z", runbook="fetch-log"),
+            _rec("2026-06-01T02:00:00Z", runbook="fetch-log"),
+            _rec("2026-06-01T03:00:00Z"),  # manual — no runbook
         ]
         out = _aggregate_analytics(records, "2026-06-01", "2026-06-01")
-        self.assertEqual(out["dimensions"]["skills"], ["fetch-log"])
-        skill_bucket = next(b for b in out["buckets"] if b["skill"] == "fetch-log")
-        self.assertEqual(skill_bucket["total"], 2)
+        self.assertEqual(out["dimensions"]["runbooks"], ["fetch-log"])
+        runbook_bucket = next(b for b in out["buckets"] if b["runbook"] == "fetch-log")
+        self.assertEqual(runbook_bucket["total"], 2)
 
     def test_exception_ranking(self) -> None:
         records = [

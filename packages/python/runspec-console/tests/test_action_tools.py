@@ -1,4 +1,4 @@
-"""Tests for the built-in 'action' agent tools (create_document, run_skill,
+"""Tests for the built-in 'action' agent tools (create_document, run_runbook,
 create_schedule, emit_event) — schema presence, confirm-gating, and execution.
 
 These mirror the lightweight-stub pattern in test_relay_filter.py: a tiny bridge
@@ -23,7 +23,7 @@ class _ActionBridge:
     _action_tools = Bridge._action_tools
     _run_action_tool = Bridge._run_action_tool
     _action_create_document = Bridge._action_create_document
-    _action_run_skill = Bridge._action_run_skill
+    _action_run_runbook = Bridge._action_run_runbook
     _action_create_schedule = Bridge._action_create_schedule
     _action_emit_event = Bridge._action_emit_event
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
@@ -65,15 +65,15 @@ def test_create_document_dest_enum_includes_remote_hosts():
     assert doc["input_schema"]["properties"]["dest"]["enum"] == ["local", "prod"]
 
 
-def test_run_skill_tool_only_when_skills_exist(monkeypatch):
-    monkeypatch.setattr(memory, "list_skills", lambda: [])
+def test_run_runbook_tool_only_when_runbooks_exist(monkeypatch):
+    monkeypatch.setattr(memory, "list_runbooks", lambda: [])
     b = _ActionBridge()
-    assert "run_skill" not in {t["name"] for t in b._action_tools()}
+    assert "run_runbook" not in {t["name"] for t in b._action_tools()}
     monkeypatch.setattr(
-        memory, "list_skills", lambda: [{"id": "restart", "title": "Restart svc"}]
+        memory, "list_runbooks", lambda: [{"id": "restart", "title": "Restart svc"}]
     )
-    rs = next(t for t in b._action_tools() if t["name"] == "run_skill")
-    assert rs["input_schema"]["properties"]["skill_id"]["enum"] == ["restart"]
+    rs = next(t for t in b._action_tools() if t["name"] == "run_runbook")
+    assert rs["input_schema"]["properties"]["runbook_id"]["enum"] == ["restart"]
 
 
 def test_all_action_tools_are_confirm_gated():
@@ -131,10 +131,10 @@ def test_create_document_remote_uploads(tmp_path):
     assert a[0] == "local" and a[2] == "prod" and a[3] == "/tmp/docs"
 
 
-def test_run_skill_renders_inline_without_spawning(monkeypatch):
+def test_run_runbook_renders_inline_without_spawning(monkeypatch):
     monkeypatch.setattr(
         memory,
-        "load_skill",
+        "load_runbook",
         lambda sid: {
             "id": "restart",
             "title": "Restart",
@@ -144,16 +144,16 @@ def test_run_skill_renders_inline_without_spawning(monkeypatch):
     )
     b = _ActionBridge()
     out = b._run_action_tool(
-        "run_skill", {"skill_id": "restart", "values": {"svc": "nginx"}}
+        "run_runbook", {"runbook_id": "restart", "values": {"svc": "nginx"}}
     )
     assert "Restart" in out and "do nginx" in out
     # It returns text for the agent to follow — it does NOT start a chat turn.
 
 
-def test_run_skill_unknown(monkeypatch):
-    monkeypatch.setattr(memory, "load_skill", lambda sid: None)
+def test_run_runbook_unknown(monkeypatch):
+    monkeypatch.setattr(memory, "load_runbook", lambda sid: None)
     b = _ActionBridge()
-    out = b._run_action_tool("run_skill", {"skill_id": "nope"})
+    out = b._run_action_tool("run_runbook", {"runbook_id": "nope"})
     assert out.startswith("Error")
 
 
@@ -188,32 +188,32 @@ def test_create_schedule_prompt_persists(monkeypatch):
     assert saved["action"] == "prompt" and saved["prompt"].startswith("Check disk")
 
 
-def test_create_schedule_skill_persists(monkeypatch):
+def test_create_schedule_runbook_persists(monkeypatch):
     b = _ActionBridge()
     out = b._run_action_tool(
         "create_schedule",
         {
             "id": "weekly-report",
-            "action": "skill",
-            "skill": "build-report",
+            "action": "runbook",
+            "runbook": "build-report",
             "values": {"scope": "prod"},
             "when": {"every": "1d"},
         },
     )
     assert out.startswith("✓")
     saved = b.created_schedules[0]
-    assert saved["action"] == "skill" and saved["skill"] == "build-report"
+    assert saved["action"] == "runbook" and saved["runbook"] == "build-report"
     assert saved["values"] == {"scope": "prod"}
 
 
-def test_create_schedule_action_enum_includes_prompt_and_skill(monkeypatch):
-    monkeypatch.setattr(memory, "list_skills", lambda: [{"id": "build-report"}])
+def test_create_schedule_action_enum_includes_prompt_and_runbook(monkeypatch):
+    monkeypatch.setattr(memory, "list_runbooks", lambda: [{"id": "build-report"}])
     b = _ActionBridge()
     cs = next(t for t in b._action_tools() if t["name"] == "create_schedule")
     enum = cs["input_schema"]["properties"]["action"]["enum"]
-    assert {"event", "runnable", "prompt", "skill"} == set(enum)
-    # The skill field offers the saved runbook ids as an enum.
-    assert cs["input_schema"]["properties"]["skill"]["enum"] == ["build-report"]
+    assert {"event", "runnable", "prompt", "runbook"} == set(enum)
+    # The runbook field offers the saved runbook ids as an enum.
+    assert cs["input_schema"]["properties"]["runbook"]["enum"] == ["build-report"]
 
 
 def test_create_schedule_runnable_and_host_are_selectors(monkeypatch):

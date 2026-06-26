@@ -612,7 +612,7 @@ export function TriggersEditor({
               </Form.Item>
               {actionTools.length > 0 && (
                 <Form.Item name="action_allow" label="Action tools (optional)"
-                  help="Built-in actions the agent may take (create document, run a skill, send mail, …). Empty = all available.">
+                  help="Built-in actions the agent may take (create document, run a runbook, send mail, …). Empty = all available.">
                   <Select mode="multiple" allowClear placeholder="Any available action"
                     options={actionTools.map(a => ({ value: a.name, label: a.label }))} />
                 </Form.Item>

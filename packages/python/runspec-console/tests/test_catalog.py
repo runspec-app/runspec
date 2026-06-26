@@ -9,12 +9,12 @@ from __future__ import annotations
 from runspec_console.catalog import (
     build_catalog,
     build_full_catalog,
-    build_skill_catalog,
+    build_runbook_catalog,
     discoverable_audiences,
     is_self_service,
     runnable_to_catalog_entry,
-    skill_audiences,
-    skill_to_catalog_entry,
+    runbook_audiences,
+    runbook_to_catalog_entry,
 )
 
 
@@ -217,10 +217,10 @@ def test_full_catalog_skips_subcommands():
     assert tools == []
 
 
-# ── skills (published runbooks) ─────────────────────────────────────────────────
+# ── runbooks (published runbooks) ─────────────────────────────────────────────────
 
 
-def _skill(sid, discoverable=None, **over):
+def _runbook(sid, discoverable=None, **over):
     base = {"id": sid, "title": f"{sid} title", "symptom": f"{sid} symptom"}
     if discoverable is not None:
         base["discoverable"] = discoverable
@@ -228,23 +228,23 @@ def _skill(sid, discoverable=None, **over):
     return base
 
 
-def test_skill_audiences_is_opt_in():
-    assert skill_audiences(_skill("a")) == []  # absent → not published
-    assert skill_audiences(_skill("a", discoverable=False)) == []
-    assert skill_audiences(_skill("a", discoverable=True)) == ["operator"]
-    assert skill_audiences(_skill("a", discoverable=["operator"])) == ["operator"]
+def test_runbook_audiences_is_opt_in():
+    assert runbook_audiences(_runbook("a")) == []  # absent → not published
+    assert runbook_audiences(_runbook("a", discoverable=False)) == []
+    assert runbook_audiences(_runbook("a", discoverable=True)) == ["operator"]
+    assert runbook_audiences(_runbook("a", discoverable=["operator"])) == ["operator"]
 
 
-def test_skill_entry_shape_and_schema():
-    entry = skill_to_catalog_entry(
-        _skill(
+def test_runbook_entry_shape_and_schema():
+    entry = runbook_to_catalog_entry(
+        _runbook(
             "restart",
             discoverable=["operator"],
             args={"svc": {"options": ["nginx", "apache"]}},
         )
     )
-    assert entry["name"] == "skill:restart"  # namespaced wire name
-    assert entry["x-kind"] == "skill" and entry["x-audience"] == "operator"
+    assert entry["name"] == "runbook:restart"  # namespaced wire name
+    assert entry["x-kind"] == "runbook" and entry["x-audience"] == "operator"
     assert entry["x-title"] == "restart title"
     assert entry["inputSchema"]["properties"]["svc"] == {
         "type": "string",
@@ -252,34 +252,36 @@ def test_skill_entry_shape_and_schema():
     }
 
 
-def test_build_skill_catalog_includes_only_opt_in():
-    tools, index = build_skill_catalog(
+def test_build_runbook_catalog_includes_only_opt_in():
+    tools, index = build_runbook_catalog(
         [
-            _skill("restart", discoverable=["operator"]),
-            _skill("private"),  # not published
-            _skill("restart", discoverable=["operator"]),  # dup id → first wins
+            _runbook("restart", discoverable=["operator"]),
+            _runbook("private"),  # not published
+            _runbook("restart", discoverable=["operator"]),  # dup id → first wins
         ]
     )
-    assert [t["name"] for t in tools] == ["skill:restart"]
-    assert index == {"skill:restart": "restart"}
+    assert [t["name"] for t in tools] == ["runbook:restart"]
+    assert index == {"runbook:restart": "restart"}
 
 
-def test_build_skill_catalog_tags_broadest_audience():
-    tools, _ = build_skill_catalog(
+def test_build_runbook_catalog_tags_broadest_audience():
+    tools, _ = build_runbook_catalog(
         [
-            _skill("reset-pw", discoverable=["self-service"]),  # visitor-facing
-            _skill("both", discoverable=["operator", "self-service"]),  # broadest wins
-            _skill("restart", discoverable=["operator"]),  # operator-only
+            _runbook("reset-pw", discoverable=["self-service"]),  # visitor-facing
+            _runbook(
+                "both", discoverable=["operator", "self-service"]
+            ),  # broadest wins
+            _runbook("restart", discoverable=["operator"]),  # operator-only
         ]
     )
     by = {t["name"]: t["x-audience"] for t in tools}
     assert by == {
-        "skill:reset-pw": "self-service",
-        "skill:both": "self-service",
-        "skill:restart": "operator",
+        "runbook:reset-pw": "self-service",
+        "runbook:both": "self-service",
+        "runbook:restart": "operator",
     }
 
 
-def test_skill_entry_explicit_self_service_audience():
-    entry = skill_to_catalog_entry(_skill("reset-pw"), audience="self-service")
-    assert entry["x-audience"] == "self-service" and entry["x-kind"] == "skill"
+def test_runbook_entry_explicit_self_service_audience():
+    entry = runbook_to_catalog_entry(_runbook("reset-pw"), audience="self-service")
+    assert entry["x-audience"] == "self-service" and entry["x-kind"] == "runbook"

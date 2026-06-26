@@ -69,7 +69,7 @@ through the call; paramiko then decrypts `key_filename` with it. Key paths are
 TOML has no native include/inheritance, so a shared base is built on the merge
 engine. `[config_sync] layers` is an ordered list of repo subdirectories overlaid
 **low→high** — e.g. a shared `_base`, then `regions/emea`, then `teams/emea-pay`
-on top — so teams share common hosts/filters/skills/defaults and overlay their own
+on top — so teams share common hosts/filters/runbooks/defaults and overlay their own
 flavour instead of each folder duplicating the base. With `layers` empty, the
 single `subpath` is used (unchanged behaviour).
 
@@ -77,7 +77,7 @@ A pull fetches the ref **once** (`gitsync.fetch_layers` reads every layer out of
 the same in-memory commit tree — no extra round-trips) and, per file, folds the
 layers into one effective table (`configmerge.fold_layers`): mapping files
 (`config.toml`, the triggers tables) `deep_overlay` in order; array-of-tables
-files (hosts/filters/credentials/skills) `merge_collection` by identity so a
+files (hosts/filters/credentials/runbooks) `merge_collection` by identity so a
 base layer's entries survive a later layer that only adds/updates a few. That
 effective table then goes through the **same** non-destructive merge onto local —
 so the `preserve` list and the operator's local-only entries still win over the
@@ -94,13 +94,13 @@ as the one entry on load (back-compat).
 
 ### Runbook docs — a deterministic wiki (0.99.0)
 
-Skills are written for the agent; `runspec_console/docsgen.py` renders them as a
-human-followable **markdown wiki** (`render_wiki(skills, hosts, runnables) ->
+Runbooks are written for the agent; `runspec_console/docsgen.py` renders them as a
+human-followable **markdown wiki** (`render_wiki(runbooks, hosts, runnables) ->
 {path: md}`) so during an outage — when the console may be down — a person can
 SSH in and run the same runnables the agent would. `bridge.generate_docs(dest_dir)`
 writes a `README.md` (index grouped by tag + an SSH preamble + section links),
-`skills/<id>.md` per skill (when-to-use, steps, a params table from
-`[skill.args]`, and cross-links to the `host__runnable` tokens and host names its
+`runbooks/<id>.md` per runbook (when-to-use, steps, a params table from
+`[runbook.args]`, and cross-links to the `host__runnable` tokens and host names its
 steps mention), `hosts.md`, and the **runnable catalogue** — `runnables.md` plus a
 per-host `runnables/<host>.md` listing every runnable's description, autonomy,
 run-as, args, and subcommands. The catalogue comes from the console's cached
@@ -108,8 +108,8 @@ discovery (`get_runnables("all")`), so it publishes offline from the last sync �
 no live SSH at generate time.
 
 Output is **deterministic** — everything sorted, no timestamps — so the same
-skills produce byte-identical files; re-running (or a daily refresh) only changes
-what the skills changed, which keeps the commit-back diff clean. The output dir is
+runbooks produce byte-identical files; re-running (or a daily refresh) only changes
+what the runbooks changed, which keeps the commit-back diff clean. The output dir is
 `[docs] dir` (default `app_dir()/docs`); point it at a local clone of the config
 repo's team folder and commit the docs back so the team shares them. Config Sync
 is **pull-only with no working tree**, so the console never pushes — the operator

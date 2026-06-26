@@ -86,7 +86,7 @@ def runnable_to_catalog_entry(
     ``audience`` stamps the entry's ``x-audience`` (``"self-service"`` | ``"operator"``)
     so the room can serve operator-only entries to operator sessions and the
     self-service subset to visitors. ``x-kind`` is ``"runnable"`` — the room and
-    frontend tell runnables and skills apart by it."""
+    frontend tell runnables and runbooks apart by it."""
     properties: dict[str, Any] = {}
     required: list[str] = []
     for arg in runnable.get("args", []):
@@ -214,16 +214,16 @@ def build_full_catalog(
     return tools, by_host
 
 
-# ── skills (published runbooks) ──────────────────────────────────────────────
+# ── runbooks (published runbooks) ──────────────────────────────────────────────
 
 
-def skill_audiences(skill: dict[str, Any]) -> list[str]:
+def runbook_audiences(runbook: dict[str, Any]) -> list[str]:
     """The audiences a runbook is published to, from its ``discoverable`` field.
 
-    Unlike a runnable, a skill is **opt-in**: absent / ``False`` / unknown → ``[]``
+    Unlike a runnable, a runbook is **opt-in**: absent / ``False`` / unknown → ``[]``
     (not published), so an ordinary runbook never lands in a queue's catalog by
     accident. ``True`` → ``["operator"]``; a list of strings → itself."""
-    value = skill.get("discoverable")
+    value = runbook.get("discoverable")
     if value is True:
         return [OPERATOR]
     if isinstance(value, list):
@@ -231,23 +231,23 @@ def skill_audiences(skill: dict[str, Any]) -> list[str]:
     return []
 
 
-def skill_to_catalog_entry(
-    skill: dict[str, Any], *, audience: str = OPERATOR
+def runbook_to_catalog_entry(
+    runbook: dict[str, Any], *, audience: str = OPERATOR
 ) -> dict[str, Any]:
     """One runbook → a catalog tool entry, the same visitor-form contract a runnable
     uses so the room/frontend render it identically. The wire ``name`` is
-    ``skill:<id>`` — namespaced so it can never collide with a runnable name in the
+    ``runbook:<id>`` — namespaced so it can never collide with a runnable name in the
     room's name-keyed dedup/holder logic; ``x-title`` is the human label and
-    ``x-kind`` is ``"skill"``. ``inputSchema`` is built from the skill's
-    ``[skill.args]`` table via the shared arg machinery, so a runbook's inputs behave
+    ``x-kind`` is ``"runbook"``. ``inputSchema`` is built from the runbook's
+    ``[runbook.args]`` table via the shared arg machinery, so a runbook's inputs behave
     exactly like a runnable's. ``audience`` stamps ``x-audience`` — ``operator`` keeps
     a runbook operator-only, ``self-service`` opens it to visitors (the room filters
     on it)."""
-    from .skillargs import parse_skill_args
+    from .runbookargs import parse_runbook_args
 
     properties: dict[str, Any] = {}
     required: list[str] = []
-    for arg in parse_skill_args(skill.get("args")):
+    for arg in parse_runbook_args(runbook.get("args")):
         if str(arg.get("type")) == "password":
             continue
         name = str(arg.get("name"))
@@ -257,26 +257,26 @@ def skill_to_catalog_entry(
     schema: dict[str, Any] = {"type": "object", "properties": properties}
     if required:
         schema["required"] = required
-    title = str(skill.get("title") or skill.get("id") or "")
+    title = str(runbook.get("title") or runbook.get("id") or "")
     return {
-        "name": "skill:" + str(skill.get("id") or ""),
+        "name": "runbook:" + str(runbook.get("id") or ""),
         "x-title": title,
-        "description": str(skill.get("symptom") or title),
+        "description": str(runbook.get("symptom") or title),
         "x-autonomy": "confirm",
-        "x-kind": "skill",
+        "x-kind": "runbook",
         "x-audience": audience,
         "inputSchema": schema,
     }
 
 
-def build_skill_catalog(
-    skills: list[dict[str, Any]],
+def build_runbook_catalog(
+    runbooks: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """The publishable runbooks for a queue: ``(tools, index)``.
 
-    ``tools`` are skill catalog entries; ``index`` maps each entry's ``skill:<id>``
-    wire name back to the bare skill id so an assigned skill request can be rendered
-    + run. A skill is included only if it opts in via its ``discoverable`` audience
+    ``tools`` are runbook catalog entries; ``index`` maps each entry's ``runbook:<id>``
+    wire name back to the bare runbook id so an assigned runbook request can be rendered
+    + run. A runbook is included only if it opts in via its ``discoverable`` audience
     (``operator`` or ``self-service``) — runbooks are not published by default. Each
     entry is tagged with the **broadest** audience it qualifies for (``self-service``
     when self-service-marked, else ``operator``), mirroring how a runnable is tagged,
@@ -284,19 +284,19 @@ def build_skill_catalog(
     First id wins on a duplicate."""
     tools: list[dict[str, Any]] = []
     index: dict[str, str] = {}
-    for skill in skills:
-        sid = str(skill.get("id") or "")
+    for runbook in runbooks:
+        sid = str(runbook.get("id") or "")
         if not sid:
             continue
-        audiences = set(skill_audiences(skill))
+        audiences = set(runbook_audiences(runbook))
         if not audiences & {OPERATOR, SELF_SERVICE}:
             continue  # not published — opt-in only
-        name = "skill:" + sid
+        name = "runbook:" + sid
         if name in index:
             continue
         # Broadest audience wins: a self-service-marked runbook is visible to
         # visitors (and operators); otherwise it stays operator-only.
         audience = SELF_SERVICE if SELF_SERVICE in audiences else OPERATOR
-        tools.append(skill_to_catalog_entry(skill, audience=audience))
+        tools.append(runbook_to_catalog_entry(runbook, audience=audience))
         index[name] = sid
     return tools, index

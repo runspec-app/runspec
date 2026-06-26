@@ -134,7 +134,7 @@ COLLECTION_FILES: dict[str, tuple[str, str]] = {
     "runspec_groups.toml": ("group", "name"),
     "runspec_filters.toml": ("filter", "name"),
     "runspec_credentials.toml": ("credential", "id"),
-    "runspec_skills.toml": ("skill", "id"),
+    "runspec_runbooks.toml": ("runbook", "id"),
     "runspec_repos.toml": ("repo", "name"),
 }
 

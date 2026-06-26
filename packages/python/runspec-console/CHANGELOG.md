@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.137.0] — 2026-06-26
+
+### Changed
+- **Renamed "skills" → "runbooks" everywhere.** The TOML-based, parameterized
+  procedures the console calls *skills* are now consistently called **runbooks**,
+  to stop the agent confusing them with Claude Code *skills* (markdown `SKILL.md`
+  files) when told to "use a skill". This touches the whole surface:
+  - **Agent tools** are now `save_runbook` / `load_runbook` / `run_runbook` (were
+    `save_skill` / `load_skill` / `run_skill`), with descriptions to match. The
+    schedule `action = "runbook"` replaces `action = "skill"`.
+  - **UI**: the `$` menu, the Forms-tab swimlane, the Settings tab, and the
+    schedule modal all say "Runbooks" / "Run a runbook".
+  - **Storage**: the collection file is `runspec_runbooks.toml` with `[[runbook]]`
+    / `[runbook.args]` (was `runspec_skills.toml` / `[[skill]]`); bridge API is
+    `get_runbooks` / `save_runbooks` / `run_runbook`; the run-provenance env var is
+    `RUNSPEC_RUNBOOK`; the UI refresh event is `runspec:runbooks_changed`.
+  - **Back-compat** (so the rename is seamless on an existing install): a legacy
+    `runspec_skills.toml` is migrated to the new name on first read; a schedule
+    with `action = "skill"` (or a `skill` field) is still accepted and treated as a
+    runbook. **Config Sync note:** a synced repo that still ships
+    `runspec_skills.toml` should rename it to `runspec_runbooks.toml` — the pull
+    now looks for the new name.
+- **`save_runbook` is also the edit path.** Its description now states that saving
+  with an existing id overwrites that runbook — so to edit one the agent does
+  `load_runbook` → change fields → `save_runbook` with the same id. No separate
+  edit tool (the upsert already covers it).
+
 ## [0.136.1] — 2026-06-26
 
 ### Fixed

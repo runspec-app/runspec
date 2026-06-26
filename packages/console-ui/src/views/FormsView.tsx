@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
-import type { ArgDef, Host, Runnable, Skill } from '../bridge'
+import type { ArgDef, Host, Runnable, Runbook } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { PathInput } from './PathInput'
@@ -629,14 +629,14 @@ function RunnableCard({ runnable, hosts, onClick }: {
   )
 }
 
-// A saved skill, rendered as a launchable card alongside runnables. Clicking opens
-// the same parameter form the `$` chat menu uses (App owns the SkillRunModal).
-function SkillCard({ skill, onClick }: { skill: Skill; onClick: () => void }) {
+// A saved runbook, rendered as a launchable card alongside runnables. Clicking opens
+// the same parameter form the `$` chat menu uses (App owns the RunbookRunModal).
+function RunbookCard({ runbook, onClick }: { runbook: Runbook; onClick: () => void }) {
   const isDark = useIsDark()
   const [hovered, setHovered] = useState(false)
 
-  const argCount = (skill.args ?? []).length
-  const requiredCount = (skill.args ?? []).filter(a => a.required).length
+  const argCount = (runbook.args ?? []).length
+  const requiredCount = (runbook.args ?? []).filter(a => a.required).length
 
   const accent = isDark ? '#bd93f9' : '#722ed1'
   const border = hovered ? accent : (isDark ? '#2a2a2a' : '#e0e0e0')
@@ -657,15 +657,15 @@ function SkillCard({ skill, onClick }: { skill: Skill; onClick: () => void }) {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <Text style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: accent }}>
-          ${skill.id}
+          ${runbook.id}
         </Text>
         <div style={{ marginLeft: 'auto' }}>
-          <Tag color="purple" style={{ fontSize: 10, margin: 0 }}>skill</Tag>
+          <Tag color="purple" style={{ fontSize: 10, margin: 0 }}>runbook</Tag>
         </div>
       </div>
-      {(skill.title || skill.symptom) && (
+      {(runbook.title || runbook.symptom) && (
         <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.4 }}>
-          {skill.title}{skill.title && skill.symptom ? ' — ' : ''}{skill.symptom}
+          {runbook.title}{runbook.title && runbook.symptom ? ' — ' : ''}{runbook.symptom}
         </Text>
       )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
@@ -676,7 +676,7 @@ function SkillCard({ skill, onClick }: { skill: Skill; onClick: () => void }) {
         ) : (
           <Tag style={{ fontSize: 10, margin: 0 }}>no params</Tag>
         )}
-        {(skill.tags ?? []).slice(0, 3).map(t => (
+        {(runbook.tags ?? []).slice(0, 3).map(t => (
           <Tag key={t} style={{ fontSize: 10, margin: 0 }}>{t}</Tag>
         ))}
       </div>
@@ -699,14 +699,14 @@ interface FormsViewProps {
   onRunRunnable: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[], credentialIds?: string[]) => void
   pendingForm?: PendingForm | null
   onPendingFormClear?: () => void
-  skills?: Skill[]
-  onOpenSkill?: (skill: Skill) => void
+  runbooks?: Runbook[]
+  onOpenRunbook?: (runbook: Runbook) => void
 }
 
 export function FormsView({
   runnables, hosts, selectedHost, activeScope,
   onRunRunnable, pendingForm, onPendingFormClear,
-  skills = [], onOpenSkill,
+  runbooks = [], onOpenRunbook,
 }: FormsViewProps) {
   const isDark = useIsDark()
   const [search, setSearch] = useState('')
@@ -777,18 +777,18 @@ export function FormsView({
     ? scopeFiltered.filter(r => searchMatch(r, search))
     : scopeFiltered
 
-  // Skills are host-agnostic, so they ignore the host/scope filters — only the
+  // Runbooks are host-agnostic, so they ignore the host/scope filters — only the
   // text search narrows them. Shown as their own swimlane above the runnables.
-  const filteredSkills = (onOpenSkill && skills.length > 0)
+  const filteredRunbooks = (onOpenRunbook && runbooks.length > 0)
     ? (search
-        ? skills.filter(s => {
+        ? runbooks.filter(s => {
             const low = search.toLowerCase()
             return s.id.toLowerCase().includes(low) ||
               (s.title ?? '').toLowerCase().includes(low) ||
               (s.symptom ?? '').toLowerCase().includes(low) ||
               (s.tags ?? []).some(t => t.toLowerCase().includes(low))
           })
-        : skills)
+        : runbooks)
     : []
 
   // Group into swimlanes preserving existing group order
@@ -813,7 +813,7 @@ export function FormsView({
         />
       </div>
 
-      {filtered.length === 0 && filteredSkills.length === 0 ? (
+      {filtered.length === 0 && filteredRunbooks.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>
           <div style={{ textAlign: 'center' }}>
             <AppstoreOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
@@ -822,7 +822,7 @@ export function FormsView({
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {filteredSkills.length > 0 && (
+          {filteredRunbooks.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{
                 fontSize: 10, color: isDark ? '#aaa' : '#999',
@@ -830,15 +830,15 @@ export function FormsView({
                 marginBottom: 12, paddingBottom: 6,
                 borderBottom: `1px solid ${borderCol}`,
               }}>
-                Skills
+                Runbooks
               </div>
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
                 gap: 10,
               }}>
-                {filteredSkills.map(s => (
-                  <SkillCard key={s.id} skill={s} onClick={() => onOpenSkill?.(s)} />
+                {filteredRunbooks.map(s => (
+                  <RunbookCard key={s.id} runbook={s} onClick={() => onOpenRunbook?.(s)} />
                 ))}
               </div>
             </div>

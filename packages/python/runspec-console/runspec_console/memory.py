@@ -10,8 +10,8 @@ owns when to read/write):
   folded into the system prompt (capped) so the prompt-cached prefix stays stable;
   the rest is fetched on demand via `search_memory` (stdlib token-overlap scoring —
   no embedding dependency). Never synced.
-- **Skills** (`runspec_skills.toml`, shareable): operator/agent-authored runbooks
-  (`symptom` → ordered `steps` naming which runnables to call). A `[[skill]]`
+- **Runbooks** (`runspec_runbooks.toml`, shareable): operator/agent-authored runbooks
+  (`symptom` → ordered `steps` naming which runnables to call). A `[[runbook]]`
   collection so it rides the existing Config Sync (merged by `id`).
 
 Writes are atomic-ish (temp file + replace) under a re-entrant lock, mirroring
@@ -32,7 +32,7 @@ from typing import Any
 
 import tomli_w
 
-from .config import memory_path, skills_path
+from .config import memory_path, runbooks_path
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -197,40 +197,40 @@ def build_header(max_facts: int = 6, max_chars: int = 700) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-# ── skills (curated runbooks) ───────────────────────────────────────────────────
+# ── runbooks (curated runbooks) ───────────────────────────────────────────────────
 
 
-def load_skills() -> list[dict[str, Any]]:
-    """All skill entries ({}-safe). Used by the bridge and the Config-Sync merge."""
+def load_runbooks() -> list[dict[str, Any]]:
+    """All runbook entries ({}-safe). Used by the bridge and the Config-Sync merge."""
     with _LOCK:
-        return _load(skills_path(), "skill")
+        return _load(runbooks_path(), "runbook")
 
 
-def save_skills(rows: list[dict[str, Any]]) -> None:
+def save_runbooks(rows: list[dict[str, Any]]) -> None:
     with _LOCK:
-        _save(skills_path(), "skill", rows)
+        _save(runbooks_path(), "runbook", rows)
 
 
-def list_skills() -> list[dict[str, Any]]:
-    """Skill metadata for the agent's `load_skill` enum + display: id/title/symptom."""
+def list_runbooks() -> list[dict[str, Any]]:
+    """Runbook metadata for the agent's `load_runbook` enum + display: id/title/symptom."""
     return [
         {
             "id": s.get("id"),
             "title": s.get("title", ""),
             "symptom": s.get("symptom", ""),
         }
-        for s in load_skills()
+        for s in load_runbooks()
         if s.get("id")
     ]
 
 
-def load_skill(skill_id: str) -> dict[str, Any] | None:
-    """One full skill (title/symptom/steps/tags/args) by id, or None."""
-    return next((s for s in load_skills() if s.get("id") == skill_id), None)
+def load_runbook(runbook_id: str) -> dict[str, Any] | None:
+    """One full runbook (title/symptom/steps/tags/args) by id, or None."""
+    return next((s for s in load_runbooks() if s.get("id") == runbook_id), None)
 
 
-def save_skill(
-    skill_id: str,
+def save_runbook(
+    runbook_id: str,
     *,
     title: str,
     symptom: str = "",
@@ -245,22 +245,22 @@ def save_skill(
     **host group** instead of a single host (e.g. "run restart-service on the
     Production group") — the agent passes the group name as ``run_runnable``'s host
     to fan the run out across every member behind one grouped confirm. ``args`` is
-    an optional ``[skill.args]`` table using the exact runspec arg grammar — see
-    ``skillargs.py`` for how it is parsed/validated/rendered (the same core machinery
+    an optional ``[runbook.args]`` table using the exact runspec arg grammar — see
+    ``runbookargs.py`` for how it is parsed/validated/rendered (the same core machinery
     runnable forms use)."""
-    skill_id = (skill_id or "").strip() or _slug(title)
-    if not skill_id:
+    runbook_id = (runbook_id or "").strip() or _slug(title)
+    if not runbook_id:
         return ""
     entry: dict[str, Any] = {
-        "id": skill_id,
+        "id": runbook_id,
         "title": (title or "").strip(),
         "symptom": (symptom or "").strip(),
         "steps": (steps or "").strip(),
         "tags": [str(t).strip() for t in tags if str(t).strip()],
         "updated": _now(),
     }
-    # Only persist a non-empty args table — keeps param-less skills clean and the
-    # TOML free of empty `[skill.args]` tables.
+    # Only persist a non-empty args table — keeps param-less runbooks clean and the
+    # TOML free of empty `[runbook.args]` tables.
     if args:
         entry["args"] = dict(args)
     # The publish audience (``discoverable``) — which queue catalogs this runbook is
@@ -270,11 +270,11 @@ def save_skill(
     if aud:
         entry["discoverable"] = aud
     with _LOCK:
-        rows = _load(skills_path(), "skill")
-        rows = [s for s in rows if s.get("id") != skill_id]
+        rows = _load(runbooks_path(), "runbook")
+        rows = [s for s in rows if s.get("id") != runbook_id]
         rows.append(entry)
-        _save(skills_path(), "skill", rows)
-    return skill_id
+        _save(runbooks_path(), "runbook", rows)
+    return runbook_id
 
 
 # ── body rendering ──────────────────────────────────────────────────────────────
@@ -282,8 +282,8 @@ def save_skill(
 _PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}")
 
 
-def render_skill_body(steps: str, values: dict[str, Any]) -> str:
-    """Substitute ``{{name}}`` placeholders in a skill body with ``values`` (the
+def render_runbook_body(steps: str, values: dict[str, Any]) -> str:
+    """Substitute ``{{name}}`` placeholders in a runbook body with ``values`` (the
     operator's form input). Unknown placeholders are left intact so the agent can see
     an unfilled slot rather than a silent blank. Mirrors the ``{{arg}}`` convention of
     ``fs_transfer.render_pipeline`` (no shell-quoting here — this is prompt text)."""

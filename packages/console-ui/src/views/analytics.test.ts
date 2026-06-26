@@ -9,7 +9,7 @@ import { mockApi } from '../bridge/mock'
 function bucket(p: Partial<AnalyticsBucket>): AnalyticsBucket {
   return {
     date: '2026-06-01', host: 'local', group: 'ops', runnable: 'backup',
-    operator: 'alice', initiatedBy: 'user', autonomy: 'confirm', skill: '',
+    operator: 'alice', initiatedBy: 'user', autonomy: 'confirm', runbook: '',
     total: 1, success: 1, failure: 0, durationMsSum: 100,
     events: { DEBUG: 0, INFO: 1, WARNING: 0, ERROR: 0, CRITICAL: 0 },
     ...p,
@@ -43,14 +43,14 @@ describe('filterBuckets', () => {
     expect(filterBuckets(buckets, ['ops'], ['bob'], 'user')).toHaveLength(1)
   })
 
-  it('filters by skill', () => {
-    const withSkills = [
-      bucket({ skill: 'fetch-log' }),
-      bucket({ skill: '' }),
-      bucket({ skill: 'fetch-log' }),
+  it('filters by runbook', () => {
+    const withRunbooks = [
+      bucket({ runbook: 'fetch-log' }),
+      bucket({ runbook: '' }),
+      bucket({ runbook: 'fetch-log' }),
     ]
-    expect(filterBuckets(withSkills, [], [], 'all', ['fetch-log'])).toHaveLength(2)
-    expect(filterBuckets(withSkills, [], [], 'all', [])).toHaveLength(3)
+    expect(filterBuckets(withRunbooks, [], [], 'all', ['fetch-log'])).toHaveLength(2)
+    expect(filterBuckets(withRunbooks, [], [], 'all', [])).toHaveLength(3)
   })
 })
 

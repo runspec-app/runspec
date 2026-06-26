@@ -12,7 +12,7 @@
 
 One console family = **one email = one runspec-room instance = one helpdesk = one
 queue.** A different email means a different room instance. Several **operator
-consoles** (a shared pool) connect to the one room; **L1/L2 is a skill tier within
+consoles** (a shared pool) connect to the one room; **L1/L2 is a runbook tier within
 that pool**, relevant only to *who takes/escalates a ticket* — not a queue split.
 
 The earlier "teams = queues" idea is dropped: operators all support every customer
@@ -108,7 +108,7 @@ label   = "Alerts"
   **return-to-queue** (an operator releases a ticket back to the pool → re-page) as
   a crude escalation.
 - **v2:** reassign/escalate a ticket to a specific operator or tier (the request
-  already carries an `assignee`); skill-based routing later still.
+  already carries an `assignee`); runbook-based routing later still.
 
 ---
 
@@ -160,7 +160,7 @@ security-review cost — a future OIDC need is built separately):
   default, durable across restarts (console 0.72.0; see `console-triggers.md` §5).
 
 **v2 backlog:** reassign a visitor's team; reassign/escalate a ticket (L1→L2);
-per-team catalogues / skill-based routing.
+per-team catalogues / runbook-based routing.
 
 ---
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen, type Skill, type RunCard, type TriggerEvent } from '../bridge'
+import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type RunCard, type TriggerEvent } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
@@ -22,7 +22,7 @@ const CRON_PRESETS = [
   { label: 'Custom…',          value: '__custom__' },
 ]
 
-type Action = 'runnable' | 'event' | 'prompt' | 'skill'
+type Action = 'runnable' | 'event' | 'prompt' | 'runbook'
 type WhenKind = 'cron' | 'every'
 type Target = 'host' | 'group' | 'anyhost'
 
@@ -45,13 +45,13 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [cronPreset, setCronPreset] = useState<string>('')
   const [customCron, setCustomCron] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [skills, setSkills] = useState<Skill[]>([])
+  const [runbooks, setRunbooks] = useState<Runbook[]>([])
   const isDark = useIsDark()
 
-  // Saved runbooks, for the "Run a skill" action's picker. Loaded once per open.
+  // Saved runbooks, for the "Run a runbook" action's picker. Loaded once per open.
   useEffect(() => {
     if (!open) return
-    bridge.get_skills().then(setSkills).catch(console.error)
+    bridge.get_runbooks().then(setRunbooks).catch(console.error)
   }, [open])
 
   // Distinct host groups (from each host's `group` field), for group targeting.
@@ -59,10 +59,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const hostName: string = Form.useWatch('host', form) ?? defaultHost
   const groupName: string = Form.useWatch('group', form) ?? ''
   const hostsList: string[] = Form.useWatch('hosts', form) ?? []
-  // The chosen runbook (derived from the form's `skill` id) drives the value
-  // inputs, so it survives the async skills load with no extra state.
-  const skillId: string = Form.useWatch('skill', form) ?? ''
-  const selectedSkill = skills.find(s => s.id === skillId) ?? null
+  // The chosen runbook (derived from the form's `runbook` id) drives the value
+  // inputs, so it survives the async runbooks load with no extra state.
+  const runbookId: string = Form.useWatch('runbook', form) ?? ''
+  const selectedRunbook = runbooks.find(s => s.id === runbookId) ?? null
   // The runnable picker offers what the chosen target can run: a single host's
   // runnables, or (group / any-of-hosts mode) every runnable present on any of the
   // targeted hosts.
@@ -128,7 +128,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       every: editing.when.every ?? '',
       event: editing.event ?? '',
       prompt: editing.prompt ?? '',
-      skill: editing.skill ?? undefined,
+      runbook: editing.runbook ?? undefined,
       fields: Object.entries(editing.fields ?? {}).map(([key, value]) => ({ key, value })),
     }
     for (const [k, v] of Object.entries(editing.args ?? {})) fv[`arg_${k}`] = String(v)
@@ -193,17 +193,17 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       if (!prompt) { form.setFields([{ name: 'prompt', errors: ['Required'] }]); return }
       base.prompt = prompt
       if (!base.id) base.id = `rs-prompt-${Date.now()}`
-    } else if (action === 'skill') {
-      const skill = String(values.skill ?? '').trim()
-      if (!skill) { form.setFields([{ name: 'skill', errors: ['Required'] }]); return }
+    } else if (action === 'runbook') {
+      const runbook = String(values.runbook ?? '').trim()
+      if (!runbook) { form.setFields([{ name: 'runbook', errors: ['Required'] }]); return }
       const vals: Record<string, unknown> = {}
-      for (const a of selectedSkill?.args ?? []) {
+      for (const a of selectedRunbook?.args ?? []) {
         const v = values[`val_${a.name}`]
         if (v !== undefined && v !== '') vals[a.name] = v
       }
-      base.skill = skill
+      base.runbook = runbook
       base.values = vals
-      if (!base.id) base.id = `rs-${skill}-${Date.now()}`
+      if (!base.id) base.id = `rs-${runbook}-${Date.now()}`
     } else {
       const args: Record<string, unknown> = {}
       for (const a of selectedRunnable?.args ?? []) {
@@ -263,7 +263,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
             options={[
               { label: 'Run a runnable', value: 'runnable' },
               { label: 'Run a prompt', value: 'prompt' },
-              { label: 'Run a skill', value: 'skill' },
+              { label: 'Run a runbook', value: 'runbook' },
               { label: 'Emit an event', value: 'event' },
             ]}
           />
@@ -272,7 +272,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
               ? 'Runs the chosen runnable directly (no agent, no confirm gate).'
               : action === 'prompt'
               ? 'Runs an agent turn on a fixed instruction — schedule the assistant to check or do something later. It still confirms before anything destructive.'
-              : action === 'skill'
+              : action === 'runbook'
               ? 'Runs a saved runbook as an agent turn on this cadence. It still confirms before anything destructive.'
               : 'Emits a matchable event — set up Triggers (source = schedule) to react to it, like email.'}
           </div>
@@ -364,14 +364,14 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
           </Form.Item>
         )}
 
-        {/* ── Skill action ── */}
-        {action === 'skill' && (
+        {/* ── Runbook action ── */}
+        {action === 'runbook' && (
           <>
-            <Form.Item name="skill" label="Runbook" rules={[{ required: true, message: 'Required' }]}
-              help={skills.length === 0 ? 'No saved runbooks yet — create one in Settings → Skills.' : undefined}>
+            <Form.Item name="runbook" label="Runbook" rules={[{ required: true, message: 'Required' }]}
+              help={runbooks.length === 0 ? 'No saved runbooks yet — create one in Settings → Runbooks.' : undefined}>
               <Select placeholder="Select a runbook" showSearch
                 filterOption={(input, opt) => (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())}>
-                {skills.map(s => (
+                {runbooks.map(s => (
                   <Select.Option key={s.id} value={s.id}>
                     <code>{s.id}</code>
                     {s.title && <span style={{ ...labelStyle, marginLeft: 8 }}>{s.title}</span>}
@@ -379,10 +379,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 ))}
               </Select>
             </Form.Item>
-            {selectedSkill && selectedSkill.args.length > 0 && (
+            {selectedRunbook && selectedRunbook.args.length > 0 && (
               <>
                 <div style={{ ...labelStyle, marginBottom: 8, marginTop: 4 }}>Parameters</div>
-                {selectedSkill.args.map(a => (
+                {selectedRunbook.args.map(a => (
                   <Form.Item
                     key={a.name}
                     name={`val_${a.name}`}
@@ -625,7 +625,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
       const res = await bridge.run_schedule_now(s.id)
       if (res.action === 'event') message.success(`Emitted event “${res.event}”`)
       else if (res.action === 'prompt') message.success('Running the scheduled prompt…')
-      else if (res.action === 'skill') message.success(`Running runbook ${res.runnable}…`)
+      else if (res.action === 'runbook') message.success(`Running runbook ${res.runnable}…`)
       else message.success(`Running /${res.runnable} on ${res.host}…`)
     } catch (e) {
       message.error(String(e))
@@ -641,7 +641,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
 
   const detailFor = (s: Schedule): Record<string, unknown> =>
     s.action === 'event' ? (s.fields ?? {})
-      : s.action === 'skill' ? (s.values ?? {})
+      : s.action === 'runbook' ? (s.values ?? {})
       : s.action === 'prompt' ? {}
       : (s.args ?? {})
 
@@ -686,8 +686,8 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           ? <Space size={6}><Tag color="purple">event</Tag><code>{s.event}</code></Space>
           : s.action === 'prompt'
           ? <Space size={6}><Tag color="cyan">prompt</Tag><span style={{ color: dimCol, fontSize: 12 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
-          : s.action === 'skill'
-          ? <Space size={6}><Tag color="gold">skill</Tag><code>{s.skill}</code></Space>
+          : s.action === 'runbook'
+          ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
           : <Space size={6}><Tag>run</Tag><code>/{s.runnable}</code></Space>,
     },
     {
@@ -700,7 +700,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
               : (s.hosts?.length
                   ? <Tag color="geekblue">any: {s.hosts.join(', ')}</Tag>
                   : (s.host ? <Tag>{s.host}</Tag> : <span style={{ color: dimCol }}>—</span>)))
-          : (s.action === 'prompt' || s.action === 'skill')
+          : (s.action === 'prompt' || s.action === 'runbook')
           ? <Tag color="cyan">agent</Tag>
           : <span style={{ color: dimCol }}>—</span>,
     },

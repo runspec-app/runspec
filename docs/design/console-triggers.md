@@ -217,18 +217,18 @@ When a schedule fires it does one of four things, chosen by `action`:
   turn is the same isolated, autonomy-gated loop a reactive agent-mode trigger
   uses (`_trigger_run_agent_turn`), so a destructive tool the agent reaches for
   still parks at the confirm gate.
-- **`action = "skill"`** — run a saved **skill runbook** (`skill` = its id) as an
+- **`action = "runbook"`** — run a saved **runbook runbook** (`runbook` = its id) as an
   agent turn: the runbook body is rendered (its `{{placeholders}}` filled from the
-  `values` table, validated against `[skill.args]` the same way the `run_skill`
+  `values` table, validated against `[runbook.args]` the same way the `run_runbook`
   action tool does) and handed to the agent as its instructions. Re-run an
   existing runbook on a cadence without re-typing it.
 
-The `prompt`/`skill` paths run on the bridge's `run_agent` callback
+The `prompt`/`runbook` paths run on the bridge's `run_agent` callback
 (`_invoke_scheduled_agent`), which builds a Schedules-tab run card up front and
 runs the turn on its own daemon thread, so the timer (and the *Run now* button)
 return immediately while the agent works. The agent itself can create any of
 these via the `create_schedule` action tool (its `action` enum now includes
-`prompt` and `skill`), and the per-turn console-context block lists prompt/skill
+`prompt` and `runbook`), and the per-turn console-context block lists prompt/runbook
 schedules so the agent knows they exist.
 
 The timing lives in a `when` table — exactly one of `cron = "30 17 * * mon-fri"`
@@ -260,11 +260,11 @@ action = "prompt"
 prompt = "Check disk usage on the web hosts and flag anything over 80%."
 when = { cron = "0 8 * * mon-fri" }
 
-# action = "skill" — run a saved runbook as an agent turn
+# action = "runbook" — run a saved runbook as an agent turn
 [[schedule]]
 id = "weekly-billing-report"
-action = "skill"
-skill = "build-billing-report"
+action = "runbook"
+runbook = "build-billing-report"
 values = { scope = "prod" }
 when = { cron = "0 9 * * 1" }
 
@@ -413,7 +413,7 @@ plus the file-transfer / memory / Outlook tools; it now also gets four built-in
 | Tool | Effect |
 |---|---|
 | `create_document` | Write markdown to a local file, and optionally upload it to a fleet host (reuses `start_transfer`). |
-| `run_skill` | Render a saved runbook's steps **inline** and return them for the agent to follow with its other (gated) tools — *not* a spawned sub-agent. |
+| `run_runbook` | Render a saved runbook's steps **inline** and return them for the agent to follow with its other (gated) tools — *not* a spawned sub-agent. |
 | `create_schedule` | Add a cron/interval schedule (validated via `parse_schedule_entry`, then `create_schedule`). |
 | `emit_event` | Feed a matchable `Event` into the engine now (fan-out to `source="schedule"` triggers). Bounded: it does not wait on or branch over their results. |
 

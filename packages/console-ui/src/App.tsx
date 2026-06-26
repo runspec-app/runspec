@@ -36,7 +36,7 @@ import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
 import { RelayModal } from './views/RelayModal'
 import { CopyKeyModal } from './views/CopyKeyModal'
-import { SkillRunModal } from './views/SkillRunModal'
+import { RunbookRunModal } from './views/RunbookRunModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
 // so it stays out of the initial bundle.
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
@@ -44,7 +44,7 @@ import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type Runnable, type Skill } from './bridge'
+import { bridge, type HistoryRecord, type Host, type Runnable, type Runbook } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
@@ -88,8 +88,8 @@ export default function App() {
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
-  const [skills, setSkills] = useState<Skill[]>([])
-  const [pendingSkill, setPendingSkill] = useState<Skill | null>(null)
+  const [runbooks, setRunbooks] = useState<Runbook[]>([])
+  const [pendingRunbook, setPendingRunbook] = useState<Runbook | null>(null)
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
@@ -207,10 +207,10 @@ export default function App() {
     // even if the initial JS→Python call stalled — also clear loading here.
     const onRunnablesUpdated = () =>
       bridge.get_runnables('all').then(r => { setRunnables(r); setRunnablesLoading(false) })
-    // Skills feed the `$` menu + run modal; refresh after the editor saves or a
-    // Config Sync pull lands new ones (gitsync dispatches runspec:skills_changed).
-    const loadSkills = () => bridge.get_skills().then(setSkills).catch(() => {})
-    loadSkills()
+    // Runbooks feed the `$` menu + run modal; refresh after the editor saves or a
+    // Config Sync pull lands new ones (gitsync dispatches runspec:runbooks_changed).
+    const loadRunbooks = () => bridge.get_runbooks().then(setRunbooks).catch(() => {})
+    loadRunbooks()
     // Discovery readiness: read on mount (events may predate this listener), then
     // track live as each host completes.
     bridge.discovery_state?.().then(setDiscovery).catch(() => {})
@@ -220,12 +220,12 @@ export default function App() {
     }
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
-    window.addEventListener('runspec:skills_changed', loadSkills)
+    window.addEventListener('runspec:runbooks_changed', loadRunbooks)
     window.addEventListener('runspec:discovery_state', onDiscoveryState)
     return () => {
       window.removeEventListener('runspec:hosts_updated', onHostsUpdated)
       window.removeEventListener('runspec:runnables_updated', onRunnablesUpdated)
-      window.removeEventListener('runspec:skills_changed', loadSkills)
+      window.removeEventListener('runspec:runbooks_changed', loadRunbooks)
       window.removeEventListener('runspec:discovery_state', onDiscoveryState)
     }
   }, [])
@@ -275,14 +275,14 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('runspec:send_chat', { detail: { message } }))
   }
 
-  const handleOpenSkill = (skill: Skill) => setPendingSkill(skill)
+  const handleOpenRunbook = (runbook: Runbook) => setPendingRunbook(runbook)
 
   // The run modal collected values; hand off to ConsoleView (it owns the
-  // bridge.run_skill call + the transcript block, mirroring runspec:send_chat).
-  const handleRunSkill = (skillId: string, values: Record<string, unknown>, extra: string) => {
-    setInputHistory(h => [...h, `$${skillId}`])
+  // bridge.run_runbook call + the transcript block, mirroring runspec:send_chat).
+  const handleRunRunbook = (runbookId: string, values: Record<string, unknown>, extra: string) => {
+    setInputHistory(h => [...h, `$${runbookId}`])
     if (autoSwitch) { setView('console') }
-    window.dispatchEvent(new CustomEvent('runspec:run_skill', { detail: { skillId, values, extra } }))
+    window.dispatchEvent(new CustomEvent('runspec:run_runbook', { detail: { runbookId, values, extra } }))
   }
 
   // ConsoleView broadcasts the in-flight chat turn so the command bar's send
@@ -744,7 +744,7 @@ export default function App() {
                 {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && (
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} skills={skills} onOpenSkill={handleOpenSkill} />}
+                    {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
                     {view === 'rota'      && <RotaView />}
                     {view === 'dev'       && <DevView />}
@@ -801,10 +801,10 @@ export default function App() {
               )}
               <CommandInput
                 runnables={scopedRunnables}
-                skills={skills}
+                runbooks={runbooks}
                 onRunRunnable={handleRunRunnable}
                 onOpenForm={handleOpenForm}
-                onOpenSkill={handleOpenSkill}
+                onOpenRunbook={handleOpenRunbook}
                 onSendChat={handleSendChat}
                 activeChatId={activeChatId}
                 onStopChat={(id) => { bridge.cancel_chat(id).catch(console.error) }}
@@ -831,11 +831,11 @@ export default function App() {
           hosts={hosts}
         />
 
-        <SkillRunModal
-          skill={pendingSkill}
+        <RunbookRunModal
+          runbook={pendingRunbook}
           hostNames={hosts.map(h => h.name)}
-          onClose={() => setPendingSkill(null)}
-          onRun={handleRunSkill}
+          onClose={() => setPendingRunbook(null)}
+          onRun={handleRunRunbook}
         />
 
         <CopyKeyModal

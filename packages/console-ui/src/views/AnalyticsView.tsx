@@ -45,7 +45,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
   // Client-side filters — applied instantly over the `buckets` grain.
   const [groupFilter, setGroupFilter] = useState<string[]>([])
   const [operatorFilter, setOperatorFilter] = useState<string[]>([])
-  const [skillFilter, setSkillFilter] = useState<string[]>([])
+  const [runbookFilter, setRunbookFilter] = useState<string[]>([])
   const [initiatedBy, setInitiatedBy] = useState<'all' | 'user' | 'llm'>('all')
 
   const plotTheme = isDark ? 'classicDark' : 'classic'
@@ -84,12 +84,12 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
   const effectiveGroups = groupFilter.length > 0 ? groupFilter : activeScope
 
   const filteredBuckets = useMemo<AnalyticsBucket[]>(
-    () => data ? filterBuckets(data.buckets, effectiveGroups, operatorFilter, initiatedBy, skillFilter) : [],
-    [data, effectiveGroups, operatorFilter, initiatedBy, skillFilter],
+    () => data ? filterBuckets(data.buckets, effectiveGroups, operatorFilter, initiatedBy, runbookFilter) : [],
+    [data, effectiveGroups, operatorFilter, initiatedBy, runbookFilter],
   )
 
   const clientFiltersActive =
-    effectiveGroups.length > 0 || operatorFilter.length > 0 || initiatedBy !== 'all' || skillFilter.length > 0
+    effectiveGroups.length > 0 || operatorFilter.length > 0 || initiatedBy !== 'all' || runbookFilter.length > 0
 
   // ── derived series (pure helpers in ./analytics, unit-tested separately) ────
   const kpis = useMemo(() => computeKpis(filteredBuckets), [filteredBuckets])
@@ -165,11 +165,11 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
           options={dims.operators.map(o => ({ label: o, value: o }))}
           maxTagCount="responsive"
         />
-        {(dims.skills?.length ?? 0) > 0 && (
+        {(dims.runbooks?.length ?? 0) > 0 && (
           <Select
-            mode="multiple" allowClear placeholder="All skills"
-            style={{ minWidth: 170 }} value={skillFilter} onChange={setSkillFilter}
-            options={dims.skills.map(s => ({ label: `$${s}`, value: s }))}
+            mode="multiple" allowClear placeholder="All runbooks"
+            style={{ minWidth: 170 }} value={runbookFilter} onChange={setRunbookFilter}
+            options={dims.runbooks.map(s => ({ label: `$${s}`, value: s }))}
             maxTagCount="responsive"
           />
         )}

@@ -32,16 +32,16 @@ what otherwise looks like a massive task.
 
 The console is the cockpit: humans + their agents, a fleet of hosts, and a central
 checkout. It already has every primitive this needs — dulwich git (Config Sync), SSH
-filtered-fetch, the memory store, git-synced skills. The wiki is the **missing middle
+filtered-fetch, the memory store, git-synced runbooks. The wiki is the **missing middle
 layer**:
 
 | Layer | What it holds | State today |
 |---|---|---|
 | Memory | cross-run facts, keyed by an `app` tag | exists (local TOML) |
-| Skills | reusable runbooks / procedures | exists (git-synced) |
+| Runbooks | reusable runbooks / procedures | exists (git-synced) |
 | **Knowledge (this)** | **repo-anchored discoveries with provenance + freshness** — "what we learned about module X, validated at commit abc123" | **missing** |
 
-Longer term, memory and skills fold into this anchored model (a discovery *is* a memory
+Longer term, memory and runbooks fold into this anchored model (a discovery *is* a memory
 with a code location and a freshness stamp).
 
 ## Storage: a local-only knowledge ref on a durable central checkout (leading option)
@@ -92,7 +92,7 @@ side namespace on a remote (still never a branch/PR).
    and is useful alone.*
 2. **`note-save`** — write/update a note stamped at HEAD.
 3. **Console "Knowledge" tab** — browse the wiki, see staleness, jump to code.
-4. **Fold in memory/skills** — unify under the anchored model.
+4. **Fold in memory/runbooks** — unify under the anchored model.
 5. **Collective / multi-writer** — the shared central checkout + ref replication; notes
    merge across a team of humans+agents.
 

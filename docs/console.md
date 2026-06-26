@@ -449,17 +449,17 @@ A nav badge appears on the tab while a schedule run is in flight.
 
 A **runbook** is a saved, reusable procedure the chat agent can follow — "when
 you see *this symptom*, run *these runnables in this order*". Runbooks live in
-`runspec_skills.toml` as a `[[skill]]` collection and **ride Config Sync** (merged
+`runspec_runbooks.toml` as a `[[runbook]]` collection and **ride Config Sync** (merged
 by `id`), so a team ships vetted procedures from one git tag. The agent reads them
-with its `load_skill` / `list_skills` tools, renders one inline as a trigger
-action with `run_skill`, and you can invoke one from the chat `$` menu. Author
-them by asking the agent to save one (its `save_skill` tool writes the entry), by
-adding a `[[skill]]` block to the config-sync repo, or by editing the file
+with its `load_runbook` / `list_runbooks` tools, renders one inline as a trigger
+action with `run_runbook`, and you can invoke one from the chat `$` menu. Author
+them by asking the agent to save one (its `save_runbook` tool writes the entry), by
+adding a `[[runbook]]` block to the config-sync repo, or by editing the file
 directly.
 
 ```toml
-# runspec_skills.toml — a runbook collection (rides Config Sync, merged by id)
-[[skill]]
+# runspec_runbooks.toml — a runbook collection (rides Config Sync, merged by id)
+[[runbook]]
 id = "web-502-triage"
 title = "Triage 502s on the web tier"
 symptom = "Web nodes returning 502s after a deploy"
@@ -470,13 +470,13 @@ steps = """
 3. Re-run http-check and confirm 200s before resolving.
 """
 
-[skill.args]
+[runbook.args]
 host = { type = "choice", options = ["web-01", "web-02"], description = "Node to act on" }
 ```
 
 `steps` is a prompt template: `web-01__http-check` is the `host__runnable` tool
 token the agent calls (use the runnables actually installed on your hosts), and
-`{{host}}` is filled from the `[skill.args]` table — which uses the **same arg
+`{{host}}` is filled from the `[runbook.args]` table — which uses the **same arg
 grammar** as a `runspec.toml`.
 
 ### Generating the runbook wiki
@@ -489,17 +489,17 @@ from the team's runbooks + fleet + cached runnable catalogue (offline, from the
 last sync — no live SSH):
 
 - `README.md` — index with an outage preamble
-- `skills/<id>.md` — one page per runbook (when-to-use, steps, params)
+- `runbooks/<id>.md` — one page per runbook (when-to-use, steps, params)
 - `hosts.md`, `runnables.md`, `runnables/<host>.md` — the offline host/runnable
   catalogue
 - `maintaining-docs.md` — how to regenerate, plus a paste-able
-  `regenerate-runbook-docs` runbook you can drop into `runspec_skills.toml` so
+  `regenerate-runbook-docs` runbook you can drop into `runspec_runbooks.toml` so
   anyone can trigger a refresh from the `$` menu
 
 The output is **deterministic** (everything sorted, no timestamps), so it diffs
 cleanly — review, commit, and push it back to the config repo, and the team gets
 the update on their next Config Sync pull. Re-running changes nothing unless the
-skills or fleet actually changed.
+runbooks or fleet actually changed.
 
 ---
 

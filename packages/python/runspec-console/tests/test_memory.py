@@ -68,8 +68,8 @@ def test_blank_fact_rejected(mem):
     assert mem.read_memory() == []
 
 
-def test_skill_roundtrip(mem):
-    sid = mem.save_skill(
+def test_runbook_roundtrip(mem):
+    sid = mem.save_runbook(
         "",
         title="Stale cache triage",
         symptom="users see old data",
@@ -77,52 +77,52 @@ def test_skill_roundtrip(mem):
         tags=["cache"],
     )
     assert sid == "stale-cache-triage"
-    listed = mem.list_skills()
+    listed = mem.list_runbooks()
     assert listed == [
         {"id": sid, "title": "Stale cache triage", "symptom": "users see old data"}
     ]
-    full = mem.load_skill(sid)
+    full = mem.load_runbook(sid)
     assert "restart-service" in full["steps"]
 
 
-def test_skill_replace_by_id(mem):
-    mem.save_skill("s1", title="v1", steps="a")
-    mem.save_skill("s1", title="v2", steps="b")
-    skills = mem.load_skills()
-    assert len(skills) == 1 and skills[0]["title"] == "v2"
+def test_runbook_replace_by_id(mem):
+    mem.save_runbook("s1", title="v1", steps="a")
+    mem.save_runbook("s1", title="v2", steps="b")
+    runbooks = mem.load_runbooks()
+    assert len(runbooks) == 1 and runbooks[0]["title"] == "v2"
 
 
-def test_skill_args_roundtrip(mem):
-    """A skill's [skill.args] table survives save → load verbatim."""
+def test_runbook_args_roundtrip(mem):
+    """A runbook's [runbook.args] table survives save → load verbatim."""
     args = {
         "app": {"type": "str", "required": True},
         "filter": {"options": ["a", "b"], "default": "a"},
     }
-    sid = mem.save_skill(
+    sid = mem.save_runbook(
         "fetch-log", title="Fetch log", steps="grab {{app}} via {{filter}}", args=args
     )
-    full = mem.load_skill(sid)
+    full = mem.load_runbook(sid)
     assert full["args"] == args
 
 
-def test_skill_without_args_has_no_args_key(mem):
-    """Param-less skills stay clean — no empty `args` table is written."""
-    sid = mem.save_skill("plain", title="Plain", steps="do a thing")
-    assert "args" not in mem.load_skill(sid)
+def test_runbook_without_args_has_no_args_key(mem):
+    """Param-less runbooks stay clean — no empty `args` table is written."""
+    sid = mem.save_runbook("plain", title="Plain", steps="do a thing")
+    assert "args" not in mem.load_runbook(sid)
 
 
-def test_render_skill_body(mem):
+def test_render_runbook_body(mem):
     body = "get {{app}} on {{host}} x{{count}} on={{flag}} miss={{nope}}"
-    out = mem.render_skill_body(
+    out = mem.render_runbook_body(
         body, {"app": "web", "host": "h1", "count": 5, "flag": True}
     )
     # Known placeholders substituted (bool → true/false, int → str); unknown left intact.
     assert out == "get web on h1 x5 on=true miss={{nope}}"
 
 
-def test_skill_args_survive_config_sync_merge(mem):
-    """Skills merge by id through configmerge — the nested args table travels with
-    the entry (adding from the repo, keeping the operator's own skills)."""
+def test_runbook_args_survive_config_sync_merge(mem):
+    """Runbooks merge by id through configmerge — the nested args table travels with
+    the entry (adding from the repo, keeping the operator's own runbooks)."""
     from runspec_console import configmerge
 
     local = [{"id": "mine", "title": "Mine", "steps": "x"}]
@@ -150,7 +150,7 @@ def test_memory_persists_as_valid_json_shape(mem):
 
 def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     """The bridge surfaces the four tools, runs them without a confirm gate, and
-    only offers load_skill once a runbook exists."""
+    only offers load_runbook once a runbook exists."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     from runspec_console.bridge import Bridge
 
@@ -168,41 +168,41 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     b = _Stub()
 
     # Autonomy: local + reversible → run without prompting.
-    for name in ("remember", "search_memory", "save_skill", "load_skill"):
+    for name in ("remember", "search_memory", "save_runbook", "load_runbook"):
         assert b._effective_tool_autonomy(name, {}) == "autonomous"
 
-    # Registration: write tools present; load_skill omitted until a skill exists.
+    # Registration: write tools present; load_runbook omitted until a runbook exists.
     names = {t["name"] for t in b._memory_tools()}
-    assert {"remember", "search_memory", "save_skill"} <= names
-    assert "load_skill" not in names
+    assert {"remember", "search_memory", "save_runbook"} <= names
+    assert "load_runbook" not in names
 
-    # Routing: remember → search round-trips; saving a skill reveals load_skill.
+    # Routing: remember → search round-trips; saving a runbook reveals load_runbook.
     b._run_memory_tool(
         "remember", {"fact": "the log is at /var/log/app.log", "app": "a"}
     )
     b._run_memory_tool(
-        "save_skill", {"title": "Restart flow", "steps": "1. restart-service"}
+        "save_runbook", {"title": "Restart flow", "steps": "1. restart-service"}
     )
-    assert "load_skill" in {t["name"] for t in b._memory_tools()}
-    # Saving a skill notifies the UI so the `$` menu / Forms / Skills editor
+    assert "load_runbook" in {t["name"] for t in b._memory_tools()}
+    # Saving a runbook notifies the UI so the `$` menu / Forms / Runbooks editor
     # refresh live (no restart needed) — mirrors the Settings editor's dispatch.
-    assert any(ev == "runspec:skills_changed" for ev, _ in b.dispatched)
+    assert any(ev == "runspec:runbooks_changed" for ev, _ in b.dispatched)
     out = b._run_memory_tool("search_memory", {"query": "log"})
     assert "/var/log/app.log" in out
 
 
-def test_bridge_get_save_skills_roundtrip(tmp_path, monkeypatch):
-    """save_skills persists the collection (validating args); get_skills returns each
-    skill with its args parsed to the ArgDef shape the UI consumes."""
+def test_bridge_get_save_runbooks_roundtrip(tmp_path, monkeypatch):
+    """save_runbooks persists the collection (validating args); get_runbooks returns each
+    runbook with its args parsed to the ArgDef shape the UI consumes."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     from runspec_console.bridge import Bridge
 
     class _Stub:
-        get_skills = Bridge.get_skills
-        save_skills = Bridge.save_skills
+        get_runbooks = Bridge.get_runbooks
+        save_runbooks = Bridge.save_runbooks
 
     b = _Stub()
-    res = b.save_skills(
+    res = b.save_runbooks(
         [
             {
                 "id": "fetch-log",
@@ -216,23 +216,23 @@ def test_bridge_get_save_skills_roundtrip(tmp_path, monkeypatch):
     )
     assert res["ok"] and res["count"] == 1
 
-    skills = b.get_skills()
-    assert len(skills) == 1
-    s = skills[0]
+    runbooks = b.get_runbooks()
+    assert len(runbooks) == 1
+    s = runbooks[0]
     assert s["id"] == "fetch-log" and s["argsRaw"]["app"]["required"] is True
     # args is the parsed ArgDef[] (same shape the Forms tab renders).
     assert s["args"] == [{"name": "app", "type": "str", "required": True}]
 
 
-def test_bridge_save_skills_rejects_bad_args(tmp_path, monkeypatch):
+def test_bridge_save_runbooks_rejects_bad_args(tmp_path, monkeypatch):
     """A malformed args table (choice without options) is rejected before it lands."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     from runspec_console.bridge import Bridge
 
     class _Stub:
-        save_skills = Bridge.save_skills
+        save_runbooks = Bridge.save_runbooks
 
-    res = _Stub().save_skills(
+    res = _Stub().save_runbooks(
         [
             {
                 "id": "bad",

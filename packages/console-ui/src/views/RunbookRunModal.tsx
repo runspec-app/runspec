@@ -1,18 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Modal, Input, Select, Typography, Tag, message } from 'antd'
-import type { ArgDef, Skill } from '../bridge'
+import type { ArgDef, Runbook } from '../bridge'
 import { ArgInput } from './FormsView'
 
 const { Text } = Typography
 const { TextArea } = Input
 
-interface SkillRunModalProps {
-  skill: Skill | null
+interface RunbookRunModalProps {
+  runbook: Runbook | null
   hostNames: string[]
   onClose: () => void
-  // Fire the skill: the rendered body + values are sent to the agent (the console
-  // turn is tagged with the skill). ConsoleView owns the bridge.run_skill call.
-  onRun: (skillId: string, values: Record<string, unknown>, extra: string) => void
+  // Fire the runbook: the rendered body + values are sent to the agent (the console
+  // turn is tagged with the runbook). ConsoleView owns the bridge.run_runbook call.
+  onRun: (runbookId: string, values: Record<string, unknown>, extra: string) => void
 }
 
 // Literal defaults seed the form; a $VAR_REF default is shown as a placeholder in
@@ -28,11 +28,11 @@ function defaultsFor(args: ArgDef[]): Record<string, unknown> {
   return d
 }
 
-// One field. A skill's params are real runspec args, so the common types reuse the
-// Forms-tab ArgInput verbatim. Two skill-specific cases: a `ui:"host"` slot → fleet
-// dropdown, and `path` → plain text (a skill path is usually a *remote* path, so we
+// One field. A runbook's params are real runspec args, so the common types reuse the
+// Forms-tab ArgInput verbatim. Two runbook-specific cases: a `ui:"host"` slot → fleet
+// dropdown, and `path` → plain text (a runbook path is usually a *remote* path, so we
 // don't browse the local console filesystem).
-function SkillField({ arg, hostNames, value, error, onChange }: {
+function RunbookField({ arg, hostNames, value, error, onChange }: {
   arg: ArgDef
   hostNames: string[]
   value: unknown
@@ -68,20 +68,20 @@ function SkillField({ arg, hostNames, value, error, onChange }: {
   return <ArgInput arg={arg} host="" runnable="" value={value} error={error} onChange={onChange} />
 }
 
-export function SkillRunModal({ skill, hostNames, onClose, onRun }: SkillRunModalProps) {
+export function RunbookRunModal({ runbook, hostNames, onClose, onRun }: RunbookRunModalProps) {
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [extra, setExtra] = useState('')
 
   useEffect(() => {
-    if (!skill) return
-    setValues(defaultsFor(skill.args ?? []))
+    if (!runbook) return
+    setValues(defaultsFor(runbook.args ?? []))
     setErrors({})
     setExtra('')
-  }, [skill?.id])
+  }, [runbook?.id])
 
-  if (!skill) return null
-  const args = skill.args ?? []
+  if (!runbook) return null
+  const args = runbook.args ?? []
 
   const change = (name: string, v: unknown) => {
     setValues(prev => ({ ...prev, [name]: v }))
@@ -103,9 +103,9 @@ export function SkillRunModal({ skill, hostNames, onClose, onRun }: SkillRunModa
       }
     }
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
-    onRun(skill.id, values, extra.trim())
+    onRun(runbook.id, values, extra.trim())
     onClose()
-    message.success(`$${skill.id} started`)
+    message.success(`$${runbook.id} started`)
   }
 
   return (
@@ -113,18 +113,18 @@ export function SkillRunModal({ skill, hostNames, onClose, onRun }: SkillRunModa
       open
       onCancel={onClose}
       onOk={submit}
-      okText="Run skill"
+      okText="Run runbook"
       width={560}
-      title={`Skill: ${skill.title || skill.id}`}
+      title={`Runbook: ${runbook.title || runbook.id}`}
     >
-      {skill.symptom && (
+      {runbook.symptom && (
         <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
-          {skill.symptom}
+          {runbook.symptom}
         </Text>
       )}
-      {skill.argsError && (
+      {runbook.argsError && (
         <Text type="danger" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
-          This skill's parameters are misconfigured: {skill.argsError}
+          This runbook's parameters are misconfigured: {runbook.argsError}
         </Text>
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -138,14 +138,14 @@ export function SkillRunModal({ skill, hostNames, onClose, onRun }: SkillRunModa
                 : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>}
               {a.description && <Text type="secondary" style={{ fontSize: 11 }}>{a.description}</Text>}
             </div>
-            <SkillField arg={a} hostNames={hostNames} value={values[a.name]} error={errors[a.name]} onChange={v => change(a.name, v)} />
+            <RunbookField arg={a} hostNames={hostNames} value={values[a.name]} error={errors[a.name]} onChange={v => change(a.name, v)} />
             {errors[a.name] && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{errors[a.name]}</Text>}
           </div>
         ))}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
             <Text style={{ fontSize: 12 }}>Additional instructions</Text>
-            <Text type="secondary" style={{ fontSize: 10 }}>optional — appended to the skill</Text>
+            <Text type="secondary" style={{ fontSize: 10 }}>optional — appended to the runbook</Text>
           </div>
           <TextArea
             value={extra}

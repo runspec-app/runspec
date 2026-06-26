@@ -117,5 +117,5 @@ def test_fold_layers_collection_merges_by_identity():
 
 
 def test_fold_layers_single_layer_is_identity():
-    one = {"skill": [{"id": "a"}]}
-    assert cm.fold_layers("runspec_skills.toml", [one]) == one
+    one = {"runbook": [{"id": "a"}]}
+    assert cm.fold_layers("runspec_runbooks.toml", [one]) == one

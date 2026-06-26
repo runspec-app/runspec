@@ -832,8 +832,8 @@ class InternalsMixin:
                     target = f"emit {s.get('event')}"
                 elif action == "prompt":
                     target = f"agent prompt: {str(s.get('prompt') or '')[:50]}"
-                elif action == "skill":
-                    target = f"agent runbook {s.get('skill')}"
+                elif action == "runbook":
+                    target = f"agent runbook {s.get('runbook')}"
                 else:
                     where = (
                         f"group:{s.get('group')}" if s.get("group") else s.get("host")
@@ -846,7 +846,7 @@ class InternalsMixin:
             lines.append(
                 "You can add schedules with the create_schedule tool — including "
                 "action='prompt' (run an agent turn on a fixed instruction, to "
-                "check or do something later) and action='skill' (run a saved "
+                "check or do something later) and action='runbook' (run a saved "
                 "runbook on a cadence)."
             )
 

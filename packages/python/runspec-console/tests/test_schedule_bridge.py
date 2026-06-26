@@ -271,7 +271,7 @@ def test_run_now_unknown_id_raises(tmp_path, monkeypatch):
         ns.run_schedule_now("nope")
 
 
-# ── prompt / skill schedules: agent-turn path ─────────────────────────────────
+# ── prompt / runbook schedules: agent-turn path ─────────────────────────────────
 
 
 def test_run_now_prompt_routes_to_agent(tmp_path, monkeypatch):
@@ -299,7 +299,7 @@ def test_run_now_prompt_routes_to_agent(tmp_path, monkeypatch):
     assert len(events) == 1 and events[0]["type"] == "prompt"
 
 
-def test_run_now_skill_routes_to_agent(tmp_path, monkeypatch):
+def test_run_now_runbook_routes_to_agent(tmp_path, monkeypatch):
     ns = _stub(tmp_path, monkeypatch)
     captured = []
     ns._invoke_scheduled_agent = lambda job: captured.append(job) or "card-2"
@@ -308,17 +308,17 @@ def test_run_now_skill_routes_to_agent(tmp_path, monkeypatch):
         [
             {
                 "id": "s1",
-                "action": "skill",
-                "skill": "build-report",
+                "action": "runbook",
+                "runbook": "build-report",
                 "values": {"scope": "prod"},
                 "when": {"every": "1h"},
             }
         ],
     )
     res = ns.run_schedule_now("s1")
-    assert res["action"] == "skill" and res["inv_id"] == "card-2"
-    assert captured[0].skill == "build-report"
-    assert ns.get_schedule_events()[0]["type"] == "skill"
+    assert res["action"] == "runbook" and res["inv_id"] == "card-2"
+    assert captured[0].runbook == "build-report"
+    assert ns.get_schedule_events()[0]["type"] == "runbook"
 
 
 def test_pick_connected_host_prefers_connected(tmp_path, monkeypatch):
@@ -365,28 +365,28 @@ def test_scheduled_agent_message_prompt(tmp_path, monkeypatch):
     assert ns._scheduled_agent_message(job) == "Do the thing."
 
 
-def test_scheduled_agent_message_skill_renders_body(tmp_path, monkeypatch):
+def test_scheduled_agent_message_runbook_renders_body(tmp_path, monkeypatch):
     ns = _stub(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        "runspec_console.memory.load_skill",
+        "runspec_console.memory.load_runbook",
         lambda sid: {"id": sid, "title": "Build report", "steps": "Run {{scope}}"},
     )
     monkeypatch.setattr(
-        "runspec_console.skillargs.validate_skill_values", lambda raw, vals: []
+        "runspec_console.runbookargs.validate_runbook_values", lambda raw, vals: []
     )
     monkeypatch.setattr(
-        "runspec_console.memory.render_skill_body",
+        "runspec_console.memory.render_runbook_body",
         lambda steps, vals: steps.replace("{{scope}}", vals.get("scope", "")),
     )
     job = types.SimpleNamespace(
-        action="skill", skill="build-report", values={"scope": "prod"}, id="s1"
+        action="runbook", runbook="build-report", values={"scope": "prod"}, id="s1"
     )
     msg = ns._scheduled_agent_message(job)
     assert "Build report" in msg and "Run prod" in msg
 
 
-def test_scheduled_agent_message_skill_missing_is_empty(tmp_path, monkeypatch):
+def test_scheduled_agent_message_runbook_missing_is_empty(tmp_path, monkeypatch):
     ns = _stub(tmp_path, monkeypatch)
-    monkeypatch.setattr("runspec_console.memory.load_skill", lambda sid: None)
-    job = types.SimpleNamespace(action="skill", skill="nope", values={}, id="s1")
+    monkeypatch.setattr("runspec_console.memory.load_runbook", lambda sid: None)
+    job = types.SimpleNamespace(action="runbook", runbook="nope", values={}, id="s1")
     assert ns._scheduled_agent_message(job) == ""

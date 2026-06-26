@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames } from '../views/FormsView'
@@ -2403,7 +2403,7 @@ function ConfigSyncTab() {
       <Divider style={{ margin: '18px 0 12px' }} />
       <Text strong style={{ fontSize: 13, display: 'block' }}>Runbook docs</Text>
       <Text type="secondary" style={{ fontSize: 12, display: 'block', margin: '4px 0 10px' }}>
-        Generate a plain-markdown <strong>wiki</strong> from your skills + fleet — grouped by tag, one page per skill, cross-linked to the runnables and hosts each names. It's for humans to follow during an outage (when the console may be down). Output is deterministic, so re-running only changes what your skills changed — point it at a local clone of the config repo and commit the docs back for the team.
+        Generate a plain-markdown <strong>wiki</strong> from your runbooks + fleet — grouped by tag, one page per runbook, cross-linked to the runnables and hosts each names. It's for humans to follow during an outage (when the console may be down). Output is deterministic, so re-running only changes what your runbooks changed — point it at a local clone of the config repo and commit the docs back for the team.
       </Text>
       <Space.Compact style={{ width: '100%' }}>
         <Input size="small" value={docsDir} onChange={e => setDocsDir(e.target.value)}
@@ -2423,13 +2423,13 @@ function ConfigSyncTab() {
   )
 }
 
-// ── Skills ────────────────────────────────────────────────────────────────────
+// ── Runbooks ────────────────────────────────────────────────────────────────────
 
-// One editor row for a skill parameter. Stored as a runspec `[skill.args]` entry —
+// One editor row for a runbook parameter. Stored as a runspec `[runbook.args]` entry —
 // `host` is the console-only `ui:"host"` pseudo-type (→ a fleet-host dropdown in the
-// run modal). `password` is intentionally absent: a skill substitutes values into the
-// prompt body, so secrets belong in a Credentials-bound runnable, not a skill param.
-interface SkillArgRow {
+// run modal). `password` is intentionally absent: a runbook substitutes values into the
+// prompt body, so secrets belong in a Credentials-bound runnable, not a runbook param.
+interface RunbookArgRow {
   name?: string
   type?: string
   options?: string[]
@@ -2437,18 +2437,18 @@ interface SkillArgRow {
   required?: boolean
   description?: string
 }
-interface SkillFormValues {
+interface RunbookFormValues {
   id: string
   title: string
   symptom?: string
   tags?: string[]
   steps: string
-  args?: SkillArgRow[]
+  args?: RunbookArgRow[]
 }
 
-const SKILL_ARG_TYPES = ['str', 'int', 'float', 'flag', 'choice', 'path', 'host']
+const RUNBOOK_ARG_TYPES = ['str', 'int', 'float', 'flag', 'choice', 'path', 'host']
 
-function argsRawToRows(raw: Record<string, unknown> | undefined): SkillArgRow[] {
+function argsRawToRows(raw: Record<string, unknown> | undefined): RunbookArgRow[] {
   if (!raw) return []
   return Object.entries(raw).map(([name, defUnknown]) => {
     const def = (defUnknown ?? {}) as Record<string, unknown>
@@ -2463,7 +2463,7 @@ function argsRawToRows(raw: Record<string, unknown> | undefined): SkillArgRow[] 
   })
 }
 
-function rowsToArgsRaw(rows: SkillArgRow[] | undefined): Record<string, unknown> {
+function rowsToArgsRaw(rows: RunbookArgRow[] | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const row of rows ?? []) {
     const name = (row.name ?? '').trim()
@@ -2486,26 +2486,26 @@ function rowsToArgsRaw(rows: SkillArgRow[] | undefined): Record<string, unknown>
   return out
 }
 
-function SkillsTab() {
-  const [skills, setSkills] = useState<Skill[]>([])
+function RunbooksTab() {
+  const [runbooks, setRunbooks] = useState<Runbook[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)  // '' = new
-  const [form] = Form.useForm<SkillFormValues>()
+  const [form] = Form.useForm<RunbookFormValues>()
 
-  const load = useCallback(() => bridge.get_skills().then(setSkills).catch(() => {}), [])
-  // Load on mount, and refresh whenever skills change elsewhere — notably a
-  // Config Sync pull, which merges new skills to disk and dispatches this event.
+  const load = useCallback(() => bridge.get_runbooks().then(setRunbooks).catch(() => {}), [])
+  // Load on mount, and refresh whenever runbooks change elsewhere — notably a
+  // Config Sync pull, which merges new runbooks to disk and dispatches this event.
   // Without this the panel stayed stale until the drawer was reopened/restarted,
-  // and a subsequent bulk save here would clobber the pulled-in skills it never
-  // saw (they live in the in-memory `skills` list this rebuilds from).
+  // and a subsequent bulk save here would clobber the pulled-in runbooks it never
+  // saw (they live in the in-memory `runbooks` list this rebuilds from).
   useEffect(() => {
     load()
     const onChanged = () => { load() }
-    window.addEventListener('runspec:skills_changed', onChanged)
-    return () => window.removeEventListener('runspec:skills_changed', onChanged)
+    window.addEventListener('runspec:runbooks_changed', onChanged)
+    return () => window.removeEventListener('runspec:runbooks_changed', onChanged)
   }, [load])
 
   const startAdd = () => { form.resetFields(); form.setFieldsValue({ args: [] }); setEditingKey('') }
-  const startEdit = (s: Skill) => {
+  const startEdit = (s: Runbook) => {
     form.setFieldsValue({
       id: s.id, title: s.title, symptom: s.symptom, tags: s.tags ?? [],
       steps: s.steps, args: argsRawToRows(s.argsRaw),
@@ -2514,14 +2514,14 @@ function SkillsTab() {
   }
   const cancel = () => { setEditingKey(null); form.resetFields() }
 
-  // Persist the whole collection (mirrors save_jump_hosts). Existing skills are sent
+  // Persist the whole collection (mirrors save_jump_hosts). Existing runbooks are sent
   // by their stored argsRaw table; the edited one is rebuilt from the form rows.
   const persist = async (rows: Array<Record<string, unknown>>) => {
-    const res = await bridge.save_skills(rows as unknown as Skill[])
-    if (!res.ok) { message.error(res.error || 'Could not save skill'); return false }
+    const res = await bridge.save_runbooks(rows as unknown as Runbook[])
+    if (!res.ok) { message.error(res.error || 'Could not save runbook'); return false }
     await load()
     // Refresh the `$` menu / run modal elsewhere in the app.
-    window.dispatchEvent(new CustomEvent('runspec:skills_changed'))
+    window.dispatchEvent(new CustomEvent('runspec:runbooks_changed'))
     return true
   }
 
@@ -2536,7 +2536,7 @@ function SkillsTab() {
       tags: values.tags ?? [],
       argsRaw: rowsToArgsRaw(values.args),
     }
-    const others = skills
+    const others = runbooks
       .filter(s => s.id !== (editingKey || id))
       .map(s => ({
         id: s.id, title: s.title, symptom: s.symptom, steps: s.steps,
@@ -2546,7 +2546,7 @@ function SkillsTab() {
   }
 
   const remove = async (id: string) => {
-    const rows = skills
+    const rows = runbooks
       .filter(s => s.id !== id)
       .map(s => ({ id: s.id, title: s.title, symptom: s.symptom, steps: s.steps, tags: s.tags, argsRaw: s.argsRaw ?? {} }))
     await persist(rows)
@@ -2555,21 +2555,21 @@ function SkillsTab() {
   return (
     <div>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-        Skills are reusable, parameterized runbooks. Invoke one from the chat prompt
+        Runbooks are reusable, parameterized runbooks. Invoke one from the chat prompt
         with <Typography.Text code>$</Typography.Text>: it collects the parameters
         below in a form, then runs the steps through the assistant (using SSH runnables,
         file relay, and filters). Parameters use the same fields as a runnable's args, and
         the body can reference them as <Typography.Text code>{'{{name}}'}</Typography.Text>.
-        Skills sync with the rest of your config (Config Sync), so a team shares one set.
+        Runbooks sync with the rest of your config (Config Sync), so a team shares one set.
       </Typography.Paragraph>
 
       <Button type="dashed" icon={<PlusOutlined />} onClick={startAdd} style={{ marginBottom: 12 }}>
-        New skill
+        New runbook
       </Button>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {skills.length === 0 && <Empty description="No skills yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
-        {skills.map(s => (
+        {runbooks.length === 0 && <Empty description="No runbooks yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+        {runbooks.map(s => (
           <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
             <span style={{ minWidth: 200 }}>
               <Typography.Text code style={{ fontSize: 12 }}>${s.id}</Typography.Text>
@@ -2590,7 +2590,7 @@ function SkillsTab() {
 
       <Modal
         open={editingKey !== null}
-        title={editingKey === '' ? 'New skill' : `Edit — ${editingKey}`}
+        title={editingKey === '' ? 'New runbook' : `Edit — ${editingKey}`}
         width={680}
         onCancel={cancel}
         onOk={save}
@@ -2629,7 +2629,7 @@ function SkillsTab() {
                       <Input placeholder="name" style={{ fontFamily: 'monospace' }} />
                     </Form.Item>
                     <Form.Item {...rest} name={[name, 'type']} style={{ marginBottom: 0, width: 96 }} initialValue="str">
-                      <Select options={SKILL_ARG_TYPES.map(t => ({ label: t, value: t }))} />
+                      <Select options={RUNBOOK_ARG_TYPES.map(t => ({ label: t, value: t }))} />
                     </Form.Item>
                     <Form.Item noStyle shouldUpdate={(p, c) => p.args?.[name]?.type !== c.args?.[name]?.type}>
                       {() => form.getFieldValue(['args', name, 'type']) === 'choice' ? (
@@ -2889,7 +2889,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
           { key: 'llm',       label: 'LLM / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
-          { key: 'skills',    label: 'Skills',     children: <SkillsTab /> },
+          { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },

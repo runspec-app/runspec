@@ -508,7 +508,7 @@ function _aggregateMock(runs: SyntheticRun[], sinceDays: number): AnalyticsData 
     const bkey = [day, r.host, r.group, r.runnable, r.operator, r.initiatedBy, r.autonomy].join('|')
     const b = bucketMap.get(bkey) ?? {
       date: day, host: r.host, group: r.group, runnable: r.runnable, operator: r.operator,
-      initiatedBy: r.initiatedBy, autonomy: r.autonomy, skill: '',
+      initiatedBy: r.initiatedBy, autonomy: r.autonomy, runbook: '',
       total: 0, success: 0, failure: 0, durationMsSum: 0,
       events: { DEBUG: 0, INFO: 0, WARNING: 0, ERROR: 0, CRITICAL: 0 } as Record<string, number>,
     }
@@ -547,7 +547,7 @@ function _aggregateMock(runs: SyntheticRun[], sinceDays: number): AnalyticsData 
     exceptions: [...excMap.values()].sort((a, b) => b.count - a.count).slice(0, 50),
     dimensions: {
       hosts: [...hosts].sort(), groups: [...groups].sort(), runnables: [...runnables].sort(),
-      operators: [...operators].sort(), initiatedBy: ['user', 'llm'], skills: [],
+      operators: [...operators].sort(), initiatedBy: ['user', 'llm'], runbooks: [],
     },
     partial: false, errors: [],
   }
@@ -722,7 +722,7 @@ export const mockApi: BridgeApi = {
   sync_pull: async () => { console.log('[mock] sync_pull'); return { ok: true, ref: 'v1.2.0', commit: 'a1b2c3d4e5f6', written: ['config.toml', 'runspec_hosts.toml'], skipped: [], backups: ['config.toml.bak-20260616-043000'], pruned: [] } },
   get_docs_config: async () => ({ dir: '', default: '/home/user/.config/runspec-console/docs' }),
   save_docs_config: async (dest_dir) => { console.log('[mock] save_docs_config', dest_dir) },
-  generate_docs: async (dest_dir) => { console.log('[mock] generate_docs', dest_dir); return { ok: true, dir: dest_dir || '/home/user/.config/runspec-console/docs', written: ['README.md', 'hosts.md', 'skills/restart-web.md'] } },
+  generate_docs: async (dest_dir) => { console.log('[mock] generate_docs', dest_dir); return { ok: true, dir: dest_dir || '/home/user/.config/runspec-console/docs', written: ['README.md', 'hosts.md', 'runbooks/restart-web.md'] } },
 
   test_host: async (name): Promise<TestResult> => {
     await new Promise(r => setTimeout(r, 1200))
@@ -1042,9 +1042,9 @@ export const mockApi: BridgeApi = {
   },
 
   clear_chat: async () => {},
-  get_skills: async () => [],
-  save_skills: async () => ({ ok: true, count: 0 }),
-  run_skill: async (skillId, _values, _extra) => ({ chat_id: `mock-skill-${skillId}`, message: `$${skillId}` }),
+  get_runbooks: async () => [],
+  save_runbooks: async () => ({ ok: true, count: 0 }),
+  run_runbook: async (runbookId, _values, _extra) => ({ chat_id: `mock-runbook-${runbookId}`, message: `$${runbookId}` }),
   cancel_chat: async (chatId: string) => {
     if (_activeChat && (!chatId || _activeChat.id === chatId)) {
       _activeChat.cancelled = true
@@ -1189,7 +1189,7 @@ export const mockApi: BridgeApi = {
   },
   list_action_tools: async () => [
     { name: 'create_document', label: 'Create document' },
-    { name: 'run_skill', label: 'Run skill (runbook)' },
+    { name: 'run_runbook', label: 'Run runbook (runbook)' },
     { name: 'create_schedule', label: 'Create schedule' },
     { name: 'emit_event', label: 'Emit event' },
   ],

@@ -525,11 +525,11 @@ class AutonomyMixin:
         return self._run_tool_sync(tool_name, tool_input, chat_id)
 
     def _set_run_origin(
-        self, chat_id: str, trigger: str, agent: bool, skill: str = ""
+        self, chat_id: str, trigger: str, agent: bool, runbook: str = ""
     ) -> None:
         """Register a turn's run provenance so _run_tool_sync can tag its runnable
-        runs (the trigger source, whether it's an LLM/agent turn, and the skill that
-        drove it when invoked via run_skill). Keyed by the card/chat id; cleared with
+        runs (the trigger source, whether it's an LLM/agent turn, and the runbook that
+        drove it when invoked via run_runbook). Keyed by the card/chat id; cleared with
         _clear_run_origin in the handler's finally."""
         if not chat_id:
             return
@@ -537,7 +537,7 @@ class AutonomyMixin:
             self._run_origin[chat_id] = {
                 "trigger": trigger,
                 "agent": agent,
-                "skill": skill,
+                "runbook": runbook,
             }
 
     def _clear_run_origin(self, chat_id: str) -> None:
@@ -715,9 +715,9 @@ class AutonomyMixin:
             origin = getattr(self, "_run_origin", {}).get(chat_id, {})
         run_agent = bool(origin.get("agent", True))
         run_trigger = str(origin.get("trigger", ""))
-        # The saved skill that drove this turn (set by run_skill) → tags each
-        # runnable's run_summary as extra.skill for History/Analytics attribution.
-        run_skill = str(origin.get("skill", ""))
+        # The saved runbook that drove this turn (set by run_runbook) → tags each
+        # runnable's run_summary as extra.runbook for History/Analytics attribution.
+        run_runbook = str(origin.get("runbook", ""))
         ssh = entry.get("ssh")
         if ssh:
             executor_mod.run_remote(
@@ -739,7 +739,7 @@ class AutonomyMixin:
                 secrets=secrets,
                 cred_env=cred_env,
                 trigger=run_trigger,
-                skill=run_skill,
+                runbook=run_runbook,
             )
         else:
             executor_mod.run_local(
@@ -758,7 +758,7 @@ class AutonomyMixin:
                 secrets=secrets,
                 cred_env=cred_env,
                 trigger=run_trigger,
-                skill=run_skill,
+                runbook=run_runbook,
             )
 
         output = "\n".join(output_lines)

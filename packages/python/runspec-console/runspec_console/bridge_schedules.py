@@ -151,13 +151,13 @@ class SchedulesMixin:
             )
             self._record_schedule_fire(job)
             return {"action": "event", "event": job.event}
-        if job.action in ("prompt", "skill"):
+        if job.action in ("prompt", "runbook"):
             inv_id = self._invoke_scheduled_agent(job)
             self._record_schedule_fire(job)
             return {
                 "action": job.action,
                 "inv_id": inv_id,
-                "runnable": job.skill if job.action == "skill" else "(prompt)",
+                "runnable": job.runbook if job.action == "runbook" else "(prompt)",
                 "host": "agent",
             }
         inv_id = self._invoke_scheduled(
@@ -189,8 +189,8 @@ class SchedulesMixin:
             etype, summary = job.event, f"emit {job.event}"
         elif job.action == "prompt":
             etype, summary = "prompt", f"prompt: {job.prompt[:60]}"
-        elif job.action == "skill":
-            etype, summary = "skill", f"skill: {job.skill}"
+        elif job.action == "runbook":
+            etype, summary = "runbook", f"runbook: {job.runbook}"
         else:
             etype = job.runnable or "runnable"
             where = (
@@ -248,46 +248,46 @@ class SchedulesMixin:
         return candidates[0]
 
     def _run_scheduled_agent(self, job: Any) -> None:
-        """Run a prompt/skill-action schedule on the timer (ScheduleSource's
+        """Run a prompt/runbook-action schedule on the timer (ScheduleSource's
         ``run_agent`` callback). The manual *Run now* path uses
         :meth:`_invoke_scheduled_agent` directly so it can surface the card id."""
         self._invoke_scheduled_agent(job)
 
     def _scheduled_agent_message(self, job: Any) -> str:
-        """The agent's first user turn for a prompt/skill schedule, or ``""`` if a
-        skill can't be rendered (missing id, bad values, empty body).
+        """The agent's first user turn for a prompt/runbook schedule, or ``""`` if a
+        runbook can't be rendered (missing id, bad values, empty body).
 
-        A ``prompt`` schedule hands its text straight through. A ``skill`` schedule
+        A ``prompt`` schedule hands its text straight through. A ``runbook`` schedule
         renders the saved runbook (its ``{{placeholders}}`` filled from ``values``)
-        the same way the ``run_skill`` action tool does, so a scheduled runbook and
+        the same way the ``run_runbook`` action tool does, so a scheduled runbook and
         an agent-invoked one read identically."""
         if job.action == "prompt":
             return str(job.prompt or "").strip()
-        from . import memory, skillargs
+        from . import memory, runbookargs
 
-        skill = memory.load_skill(str(job.skill or ""))
-        if not skill:
-            logger.warning("schedule '%s': no runbook with id %r", job.id, job.skill)
+        runbook = memory.load_runbook(str(job.runbook or ""))
+        if not runbook:
+            logger.warning("schedule '%s': no runbook with id %r", job.id, job.runbook)
             return ""
         vals = dict(job.values or {})
-        raw = skill.get("args") if isinstance(skill.get("args"), dict) else {}
-        errors = skillargs.validate_skill_values(raw, vals)
+        raw = runbook.get("args") if isinstance(runbook.get("args"), dict) else {}
+        errors = runbookargs.validate_runbook_values(raw, vals)
         if errors:
             logger.warning(
-                "schedule '%s': skill %r values invalid — %s",
+                "schedule '%s': runbook %r values invalid — %s",
                 job.id,
-                job.skill,
+                job.runbook,
                 "; ".join(errors),
             )
             return ""
-        body = memory.render_skill_body(str(skill.get("steps") or ""), vals)
+        body = memory.render_runbook_body(str(runbook.get("steps") or ""), vals)
         if not body.strip():
             return ""
-        title = skill.get("title") or skill.get("id")
+        title = runbook.get("title") or runbook.get("id")
         return f"Runbook '{title}' — follow these steps now using your tools:\n\n{body}"
 
     def _invoke_scheduled_agent(self, job: Any) -> str:
-        """Run a prompt/skill schedule as a headless **agent turn** and return its
+        """Run a prompt/runbook schedule as a headless **agent turn** and return its
         card id (``""`` on failure). Builds a Schedules-tab run card up front, then
         runs the turn on its own daemon thread — the same isolated, autonomy-gated
         loop a reactive agent-mode trigger uses (``_trigger_run_agent_turn``), so a
@@ -300,8 +300,12 @@ class SchedulesMixin:
             summary = f"prompt: {job.prompt[:80]}"
             detail: dict[str, Any] = {"action": "prompt", "prompt": job.prompt}
         else:
-            summary = f"skill: {job.skill}"
-            detail = {"action": "skill", "skill": job.skill, "values": dict(job.values)}
+            summary = f"runbook: {job.runbook}"
+            detail = {
+                "action": "runbook",
+                "runbook": job.runbook,
+                "values": dict(job.values),
+            }
         detail["schedule_id"] = job.id
         card: dict[str, Any] = {
             "card_id": card_id,
@@ -323,7 +327,7 @@ class SchedulesMixin:
             card["detail"] = {
                 **card["detail"],
                 "error": "could not build the agent prompt (empty prompt or "
-                "missing/invalid skill runbook)",
+                "missing/invalid runbook runbook)",
             }
             card["timeline"] = [*card["timeline"], {"ts": now, "text": "failed"}]
             self._on_schedule_card(card)

@@ -96,8 +96,8 @@ confirm gate — no model spend on bookkeeping):
   `app` tag (free chat has no single active host). Recall is stdlib token-overlap
   scoring — no embedding dependency. Eviction keeps pinned + most-used + newest per
   app. **Never synced** — it's local knowledge.
-- **Skills = curated runbooks** (shareable): `save_skill` / `load_skill` over
-  `runspec_skills.toml`, a `[[skill]]` collection (symptom + ordered steps naming the
+- **Runbooks = curated runbooks** (shareable): `save_runbook` / `load_runbook` over
+  `runspec_runbooks.toml`, a `[[runbook]]` collection (symptom + ordered steps naming the
   runnables to call). It **rides the existing Config Sync** — added to `KNOWN_FILES`
   and merged by `id` like filters/credentials — so a team ships vetted procedures
   from one git tag. (A TOML collection, not markdown files, precisely so it reuses
@@ -117,4 +117,4 @@ system stay prompt-cached.
 | On-source filter before transfer | console `download_file` / `relay_file` |
 | Tool-search mode (~3 tools/turn) | console `_tool_mode()` (0.86.0+) |
 | Prompt caching of tools + system | console Anthropic adapter |
-| Persistent memory + curated runbooks | console `memory.py` (`runspec_memory.toml` local; `runspec_skills.toml` synced) |
+| Persistent memory + curated runbooks | console `memory.py` (`runspec_memory.toml` local; `runspec_runbooks.toml` synced) |

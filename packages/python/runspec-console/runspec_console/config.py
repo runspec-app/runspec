@@ -69,10 +69,23 @@ def memory_path() -> Path:
     return app_dir() / "runspec_memory.toml"
 
 
-def skills_path() -> Path:
-    """Curated agent runbooks (`runspec_skills.toml`) — a `[[skill]]` collection.
-    Shareable: rides Config Sync (KNOWN_FILES), merged by `id` like filters."""
-    return app_dir() / "runspec_skills.toml"
+def runbooks_path() -> Path:
+    """Curated agent runbooks (`runspec_runbooks.toml`) — a `[[runbook]]` collection.
+    Shareable: rides Config Sync (KNOWN_FILES), merged by `id` like filters.
+
+    Back-compat: runbooks were called *skills* (`runspec_skills.toml`) before the
+    rename. If only the legacy file exists, migrate it once by renaming it to the
+    new path so existing runbooks aren't orphaned; nothing is lost if neither
+    exists (a fresh install just creates the new file on first save)."""
+    path = app_dir() / "runspec_runbooks.toml"
+    if not path.exists():
+        legacy = app_dir() / "runspec_skills.toml"
+        if legacy.exists():
+            try:
+                legacy.rename(path)
+            except OSError:
+                return legacy  # couldn't migrate — keep reading the legacy file
+    return path
 
 
 def credentials_path() -> Path:

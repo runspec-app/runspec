@@ -227,24 +227,24 @@ def test_parse_entry_prompt_requires_prompt():
         parse_schedule_entry({"id": "x", "action": "prompt", "when": {"every": "5m"}})
 
 
-def test_parse_entry_skill():
+def test_parse_entry_runbook():
     job = parse_schedule_entry(
         {
             "id": "weekly-report",
-            "action": "skill",
-            "skill": "build-report",
+            "action": "runbook",
+            "runbook": "build-report",
             "values": {"scope": "prod"},
             "when": {"cron": "0 9 * * 1"},
         }
     )
-    assert job.action == "skill"
-    assert job.skill == "build-report"
+    assert job.action == "runbook"
+    assert job.runbook == "build-report"
     assert job.values == {"scope": "prod"}
 
 
-def test_parse_entry_skill_requires_skill_id():
+def test_parse_entry_runbook_requires_runbook_id():
     with pytest.raises(ValueError):
-        parse_schedule_entry({"id": "x", "action": "skill", "when": {"every": "5m"}})
+        parse_schedule_entry({"id": "x", "action": "runbook", "when": {"every": "5m"}})
 
 
 # ── event_payload ─────────────────────────────────────────────────────────────
@@ -406,21 +406,21 @@ def test_fire_prompt_calls_run_agent():
     assert ran[0].action == "prompt" and ran[0].prompt == "Check disk usage."
 
 
-def test_fire_skill_calls_run_agent():
+def test_fire_runbook_calls_run_agent():
     ran: list = []
     src = ScheduleSource(
         [
             {
                 "id": "s1",
-                "action": "skill",
-                "skill": "build-report",
+                "action": "runbook",
+                "runbook": "build-report",
                 "when": {"every": "5m"},
             }
         ],
         run_agent=ran.append,
     )
     src._fire("s1")
-    assert len(ran) == 1 and ran[0].skill == "build-report"
+    assert len(ran) == 1 and ran[0].runbook == "build-report"
 
 
 def test_fire_unknown_id_is_noop():

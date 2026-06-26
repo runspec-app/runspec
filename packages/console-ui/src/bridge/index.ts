@@ -32,10 +32,10 @@ export interface Runnable {
   rawSpec?: Record<string, unknown>  // full raw spec dict for the holistic Specs view
 }
 
-// A user-invocable, parameterized runbook (the `$` skills menu + Skills settings
-// tab). Its `args` are a real runspec `[skill.args]` table — parsed server-side to
+// A user-invocable, parameterized runbook (the `$` runbooks menu + Runbooks settings
+// tab). Its `args` are a real runspec `[runbook.args]` table — parsed server-side to
 // the same ArgDef shape a runnable form uses, so the run modal reuses ArgInput.
-export interface Skill {
+export interface Runbook {
   id: string
   title: string
   symptom: string          // "when to use" — shown in the menu + editor
@@ -43,7 +43,7 @@ export interface Skill {
   tags: string[]
   updated?: string
   args: ArgDef[]           // parsed param defs — the run modal renders these
-  argsRaw?: Record<string, unknown>  // stored [skill.args] table (faithful editor round-trip)
+  argsRaw?: Record<string, unknown>  // stored [runbook.args] table (faithful editor round-trip)
   argsError?: string       // set when a malformed args table failed to parse
 }
 
@@ -170,7 +170,7 @@ export interface SyncPullResult {
   error?: string
 }
 
-// Settings → Config Sync → Runbook docs. Where the deterministic skill wiki is
+// Settings → Config Sync → Runbook docs. Where the deterministic runbook wiki is
 // written (blank = the `default`, app_dir()/docs).
 export interface DocsConfig {
   dir: string
@@ -307,13 +307,13 @@ export interface HistoryRecord {
   logLines: HistoryLogLine[]         // log records belonging to this invocation
   initiatedBy?: 'llm' | 'user'      // 'llm' when triggered by the agentic chat loop
   trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive/manual
-  skill?: string                     // saved skill that drove the run (RUNSPEC_SKILL), "" = not a skill run
+  runbook?: string                     // saved runbook that drove the run (RUNSPEC_RUNBOOK), "" = not a runbook run
 }
 
 // A schedule (Schedules tab). When it fires it either emits a matchable event
 // (action 'event') that source="schedule" triggers pick up like mail, runs a
 // runnable directly (action 'runnable'), runs an agent turn on a fixed prompt
-// (action 'prompt'), or runs a saved runbook as an agent turn (action 'skill').
+// (action 'prompt'), or runs a saved runbook as an agent turn (action 'runbook').
 // Timing lives in `when` (cron or every).
 export interface ScheduleWhen {
   cron?: string
@@ -323,7 +323,7 @@ export interface ScheduleWhen {
 export interface Schedule {
   id: string
   enabled?: boolean
-  action: 'runnable' | 'event' | 'prompt' | 'skill'
+  action: 'runnable' | 'event' | 'prompt' | 'runbook'
   when: ScheduleWhen
   // action === 'runnable' — exactly one of host / group / hosts. group fans the
   // run out across every member of the host group; hosts is a candidate list and
@@ -338,8 +338,8 @@ export interface Schedule {
   fields?: Record<string, string>
   // action === 'prompt' — the instruction the agent turn runs on.
   prompt?: string
-  // action === 'skill' — the saved runbook id + values for its {{placeholders}}.
-  skill?: string
+  // action === 'runbook' — the saved runbook id + values for its {{placeholders}}.
+  runbook?: string
   values?: Record<string, unknown>
   nextRun?: string
 }
@@ -398,7 +398,7 @@ export interface AnalyticsBucket {
   operator: string
   initiatedBy: 'user' | 'llm'
   autonomy: string
-  skill: string                     // saved skill that drove the run, "" = not a skill run
+  runbook: string                     // saved runbook that drove the run, "" = not a runbook run
   total: number
   success: number
   failure: number
@@ -420,7 +420,7 @@ export interface AnalyticsDimensions {
   runnables: string[]
   operators: string[]
   initiatedBy: string[]
-  skills: string[]
+  runbooks: string[]
 }
 
 export interface AnalyticsDurationStats {
@@ -774,7 +774,7 @@ export interface BridgeApi {
   delete_schedule: (id: string) => Promise<void>
   // Fire a schedule immediately — runs the runnable (returns inv_id) or emits the
   // event (returns event), regardless of the schedule's enabled flag.
-  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event' | 'prompt' | 'skill'; inv_id?: string; event?: string; host?: string; runnable?: string }>
+  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event' | 'prompt' | 'runbook'; inv_id?: string; event?: string; host?: string; runnable?: string }>
   get_jump_hosts: () => Promise<JumpHost[]>
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
@@ -810,7 +810,7 @@ export interface BridgeApi {
   save_sync_config: (data: Partial<SyncConfig>) => Promise<void>
   list_sync_tags: () => Promise<{ tags?: string[]; error?: string }>
   sync_pull: () => Promise<SyncPullResult>
-  // Runbook docs: a deterministic markdown wiki generated from the local skills
+  // Runbook docs: a deterministic markdown wiki generated from the local runbooks
   // + fleet, for humans to follow during an outage. get/save the output dir and
   // (re)generate the files.
   get_docs_config: () => Promise<DocsConfig>
@@ -854,18 +854,18 @@ export interface BridgeApi {
   send_chat: (message: string, invocationId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>
   clear_chat: () => Promise<void>
-  // ── skills (user-invocable, parameterized runbooks) ─────────────────────────
-  // All skills with their [skill.args] parsed to ArgDef[] — feeds the `$` menu,
+  // ── runbooks (user-invocable, parameterized runbooks) ─────────────────────────
+  // All runbooks with their [runbook.args] parsed to ArgDef[] — feeds the `$` menu,
   // the run modal, and the Settings editor.
-  get_skills: () => Promise<Skill[]>
+  get_runbooks: () => Promise<Runbook[]>
   // Persist the whole collection from the Settings editor (validates each args
   // table; rejects with {ok:false,error} if one is malformed).
-  save_skills: (skills: Skill[]) => Promise<{ ok: boolean; count?: number; error?: string }>
-  // Render a skill's body with the operator's form values (validated against its
+  save_runbooks: (runbooks: Runbook[]) => Promise<{ ok: boolean; count?: number; error?: string }>
+  // Render a runbook's body with the operator's form values (validated against its
   // args) + optional extra instructions, then start a chat turn tagged with the
-  // skill. Returns {chat_id, message} (the rendered text the UI shows) or {error}.
-  run_skill: (
-    skillId: string,
+  // runbook. Returns {chat_id, message} (the rendered text the UI shows) or {error}.
+  run_runbook: (
+    runbookId: string,
     values?: Record<string, unknown>,
     extraInstructions?: string,
   ) => Promise<{ chat_id?: string; message?: string; error?: string }>

@@ -849,9 +849,9 @@ class FleetMixin:
             self.restart_triggers()
         except Exception:
             logger.debug("restart_triggers after sync_pull failed", exc_info=True)
-        # Nudge the UI to re-read the merged skills (refreshes the `$` menu).
-        if "runspec_skills.toml" in written:
-            self._dispatch("runspec:skills_changed", {})
+        # Nudge the UI to re-read the merged runbooks (refreshes the `$` menu).
+        if "runspec_runbooks.toml" in written:
+            self._dispatch("runspec:runbooks_changed", {})
 
         return {
             "ok": True,
@@ -935,13 +935,13 @@ class FleetMixin:
                 preserve,
             )
             save_credentials(config_mod.credentials_path(), merged)
-        elif name == "runspec_skills.toml":
+        elif name == "runspec_runbooks.toml":
             from . import memory
 
             merged = configmerge.merge_collection(
-                memory.load_skills(), parsed.get("skill", []), "id", preserve
+                memory.load_runbooks(), parsed.get("runbook", []), "id", preserve
             )
-            memory.save_skills(merged)
+            memory.save_runbooks(merged)
         elif name == "runspec_triggers.toml":
             self._merge_synced_triggers(parsed, preserve)
 

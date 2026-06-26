@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, Tooltip } from 'antd'
 import { SendOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
-import type { Runnable, Skill } from '../bridge'
+import type { Runnable, Runbook } from '../bridge'
 import { ThemeContext } from '../ThemeContext'
 
 interface SlashItem {
@@ -12,10 +12,10 @@ interface SlashItem {
 
 interface CommandInputProps {
   runnables: Runnable[]
-  skills: Skill[]
+  runbooks: Runbook[]
   onRunRunnable: (runnable: Runnable, args: Record<string, unknown>, commandPath: string[]) => void
   onOpenForm: (runnable: Runnable, commandPath: string[]) => void
-  onOpenSkill: (skill: Skill) => void
+  onOpenRunbook: (runbook: Runbook) => void
   onSendChat: (message: string) => void
   activeChatId?: string | null   // set while a chat turn is in flight
   onStopChat?: (id: string) => void
@@ -70,7 +70,7 @@ function flattenToSlashItems(runnables: Runnable[]): SlashItem[] {
   return items
 }
 
-export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onOpenSkill, onSendChat, activeChatId, onStopChat, history, autoSwitch, onToggleAutoSwitch }: CommandInputProps) {
+export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, onOpenRunbook, onSendChat, activeChatId, onStopChat, history, autoSwitch, onToggleAutoSwitch }: CommandInputProps) {
   const isDark = useContext(ThemeContext)
   // Draft persistence: restore a half-typed prompt across tab switches and app
   // restarts (localStorage), so an in-progress message is never lost. Cleared on
@@ -82,10 +82,10 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
   const [slashOpen, setSlashOpen] = useState(false)
   const [slashFilter, setSlashFilter] = useState('')
   const [slashIndex, setSlashIndex] = useState(0)
-  // `$` opens the skills menu (parallel to `/` for runnables) — mutually exclusive.
-  const [skillsOpen, setSkillsOpen] = useState(false)
-  const [skillsFilter, setSkillsFilter] = useState('')
-  const [skillsIndex, setSkillsIndex] = useState(0)
+  // `$` opens the runbooks menu (parallel to `/` for runnables) — mutually exclusive.
+  const [runbooksOpen, setRunbooksOpen] = useState(false)
+  const [runbooksFilter, setRunbooksFilter] = useState('')
+  const [runbooksIndex, setRunbooksIndex] = useState(0)
   const [historyIndex, setHistoryIndex] = useState(-1)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -122,7 +122,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
       const { text } = (e as CustomEvent).detail as { text: string }
       setValue(text)
       setSlashOpen(false)
-      setSkillsOpen(false)
+      setRunbooksOpen(false)
       setHistoryIndex(-1)
       requestAnimationFrame(() => inputRef.current?.focus())
     }
@@ -145,15 +145,15 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
       })
     : slashItems
 
-  const filteredSkills = skillsFilter
-    ? skills.filter(s => {
-        const low = skillsFilter.toLowerCase()
+  const filteredRunbooks = runbooksFilter
+    ? runbooks.filter(s => {
+        const low = runbooksFilter.toLowerCase()
         return (s.id ?? '').toLowerCase().includes(low) ||
           (s.title ?? '').toLowerCase().includes(low) ||
           (s.symptom ?? '').toLowerCase().includes(low) ||
           (s.tags ?? []).some(t => t.toLowerCase().includes(low))
       })
-    : skills
+    : runbooks
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const v = e.target.value
@@ -164,15 +164,15 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
       setSlashFilter(v.slice(1).split(' ')[0])
       setSlashOpen(true)
       setSlashIndex(0)
-      setSkillsOpen(false)
+      setRunbooksOpen(false)
     } else if (v.startsWith('$')) {
-      setSkillsFilter(v.slice(1).split(' ')[0])
-      setSkillsOpen(true)
-      setSkillsIndex(0)
+      setRunbooksFilter(v.slice(1).split(' ')[0])
+      setRunbooksOpen(true)
+      setRunbooksIndex(0)
       setSlashOpen(false)
     } else {
       setSlashOpen(false)
-      setSkillsOpen(false)
+      setRunbooksOpen(false)
     }
   }
 
@@ -193,15 +193,15 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
     }
   }
 
-  const selectSkillItem = (skill: Skill) => {
-    setSkillsOpen(false)
+  const selectRunbookItem = (runbook: Runbook) => {
+    setRunbooksOpen(false)
     setValue('')
-    onOpenSkill(skill)
+    onOpenRunbook(runbook)
   }
 
   const submit = () => {
-    if (skillsOpen && filteredSkills[skillsIndex]) {
-      selectSkillItem(filteredSkills[skillsIndex])
+    if (runbooksOpen && filteredRunbooks[runbooksIndex]) {
+      selectRunbookItem(filteredRunbooks[runbooksIndex])
       return
     }
     const trimmed = value.trim()
@@ -230,13 +230,13 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
       }
     }
 
-    if (skillsOpen) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSkillsIndex(i => Math.min(i + 1, filteredSkills.length - 1)); return }
-      if (e.key === 'ArrowUp')   { e.preventDefault(); setSkillsIndex(i => Math.max(i - 1, 0)); return }
-      if (e.key === 'Escape')    { setSkillsOpen(false); return }
+    if (runbooksOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setRunbooksIndex(i => Math.min(i + 1, filteredRunbooks.length - 1)); return }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setRunbooksIndex(i => Math.max(i - 1, 0)); return }
+      if (e.key === 'Escape')    { setRunbooksOpen(false); return }
       if (e.key === 'Tab' || e.key === 'Enter') {
         e.preventDefault()
-        if (filteredSkills[skillsIndex]) selectSkillItem(filteredSkills[skillsIndex])
+        if (filteredRunbooks[runbooksIndex]) selectRunbookItem(filteredRunbooks[runbooksIndex])
         return
       }
     }
@@ -247,7 +247,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
       return
     }
 
-    if (!slashOpen && !skillsOpen) {
+    if (!slashOpen && !runbooksOpen) {
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         const next = Math.min(historyIndex + 1, history.length - 1)
@@ -281,44 +281,44 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
 
   return (
     <div style={{ position: 'relative' }}>
-      {/* Skills dropdown ($) */}
-      {skillsOpen && filteredSkills.length > 0 && (
+      {/* Runbooks dropdown ($) */}
+      {runbooksOpen && filteredRunbooks.length > 0 && (
         <div style={{
           position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 6,
           background: menuBg, border: `1px solid ${surfaceBorder}`, borderRadius: 8,
           maxHeight: 280, overflowY: 'auto', zIndex: 100,
           boxShadow: isDark ? '0 -4px 16px rgba(0,0,0,0.5)' : '0 -4px 16px rgba(0,0,0,0.12)',
         }}>
-          {filteredSkills.map((skill, idx) => (
+          {filteredRunbooks.map((runbook, idx) => (
             <div
-              key={skill.id}
-              onMouseDown={() => selectSkillItem(skill)}
+              key={runbook.id}
+              onMouseDown={() => selectRunbookItem(runbook)}
               style={{
                 padding: '8px 14px',
                 cursor: 'pointer',
-                background: idx === skillsIndex ? itemHover : 'transparent',
+                background: idx === runbooksIndex ? itemHover : 'transparent',
                 display: 'flex', alignItems: 'baseline', gap: 10,
                 borderBottom: `1px solid ${itemBorder}`,
               }}
             >
               <span style={{ fontSize: 13, minWidth: 180 }}>
-                <span style={{ color: '#bd93f9' }}>${skill.id}</span>
+                <span style={{ color: '#bd93f9' }}>${runbook.id}</span>
               </span>
-              {skill.title && (
-                <span style={{ fontSize: 12, color: inputText, flexShrink: 0 }}>{skill.title}</span>
+              {runbook.title && (
+                <span style={{ fontSize: 12, color: inputText, flexShrink: 0 }}>{runbook.title}</span>
               )}
-              {(skill.args ?? []).length > 0 && (
+              {(runbook.args ?? []).length > 0 && (
                 <span style={{ fontSize: 11, color: groupText, flexShrink: 0 }}>
-                  {(skill.args ?? []).map(a => a.name).join(' ')}
+                  {(runbook.args ?? []).map(a => a.name).join(' ')}
                 </span>
               )}
-              {skill.symptom && (
+              {runbook.symptom && (
                 <span style={{
                   flex: 1, fontSize: 11, color: dimText,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   marginLeft: 10,
                 }}>
-                  {skill.symptom}
+                  {runbook.symptom}
                 </span>
               )}
             </div>
@@ -391,7 +391,7 @@ export function CommandInput({ runnables, skills, onRunRunnable, onOpenForm, onO
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder="Type / for runnables, $ for skills, or ask the LLM..."
+          placeholder="Type / for runnables, $ for runbooks, or ask the LLM..."
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
             color: inputText, fontSize: 14, resize: 'none',

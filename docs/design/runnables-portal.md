@@ -93,7 +93,7 @@ on-shift operators of their queue**, with **per-runnable operator-affinity**:
    (the visitor-curated args via `discoverable` — this already exists), fills it,
    submits. The submission is a **request** = `{runnable, args, visitor, queue}`
    (the existing `kind="request"` / `data={tool,args}` message shape).
-2. The hub **auto-assigns** the request to an available operator — **skill-first,
+2. The hub **auto-assigns** the request to an available operator — **runbook-first,
    then round-robin**:
    - candidates = **on-shift** agents who **hold** the runnable;
    - among them, **plain round-robin** (the next candidate in rotation). Single
@@ -201,7 +201,7 @@ Outlook's job. A new item → a `new_mail` event → the trigger engine.
 1. **Folder-level Outlook monitoring** (`ItemAdd` / poll) — the whole email source.
 2. **Presence-aware live catalogue** in the hub: per-queue union of on-shift
    agents' runnables + per-runnable **affinity** (who holds it).
-3. **Auto-assignment engine** in the hub: skill-first + least-load fair routing;
+3. **Auto-assignment engine** in the hub: runbook-first + least-load fair routing;
    the `unassigned` holding state; auto-assign a pending request when an eligible
    operator comes on shift.
 4. **Page / chime**: a broadcast to *connected* agents of a queue (on- and

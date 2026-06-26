@@ -277,12 +277,12 @@ class InvokeMixin:
     def send_chat(self, message: str, invocation_id: str | None = None) -> str:
         return self._spawn_chat_turn(message)
 
-    def _spawn_chat_turn(self, message: str, skill: str = "") -> str:
+    def _spawn_chat_turn(self, message: str, runbook: str = "") -> str:
         """Start an agentic chat turn on a worker thread; return its chat id.
 
-        ``skill`` (non-empty only on the run_skill path) tags the turn's run
+        ``runbook`` (non-empty only on the run_runbook path) tags the turn's run
         provenance so every runnable the agent invokes during it is attributed to
-        the skill in History/Analytics — direct chat leaves it unset (no origin)."""
+        the runbook in History/Analytics — direct chat leaves it unset (no origin)."""
         chat_id = uuid.uuid4().hex[:12]
         with self._lock:
             self._chat_cancels[chat_id] = threading.Event()
@@ -332,12 +332,14 @@ class InvokeMixin:
                         {"id": chat_id, "exit_code": 1, "duration_ms": 0},
                     )
                     return
-                if skill:
-                    self._set_run_origin(chat_id, trigger="", agent=True, skill=skill)
+                if runbook:
+                    self._set_run_origin(
+                        chat_id, trigger="", agent=True, runbook=runbook
+                    )
                 try:
                     asyncio.run(self._agentic_chat_turn(chat_id, message, adapter))
                 finally:
-                    if skill:
+                    if runbook:
                         self._clear_run_origin(chat_id)
             finally:
                 with self._lock:
@@ -347,16 +349,16 @@ class InvokeMixin:
         t.start()
         return chat_id
 
-    # ── skills (user-invocable, parameterized runbooks) ───────────────────────
+    # ── runbooks (user-invocable, parameterized runbooks) ───────────────────────
 
-    def get_skills(self) -> list[dict[str, Any]]:
-        """All skills with their ``[skill.args]`` table parsed to the same ``ArgDef``
-        shape runnable forms use — feeds the `$` skills menu, the run modal, and the
+    def get_runbooks(self) -> list[dict[str, Any]]:
+        """All runbooks with their ``[runbook.args]`` table parsed to the same ``ArgDef``
+        shape runnable forms use — feeds the `$` runbooks menu, the run modal, and the
         Settings editor. ``argsRaw`` is the stored table for faithful editor round-trip."""
-        from . import memory, skillargs
+        from . import memory, runbookargs
 
         out: list[dict[str, Any]] = []
-        for s in memory.load_skills():
+        for s in memory.load_runbooks():
             if not s.get("id"):
                 continue
             raw = s.get("args") if isinstance(s.get("args"), dict) else {}
@@ -371,7 +373,7 @@ class InvokeMixin:
                 "argsRaw": raw,
             }
             try:
-                entry["args"] = skillargs.parse_skill_args(raw)
+                entry["args"] = runbookargs.parse_runbook_args(raw)
             except Exception as exc:
                 # Malformed args table — surface it, don't break the whole list.
                 entry["args"] = []
@@ -379,11 +381,11 @@ class InvokeMixin:
             out.append(entry)
         return out
 
-    def save_skills(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
-        """Persist the whole skills collection from the Settings editor (mirrors
-        save_jump_hosts). Validates each skill's args table up front so a bad one is
+    def save_runbooks(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """Persist the whole runbooks collection from the Settings editor (mirrors
+        save_jump_hosts). Validates each runbook's args table up front so a bad one is
         rejected before it lands in the synced file."""
-        from . import memory, skillargs
+        from . import memory, runbookargs
 
         normalised: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -399,9 +401,9 @@ class InvokeMixin:
                 raw = r.get("args") if isinstance(r.get("args"), dict) else None
             if raw:
                 try:
-                    skillargs.parse_skill_args(raw)
+                    runbookargs.parse_runbook_args(raw)
                 except Exception as exc:
-                    return {"ok": False, "error": f"Skill '{sid}': {exc}"}
+                    return {"ok": False, "error": f"Runbook '{sid}': {exc}"}
             entry: dict[str, Any] = {
                 "id": sid,
                 "title": str(r.get("title") or "").strip(),
@@ -422,38 +424,38 @@ class InvokeMixin:
             if aud:
                 entry["discoverable"] = aud
             normalised.append(entry)
-        memory.save_skills(normalised)
+        memory.save_runbooks(normalised)
         return {"ok": True, "count": len(normalised)}
 
-    def run_skill(
+    def run_runbook(
         self,
-        skill_id: str,
+        runbook_id: str,
         values: dict[str, Any] | None = None,
         extra_instructions: str = "",
     ) -> dict[str, Any]:
-        """Render a skill's body with the operator's form ``values`` (validated against
+        """Render a runbook's body with the operator's form ``values`` (validated against
         its args), append any free-text ``extra_instructions``, and start a chat turn
-        tagged with the skill. Returns ``{chat_id, message}`` — the rendered text the UI
-        shows as the chat block — or ``{error}`` if the skill is unknown / values invalid."""
-        from . import memory, skillargs
+        tagged with the runbook. Returns ``{chat_id, message}`` — the rendered text the UI
+        shows as the chat block — or ``{error}`` if the runbook is unknown / values invalid."""
+        from . import memory, runbookargs
 
-        skill = memory.load_skill(str(skill_id or ""))
-        if not skill:
-            return {"error": f"No skill with id '{skill_id}'."}
+        runbook = memory.load_runbook(str(runbook_id or ""))
+        if not runbook:
+            return {"error": f"No runbook with id '{runbook_id}'."}
         vals = dict(values or {})
-        raw = skill.get("args") if isinstance(skill.get("args"), dict) else {}
-        errors = skillargs.validate_skill_values(raw, vals)
+        raw = runbook.get("args") if isinstance(runbook.get("args"), dict) else {}
+        errors = runbookargs.validate_runbook_values(raw, vals)
         if errors:
             return {"error": "\n".join(errors)}
-        body = memory.render_skill_body(str(skill.get("steps") or ""), vals)
+        body = memory.render_runbook_body(str(runbook.get("steps") or ""), vals)
         extra = str(extra_instructions or "").strip()
         message = f"{body}\n\n{extra}".strip() if extra else body.strip()
         if not message:
-            return {"error": "This skill has an empty body."}
-        chat_id = self._spawn_chat_turn(message, skill=str(skill.get("id") or ""))
+            return {"error": "This runbook has an empty body."}
+        chat_id = self._spawn_chat_turn(message, runbook=str(runbook.get("id") or ""))
         return {"chat_id": chat_id, "message": message}
 
-    # ── runbook docs (deterministic wiki from skills + hosts) ────────────────────
+    # ── runbook docs (deterministic wiki from runbooks + hosts) ────────────────────
 
     def get_docs_config(self) -> dict[str, Any]:
         """The runbook-docs settings for the UI: the configured output ``dir`` and
@@ -468,12 +470,12 @@ class InvokeMixin:
         write_docs_dir(str(dest_dir or ""))
 
     def generate_docs(self, dest_dir: str = "") -> dict[str, Any]:
-        """Write the deterministic runbook wiki (README + per-skill + hosts pages)
-        from the local skills + fleet into ``dest_dir``.
+        """Write the deterministic runbook wiki (README + per-runbook + hosts pages)
+        from the local runbooks + fleet into ``dest_dir``.
 
         Resolution: the ``dest_dir`` arg → the saved ``[docs] dir`` → the default
         ``config_mod.app_dir()/docs``. Output is byte-stable (no timestamps), so re-running
-        only changes files whose skills changed — clean to commit back to the
+        only changes files whose runbooks changed — clean to commit back to the
         config repo. Returns ``{ok, dir, written}`` or ``{ok: False, error}``."""
 
         from . import docsgen, memory
@@ -482,7 +484,7 @@ class InvokeMixin:
         base = Path(target).expanduser() if target else (config_mod.app_dir() / "docs")
         try:
             pages = docsgen.render_wiki(
-                memory.load_skills(),
+                memory.load_runbooks(),
                 list(self._hosts),
                 self.get_runnables("all"),
             )

@@ -32,7 +32,7 @@ _READONLY_META = frozenset({"search_runnables", "describe_runnable"})
 # memory.py) — local and reversible, so the autonomy gate lets them run without a
 # prompt (like the read-only meta-tools), keeping the model spend on actual work.
 _MEMORY_TOOL_NAMES = frozenset(
-    {"remember", "search_memory", "save_skill", "load_skill"}
+    {"remember", "search_memory", "save_runbook", "load_runbook"}
 )
 
 # Read-only status tool: report the live working-hours rota + configured
@@ -94,7 +94,7 @@ _REPO_TOOL_NAMES = _REPO_READ_TOOLS | _REPO_WRITE_TOOLS
 # (treated as "confirm" in _effective_tool_autonomy). Names are "__"-free so they
 # never collide with the host__runnable scheme.
 _ACTION_TOOL_NAMES = frozenset(
-    {"create_document", "run_skill", "create_schedule", "emit_event"}
+    {"create_document", "run_runbook", "create_schedule", "emit_event"}
 )
 
 # Cap on a single runnable's output handed to the model as a tool result. The

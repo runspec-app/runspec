@@ -1,8 +1,8 @@
 """
 test_docsgen.py — the deterministic runbook-wiki generator + the bridge wrapper.
 
-render_wiki is pure (skills + hosts in → {path: markdown} out). The properties
-that matter: every skill gets a page, tags group the index, params render, skills
+render_wiki is pure (runbooks + hosts in → {path: markdown} out). The properties
+that matter: every runbook gets a page, tags group the index, params render, runbooks
 cross-link the runnables/hosts their steps name, and — the one the commit-back
 loop depends on — the same input yields byte-identical output.
 """
@@ -80,8 +80,8 @@ def test_render_wiki_emits_expected_pages():
     out = docsgen.render_wiki(SKILLS, HOSTS, RUNNABLES)
     assert set(out) == {
         "README.md",
-        "skills/restart-web.md",
-        "skills/rotate-logs.md",
+        "runbooks/restart-web.md",
+        "runbooks/rotate-logs.md",
         "hosts.md",
         "runnables.md",
         "runnables/web1.md",
@@ -117,37 +117,37 @@ def test_runnables_optional_empty_when_omitted():
     assert not any(k.startswith("runnables/") for k in out)
 
 
-def test_maintaining_page_carries_pasteable_default_skill():
+def test_maintaining_page_carries_pasteable_default_runbook():
     page = docsgen.render_wiki(SKILLS, HOSTS)["maintaining-docs.md"]
     assert "```toml" in page
-    # the paste-able block is a valid [[skill]] entry with the default skill's id
-    assert "[[skill]]" in page
+    # the paste-able block is a valid [[runbook]] entry with the default runbook's id
+    assert "[[runbook]]" in page
     assert 'id = "regenerate-runbook-docs"' in page
     # the README points at it
     readme = docsgen.render_wiki(SKILLS, HOSTS)["README.md"]
     assert "[maintaining-docs.md](maintaining-docs.md)" in readme
 
 
-def test_default_skill_toml_round_trips():
+def test_default_runbook_toml_round_trips():
     import tomllib
 
-    block = docsgen._skill_to_toml(docsgen.DEFAULT_SKILL)
+    block = docsgen._runbook_to_toml(docsgen.DEFAULT_RUNBOOK)
     parsed = tomllib.loads(block)
-    assert parsed["skill"][0]["id"] == "regenerate-runbook-docs"
-    assert parsed["skill"][0]["tags"] == ["docs", "self-service"]
+    assert parsed["runbook"][0]["id"] == "regenerate-runbook-docs"
+    assert parsed["runbook"][0]["tags"] == ["docs", "self-service"]
 
 
 def test_index_groups_by_tag_and_untagged():
     readme = docsgen.render_wiki(SKILLS, HOSTS)["README.md"]
     assert "### outage" in readme
     assert "### web" in readme
-    assert "### Untagged" in readme  # the tag-less skill
-    # a skill links to its page
-    assert "[Restart the web tier](skills/restart-web.md)" in readme
+    assert "### Untagged" in readme  # the tag-less runbook
+    # a runbook links to its page
+    assert "[Restart the web tier](runbooks/restart-web.md)" in readme
 
 
-def test_skill_page_has_params_and_cross_links():
-    page = docsgen.render_wiki(SKILLS, HOSTS)["skills/restart-web.md"]
+def test_runbook_page_has_params_and_cross_links():
+    page = docsgen.render_wiki(SKILLS, HOSTS)["runbooks/restart-web.md"]
     assert "# Restart the web tier" in page
     assert "**When to use:** Web is 502ing" in page
     assert "## Parameters" in page
@@ -175,7 +175,7 @@ def test_output_is_byte_identical_across_runs():
 
 def test_empty_inputs_render_without_error():
     out = docsgen.render_wiki([], [])
-    assert "_No skills defined yet._" in out["README.md"]
+    assert "_No runbooks defined yet._" in out["README.md"]
     assert "_No hosts defined._" in out["hosts.md"]
 
 
@@ -198,12 +198,12 @@ class _DocsBridge:
 def test_generate_docs_writes_files(monkeypatch, tmp_path):
     import runspec_console.memory as memory
 
-    monkeypatch.setattr(memory, "load_skills", lambda: SKILLS)
+    monkeypatch.setattr(memory, "load_runbooks", lambda: SKILLS)
     res = _DocsBridge(HOSTS, RUNNABLES).generate_docs(str(tmp_path / "docs"))
 
     assert res["ok"] is True
     assert (tmp_path / "docs" / "README.md").exists()
-    assert (tmp_path / "docs" / "skills" / "restart-web.md").exists()
+    assert (tmp_path / "docs" / "runbooks" / "restart-web.md").exists()
     assert (tmp_path / "docs" / "runnables" / "web1.md").exists()
     assert set(res["written"]) == {
         "README.md",
@@ -212,8 +212,8 @@ def test_generate_docs_writes_files(monkeypatch, tmp_path):
         "runnables/web1.md",
         "runnables/db1.md",
         "maintaining-docs.md",
-        "skills/restart-web.md",
-        "skills/rotate-logs.md",
+        "runbooks/restart-web.md",
+        "runbooks/rotate-logs.md",
     }
     # rerun with the same inputs is byte-identical (clean diff)
     before = (tmp_path / "docs" / "README.md").read_bytes()
@@ -224,7 +224,7 @@ def test_generate_docs_writes_files(monkeypatch, tmp_path):
 def test_generate_docs_defaults_to_app_dir(monkeypatch, tmp_path):
     import runspec_console.memory as memory
 
-    monkeypatch.setattr(memory, "load_skills", lambda: [])
+    monkeypatch.setattr(memory, "load_runbooks", lambda: [])
     monkeypatch.setattr("runspec_console.config.read_docs_dir", lambda: "")
     monkeypatch.setattr("runspec_console.config.app_dir", lambda: tmp_path)
     res = _DocsBridge([]).generate_docs()

@@ -291,11 +291,11 @@ exit. This has two independently controlled parts:
   axes independently. runspec-console sets it on scheduled and event-triggered
   runs to show per-run icons.
 
-  **Provenance — `RUNSPEC_SKILL`.** A further orthogonal axis: a caller can set
-  `RUNSPEC_SKILL` to the id of a saved *skill* (runbook) that drove the run; it
-  lands as `extra.skill` (empty otherwise). runspec-console sets it when a run is
-  started from its `$` skills menu, so the History/Analytics tabs can attribute and
-  filter runs by skill.
+  **Provenance — `RUNSPEC_RUNBOOK`.** A further orthogonal axis: a caller can set
+  `RUNSPEC_RUNBOOK` to the id of a saved *runbook* (runbook) that drove the run; it
+  lands as `extra.runbook` (empty otherwise). runspec-console sets it when a run is
+  started from its `$` runbooks menu, so the History/Analytics tabs can attribute and
+  filter runs by runbook.
 
 - **The console echo** (`summary_console`, default **off**) — one human-readable
   line to **stderr**:
