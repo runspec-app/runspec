@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.135.0] — 2026-06-26
+
+### Added
+- **Eight new Outlook Classic agent tools** (desktop COM) — read/triage and create
+  calendar events without any new Graph permission, riding the signed-in desktop
+  session. Reads (autonomous): `outlook_get_message` (full body + headers +
+  attachment list — closes the gap where list/search rows only carried a 280-char
+  preview), `outlook_resolve_recipient` (GAL/contacts → SMTP). Writes (confirm):
+  `outlook_save_attachment` (to disk, e.g. to feed a log into `runspec-logops`),
+  `outlook_create_event` (meeting invite with attendees, else a personal block),
+  `outlook_respond_invite` (accept/tentative/decline), plus the helpdesk-triage
+  trio `outlook_mark_read` / `outlook_categorize` / `outlook_move`. `outlook_draft`
+  also gained a `reply_all` mode.
+- **Git-repo agent tools (local checkouts)** — ground the agent in real source code
+  and make small, reviewed *local* edits, reusing the Config Sync git machinery
+  (dulwich + paramiko SSH + HTTPS CA/proxy), so auth/CA/proxy behave exactly as
+  Config Sync does. New **`runspec_repos.toml`** registry (the controlled list of
+  repos the agent may touch; rides Config Sync, merged by `name`). Seven tools:
+  `repo_status` / `repo_list` / `repo_grep` / `repo_read` / `repo_diff` (read-only,
+  autonomous) and `repo_sync` (clone/fetch + checkout) / `repo_write` (local file
+  edit) (confirm-gated). Checkouts live at `{app_dir}/repos/{name}` (never synced);
+  every path is fenced by `_safe_path`; reads are byte/size/result-bounded; binaries
+  are skipped.
+- All new tools are selectable in the per-trigger action allowlist and named in the
+  per-turn `_console_context`.
+
+### Notes
+- `outlook_create_event` does **not** add a Teams join link by itself — the desktop
+  Teams add-in is not scriptable over COM; a link appears only if the org enables
+  online-meeting-by-default (or via a separate Graph `OnlineMeetings` scope).
+- Repo edits are **local only — no commit/push by design**; the operator reviews with
+  `repo_diff` and commits with their own tooling (a re-`repo_sync` restores files
+  from the remote). Registry is file/Config-Sync managed for now (no Settings UI / no
+  new public bridge API surface). See `docs/design/repo-tools.md`.
+
+
 ## [0.134.0] — 2026-06-26
 
 ### Fixed

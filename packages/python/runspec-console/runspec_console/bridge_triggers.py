@@ -1474,10 +1474,37 @@ class TriggersMixin:
             items += [
                 {"name": "outlook_inbox", "label": "Outlook: read inbox"},
                 {"name": "outlook_search", "label": "Outlook: search"},
+                {"name": "outlook_get_message", "label": "Outlook: read message"},
                 {"name": "outlook_calendar", "label": "Outlook: calendar"},
                 {"name": "outlook_reminders", "label": "Outlook: reminders"},
+                {
+                    "name": "outlook_resolve_recipient",
+                    "label": "Outlook: resolve recipient",
+                },
                 {"name": "outlook_draft", "label": "Outlook: draft mail"},
                 {"name": "outlook_send", "label": "Outlook: send mail"},
+                {
+                    "name": "outlook_save_attachment",
+                    "label": "Outlook: save attachment",
+                },
+                {"name": "outlook_create_event", "label": "Outlook: create event"},
+                {
+                    "name": "outlook_respond_invite",
+                    "label": "Outlook: respond to invite",
+                },
+                {"name": "outlook_mark_read", "label": "Outlook: mark read/unread"},
+                {"name": "outlook_categorize", "label": "Outlook: categorize"},
+                {"name": "outlook_move", "label": "Outlook: move to folder"},
+            ]
+        if self._repo_tools():
+            items += [
+                {"name": "repo_status", "label": "Repo: list/status"},
+                {"name": "repo_sync", "label": "Repo: sync (clone/fetch)"},
+                {"name": "repo_list", "label": "Repo: list files"},
+                {"name": "repo_grep", "label": "Repo: search"},
+                {"name": "repo_read", "label": "Repo: read file"},
+                {"name": "repo_diff", "label": "Repo: diff"},
+                {"name": "repo_write", "label": "Repo: write file (local)"},
             ]
         return items
 

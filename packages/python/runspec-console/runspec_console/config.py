@@ -79,6 +79,19 @@ def credentials_path() -> Path:
     return app_dir() / "runspec_credentials.toml"
 
 
+def repos_path() -> Path:
+    """The git-repo registry (`runspec_repos.toml`) — the controlled list of repos
+    the agent's repo_* tools may clone/read/edit. Rides Config Sync (KNOWN_FILES),
+    merged by `name` like the other collection files."""
+    return app_dir() / "runspec_repos.toml"
+
+
+def repos_root() -> Path:
+    """Parent dir for local repo checkouts (one subdir per registry `name`). Local
+    working copies — **never** synced; the registry that lists them is."""
+    return app_dir() / "repos"
+
+
 def config_path() -> Path:
     return app_dir() / "config.toml"
 

@@ -35,6 +35,9 @@ from .bridge_const import (
     _OUTLOOK_READ_TOOLS,
     _OUTLOOK_WRITE_TOOLS,
     _OUTLOOK_TOOL_NAMES,
+    _REPO_READ_TOOLS,
+    _REPO_WRITE_TOOLS,
+    _REPO_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
     _AGENT_TOOL_OUTPUT_CAP,
 )
@@ -62,6 +65,10 @@ class AutonomyMixin:
             return "autonomous"  # read-only Outlook reads (local COM) — no prompt
         if tool_name in _OUTLOOK_WRITE_TOOLS:
             return "confirm"  # draft/send mail — always prompt (send is irreversible)
+        if tool_name in _REPO_READ_TOOLS:
+            return "autonomous"  # read-only repo reads (local checkout) — no prompt
+        if tool_name in _REPO_WRITE_TOOLS:
+            return "confirm"  # clone/fetch+checkout or local file write — always prompt
         if tool_name in _CUSTOM_TOOL_NAMES:
             return "confirm"  # side-effecting file move — always prompt
         if tool_name in _READONLY_META:
@@ -594,6 +601,8 @@ class AutonomyMixin:
             return self._run_custom_tool(tool_name, dict(tool_input or {}))
         if tool_name in _OUTLOOK_TOOL_NAMES:
             return self._run_outlook_tool(tool_name, dict(tool_input or {}))
+        if tool_name in _REPO_TOOL_NAMES:
+            return self._run_repo_tool(tool_name, dict(tool_input or {}))
         if tool_name in _MEMORY_TOOL_NAMES:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
         if tool_name in _STATUS_TOOL_NAMES:

@@ -47,12 +47,46 @@ _STATUS_TOOL_NAMES = frozenset({"console_status"})
 # + pywin32). These ride the desktop's signed-in Outlook session, so they work in
 # locked-down environments that block the Graph device-code flow.
 _OUTLOOK_READ_TOOLS = frozenset(
-    {"outlook_inbox", "outlook_search", "outlook_calendar", "outlook_reminders"}
+    {
+        "outlook_inbox",
+        "outlook_search",
+        "outlook_get_message",
+        "outlook_calendar",
+        "outlook_reminders",
+        "outlook_resolve_recipient",
+    }
 )
 
-_OUTLOOK_WRITE_TOOLS = frozenset({"outlook_draft", "outlook_send"})
+# draft/send mail, save an attachment to disk, create a calendar event, respond to
+# an invite, and triage actions (mark read / categorize / move) — all
+# side-effecting, so they prompt before running.
+_OUTLOOK_WRITE_TOOLS = frozenset(
+    {
+        "outlook_draft",
+        "outlook_send",
+        "outlook_save_attachment",
+        "outlook_create_event",
+        "outlook_respond_invite",
+        "outlook_mark_read",
+        "outlook_categorize",
+        "outlook_move",
+    }
+)
 
 _OUTLOOK_TOOL_NAMES = _OUTLOOK_READ_TOOLS | _OUTLOOK_WRITE_TOOLS
+
+# Git-repo (local checkout) agent tools. Reads are autonomous (read-only over a
+# local checkout); repo_sync (clones/fetches + writes a working tree, discarding
+# local edits) and repo_write (writes a file) are side-effecting and prompt first.
+# Only offered when the git engine (dulwich) is available and at least one repo is
+# registered in runspec_repos.toml. No commit/push — edits are local only.
+_REPO_READ_TOOLS = frozenset(
+    {"repo_status", "repo_list", "repo_grep", "repo_read", "repo_diff"}
+)
+
+_REPO_WRITE_TOOLS = frozenset({"repo_sync", "repo_write"})
+
+_REPO_TOOL_NAMES = _REPO_READ_TOOLS | _REPO_WRITE_TOOLS
 
 # Built-in "action" tools beyond running a runnable — write a markdown document,
 # follow a saved runbook, create a schedule, or emit an event into the trigger

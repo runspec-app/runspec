@@ -17,6 +17,7 @@ class _ActionBridge:
     _custom_agent_tools = Bridge._custom_agent_tools
     _denylist_tool = Bridge._denylist_tool
     _outlook_tools = Bridge._outlook_tools
+    _repo_tools = Bridge._repo_tools
     _memory_tools = Bridge._memory_tools
     _status_tools = Bridge._status_tools
     _action_tools = Bridge._action_tools

@@ -878,9 +878,29 @@ class InternalsMixin:
             lines.append(
                 f"Outlook (Classic, desktop): monitoring {where} for new mail"
                 + (f" — label '{mailbox['label']}'" if mailbox.get("label") else "")
-                + ". You can read, search, draft and send via the outlook_* tools "
-                "(outlook_inbox / outlook_search / outlook_calendar / outlook_reminders "
-                "are read-only; outlook_draft / outlook_send write — send is confirm-gated)."
+                + ". You can read, search, draft, send, manage your calendar, and "
+                "triage (mark read / categorize / move) via the outlook_* tools "
+                "(outlook_inbox / outlook_search / outlook_get_message / "
+                "outlook_calendar / outlook_reminders / outlook_resolve_recipient are "
+                "read-only; outlook_draft / outlook_send / outlook_save_attachment / "
+                "outlook_create_event / outlook_respond_invite / outlook_mark_read / "
+                "outlook_categorize / outlook_move write — sends, invites and "
+                "responses are confirm-gated)."
             )
+
+        from . import repos as repos_mod
+
+        if repos_mod.available():
+            registered = repos_mod.read_repos()
+            if registered:
+                lines.append("")
+                names = ", ".join(r["name"] for r in registered)
+                lines.append(
+                    f"Git repos (local checkouts): {names}. Use the repo_* tools to "
+                    "ground answers in real code — repo_status / repo_list / repo_read "
+                    "/ repo_grep / repo_diff are read-only; repo_sync (clone/fetch) and "
+                    "repo_write (local file edit) are confirm-gated. Edits are LOCAL "
+                    "ONLY — no commit/push; review them with repo_diff."
+                )
 
         return "\n".join(lines)

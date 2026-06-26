@@ -11,6 +11,7 @@ import os
 import re
 import sys
 from collections.abc import Collection
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,21 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    """Parse an ISO-8601 datetime string from a tool arg into a naive local-time
+    ``datetime`` (or ``None`` if blank/unparseable). Any timezone offset is dropped
+    — Outlook COM takes wall-clock local times — so an aware input is treated as
+    the operator's local time."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
 class AgentToolsMixin:
@@ -377,6 +393,7 @@ class AgentToolsMixin:
             return [
                 *([deny_tool] if deny_tool else []),
                 *self._outlook_tools(),
+                *self._repo_tools(),
                 *self._status_tools(),
                 *self._memory_tools(),
                 *self._action_tools(),
@@ -516,6 +533,7 @@ class AgentToolsMixin:
             relay,
             *([deny_tool] if deny_tool else []),
             *self._outlook_tools(),
+            *self._repo_tools(),
             *self._status_tools(),
             *self._memory_tools(),
             *self._action_tools(),
@@ -609,6 +627,24 @@ class AgentToolsMixin:
                 },
             },
             {
+                "name": "outlook_get_message",
+                "description": (
+                    "Read one Outlook message in full by its entry_id — full body, "
+                    "headers, and attachment list. Use this after outlook_inbox / "
+                    "outlook_search, whose rows carry only a short preview."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of the message (from outlook_inbox/outlook_search or a new_mail trigger).",
+                        },
+                    },
+                    "required": ["entry_id"],
+                },
+            },
+            {
                 "name": "outlook_calendar",
                 "description": "List upcoming Outlook calendar events over the next N days (desktop COM).",
                 "input_schema": {
@@ -631,6 +667,23 @@ class AgentToolsMixin:
                 "input_schema": {"type": "object", "properties": {}},
             },
             {
+                "name": "outlook_resolve_recipient",
+                "description": (
+                    "Resolve a name against the Outlook address book (GAL/contacts) "
+                    "to its email address before drafting or sending. Read-only."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Display name or partial name to resolve.",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+            {
                 "name": "outlook_draft",
                 "description": (
                     "Save a mail to the Outlook Drafts folder (never sent). Provide "
@@ -648,6 +701,10 @@ class AgentToolsMixin:
                         "reply_to": {
                             "type": "string",
                             "description": "entry_id of the message to reply to (from outlook_inbox/search or a new_mail trigger).",
+                        },
+                        "reply_all": {
+                            "type": "boolean",
+                            "description": "With reply_to, reply to the sender AND all other recipients (default false).",
                         },
                         "to": {
                             "type": "string",
@@ -704,6 +761,175 @@ class AgentToolsMixin:
                     },
                 },
             },
+            {
+                "name": "outlook_save_attachment",
+                "description": (
+                    "Save an attachment from an Outlook message to a file on this "
+                    "machine (e.g. to then feed a log file into the logops runnables). "
+                    "Identify it by name or 1-based index; omit both if the message "
+                    "has exactly one attachment. Defaults to the system temp dir."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of the message holding the attachment.",
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Attachment filename to save (case-insensitive; substring allowed).",
+                        },
+                        "index": {
+                            "type": "integer",
+                            "description": "1-based attachment index (alternative to name).",
+                        },
+                        "dest_dir": {
+                            "type": "string",
+                            "description": "Destination directory; omit for the system temp dir.",
+                        },
+                    },
+                    "required": ["entry_id"],
+                },
+            },
+            {
+                "name": "outlook_create_event",
+                "description": (
+                    "Create an Outlook calendar event. With attendees it sends a "
+                    "meeting invite; without, it saves a personal calendar block. "
+                    "Times are interpreted in your local timezone. Note: this does "
+                    "not add a Teams link by itself — a Teams join link only appears "
+                    "if your org enables online-meeting-by-default."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "subject": {
+                            "type": "string",
+                            "description": "Event title.",
+                        },
+                        "start": {
+                            "type": "string",
+                            "description": "Start time, ISO 8601 (e.g. 2026-06-27T14:00).",
+                        },
+                        "end": {
+                            "type": "string",
+                            "description": "End time, ISO 8601. Defaults to 30 minutes after start.",
+                        },
+                        "attendees": {
+                            "type": "string",
+                            "description": "Attendee address(es), semicolon-separated. Provide to send an invite.",
+                        },
+                        "location": {
+                            "type": "string",
+                            "description": "Location (optional).",
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "Event body / agenda (optional).",
+                        },
+                        "reminder_minutes": {
+                            "type": "integer",
+                            "description": "Reminder lead time in minutes (default 15; negative for no reminder).",
+                        },
+                    },
+                    "required": ["subject", "start"],
+                },
+            },
+            {
+                "name": "outlook_respond_invite",
+                "description": (
+                    "Respond to a meeting invitation in your mailbox — accept, "
+                    "decline, or tentative. Sends the response to the organizer."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of the meeting invite (from outlook_inbox/outlook_calendar).",
+                        },
+                        "response": {
+                            "type": "string",
+                            "enum": ["accept", "tentative", "decline"],
+                            "description": "Your response.",
+                        },
+                    },
+                    "required": ["entry_id", "response"],
+                },
+            },
+            {
+                "name": "outlook_mark_read",
+                "description": (
+                    "Mark an Outlook message read (default) or unread by entry_id — "
+                    "the 'handled' flag when closing out a helpdesk message."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of the message.",
+                        },
+                        "read": {
+                            "type": "boolean",
+                            "description": "True to mark read (default), false to mark unread.",
+                        },
+                    },
+                    "required": ["entry_id"],
+                },
+            },
+            {
+                "name": "outlook_categorize",
+                "description": (
+                    "Tag an Outlook message with one or more categories (e.g. "
+                    "'Triaged', 'Outage'). Adds to existing categories unless replace "
+                    "is set."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of the message.",
+                        },
+                        "categories": {
+                            "type": "string",
+                            "description": "Category name(s), comma-separated.",
+                        },
+                        "replace": {
+                            "type": "boolean",
+                            "description": "Replace existing categories instead of adding (default false).",
+                        },
+                    },
+                    "required": ["entry_id", "categories"],
+                },
+            },
+            {
+                "name": "outlook_move",
+                "description": (
+                    "File an Outlook message into another folder (e.g. 'Tickets/Closed'). "
+                    "Folder path resolves within the same mailbox unless mailbox is given."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of the message to move.",
+                        },
+                        "folder": {
+                            "type": "string",
+                            "description": "Destination folder path (e.g. 'Tickets/Closed').",
+                        },
+                        "mailbox": {
+                            "type": "string",
+                            "description": "Mailbox address; omit for the monitored/default account.",
+                        },
+                    },
+                    "required": ["entry_id", "folder"],
+                },
+            },
         ]
 
     def _run_outlook_tool(self, name: str, ti: dict[str, Any]) -> str:
@@ -734,6 +960,11 @@ class AgentToolsMixin:
                     int(ti.get("count") or 20),
                 )
                 return _json.dumps({"messages": rows, "count": len(rows)}, default=str)
+            if name == "outlook_get_message":
+                eid = str(ti.get("entry_id") or "").strip()
+                if not eid:
+                    return "Error: 'entry_id' is required for outlook_get_message."
+                return _json.dumps(ol.get_message(eid), default=str)
             if name == "outlook_calendar":
                 rows = ol.upcoming_events(
                     int(ti.get("days") or 1), int(ti.get("count") or 20)
@@ -746,11 +977,18 @@ class AgentToolsMixin:
                 if rows is None:
                     return "Could not read Outlook reminders (is Outlook running?)."
                 return _json.dumps({"reminders": rows, "count": len(rows)}, default=str)
+            if name == "outlook_resolve_recipient":
+                who = str(ti.get("name") or "").strip()
+                if not who:
+                    return "Error: 'name' is required for outlook_resolve_recipient."
+                return _json.dumps(ol.resolve_recipient(who), default=str)
             if name == "outlook_draft":
                 body = str(ti.get("body") or "")
                 fm = str(ti.get("from_mailbox") or "") or None
                 if ti.get("reply_to"):
-                    res = ol.save_reply_draft(str(ti["reply_to"]), body, fm)
+                    res = ol.save_reply_draft(
+                        str(ti["reply_to"]), body, fm, bool(ti.get("reply_all", False))
+                    )
                 else:
                     to = str(ti.get("to") or "")
                     if not to:
@@ -778,9 +1016,332 @@ class AgentToolsMixin:
                         str(ti.get("from_mailbox") or ""),
                     )
                 return f"✓ Sent: to {res.get('to')} — {res.get('subject', '')}"
+            if name == "outlook_save_attachment":
+                eid = str(ti.get("entry_id") or "").strip()
+                if not eid:
+                    return "Error: 'entry_id' is required for outlook_save_attachment."
+                res = ol.save_attachment(
+                    eid,
+                    str(ti.get("name") or ""),
+                    int(ti.get("index") or 0),
+                    str(ti.get("dest_dir") or ""),
+                )
+                return (
+                    f"✓ Saved attachment '{res.get('name')}' "
+                    f"({res.get('size')} bytes) to {res.get('path')}"
+                )
+            if name == "outlook_create_event":
+                subject = str(ti.get("subject") or "").strip()
+                if not subject:
+                    return "Error: 'subject' is required for outlook_create_event."
+                start = _parse_dt(ti.get("start"))
+                if start is None:
+                    return (
+                        "Error: 'start' must be an ISO datetime "
+                        "(e.g. 2026-06-27T14:00) for outlook_create_event."
+                    )
+                end = _parse_dt(ti.get("end")) or (start + timedelta(minutes=30))
+                rmin = ti.get("reminder_minutes")
+                res = ol.create_event(
+                    subject,
+                    start,
+                    end,
+                    attendees=str(ti.get("attendees") or ""),
+                    location=str(ti.get("location") or ""),
+                    body=str(ti.get("body") or ""),
+                    reminder_minutes=int(rmin) if rmin is not None else 15,
+                )
+                verb = (
+                    "Invite sent" if res.get("sent") else "Event saved to your calendar"
+                )
+                return (
+                    f"✓ {verb}: {res.get('subject')} "
+                    f"({res.get('start')} → {res.get('end')}; entry_id {res.get('entry_id')})"
+                )
+            if name == "outlook_respond_invite":
+                eid = str(ti.get("entry_id") or "").strip()
+                if not eid:
+                    return "Error: 'entry_id' is required for outlook_respond_invite."
+                try:
+                    res = ol.respond_invite(eid, str(ti.get("response") or ""))
+                except ValueError as exc:
+                    return f"Error: {exc}"
+                return f"✓ Responded '{res.get('response')}' to: {res.get('subject')}"
+            if name == "outlook_mark_read":
+                eid = str(ti.get("entry_id") or "").strip()
+                if not eid:
+                    return "Error: 'entry_id' is required for outlook_mark_read."
+                res = ol.mark_message(eid, bool(ti.get("read", True)))
+                state = "unread" if res.get("unread") else "read"
+                return f"✓ Marked {state}: {res.get('subject')}"
+            if name == "outlook_categorize":
+                eid = str(ti.get("entry_id") or "").strip()
+                if not eid:
+                    return "Error: 'entry_id' is required for outlook_categorize."
+                cats = str(ti.get("categories") or "").strip()
+                if not cats:
+                    return "Error: 'categories' is required for outlook_categorize."
+                res = ol.categorize_message(eid, cats, bool(ti.get("replace", False)))
+                return (
+                    f"✓ Categorized [{', '.join(res.get('categories') or [])}]: "
+                    f"{res.get('subject')}"
+                )
+            if name == "outlook_move":
+                eid = str(ti.get("entry_id") or "").strip()
+                if not eid:
+                    return "Error: 'entry_id' is required for outlook_move."
+                folder = str(ti.get("folder") or "").strip()
+                if not folder:
+                    return "Error: 'folder' is required for outlook_move."
+                res = ol.move_message(eid, str(ti.get("mailbox") or ""), folder)
+                return f"✓ Moved to {res.get('folder')}: {res.get('subject')}"
         except Exception as exc:  # noqa: BLE001 — surface COM failures to the agent
             return f"✗ Outlook {name} failed: {exc}"
         return f"Error: unknown Outlook tool '{name}'."
+
+    def _repo_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the git-repo tools — list/read/grep/diff (read-only,
+        autonomous) and sync/write (confirm-gated, local edits only, no push).
+        Offered only when the git engine is available AND at least one repo is
+        registered in runspec_repos.toml; empty list otherwise."""
+        from . import repos
+
+        if not repos.available():
+            return []
+        registered = repos.read_repos()
+        if not registered:
+            return []
+        names = ", ".join(r["name"] for r in registered)
+        hint = (
+            f" Registered repos: {names}. Call repo_sync first to fetch a repo "
+            "before reading it; edits are LOCAL ONLY (review with repo_diff — there "
+            "is no commit/push)."
+        )
+        return [
+            {
+                "name": "repo_status",
+                "description": (
+                    "List the registered git repos and whether each is checked out "
+                    "locally (with its synced ref/commit)." + hint
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "repo_sync",
+                "description": (
+                    "Clone (or fetch + re-checkout) a registered repo into its local "
+                    "working copy at its configured ref. NOTE: re-syncing discards "
+                    "uncommitted local edits (remote is source of truth)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Registered repo name (see repo_status).",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+            {
+                "name": "repo_list",
+                "description": "List files/dirs in a synced repo at a path (default repo root).",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Registered repo name.",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Directory path within the repo; omit for the root.",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+            {
+                "name": "repo_grep",
+                "description": "Regex-search a synced repo's files for a pattern (subject/body of code).",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Registered repo name.",
+                        },
+                        "pattern": {
+                            "type": "string",
+                            "description": "Regular expression to search for.",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Limit the search to this subdirectory (optional).",
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Max matches to return (default 100).",
+                        },
+                    },
+                    "required": ["name", "pattern"],
+                },
+            },
+            {
+                "name": "repo_read",
+                "description": "Read a file from a synced repo, optionally a 1-based line range.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Registered repo name.",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "File path within the repo.",
+                        },
+                        "start": {
+                            "type": "integer",
+                            "description": "First line (1-based) to return (optional).",
+                        },
+                        "end": {
+                            "type": "integer",
+                            "description": "Last line to return (optional).",
+                        },
+                    },
+                    "required": ["name", "path"],
+                },
+            },
+            {
+                "name": "repo_diff",
+                "description": (
+                    "Show the working-tree changes in a synced repo (unified diff vs "
+                    "the synced commit) — review local edits before applying them."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Registered repo name.",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Limit the diff to this path prefix (optional).",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+            {
+                "name": "repo_write",
+                "description": (
+                    "Create or overwrite a file in a synced repo's LOCAL working copy "
+                    "(no commit, no push — review with repo_diff). Provide the full new "
+                    "file content."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Registered repo name.",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "File path within the repo to write.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Full new file content.",
+                        },
+                    },
+                    "required": ["name", "path", "content"],
+                },
+            },
+        ]
+
+    def _run_repo_tool(self, name: str, ti: dict[str, Any]) -> str:
+        """Execute a git-repo tool. Reads return JSON; sync/write return a one-line
+        summary (the autonomy gate has already approved a side-effecting call)."""
+        import json as _json
+
+        from . import repos
+
+        repo_name = str(ti.get("name") or "").strip()
+        if name == "repo_status":
+            rows = [
+                {
+                    "name": r["name"],
+                    "url": r["url"],
+                    "ref": r["ref"],
+                    "checked_out": repos.is_checked_out(r["name"]),
+                    "description": r.get("description", ""),
+                }
+                for r in repos.read_repos()
+            ]
+            return _json.dumps({"repos": rows, "count": len(rows)}, default=str)
+
+        if not repo_name:
+            return f"Error: 'name' is required for {name}."
+        entry = repos.find_repo(repo_name)
+        if entry is None:
+            return (
+                f"Error: no repo named {repo_name!r} is registered (see repo_status)."
+            )
+        dest = repos.checkout_dir(entry["name"])
+
+        try:
+            if name == "repo_sync":
+                auth = self._sync_auth(entry["url"], entry.get("credential_id", ""))
+                res = repos.sync_repo(entry["url"], entry["ref"], auth, dest)
+                return (
+                    f"✓ {res['action']} {entry['name']} @ {res['ref']} "
+                    f"({res['commit'][:10]}) → {res['path']}"
+                )
+            # All other ops need a checkout first.
+            if not repos.is_checked_out(entry["name"]):
+                return f"Error: {entry['name']} is not checked out yet — run repo_sync first."
+            if name == "repo_list":
+                rows = repos.list_dir(dest, str(ti.get("path") or ""))
+                return _json.dumps({"entries": rows, "count": len(rows)}, default=str)
+            if name == "repo_grep":
+                pattern = str(ti.get("pattern") or "")
+                if not pattern:
+                    return "Error: 'pattern' is required for repo_grep."
+                rows = repos.grep_repo(
+                    dest,
+                    pattern,
+                    str(ti.get("path") or ""),
+                    int(ti.get("max_results") or 100),
+                )
+                return _json.dumps({"matches": rows, "count": len(rows)}, default=str)
+            if name == "repo_read":
+                path = str(ti.get("path") or "")
+                if not path:
+                    return "Error: 'path' is required for repo_read."
+                res = repos.read_file(
+                    dest, path, int(ti.get("start") or 0), int(ti.get("end") or 0)
+                )
+                return _json.dumps(res, default=str)
+            if name == "repo_diff":
+                res = repos.diff_repo(dest, str(ti.get("path") or ""))
+                return _json.dumps(res, default=str)
+            if name == "repo_write":
+                path = str(ti.get("path") or "")
+                if not path:
+                    return "Error: 'path' is required for repo_write."
+                res = repos.write_file(dest, path, str(ti.get("content") or ""))
+                verb = "Created" if res["created"] else "Updated"
+                return (
+                    f"✓ {verb} {entry['name']}/{res['path']} ({res['bytes']} bytes) "
+                    "in the local working copy — review with repo_diff (not committed)."
+                )
+        except Exception as exc:  # noqa: BLE001 — surface git/FS failures to the agent
+            return f"✗ Repo {name} failed: {exc}"
+        return f"Error: unknown repo tool '{name}'."
 
     def _denylist_tool(self) -> dict[str, Any] | None:
         """Schema for the built-in ``manage_denylist`` tool — a fleet kill switch.

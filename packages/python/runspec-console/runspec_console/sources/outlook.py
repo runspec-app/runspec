@@ -42,8 +42,10 @@ See docs/design/email-folder-watch.md and docs/design/console-triggers.md (§4.1
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -490,7 +492,12 @@ class OutlookSource:
 
 
 def _compose_reply_draft(
-    app: Any, namespace: Any, entry_id: str, body: str, from_mailbox: str | None
+    app: Any,
+    namespace: Any,
+    entry_id: str,
+    body: str,
+    from_mailbox: str | None,
+    reply_all: bool = False,
 ) -> dict[str, str]:
     """Build + save the reply draft via the Outlook object model (testable core).
 
@@ -509,7 +516,9 @@ def _compose_reply_draft(
     the saved draft the card's Send button later re-opens.
     """
     original = namespace.GetItemFromID(entry_id)
-    reply = original.Reply()  # read-only use — never Save()/Send() this object
+    # ReplyAll copies To + every other recipient into CC; Reply just the sender.
+    # Either is read-only use here — we never Save()/Send() this object.
+    reply = original.ReplyAll() if reply_all else original.Reply()
     quoted = _str(_attr(reply, "Body"))
 
     mail = app.CreateItem(0)  # olMailItem — a plain draft, not an inline response
@@ -536,9 +545,15 @@ def _compose_reply_draft(
 
 
 def save_reply_draft(
-    entry_id: str, body: str, from_mailbox: str | None = None
+    entry_id: str,
+    body: str,
+    from_mailbox: str | None = None,
+    reply_all: bool = False,
 ) -> dict[str, str]:
     """Create a reply to the message ``entry_id`` and save it to Drafts.
+
+    ``reply_all`` replies to the sender **and** all other recipients (CC included)
+    rather than just the sender.
 
     The agent's ``body`` is placed above Outlook's quoted original. The draft is
     **saved, never sent** — the user reviews it and sends from Outlook *or* via
@@ -566,7 +581,9 @@ def save_reply_draft(
     try:
         app = win32com.client.Dispatch("Outlook.Application")
         namespace = app.GetNamespace("MAPI")
-        return _compose_reply_draft(app, namespace, entry_id, body, from_mailbox)
+        return _compose_reply_draft(
+            app, namespace, entry_id, body, from_mailbox, reply_all
+        )
     finally:
         pythoncom.CoUninitialize()
 
@@ -648,6 +665,9 @@ def send_draft(entry_id: str) -> dict[str, str]:
 # are duck-typed and unit-tested with fakes on any platform.
 
 _PREVIEW_CAP = 280  # chars of body preview in a list/search row (tokens stay small)
+# A full single-message read (outlook_get_message) is allowed a larger body than a
+# list-row preview, but still bounded so one giant message can't blow the context.
+_FULL_BODY_CAP = 50_000
 
 
 def outlook_available() -> bool:
@@ -997,6 +1017,456 @@ def send_new_mail(
             logger.debug("outlook: ResolveAll on send failed", exc_info=True)
         mail.Send()
         return {"to": to, "subject": subject}
+    finally:
+        pythoncom.CoUninitialize()
+
+
+# ── agent-facing: full-message read, attachments, recipient resolve ───────────
+#
+# Tranche-1 reads that go beyond the list-row preview: fetch one message in full
+# (the primitive the list/search rows promise via their entry_id), save an
+# attachment to disk (so it can be fed to e.g. the logops runnables), and resolve
+# a name against the address book before drafting. The pure shapers
+# (_full_message / _attachment_rows / _match_attachment_index / _safe_attachment_name)
+# are duck-typed and unit-tested with fakes on any platform.
+
+
+def _attachment_rows(attachments: Any) -> list[dict[str, Any]]:
+    """Compact rows for a message's attachments (name/size/1-based index). Pure;
+    the COM ``Attachments`` collection is 1-indexed, so we fall back to the
+    enumeration position when an item doesn't expose ``Index``."""
+    rows: list[dict[str, Any]] = []
+    for pos, att in enumerate(attachments or [], start=1):
+        rows.append(
+            {
+                "name": _str(_attr(att, "FileName")),
+                "size": int(_attr(att, "Size", 0) or 0),
+                "index": int(_attr(att, "Index", pos) or pos),
+            }
+        )
+    return rows
+
+
+def _full_message(item: Any) -> dict[str, Any]:
+    """Full single-message shape for ``outlook_get_message`` (duck-typed/testable).
+
+    Like ``_mail_summary`` but with the **whole** body (capped at ``_FULL_BODY_CAP``)
+    plus the cc line and the attachment list, so the agent can act on a message it
+    found via a list/search row (which only carries a 280-char preview)."""
+    body = _str(_attr(item, "Body"))
+    if len(body) > _FULL_BODY_CAP:
+        body = body[:_FULL_BODY_CAP] + "…"
+    sender = _attr(item, "SenderName") or _attr(item, "SenderEmailAddress")
+    return {
+        "subject": _str(_attr(item, "Subject")),
+        "from": _str(sender),
+        "from_address": _str(_attr(item, "SenderEmailAddress")),
+        "to": _str(_attr(item, "To")),
+        "cc": _str(_attr(item, "CC")),
+        "received": _str(_attr(item, "ReceivedTime")),
+        "unread": bool(_attr(item, "UnRead", False)),
+        "categories": _split_categories(_attr(item, "Categories")),
+        "conversation_id": _str(_attr(item, "ConversationID")),
+        "entry_id": _str(_attr(item, "EntryID")),
+        "attachments": _attachment_rows(_attr(item, "Attachments", [])),
+        "body": body,
+    }
+
+
+def get_message(entry_id: str) -> dict[str, Any]:
+    """Read one Outlook message in full by its ``entry_id`` (full body + headers +
+    attachment list). The reads that list/search messages return only a preview;
+    this is how the agent gets the rest. Windows-only; win32 imports stay here."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("get_message needs an entry_id")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        return _full_message(ns.GetItemFromID(entry_id))
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def _safe_attachment_name(name: str) -> str:
+    """Basename only — strip any directory parts so a crafted attachment filename
+    can't escape the destination directory. Pure/testable."""
+    base = os.path.basename(_str(name).replace("\\", "/")).strip()
+    return base or "attachment"
+
+
+def _match_attachment_index(
+    rows: list[dict[str, Any]], name: str, index: int
+) -> int | None:
+    """Pick which attachment to save → its 1-based index, or ``None`` if no match.
+
+    By explicit ``index`` if given; else by ``name`` (exact case-insensitive, then
+    substring); else only when there's exactly one attachment. Pure/testable."""
+    if index:
+        return index if any(int(r.get("index", 0)) == index for r in rows) else None
+    if name:
+        nl = name.strip().lower()
+        for r in rows:
+            if _str(r.get("name")).lower() == nl:
+                return int(r.get("index", 0))
+        for r in rows:
+            if nl in _str(r.get("name")).lower():
+                return int(r.get("index", 0))
+        return None
+    return int(rows[0].get("index", 0)) if len(rows) == 1 else None
+
+
+def save_attachment(
+    entry_id: str, name: str = "", index: int = 0, dest_dir: str = ""
+) -> dict[str, Any]:
+    """Save one attachment of message ``entry_id`` to disk and return
+    {name, path, size}. Identify it by ``name`` or 1-based ``index`` (omit both
+    if the message has exactly one). ``dest_dir`` defaults to the system temp
+    dir; the saved filename is always a basename so it can't escape it.
+    Confirm-gated at the tool layer (it writes a file). Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("save_attachment needs an entry_id")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        item = ns.GetItemFromID(entry_id)
+        rows = _attachment_rows(_attr(item, "Attachments", []))
+        if not rows:
+            raise RuntimeError("message has no attachments")
+        idx = _match_attachment_index(rows, name, int(index or 0))
+        if idx is None:
+            avail = ", ".join(r["name"] or "(unnamed)" for r in rows)
+            raise RuntimeError(
+                f"no attachment matched name={name!r} index={index!r}; available: {avail}"
+            )
+        att = item.Attachments.Item(idx)
+        target_dir = dest_dir or tempfile.gettempdir()
+        os.makedirs(target_dir, exist_ok=True)
+        fname = _safe_attachment_name(_str(_attr(att, "FileName")) or name)
+        path = os.path.join(target_dir, fname)
+        att.SaveAsFile(path)
+        return {"name": fname, "path": path, "size": int(_attr(att, "Size", 0) or 0)}
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def _resolve_smtp(recipient: Any) -> str:
+    """Best-effort SMTP address for a resolved recipient (Exchange users expose an
+    ``X.500``-style ``Address``, not SMTP). Returns ``""`` when unavailable."""
+    try:
+        entry = recipient.AddressEntry
+        try:
+            user = entry.GetExchangeUser()
+            if user is not None:
+                smtp = _str(_attr(user, "PrimarySmtpAddress"))
+                if smtp:
+                    return smtp
+        except Exception:
+            pass
+        addr = _str(_attr(entry, "Address"))
+        return addr if "@" in addr else ""
+    except Exception:
+        return ""
+
+
+def resolve_recipient(name: str) -> dict[str, Any]:
+    """Resolve ``name`` against the Outlook address book (GAL/contacts) → {resolved,
+    name, address, exchange_dn}. ``address`` prefers the SMTP form. Read-only.
+    Windows-only; win32 imports stay here."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    if not name:
+        raise RuntimeError("resolve_recipient needs a name")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        rcpt = ns.CreateRecipient(name)
+        rcpt.Resolve()
+        addr = _str(_attr(rcpt, "Address"))
+        smtp = _resolve_smtp(rcpt)
+        return {
+            "resolved": bool(_attr(rcpt, "Resolved", False)),
+            "name": _str(_attr(rcpt, "Name")) or name,
+            "address": smtp or addr,
+            "exchange_dn": addr if addr.startswith("/") else "",
+        }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+# ── agent-facing: calendar events + meeting responses ─────────────────────────
+#
+# Tranche-2 writes (confirm-gated at the tool layer): create a calendar event
+# (an invite when attendees are given, else a personal block) and respond to a
+# received meeting invite. The pure cores (_split_recipients / _build_event /
+# _respond_code) are duck-typed and unit-tested with fakes.
+
+
+def _split_recipients(value: str) -> list[str]:
+    """Split a ``;``/``,``-separated recipient string into trimmed addresses."""
+    return [c.strip() for c in _str(value).replace(",", ";").split(";") if c.strip()]
+
+
+def _build_event(
+    app: Any,
+    *,
+    subject: str,
+    start: datetime,
+    end: datetime,
+    attendees: str,
+    location: str,
+    body: str,
+    reminder_minutes: int,
+) -> dict[str, Any]:
+    """Create a calendar appointment (``CreateItem(1)``); send it as a meeting
+    invite when ``attendees`` are given, else save it as a personal block. Pure
+    core (duck-typed ``app``) so it's testable with a fake. Returns a small summary."""
+    appt = app.CreateItem(1)  # olAppointmentItem
+    appt.Subject = subject
+    appt.Start = start
+    appt.End = end
+    if location:
+        appt.Location = location
+    if body:
+        appt.Body = body
+    if reminder_minutes is not None and reminder_minutes >= 0:
+        appt.ReminderSet = True
+        appt.ReminderMinutesBeforeStart = int(reminder_minutes)
+    recips = _split_recipients(attendees)
+    for addr in recips:
+        appt.Recipients.Add(addr)
+    if recips:
+        appt.MeetingStatus = 1  # olMeeting → sending it invites the attendees
+        try:
+            appt.Recipients.ResolveAll()
+        except Exception:
+            logger.debug("outlook: ResolveAll on event failed", exc_info=True)
+        appt.Send()
+    else:
+        appt.Save()  # → default calendar
+    return {
+        "subject": _str(_attr(appt, "Subject")),
+        "start": _str(_attr(appt, "Start")),
+        "end": _str(_attr(appt, "End")),
+        "entry_id": _str(_attr(appt, "EntryID")),
+        "attendees": recips,
+        "sent": bool(recips),
+    }
+
+
+def create_event(
+    subject: str,
+    start: datetime,
+    end: datetime,
+    *,
+    attendees: str = "",
+    location: str = "",
+    body: str = "",
+    reminder_minutes: int = 15,
+) -> dict[str, Any]:
+    """Create an Outlook calendar event — a meeting invite when ``attendees`` are
+    given, else a personal calendar block. ``start``/``end`` are local-time
+    datetimes (the tool layer parses ISO strings). Does **not** itself add a Teams
+    link — that only appears if the org enables online-meeting-by-default.
+    Confirm-gated at the tool layer. Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("create_event requires Windows (Outlook COM)")
+    if not subject:
+        raise RuntimeError("create_event needs a subject")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        return _build_event(
+            app,
+            subject=subject,
+            start=start,
+            end=end,
+            attendees=attendees,
+            location=location,
+            body=body,
+            reminder_minutes=reminder_minutes,
+        )
+    finally:
+        pythoncom.CoUninitialize()
+
+
+# Outlook OlMeetingResponse: olMeetingTentative=2, olMeetingAccepted=3,
+# olMeetingDeclined=4.
+_MEETING_RESPONSES = {"tentative": 2, "accept": 3, "decline": 4}
+
+
+def _respond_code(response: str) -> int:
+    """Map an accept/tentative/decline word to its OlMeetingResponse code.
+    Pure/testable; raises ``ValueError`` on an unknown response."""
+    code = _MEETING_RESPONSES.get(_str(response).strip().lower())
+    if code is None:
+        raise ValueError(
+            f"response must be one of accept/tentative/decline (got {response!r})"
+        )
+    return code
+
+
+def respond_invite(entry_id: str, response: str) -> dict[str, Any]:
+    """Respond to a received meeting invite (``entry_id``) — accept / tentative /
+    decline — and send the response to the organizer. Confirm-gated at the tool
+    layer. Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("respond_invite requires Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("respond_invite needs an entry_id")
+    code = _respond_code(response)  # raises ValueError before any COM work
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        item = ns.GetItemFromID(entry_id)
+        resp = item.Respond(code, True)  # fNoUI=True
+        try:
+            resp.Send()
+        except Exception:
+            logger.debug("outlook: sending meeting response failed", exc_info=True)
+        return {
+            "subject": _str(_attr(item, "Subject")),
+            "response": _str(response).strip().lower(),
+        }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+# ── agent-facing: mailbox triage actions (mark / categorize / move) ───────────
+#
+# Tranche-3 writes (confirm-gated): the "after handling" half of the helpdesk
+# loop — flag a message read/unread, tag it with a category, or file it into a
+# folder. The pure core (_merge_categories) is unit-tested with fakes.
+
+
+def mark_message(entry_id: str, read: bool = True) -> dict[str, Any]:
+    """Mark a message read (default) or unread by ``entry_id``. Returns
+    {subject, unread}. Confirm-gated at the tool layer. Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("mark_message needs an entry_id")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        item = app.GetNamespace("MAPI").GetItemFromID(entry_id)
+        item.UnRead = not read
+        item.Save()
+        return {
+            "subject": _str(_attr(item, "Subject")),
+            "unread": bool(_attr(item, "UnRead", False)),
+        }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def _merge_categories(existing: Any, new: str, replace: bool) -> str:
+    """Compute the new ``Categories`` string. ``replace`` ⇒ just the incoming ones;
+    else union with the existing, preserving order and de-duping case-insensitively.
+    Pure/testable. Accepts ``,`` or ``;``-separated incoming categories."""
+    incoming = [c.strip() for c in _str(new).replace(";", ",").split(",") if c.strip()]
+    if replace:
+        chosen = incoming
+    else:
+        chosen = _split_categories(existing)
+        seen = {c.lower() for c in chosen}
+        for c in incoming:
+            if c.lower() not in seen:
+                seen.add(c.lower())
+                chosen.append(c)
+    return ", ".join(chosen)
+
+
+def categorize_message(
+    entry_id: str, categories: str, replace: bool = False
+) -> dict[str, Any]:
+    """Add (default) or replace Outlook categories on a message. Returns
+    {subject, categories}. Confirm-gated at the tool layer. Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("categorize_message needs an entry_id")
+    if not str(categories or "").strip():
+        raise RuntimeError("categorize_message needs at least one category")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        item = app.GetNamespace("MAPI").GetItemFromID(entry_id)
+        item.Categories = _merge_categories(
+            _attr(item, "Categories"), categories, replace
+        )
+        item.Save()
+        return {
+            "subject": _str(_attr(item, "Subject")),
+            "categories": _split_categories(_attr(item, "Categories")),
+        }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def move_message(entry_id: str, mailbox: str = "", folder: str = "") -> dict[str, Any]:
+    """Move a message to another folder (resolved like a watch: ``mailbox`` store +
+    a ``/``-separated ``folder`` path). Returns the destination plus the moved
+    item's **new** entry_id (Move re-keys it). Confirm-gated. Windows-only."""
+    if sys.platform != "win32":
+        raise RuntimeError("Outlook tools require Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("move_message needs an entry_id")
+    if not folder:
+        raise RuntimeError("move_message needs a destination folder")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        item = ns.GetItemFromID(entry_id)
+        target = _resolve_watch(ns, mailbox, folder)
+        moved = item.Move(target)  # returns the moved item on modern Outlook
+        ref = moved if moved is not None else item
+        return {
+            "subject": _str(_attr(ref, "Subject")),
+            "mailbox": mailbox,
+            "folder": folder,
+            "entry_id": _str(_attr(moved, "EntryID")) if moved is not None else "",
+        }
     finally:
         pythoncom.CoUninitialize()
 
