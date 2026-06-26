@@ -8,6 +8,72 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.138.0] — 2026-06-26
+
+### Added
+- **Settings → Repos: choose a custom checkout location per repo.** A repo
+  normally checks out under the app-data `repos/{name}` dir — fine for read-only
+  repos you'll never edit. For a repo you actively develop, the repo form now has
+  a **"Checkout location"** field (with a native **Browse…** folder picker) to
+  point its checkout at your own dev folder instead, so the agent reads/edits the
+  same working copy you do. That path is **machine-local**: it's stored in its own
+  `runspec_repo_paths.toml` and is **never** synced (it's specific to this
+  machine's filesystem), while the repo registry that rides Config Sync stays
+  path-free. The repo row shows a **`custom`** tag when an override is set.
+  (`config.repo_paths_path`; `repos.read_repo_paths`/`custom_path`/`set_repo_path`/
+  `checkout_dir` honouring the override; bridge `browse_folder`.)
+
+### Changed
+- **Deleting a repo now also removes its app-data checkout from disk** (previously
+  the on-disk clone was left behind). A **custom dev-folder checkout is never
+  touched** — those are your own working copies, possibly with uncommitted work —
+  only the override mapping is dropped. New bridge `delete_repo` (the registry
+  remove + AppData-only cleanup); the Settings delete confirmation now says which
+  applies.
+
+### API
+- New pywebview bridge methods: `delete_repo(name)`, `browse_folder()`. `get_repos`
+  rows gain `path` (the machine-local override, "" = default) and `checkout_dir`
+  (the effective absolute path); `save_repos` splits a repo's `path` out to the
+  machine-local file and strips it from the synced registry.
+
+
+## [0.137.1] — 2026-06-26
+
+### Fixed
+- **Settings → Repos: a failed clone left an orphan `.git` that showed a green
+  "synced" chip with no files.** Three linked issues: (1) a new credential didn't
+  appear in the repo dropdown until a restart — `ReposTab` now refreshes on the
+  `runspec:credentials-changed` event the Credentials tab already fires; (2) the
+  "synced" status keyed only on a `.git` dir existing, so a failed checkout read as
+  synced — `is_checked_out` now requires a real working tree; (3) `sync_repo` ran
+  `Repo.init` (writing `.git`) before the fetch, so a failed **fresh** clone (e.g.
+  a credential/auth failure) left that orphan `.git` behind — it now removes the
+  half-made checkout on failure (an existing checkout is preserved), and fails
+  loudly if a non-empty commit ever materialises zero files. Net: a bad-auth sync
+  now surfaces a clear error and an honest "not synced", instead of a misleading
+  green chip over an empty folder.
+
+### Changed
+- **Replaced the jargon "LLM" in user-facing wording (strings/labels only — no
+  code, config keys, or identifiers changed).** Context-aware, not a blanket
+  swap:
+  - The **acting entity** in chat/cards now reads **"assistant"** — "ask the
+    assistant", "Ask the assistant", "Triggered by the assistant", "the assistant
+    can invoke this", trigger help text. ("Assistant" avoids colliding with the
+    human *helpdesk agent / operator* meaning the product also uses.)
+  - Where the word names the autonomous **mode**, it stays **"agent"** — the
+    redundant "(LLM)" qualifier is dropped ("Agent (LLM turn)" → "Agent"; the
+    analytics "User vs agent (LLM)" → "User vs agent"; the analytics initiator
+    filter "LLM" → "Agent").
+  - The **provider/model configuration** reads **"Model"** — the Settings tab
+    "LLM / API" → "Model / API", and the misconfig messages ("No LLM provider
+    configured" → "No model provider configured", "Unknown LLM provider" →
+    "Unknown model provider", etc.).
+
+  Config keys (`[llm]`, `_llm` templates, `tool_mode`), the provider-plugin API,
+  and all identifiers are unchanged.
+
 ## [0.137.0] — 2026-06-26
 
 ### Changed

@@ -391,7 +391,7 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder="Type / for runnables, $ for runbooks, or ask the LLM..."
+          placeholder="Type / for runnables, $ for runbooks, or ask the assistant..."
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
             color: inputText, fontSize: 14, resize: 'none',

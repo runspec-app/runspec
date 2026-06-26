@@ -151,7 +151,7 @@ function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
                 />
               </Tooltip>
               {onAskLlm && (
-                <Tooltip title="Ask the LLM">
+                <Tooltip title="Ask the assistant">
                   <Button
                     type="text"
                     size="small"
@@ -259,7 +259,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
             </Tooltip>
           )}
           {r.initiatedBy === 'llm' && (
-            <Tooltip title="Triggered by LLM">
+            <Tooltip title="Triggered by the assistant">
               <RobotOutlined style={{ color: '#1677ff', fontSize: 12 }} />
             </Tooltip>
           )}

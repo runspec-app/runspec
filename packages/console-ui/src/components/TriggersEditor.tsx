@@ -560,7 +560,7 @@ export function TriggersEditor({
           </div>
 
           <Form.Item name="mode" label="Mode">
-            <Segmented options={[{ label: 'Agent (LLM turn)', value: 'agent' }, { label: 'Rule (fixed run)', value: 'rule' }]} />
+            <Segmented options={[{ label: 'Agent', value: 'agent' }, { label: 'Rule (fixed run)', value: 'rule' }]} />
           </Form.Item>
 
           <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>Match — every field's regex must match the event payload (empty = any event of that source/type)</label>
@@ -575,7 +575,7 @@ export function TriggersEditor({
 
           {mode === 'rule' ? (
             <>
-              <Form.Item name="pre_turn" label="LLM pre-turn (optional)"
+              <Form.Item name="pre_turn" label="Assistant pre-turn (optional)"
                 help={'A single LLM step that reads the event and fills the args below — reference its output as {{ _llm.<name> }}. It only extracts; it never decides which runnables run.'}>
                 <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="Extract the affected hostname and severity from the alert." />
               </Form.Item>
@@ -604,7 +604,7 @@ export function TriggersEditor({
             </>
           ) : (
             <>
-              <Form.Item name="rules" label="Agent instructions" help="The per-trigger system prompt the LLM follows.">
+              <Form.Item name="rules" label="Agent instructions" help="The per-trigger system prompt the assistant follows.">
                 <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder="Triage the email and draft a reset link…" />
               </Form.Item>
               <Form.Item name="runnables" label="Runnable allowlist (optional)" help="Tools the agent may call. Empty = any runnable.">

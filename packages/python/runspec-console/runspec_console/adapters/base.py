@@ -262,7 +262,7 @@ def load_adapter(provider: str, **kwargs: Any) -> ModelAdapter:
     if factory is None:
         available = ", ".join(available_providers())
         raise ValueError(
-            f"Unknown LLM provider: {provider!r}. Available: {available}. "
+            f"Unknown model provider: {provider!r}. Available: {available}. "
             "Plugins may add more via the 'runspec_console.adapters' entry-point "
             "group or a 'module:Class' provider path."
         )

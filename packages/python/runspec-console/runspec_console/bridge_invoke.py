@@ -324,7 +324,7 @@ class InvokeMixin:
                         "runspec:token",
                         {
                             "id": chat_id,
-                            "token": "⚠ No LLM provider configured. Set provider and API key in Settings.",
+                            "token": "⚠ No model provider configured. Set provider and API key in Settings.",
                         },
                     )
                     self._dispatch(

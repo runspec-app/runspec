@@ -155,7 +155,7 @@ describe('breakdowns', () => {
       bucket({ initiatedBy: 'user', total: 3 }),
       bucket({ initiatedBy: 'llm', total: 2 }),
     ])
-    expect(out).toEqual([{ type: 'user', value: 3 }, { type: 'agent (LLM)', value: 2 }])
+    expect(out).toEqual([{ type: 'user', value: 3 }, { type: 'agent', value: 2 }])
   })
 })
 

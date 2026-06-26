@@ -685,9 +685,10 @@ export const mockApi: BridgeApi = {
 
   get_repos: async () => [
     { name: 'payments', url: 'https://git.example.com/team/payments.git', ref: 'main', credential_id: 'svc-prod', description: 'Payments service', checked_out: true, commit: 'a1b2c3d4e5' },
-    { name: 'infra', url: 'git@git.example.com:ops/infra.git', ref: 'v2.1.0', checked_out: false, commit: '' },
+    { name: 'infra', url: 'git@git.example.com:ops/infra.git', ref: 'v2.1.0', path: 'C:\\dev\\infra', checkout_dir: 'C:\\dev\\infra', checked_out: false, commit: '' },
   ],
   save_repos: async (repos) => { console.log('[mock] save_repos', repos) },
+  delete_repo: async (name) => { console.log('[mock] delete_repo', name); return { ok: true, removed_checkout: true } },
   sync_repo: async (name) => { console.log('[mock] sync_repo', name); return { ok: true, action: 'cloned', commit: 'a1b2c3d4e5' } },
 
   get_filters: async () => [
@@ -1030,6 +1031,7 @@ export const mockApi: BridgeApi = {
   open_putty_url: async (url: string) => { console.log('mock: open_putty_url', url) },
   browse_ssh_binary: async () => '',
   browse_key_file: async () => '',
+  browse_folder: async () => '',
 
   // Mirrors the Python bridge's gate round-trip: send_chat parks a resolver
   // keyed by request_id; resolve_tool_confirmation (called by the UI's

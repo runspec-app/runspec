@@ -339,29 +339,59 @@ class FleetMixin:
     def get_repos(self) -> list[dict[str, Any]]:
         """The git-repo registry (``runspec_repos.toml``) for Settings → Repos —
         each entry plus its local-checkout status (``checked_out`` + short
-        ``commit``). The registry is the agent's allowlist: a repo not listed here
-        can't be cloned/read/edited by the ``repo_*`` tools."""
+        ``commit``), its machine-local custom checkout ``path`` ("" = default
+        AppData location), and the effective ``checkout_dir``. The registry is the
+        agent's allowlist: a repo not listed here can't be cloned/read/edited by
+        the ``repo_*`` tools."""
         from . import repos as repos_mod
 
         out: list[dict[str, Any]] = []
         for r in repos_mod.read_repos():
+            name = r["name"]
             out.append(
                 {
                     **r,
-                    "checked_out": repos_mod.is_checked_out(r["name"]),
-                    "commit": repos_mod.head_commit(r["name"]),
+                    "path": repos_mod.custom_path(name),
+                    "checkout_dir": str(repos_mod.checkout_dir(name)),
+                    "checked_out": repos_mod.is_checked_out(name),
+                    "commit": repos_mod.head_commit(name),
                 }
             )
         return out
 
     def save_repos(self, repos: list[dict[str, Any]]) -> None:
-        """Replace the repo registry (add / edit / delete / reorder). Local
-        checkouts on disk are left alone — removing an entry just revokes the
-        agent's access to it; the operator can delete the checkout dir manually."""
+        """Replace the repo registry (add / edit / reorder). A repo's optional
+        custom checkout ``path`` is **machine-local** — it's split out to its own
+        ``runspec_repo_paths.toml`` (never synced) and stripped from the synced
+        registry. Local checkouts on disk are left alone here; deletion goes
+        through :meth:`delete_repo`."""
+        from . import repos as repos_mod
+        from .config import repo_paths_path, repos_path
+
+        # Rebuild the whole override map from the saved set, so an override for a
+        # repo no longer present is also dropped.
+        mapping: dict[str, str] = {}
+        for r in repos or []:
+            name = str(r.get("name") or "").strip()
+            path = str(r.get("path") or "").strip()
+            if name and path:
+                mapping[name] = path
+        repos_mod.save_repo_paths(repo_paths_path(), mapping)
+        repos_mod.save_repos(repos_path(), repos)
+
+    def delete_repo(self, name: str) -> dict[str, Any]:
+        """Remove a repo from the registry **and** delete its AppData checkout from
+        disk (Settings → Repos 'Delete'). A custom dev-folder checkout is **never**
+        touched — the operator owns those working copies. Returns
+        ``{ok, removed_checkout}``."""
         from . import repos as repos_mod
         from .config import repos_path
 
-        repos_mod.save_repos(repos_path(), repos)
+        key = str(name or "").strip().casefold()
+        kept = [r for r in repos_mod.read_repos() if r["name"].casefold() != key]
+        removed = repos_mod.delete_checkout(name)
+        repos_mod.save_repos(repos_path(), kept)
+        return {"ok": True, "removed_checkout": removed}
 
     def sync_repo(self, name: str) -> dict[str, Any]:
         """Operator-initiated clone/fetch of a registered repo (Settings → Repos

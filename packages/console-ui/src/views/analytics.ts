@@ -109,5 +109,5 @@ export function operatorBreakdown(buckets: AnalyticsBucket[]): CategoryValue[] {
 export function initiatedBreakdown(buckets: AnalyticsBucket[]): CategoryValue[] {
   let user = 0, llm = 0
   for (const b of buckets) b.initiatedBy === 'llm' ? (llm += b.total) : (user += b.total)
-  return [{ type: 'user', value: user }, { type: 'agent (LLM)', value: llm }]
+  return [{ type: 'user', value: user }, { type: 'agent', value: llm }]
 }

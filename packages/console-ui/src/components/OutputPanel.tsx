@@ -519,7 +519,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: c.dim }}>
         <div style={{ textAlign: 'center' }}>
           <ThunderboltOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
-          <Text type="secondary">Type <Text code>/</Text> to run a runnable, or ask the LLM anything</Text>
+          <Text type="secondary">Type <Text code>/</Text> to run a runnable, or ask the assistant anything</Text>
         </div>
       </div>
     )
@@ -1130,7 +1130,7 @@ function BlockCard({
                   />
                 </Tooltip>
                 {onAskLlm && (
-                  <Tooltip title="Ask the LLM">
+                  <Tooltip title="Ask the assistant">
                     <Button
                       type="text" size="small" icon={<RobotOutlined />}
                       onClick={handleAskLlm}

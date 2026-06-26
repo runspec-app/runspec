@@ -257,6 +257,8 @@ export interface Repo {
   ref: string
   credential_id?: string
   description?: string
+  path?: string          // machine-local custom checkout dir ("" / absent = default AppData location)
+  checkout_dir?: string  // effective absolute checkout dir (read-only; from get_repos)
   checked_out?: boolean
   commit?: string
 }
@@ -787,6 +789,9 @@ export interface BridgeApi {
   // (Settings → Repos). sync_repo clones/fetches a repo on operator demand.
   get_repos: () => Promise<Repo[]>
   save_repos: (repos: Repo[]) => Promise<void>
+  // Remove a repo from the registry and delete its AppData checkout from disk; a
+  // custom dev-folder checkout (Repo.path) is never deleted.
+  delete_repo: (name: string) => Promise<{ ok: boolean; removed_checkout: boolean }>
   sync_repo: (name: string) => Promise<RepoSyncResult>
   // Named source-side stream filters (Settings → Filters), selectable by name in
   // the Relay and Download dialogs.
@@ -950,6 +955,7 @@ export interface BridgeApi {
   open_putty_url: (url: string) => Promise<void>
   browse_ssh_binary: () => Promise<string>
   browse_key_file: () => Promise<string>
+  browse_folder: () => Promise<string>
   minimize_window: () => Promise<void>
   toggle_maximize_window: () => Promise<void>
   close_window: () => Promise<void>

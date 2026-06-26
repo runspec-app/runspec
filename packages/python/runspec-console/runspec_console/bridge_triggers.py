@@ -1797,7 +1797,7 @@ class TriggersMixin:
             return f"⚠ Trigger could not run: {exc}"
         if adapter is None:
             return (
-                "⚠ No LLM provider configured — the trigger matched, but agent mode "
+                "⚠ No model provider configured — the trigger matched, but agent mode "
                 "needs a provider + API key in Settings to run."
             )
         cancel = threading.Event()

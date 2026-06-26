@@ -594,7 +594,7 @@ function RunnableCard({ runnable, hosts, onClick }: {
             </Tooltip>
           )}
           {isAuto && (
-            <Tooltip title="autonomy: autonomous — the LLM can invoke this without asking">
+            <Tooltip title="autonomy: autonomous — the assistant can invoke this without asking">
               <Tag color="green" style={{ fontSize: 10, margin: 0 }}>auto</Tag>
             </Tooltip>
           )}

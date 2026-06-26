@@ -157,12 +157,54 @@ def test_sync_read_grep_edit_diff_roundtrip(tmp_path):
     assert repos.read_file(dest, "a.txt")["content"] == "hello\nworld"
 
 
+def test_is_checked_out_requires_working_tree(tmp_path, monkeypatch):
+    """A bare .git with no working tree reads as not-checked-out (honest status)."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    d = repos.checkout_dir("payments")
+    (d / ".git").mkdir(parents=True)
+    assert repos.is_checked_out("payments") is False  # only .git → not ready
+    (d / "README.md").write_text("hi", encoding="utf-8")
+    assert repos.is_checked_out("payments") is True  # real working tree
+
+
+def test_sync_empty_working_tree_raises(tmp_path, monkeypatch):
+    """A non-empty commit that leaves only .git on disk is a silently-failed
+    checkout — sync_repo surfaces it as an error instead of reporting success."""
+    import dulwich.index
+
+    src = _make_origin(tmp_path)
+    # Simulate the silent-checkout failure: fetch + ref resolution succeed, but the
+    # working tree never materialises (only .git ends up on disk).
+    monkeypatch.setattr(dulwich.index, "build_index_from_tree", lambda *a, **k: None)
+    with pytest.raises(gitsync.GitSyncError) as exc:
+        repos.sync_repo(
+            str(src), "v1", gitsync.GitAuth(scheme="local"), tmp_path / "co"
+        )
+    assert "no files were written" in str(exc.value)
+
+
 def test_sync_unknown_ref_raises(tmp_path):
     src = _make_origin(tmp_path)
+    dest = tmp_path / "co"
+    with pytest.raises(gitsync.GitSyncError):
+        repos.sync_repo(str(src), "nope", gitsync.GitAuth(scheme="local"), dest)
+    # A failed *fresh* clone must not leave an orphan .git behind (it would read as
+    # a misleading "synced" repo with no files). The whole dir is removed.
+    assert not dest.exists()
+
+
+def test_failed_clone_leaves_no_orphan(tmp_path):
+    """A failed fetch on a fresh clone removes the half-made checkout — the root
+    cause of the 'only .git, but a green synced chip' report."""
+    dest = tmp_path / "co"
     with pytest.raises(gitsync.GitSyncError):
         repos.sync_repo(
-            str(src), "nope", gitsync.GitAuth(scheme="local"), tmp_path / "co"
+            str(tmp_path / "does-not-exist"),
+            "main",
+            gitsync.GitAuth(scheme="local"),
+            dest,
         )
+    assert not dest.exists()
 
 
 def test_read_rejects_binary(tmp_path):
@@ -184,6 +226,7 @@ class _StubBridge:
     # Settings → Repos bridge methods (FleetMixin) — used by the registry-UI tests.
     get_repos = Bridge.get_repos
     save_repos = Bridge.save_repos
+    delete_repo = Bridge.delete_repo
     sync_repo = Bridge.sync_repo
 
     def _sync_auth(self, url, cred_id):  # what _run_repo_tool / sync_repo call
@@ -364,3 +407,142 @@ def test_repos_registered_for_config_sync():
 def test_repos_path_helpers():
     assert config.repos_path().name == "runspec_repos.toml"
     assert config.repos_root().name == "repos"
+    assert config.repo_paths_path().name == "runspec_repo_paths.toml"
+
+
+# ── machine-local custom checkout-path overrides ──────────────────────────────
+
+
+def test_repo_paths_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = config.repo_paths_path()
+    assert repos.read_repo_paths() == {}  # absent → empty, no file written
+    repos.set_repo_path("payments", r"C:\dev\payments")
+    assert p.exists()
+    assert repos.read_repo_paths() == {"payments": r"C:\dev\payments"}
+    # Round-trips through TOML (backslashes survive the basic-string escaping).
+    assert repos.load_repo_paths(p) == {"payments": r"C:\dev\payments"}
+
+
+def test_custom_path_case_insensitive(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    repos.set_repo_path("Payments", "/home/me/dev/payments")
+    assert repos.custom_path("payments") == "/home/me/dev/payments"
+    assert repos.custom_path("PAYMENTS") == "/home/me/dev/payments"
+    assert repos.custom_path("other") == ""
+
+
+def test_set_repo_path_clear_removes_entry_and_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = config.repo_paths_path()
+    repos.set_repo_path("a", "/x/a")
+    repos.set_repo_path("a", "")  # clearing the only entry deletes the file
+    assert not p.exists()
+    assert repos.custom_path("a") == ""
+
+
+def test_checkout_dir_honours_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    # Default location is under repos_root.
+    assert repos.checkout_dir("app") == config.repos_root() / "app"
+    repos.set_repo_path("app", str(tmp_path / "dev" / "app"))
+    assert repos.checkout_dir("app") == (tmp_path / "dev" / "app")
+    assert repos.default_checkout_dir("app") == config.repos_root() / "app"
+
+
+def test_delete_checkout_removes_appdata_only(tmp_path, monkeypatch):
+    """delete_checkout removes the AppData dir + drops the override, but never
+    touches a custom dev-folder checkout."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    # AppData checkout exists and gets removed.
+    appdata = repos.default_checkout_dir("app")
+    appdata.mkdir(parents=True)
+    (appdata / "f.txt").write_text("x", encoding="utf-8")
+    assert repos.delete_checkout("app") is True
+    assert not appdata.exists()
+
+    # A repo with a custom dev folder: the dev folder survives, the override is
+    # cleared, and no AppData dir is reported removed.
+    dev = tmp_path / "mydev" / "infra"
+    dev.mkdir(parents=True)
+    (dev / "keep.txt").write_text("important", encoding="utf-8")
+    repos.set_repo_path("infra", str(dev))
+    assert repos.delete_checkout("infra") is False  # no AppData dir to remove
+    assert dev.exists() and (dev / "keep.txt").exists()  # dev folder untouched
+    assert repos.custom_path("infra") == ""  # override cleared
+
+
+def test_get_repos_includes_custom_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr(
+        repos, "read_repos", lambda: [{"name": "infra", "url": "u", "ref": "main"}]
+    )
+    repos.set_repo_path("infra", str(tmp_path / "dev" / "infra"))
+    monkeypatch.setattr(repos, "is_checked_out", lambda n: False)
+    monkeypatch.setattr(repos, "head_commit", lambda n: "")
+    row = _StubBridge().get_repos()[0]
+    assert row["path"] == str(tmp_path / "dev" / "infra")
+    assert row["checkout_dir"] == str(tmp_path / "dev" / "infra")
+
+
+def test_save_repos_splits_path_to_local_file(monkeypatch, tmp_path):
+    """A repo's `path` is written to the machine-local file, never the synced
+    registry."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    reg = config.repos_path()
+    _StubBridge().save_repos(
+        [{"name": "infra", "url": "https://x/infra.git", "path": r"C:\dev\infra"}]
+    )
+    # Synced registry has no `path` field…
+    saved = repos.normalise_repos(repos.load_repos(reg))[0]
+    assert "path" not in saved
+    assert reg.read_text(encoding="utf-8").find("path") == -1
+    # …but the machine-local override file does.
+    assert repos.custom_path("infra") == r"C:\dev\infra"
+
+
+def test_save_repos_drops_stale_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    repos.set_repo_path("gone", "/old/path")
+    _StubBridge().save_repos([{"name": "infra", "url": "https://x/infra.git"}])
+    # The override for a repo no longer in the saved set is rebuilt away.
+    assert repos.custom_path("gone") == ""
+
+
+def test_delete_repo_removes_entry_and_appdata(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    reg = config.repos_path()
+    repos.save_repos(
+        reg,
+        [
+            {"name": "app", "url": "https://x/app.git"},
+            {"name": "infra", "url": "https://x/infra.git"},
+        ],
+    )
+    appdata = repos.default_checkout_dir("app")
+    appdata.mkdir(parents=True)
+    (appdata / "f.txt").write_text("x", encoding="utf-8")
+    res = _StubBridge().delete_repo("app")
+    assert res["ok"] is True and res["removed_checkout"] is True
+    assert not appdata.exists()
+    names = [r["name"] for r in repos.normalise_repos(repos.load_repos(reg))]
+    assert names == ["infra"]
+
+
+def test_delete_repo_keeps_custom_checkout(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    reg = config.repos_path()
+    repos.save_repos(reg, [{"name": "infra", "url": "https://x/infra.git"}])
+    dev = tmp_path / "mydev" / "infra"
+    dev.mkdir(parents=True)
+    (dev / "keep.txt").write_text("work in progress", encoding="utf-8")
+    repos.set_repo_path("infra", str(dev))
+    res = _StubBridge().delete_repo("infra")
+    assert res["ok"] is True and res["removed_checkout"] is False
+    assert dev.exists() and (dev / "keep.txt").exists()  # never deleted
+    assert repos.normalise_repos(repos.load_repos(reg)) == []
+
+
+def test_repo_paths_not_synced():
+    """The machine-local override file must stay out of Config Sync."""
+    assert "runspec_repo_paths.toml" not in gitsync.KNOWN_FILES

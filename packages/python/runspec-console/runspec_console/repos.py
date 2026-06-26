@@ -132,13 +132,125 @@ def find_repo(name: str) -> dict[str, Any] | None:
     return None
 
 
-def checkout_dir(name: str) -> Path:
-    """The local checkout dir for a registry repo (``{repos_root}/{name}``)."""
+# ── machine-local checkout-path overrides (runspec_repo_paths.toml) ────────────
+# A repo's checkout normally lives in ``{repos_root}/{name}`` (AppData) — local,
+# regenerable, never synced. For a repo the operator actively develops, they can
+# point the checkout at their own dev folder instead. That choice is
+# **machine-local**: stored here (not in the synced registry), because the path is
+# specific to this machine's filesystem and must not propagate to other consoles
+# via Config Sync. Shape::
+#
+#     [paths]
+#     "payments" = "C:\\dev\\payments"
+
+
+def load_repo_paths(path: Path) -> dict[str, str]:
+    """The ``[paths]`` name→checkout-dir overrides in ``path`` ({} when absent or
+    unreadable). Blank values are dropped."""
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except Exception:
+        return {}
+    paths = data.get("paths")
+    if not isinstance(paths, dict):
+        return {}
+    return {str(k): str(v).strip() for k, v in paths.items() if str(v).strip()}
+
+
+def save_repo_paths(path: Path, mapping: dict[str, str]) -> None:
+    """Write the machine-local checkout-path overrides as a ``[paths]`` table.
+    Blank entries are dropped; an empty mapping removes the file entirely so a
+    clean install stays clean."""
+    clean = {
+        str(k).strip(): str(v).strip()
+        for k, v in (mapping or {}).items()
+        if str(k).strip() and str(v).strip()
+    }
+    if not clean:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    lines = ["[paths]"]
+    for name, p in clean.items():
+        lines.append(f"{config._toml_str(name)} = {config._toml_str(p)}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def read_repo_paths() -> dict[str, str]:
+    """The machine-local checkout-path overrides from the app dir."""
+    return load_repo_paths(config.repo_paths_path())
+
+
+def custom_path(name: str) -> str:
+    """The machine-local custom checkout path for ``name`` (case-insensitive), or
+    ``""`` when the repo uses the default AppData location."""
+    key = str(name or "").strip().casefold()
+    for k, v in read_repo_paths().items():
+        if k.casefold() == key:
+            return v
+    return ""
+
+
+def set_repo_path(name: str, path: str) -> None:
+    """Set (or, with a blank ``path``, clear) the machine-local custom checkout
+    location for ``name``. Replaces any existing entry for the name."""
+    key = str(name or "").strip().casefold()
+    mapping = {k: v for k, v in read_repo_paths().items() if k.casefold() != key}
+    p = str(path or "").strip()
+    if p:
+        mapping[str(name).strip()] = p
+    save_repo_paths(config.repo_paths_path(), mapping)
+
+
+def default_checkout_dir(name: str) -> Path:
+    """The default AppData checkout dir (``{repos_root}/{name}``) — always safe to
+    delete (regenerable), unlike a custom dev-folder checkout."""
     return config.repos_root() / name
 
 
+def checkout_dir(name: str) -> Path:
+    """The effective local checkout dir for a registry repo. Defaults to the
+    AppData ``{repos_root}/{name}``, unless the operator has set a machine-local
+    custom checkout path (e.g. their dev folder) for this repo — see
+    :func:`read_repo_paths`."""
+    custom = custom_path(name)
+    if custom:
+        return Path(custom).expanduser()
+    return default_checkout_dir(name)
+
+
+def delete_checkout(name: str) -> bool:
+    """Delete the repo's **AppData** checkout dir (if any) and drop any
+    machine-local path override for the name. A custom dev-folder checkout is
+    **never** removed — those are the operator's own working copies, possibly with
+    uncommitted work. Returns True when an AppData directory was removed."""
+    import shutil
+
+    d = default_checkout_dir(name)
+    removed = d.exists()
+    if removed:
+        shutil.rmtree(d, ignore_errors=True)
+    set_repo_path(name, "")  # the registry entry it belonged to is going away
+    return removed
+
+
 def is_checked_out(name: str) -> bool:
-    return (checkout_dir(name) / ".git").exists()
+    """True when the repo has a **real** local checkout — a ``.git`` dir *and* a
+    materialised working tree (at least one non-``.git`` entry). A bare ``.git``
+    with no working tree (a checkout that silently failed) reads as not-checked-out,
+    so the Settings chip and the agent's read tools don't treat it as ready."""
+    d = checkout_dir(name)
+    if not (d / ".git").exists():
+        return False
+    try:
+        return any(p.name != ".git" for p in d.iterdir())
+    except OSError:
+        return False
 
 
 def head_commit(name: str) -> str:
@@ -190,6 +302,8 @@ def sync_repo(url: str, ref: str, auth: Any, dest: Path) -> dict[str, Any]:
             "git engine unavailable — install the 'git-sync' extra "
             "(pip install runspec-console[git-sync])"
         )
+    import shutil
+
     from dulwich.client import get_transport_and_path
     from dulwich.index import build_index_from_tree
     from dulwich.repo import Repo
@@ -197,34 +311,65 @@ def sync_repo(url: str, ref: str, auth: Any, dest: Path) -> dict[str, Any]:
     existing = (dest / ".git").exists()
     dest.mkdir(parents=True, exist_ok=True)
     repo = Repo(str(dest)) if existing else Repo.init(str(dest))
+    # A fresh clone calls Repo.init, which writes `.git` *before* the network
+    # fetch. If anything below fails (auth, transport, bad ref, empty checkout),
+    # that orphan `.git` is left behind and would otherwise read as a (misleading)
+    # "synced" repo with no files — so on a failed *fresh* clone we remove the
+    # whole dir. An update (existing checkout) is left intact.
     try:
-        client, path = get_transport_and_path(
-            url, **gitsync._transport_kwargs(url, auth)
-        )
-        fetch_result = client.fetch(path, repo)
-        refs = fetch_result.refs or {}
-    except gitsync.GitSyncError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise gitsync.GitSyncError(gitsync._human_error(exc)) from exc
+        try:
+            client, path = get_transport_and_path(
+                url, **gitsync._transport_kwargs(url, auth)
+            )
+            fetch_result = client.fetch(path, repo)
+            refs = fetch_result.refs or {}
+        except gitsync.GitSyncError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise gitsync.GitSyncError(gitsync._human_error(exc)) from exc
 
-    sha = gitsync._resolve_ref(refs, ref)
-    if sha is None:
-        raise gitsync.GitSyncError(
-            f"ref {ref!r} not found in {url} — check the tag/branch name"
-        )
-    try:
-        commit_sha = gitsync._peel_to_commit(repo, sha)
-        repo.refs[b"HEAD"] = commit_sha  # detached at the synced commit
-        # Write the working tree + index to match the commit (re-sync overwrites
-        # tracked files — local edits are discarded; remote is source of truth).
-        build_index_from_tree(
-            repo.path, repo.index_path(), repo.object_store, repo[commit_sha].tree
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise gitsync.GitSyncError(f"could not check out ref {ref!r}: {exc}") from exc
-    finally:
+        sha = gitsync._resolve_ref(refs, ref)
+        if sha is None:
+            raise gitsync.GitSyncError(
+                f"ref {ref!r} not found in {url} — check the tag/branch name"
+            )
+        try:
+            commit_sha = gitsync._peel_to_commit(repo, sha)
+            repo.refs[b"HEAD"] = commit_sha  # detached at the synced commit
+            # How many entries the commit's tree has — to tell an empty repo
+            # (legitimate 0 files) from a checkout that silently wrote nothing.
+            tree_entries = len(repo[repo[commit_sha].tree])
+            # Write the working tree + index to match the commit (re-sync overwrites
+            # tracked files — local edits are discarded; remote is source of truth).
+            build_index_from_tree(
+                repo.path, repo.index_path(), repo.object_store, repo[commit_sha].tree
+            )
+        except gitsync.GitSyncError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise gitsync.GitSyncError(
+                f"could not check out ref {ref!r}: {exc}"
+            ) from exc
+
+        # Verify the working tree actually materialised: a non-empty commit that
+        # leaves only .git on disk is a silently-failed checkout (don't report
+        # success). Better a clear error than a green "synced" chip over an empty dir.
+        try:
+            wrote = any(p.name != ".git" for p in dest.iterdir())
+        except OSError:
+            wrote = False
+        if tree_entries > 0 and not wrote:
+            raise gitsync.GitSyncError(
+                f"fetched {commit_sha.decode('ascii')[:10]} but no files were written "
+                f"to the working tree at {dest} (the commit has {tree_entries} "
+                "top-level entries) — the checkout did not materialise."
+            )
+    except Exception:
         repo.close()
+        if not existing:
+            shutil.rmtree(dest, ignore_errors=True)
+        raise
+    repo.close()
     return {
         "action": "updated" if existing else "cloned",
         "ref": ref,

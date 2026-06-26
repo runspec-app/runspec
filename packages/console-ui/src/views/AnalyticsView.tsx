@@ -174,7 +174,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
           />
         )}
         <Segmented
-          options={[{ label: 'All', value: 'all' }, { label: 'User', value: 'user' }, { label: 'LLM', value: 'llm' }]}
+          options={[{ label: 'All', value: 'all' }, { label: 'User', value: 'user' }, { label: 'Agent', value: 'llm' }]}
           value={initiatedBy}
           onChange={(v) => setInitiatedBy(v as 'all' | 'user' | 'llm')}
         />
@@ -198,12 +198,12 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         <Col xs={12} sm={6}><Card size="small" style={cardStyle}><Statistic title="Total runs" value={kpis.total} valueStyle={{ color: ACCENT }} /></Card></Col>
         <Col xs={12} sm={6}><Card size="small" style={cardStyle}><Statistic title="Success rate" value={kpis.rate} precision={1} suffix="%" valueStyle={{ color: kpis.rate >= 95 ? SUCCESS : kpis.rate >= 80 ? WARNING : FAILURE }} /></Card></Col>
         <Col xs={12} sm={6}>
-          <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/LLM filters' : ''}>
+          <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/agent filters' : ''}>
             <Card size="small" style={cardStyle}><Statistic title="Duration p50" value={(data.durationMs.p50 / 1000).toFixed(2)} suffix="s" /></Card>
           </Tooltip>
         </Col>
         <Col xs={12} sm={6}>
-          <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/LLM filters' : ''}>
+          <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/agent filters' : ''}>
             <Card size="small" style={cardStyle}><Statistic title="Duration p95" value={(data.durationMs.p95 / 1000).toFixed(2)} suffix="s" valueStyle={{ color: WARNING }} /></Card>
           </Tooltip>
         </Col>
@@ -279,12 +279,12 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
           </Card>
         </Col>
         <Col xs={24} lg={12}>
-          <Card size="small" title="User vs agent (LLM)" style={cardStyle}>
+          <Card size="small" title="User vs agent" style={cardStyle}>
             {kpis.total === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
               <Pie
                 data={initiated} angleField="value" colorField="type"
                 height={chartHeight} theme={plotTheme} innerRadius={0.5}
-                scale={{ color: { domain: ['user', 'agent (LLM)'], range: [ACCENT, '#722ed1'] } }}
+                scale={{ color: { domain: ['user', 'agent'], range: [ACCENT, '#722ed1'] } }}
                 legend={{ color: { position: 'right' } }} label={{ text: 'value', position: 'inside' }}
               />
             )}

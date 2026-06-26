@@ -694,19 +694,19 @@ class InternalsMixin:
             builtins = {"anthropic", "openai", "bedrock", "langserve"}
             if provider in builtins:
                 raise ImportError(
-                    f"LLM provider '{provider}' requires its optional dependency. "
+                    f"Model provider '{provider}' requires its optional dependency. "
                     f"Install it with: pip install runspec-console[{provider}]"
                 ) from exc
             # A plugin provider (entry point / dotted path) resolved, but a
             # dependency is missing. Surface the real cause and point at the
             # plugin package — there is no `runspec-console[{provider}]` extra.
             raise ImportError(
-                f"LLM provider '{provider}' could not be loaded: {exc}. "
+                f"Model provider '{provider}' could not be loaded: {exc}. "
                 f"Install the package that provides '{provider}' (and its "
                 f"dependencies) into the same environment as runspec-console."
             ) from exc
         except ValueError as exc:
-            raise ValueError(f"LLM configuration error: {exc}") from exc
+            raise ValueError(f"Model configuration error: {exc}") from exc
         # When a key-vending command is configured, don't cache the adapter — the
         # adapter's own TTL controls refresh. Static-key configs cache as before.
         # A system_override adapter is one-off and never cached.

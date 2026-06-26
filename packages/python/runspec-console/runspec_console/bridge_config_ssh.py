@@ -806,4 +806,27 @@ class ConfigSshMixin:
             chosen = str(result)
         return _normalize_path(chosen)
 
+    def browse_folder(self) -> str:
+        """Open a native folder picker; returns the chosen directory or ''.
+
+        Used by Settings → Repos to point a repo's checkout at a custom dev folder
+        instead of the default AppData location. Path normalised to forward slashes
+        for a consistent UI / config representation."""
+        import webview
+
+        windows = getattr(webview, "windows", None) or []
+        if not windows:
+            return ""
+        try:
+            result = windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        except Exception:
+            return ""
+        if not result:
+            return ""
+        if isinstance(result, (list, tuple)):
+            chosen = str(result[0]) if result else ""
+        else:
+            chosen = str(result)
+        return _normalize_path(chosen)
+
     # ── hosts file management ─────────────────────────────────────────────────

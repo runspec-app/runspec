@@ -105,6 +105,16 @@ def repos_root() -> Path:
     return app_dir() / "repos"
 
 
+def repo_paths_path() -> Path:
+    """Machine-local per-repo checkout-location overrides (`runspec_repo_paths.toml`).
+    A repo normally checks out under `repos_root()/{name}` (AppData); for one the
+    operator actively develops, they can point its checkout at their own dev folder
+    instead. That choice is **machine-local** — the path is specific to this
+    machine's filesystem, so it lives here and is **never** synced (not in Config
+    Sync's KNOWN_FILES), unlike the registry that lists the repos."""
+    return app_dir() / "runspec_repo_paths.toml"
+
+
 def config_path() -> Path:
     return app_dir() / "config.toml"
 

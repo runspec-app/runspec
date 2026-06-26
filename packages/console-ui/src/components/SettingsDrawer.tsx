@@ -1582,7 +1582,7 @@ function FiltersTab() {
 
 // ── Repos tab (git repos the agent may read + locally edit) ─────────────────
 
-interface RepoFormValues { name: string; url: string; ref?: string; credential_id?: string; description?: string }
+interface RepoFormValues { name: string; url: string; ref?: string; credential_id?: string; description?: string; path?: string }
 
 function ReposTab() {
   const [repos, setRepos] = useState<Repo[]>([])
@@ -1595,16 +1595,27 @@ function ReposTab() {
   const reload = useCallback(() => bridge.get_repos().then(setRepos), [])
   useEffect(() => {
     reload()
-    bridge.list_credentials().then(setCreds)
+    // Refresh the credential dropdown live when the Credentials tab adds/edits one
+    // (it dispatches this event) — otherwise a newly-added credential only appears
+    // after a restart.
+    const loadCreds = () => bridge.list_credentials().then(setCreds)
+    loadCreds()
     bridge.get_sync_config().then(c => setEngineMissing(!c.engine))
+    window.addEventListener('runspec:credentials-changed', loadCreds)
+    return () => window.removeEventListener('runspec:credentials-changed', loadCreds)
   }, [reload])
 
   // Status fields (checked_out/commit) are read-only; the backend ignores them on
   // save, so we can send the list as-is.
   const persist = async (next: Repo[]) => { setRepos(next); await bridge.save_repos(next); await reload() }
   const startAdd = () => { form.resetFields(); setEditingKey('') }
-  const startEdit = (r: Repo) => { form.setFieldsValue({ name: r.name, url: r.url, ref: r.ref, credential_id: r.credential_id, description: r.description }); setEditingKey(r.name) }
+  const startEdit = (r: Repo) => { form.setFieldsValue({ name: r.name, url: r.url, ref: r.ref, credential_id: r.credential_id, description: r.description, path: r.path }); setEditingKey(r.name) }
   const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  const browsePath = async () => {
+    const dir = await bridge.browse_folder()
+    if (dir) form.setFieldValue('path', dir)
+  }
 
   const save = async () => {
     const v = await form.validateFields()
@@ -1614,6 +1625,7 @@ function ReposTab() {
       ref: (v.ref || '').trim() || 'main',
       ...(v.credential_id ? { credential_id: v.credential_id } : {}),
       ...(v.description?.trim() ? { description: v.description.trim() } : {}),
+      ...(v.path?.trim() ? { path: v.path.trim() } : {}),
     }
     if (editingKey === '') {
       if (repos.some(r => r.name === next.name)) { message.error('A repo with that name already exists'); return }
@@ -1625,7 +1637,8 @@ function ReposTab() {
   }
 
   const remove = async (name: string) => {
-    await persist(repos.filter(r => r.name !== name))
+    await bridge.delete_repo(name)
+    await reload()
     if (editingKey === name) setEditingKey(null)
   }
 
@@ -1687,6 +1700,11 @@ function ReposTab() {
           <Form.Item name="description" label="Description">
             <Input placeholder="What this repo is (optional — shown to the agent)" />
           </Form.Item>
+          <Form.Item name="path" label="Checkout location"
+            tooltip="Where the repo is checked out on disk. Leave blank to use the default app-data location (recommended for read-only repos). Set it to your own dev folder for a repo you actively develop — that path is machine-local and never synced. Deleting the repo never removes a custom dev-folder checkout.">
+            <Input placeholder="(default app-data location)" autoComplete="off"
+              addonAfter={<a onClick={browsePath}>Browse…</a>} />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -1700,8 +1718,9 @@ function ReposTab() {
             <Text style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
             <Tag style={{ margin: 0, fontSize: 10 }}>{r.ref}</Tag>
             {r.checked_out
-              ? <Tag color="green" style={{ margin: 0, fontSize: 10 }} title={`Checked out at ${r.commit}`}>synced {r.commit}</Tag>
+              ? <Tag color="green" style={{ margin: 0, fontSize: 10 }} title={`Checked out at ${r.commit}${r.checkout_dir ? ` — ${r.checkout_dir}` : ''}`}>synced {r.commit}</Tag>
               : <Tag style={{ margin: 0, fontSize: 10 }}>not synced</Tag>}
+            {r.path && <Tag color="blue" style={{ margin: 0, fontSize: 10 }} title={`Custom checkout: ${r.path}`}>custom</Tag>}
             <Text type="secondary" title={`${r.url}${credLabel(r.credential_id) ? ` — auth: ${credLabel(r.credential_id)}` : ''}`} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {r.url}
             </Text>
@@ -1709,7 +1728,7 @@ function ReposTab() {
               <Button type="text" size="small" icon={syncing === r.name ? <LoadingOutlined /> : <ReloadOutlined />} onClick={() => sync(r.name)} disabled={isEditing || engineMissing || syncing !== null} style={{ padding: '0 4px', color: '#666' }} />
             </Tooltip>
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
-            <Popconfirm title={`Remove ${r.name}?`} description="The local checkout on disk is left in place." onConfirm={() => remove(r.name)} okText="Remove" cancelText="Cancel" placement="left">
+            <Popconfirm title={`Remove ${r.name}?`} description={r.path ? 'Your custom dev-folder checkout is left untouched.' : 'The app-data checkout on disk is also deleted.'} onConfirm={() => remove(r.name)} okText="Remove" cancelText="Cancel" placement="left">
               <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
             </Popconfirm>
           </div>
@@ -2887,7 +2906,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
         tabPosition="left"
         items={[
           { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
-          { key: 'llm',       label: 'LLM / API',  children: <LlmTab /> },
+          { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },

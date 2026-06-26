@@ -124,7 +124,7 @@ def test_unknown_provider_lists_available():
     with pytest.raises(ValueError) as exc:
         load_adapter("nope-not-real")
     msg = str(exc.value)
-    assert "Unknown LLM provider" in msg
+    assert "Unknown model provider" in msg
     assert "anthropic" in msg  # the available list is shown
 
 
