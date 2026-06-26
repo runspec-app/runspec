@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.136.1] — 2026-06-26
+
+### Fixed
+- **A runbook the chat agent saved didn't appear until a console restart.** The
+  agent's `save_skill` tool persisted the skill correctly, but — unlike the
+  Settings → Skills editor — it dispatched no UI event, so the `$` skills menu,
+  the Forms tab, and the Skills editor kept showing the old list until the next
+  start (when `get_skills` re-reads the file). `_run_memory_tool` now fires
+  `runspec:skills_changed` after a successful `save_skill`, so an agent-saved
+  runbook shows up live everywhere, no restart needed.
+
 ## [0.136.0] — 2026-06-26
 
 ### Added
@@ -20,6 +31,8 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   `get_repos` / `save_repos` / `sync_repo` (`bridge_fleet.py`); the registry still
   rides Config Sync. Deleting an entry revokes the agent's access but leaves the
   local checkout on disk.
+
+## [0.135.0] — 2026-06-26
 
 ### Added
 - **Eight new Outlook Classic agent tools** (desktop COM) — read/triage and create

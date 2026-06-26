@@ -159,6 +159,12 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
         _run_memory_tool = Bridge._run_memory_tool
         _effective_tool_autonomy = Bridge._effective_tool_autonomy
 
+        def __init__(self):
+            self.dispatched: list[tuple[str, object]] = []
+
+        def _dispatch(self, ev, payload):
+            self.dispatched.append((ev, payload))
+
     b = _Stub()
 
     # Autonomy: local + reversible → run without prompting.
@@ -178,6 +184,9 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
         "save_skill", {"title": "Restart flow", "steps": "1. restart-service"}
     )
     assert "load_skill" in {t["name"] for t in b._memory_tools()}
+    # Saving a skill notifies the UI so the `$` menu / Forms / Skills editor
+    # refresh live (no restart needed) — mirrors the Settings editor's dispatch.
+    assert any(ev == "runspec:skills_changed" for ev, _ in b.dispatched)
     out = b._run_memory_tool("search_memory", {"query": "log"})
     assert "/var/log/app.log" in out
 

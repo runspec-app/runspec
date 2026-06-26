@@ -1986,6 +1986,10 @@ class AgentToolsMixin:
             )
             if not sid:
                 return "Error: a skill needs a title (or an id) and steps."
+            # Refresh the `$` menu / Forms tab / Skills editor live, the same way
+            # the Settings editor does — otherwise an agent-saved skill only shows
+            # up after a console restart (when get_skills re-reads the file).
+            self._dispatch("runspec:skills_changed", {"id": sid})
             return f"Saved runbook '{sid}'."
         if name == "load_skill":
             skill = memory.load_skill(str(ti.get("id") or ""))
