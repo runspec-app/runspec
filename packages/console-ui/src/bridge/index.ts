@@ -247,6 +247,27 @@ export interface HostGroup {
   description?: string
 }
 
+// A git repo the agent may read and locally edit (Settings → Repos,
+// runspec_repos.toml). The registry is the agent's allowlist — only repos listed
+// here are reachable by the repo_* tools. `checked_out`/`commit` are status fields
+// returned by get_repos (the local working-copy state); omit them on save.
+export interface Repo {
+  name: string
+  url: string
+  ref: string
+  credential_id?: string
+  description?: string
+  checked_out?: boolean
+  commit?: string
+}
+
+export interface RepoSyncResult {
+  ok: boolean
+  action?: string   // "cloned" | "updated"
+  commit?: string   // short HEAD sha after the sync
+  error?: string
+}
+
 export interface JumpHost {
   name: string        // identifier — displayed and used as SSH host alias
   hostname: string
@@ -762,6 +783,11 @@ export interface BridgeApi {
   get_groups: () => Promise<HostGroup[]>
   save_groups: (groups: HostGroup[]) => Promise<void>
   rename_group: (oldName: string, newName: string) => Promise<void>
+  // Git-repo registry (runspec_repos.toml) — the agent's read/edit allowlist
+  // (Settings → Repos). sync_repo clones/fetches a repo on operator demand.
+  get_repos: () => Promise<Repo[]>
+  save_repos: (repos: Repo[]) => Promise<void>
+  sync_repo: (name: string) => Promise<RepoSyncResult>
   // Named source-side stream filters (Settings → Filters), selectable by name in
   // the Relay and Download dialogs.
   get_filters: () => Promise<Filter[]>

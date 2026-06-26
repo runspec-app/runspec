@@ -141,6 +141,23 @@ def is_checked_out(name: str) -> bool:
     return (checkout_dir(name) / ".git").exists()
 
 
+def head_commit(name: str) -> str:
+    """Short HEAD commit sha of the local checkout, or ``""`` when not checked out
+    / unreadable. Used by the Settings → Repos tab to show sync state."""
+    if not available() or not is_checked_out(name):
+        return ""
+    try:
+        from dulwich.repo import Repo
+
+        repo = Repo(str(checkout_dir(name)))
+        try:
+            return repo.head().decode("ascii")[:10]
+        finally:
+            repo.close()
+    except Exception:
+        return ""
+
+
 # ── path safety ───────────────────────────────────────────────────────────────
 
 

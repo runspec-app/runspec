@@ -78,9 +78,20 @@ The pure helpers (`normalise_repos`, `_safe_path`, `_is_binary`, `_unified_diff`
 are unit-tested on any OS; the clone/read/edit/diff roundtrip is tested against a
 real local dulwich repo (no network).
 
+## Registry UI (Settings → Repos)
+
+The registry is managed from a **Settings → Repos** tab (`SettingsDrawer.tsx`
+`ReposTab`), so operators don't hand-edit `runspec_repos.toml`. It's framed as the
+agent's allowlist ("repositories the agent may read and locally edit"): add / edit /
+delete entries (name, URL, branch/tag, a credential picked from the Credentials tab,
+description), each row showing **checked-out / synced-commit** status with a **Sync
+now** button. That button calls the bridge `sync_repo(name)` — an operator-initiated
+clone/fetch, so the click *is* the authorization and it runs without the autonomy
+gate the agent's `repo_sync` tool carries. Backed by `get_repos` / `save_repos` /
+`sync_repo` (`bridge_fleet.py`); the registry still rides Config Sync, so the UI just
+edits the local layer. Deleting an entry revokes the agent's access but leaves the
+on-disk checkout in place.
+
 ## Follow-ups
-- A **Settings → Repos** tab (bridge `get_repos`/`save_repos`) so the registry is
-  managed in the UI rather than by editing the TOML / Config Sync. (v1 is
-  registry-file + Config Sync only — no new public bridge API surface.)
 - Optional **delegate-to-Claude-Code** edit path via `runspec-claude` for repos
   where the operator wants full authoring rather than small reviewed edits.

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Skill, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames } from '../views/FormsView'
@@ -1580,6 +1580,145 @@ function FiltersTab() {
   )
 }
 
+// ── Repos tab (git repos the agent may read + locally edit) ─────────────────
+
+interface RepoFormValues { name: string; url: string; ref?: string; credential_id?: string; description?: string }
+
+function ReposTab() {
+  const [repos, setRepos] = useState<Repo[]>([])
+  const [creds, setCreds] = useState<Credential[]>([])
+  const [engineMissing, setEngineMissing] = useState(false)
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState<string | null>(null)
+  const [form] = Form.useForm<RepoFormValues>()
+
+  const reload = useCallback(() => bridge.get_repos().then(setRepos), [])
+  useEffect(() => {
+    reload()
+    bridge.list_credentials().then(setCreds)
+    bridge.get_sync_config().then(c => setEngineMissing(!c.engine))
+  }, [reload])
+
+  // Status fields (checked_out/commit) are read-only; the backend ignores them on
+  // save, so we can send the list as-is.
+  const persist = async (next: Repo[]) => { setRepos(next); await bridge.save_repos(next); await reload() }
+  const startAdd = () => { form.resetFields(); setEditingKey('') }
+  const startEdit = (r: Repo) => { form.setFieldsValue({ name: r.name, url: r.url, ref: r.ref, credential_id: r.credential_id, description: r.description }); setEditingKey(r.name) }
+  const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  const save = async () => {
+    const v = await form.validateFields()
+    const next: Repo = {
+      name: v.name.trim(),
+      url: v.url.trim(),
+      ref: (v.ref || '').trim() || 'main',
+      ...(v.credential_id ? { credential_id: v.credential_id } : {}),
+      ...(v.description?.trim() ? { description: v.description.trim() } : {}),
+    }
+    if (editingKey === '') {
+      if (repos.some(r => r.name === next.name)) { message.error('A repo with that name already exists'); return }
+      await persist([...repos, next])
+    } else {
+      await persist(repos.map(r => r.name === editingKey ? next : r))
+    }
+    setEditingKey(null); form.resetFields()
+  }
+
+  const remove = async (name: string) => {
+    await persist(repos.filter(r => r.name !== name))
+    if (editingKey === name) setEditingKey(null)
+  }
+
+  const sync = async (name: string) => {
+    setSyncing(name)
+    try {
+      const res = await bridge.sync_repo(name)
+      if (res.ok) message.success(`${res.action === 'updated' ? 'Updated' : 'Cloned'} ${name}${res.commit ? ` @ ${res.commit}` : ''}`)
+      else message.error(`Sync failed: ${res.error}`)
+    } finally { setSyncing(null); await reload() }
+  }
+
+  const isEditing = editingKey !== null
+  const credLabel = (id?: string) => creds.find(c => c.id === id)?.label
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Repositories the agent may read and <strong>locally</strong> edit (the <code>repo_*</code> tools). This list is the allowlist — a repo not here is unreachable. Saved to <code>runspec_repos.toml</code>; rides Config Sync. Edits are local only (no commit/push).
+        </Text>
+        <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add repo</Button>
+      </div>
+
+      {engineMissing && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+          message="Git engine not installed"
+          description={<span style={{ fontSize: 12 }}>Install the <code>git-sync</code> extra (<code>pip install runspec-console[git-sync]</code>) to clone/read repos.</span>} />
+      )}
+
+      <Modal
+        open={editingKey !== null}
+        title={editingKey === '' ? 'New repo' : `Edit — ${editingKey}`}
+        width={680}
+        onCancel={cancel}
+        onOk={save}
+        okText="Save"
+        maskClosable={false}
+        okButtonProps={{ icon: <CheckOutlined /> }}
+        cancelButtonProps={{ icon: <CloseOutlined /> }}
+      >
+        <Form form={form} layout="vertical" size="small">
+          <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Required' }]}
+            tooltip="A short identifier the agent uses to name this repo (e.g. 'payments').">
+            <Input placeholder="payments" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+          </Form.Item>
+          <Form.Item name="url" label="Repository URL" rules={[{ required: true, message: 'Required' }]}
+            tooltip="HTTPS (https://…) or SSH (git@host:org/repo.git).">
+            <Input placeholder="https://git.example.com/team/payments.git" autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="ref" label="Branch / tag" tooltip="Branch or tag to check out. Defaults to main.">
+            <Input placeholder="main" />
+          </Form.Item>
+          <Form.Item name="credential_id" label="Credential"
+            tooltip="A Credentials-tab entry. HTTPS uses a token/userpass credential; SSH uses an ssh-key credential (else your console SSH key). Leave blank for a public repo.">
+            <Select allowClear placeholder="None (public / anonymous)"
+              options={creds.map(c => ({ value: c.id, label: `${c.label}${c.kind === 'ssh-key' ? ' (ssh-key)' : c.username ? ` (${c.username})` : ''}` }))} />
+          </Form.Item>
+          <Form.Item name="description" label="Description">
+            <Input placeholder="What this repo is (optional — shown to the agent)" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {repos.length === 0 && editingKey === null && (
+        <Text type="secondary" style={{ fontSize: 12 }}>No repos yet. Add one so the agent can read and edit its code.</Text>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {repos.map(r => (
+          <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingKey === r.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+            <Text style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
+            <Tag style={{ margin: 0, fontSize: 10 }}>{r.ref}</Tag>
+            {r.checked_out
+              ? <Tag color="green" style={{ margin: 0, fontSize: 10 }} title={`Checked out at ${r.commit}`}>synced {r.commit}</Tag>
+              : <Tag style={{ margin: 0, fontSize: 10 }}>not synced</Tag>}
+            <Text type="secondary" title={`${r.url}${credLabel(r.credential_id) ? ` — auth: ${credLabel(r.credential_id)}` : ''}`} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {r.url}
+            </Text>
+            <Tooltip title="Sync now (clone / fetch)">
+              <Button type="text" size="small" icon={syncing === r.name ? <LoadingOutlined /> : <ReloadOutlined />} onClick={() => sync(r.name)} disabled={isEditing || engineMissing || syncing !== null} style={{ padding: '0 4px', color: '#666' }} />
+            </Tooltip>
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+            <Popconfirm title={`Remove ${r.name}?`} description="The local checkout on disk is left in place." onConfirm={() => remove(r.name)} okText="Remove" cancelText="Cancel" placement="left">
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Credentials tab ─────────────────────────────────────────────────────────
 
 const KIND_OPTIONS = [
@@ -2752,6 +2891,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'skills',    label: 'Skills',     children: <SkillsTab /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
+          { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
           { key: 'denylist',  label: 'Denylist',   children: <DenylistTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },

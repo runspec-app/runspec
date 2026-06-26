@@ -8,7 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.135.0] — 2026-06-26
+## [0.136.0] — 2026-06-26
+
+### Added
+- **Settings → Repos tab** — manage the git-repo registry (`runspec_repos.toml`)
+  from the UI instead of hand-editing TOML. The tab is the agent's **read/edit
+  allowlist**: add/edit/delete repos (name, URL, branch/tag, a credential picked
+  from the Credentials tab, description), with a per-row **Sync now** button
+  (operator-initiated clone/fetch — the click is the authorization, so no autonomy
+  gate) and a live checked-out / synced-commit status. New bridge methods
+  `get_repos` / `save_repos` / `sync_repo` (`bridge_fleet.py`); the registry still
+  rides Config Sync. Deleting an entry revokes the agent's access but leaves the
+  local checkout on disk.
 
 ### Added
 - **Eight new Outlook Classic agent tools** (desktop COM) — read/triage and create

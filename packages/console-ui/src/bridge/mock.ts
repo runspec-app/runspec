@@ -683,6 +683,13 @@ export const mockApi: BridgeApi = {
   save_groups: async (groups) => { console.log('[mock] save_groups', groups) },
   rename_group: async (oldName, newName) => { console.log('[mock] rename_group', oldName, newName) },
 
+  get_repos: async () => [
+    { name: 'payments', url: 'https://git.example.com/team/payments.git', ref: 'main', credential_id: 'svc-prod', description: 'Payments service', checked_out: true, commit: 'a1b2c3d4e5' },
+    { name: 'infra', url: 'git@git.example.com:ops/infra.git', ref: 'v2.1.0', checked_out: false, commit: '' },
+  ],
+  save_repos: async (repos) => { console.log('[mock] save_repos', repos) },
+  sync_repo: async (name) => { console.log('[mock] sync_repo', name); return { ok: true, action: 'cloned', commit: 'a1b2c3d4e5' } },
+
   get_filters: async () => [
     { name: 'id-lines', pipeline: 'grep -F -- {{arg}} | cut -d, -f1,4', description: 'Lines containing the txn id, keep cols 1 & 4', param_label: 'transaction id' },
     { name: 'errors', pipeline: 'grep -i error' },

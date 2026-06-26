@@ -181,8 +181,12 @@ class _StubBridge:
     _repo_tools = Bridge._repo_tools
     _run_repo_tool = Bridge._run_repo_tool
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
+    # Settings → Repos bridge methods (FleetMixin) — used by the registry-UI tests.
+    get_repos = Bridge.get_repos
+    save_repos = Bridge.save_repos
+    sync_repo = Bridge.sync_repo
 
-    def _sync_auth(self, url, cred_id):  # what _run_repo_tool calls for repo_sync
+    def _sync_auth(self, url, cred_id):  # what _run_repo_tool / sync_repo call
         return gitsync.GitAuth(scheme="local")
 
 
@@ -287,6 +291,67 @@ def test_repo_write_reports(monkeypatch):
         "repo_write", {"name": "app", "path": "a.txt", "content": "hi"}
     )
     assert out.startswith("✓ Created app/a.txt") and "not committed" in out
+
+
+# ── Settings → Repos bridge methods ───────────────────────────────────────────
+
+
+def test_get_repos_includes_status(monkeypatch):
+    monkeypatch.setattr(
+        repos,
+        "read_repos",
+        lambda: [{"name": "app", "url": "u", "ref": "main", "credential_id": ""}],
+    )
+    monkeypatch.setattr(repos, "is_checked_out", lambda n: True)
+    monkeypatch.setattr(repos, "head_commit", lambda n: "abcdef0123")
+    rows = _StubBridge().get_repos()
+    assert rows[0]["name"] == "app"
+    assert rows[0]["checked_out"] is True and rows[0]["commit"] == "abcdef0123"
+
+
+def test_save_repos_writes_registry(monkeypatch, tmp_path):
+    p = tmp_path / "runspec_repos.toml"
+    monkeypatch.setattr(config, "repos_path", lambda: p)
+    _StubBridge().save_repos([{"name": "App", "url": "https://x/app.git"}])
+    assert repos.normalise_repos(repos.load_repos(p))[0]["name"] == "App"
+
+
+def test_sync_repo_unknown(monkeypatch):
+    monkeypatch.setattr(repos, "find_repo", lambda n: None)
+    res = _StubBridge().sync_repo("ghost")
+    assert res["ok"] is False and "registered" in res["error"]
+
+
+def test_sync_repo_ok(monkeypatch):
+    monkeypatch.setattr(
+        repos, "find_repo", lambda n: {"name": "app", "url": "u", "ref": "main"}
+    )
+    monkeypatch.setattr(repos, "checkout_dir", lambda n: "/co/app")
+    monkeypatch.setattr(
+        repos,
+        "sync_repo",
+        lambda url, ref, auth, dest: {"action": "cloned", "commit": "abcdef0123456"},
+    )
+    res = _StubBridge().sync_repo("app")
+    assert (
+        res["ok"] is True
+        and res["action"] == "cloned"
+        and res["commit"] == "abcdef0123"
+    )
+
+
+def test_sync_repo_surfaces_error(monkeypatch):
+    monkeypatch.setattr(
+        repos, "find_repo", lambda n: {"name": "app", "url": "u", "ref": "main"}
+    )
+    monkeypatch.setattr(repos, "checkout_dir", lambda n: "/co/app")
+
+    def boom(*a, **k):
+        raise gitsync.GitSyncError("auth failed")
+
+    monkeypatch.setattr(repos, "sync_repo", boom)
+    res = _StubBridge().sync_repo("app")
+    assert res["ok"] is False and "auth failed" in res["error"]
 
 
 def test_repos_registered_for_config_sync():

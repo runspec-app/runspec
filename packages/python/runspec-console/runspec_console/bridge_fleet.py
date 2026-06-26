@@ -336,6 +336,55 @@ class FleetMixin:
             self._reload_hosts()
         self._dispatch("runspec:hosts_updated", {})
 
+    def get_repos(self) -> list[dict[str, Any]]:
+        """The git-repo registry (``runspec_repos.toml``) for Settings → Repos —
+        each entry plus its local-checkout status (``checked_out`` + short
+        ``commit``). The registry is the agent's allowlist: a repo not listed here
+        can't be cloned/read/edited by the ``repo_*`` tools."""
+        from . import repos as repos_mod
+
+        out: list[dict[str, Any]] = []
+        for r in repos_mod.read_repos():
+            out.append(
+                {
+                    **r,
+                    "checked_out": repos_mod.is_checked_out(r["name"]),
+                    "commit": repos_mod.head_commit(r["name"]),
+                }
+            )
+        return out
+
+    def save_repos(self, repos: list[dict[str, Any]]) -> None:
+        """Replace the repo registry (add / edit / delete / reorder). Local
+        checkouts on disk are left alone — removing an entry just revokes the
+        agent's access to it; the operator can delete the checkout dir manually."""
+        from . import repos as repos_mod
+        from .config import repos_path
+
+        repos_mod.save_repos(repos_path(), repos)
+
+    def sync_repo(self, name: str) -> dict[str, Any]:
+        """Operator-initiated clone/fetch of a registered repo (Settings → Repos
+        'Sync now'). The operator's click is the authorization, so this runs
+        directly — unlike the agent's confirm-gated ``repo_sync`` tool. Returns
+        ``{ok, action?, commit?, error?}``; never raises (errors ride the dict)."""
+        from . import repos as repos_mod
+
+        entry = repos_mod.find_repo(name)
+        if entry is None:
+            return {"ok": False, "error": f"no repo named {name!r} is registered"}
+        try:
+            auth = self._sync_auth(entry["url"], entry.get("credential_id", ""))
+            res = repos_mod.sync_repo(
+                entry["url"],
+                entry["ref"],
+                auth,
+                repos_mod.checkout_dir(entry["name"]),
+            )
+            return {"ok": True, "action": res["action"], "commit": res["commit"][:10]}
+        except Exception as exc:  # noqa: BLE001 — surface git failures to the UI
+            return {"ok": False, "error": str(exc)}
+
     def get_filters(self) -> list[dict[str, Any]]:
         """Named source-side stream filters, for the Settings tab and pickers."""
         self._reload_filters()
