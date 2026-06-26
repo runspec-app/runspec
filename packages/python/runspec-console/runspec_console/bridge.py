@@ -149,6 +149,14 @@ class Bridge(
         # binary path, which is wrong for pipx / ~/.local / system installs.
         self._remote_logdir_cache: dict[str, list[str]] = {}
         self._runnables_cache: list[dict[str, Any]] = []
+        # Fleet-discovery readiness, so the agent isn't "blind" on the first turn
+        # after launch (search mode's catalog index is empty until discovery runs)
+        # and the UI can show a "discovering N/M hosts…" indicator. ``_discovery_ready``
+        # flips true once the first full refresh cycle finishes; ``_discovery_progress``
+        # tracks (done, total) hosts of the current/most-recent cycle. Guarded by
+        # ``self._lock`` alongside ``_runnables_cache``.
+        self._discovery_ready = False
+        self._discovery_progress: tuple[int, int] = (0, 0)
         # Persistent agent conversation so the model remembers prior turns. One
         # rolling conversation per app session; reset via clear_chat(). The lock
         # serialises turns so two quick sends can't interleave the history.

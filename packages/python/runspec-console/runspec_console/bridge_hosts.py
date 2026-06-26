@@ -111,6 +111,18 @@ class HostsMixin:
             return cache
         return [r for r in cache if r.get("host") == host]
 
+    def discovery_state(self) -> dict[str, Any]:
+        """Fleet-discovery readiness for the UI: ``{ready, done, total}``.
+
+        ``ready`` flips true once the first full refresh cycle has finished; until
+        then ``done``/``total`` track how many hosts have been discovered so the UI
+        can show a "discovering N/M hosts…" indicator. Read on mount (the
+        ``runspec:discovery_state`` events may predate the view); the live updates
+        come over that event. ``total`` is 0 before the first cycle starts."""
+        with self._lock:
+            done, total = self._discovery_progress
+            return {"ready": self._discovery_ready, "done": done, "total": total}
+
     def list_dir(
         self,
         host: str,

@@ -453,6 +453,29 @@ class InternalsMixin:
             )
         return out
 
+    @staticmethod
+    def _dedup_host_runnables(
+        runnables: list[dict[str, Any]], host_name: str
+    ) -> list[dict[str, Any]]:
+        """Drop duplicate ``(host, name)`` runnables within one host's discovery
+        (the same runnable name shipped by two installed packages on that host),
+        keeping the first and warning. Cross-host collisions can't happen — the
+        key includes the host — so this is safe to run per host as it completes."""
+        seen: set[tuple[str, str]] = set()
+        out: list[dict[str, Any]] = []
+        for r in runnables:
+            key = (r.get("host", ""), r.get("name", ""))
+            if key in seen:
+                sys.stderr.write(
+                    f"runspec-console: warning: '{key[1]}' defined in multiple"
+                    f" installed packages on host '{key[0] or host_name}', keeping first\n"
+                )
+                sys.stderr.flush()
+                continue
+            seen.add(key)
+            out.append(r)
+        return out
+
     def _refresh_cycle(self) -> None:
         """Probe connectivity, then discover runnables — reusing pooled connections.
 
@@ -497,29 +520,65 @@ class InternalsMixin:
         self._dispatch("runspec:hosts_updated", {})
 
         # ── Phase 2: runnables discovery (reuses the warm transport) ───────────
+        # Merge each host's runnables into the cache *as it completes* rather than
+        # waiting for the whole fleet, so local (no SSH — near-instant) and fast
+        # hosts are usable on the very first turn instead of being blocked behind
+        # the slowest bastion. Dedup is per-host (the key includes the host, so two
+        # hosts never collide); a removed host is pruned by the canonical assign at
+        # the end of the cycle.
+        from concurrent.futures import as_completed
+
+        total = len(all_hosts)
+        self._dispatch(
+            "runspec:discovery_state",
+            {"done": 0, "total": total, "ready": self._discovery_ready},
+        )
+        accumulated: list[dict[str, Any]] = []
+        done = 0
         with ThreadPoolExecutor(
             max_workers=min(workers, len(all_hosts)),
             thread_name_prefix="refresh-disc",
         ) as ex:
-            results = list(ex.map(self._discover_one, all_hosts))
-        discovered: list[dict[str, Any]] = [item for sub in results for item in sub]
-
-        seen_keys: set[tuple[str, str]] = set()
-        deduped: list[dict[str, Any]] = []
-        for r in discovered:
-            key = (r.get("host", ""), r.get("name", ""))
-            if key in seen_keys:
-                sys.stderr.write(
-                    f"runspec-console: warning: '{key[1]}' defined in multiple"
-                    f" installed packages on host '{key[0]}', keeping first\n"
+            futures = {ex.submit(self._discover_one, h): h for h in all_hosts}
+            for fut in as_completed(futures):
+                host_name = futures[fut].get("name", "")
+                try:
+                    host_runnables = fut.result()
+                except Exception:
+                    logger.debug(
+                        "discovery failed for host %s", host_name, exc_info=True
+                    )
+                    host_runnables = []
+                cleaned = self._dedup_host_runnables(host_runnables, host_name)
+                accumulated.extend(cleaned)
+                done += 1
+                # Splice this host's results into the live cache: drop its prior
+                # entries, keep every other host's, append the fresh set. Never
+                # empties the cache mid-cycle (steady-state refreshes stay warm).
+                with self._lock:
+                    self._runnables_cache = [
+                        r
+                        for r in self._runnables_cache
+                        if r.get("host", "") != host_name
+                    ] + cleaned
+                    self._discovery_progress = (done, total)
+                self._dispatch("runspec:runnables_updated", {})
+                self._dispatch(
+                    "runspec:discovery_state",
+                    {"done": done, "total": total, "ready": self._discovery_ready},
                 )
-                sys.stderr.flush()
-            else:
-                seen_keys.add(key)
-                deduped.append(r)
+
+        # Canonical assign: prunes any host that left the fleet (its entries linger
+        # in the spliced cache until here), and marks discovery ready after the
+        # first full cycle so the readiness indicator clears.
         with self._lock:
-            self._runnables_cache = deduped
+            self._runnables_cache = accumulated
+            self._discovery_ready = True
+            self._discovery_progress = (total, total)
         self._dispatch("runspec:runnables_updated", {})
+        self._dispatch(
+            "runspec:discovery_state", {"done": total, "total": total, "ready": True}
+        )
         # The fleet's runnables changed — refresh every staffed queue's
         # self-service catalog so visitors are offered what can run *now*.
         try:

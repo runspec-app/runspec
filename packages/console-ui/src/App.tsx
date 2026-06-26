@@ -1,5 +1,5 @@
-import React, { useEffect, useState, Suspense } from 'react'
-import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin } from 'antd'
+import React, { useEffect, useState, useMemo, Suspense } from 'react'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -22,6 +22,7 @@ import {
   ReadOutlined,
   DownOutlined,
   RightOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -76,6 +77,12 @@ export default function App() {
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
   const [runnables, setRunnables] = useState<Runnable[]>([])
   const [runnablesLoading, setRunnablesLoading] = useState(true)
+  // Fleet-discovery readiness — drives the "discovering N/M hosts…" indicator
+  // above the composer so a first turn that races discovery is visibly explained
+  // (the agent is blind until the catalog is populated). Cleared once ready.
+  const [discovery, setDiscovery] = useState<{ ready: boolean; done: number; total: number }>(
+    { ready: true, done: 0, total: 0 },
+  )
   const [hosts, setHosts] = useState<Host[]>([])
   const [selectedHost, setSelectedHost] = useState<string>('')
   const [inputHistory, setInputHistory] = useState<string[]>([])
@@ -103,6 +110,46 @@ export default function App() {
   const scopedRunnables = activeScope.length > 0
     ? hostFilteredRunnables.filter(r => activeScope.includes(r.group))
     : hostFilteredRunnables
+
+  // Catalogue stats for the footer indicator: total tools, distinct hosts/venvs,
+  // and a per-host → per-venv breakdown for the hover popover. Recomputed when the
+  // runnables cache changes — so the count visibly grows as discovery streams hosts
+  // in on startup, and settles at a number you learn to expect.
+  const catalogue = useMemo(() => {
+    const byHost = new Map<string, Map<string, number>>()
+    for (const r of runnables) {
+      let venvs = byHost.get(r.host)
+      if (!venvs) { venvs = new Map(); byHost.set(r.host, venvs) }
+      venvs.set(r.group, (venvs.get(r.group) ?? 0) + 1)
+    }
+    const hostsBreakdown = [...byHost.entries()]
+      .map(([host, venvs]) => ({
+        host,
+        total: [...venvs.values()].reduce((a, b) => a + b, 0),
+        venvs: [...venvs.entries()]
+          .map(([group, count]) => ({ group, count }))
+          .sort((a, b) => b.count - a.count || a.group.localeCompare(b.group)),
+      }))
+      .sort((a, b) => b.total - a.total || a.host.localeCompare(b.host))
+    const venvCount = hostsBreakdown.reduce((n, h) => n + h.venvs.length, 0)
+    const byHostTotal: Record<string, number> = {}
+    const byHostVenvs: Record<string, { group: string; count: number }[]> = {}
+    for (const h of hostsBreakdown) { byHostTotal[h.host] = h.total; byHostVenvs[h.host] = h.venvs }
+    return { total: runnables.length, hostCount: byHost.size, venvCount, hostsBreakdown, byHostTotal, byHostVenvs }
+  }, [runnables])
+
+  // Briefly highlight the footer catalogue count whenever it changes, so the eye
+  // catches it climbing during startup discovery (and any later refresh delta).
+  const [countFlash, setCountFlash] = useState(false)
+  const prevTotalRef = React.useRef<number | null>(null)
+  useEffect(() => {
+    const prev = prevTotalRef.current
+    prevTotalRef.current = catalogue.total
+    if (prev === null || prev === catalogue.total) return  // skip first paint / no-op
+    setCountFlash(true)
+    const t = setTimeout(() => setCountFlash(false), 700)
+    return () => clearTimeout(t)
+  }, [catalogue.total])
 
   const handleScopeToggle = (group: string) => {
     setActiveScope(prev =>
@@ -164,13 +211,22 @@ export default function App() {
     // Config Sync pull lands new ones (gitsync dispatches runspec:skills_changed).
     const loadSkills = () => bridge.get_skills().then(setSkills).catch(() => {})
     loadSkills()
+    // Discovery readiness: read on mount (events may predate this listener), then
+    // track live as each host completes.
+    bridge.discovery_state?.().then(setDiscovery).catch(() => {})
+    const onDiscoveryState = (e: Event) => {
+      const d = (e as CustomEvent).detail as { ready: boolean; done: number; total: number }
+      if (d) setDiscovery(d)
+    }
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
     window.addEventListener('runspec:skills_changed', loadSkills)
+    window.addEventListener('runspec:discovery_state', onDiscoveryState)
     return () => {
       window.removeEventListener('runspec:hosts_updated', onHostsUpdated)
       window.removeEventListener('runspec:runnables_updated', onRunnablesUpdated)
       window.removeEventListener('runspec:skills_changed', loadSkills)
+      window.removeEventListener('runspec:discovery_state', onDiscoveryState)
     }
   }, [])
 
@@ -417,6 +473,30 @@ export default function App() {
                         fontSize: 13, color: textCol, flex: 1,
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}>{h.name}</span>
+                      {(() => {
+                        const count = catalogue.byHostTotal[h.name]
+                        if (!count) return null
+                        const venvs = catalogue.byHostVenvs[h.name] ?? []
+                        return (
+                          <Tooltip
+                            title={
+                              <div style={{ fontSize: 11 }}>
+                                {count} runnable{count === 1 ? '' : 's'}
+                                {venvs.map(v => (
+                                  <div key={v.group} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                                    <span style={{ fontFamily: 'monospace' }}>{v.group}</span>
+                                    <span>{v.count}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            }
+                          >
+                            <span style={{ fontSize: 10, color: iconCol, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                              {count}
+                            </span>
+                          </Tooltip>
+                        )
+                      })()}
                       {runnablesLoading && <LoadingOutlined style={{ fontSize: 10, color: '#595959' }} spin />}
                     </div>
                   </Dropdown>
@@ -475,30 +555,102 @@ export default function App() {
                 )
               })()}
             </div>
-            {/* Version + update indicator */}
+            {/* Catalogue size + version/update footer */}
             <div style={{
               flexShrink: 0,
               borderTop: `1px solid ${borderCol}`,
-              padding: '7px 14px',
-              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 14px',
+              display: 'flex', flexDirection: 'column', gap: 3,
               fontSize: 11, color: iconCol,
             }}>
-              <span style={{ fontFamily: 'monospace' }}>{version ? `v${version}` : ''}</span>
-              {updateInfo?.updateAvailable ? (
-                <Tooltip title={`Update available: v${updateInfo.latest} — open documentation`}>
-                  <Tag
-                    color="blue"
+              {/* Catalogue: total tools, growing live while discovery streams hosts in */}
+              <Popover
+                placement="topLeft"
+                mouseEnterDelay={0.2}
+                content={
+                  <div style={{ maxWidth: 280, maxHeight: 320, overflowY: 'auto', fontSize: 12 }}>
+                    <div style={{ marginBottom: 6, color: iconCol }}>
+                      {catalogue.total} runnable{catalogue.total === 1 ? '' : 's'} across{' '}
+                      {catalogue.venvCount} venv{catalogue.venvCount === 1 ? '' : 's'} on{' '}
+                      {catalogue.hostCount} host{catalogue.hostCount === 1 ? '' : 's'}
+                      {!discovery.ready && discovery.total > 0 && (
+                        <span> · still loading ({discovery.done}/{discovery.total} hosts)</span>
+                      )}
+                    </div>
+                    {catalogue.hostsBreakdown.length === 0 ? (
+                      <div style={{ color: iconCol }}>No runnables discovered yet.</div>
+                    ) : catalogue.hostsBreakdown.map(h => (
+                      <div key={h.host} style={{ marginBottom: 5 }}>
+                        <div style={{ fontWeight: 600, color: titleCol }}>
+                          {h.host} <span style={{ fontWeight: 400, color: iconCol }}>· {h.total}</span>
+                        </div>
+                        <div style={{ paddingLeft: 8 }}>
+                          {h.venvs.map(v => (
+                            <div key={v.group} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                              <span style={{ fontFamily: 'monospace', color: iconCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.group}</span>
+                              <span style={{ color: iconCol }}>{v.count}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                }
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
+                  {!discovery.ready && discovery.total > 0
+                    ? <LoadingOutlined spin style={{ fontSize: 11 }} />
+                    : <AppstoreOutlined style={{ fontSize: 11 }} />}
+                  <span>
+                    <span style={{
+                      fontVariantNumeric: 'tabular-nums',
+                      color: countFlash ? '#52c41a' : titleCol,
+                      fontWeight: countFlash ? 600 : 400,
+                      transition: 'color 0.6s ease, font-weight 0.6s ease',
+                    }}>{catalogue.total}</span>
+                    {' '}tool{catalogue.total === 1 ? '' : 's'}
+                    {catalogue.venvCount > 0 && <span> · {catalogue.venvCount} venv{catalogue.venvCount === 1 ? '' : 's'}</span>}
+                    {!discovery.ready && discovery.total > 0 && (
+                      <span style={{ opacity: 0.7 }}> · {discovery.done}/{discovery.total} hosts</span>
+                    )}
+                  </span>
+                </div>
+              </Popover>
+
+              {/* Version + update state */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Tooltip title={version ? `runspec-console v${version} — open documentation & release notes` : ''}>
+                  <span
                     onClick={() => bridge.open_docs().catch(console.error)}
-                    style={{ cursor: 'pointer', margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 5px' }}
+                    style={{ fontFamily: 'monospace', cursor: 'pointer' }}
                   >
-                    ↑ {updateInfo.latest}
-                  </Tag>
+                    {version ? `v${version}` : ''}
+                  </span>
                 </Tooltip>
-              ) : updateInfo ? (
-                <Tooltip title="You're on the latest version">
-                  <span style={{ color: '#52c41a' }}>up to date</span>
-                </Tooltip>
-              ) : null}
+                {updateInfo?.updateAvailable ? (
+                  <Tooltip title={`Update available: v${updateInfo.latest} — open documentation`}>
+                    <Tag
+                      color="blue"
+                      onClick={() => bridge.open_docs().catch(console.error)}
+                      style={{ cursor: 'pointer', margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 5px' }}
+                    >
+                      ↑ {updateInfo.latest}
+                    </Tag>
+                  </Tooltip>
+                ) : updateInfo ? (
+                  <Tooltip title="You're on the latest version">
+                    <span style={{ color: '#52c41a', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                      <CheckCircleOutlined style={{ fontSize: 11 }} /> up to date
+                    </span>
+                  </Tooltip>
+                ) : (
+                  <Tooltip title="Checking for updates…">
+                    <span style={{ opacity: 0.6, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                      <LoadingOutlined spin style={{ fontSize: 10 }} /> checking…
+                    </span>
+                  </Tooltip>
+                )}
+              </div>
             </div>
           </div>
 
@@ -638,6 +790,15 @@ export default function App() {
               padding: '8px 12px 8px 16px',
               background: contentBg, flexShrink: 0,
             }}>
+              {!discovery.ready && discovery.total > 0 && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  margin: '0 0 6px', fontSize: 11, color: isDark ? '#8c8c8c' : '#8c8c8c',
+                }}>
+                  <LoadingOutlined spin style={{ fontSize: 11 }} />
+                  <span>Discovering fleet… {discovery.done}/{discovery.total} hosts. The assistant sees more runnables as they load.</span>
+                </div>
+              )}
               <CommandInput
                 runnables={scopedRunnables}
                 skills={skills}

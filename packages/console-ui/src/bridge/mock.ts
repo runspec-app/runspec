@@ -619,6 +619,7 @@ export const mockApi: BridgeApi = {
   },
 
   get_runnables: async (_host) => MOCK_RUNNABLES,
+  discovery_state: async () => ({ ready: true, done: 1, total: 1 }),
   list_dir: async (_host, path = '', _group, dirsOnly = false, _runnable, asServiceAccount = false) => {
     const home = asServiceAccount ? '/home/svc_app' : '/var/log/app'
     const cwd = path && path !== '/' ? path.replace(/\/$/, '') : home

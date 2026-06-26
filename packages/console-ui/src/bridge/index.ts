@@ -714,6 +714,11 @@ export interface BridgeApi {
   // Read-only structured denylist state per host/venv (Settings → Denylist table).
   denylist_status: (targets?: string[]) => Promise<DenylistHostStatus[]>
   get_runnables: (host: string) => Promise<Runnable[]>
+  // Fleet-discovery readiness for the "discovering N/M hosts…" indicator. `ready`
+  // flips true after the first full refresh cycle; live updates arrive on the
+  // `runspec:discovery_state` window event (read this on mount in case it predates
+  // the listener).
+  discovery_state: () => Promise<{ ready: boolean; done: number; total: number }>
   get_history: (host: string, runnable?: string) => Promise<HistoryRecord[]>
   // History across every host (local + connected remotes) — the History tab uses
   // this so a run shows up regardless of which host it ran on.

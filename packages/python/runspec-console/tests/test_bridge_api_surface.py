@@ -56,6 +56,7 @@ EXPECTED = {
     "get_public_key",
     "get_room_state",
     "get_runnables",
+    "discovery_state",
     "get_schedule_board",
     "get_schedule_events",
     "get_schedules",

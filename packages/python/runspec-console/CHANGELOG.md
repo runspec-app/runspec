@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.134.0] — 2026-06-26
+
+### Fixed
+- **The agent is no longer "blind" on the first turn after launch (search mode).**
+  Fleet discovery filled the runnables cache in one atomic assignment at the *end*
+  of the refresh cycle — after the connectivity probes and discovery across **every**
+  host finished — so a chat turn fired before that completed saw an empty cache. In
+  `[llm] tool_mode = "search"` the searchable menu *is* that cache, so the agent had
+  nothing to search and silently gave a degraded answer (and a single slow/hanging
+  bastion delayed even local runnables). Discovery now **merges each host into the
+  cache as it completes** (`bridge_internals.py` `_refresh_cycle`), so local (no SSH —
+  near-instant) and fast hosts are usable immediately; the canonical end-of-cycle
+  assign still prunes hosts that left the fleet. The search-mode catalog index also
+  carries a *"discovery in progress — N of M hosts loaded"* note while the first cycle
+  runs, so the model offers to retry instead of concluding a runnable doesn't exist.
+
+### Added
+- **"Discovering fleet… N/M hosts" indicator** above the chat composer while the first
+  discovery cycle runs, so a first turn that races discovery is visibly explained.
+  Backed by a new `runspec:discovery_state` event (dispatched per host as discovery
+  completes) and a `discovery_state()` bridge method (read on mount in case the events
+  predate the listener).
+- **Catalogue size in the sidebar footer.** A live `N tools · N venvs` readout (with a
+  hover popover breaking the catalogue down per host → per venv) sits above the version
+  line. The count **grows as discovery streams hosts in** on startup — so you can watch
+  it climb and learn to expect a steady-state number — and shows `done/total hosts`
+  while the first cycle runs. A spinner stands in for the icon until discovery settles.
+  The count **flashes green briefly when it changes**, so the eye catches it climbing.
+- **Per-host runnable counts in the sidebar.** Each host row shows its own tool count
+  next to the name, with a tooltip breaking that host down per venv — so a host
+  advertises how much it contributes without opening the footer popover.
+- **Friendlier version/update footer.** The version is now click-to-open-docs, "up to
+  date" gains a check icon, and a "checking…" state shows while the update probe is in
+  flight (previously blank).
+
+
 ## [0.133.0] — 2026-06-25
 
 ### Added

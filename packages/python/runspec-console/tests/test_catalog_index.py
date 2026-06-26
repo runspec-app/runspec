@@ -16,10 +16,14 @@ from runspec_console.bridge import Bridge
 
 
 class _Bridge:
-    def __init__(self, runnables, config=None):
+    def __init__(self, runnables, config=None, *, ready=True, progress=(1, 1)):
         self._lock = threading.Lock()
         self._runnables_cache = runnables
         self._config = config or {}
+        # Discovery readiness — default ready so the index reads as a finished
+        # fleet; the not-ready path appends a "still loading" note for the agent.
+        self._discovery_ready = ready
+        self._discovery_progress = progress
 
     def get_config(self):
         return self._config
@@ -96,6 +100,35 @@ def test_index_caps_with_overflow_note():
 
 def test_index_empty_when_no_runnables():
     assert _Bridge([])._build_catalog_index() == ""
+
+
+# ── discovery-readiness hint (the first-turn "blind" fix) ─────────────────────
+
+
+def test_index_empty_but_not_ready_tells_agent_discovery_in_progress():
+    # First turn after launch: nothing discovered yet. Instead of "" (which folds
+    # nothing and leaves the agent blind), the index is a "still loading" note so
+    # the agent won't conclude a runnable doesn't exist.
+    out = _Bridge([], ready=False, progress=(0, 3))._build_catalog_index()
+    assert out != ""
+    assert "discovery in progress" in out.lower()
+    assert "0 of 3 hosts" in out
+
+
+def test_index_partial_and_not_ready_appends_loading_note():
+    out = _Bridge(
+        [_rn("a", "ping", description="Ping a host.")], ready=False, progress=(1, 3)
+    )._build_catalog_index()
+    lines = out.splitlines()
+    assert lines[0] == "- fleet__ping — Ping a host."  # the real entry still leads
+    assert "1 of 3 hosts" in lines[-1]  # trailing readiness note
+
+
+def test_index_when_ready_has_no_loading_note():
+    out = _Bridge(
+        [_rn("a", "ping", description="Ping a host.")], ready=True
+    )._build_catalog_index()
+    assert "discovery in progress" not in out.lower()
 
 
 # ── folding into history (non-mutating) ───────────────────────────────────────

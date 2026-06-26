@@ -228,6 +228,80 @@ def test_refresh_settings_workers_resolution():
     assert refresh_settings({"workers": 0}, max_concurrent=10)["workers"] == 20
 
 
+def _run_cycle(b, *, workers=4):
+    """Drive one _refresh_cycle with discovery returning one runnable per host,
+    capturing the cache size at every runnables_updated and every discovery_state
+    detail. Returns (sizes, states)."""
+    sizes: list[int] = []
+    states: list[dict] = []
+
+    def snap(ev, detail):
+        if ev == "runspec:runnables_updated":
+            with b._lock:
+                sizes.append(len(b._runnables_cache))
+        elif ev == "runspec:discovery_state":
+            states.append(dict(detail))
+
+    def fake_discover(h):
+        return [{"host": h["name"], "name": f"r-{h['name']}"}]
+
+    with (
+        patch.object(b, "_reload_hosts"),
+        patch.object(b, "_local_host_entry", return_value={"name": "local"}),
+        patch.object(b, "_dispatch", side_effect=snap),
+        patch.object(b, "get_config", return_value={}),
+        patch.object(b, "_publish_catalogs"),
+        patch.object(b, "_discover_one", side_effect=fake_discover),
+        patch.object(b, "_probe_one"),
+        patch(
+            "runspec_console.ssh_pool.refresh_settings",
+            return_value={"interval": 30, "jitter": 0, "workers": workers},
+        ),
+    ):
+        b._refresh_cycle()
+    return sizes, states
+
+
+def test_refresh_cycle_populates_cache_incrementally_and_marks_ready():
+    b = _make_bridge()
+    b._hosts = [
+        {"name": "h1", "ssh": "u@h1", "runspec_paths": ["/v/bin/runspec"]},
+        {"name": "h2", "ssh": "u@h2", "runspec_paths": ["/v/bin/runspec"]},
+    ]
+    assert b._discovery_ready is False  # blind until the first cycle finishes
+
+    sizes, states = _run_cycle(b)
+
+    # all_hosts = local + h1 + h2 → 3 hosts, each contributing one runnable.
+    # Cache grows monotonically as hosts complete (incremental splice), never
+    # emptying mid-cycle, ending with every host present.
+    assert sizes == sorted(sizes)  # non-decreasing
+    assert sizes[-1] == 3
+    assert {r["host"] for r in b._runnables_cache} == {"local", "h1", "h2"}
+
+    # Readiness: a 0-of-N kickoff, per-host progress, then ready=True at the end.
+    assert states[0] == {"done": 0, "total": 3, "ready": False}
+    assert states[-1] == {"done": 3, "total": 3, "ready": True}
+    assert [s["done"] for s in states] == sorted(s["done"] for s in states)
+    assert b._discovery_ready is True
+    assert b.discovery_state() == {"ready": True, "done": 3, "total": 3}
+
+
+def test_refresh_cycle_prunes_a_removed_host():
+    b = _make_bridge()
+    b._hosts = [
+        {"name": "h1", "ssh": "u@h1", "runspec_paths": ["/v/bin/runspec"]},
+        {"name": "h2", "ssh": "u@h2", "runspec_paths": ["/v/bin/runspec"]},
+    ]
+    _run_cycle(b)
+    assert {r["host"] for r in b._runnables_cache} == {"local", "h1", "h2"}
+
+    # h2 leaves the fleet — the canonical end-of-cycle assign drops its entries.
+    b._hosts = [{"name": "h1", "ssh": "u@h1", "runspec_paths": ["/v/bin/runspec"]}]
+    _run_cycle(b)
+    assert {r["host"] for r in b._runnables_cache} == {"local", "h1"}
+
+
 def test_refresh_cycle_bounds_concurrency_and_orders_phases():
     """The fan-out never runs more than `workers` tasks at once, and the whole
     probe phase (+ hosts_updated) completes before discovery starts."""

@@ -487,6 +487,8 @@ class SearchMixin:
             limit = 300
         with self._lock:
             runnables = list(self._runnables_cache)
+            ready = self._discovery_ready
+            done, total = self._discovery_progress
         seen: dict[tuple[str, str], dict[str, Any]] = {}
         order: list[tuple[str, str]] = []
         for r in runnables:
@@ -500,12 +502,24 @@ class SearchMixin:
             rid = self._dedup_tool_name(r)
             desc = self._first_sentence(r.get("description") or "")
             lines.append(f"- {rid}" + (f" — {desc}" if desc else ""))
-        if not lines:
-            return ""
         if len(lines) > limit > 0:
             overflow = len(lines) - limit
             lines = lines[:limit]
             lines.append(f"- …and {overflow} more — use search_runnables to find them.")
+        # While the first discovery cycle is still running the menu is partial (or
+        # empty) — tell the model so it doesn't conclude "no such runnable" from an
+        # incomplete fleet and can offer to retry once loading finishes.
+        if not ready:
+            note = (
+                f"(Fleet discovery in progress — {done} of {total} hosts loaded. "
+                "More runnables may appear shortly; if you can't find one, say it's "
+                "still loading and offer to retry rather than concluding it doesn't exist.)"
+            )
+            if not lines:
+                return note
+            lines.append(f"- {note}")
+        if not lines:
+            return ""
         return "\n".join(lines)
 
     def _fold_catalog_index(
