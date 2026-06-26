@@ -25,8 +25,12 @@ Implement `runspec_console.ModelAdapter`. It's dependency-free, so your plugin
 depends on `runspec-console` only for the base classes — none of the host's
 optional SDKs leak in. Your adapter factory (an adapter class works directly)
 receives the kwargs runspec-console threads from `[llm]`: `api_key`, `model`,
-`system`, `base_url`, `api_key_command`, `api_key_ttl_ms`, plus any custom keys
-you read yourself.
+`system`, `base_url`, `api_key_command`, `api_key_ttl_ms`, plus **any custom key
+you declare as a constructor parameter**. runspec-console inspects your factory's
+signature and forwards a matching `[llm]` key by name — so a `[llm] tenant_id`
+reaches an adapter whose `__init__` takes `tenant_id` with no allowlist change on
+the host side. (`provider` and `system` are reserved and never forwarded raw; a
+`**kwargs`-only factory declares no parameters, so it gets only the keys above.)
 
 Required methods: `chat()`, `stream_chat()`, `make_tool_turn()`.
 `stream_with_tools()` has a correct non-streaming default. `chat()` must set

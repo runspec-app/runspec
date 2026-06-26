@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.139.0] — 2026-06-26
+
+### Added
+- **Plugin adapters can require their own `[llm]` config keys.** When building an
+  LLM adapter, `Bridge._get_adapter` still threads the built-in keys (`api_key`,
+  `model`, `system`, `base_url`, `api_key_command`, `api_key_ttl_ms`, the
+  LangServe knobs) from `[llm]`, but now **also inspects the adapter factory's
+  constructor signature** and forwards any further `[llm]` key whose name matches
+  a declared parameter. So a custom provider whose `__init__` takes `tenant_id`
+  receives `[llm] tenant_id` with no allowlist change in runspec-console. Built-in
+  / `**kwargs`-only factories declare no named parameters, so they are unaffected;
+  `provider` and `system` are reserved and never forwarded raw. New
+  `runspec_console.adapters.base.adapter_config_keys(provider)` (best-effort
+  signature inspection, empty on unresolvable/uninspectable factories); factory
+  resolution split into a shared `_resolve_factory` helper.
+
+---
+
+
 ## [0.138.0] — 2026-06-26
 
 ### Added

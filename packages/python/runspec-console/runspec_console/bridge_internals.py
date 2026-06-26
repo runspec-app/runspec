@@ -686,6 +686,22 @@ class InternalsMixin:
                 kwargs[key] = llm_cfg[key]
         if llm_cfg.get("tools_in_config") is not None:
             kwargs["tools_in_config"] = bool(llm_cfg["tools_in_config"])
+        # The block above is an allowlist of keys the built-in adapters
+        # understand. A plugin adapter (entry point / dotted path / registered)
+        # may require its own [llm] config keys — rather than grow the allowlist
+        # we inspect the adapter's constructor and forward any further config
+        # key that matches a declared parameter. Keys already set above win;
+        # `provider` (selects the adapter) and `system` (handled above and via
+        # system_override) are never forwarded raw. Built-in `**kwargs`
+        # factories declare no params, so this is a no-op for them.
+        from .adapters.base import adapter_config_keys
+
+        declared = adapter_config_keys(provider)
+        for key, value in llm_cfg.items():
+            if key in kwargs or key in ("provider", "system"):
+                continue
+            if key in declared:
+                kwargs[key] = value
         try:
             from .adapters.base import load_adapter
 

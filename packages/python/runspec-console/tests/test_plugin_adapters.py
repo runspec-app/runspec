@@ -15,6 +15,7 @@ import pytest
 from runspec_console.adapters import base
 from runspec_console.adapters.base import (
     ModelAdapter,
+    adapter_config_keys,
     available_providers,
     load_adapter,
     register_adapter,
@@ -126,6 +127,33 @@ def test_unknown_provider_lists_available():
     msg = str(exc.value)
     assert "Unknown model provider" in msg
     assert "anthropic" in msg  # the available list is shown
+
+
+# ── adapter_config_keys (signature inspection) ────────────────────────────────
+
+
+def test_config_keys_reads_factory_signature(monkeypatch):
+    def factory(api_key=None, tenant_id=None, region=None):  # noqa: ANN001
+        return _make()
+
+    monkeypatch.setitem(base._REGISTRY, "sigco", factory)
+    assert adapter_config_keys("sigco") == {"api_key", "tenant_id", "region"}
+
+
+def test_config_keys_inspects_class_init(monkeypatch):
+    _inject_fake_module(monkeypatch)
+    # _Dummy.__init__ is (self, **kwargs) — no named params, self excluded.
+    assert adapter_config_keys("fake_plugin_mod:MyAdapter") == frozenset()
+
+
+def test_config_keys_kwargs_only_factory_is_empty(monkeypatch):
+    monkeypatch.setitem(base._REGISTRY, "kwco", _make)  # def _make(**kwargs)
+    assert adapter_config_keys("kwco") == frozenset()
+
+
+def test_config_keys_unknown_provider_is_empty():
+    # Best-effort: an unresolvable provider yields no keys rather than raising.
+    assert adapter_config_keys("nope-not-real") == frozenset()
 
 
 # ── import_plugin_modules ─────────────────────────────────────────────────────

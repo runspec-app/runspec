@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from runspec_console.adapters import base
 from runspec_console.bridge import Bridge
 
 LOAD = "runspec_console.adapters.base.load_adapter"
@@ -118,3 +119,43 @@ def test_builtin_import_error_still_suggests_the_extra():
 def test_no_provider_returns_none():
     bridge = _StubBridge({"llm": {}})
     assert bridge._get_adapter() is None
+
+
+def test_plugin_declared_config_keys_are_forwarded(monkeypatch):
+    # A plugin adapter that declares its own constructor parameters should
+    # receive matching [llm] config keys — without the allowlist knowing them.
+    def _make(api_key=None, tenant_id=None, region=None, **_extra):  # noqa: ANN001
+        ...
+
+    monkeypatch.setitem(base._REGISTRY, "mycorp", _make)
+    cfg = {
+        "llm": {
+            "provider": "mycorp",
+            "api_key": "sk-1",
+            "tenant_id": "acme",
+            "region": "eu",
+            "not_declared": "dropped",
+        }
+    }
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert kwargs["tenant_id"] == "acme"
+    assert kwargs["region"] == "eu"
+    assert kwargs["api_key"] == "sk-1"
+    # A config key the adapter does not declare is never forwarded.
+    assert "not_declared" not in kwargs
+    # `provider` selects the adapter; it is not threaded through as a kwarg.
+    assert "provider" not in kwargs
+
+
+def test_builtin_kwargs_factory_forwards_nothing_extra():
+    # Built-in factories take **kwargs (no named params), so a stray [llm] key
+    # is not signature-matched and stays out of the adapter kwargs.
+    cfg = {"llm": {"provider": "anthropic", "api_key": "k", "tenant_id": "x"}}
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert "tenant_id" not in kwargs

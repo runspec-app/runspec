@@ -227,6 +227,74 @@ def import_plugin_modules(modules: list[str]) -> None:
             )
 
 
+def _resolve_factory(provider: str) -> AdapterFactory:
+    """Resolve a provider name/path to its (uninstantiated) factory callable.
+
+    Mirrors load_adapter's three-source resolution — dotted path, explicit
+    registry, then entry points — and raises the same ValueErrors for an
+    unloadable dotted path or an unknown provider. Split out so signature
+    inspection (adapter_config_keys) can reach the factory without building it.
+    """
+    # 1. dotted path — "package.module:attr"
+    if ":" in provider:
+        import importlib
+
+        module_path, _, attr = provider.partition(":")
+        try:
+            module = importlib.import_module(module_path)
+            return getattr(module, attr)
+        except (ImportError, AttributeError) as exc:
+            raise ValueError(
+                f"Could not load adapter from path {provider!r}: {exc}"
+            ) from exc
+
+    # 2. explicit registry (built-ins + plugins that called register_adapter)
+    factory = _REGISTRY.get(provider)
+    if factory is None:
+        # 3. entry-point discovery (installed plugin distributions)
+        ep = _entry_point_factories().get(provider)
+        if ep is not None:
+            factory = ep()  # resolve the EntryPoint.load callable
+
+    if factory is None:
+        available = ", ".join(available_providers())
+        raise ValueError(
+            f"Unknown model provider: {provider!r}. Available: {available}. "
+            "Plugins may add more via the 'runspec_console.adapters' entry-point "
+            "group or a 'module:Class' provider path."
+        )
+    return factory
+
+
+def adapter_config_keys(provider: str) -> frozenset[str]:
+    """Named constructor parameters the provider's adapter factory declares.
+
+    Lets Bridge forward extra ``[llm]`` config keys to plugin adapters by
+    signature inspection: a config key matching a declared parameter is threaded
+    through, so a custom adapter can require its own config without
+    runspec-console maintaining a per-key allowlist.
+
+    Best-effort — returns an empty set when the factory can't be resolved or
+    introspected. A built-in (or any ``**kwargs``) factory declares no named
+    parameters, so nothing extra is forwarded for those; their keys are handled
+    by Bridge's explicit allowlist regardless.
+    """
+    import inspect
+
+    try:
+        factory = _resolve_factory(provider)
+        sig = inspect.signature(factory)
+    except (ValueError, TypeError):
+        return frozenset()
+    return frozenset(
+        name
+        for name, param in sig.parameters.items()
+        if name != "self"
+        and param.kind
+        not in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+    )
+
+
 def load_adapter(provider: str, **kwargs: Any) -> ModelAdapter:
     """
     Instantiate the named adapter from the registry, an entry point, or a dotted
@@ -237,33 +305,4 @@ def load_adapter(provider: str, **kwargs: Any) -> ModelAdapter:
               name registered by a plugin, or a "module:ClassOrFactory" path.
     kwargs:   passed straight through to the adapter factory / __init__.
     """
-    # 1. dotted path — "package.module:attr"
-    if ":" in provider:
-        import importlib
-
-        module_path, _, attr = provider.partition(":")
-        try:
-            module = importlib.import_module(module_path)
-            factory = getattr(module, attr)
-        except (ImportError, AttributeError) as exc:
-            raise ValueError(
-                f"Could not load adapter from path {provider!r}: {exc}"
-            ) from exc
-        return factory(**kwargs)
-
-    # 2. explicit registry (built-ins + plugins that called register_adapter)
-    factory = _REGISTRY.get(provider)
-    if factory is None:
-        # 3. entry-point discovery (installed plugin distributions)
-        factory = _entry_point_factories().get(provider)
-        if factory is not None:
-            factory = factory()  # resolve the EntryPoint.load callable
-
-    if factory is None:
-        available = ", ".join(available_providers())
-        raise ValueError(
-            f"Unknown model provider: {provider!r}. Available: {available}. "
-            "Plugins may add more via the 'runspec_console.adapters' entry-point "
-            "group or a 'module:Class' provider path."
-        )
-    return factory(**kwargs)
+    return _resolve_factory(provider)(**kwargs)
