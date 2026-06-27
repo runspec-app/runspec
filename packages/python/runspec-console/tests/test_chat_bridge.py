@@ -20,6 +20,7 @@ effects, mirroring test_draft_send.py.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import types
 from typing import Any
@@ -892,6 +893,22 @@ def test_publish_catalog_force_always_sends():
     s._publish_catalog(spec, src, force=True)
     s._publish_catalog(spec, src, force=True)  # reconnect → resend even if empty
     assert src.sends == [[], []]
+
+
+def test_forced_resend_of_unchanged_catalog_does_not_log_info(caplog):
+    """A flapping room reconnects and force-republishes the same catalog every
+    cycle; that must not spam INFO "published N tool(s)" — only a genuine change
+    is announced at INFO (the unchanged re-send drops to DEBUG)."""
+    s = _catalog_stub([])
+    spec = {"room": "helpdesk/it", "queue": "it"}
+    src = _CatalogSource()
+    with caplog.at_level(logging.INFO, logger="runspec_console.bridge_const"):
+        s._publish_catalog(spec, src, force=True)  # first connect → INFO
+        s._publish_catalog(spec, src, force=True)  # reconnect, unchanged → no INFO
+        s._publish_catalog(spec, src, force=True)  # reconnect, unchanged → no INFO
+    published = [r for r in caplog.records if "published" in r.getMessage()]
+    assert len(published) == 1  # announced once, not once per reconnect
+    assert src.sends == [[], [], []]  # but the catalog was re-sent every time
 
 
 # ── get_room_state ────────────────────────────────────────────────────────────

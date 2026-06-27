@@ -8,6 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.141.0] — 2026-06-27
+
+### Added
+- **Room connection status in the console footer.** The backend already emitted
+  per-room connect/drop events (`runspec:room_connection`) and exposed
+  `get_room_state()`, but nothing in the UI rendered them — a room server going
+  down (e.g. a console-room reaped on logout because `loginctl enable-linger`
+  wasn't set) was only visible by reading Dev-tab SSH logs. The footer now shows
+  a live **`N/M rooms`** indicator (green all-up / amber some-down / red all-down)
+  with a hover breakdown listing each configured room + host and its
+  connected/down state, plus a nudge to check the room process when one is down.
+  Hidden entirely when no rooms are configured (`App.tsx`).
+
+### Changed
+- **Quieted two sources of room-connection log noise.** When a host's
+  `console-room` server isn't reachable on its port, the room tunnel's
+  direct-tcpip channel-open is refused and paramiko logs
+  `Secsh channel N open FAILED: Connection refused: Connect failed` at ERROR on
+  **every** reconnect backoff (with an incrementing channel id), so the Dev tab
+  filled with the same error 4+ times. The Dev-tab handler (`_ParamikoDevHandler`)
+  now **coalesces identical SSH records within a 60s window** — normalising the
+  channel id out of the dedup key — so a reconnect storm shows one row, not N; a
+  record that persists past the window resurfaces, and any record carrying a
+  traceback is never suppressed. (The console already logs its own friendly,
+  deduped, host-aware summary of this exact "is the room process running on its
+  port?" condition to the app log — that is unchanged.)
+- **Catalog re-publish no longer spams the app log on a flapping room.** A room
+  that opens, publishes, and drops repeatedly used to log
+  `published N tool(s) to 'helpdesk/helpdesk' catalog` at INFO on every
+  reconnect, because the forced subscribe re-publish always logged and the
+  disconnect path cleared the per-namespace publish cache. `_publish_catalog`
+  now logs INFO **only on a genuine content change**; a forced re-send of an
+  unchanged catalog (the reconnect path) still sends — a fresh hub needs it —
+  but logs at DEBUG. The cache is retained across the drop so an unchanged
+  reconnect is recognised as such.
+
+
 ## [0.140.0] — 2026-06-27
 
 ### Added

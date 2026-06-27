@@ -466,9 +466,10 @@ class TriggersMixin:
             with self._lock:
                 self._chat_sources.pop(room, None)
                 self._agent_rooms.pop(room, None)
-                self._published_catalogs.pop(
-                    room, None
-                )  # force a fresh publish on reconnect
+                # Keep the last-published catalog cached across the drop: the
+                # reconnect path re-sends it anyway (force=True), and retaining it
+                # lets _publish_catalog see the content is unchanged and log at
+                # DEBUG instead of re-announcing it at INFO every reconnect.
             self._dispatch(
                 "runspec:room_connection",
                 {"room": room, "host": host, "connected": False, "queue": queue},
@@ -530,13 +531,25 @@ class TriggersMixin:
                 self._runbook_index[key] = (
                     runbook_index  # runbook enactment map (name→id)
                 )
-                unchanged = not force and self._published_catalogs.get(key) == tools
-                if not unchanged:
-                    self._published_catalogs[key] = tools
-            if unchanged:
-                return  # nothing to send — the room already has this catalog
+                changed = self._published_catalogs.get(key) != tools
+                # A routine refresh with no change sends nothing. A forced publish
+                # (subscribe / reconnect) still re-sends — a fresh hub has no
+                # catalog yet — but is no longer treated as a "change" for logging.
+                if not changed and not force:
+                    return  # nothing to send — the room already has this catalog
+                self._published_catalogs[key] = tools
             source.send_catalog(tools)
-            logger.info("chat: published %d tool(s) to %r catalog", len(tools), key)
+            # Only announce a genuine change at INFO. A forced re-send of an
+            # identical catalog — the reconnect path on a flapping room — would
+            # otherwise spam "published N tool(s)" every cycle; keep it at DEBUG.
+            if changed:
+                logger.info("chat: published %d tool(s) to %r catalog", len(tools), key)
+            else:
+                logger.debug(
+                    "chat: re-sent unchanged %d-tool catalog to %r on reconnect",
+                    len(tools),
+                    key,
+                )
         except Exception:
             logger.exception("chat: catalog publish for %r failed", spec.get("room"))
 

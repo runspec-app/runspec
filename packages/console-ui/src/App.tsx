@@ -23,6 +23,7 @@ import {
   DownOutlined,
   RightOutlined,
   CheckCircleOutlined,
+  CommentOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -44,7 +45,7 @@ import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type Runnable, type Runbook } from './bridge'
+import { bridge, type HistoryRecord, type Host, type Runnable, type Runbook, type RoomInfo } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
@@ -85,6 +86,10 @@ export default function App() {
   )
   const [hosts, setHosts] = useState<Host[]>([])
   const [selectedHost, setSelectedHost] = useState<string>('')
+  // Configured chat/helpdesk rooms + their live connection state, for the footer
+  // indicator. Updated on every runspec:room_connection flip so a room server
+  // going down (or coming back) is visible without digging through Dev logs.
+  const [rooms, setRooms] = useState<RoomInfo[]>([])
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
@@ -218,15 +223,22 @@ export default function App() {
       const d = (e as CustomEvent).detail as { ready: boolean; done: number; total: number }
       if (d) setDiscovery(d)
     }
+    // Room connection state: read on mount, then refetch on every connect/drop
+    // flip (a refetch is cheap and always reflects the full configured set, incl.
+    // a newly added room) so the footer indicator stays live.
+    const loadRooms = () => bridge.get_room_state().then(s => setRooms(s.rooms)).catch(() => {})
+    loadRooms()
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
     window.addEventListener('runspec:runbooks_changed', loadRunbooks)
     window.addEventListener('runspec:discovery_state', onDiscoveryState)
+    window.addEventListener('runspec:room_connection', loadRooms)
     return () => {
       window.removeEventListener('runspec:hosts_updated', onHostsUpdated)
       window.removeEventListener('runspec:runnables_updated', onRunnablesUpdated)
       window.removeEventListener('runspec:runbooks_changed', loadRunbooks)
       window.removeEventListener('runspec:discovery_state', onDiscoveryState)
+      window.removeEventListener('runspec:room_connection', loadRooms)
     }
   }, [])
 
@@ -563,6 +575,53 @@ export default function App() {
               display: 'flex', flexDirection: 'column', gap: 3,
               fontSize: 11, color: iconCol,
             }}>
+              {/* Rooms: live connection state for every configured chat/helpdesk
+                  room, so a room server going down is visible at a glance instead
+                  of buried in the Dev tab. Hidden entirely when none are set. */}
+              {rooms.length > 0 && (() => {
+                const up = rooms.filter(r => r.connected).length
+                const allUp = up === rooms.length
+                const dot = allUp ? '#52c41a' : (up === 0 ? '#ff4d4f' : '#faad14')
+                return (
+                  <Popover
+                    placement="topLeft"
+                    mouseEnterDelay={0.2}
+                    content={
+                      <div style={{ maxWidth: 300, maxHeight: 320, overflowY: 'auto', fontSize: 12 }}>
+                        <div style={{ marginBottom: 6, color: iconCol }}>
+                          {up}/{rooms.length} room{rooms.length === 1 ? '' : 's'} connected
+                        </div>
+                        {rooms.map(r => (
+                          <div key={`${r.host}/${r.room}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <span style={{ color: r.connected ? '#52c41a' : '#ff4d4f', marginRight: 6 }}>●</span>
+                              <span style={{ color: titleCol }}>{r.queue || r.room}</span>
+                              <span style={{ color: iconCol }}> · {r.host}</span>
+                            </span>
+                            <span style={{ color: r.connected ? '#52c41a' : '#ff4d4f', flexShrink: 0 }}>
+                              {r.connected ? 'connected' : 'down'}
+                            </span>
+                          </div>
+                        ))}
+                        {up < rooms.length && (
+                          <div style={{ marginTop: 6, color: iconCol, fontSize: 11 }}>
+                            A “down” room means its server isn’t reachable on the host — check the room process is running on its port.
+                          </div>
+                        )}
+                      </div>
+                    }
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
+                      <CommentOutlined style={{ fontSize: 11, color: dot }} />
+                      <span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums', color: titleCol }}>{up}/{rooms.length}</span>
+                        {' '}room{rooms.length === 1 ? '' : 's'}
+                        {!allUp && <span style={{ color: dot }}> · {rooms.length - up} down</span>}
+                      </span>
+                    </div>
+                  </Popover>
+                )
+              })()}
               {/* Catalogue: total tools, growing live while discovery streams hosts in */}
               <Popover
                 placement="topLeft"

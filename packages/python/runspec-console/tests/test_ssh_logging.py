@@ -87,6 +87,93 @@ def test_handler_leaves_untagged_records_unchanged() -> None:
     assert detail["message"] == "Error reading SSH protocol banner"
 
 
+def test_handler_coalesces_channel_open_storm() -> None:
+    """A reconnect storm — paramiko logging a channel-open failure with an
+    incrementing channel id on every backoff — collapses to a single Dev-tab row."""
+    fb = _FakeBridge()
+    handler = _ParamikoDevHandler(fb)  # type: ignore[arg-type]
+    for chan in (1, 2, 3, 4):
+        handler.emit(
+            _record(
+                logging.ERROR,
+                f"Secsh channel {chan} open FAILED: Connection refused: Connect failed",
+            )
+        )
+    assert len(fb.emitted) == 1  # four attempts, one row
+
+
+def test_handler_does_not_coalesce_distinct_messages() -> None:
+    fb = _FakeBridge()
+    handler = _ParamikoDevHandler(fb)  # type: ignore[arg-type]
+    handler.emit(_record(logging.ERROR, "Error reading SSH protocol banner"))
+    handler.emit(_record(logging.INFO, "Connected (version 2.0)"))
+    assert len(fb.emitted) == 2
+
+
+def test_handler_resurfaces_after_window() -> None:
+    """An identical record reappears once the dedup window has elapsed, so an
+    ongoing problem is never hidden forever."""
+    fb = _FakeBridge()
+    clock = {"t": 0.0}
+    handler = _ParamikoDevHandler(fb, clock=lambda: clock["t"])  # type: ignore[arg-type]
+    handler.emit(
+        _record(
+            logging.ERROR,
+            "Secsh channel 1 open FAILED: Connection refused: Connect failed",
+        )
+    )
+    clock["t"] = 30.0  # within the 60s window
+    handler.emit(
+        _record(
+            logging.ERROR,
+            "Secsh channel 2 open FAILED: Connection refused: Connect failed",
+        )
+    )
+    assert len(fb.emitted) == 1
+    clock["t"] = 90.0  # past the window
+    handler.emit(
+        _record(
+            logging.ERROR,
+            "Secsh channel 3 open FAILED: Connection refused: Connect failed",
+        )
+    )
+    assert len(fb.emitted) == 2
+
+
+def test_handler_never_coalesces_a_record_with_traceback() -> None:
+    """Records carrying a traceback are higher-signal — always forwarded, even
+    when an identical bare line was just seen."""
+    fb = _FakeBridge()
+    handler = _ParamikoDevHandler(fb)  # type: ignore[arg-type]
+    handler.emit(_record(logging.ERROR, "boom"))
+    try:
+        raise TimeoutError("socket timed out")
+    except TimeoutError:
+        import sys
+
+        handler.emit(_record(logging.ERROR, "boom", exc_info=sys.exc_info()))
+    assert len(fb.emitted) == 2
+    assert "traceback" in fb.emitted[1]
+
+
+def test_handler_coalesce_is_per_host() -> None:
+    """The same message on two different tagged transports is two rows — the host
+    is part of the forwarded line, so distinct hosts don't collapse together."""
+    fb = _FakeBridge()
+    handler = _ParamikoDevHandler(fb)  # type: ignore[arg-type]
+    handler.emit(
+        _record(
+            logging.ERROR, "EOF during negotiation", name="paramiko.transport.web01"
+        )
+    )
+    handler.emit(
+        _record(
+            logging.ERROR, "EOF during negotiation", name="paramiko.transport.web02"
+        )
+    )
+    assert len(fb.emitted) == 2
+
+
 def test_handler_includes_traceback_on_exc_info() -> None:
     fb = _FakeBridge()
     handler = _ParamikoDevHandler(fb)  # type: ignore[arg-type]

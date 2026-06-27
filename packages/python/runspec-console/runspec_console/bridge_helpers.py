@@ -7,7 +7,9 @@ only via duck typing / string annotations, so no runtime Bridge import is needed
 from __future__ import annotations
 
 import logging
+import re
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -20,6 +22,11 @@ from .bridge_const import (
     logger,
 )
 
+# paramiko numbers each channel-open attempt, so a reconnect storm logs
+# "Secsh channel 1 open FAILED…", "…channel 2…", … — same event, different id.
+# Normalise the id out of the dedup key so the burst collapses to one row.
+_CHANNEL_ID_RE = re.compile(r"\bchannel \d+\b", re.IGNORECASE)
+
 
 class _ParamikoDevHandler(logging.Handler):
     """Forward paramiko log records into the Dev tab as ``runspec:ssh`` events.
@@ -31,12 +38,41 @@ class _ParamikoDevHandler(logging.Handler):
     Dev-tab row (the connect/banner/auth lifecycle, with the exact failure), and
     — because the paramiko logger's ``propagate`` is turned off when this is
     installed — keeps the terminal clean.
+
+    Identical records are **coalesced** within a short window so a reconnect
+    storm (e.g. paramiko logging a channel-open failure on every backoff while a
+    room server is down) shows once instead of N times. A record that persists
+    past the window resurfaces, so an ongoing problem is never hidden for long.
     """
 
-    def __init__(self, bridge: Bridge) -> None:
+    # Seconds an identical record is suppressed after it's first forwarded.
+    _DEDUP_WINDOW = 60.0
+
+    def __init__(
+        self, bridge: Bridge, *, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         super().__init__()
         self._bridge = bridge
+        self._clock = clock
+        self._recent: dict[tuple[str, str], float] = {}
         self.setFormatter(logging.Formatter("%(message)s"))
+
+    def _is_duplicate(self, level: str, message: str) -> bool:
+        """True if this (level, message) was forwarded within the dedup window.
+
+        The channel id is normalised out so paramiko's per-attempt
+        "Secsh channel N open FAILED" lines collapse to one. Updates the
+        last-seen time either way (a steady stream of repeats keeps suppressing)
+        and bounds the map so it can't grow without limit."""
+        key = (level, _CHANNEL_ID_RE.sub("channel N", message))
+        now = self._clock()
+        last = self._recent.get(key)
+        self._recent[key] = now
+        if len(self._recent) > 256:
+            self._recent = {
+                k: t for k, t in self._recent.items() if now - t < self._DEDUP_WINDOW
+            }
+        return last is not None and (now - last) < self._DEDUP_WINDOW
 
     @staticmethod
     def _host_from_channel(name: str) -> str:
@@ -70,8 +106,13 @@ class _ParamikoDevHandler(logging.Handler):
             # format() appends the traceback after the (bare) message when the
             # record carries exc_info — that's the banner-timeout stack we want
             # expandable in the Dev tab.
-            if record.exc_info or record.exc_text:
+            has_tb = bool(record.exc_info or record.exc_text)
+            if has_tb:
                 detail["traceback"] = self.format(record)
+            # Coalesce repeats of the same (host-tagged) line — but never a record
+            # carrying a traceback, which is higher-signal and worth seeing each time.
+            if not has_tb and self._is_duplicate(detail["level"], detail["message"]):
+                return
             self._bridge._emit_ssh_log(detail)
         except Exception:
             # A logging handler must never raise — that would break the call
