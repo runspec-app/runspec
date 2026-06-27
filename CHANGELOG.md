@@ -7,6 +7,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.47.0] / [node-0.36.0] — 2026-06-27
+
+### Changed
+
+- **`discoverable` is now a plain boolean — the self-service audience left the
+  format.** The keyword bundled two unrelated jobs: hiding an internal-helper
+  runnable from discovery, and marking a runnable (or arg) for a *self-service*
+  visitor catalog. The latter is a front-end concern that means nothing to the
+  runnable as a CLI, so it was removed from `runspec.toml` entirely. `discoverable`
+  reverts to `true` (listed by `runspec serve`/`local`, the default) or `false`
+  (hidden — an internal helper, still runnable when invoked directly); the
+  `["operator", "self-service"]` audience-list form and the entire **arg-level**
+  `discoverable` field are gone. `runspec serve` now skips a runnable only when
+  `discoverable = false`; `runspec local` annotates a hidden one as `[hidden]` and
+  emits `x-discoverable: false` for it (omitted otherwise). Designating which
+  runnables a self-service visitor may request is now a runspec-console concern
+  (`runspec_self_service.toml`), not a `runspec.toml` one. Parity across Python and
+  Node. (`discovery.py`/`discovery.ts`, `serve.py`/`serve.ts`, `cli.py`/`cli.ts`,
+  `models.py`/`models.ts`, `loader.*`, `parser.py`; `schema/runspec.schema.json`,
+  `spec/SPEC.md`, `docs/format.md`; `docs/design/discoverable-args.md` superseded.)
+
 ## [0.46.0] / [node-0.35.0] — 2026-06-23
 
 ### Changed

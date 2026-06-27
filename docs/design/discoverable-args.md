@@ -1,6 +1,16 @@
 # Design: arg-level `discoverable` — curating which args reach the visitor form
 
-**Status:** Slices 1+2 **shipped** (`runspec` 0.35.0 / `runspec-node` 0.31.0,
+> **Superseded / reverted.** The `"self-service"` audience and the entire
+> arg-level `discoverable` field described here were **removed from the
+> `runspec.toml` format**. Self-service is a front-end concern, not a runnable
+> concern: which runnables a visitor may request is now designated in the
+> runspec-console's git-managed `runspec_self_service.toml` (see
+> `docs/design/operator-self-service.md`), and `discoverable` reverted to a plain
+> boolean (visible / hidden) at the runnable level only. This document is kept for
+> historical context; arg-level visitor-form curation is not currently implemented
+> in any layer.
+
+**Status (historical):** Slices 1+2 **shipped** (`runspec` 0.35.0 / `runspec-node` 0.31.0,
 PR #214) — the spec change (schema/SPEC/format.md) + per-arg `x-discoverable`
 emit, at parity across both packs. **Remaining (next session):** slice 3 (console
 `catalog.py` arg filter — the consumer that strips non-`self-service` args before

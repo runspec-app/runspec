@@ -6,7 +6,7 @@ import { findConfig } from './finder';
 import { loadRaw } from './loader';
 import { inferScript } from './inference';
 import { buildSchema } from './cli';
-import { OPERATOR, isDiscoverableTo, validateDiscoverable } from './discovery';
+import { validateDiscoverable } from './discovery';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const ERR_PARSE = -32700;
@@ -67,16 +67,14 @@ export function serve(): void {
       process.exit(1);
     }
     if (!isServeMatch(runnable.serve, context)) continue;
-    // `serve` is an operator surface — skip runnables not discoverable to the
-    // `operator` audience (orthogonal to the serve *context* filter above). An
-    // internal helper (discoverable=false, or a list without "operator") is
-    // hidden from the agent surface this way.
+    // `discoverable = false` marks an internal helper that should never surface
+    // as an MCP tool (orthogonal to the serve *context* filter above).
     const discErrors = validateDiscoverable(runnable.discoverable);
     if (discErrors.length > 0) {
       for (const err of discErrors) process.stderr.write(`runspec serve: ${name}.discoverable: ${err}\n`);
       process.exit(1);
     }
-    if (!isDiscoverableTo(runnable.discoverable, OPERATOR)) continue;
+    if (runnable.discoverable === false) continue;
     const inferred = inferScript(runnable, config.autonomyDefault);
     tools[name] = buildSchema(name, inferred, 'mcp');
     argSpecs[name] = inferred.args ?? {};

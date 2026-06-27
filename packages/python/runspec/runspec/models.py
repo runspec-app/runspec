@@ -83,11 +83,6 @@ class Arg(Generic[T]):
     env: str | None = None
     deprecated: str | None = None
     autonomy: str | None = None
-    # Per-arg discoverability audiences (raw spec value). Operators/agents always
-    # see every arg; this gates only visitor-facing surfaces (the self-service
-    # catalog form), which include an arg solely when 'self-service' is listed —
-    # default-deny. See runspec.discovery.normalise_discoverable.
-    discoverable: bool | list[str] | None = None
     ui: str | None = None
     hint: str | None = None  # UI placeholder/hint text (str/path/password types)
     meta: dict[str, Any] | None = None
@@ -284,12 +279,11 @@ class RunSpec:
         return self.__runspec_groups__
 
     @property
-    def runspec_discoverable(self) -> list[str]:
-        """Canonical discoverability audiences for this runnable (e.g. ['operator']).
+    def runspec_discoverable(self) -> bool:
+        """Whether this runnable is discoverable (listed by `runspec serve`/`local`).
 
-        Normalised from the `discoverable` keyword: absent/`true` → ['operator'],
-        `false` → [], a list → itself. A consumer (e.g. a self-service catalog)
-        filters runnables by membership: `'self-service' in args.runspec_discoverable`.
+        Normalised from the `discoverable` keyword: absent/`true` → ``True``,
+        `false` → ``False`` (an internal helper, hidden from discovery surfaces).
         """
         from runspec.discovery import normalise_discoverable
 

@@ -1,66 +1,37 @@
-"""Discoverability audiences for runnables (the `discoverable` keyword).
+"""The `discoverable` keyword — whether a runnable is listed at all.
 
-`discoverable` declares *which audiences* may discover a runnable, orthogonal to
-`serve` (which declares *the context*). It is metadata only — it adds no runtime
-behaviour to the runnable; the surfaces (`runspec serve`, `runspec local`, and a
-future self-service catalog) read it to decide what to expose to whom.
+`discoverable` is a plain boolean visibility gate, orthogonal to `serve` (which
+declares *the context*). It is metadata only — it adds no runtime behaviour to
+the runnable; the discovery surfaces (`runspec serve`, `runspec local`) read it
+to decide whether to expose the runnable:
 
-Canonical form is a list of audience strings. The TOML value is normalised:
+    absent / true   → visible (the default)
+    false           → hidden from all discovery surfaces (internal helper)
 
-    absent / true          → ["operator"]          (the default; operator-visible)
-    false                  → []                     (hidden from all surfaces)
-    ["operator", ...]      → as written (validated)
-
-`self-service` is never implied — a runnable reaches a visitor-facing catalog only
-by listing it explicitly, so the default never exposes a runnable to untrusted
-users.
+A `false` runnable still runs when invoked directly on the CLI; it simply never
+surfaces as a discovered tool (e.g. an MCP tool under `runspec serve`). Curating
+which runnables a *self-service* audience may see is no longer a format concern —
+that lives in the runspec-console catalog configuration.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-#: The audiences a runnable may be discoverable to.
-OPERATOR = "operator"
-SELF_SERVICE = "self-service"
-AUDIENCES: tuple[str, ...] = (OPERATOR, SELF_SERVICE)
 
+def normalise_discoverable(value: Any) -> bool:
+    """Return the canonical boolean for a raw `discoverable` value.
 
-def normalise_discoverable(value: Any) -> list[str]:
-    """Return the canonical audience list for a raw `discoverable` value.
-
-    Lenient — mirrors the rest of the loader: unknown shapes fall back to the
-    default (operator-visible). Strict validation is `validate_discoverable`,
-    surfaced by `runspec serve`/`local`.
+    Lenient — mirrors the rest of the loader: absent/`true` → ``True``,
+    `false` → ``False``, any other shape falls back to the default (visible).
+    Strict validation is `validate_discoverable`, surfaced by
+    `runspec serve`/`local`.
     """
-    if value is None or value is True:
-        return [OPERATOR]
-    if value is False:
-        return []
-    if isinstance(value, list):
-        # Preserve order, drop duplicates; leave unknowns for the validator.
-        seen: dict[str, None] = {}
-        for item in value:
-            if isinstance(item, str):
-                seen.setdefault(item, None)
-        return list(seen)
-    return [OPERATOR]
+    return value is not False
 
 
 def validate_discoverable(value: Any) -> list[str]:
     """Return human-readable error messages for an invalid `discoverable` value."""
     if value is None or isinstance(value, bool):
         return []
-    if isinstance(value, list):
-        if not value:
-            return ["discoverable = [] is invalid — write false to hide everywhere, or omit to default to true"]
-        unknown = [a for a in value if a not in AUDIENCES]
-        if unknown:
-            return [f"discoverable contains unknown audience(s) {unknown!r} — valid values are 'operator' and 'self-service'"]
-        return []
-    return [f"discoverable must be true, false, or a list of audiences ('operator', 'self-service'), got {type(value).__name__}"]
-
-
-def is_discoverable_to(value: Any, audience: str) -> bool:
-    """Return True if a runnable with this `discoverable` value reaches `audience`."""
-    return audience in normalise_discoverable(value)
+    return [f"discoverable must be true or false, got {type(value).__name__}"]

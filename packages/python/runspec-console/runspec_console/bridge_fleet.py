@@ -336,6 +336,33 @@ class FleetMixin:
             self._reload_hosts()
         self._dispatch("runspec:hosts_updated", {})
 
+    # ── self-service catalog registry (runspec_self_service.toml) ──────────────
+
+    def get_self_service(self) -> list[dict[str, Any]]:
+        """The self-service catalog registry — ``[{name, description}]`` in registry
+        order — naming which discovered runnables are offered to *visitors* in the
+        helpdesk room. This replaces the runspec.toml ``discoverable =
+        ["self-service"]`` marking (a front-end concern, so it lives here); the
+        Settings → Self-Service tab edits it. Rides Config Sync, merged by name."""
+        from .config import self_service_path
+        from .self_service import load_self_service, normalise_self_service
+
+        return normalise_self_service(load_self_service(self_service_path()))
+
+    def save_self_service(self, entries: list[dict[str, Any]]) -> None:
+        """Replace the self-service registry (add / remove / edit description /
+        reorder) and republish every connected queue's catalog so the room reflects
+        the change immediately."""
+        from .config import self_service_path
+        from .self_service import save_self_service as _save
+
+        _save(self_service_path(), entries)
+        try:
+            self._publish_catalogs()
+        except Exception:
+            logger.debug("republish after save_self_service failed", exc_info=True)
+        self._dispatch("runspec:self_service_changed", {})
+
     def get_repos(self) -> list[dict[str, Any]]:
         """The git-repo registry (``runspec_repos.toml``) for Settings → Repos —
         each entry plus its local-checkout status (``checked_out`` + short

@@ -299,7 +299,6 @@ Every `Arg` carries its full spec:
 | `env` | `str \| None` | Environment variable name |
 | `deprecated` | `str \| None` | Deprecation message |
 | `autonomy` | `str \| None` | Per-arg autonomy override |
-| `discoverable` | `bool \| list \| None` | Per-arg visitor-facing audiences (self-service forms) |
 | `ui` | `str \| None` | Form control hint |
 | `hint` | `str \| None` | UI placeholder/hint text (`str`/`path`/`password`) |
 | `meta` | `dict \| None` | Developer-defined pass-through metadata |

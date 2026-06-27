@@ -247,6 +247,15 @@ export interface HostGroup {
   description?: string
 }
 
+// A runnable designated as self-service (Settings → Self-Service,
+// runspec_self_service.toml). The registry names which discovered runnables are
+// offered to visitors in the helpdesk room — replacing the runspec.toml
+// `discoverable = ["self-service"]` marking. Identity key is `name` (synced).
+export interface SelfServiceEntry {
+  name: string
+  description?: string
+}
+
 // A git repo the agent may read and locally edit (Settings → Repos,
 // runspec_repos.toml). The registry is the agent's allowlist — only repos listed
 // here are reachable by the repo_* tools. `checked_out`/`commit` are status fields
@@ -785,6 +794,12 @@ export interface BridgeApi {
   get_groups: () => Promise<HostGroup[]>
   save_groups: (groups: HostGroup[]) => Promise<void>
   rename_group: (oldName: string, newName: string) => Promise<void>
+  // Self-service catalog registry (runspec_self_service.toml) — which discovered
+  // runnables are offered to visitors in the helpdesk room (Settings →
+  // Self-Service). Replaces the runspec.toml `discoverable = ["self-service"]`
+  // marking; saving republishes every connected queue's catalog.
+  get_self_service: () => Promise<SelfServiceEntry[]>
+  save_self_service: (entries: SelfServiceEntry[]) => Promise<void>
   // Git-repo registry (runspec_repos.toml) — the agent's read/edit allowlist
   // (Settings → Repos). sync_repo clones/fetches a repo on operator demand.
   get_repos: () => Promise<Repo[]>

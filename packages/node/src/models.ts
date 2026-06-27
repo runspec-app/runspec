@@ -40,10 +40,6 @@ export interface ArgSpec {
   env?: string | string[];
   deprecated?: string;
   autonomy?: string;
-  // Per-arg discoverability audiences. Operators/agents always see every arg;
-  // this gates only the visitor self-service form, which includes the arg solely
-  // when 'self-service' is listed (default-deny). See normaliseDiscoverable.
-  discoverable?: boolean | string[];
   ui?: string;
   hint?: string; // UI placeholder/hint text (str/path/password types)
   meta?: Record<string, unknown>;
@@ -67,7 +63,7 @@ export interface ScriptSpec {
   autonomyReason?: string;
   output?: string;
   serve?: boolean | string[];
-  discoverable?: boolean | string[];
+  discoverable?: boolean;
   /** The OS user the runnable must run as. String, $ENV ref, or a per-host /
    *  pattern table. Consumed by an executor for escalation; on the direct path
    *  it is the identity asserted by `enforceRunAs`. */

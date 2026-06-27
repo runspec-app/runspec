@@ -6,8 +6,8 @@ Status: implemented — `runspec-room` 0.29.0, `runspec-console` 0.130.0.
 
 The console-room web app had exactly one kind of authenticated user: a **visitor**.
 Logging in via email-verify only ever showed the *self-service* catalogue — runnables
-whose `discoverable` audience contains `"self-service"`, optionally narrowed by a
-host's `room_catalog` allowlist — rendered as a form. Submitting routed a `request`
+**designated self-service in the console's `runspec_self_service.toml`**, optionally
+narrowed by a host's `room_catalog` allowlist — rendered as a form. Submitting routed a `request`
 frame to an on-shift operator console, which enacted it behind its autonomy gate. The
 room is a "dumb pipe"; consoles execute.
 
@@ -54,13 +54,22 @@ the WebSocket door (→ `BrowserConnection.operator`) consume it. Dev mode honou
 
 ### Console: building the catalogue
 
-`catalog.build_full_catalog(runnables, self_service_allowlist=…)` emits **one** entry
-per runnable, tagged with the broadest audience it qualifies for:
+> **Update (visibility refactor).** Self-service marking moved out of `runspec.toml`:
+> the `"self-service"` audience on a runnable was removed. A runnable is self-service
+> when its **name is listed in the console's `runspec_self_service.toml`** (the
+> `runspec_console.self_service` registry, edited from Settings → Self-Service, synced
+> by Config Sync). `build_full_catalog` now takes `self_service_names=<set>` (the
+> configured names) alongside `self_service_allowlist=` (the per-queue `room_catalog`).
+> Every discovered runnable is at least operator-visible — a `discoverable = false`
+> runnable is hidden by core `runspec local` and never reaches the console.
 
-- `self-service` when it is self-service-marked **and** passes the `room_catalog`
-  visitor allowlist (visible to everyone), else
-- `operator` when it is operator-discoverable (the default audience) — visible only to
-  operator sessions, and deliberately **not** narrowed by the visitor allowlist.
+`catalog.build_full_catalog(runnables, self_service_names=…, self_service_allowlist=…)`
+emits **one** entry per runnable, tagged with the broadest audience it qualifies for:
+
+- `self-service` when its name is in `self_service_names` **and** it passes the
+  `room_catalog` visitor allowlist (visible to everyone), else
+- `operator` — visible only to operator sessions, and deliberately **not** narrowed by
+  the visitor allowlist.
 
 `catalog.build_runbook_catalog(runbooks)` appends published runbooks as
 `runbook:<id>` entries, with `inputSchema` built from each runbook's `[runbook.args]` via the

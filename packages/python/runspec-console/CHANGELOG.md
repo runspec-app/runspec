@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.142.0] — 2026-06-27
+
+### Changed
+- **Self-service designation moved from `runspec.toml` into a console config
+  file.** Which discovered runnables are offered to *visitors* in the helpdesk
+  room is now configured here, not baked into each package's `runspec.toml` (the
+  `discoverable = ["self-service"]` marking was removed from the format in
+  `runspec` 0.47.0). A new **Settings → Self-Service** tab (`SelfServiceTab` in
+  `SettingsDrawer.tsx`) toggles runnables on/off; the set is stored in
+  `runspec_self_service.toml` — a `[[self_service]]` collection that rides Config
+  Sync (merged by `name`, like `runspec_groups.toml`). The catalog publisher
+  (`catalog.build_full_catalog` / `build_catalog`) now takes the configured
+  `self_service_names` set instead of reading each runnable's `discoverable`
+  audience; every discovered runnable is at least operator-visible, and the
+  per-queue `room_catalog` allowlist still narrows the self-service set per queue.
+  New module `self_service.py`, bridge `get_self_service`/`save_self_service`,
+  config `self_service_path()`. See `docs/design/operator-self-service.md`.
+
 ## [0.141.0] — 2026-06-27
 
 ### Added

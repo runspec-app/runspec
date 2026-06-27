@@ -1186,19 +1186,21 @@ def _build_schema(name: str, script: dict[str, Any], fmt: str) -> dict[str, Any]
         if arg.get("required"):
             required_args.append(arg_name)
 
-    from runspec.discovery import normalise_discoverable
-
     schema: dict[str, Any] = {
         "name": name,
         "description": script.get("description") or "",
         "x-autonomy": script.get("autonomy", "confirm"),
         "x-output": script.get("output", "text"),
-        "x-discoverable": normalise_discoverable(script.get("discoverable")),
         "inputSchema": {
             "type": "object",
             "properties": properties,
         },
     }
+
+    # `discoverable = false` hides an internal helper; emit x-discoverable only
+    # in that case (the default true is implied by its absence).
+    if script.get("discoverable") is False:
+        schema["x-discoverable"] = False
 
     if required_args:
         schema["inputSchema"]["required"] = required_args
@@ -1261,14 +1263,6 @@ def _arg_to_json_schema(arg: dict[str, Any]) -> dict[str, Any]:
     # without colliding with built-in JSON Schema keywords.
     if arg.get("meta"):
         prop["x-meta"] = arg["meta"]
-
-    # Per-arg discoverability audiences — only emitted when declared. Consumers
-    # of the visitor catalog include an arg only when 'self-service' is present;
-    # an absent x-discoverable therefore reads as operator-only (default-deny).
-    if arg.get("discoverable") is not None:
-        from runspec.discovery import normalise_discoverable
-
-        prop["x-discoverable"] = normalise_discoverable(arg["discoverable"])
 
     return prop
 
@@ -1427,17 +1421,11 @@ def _print_local_text(discovered: list[dict[str, Any]]) -> None:
 
             has_ep = (bin_dir / name).exists() or (bin_dir / f"{name}.exe").exists()
             callable_marker = "" if has_ep else "  [not callable]"
-            # Annotate any non-default discoverability so the developer sees that a
-            # runnable is hidden from operator agents or offered to the catalog.
-            from runspec.discovery import OPERATOR, normalise_discoverable, validate_discoverable
+            # Annotate a hidden runnable (discoverable = false) so the developer
+            # sees it won't surface under `runspec serve`/`local` discovery.
+            from runspec.discovery import validate_discoverable
 
-            audiences = normalise_discoverable(runnable.get("discoverable"))
-            if audiences == [OPERATOR]:
-                disc_marker = ""
-            elif not audiences:
-                disc_marker = "  [discoverable=false]"
-            else:
-                disc_marker = f"  [audiences: {', '.join(audiences)}]"
+            disc_marker = "  [hidden]" if runnable.get("discoverable") is False else ""
             print(f"    {name:<24} {desc[:48]:<50}  [{autonomy}]{disc_marker}{callable_marker}")
 
             for err in validate_discoverable(runnable.get("discoverable")):

@@ -1,7 +1,7 @@
 # Integration fixture: complex.toml
 # Tests subcommands, groups, multiple values, autonomy escalation,
 # env vars, choices, ranges, flags, deprecated args, string validation
-# (pattern / min-length / max-length), require-command, and discoverable.
+# (pattern / min-length / max-length), require-command, and discoverable (bool).
 
 [config]
 autonomy-default = "confirm"
@@ -11,7 +11,7 @@ version          = "1"
 [pipeline]
 description  = "Process and validate data pipeline files"
 autonomy     = "confirm"
-discoverable = ["operator", "self-service"]   # operator surfaces AND a visitor catalog
+discoverable = true                           # listed by runspec serve/local (the default)
 
 [pipeline.commands.run]
 description     = "Run the pipeline against one or more input files"

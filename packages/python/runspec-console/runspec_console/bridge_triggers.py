@@ -514,6 +514,8 @@ class TriggersMixin:
         ``force`` overrides the diff (the subscribe path always sends, as a fresh
         connection's hub has no catalog yet). Best-effort — a failed publish never
         breaks the connection; the next refresh or reconnect republishes."""
+        from . import config as config_mod
+        from . import self_service as self_service_mod
         from .catalog import build_full_catalog
 
         try:
@@ -521,8 +523,13 @@ class TriggersMixin:
             with self._lock:
                 runnables = list(self._runnables_cache)
             allowlist = spec.get("catalog_allowlist")
+            ss_names = self_service_mod.self_service_names(
+                self_service_mod.load_self_service(config_mod.self_service_path())
+            )
             tools, index = build_full_catalog(
-                runnables, self_service_allowlist=allowlist
+                runnables,
+                self_service_names=ss_names,
+                self_service_allowlist=allowlist,
             )
             runbook_tools, runbook_index = self._build_room_runbooks()
             tools = tools + runbook_tools

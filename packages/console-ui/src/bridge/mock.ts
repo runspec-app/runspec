@@ -683,6 +683,12 @@ export const mockApi: BridgeApi = {
   save_groups: async (groups) => { console.log('[mock] save_groups', groups) },
   rename_group: async (oldName, newName) => { console.log('[mock] rename_group', oldName, newName) },
 
+  get_self_service: async () => [
+    { name: 'reset-password', description: 'Password resets' },
+    { name: 'request-vm', description: '' },
+  ],
+  save_self_service: async (entries) => { console.log('[mock] save_self_service', entries) },
+
   get_repos: async () => [
     { name: 'payments', url: 'https://git.example.com/team/payments.git', ref: 'main', credential_id: 'svc-prod', description: 'Payments service', checked_out: true, commit: 'a1b2c3d4e5' },
     { name: 'infra', url: 'git@git.example.com:ops/infra.git', ref: 'v2.1.0', path: 'C:\\dev\\infra', checkout_dir: 'C:\\dev\\infra', checked_out: false, commit: '' },

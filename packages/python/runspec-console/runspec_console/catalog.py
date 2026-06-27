@@ -2,12 +2,13 @@
 catalog.py — build a helpdesk queue's self-service catalog from discovered
 runnables (pure; no I/O).
 
-The console is the catalog authority: it already discovers runnables across the
-fleet (SSH + ``runspec local``) and sees each runnable's ``discoverable``
-audiences (H0). This module filters that cache to the runnables a *visitor* may
-request — ``discoverable`` contains ``"self-service"`` — applies the optional
-per-queue allowlist, and converts each to the catalog entry shape the room
-server caches and the visitor frontend renders forms from:
+The console is the catalog authority: it discovers every visible runnable across
+the fleet (SSH + ``runspec local``). Which of those a *visitor* may request is a
+front-end concern, designated in the console's own ``runspec_self_service.toml``
+(see :mod:`runspec_console.self_service`) — **not** in each package's
+``runspec.toml``. This module takes that configured self-service name set, applies
+the optional per-queue allowlist, and converts each entry to the catalog shape the
+room server caches and the visitor frontend renders forms from:
 
     {"name": ..., "description": ..., "inputSchema": {JSON Schema}}
 
@@ -25,31 +26,6 @@ from typing import Any
 
 OPERATOR = "operator"
 SELF_SERVICE = "self-service"
-
-
-def discoverable_audiences(value: Any) -> list[str]:
-    """Canonical audience list for a raw ``discoverable`` value — the same
-    normalisation as the core's ``runspec.discovery``: absent/``True`` →
-    ``["operator"]``, ``False`` → ``[]``, a list → itself (strings only)."""
-    if value is None or value is True:
-        return [OPERATOR]
-    if value is False:
-        return []
-    if isinstance(value, list):
-        return [a for a in value if isinstance(a, str)]
-    return [OPERATOR]
-
-
-def is_self_service(runnable: dict[str, Any]) -> bool:
-    """True if a discovered runnable is marked for the visitor catalog.
-
-    ``discoverable`` travels in the runnable's ``rawSpec`` (discovery keeps the
-    full spec minus args/commands), so this works for both discovery paths —
-    and a host running an older runspec simply has no key → operator-only →
-    never visitor-facing. Safe by default."""
-    raw = runnable.get("rawSpec")
-    value = raw.get("discoverable") if isinstance(raw, dict) else None
-    return SELF_SERVICE in discoverable_audiences(value)
 
 
 _TYPE_MAP = {
@@ -114,6 +90,7 @@ def runnable_to_catalog_entry(
 def build_catalog(
     runnables: list[dict[str, Any]],
     *,
+    self_service_names: set[str],
     allowlist: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """The catalog for a queue: ``(tools, index)``.
@@ -122,11 +99,12 @@ def build_catalog(
     payload); ``index`` maps each published bare tool name back to the discovered
     runnable (host/group/name) so a visitor request can later be enacted.
 
-    Filters, in order: ``self-service``-marked only (the H0 opt-in); no
-    subcommand-requiring runnables (the visitor form is flat in v1); the optional
-    per-queue ``allowlist`` of bare names (the narrowing knob — ``None`` means
-    all marked). Names collide across hosts on a fleet; first discovered wins,
-    keeping the catalog stable for visitors."""
+    Filters, in order: only names in ``self_service_names`` (the console's
+    ``runspec_self_service.toml`` designation); no subcommand-requiring runnables
+    (the visitor form is flat in v1); the optional per-queue ``allowlist`` of bare
+    names (the ``room_catalog`` narrowing knob — ``None`` means all designated).
+    Names collide across hosts on a fleet; first discovered wins, keeping the
+    catalog stable for visitors."""
     allowed = set(allowlist) if allowlist is not None else None
     tools: list[dict[str, Any]] = []
     index: dict[str, dict[str, Any]] = {}
@@ -134,7 +112,7 @@ def build_catalog(
         name = str(runnable.get("name") or "")
         if not name or name in index:
             continue
-        if not is_self_service(runnable):
+        if name not in self_service_names:
             continue
         if runnable.get("requireCommand"):
             continue
@@ -148,19 +126,22 @@ def build_catalog(
 def build_full_catalog(
     runnables: list[dict[str, Any]],
     *,
+    self_service_names: set[str],
     self_service_allowlist: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, dict[str, Any]]]]:
     """The combined catalog for a queue: ``(tools, index)`` covering **both**
     audiences in one tagged list (the channel the room filters per session).
 
     Each runnable name yields **one** entry, tagged with the broadest audience it
-    qualifies for: ``"self-service"`` when it is self-service-marked *and* passes the
+    qualifies for: ``"self-service"`` when its name is in ``self_service_names``
+    (the console's ``runspec_self_service.toml`` designation) *and* it passes the
     optional ``self_service_allowlist`` (the ``room_catalog`` visitor-narrowing
-    knob) — visible to everyone; otherwise ``"operator"`` when it is
-    operator-discoverable (the default audience) — visible only to operator sessions.
-    A runnable discoverable to nobody (``discoverable = false``) is dropped. One
-    entry per name keeps the room's name-keyed dedup stable; the operator set is
-    deliberately *not* narrowed by the self-service allowlist.
+    knob) — visible to everyone; otherwise ``"operator"`` — visible only to operator
+    sessions. Every discovered runnable is at least operator-visible (a hidden
+    ``discoverable = false`` runnable never reaches the console, having been filtered
+    by ``runspec local``). One entry per name keeps the room's name-keyed dedup
+    stable; the operator set is deliberately *not* narrowed by the self-service
+    allowlist.
 
     The **same runnable on several hosts** (a fleet) is collapsed to one entry whose
     ``x-hosts`` lists every host it was discovered on (discovery order, deduped) — so
@@ -183,19 +164,10 @@ def build_full_catalog(
         name = str(runnable.get("name") or "")
         if not name or runnable.get("requireCommand"):
             continue
-        raw = runnable.get("rawSpec")
-        audiences = discoverable_audiences(
-            raw.get("discoverable") if isinstance(raw, dict) else None
-        )
-        self_service = SELF_SERVICE in audiences and (
+        self_service = name in self_service_names and (
             allowed is None or name in allowed
         )
-        if self_service:
-            audience = SELF_SERVICE
-        elif OPERATOR in audiences:
-            audience = OPERATOR
-        else:
-            continue  # discoverable to nobody
+        audience = SELF_SERVICE if self_service else OPERATOR
         if name not in first_of:
             order.append(name)
             audience_of[name] = audience

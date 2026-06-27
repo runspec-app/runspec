@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames } from '../views/FormsView'
@@ -1625,6 +1625,74 @@ function FiltersTab() {
   )
 }
 
+// ── Self-Service tab (which runnables visitors may request in the room) ─────
+
+function SelfServiceTab() {
+  const [entries, setEntries] = useState<SelfServiceEntry[]>([])
+  const [discovered, setDiscovered] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(() => {
+    bridge.get_self_service().then(setEntries)
+    bridge.get_runnables('all').then(rs => {
+      setDiscovered(Array.from(new Set(rs.map(r => r.name))).sort((a, b) => a.localeCompare(b)))
+    })
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const persist = async (next: SelfServiceEntry[]) => {
+    setEntries(next)
+    setSaving(true)
+    try { await bridge.save_self_service(next) } finally { setSaving(false) }
+  }
+
+  const isOn = (name: string) => entries.some(e => e.name === name)
+  const toggle = async (name: string, on: boolean) => {
+    if (on) { if (!isOn(name)) await persist([...entries, { name }]) }
+    else { await persist(entries.filter(e => e.name !== name)) }
+  }
+
+  // Designations whose runnable isn't currently discovered anywhere on the fleet
+  // — kept (so a host being offline doesn't silently drop them) but flagged.
+  const orphaned = entries.filter(e => !discovered.includes(e.name))
+
+  const row = (name: string, on: boolean, missing: boolean) => (
+    <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
+      <Switch size="small" checked={on} disabled={saving} onChange={v => toggle(name, v)} />
+      <Text style={{ fontFamily: 'monospace', fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</Text>
+      {missing && <Tag style={{ margin: 0, fontSize: 10 }} color="orange">not discovered</Tag>}
+    </div>
+  )
+
+  return (
+    <div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+        Saved to <code>runspec_self_service.toml</code> (synced). The checked runnables are offered to visitors in the helpdesk room's self-service catalogue — everything else stays operator-only. A queue's optional <code>room_catalog</code> allowlist narrows this set per queue.
+      </Text>
+
+      {discovered.length === 0 && (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No runnables discovered yet" />
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {discovered.map(name => row(name, isOn(name), false))}
+      </div>
+
+      {orphaned.length > 0 && (
+        <>
+          <Divider style={{ margin: '14px 0 8px' }} />
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+            Designated but not currently discovered on any connected host. Toggle off to remove.
+          </Text>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {orphaned.map(e => row(e.name, true, true))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Repos tab (git repos the agent may read + locally edit) ─────────────────
 
 interface RepoFormValues { name: string; url: string; ref?: string; credential_id?: string; description?: string; path?: string }
@@ -2954,6 +3022,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
+          { key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },

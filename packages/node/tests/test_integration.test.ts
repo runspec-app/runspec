@@ -192,11 +192,11 @@ describe('complex.toml', () => {
     expect(raw.runnables['pipeline'].requireCommand).toBe(false);
   });
 
-  test('discoverable: raw value preserved by the loader', () => {
+  test('discoverable: raw boolean preserved by the loader', () => {
     const raw = loadRaw(COMPLEX);
-    expect(raw.runnables['pipeline'].discoverable).toEqual(['operator', 'self-service']);
+    expect(raw.runnables['pipeline'].discoverable).toBe(true);
     expect(raw.runnables['db'].discoverable).toBe(false);
-    // Absent on the subcommands → undefined (defaults to operator-visible downstream).
+    // Absent on the subcommands → undefined (defaults to visible downstream).
     expect(raw.runnables['pipeline'].commands['run'].discoverable).toBeUndefined();
   });
 });

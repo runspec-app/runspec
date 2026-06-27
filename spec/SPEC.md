@@ -394,7 +394,7 @@ autonomy        = "confirm"                               # optional
 autonomy-reason = "Why this level was chosen"             # optional
 output          = "text"                                  # optional
 serve           = true                                    # optional, default true; also false or ["local","remote"]
-discoverable    = true                                    # optional, default true; also false or ["operator","self-service"]
+discoverable    = true                                    # optional, default true; false hides from discovery
 run_as          = "username"                              # optional, see Remote Execution
 enforce_run_as  = "error"                                 # optional, default "error"; also "warn", "off"
 become_method   = "sudo"                                  # optional, default "sudo"
@@ -469,78 +469,49 @@ Default when unspecified: `true`.
 
 ### `discoverable`
 
-Declares **which audiences** may discover this runnable. Where `serve` controls
-*the context* a runnable is exposed in (`local` vs `remote`), `discoverable`
-controls *who* it is exposed to. The two are orthogonal filters that compose.
+Declares **whether** this runnable is listed by the discovery surfaces. It is a
+plain boolean. Where `serve` controls *the context* a runnable is exposed in
+(`local` vs `remote`), `discoverable` controls whether it is listed at all. The
+two are orthogonal filters that compose.
 
-**Forms:**
-
-| Value | Canonical audiences | Meaning |
-|---|---|---|
-| `true` (default) | `["operator"]` | Visible to operator surfaces (`runspec local`, `runspec serve`). Not in any self-service catalog. |
-| `false` | `[]` | Hidden from all discovery surfaces — an internal helper. |
-| `["operator"]` | `["operator"]` | Same as `true`. |
-| `["operator", "self-service"]` | as written | Operator-visible **and** offered in the self-service catalog. |
-| `["self-service"]` | as written | Offered only in the self-service catalog — hidden from `runspec serve`/`local`. |
-
-**Audiences:**
-
-| Audience | Surface |
+| Value | Meaning |
 |---|---|
-| `operator` | The trusted operator/agent surfaces — `runspec serve` (MCP tools) and `runspec local`. This is the default. |
-| `self-service` | A visitor-facing catalog (e.g. a help desk). **Opt-in only** — a runnable reaches it solely by listing `"self-service"` explicitly; the bare `true` shorthand deliberately does *not* imply it, so a runnable is never offered to untrusted users by accident. |
+| `true` (default) | Visible to the discovery surfaces — `runspec local` and `runspec serve` (MCP tools). |
+| `false` | Hidden from all discovery surfaces — an internal helper. Still parseable and still runnable when invoked directly. |
 
 ```toml
 [reset-password]
 description  = "Reset the caller's password"
-discoverable = ["operator", "self-service"]   # operator surfaces AND the visitor catalog
+# absent ≡ true — listed by runspec serve/local
 
 [rotate-root-key]
 description  = "Rotate the cluster root key"
-discoverable = false                           # internal helper — hidden everywhere
-
-[list-tickets]
-description  = "List open tickets"
-# absent ≡ true ≡ ["operator"] — operator-visible, but not in the visitor catalog
+discoverable = false                           # internal helper — hidden from discovery
 ```
 
 **Effect on the surfaces:**
 
 - `runspec serve` exposes a runnable as an MCP tool only when its `serve` context
-  matches **and** `operator` is among its discoverable audiences. A runnable that
-  is not operator-discoverable (`discoverable = false` or a list without
-  `"operator"`) is skipped — the way to hide an internal helper from the agent
-  surface even though its package is installed.
+  matches **and** `discoverable` is not `false`. A `discoverable = false` runnable
+  is skipped — the way to keep an internal helper off the agent surface even though
+  its package is installed.
 - `runspec local` still **lists every** runnable (it is the developer's diagnostic
-  view), annotating any non-default audience. Its emitted schemas
-  (`--format mcp`/`openai`/`anthropic`) carry the canonical audience list as
-  `x-discoverable` so a downstream consumer can filter by audience.
-- A self-service catalog (a separate consumer, not the core library) filters to
-  runnables whose audiences include `self-service`.
+  view), annotating a hidden one as `[hidden]`. Its emitted schemas
+  (`--format mcp`/`openai`/`anthropic`) carry `x-discoverable: false` for a hidden
+  runnable (omitted otherwise, since `true` is the default).
 
-**Backward compatibility:** absence means `["operator"]`, so every existing
-package keeps surfacing in `runspec serve`/`local` unchanged. This is metadata
-only — it adds no runtime behaviour to the runnable itself.
+This is metadata only — it adds no runtime behaviour to the runnable itself.
 
-**Validation:** an unknown audience string, or an empty list (`discoverable = []`,
-which should be written `false`), is reported as an error by `runspec serve` and
-flagged by `runspec local`.
+> **Self-service catalogs.** Marking a runnable as available to a *self-service*
+> audience (e.g. a help-desk visitor catalog) is **not** a `runspec.toml` concern
+> — it is configured by the consumer of the catalog (e.g. runspec-console), which
+> designates the self-service subset in its own git-managed config. The format
+> only decides whether a runnable is discoverable at all.
 
-Default when unspecified: `true` (i.e. `["operator"]`).
+**Validation:** a non-boolean `discoverable` is reported as an error by
+`runspec serve` and flagged by `runspec local`.
 
-**Arg-level `discoverable` (since runspec 0.35.0).** The same keyword may be set on
-an individual **argument** to curate which of a runnable's args appear on a
-visitor-facing self-service form, without hiding anything from operators. The arg
-level consults **only** the `self-service` audience and is **default-deny**: an arg
-is on the visitor form only when its `discoverable` explicitly lists
-`"self-service"`. Operators and the agent always see every argument — they enact
-the runnable, and an input cannot be hidden from the caller — so `true`, `false`,
-and `["operator"]` all keep an arg off the visitor form (a `password` arg is always
-excluded regardless). Operator surfaces (`runspec serve`/`local`) are unaffected by
-arg-level `discoverable`; only the self-service catalog consults it, via the
-per-arg `x-discoverable` emitted on the arg schema. Curating subcommands and a
-console-side per-queue allowlist are possible later additions; this cut covers
-top-level args.
+Default when unspecified: `true`.
 
 ### `output`
 
@@ -768,7 +739,6 @@ description = "Controls output quality. Values below 60 rarely useful."
 | `env` | string | Environment variable fallback. |
 | `deprecated` | string | Deprecation message shown on use. |
 | `autonomy` | string | Per-arg autonomy override. Escalates if more restrictive. |
-| `discoverable` | bool \| array | Audiences that see this arg on the visitor self-service form. Default-deny: included only when it lists `"self-service"`. Operators always see every arg. See below. |
 | `ui` | string | Form control hint. Inferred from type if omitted. |
 | `hint` | string | Placeholder / hint text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined metadata. Pass-through — runspec never interprets the contents. |
@@ -798,7 +768,6 @@ fields that *are* present.
 | `env` | `None` | When set, the named env var is checked before the spec default. |
 | `deprecated` | `None` | Set to a string message; shown on use. |
 | `autonomy` | inherits `[config] autonomy-default` (which itself defaults to `"confirm"`) | Per-arg overrides escalate the runnable's effective autonomy if more restrictive. |
-| `discoverable` | `None` (absent ≡ operator-only; not on the visitor form) | Only the `self-service` audience is consulted at the arg level. Emitted as `x-discoverable` when set. |
 | `ui` | derived from `type` at render time (text/number/checkbox/dropdown/etc.) | See "Form Control Inference". |
 | `hint` | `None` | Optional UI placeholder text; no effect on parsing or validation. |
 | `meta` | `None` | Pass-through — runspec never reads it. |

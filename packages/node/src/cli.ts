@@ -7,7 +7,6 @@ import * as logs from './logs';
 import { loadRaw } from './loader';
 import { inferScript } from './inference';
 import { parse } from './parser';
-import { normaliseDiscoverable } from './discovery';
 import type { ScriptSpec, ArgSpec } from './models';
 
 const _CLI_CONFIG = path.join(__dirname, 'runspec.toml');
@@ -521,9 +520,12 @@ export function buildSchema(name: string, script: ScriptSpec, fmt: string): Reco
     description: script.description ?? '',
     'x-autonomy': script.autonomy ?? 'confirm',
     'x-output': script.output ?? 'text',
-    'x-discoverable': normaliseDiscoverable(script.discoverable),
     inputSchema: { type: 'object', properties },
   };
+
+  // `discoverable = false` hides an internal helper; emit x-discoverable only in
+  // that case (the default true is implied by its absence).
+  if (script.discoverable === false) schema['x-discoverable'] = false;
 
   if (requiredArgs.length) (schema['inputSchema'] as Record<string, unknown>)['required'] = requiredArgs;
   if (script.autonomyReason) schema['x-autonomy-reason'] = script.autonomyReason;
@@ -555,12 +557,6 @@ function argToJsonSchema(arg: ArgSpec): Record<string, unknown> {
   if (arg.minLength !== undefined) prop['minLength'] = arg.minLength;
   if (arg.maxLength !== undefined) prop['maxLength'] = arg.maxLength;
   if (arg.multiple) prop = { type: 'array', items: prop };
-
-  // Per-arg discoverability — only when declared. An absent x-discoverable reads
-  // as operator-only (default-deny) to the visitor catalog, mirroring runspec.
-  if (arg.discoverable !== undefined) {
-    prop['x-discoverable'] = normaliseDiscoverable(arg.discoverable);
-  }
 
   return prop;
 }

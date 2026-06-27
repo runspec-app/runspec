@@ -90,37 +90,21 @@ def test_x_meta_preserves_full_dict():
     assert prop["x-meta"] == meta
 
 
-# ── arg-level discoverable (x-discoverable on arg properties) ────────────────
+# ── runnable-level discoverable (x-discoverable on the schema) ───────────────
 
 
-def test_arg_x_discoverable_emitted_when_self_service():
-    script = _script(args={"size": {"options": ["s", "m", "l"], "discoverable": ["self-service"]}})
-    schema = _build_schema("vm", script, "mcp")
-    prop = schema["inputSchema"]["properties"]["size"]
-    assert prop["x-discoverable"] == ["self-service"]
+def test_x_discoverable_emitted_when_hidden():
+    # discoverable = false marks an internal helper; emitted so consumers know.
+    schema = _build_schema("helper", _script(discoverable=False), "mcp")
+    assert schema["x-discoverable"] is False
 
 
-def test_arg_x_discoverable_normalises_true_to_operator_only():
-    # true → ["operator"]: operators see it (always), but it's NOT on the visitor
-    # form — only an explicit "self-service" puts it there.
-    script = _script(args={"force": {"type": "flag", "discoverable": True}})
-    schema = _build_schema("vm", script, "mcp")
-    prop = schema["inputSchema"]["properties"]["force"]
-    assert prop["x-discoverable"] == ["operator"]
-
-
-def test_arg_x_discoverable_false_is_empty_list():
-    script = _script(args={"secret_id": {"type": "str", "discoverable": False}})
-    schema = _build_schema("vm", script, "mcp")
-    prop = schema["inputSchema"]["properties"]["secret_id"]
-    assert prop["x-discoverable"] == []
-
-
-def test_arg_x_discoverable_omitted_when_absent():
-    script = _script(args={"region": {"type": "str", "default": "eu"}})
-    schema = _build_schema("vm", script, "mcp")
-    prop = schema["inputSchema"]["properties"]["region"]
-    assert "x-discoverable" not in prop
+def test_x_discoverable_omitted_when_visible():
+    # The default (true) is implied by absence — no schema noise.
+    schema = _build_schema("deploy", _script(), "mcp")
+    assert "x-discoverable" not in schema
+    schema = _build_schema("deploy", _script(discoverable=True), "mcp")
+    assert "x-discoverable" not in schema
 
 
 # ── string validation → JSON Schema keywords ────────────────────────────────

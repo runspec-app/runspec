@@ -143,8 +143,7 @@ class TestComplexFixture:
         assert spec["runnables"]["pipeline"]["require_command"] is False
 
     def test_discoverable_field(self, spec):
-        # The loader preserves the raw value; normalisation is a separate layer.
-        assert spec["runnables"]["pipeline"]["discoverable"] == ["operator", "self-service"]
+        # The loader preserves the raw boolean; absent → None (visible downstream).
+        assert spec["runnables"]["pipeline"]["discoverable"] is True
         assert spec["runnables"]["db"]["discoverable"] is False
-        # Absent on the subcommands → None (defaults to operator-visible downstream).
         assert spec["runnables"]["pipeline"]["commands"]["run"]["discoverable"] is None

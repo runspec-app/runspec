@@ -1,7 +1,8 @@
 """
 test_catalog.py — building a queue's self-service catalog from the discovery
-cache: audience normalisation, the self-service filter, the allowlist knob, and
-the runnable → catalog-entry (JSON Schema) conversion. Pure, no I/O.
+cache: the self-service filter (driven by the console's configured name set), the
+allowlist knob, and the runnable → catalog-entry (JSON Schema) conversion. Pure,
+no I/O.
 """
 
 from __future__ import annotations
@@ -10,15 +11,13 @@ from runspec_console.catalog import (
     build_catalog,
     build_full_catalog,
     build_runbook_catalog,
-    discoverable_audiences,
-    is_self_service,
     runnable_to_catalog_entry,
     runbook_audiences,
     runbook_to_catalog_entry,
 )
 
 
-def _runnable(name: str, discoverable=None, **over):
+def _runnable(name: str, **over):
     base = {
         "name": name,
         "host": "web01",
@@ -27,34 +26,9 @@ def _runnable(name: str, discoverable=None, **over):
         "autonomy": "confirm",
         "args": [],
         "requireCommand": False,
-        "rawSpec": {"discoverable": discoverable},
     }
     base.update(over)
     return base
-
-
-# ── audiences ──────────────────────────────────────────────────────────────────
-
-
-def test_audience_normalisation_matches_core():
-    assert discoverable_audiences(None) == ["operator"]
-    assert discoverable_audiences(True) == ["operator"]
-    assert discoverable_audiences(False) == []
-    assert discoverable_audiences(["operator", "self-service"]) == [
-        "operator",
-        "self-service",
-    ]
-
-
-def test_is_self_service_is_opt_in_only():
-    assert not is_self_service(_runnable("a"))  # absent → operator-only
-    assert not is_self_service(_runnable("a", discoverable=True))
-    assert not is_self_service(_runnable("a", discoverable=False))
-    assert is_self_service(_runnable("a", discoverable=["self-service"]))
-    assert is_self_service(_runnable("a", discoverable=["operator", "self-service"]))
-    # An old runspec on the host → no rawSpec key at all → never visitor-facing.
-    assert not is_self_service({"name": "a", "rawSpec": {}})
-    assert not is_self_service({"name": "a"})
 
 
 # ── entry conversion ───────────────────────────────────────────────────────────
@@ -63,7 +37,6 @@ def test_is_self_service_is_opt_in_only():
 def test_entry_carries_schema_in_visitor_contract():
     runnable = _runnable(
         "request-vm",
-        discoverable=["self-service"],
         args=[
             {"name": "size", "type": "choice", "required": True, "options": ["s", "l"]},
             {
@@ -100,10 +73,11 @@ def test_entry_carries_schema_in_visitor_contract():
 def test_build_filters_to_self_service_only():
     tools, index = build_catalog(
         [
-            _runnable("reset-password", discoverable=["self-service"]),
-            _runnable("rotate-root-key", discoverable=False),
-            _runnable("list-tickets"),  # default operator-only
-        ]
+            _runnable("reset-password"),
+            _runnable("rotate-root-key"),
+            _runnable("list-tickets"),
+        ],
+        self_service_names={"reset-password"},
     )
     assert [t["name"] for t in tools] == ["reset-password"]
     assert set(index) == {"reset-password"}
@@ -112,36 +86,40 @@ def test_build_filters_to_self_service_only():
 
 def test_build_skips_subcommand_runnables():
     tools, _ = build_catalog(
-        [_runnable("db", discoverable=["self-service"], requireCommand=True)]
+        [_runnable("db", requireCommand=True)],
+        self_service_names={"db"},
     )
     assert tools == []  # the visitor form is flat in v1
 
 
 def test_build_applies_allowlist():
-    runnables = [
-        _runnable("reset-password", discoverable=["self-service"]),
-        _runnable("request-vm", discoverable=["self-service"]),
-    ]
-    tools, _ = build_catalog(runnables, allowlist=["request-vm"])
+    runnables = [_runnable("reset-password"), _runnable("request-vm")]
+    names = {"reset-password", "request-vm"}
+    tools, _ = build_catalog(
+        runnables, self_service_names=names, allowlist=["request-vm"]
+    )
     assert [t["name"] for t in tools] == ["request-vm"]
-    # None means "all marked" (the default), [] means "none".
-    assert len(build_catalog(runnables, allowlist=None)[0]) == 2
-    assert build_catalog(runnables, allowlist=[])[0] == []
+    # None means "all designated" (the default), [] means "none".
+    assert (
+        len(build_catalog(runnables, self_service_names=names, allowlist=None)[0]) == 2
+    )
+    assert build_catalog(runnables, self_service_names=names, allowlist=[])[0] == []
 
 
 def test_build_dedupes_across_hosts_first_wins():
     tools, index = build_catalog(
         [
-            _runnable("reset-password", discoverable=["self-service"], host="web01"),
-            _runnable("reset-password", discoverable=["self-service"], host="web02"),
-        ]
+            _runnable("reset-password", host="web01"),
+            _runnable("reset-password", host="web02"),
+        ],
+        self_service_names={"reset-password"},
     )
     assert len(tools) == 1
     assert index["reset-password"]["host"] == "web01"
 
 
 def test_entry_carries_audience_and_kind_tags():
-    entry = runnable_to_catalog_entry(_runnable("a", discoverable=["self-service"]))
+    entry = runnable_to_catalog_entry(_runnable("a"))
     assert entry["x-audience"] == "self-service" and entry["x-kind"] == "runnable"
     op = runnable_to_catalog_entry(_runnable("a"), audience="operator")
     assert op["x-audience"] == "operator"
@@ -153,11 +131,11 @@ def test_entry_carries_audience_and_kind_tags():
 def test_full_catalog_tags_broadest_audience():
     tools, index = build_full_catalog(
         [
-            _runnable("reset-password", discoverable=["self-service"]),
-            _runnable("rotate-key", discoverable=True),  # operator (default-True)
-            _runnable("list-tickets"),  # operator (absent → operator)
-            _runnable("secret", discoverable=False),  # discoverable to nobody
-        ]
+            _runnable("reset-password"),  # designated self-service
+            _runnable("rotate-key"),  # operator (not designated)
+            _runnable("list-tickets"),  # operator (not designated)
+        ],
+        self_service_names={"reset-password"},
     )
     by = {t["name"]: t["x-audience"] for t in tools}
     assert by == {
@@ -165,7 +143,7 @@ def test_full_catalog_tags_broadest_audience():
         "rotate-key": "operator",
         "list-tickets": "operator",
     }
-    assert "secret" not in by  # dropped entirely
+    # Every discovered runnable is at least operator-visible now.
     assert set(index) == {"reset-password", "rotate-key", "list-tickets"}
     # index is name → {host: discovered runnable}
     assert index["reset-password"]["web01"]["host"] == "web01"
@@ -174,10 +152,11 @@ def test_full_catalog_tags_broadest_audience():
 def test_full_catalog_collapses_fleet_hosts_into_x_hosts():
     tools, index = build_full_catalog(
         [
-            _runnable("check-disk", discoverable=True, host="web01"),
-            _runnable("check-disk", discoverable=True, host="web02"),
-            _runnable("check-disk", discoverable=True, host="web01"),  # dup host
-        ]
+            _runnable("check-disk", host="web01"),
+            _runnable("check-disk", host="web02"),
+            _runnable("check-disk", host="web01"),  # dup host
+        ],
+        self_service_names=set(),
     )
     # One entry listing every host it was discovered on (order-preserving, deduped).
     assert len(tools) == 1
@@ -187,32 +166,31 @@ def test_full_catalog_collapses_fleet_hosts_into_x_hosts():
 
 
 def test_full_catalog_single_host_still_lists_it():
-    tools, _ = build_full_catalog([_runnable("check-disk", discoverable=True)])
+    tools, _ = build_full_catalog([_runnable("check-disk")], self_service_names=set())
     assert tools[0]["x-hosts"] == ["web01"]
 
 
 def test_full_catalog_allowlist_narrows_self_service_only():
-    runnables = [
-        # self-service-only but excluded by the visitor allowlist → not operator
-        # audience either, so it disappears for everyone.
-        _runnable("reset-password", discoverable=["self-service"]),
-        # both audiences: excluded from the visitor allowlist, but still operator.
-        _runnable("deploy", discoverable=["operator", "self-service"]),
-    ]
-    tools, _ = build_full_catalog(runnables, self_service_allowlist=["deploy"])
+    runnables = [_runnable("reset-password"), _runnable("deploy")]
+    names = {"reset-password", "deploy"}
+    tools, _ = build_full_catalog(
+        runnables, self_service_names=names, self_service_allowlist=["deploy"]
+    )
     by = {t["name"]: t["x-audience"] for t in tools}
-    # 'deploy' is allowlisted → self-service (broadest); 'reset-password' excluded
-    # and not operator-marked → gone.
-    assert by == {"deploy": "self-service"}
-    tools2, _ = build_full_catalog(runnables, self_service_allowlist=[])
+    # 'deploy' is allowlisted → self-service (broadest); 'reset-password' is
+    # designated but excluded by the visitor allowlist → falls back to operator.
+    assert by == {"reset-password": "operator", "deploy": "self-service"}
+    tools2, _ = build_full_catalog(
+        runnables, self_service_names=names, self_service_allowlist=[]
+    )
     by2 = {t["name"]: t["x-audience"] for t in tools2}
-    # allowlist empty: 'deploy' falls back to operator; 'reset-password' gone.
-    assert by2 == {"deploy": "operator"}
+    # allowlist empty: both fall back to operator.
+    assert by2 == {"reset-password": "operator", "deploy": "operator"}
 
 
 def test_full_catalog_skips_subcommands():
     tools, _ = build_full_catalog(
-        [_runnable("db", discoverable=True, requireCommand=True)]
+        [_runnable("db", requireCommand=True)], self_service_names=set()
     )
     assert tools == []
 

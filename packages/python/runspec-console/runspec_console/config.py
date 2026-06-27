@@ -62,6 +62,16 @@ def filters_path() -> Path:
     return app_dir() / "runspec_filters.toml"
 
 
+def self_service_path() -> Path:
+    """The self-service catalog registry (`runspec_self_service.toml`) — a
+    `[[self_service]]` collection naming which discovered runnables are offered to
+    visitors in the helpdesk room. This replaces the runspec.toml `discoverable =
+    ["self-service"]` marking: self-service is a front-end concern, designated
+    here (and edited from Settings) rather than baked into each runnable. Rides
+    Config Sync (KNOWN_FILES), merged by `name` like the other collection files."""
+    return app_dir() / "runspec_self_service.toml"
+
+
 def memory_path() -> Path:
     """Machine-local agent memory (`runspec_memory.toml`) — accrued facts the agent
     writes via the `remember` tool. **Never** synced (not in Config Sync's
