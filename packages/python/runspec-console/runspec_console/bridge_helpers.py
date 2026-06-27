@@ -38,13 +38,35 @@ class _ParamikoDevHandler(logging.Handler):
         self._bridge = bridge
         self.setFormatter(logging.Formatter("%(message)s"))
 
+    @staticmethod
+    def _host_from_channel(name: str) -> str:
+        """Pull the host out of a per-transport log channel name.
+
+        ``executor._make_ssh_client`` tags each transport's log channel as
+        ``paramiko.transport.<host>`` (paramiko appends ``.sftp`` for the SFTP
+        sub-channel), so a steady-state record like an idle-disconnect names the
+        host it happened on. Untagged records (``paramiko.transport`` itself,
+        connect-time banner errors before the transport exists) yield ``""``.
+        """
+        prefix = "paramiko.transport."
+        if not name.startswith(prefix):
+            return ""
+        host = name[len(prefix) :]
+        if host.endswith(".sftp"):
+            host = host[: -len(".sftp")]
+        return host
+
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            host = self._host_from_channel(record.name)
+            message = record.getMessage()
             detail: dict[str, Any] = {
                 "level": record.levelname,
                 "logger": record.name,
-                "message": record.getMessage(),
+                "message": f"[{host}] {message}" if host else message,
             }
+            if host:
+                detail["host"] = host
             # format() appends the traceback after the (bare) message when the
             # record carries exc_info — that's the banner-timeout stack we want
             # expandable in the Dev tab.

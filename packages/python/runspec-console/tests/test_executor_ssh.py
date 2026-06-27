@@ -261,6 +261,80 @@ def test_explicit_proxy_beats_ssh_config_proxycommand(tmp_path, monkeypatch):
     assert captured["proxy"] == "http://proxy.corp:8080"
 
 
+# ── transport tagging + TCP keepalive ─────────────────────────────────────────
+
+
+def test_connect_tags_transport_log_channel_with_host():
+    """Each transport logs under ``paramiko.transport.<host>`` so steady-state
+    paramiko records (idle-disconnect, EOF) name the host they happened on."""
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {})
+    transport = MockClient.return_value.get_transport.return_value
+    transport.set_log_channel.assert_called_once_with("paramiko.transport.prod-1")
+
+
+def test_connect_enables_socket_keepalive_by_default():
+    with patch("paramiko.SSHClient") as MockClient:
+        _make_ssh_client("deploy@prod-1", None, {})
+    sock = MockClient.return_value.get_transport.return_value.sock
+    opts = [c.args for c in sock.setsockopt.call_args_list]
+    assert (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1) in opts
+
+
+class _FakeSock:
+    """Records setsockopt/ioctl calls without a real socket."""
+
+    def __init__(self) -> None:
+        self.opts: list[tuple] = []
+        self.ioctls: list[tuple] = []
+
+    def setsockopt(self, level, opt, value) -> None:
+        self.opts.append((level, opt, value))
+
+    def ioctl(self, control, value) -> None:  # pragma: no cover - windows only
+        self.ioctls.append((control, value))
+
+
+def test_apply_socket_keepalive_sets_probe_schedule():
+    sock = _FakeSock()
+    transport = MagicMock()
+    transport.sock = sock
+    executor._apply_socket_keepalive(
+        transport, {"tcp_keepidle": 90, "tcp_keepintvl": 20, "tcp_keepcnt": 4}
+    )
+    assert (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1) in sock.opts
+    # The idle-time option is platform-named; assert the configured values land
+    # on whichever per-option constants this OS exposes.
+    values = {
+        opt: value for (_lvl, opt, value) in sock.opts if _lvl == socket.IPPROTO_TCP
+    }
+    idle_opt = getattr(socket, "TCP_KEEPIDLE", None) or getattr(
+        socket, "TCP_KEEPALIVE", None
+    )
+    if idle_opt is not None:
+        assert values.get(idle_opt) == 90
+    if hasattr(socket, "TCP_KEEPINTVL"):
+        assert values.get(socket.TCP_KEEPINTVL) == 20
+    if hasattr(socket, "TCP_KEEPCNT"):
+        assert values.get(socket.TCP_KEEPCNT) == 4
+
+
+def test_apply_socket_keepalive_off_switch_skips_everything():
+    sock = _FakeSock()
+    transport = MagicMock()
+    transport.sock = sock
+    executor._apply_socket_keepalive(transport, {"tcp_keepalive": False})
+    assert sock.opts == [] and sock.ioctls == []
+
+
+def test_apply_socket_keepalive_never_raises_on_unsupported_option():
+    sock = _FakeSock()
+    sock.setsockopt = MagicMock(side_effect=OSError("ENOPROTOOPT"))
+    transport = MagicMock()
+    transport.sock = sock
+    executor._apply_socket_keepalive(transport, {})  # must not raise
+
+
 def test_ssh_run_routes_through_proxy(monkeypatch):
     """ssh_run is what the key-rotation push/verify use — confirm a configured
     proxy reaches the connection there too."""

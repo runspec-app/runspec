@@ -57,7 +57,8 @@ large fleets, high-latency proxies):
 [ssh]
 # Connection reuse (issue #104). Set false for legacy connect-per-call.
 pool           = true
-keepalive      = 30   # seconds; transport keepalive (0 disables)
+keepalive      = 30   # seconds; SSH-layer transport keepalive (0 disables)
+tcp_keepalive  = true # OS SO_KEEPALIVE on the socket — backstop to keepalive
 max_sessions   = 8    # max concurrent channels per connection (< sshd MaxSessions)
 idle_ttl       = 300  # seconds before an unused connection is closed
 max_concurrent = 5    # max simultaneous NEW handshakes across the whole fleet

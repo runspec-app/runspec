@@ -469,6 +469,11 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
         ssh_connect_timeout: ssh.connect_timeout ?? undefined,
         ssh_banner_timeout: ssh.banner_timeout ?? undefined,
         ssh_auth_timeout: ssh.auth_timeout ?? undefined,
+        // TCP keepalive is on unless explicitly disabled in config.
+        ssh_tcp_keepalive: ssh.tcp_keepalive !== false,
+        ssh_tcp_keepidle: ssh.tcp_keepidle ?? undefined,
+        ssh_tcp_keepintvl: ssh.tcp_keepintvl ?? undefined,
+        ssh_tcp_keepcnt: ssh.tcp_keepcnt ?? undefined,
         refresh_interval: refresh.interval ?? undefined,
         refresh_jitter: refresh.jitter ?? undefined,
       })
@@ -501,11 +506,18 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
         ['ssh_connect_timeout', 'connect_timeout'],
         ['ssh_banner_timeout', 'banner_timeout'],
         ['ssh_auth_timeout', 'auth_timeout'],
+        ['ssh_tcp_keepidle', 'tcp_keepidle'],
+        ['ssh_tcp_keepintvl', 'tcp_keepintvl'],
+        ['ssh_tcp_keepcnt', 'tcp_keepcnt'],
       ] as const) {
         const n = v[field]
         if (n !== undefined && n !== null && n !== '') sshOut[key] = Number(n)
         else delete sshOut[key]
       }
+      // TCP keepalive is on by default — only persist an explicit opt-out so a
+      // default install keeps a clean config (mirrors the backend default).
+      if (v.ssh_tcp_keepalive === false) sshOut.tcp_keepalive = false
+      else delete sshOut.tcp_keepalive
       const refreshOut: Record<string, unknown> = { ...((cfg.refresh as Record<string, unknown>) ?? {}) }
       for (const [field, key] of [
         ['refresh_interval', 'interval'],
@@ -640,6 +652,39 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
                 help="Wait for the authentication exchange. Default 30."
               >
                 <InputNumber min={1} style={{ width: '100%' }} placeholder="30" />
+              </Form.Item>
+
+              <Divider style={{ margin: '4px 0 10px' }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>TCP keepalive</Text>
+              </Divider>
+              <Form.Item
+                name="ssh_tcp_keepalive"
+                label="Socket keepalive"
+                valuePropName="checked"
+                help="OS-level SO_KEEPALIVE on the SSH socket — a backstop to the SSH keepalive that lets the kernel drop a silently-dead connection (NAT/VPN idle-drop, peer reboot). On by default; the probe schedule below applies where the OS supports it."
+              >
+                <Switch size="small" />
+              </Form.Item>
+              <Form.Item
+                name="ssh_tcp_keepidle"
+                label="Idle before first probe (s)"
+                help="Seconds a connection may sit idle before the first keepalive probe. Default 60."
+              >
+                <InputNumber min={1} style={{ width: '100%' }} placeholder="60" />
+              </Form.Item>
+              <Form.Item
+                name="ssh_tcp_keepintvl"
+                label="Probe interval (s)"
+                help="Seconds between keepalive probes once they start. Default 15."
+              >
+                <InputNumber min={1} style={{ width: '100%' }} placeholder="15" />
+              </Form.Item>
+              <Form.Item
+                name="ssh_tcp_keepcnt"
+                label="Probes before drop"
+                help="Unanswered probes before the socket is declared dead. Default 3. (Probe count is fixed by the OS on Windows.)"
+              >
+                <InputNumber min={1} style={{ width: '100%' }} placeholder="3" />
               </Form.Item>
 
               <Divider style={{ margin: '4px 0 10px' }}>

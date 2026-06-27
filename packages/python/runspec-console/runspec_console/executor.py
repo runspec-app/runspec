@@ -36,6 +36,77 @@ DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_BANNER_TIMEOUT = 30.0
 DEFAULT_AUTH_TIMEOUT = 30.0
 
+# TCP socket keepalive on the SSH transport's underlying socket. This is a
+# *complement* to paramiko's application-layer keepalive (``set_keepalive`` in
+# ssh_pool — ``[ssh] keepalive``): that one sends ``keepalive@openssh.com`` over
+# the SSH connection; these set ``SO_KEEPALIVE`` + the OS probe schedule on the
+# raw socket, so the kernel also reaps a silently-dead peer (NAT/VPN/firewall
+# idle-drop, half-open after a peer reboot) and keeps stateful middleboxes from
+# evicting an idle mapping. Defaults are deliberately conservative; the SSH
+# keepalive (30s) usually fires first, so these are a backstop. Overridable via
+# ``[ssh]``: ``tcp_keepalive`` (off switch), ``tcp_keepidle`` / ``tcp_keepintvl``
+# / ``tcp_keepcnt``. The idle/intvl/cnt knobs only take effect where the OS
+# exposes them (Linux/macOS via setsockopt; Windows via the SIO_KEEPALIVE_VALS
+# ioctl — count is fixed by the OS there); ``SO_KEEPALIVE`` is set everywhere.
+DEFAULT_TCP_KEEPIDLE = 60  # s idle before the first keepalive probe
+DEFAULT_TCP_KEEPINTVL = 15  # s between probes
+DEFAULT_TCP_KEEPCNT = 3  # unanswered probes before the socket is declared dead
+
+
+def _apply_socket_keepalive(transport: Any, cfg: dict[str, Any]) -> None:
+    """Enable TCP keepalive on ``transport``'s underlying socket per ``[ssh]``.
+
+    Best-effort and never raises — keepalive is a resilience nicety, not a
+    correctness requirement, so a platform that lacks a given option simply
+    skips it. ``cfg`` is the ``[ssh]`` config dict; ``tcp_keepalive = false``
+    disables the whole thing (``SO_KEEPALIVE`` is left untouched).
+    """
+    if cfg.get("tcp_keepalive", True) is False:
+        return
+    sock = getattr(transport, "sock", None)
+    if sock is None:
+        return
+
+    def _int(key: str, default: int) -> int:
+        try:
+            return int(cfg.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    idle = _int("tcp_keepidle", DEFAULT_TCP_KEEPIDLE)
+    intvl = _int("tcp_keepintvl", DEFAULT_TCP_KEEPINTVL)
+    cnt = _int("tcp_keepcnt", DEFAULT_TCP_KEEPCNT)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        return
+    # Per-platform probe schedule. The idle-time constant is ``TCP_KEEPIDLE`` on
+    # Linux and ``TCP_KEEPALIVE`` on macOS; ``TCP_KEEPINTVL`` / ``TCP_KEEPCNT``
+    # exist on both but not on Windows. Guard each with hasattr so an absent
+    # option is skipped rather than crashing the connect.
+    idle_opt = getattr(socket, "TCP_KEEPIDLE", None)
+    if idle_opt is None:
+        idle_opt = getattr(socket, "TCP_KEEPALIVE", None)  # macOS spelling
+    for opt, value in (
+        (idle_opt, idle),
+        (getattr(socket, "TCP_KEEPINTVL", None), intvl),
+        (getattr(socket, "TCP_KEEPCNT", None), cnt),
+    ):
+        if opt is None:
+            continue
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, opt, value)
+        except OSError:
+            pass
+    # Windows exposes no per-option constants; the SIO_KEEPALIVE_VALS ioctl sets
+    # idle + interval together (probe count is OS-fixed). Best-effort.
+    if idle_opt is None and hasattr(socket, "SIO_KEEPALIVE_VALS"):
+        try:
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, idle * 1000, intvl * 1000))
+        except OSError:
+            pass
+
+
 # SSH host-key verification mode, mirroring OpenSSH's StrictHostKeyChecking.
 # Default is "accept-new" (trust-on-first-use): a never-before-seen host is
 # accepted and remembered, but a *changed* key for a known host is rejected —
@@ -441,6 +512,24 @@ def _make_ssh_client(
         connect_kwargs["sock"] = sock
 
     client.connect(**connect_kwargs)
+
+    # Tag this transport so steady-state paramiko records (idle-disconnect, EOF,
+    # keepalive failures) carry the host: ``set_log_channel`` makes the
+    # transport log under ``paramiko.transport.<host>`` instead of the shared
+    # ``paramiko.transport``, and the Dev-tab handler parses the host back out.
+    # Also turn on socket-level TCP keepalive as a backstop to the SSH keepalive.
+    # This is all diagnostics/resilience nicety — wrapped so it can never turn a
+    # successful connect into a failure (e.g. a stub client without get_transport).
+    try:
+        transport = client.get_transport()
+    except Exception:
+        transport = None
+    if transport is not None:
+        try:
+            transport.set_log_channel(f"paramiko.transport.{hostname or ssh_target}")
+        except Exception:
+            pass
+        _apply_socket_keepalive(transport, cfg)
     return client
 
 

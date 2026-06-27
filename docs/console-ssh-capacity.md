@@ -90,7 +90,9 @@ take effect on the next refresh cycle without a restart (the pool rebuilds when
 | `pool` | `[ssh]` | `true` | `true` | `true` | Connection reuse is the whole point — never disable at scale. |
 | `max_concurrent` | `[ssh]` | `5` | `8–10` | `15–25` | Global cap on *new* handshakes. Higher = faster recovery after a mass outage; raise only as far as the bastion's `MaxStartups` / rate limits tolerate. |
 | `max_sessions` | `[ssh]` | `8` | `8` | `12–16` | Channels per transport. Raise only if rooms/long runs compete with discovery on the same host; keep below the server's `sshd MaxSessions`. |
-| `keepalive` | `[ssh]` | `30` | `30` | `60–120` | At 1000 hosts a 30 s keepalive is ~33 packets/s leaving the console. Stretching it cuts bastion-side noise; don't disable over NAT/VPN. |
+| `keepalive` | `[ssh]` | `30` | `30` | `60–120` | At 1000 hosts a 30 s keepalive is ~33 packets/s leaving the console. Stretching it cuts bastion-side noise; don't disable over NAT/VPN. This is the SSH application-layer keepalive (`keepalive@openssh.com`) and the primary idle-disconnect defense. |
+| `tcp_keepalive` | `[ssh]` | `true` | `true` | `true` | OS-level `SO_KEEPALIVE` on the transport socket — a backstop to `keepalive` that lets the kernel reap a silently-dead peer. Leave on; the SSH keepalive usually fires first. |
+| `tcp_keepidle` / `tcp_keepintvl` / `tcp_keepcnt` | `[ssh]` | `60` / `15` / `3` | default | default | The OS keepalive probe schedule (idle before first probe / interval between probes / unanswered probes before the socket is declared dead). Only applied where the OS exposes it. |
 | `idle_ttl` | `[ssh]` | `300` | `300` | `600` | How long an unused transport is kept before reaping. Longer is more forgiving on flaky links at the cost of holding more idle FDs. |
 | `interval` | `[refresh]` | `30` | `30–45` | `60–120` | How often the cycle runs. Longer = less discovery chatter and fewer connects per minute. |
 | `jitter` | `[refresh]` | `3` | `5` | `10–15` | Spreads per-host handshakes across the window so `max_concurrent` isn't the startup bottleneck. |
@@ -111,7 +113,11 @@ config-only change; the bounded fan-out is the
 pool           = true   # reuse one transport per host (the whole point)
 max_concurrent = 5      # max concurrent NEW handshakes across the fleet
 max_sessions   = 8      # max concurrent channels per transport (< sshd MaxSessions)
-keepalive      = 30     # s; transport keepalive (0 disables)
+keepalive      = 30     # s; SSH-layer transport keepalive (0 disables)
+tcp_keepalive  = true   # OS SO_KEEPALIVE on the socket (backstop to keepalive)
+tcp_keepidle   = 60     # s idle before the first OS keepalive probe
+tcp_keepintvl  = 15     # s between OS keepalive probes
+tcp_keepcnt    = 3      # unanswered probes before the socket is declared dead
 idle_ttl       = 300    # s; reap a transport unused longer than this
 backoff_base   = 5      # s; per-host exponential backoff base
 backoff_max    = 300    # s; per-host backoff cap

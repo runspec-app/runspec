@@ -84,7 +84,13 @@ escape hatch.
   config change forces a fresh connection.
 
 **`PooledConnection`** wraps a paramiko `SSHClient` / `Transport` with:
-- `set_keepalive(keepalive)` — keeps NAT/idle-disconnect away.
+- `set_keepalive(keepalive)` — SSH application-layer keepalive
+  (`keepalive@openssh.com`); keeps NAT/idle-disconnect away. Complemented by an
+  OS-level `SO_KEEPALIVE` + probe schedule set on the transport socket in
+  `executor._make_ssh_client` (`[ssh] tcp_keepalive` / `tcp_keepidle` /
+  `tcp_keepintvl` / `tcp_keepcnt`), a backstop that lets the kernel reap a
+  silently-dead peer. Each transport is also tagged with a per-host paramiko log
+  channel (`paramiko.transport.<host>`) so Dev-tab SSH events name their host.
 - `is_alive()` — cheap `transport.is_active()` + age / idle-TTL checks.
 - a **per-transport channel semaphore** (`max_sessions`, default 8, < sshd's
   default `MaxSessions` 10) bounding concurrent channels on one transport.

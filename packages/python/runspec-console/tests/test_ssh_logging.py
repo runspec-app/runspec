@@ -28,9 +28,11 @@ class _FakeBridge:
         self.emitted.append(detail)
 
 
-def _record(level: int, msg: str, exc_info=None) -> logging.LogRecord:
+def _record(
+    level: int, msg: str, exc_info=None, name="paramiko.transport"
+) -> logging.LogRecord:
     return logging.LogRecord(
-        name="paramiko.transport",
+        name=name,
         level=level,
         pathname=__file__,
         lineno=1,
@@ -50,6 +52,39 @@ def test_handler_forwards_level_and_message() -> None:
     assert detail["logger"] == "paramiko.transport"
     assert detail["message"] == "Error reading SSH protocol banner"
     assert "traceback" not in detail
+
+
+def test_handler_attributes_host_from_tagged_channel() -> None:
+    """A per-transport channel (paramiko.transport.<host>) surfaces the host on
+    the event and prefixes the message — so an idle-disconnect names its host."""
+    fb = _FakeBridge()
+    handler = _ParamikoDevHandler(fb)  # type: ignore[arg-type]
+    handler.emit(
+        _record(
+            logging.ERROR, "EOF during negotiation", name="paramiko.transport.web01"
+        )
+    )
+    detail = fb.emitted[0]
+    assert detail["host"] == "web01"
+    assert detail["message"] == "[web01] EOF during negotiation"
+
+
+def test_handler_strips_sftp_suffix_from_host() -> None:
+    fb = _FakeBridge()
+    handler = _ParamikoDevHandler(fb)  # type: ignore[arg-type]
+    handler.emit(_record(logging.INFO, "sftp open", name="paramiko.transport.db1.sftp"))
+    assert fb.emitted[0]["host"] == "db1"
+
+
+def test_handler_leaves_untagged_records_unchanged() -> None:
+    """An untagged record (the shared channel / connect-time banner error before
+    a transport exists) carries no host and its message is verbatim."""
+    fb = _FakeBridge()
+    handler = _ParamikoDevHandler(fb)  # type: ignore[arg-type]
+    handler.emit(_record(logging.ERROR, "Error reading SSH protocol banner"))
+    detail = fb.emitted[0]
+    assert "host" not in detail
+    assert detail["message"] == "Error reading SSH protocol banner"
 
 
 def test_handler_includes_traceback_on_exc_info() -> None:

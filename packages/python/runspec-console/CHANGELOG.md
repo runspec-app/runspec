@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.140.0] — 2026-06-27
+
+### Added
+- **TCP socket keepalive on pooled SSH transports + host-attributed SSH events.**
+  Two changes aimed at the idle-disconnect → reconnect → catalog-republish churn
+  seen in the Dev tab. (1) `executor._make_ssh_client` now enables
+  `SO_KEEPALIVE` on the transport's underlying socket and sets the probe schedule
+  (`TCP_KEEPIDLE`/`TCP_KEEPALIVE` 60s, `TCP_KEEPINTVL` 15s, `TCP_KEEPCNT` 3) where
+  the OS exposes it (Linux/macOS `setsockopt`; Windows `SIO_KEEPALIVE_VALS`
+  ioctl), so the kernel reaps a silently-dead peer and middleboxes don't evict an
+  idle NAT mapping. This is a **backstop** to paramiko's existing application-layer
+  keepalive (`[ssh] keepalive`, default 30s, which usually fires first); the room
+  tunnel rides the pooled transport, so it inherits the protection. Tunables:
+  `[ssh] tcp_keepalive` (off switch), `tcp_keepidle` / `tcp_keepintvl` /
+  `tcp_keepcnt`. Best-effort — an unsupported option is skipped, never raised.
+  These tunables are also editable from **Settings → SSH → Advanced** (a new
+  "TCP keepalive" subsection: a default-on socket-keepalive switch plus the three
+  probe-schedule numbers), persisted to `[ssh]` like the existing connect/banner/
+  auth timeouts — `SettingsDrawer.tsx`.
+- **SSH Dev-tab events name their host.** Each transport's paramiko log channel is
+  tagged `paramiko.transport.<host>`, and `_ParamikoDevHandler` parses the host
+  back out, so a steady-state SSH event (idle-disconnect, EOF, keepalive failure)
+  in the Dev tab now carries a `host` field and an `[<host>]` message prefix
+  instead of an anonymous `paramiko.transport` row. (Connect-time banner errors,
+  which predate the transport, were already logged with the host by the pool's
+  WARNING.)
+
+
 ## [0.139.0] — 2026-06-26
 
 ### Added
