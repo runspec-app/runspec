@@ -357,6 +357,71 @@ class InternalsMixin:
 
         return sorted(applied)
 
+    def _apply_selected_credentials(
+        self,
+        runnable: str,
+        exec_args: dict[str, Any],
+        secrets: dict[str, Any],
+        ids: list[str],
+        valid_args: set[str] | None = None,
+    ) -> list[str]:
+        """Forms run-path arg-binding: fill the runnable's args from the
+        credentials the operator *explicitly selected* in the run dialog —
+        ``username_arg`` → ``exec_args`` (plain argv), ``secret_arg`` → ``secrets``
+        (the ``RUNSPEC_*_ARG_*`` env channel). Returns the ids actually applied.
+
+        This is the symmetry fix that lets a credential work the same on the Forms
+        path as for the agent (which uses ``_apply_credentials``). It differs from
+        that method deliberately:
+
+        * **No scope auto-apply.** Only the passed ``ids`` are considered — Forms
+          stays driven by the operator's conscious selection (the "human chooses"
+          half of the Forms/agent split), never by an in-scope credential the
+          operator didn't pick.
+        * **Explicit bindings only.** Only ``username_arg``/``secret_arg`` are
+          honoured (no sole-password fallback), so every credential-supplied field
+          corresponds to a binding the run dialog can label "supplied by <cred>" —
+          keeping the fill visible rather than silent.
+
+        An operator-typed value always wins (in either ``exec_args`` or
+        ``secrets``); only declared args (``valid_args``) are filled. A filled
+        ``secret_arg`` is popped from ``exec_args`` so it rides the env channel
+        only — never argv, which would otherwise win over the env value."""
+        from . import credentials as cred
+
+        self._reload_credentials()
+        entries = [
+            e for cid in ids if (e := self._credential_entry(str(cid))) is not None
+        ]
+        if not entries:
+            return []
+        applied: set[str] = set()
+
+        for entry in entries:
+            cid = str(entry.get("id", ""))
+            uname_arg = str(entry.get("username_arg", "")).strip()
+            if uname_arg and (valid_args is None or uname_arg in valid_args):
+                if exec_args.get(uname_arg) in (None, ""):
+                    uname = str(entry.get("username", "")).strip()
+                    if uname:
+                        exec_args[uname_arg] = uname
+                        applied.add(cid)
+            secret_arg = str(entry.get("secret_arg", "")).strip()
+            if secret_arg and (valid_args is None or secret_arg in valid_args):
+                already = secrets.get(secret_arg) not in (None, "") or exec_args.get(
+                    secret_arg
+                ) not in (None, "")
+                if not already:
+                    val = cred.get_secret(cid)
+                    if val:
+                        secrets[secret_arg] = val
+                        # Never also pass it (empty) on argv — CLI would win over
+                        # the env channel and blank the secret.
+                        exec_args.pop(secret_arg, None)
+                        applied.add(cid)
+
+        return sorted(applied)
+
     def _local_host_entry(self) -> dict[str, Any]:
         """Synthetic entry for the venv runspec-console itself runs in."""
         scripts = Path(sys.executable).parent

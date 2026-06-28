@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable, Runbook } from '../bridge'
@@ -31,16 +31,46 @@ export function argNeedsValue(arg: ArgDef, value: unknown): boolean {
 export function credEnvPrefix(label: string): string {
   return label.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase()
 }
+// Mirrors credentials._KIND_ENV_FIELDS, including the aliases — userpass emits
+// both _USERNAME and _USER; token emits both _TOKEN and _PAT — so a credential
+// labelled "JSM" feeds runspec-jsm (JSM_USER/JSM_PAT) and runspec-snow.
 const CRED_KIND_SUFFIXES: Record<string, string[]> = {
-  userpass: ['USERNAME', 'PASSWORD'],
+  userpass: ['USERNAME', 'USER', 'PASSWORD'],
   password: ['PASSWORD'],
-  token: ['TOKEN'],
+  token: ['TOKEN', 'PAT'],
   'ssh-key': [],
 }
 export function credEnvNames(label: string, kind: string): string[] {
   const prefix = credEnvPrefix(label)
   if (!prefix) return []
   return (CRED_KIND_SUFFIXES[kind] ?? []).map(s => `${prefix}_${s}`)
+}
+
+// A selected credential whose username_arg/secret_arg matches a declared arg
+// binds that arg: the username pre-fills it (visible, editable), the secret is
+// supplied server-side via the env channel. Drives the per-arg "from <label>"
+// indicator so the fill is never silent.
+export interface ArgBinding { label: string; role: 'username' | 'secret' }
+type SlimCred = {
+  id: string; label: string; kind: string; has_secret: boolean
+  username: string; username_arg: string; secret_arg: string
+}
+
+// Map declared-arg-name → binding, from the operator's selected credentials.
+export function bindingsForArgs(
+  selected: SlimCred[],
+  declaredArgs: Set<string>,
+): Record<string, ArgBinding> {
+  const out: Record<string, ArgBinding> = {}
+  for (const c of selected) {
+    if (c.username_arg && declaredArgs.has(c.username_arg) && !out[c.username_arg]) {
+      out[c.username_arg] = { label: c.label, role: 'username' }
+    }
+    if (c.secret_arg && declaredArgs.has(c.secret_arg) && !out[c.secret_arg]) {
+      out[c.secret_arg] = { label: c.label, role: 'secret' }
+    }
+  }
+  return out
 }
 
 function resolveNode(root: Runnable, path: string[]): Runnable {
@@ -62,9 +92,10 @@ interface ArgInputProps {
   value: unknown
   error?: string
   onChange: (v: unknown) => void
+  binding?: ArgBinding
 }
 
-export function ArgInput({ arg, host, runnable, runAs, group, value, error, onChange }: ArgInputProps) {
+export function ArgInput({ arg, host, runnable, runAs, group, value, error, onChange, binding }: ArgInputProps) {
   const isDark = useIsDark()
   // `hint` (if declared) is the form placeholder; otherwise fall back to a
   // visible $VAR_REF default so the operator sees where the value comes from.
@@ -109,7 +140,9 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         size="small"
         value={value as string ?? ''}
         onChange={e => onChange(e.target.value)}
-        placeholder={placeholder ?? 'secret — sent as an env var, not on the command line'}
+        placeholder={binding?.role === 'secret'
+          ? `supplied by credential “${binding.label}” — type to override`
+          : (placeholder ?? 'secret — sent as an env var, not on the command line')}
         autoComplete="new-password"
         style={inputStyle}
         status={error ? 'error' : undefined}
@@ -176,7 +209,7 @@ function SectionLabel({ children }: { children: ReactNode }) {
   )
 }
 
-function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange }: ArgInputProps) {
+function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, binding }: ArgInputProps) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
@@ -187,6 +220,13 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange }: A
         {arg.inherited && (
           <Tooltip title="Inherited from a global arg or a parent command — applies to this run">
             <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>inherited</Tag>
+          </Tooltip>
+        )}
+        {binding && (
+          <Tooltip title={binding.role === 'secret'
+            ? `This arg's secret is supplied by credential “${binding.label}” via the environment channel — leave blank to use it, or type to override.`
+            : `Pre-filled from credential “${binding.label}” — edit if needed.`}>
+            <Tag color="green" style={{ fontSize: 10, margin: 0 }}>from {binding.label}</Tag>
           </Tooltip>
         )}
         {arg.type === 'password'
@@ -201,13 +241,13 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange }: A
           <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
         )}
       </div>
-      <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} />
+      <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} binding={binding} />
       {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
     </div>
   )
 }
 
-function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange }: {
+function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange, boundArgs }: {
   node: Runnable
   host: string
   runnable: string
@@ -216,6 +256,7 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange 
   values: Record<string, unknown>
   errors: Record<string, string>
   onChange: (name: string, v: unknown) => void
+  boundArgs?: Record<string, ArgBinding>
 }) {
   const args = node.args ?? []
 
@@ -243,6 +284,7 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange 
       value={values[arg.name]}
       error={errors[arg.name]}
       onChange={v => onChange(arg.name, v)}
+      binding={boundArgs?.[arg.name]}
     />
   )
 
@@ -357,7 +399,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [credentialIds, setCredentialIds] = useState<string[]>([])
-  const [creds, setCreds] = useState<{ id: string; label: string; kind: string; has_secret: boolean }[]>([])
+  const [creds, setCreds] = useState<SlimCred[]>([])
 
   // Reset form when the modal or node changes
   useEffect(() => {
@@ -377,13 +419,54 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     const runnableName = state.rootRunnable.name
     bridge.list_credentials()
       .then(list => {
-        const slim = list.map(c => ({ id: c.id, label: c.label, kind: c.kind, has_secret: !!c.has_secret }))
+        const slim: SlimCred[] = list.map(c => ({
+          id: c.id, label: c.label, kind: c.kind, has_secret: !!c.has_secret,
+          username: c.username ?? '', username_arg: c.username_arg ?? '', secret_arg: c.secret_arg ?? '',
+        }))
         setCreds(slim)
         const existing = new Set(slim.map(c => c.id))
         setCredentialIds(loadCredPrefs(runnableName).filter(id => existing.has(id)))
       })
       .catch(() => setCreds([]))
   }, [state?.rootRunnable.name, state?.rootRunnable.host, state?.commandPath.join('/')])
+
+  // Which of the selected credentials bind a declared arg (username/secret), so
+  // the run dialog can pre-fill the username, mark the secret as supplied, and
+  // relax the required check — making a credential work on the Forms path for a
+  // runnable whose interface is args (not bare env vars), just like for the agent.
+  const declaredArgNames = useMemo(
+    () => new Set((state?.currentNode.args ?? []).map(a => a.name)),
+    [state?.currentNode],
+  )
+  const selectedCreds = useMemo(
+    () => credentialIds
+      .map(id => creds.find(c => c.id === id))
+      .filter((c): c is SlimCred => !!c),
+    [credentialIds, creds],
+  )
+  const boundArgs = useMemo(
+    () => bindingsForArgs(selectedCreds, declaredArgNames),
+    [selectedCreds, declaredArgNames],
+  )
+
+  // Pre-fill username-bound args (visible + editable). Only fill blanks so an
+  // operator edit is never clobbered; secrets are never pre-filled into the UI
+  // (the value never leaves the keyring — it's injected server-side).
+  useEffect(() => {
+    setValues(prev => {
+      let changed = false
+      const next = { ...prev }
+      for (const [argName, b] of Object.entries(boundArgs)) {
+        if (b.role !== 'username') continue
+        const c = selectedCreds.find(x => x.username_arg === argName)
+        if (c?.username && (next[argName] === undefined || next[argName] === '')) {
+          next[argName] = c.username
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [boundArgs, selectedCreds])
 
   if (!state) return null
 
@@ -402,7 +485,9 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     const errs: Record<string, string> = {}
     for (const arg of currentNode.args ?? []) {
       const v = values[arg.name]
-      if (argNeedsValue(arg, v)) {
+      if (argNeedsValue(arg, v) && !boundArgs[arg.name]) {
+        // A selected credential will supply this arg (username pre-fill or secret
+        // via the env channel) — don't block submit on it being empty.
         errs[arg.name] = 'Required'
       } else if (arg.range && (arg.type === 'int' || arg.type === 'float') && v !== undefined && v !== '') {
         const n = Number(v)
@@ -503,14 +588,14 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
               {currentNode.description}
             </Text>
           )}
-          <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} />
+          <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} boundArgs={boundArgs} />
           {creds.length > 0 && (
             <div style={{ marginTop: 14, borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 12 }}>
-              <Text style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>Credentials as environment variables</Text>
+              <Text style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>Credentials</Text>
               <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
-                Each selected credential is sent as env vars named after it — a credential
-                named <Text code style={{ fontSize: 10 }}>Jira</Text> sets <Text code style={{ fontSize: 10 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 10 }}>JIRA_PASSWORD</Text>.
-                Name it to match what the runnable reads. Secrets are never copied into arguments.
+                A selected credential is applied two ways — whichever the runnable reads:
+                as env vars named after it (a credential <Text code style={{ fontSize: 10 }}>Jira</Text> sets <Text code style={{ fontSize: 10 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 10 }}>JIRA_USER</Text>/<Text code style={{ fontSize: 10 }}>JIRA_PASSWORD</Text>),
+                and — if it declares an argument binding matching a field above — into that argument (the username is pre-filled; the secret rides the environment, never argv).
               </Text>
               <Select
                 size="small"
@@ -527,6 +612,11 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
                     const c = creds.find(x => x.id === id)
                     if (!c) return null
                     const names = credEnvNames(c.label, c.kind)
+                    // Bound args this credential fills on *this* runnable (only
+                    // those it actually declares — so the hint matches the form).
+                    const bound: string[] = []
+                    if (c.username_arg && declaredArgNames.has(c.username_arg)) bound.push(`--${c.username_arg}`)
+                    if (c.secret_arg && declaredArgNames.has(c.secret_arg)) bound.push(`--${c.secret_arg}`)
                     return (
                       <Text key={id} type="secondary" style={{ fontSize: 11 }}>
                         <Text style={{ fontSize: 11 }}>{c.label}</Text>
@@ -534,6 +624,9 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
                         {names.length
                           ? names.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)
                           : <Text type="warning" style={{ fontSize: 11 }}>no env vars (rename or pick a userpass/password/token credential)</Text>}
+                        {bound.length > 0 && (
+                          <span> · binds {bound.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)}</span>
+                        )}
                         {c.kind !== 'ssh-key' && !c.has_secret && <Text type="warning" style={{ fontSize: 11 }}> · no secret stored</Text>}
                       </Text>
                     )

@@ -152,6 +152,21 @@ class InvokeMixin:
         # and never reach the surfaced args record. Returns the ids applied, for
         # the audit record.
         cred_env, applied_creds = self._credential_env(host, runnable, credential_ids)
+        # Also honour the selected credentials' *arg-bindings* (username_arg →
+        # argv, secret_arg → the env channel), so a runnable that reads its
+        # credential from args — not bare env vars — works on the Forms run path
+        # exactly as it does for the agent. Driven only by the operator's explicit
+        # selection (no scope auto-apply); operator-typed values win. The run
+        # dialog pre-fills/labels these args so the fill stays visible.
+        applied_binding = self._apply_selected_credentials(
+            runnable,
+            exec_args,
+            secrets,
+            list(credential_ids or []),
+            valid_args=self._declared_arg_names(cached, cp),
+        )
+        if applied_binding:
+            applied_creds = sorted(set(applied_creds) | set(applied_binding))
 
         with self._lock:
             self._in_flight[inv_id] = {

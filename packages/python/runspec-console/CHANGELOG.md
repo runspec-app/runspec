@@ -8,6 +8,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.144.0] — 2026-06-28
+
+### Added
+- **Credential env-var aliases — a credential labelled to match a tool just
+  works.** Each kind now emits the common spellings, not just one: `userpass`
+  sets both `*_USERNAME` and `*_USER`; `token` sets both `*_TOKEN` and `*_PAT`
+  (canonical first; the aliases are additive and backward-compatible). So a
+  credential labelled `JSM` feeds `runspec-jsm` (`JSM_USER`/`JSM_PAT`) and one
+  labelled `SNOW` feeds `runspec-snow` (`SNOW_USER`/`SNOW_TOKEN`) with no
+  per-tool config. (`credentials._KIND_ENV_FIELDS`; UI preview mirrored in
+  `FormsView.credEnvNames`.)
+
+### Changed
+- **Forms run dialog now honours credential arg-bindings — credentials work the
+  same for humans as for the agent.** Previously a credential's
+  `username_arg`/`secret_arg` binding only took effect on the agent path, so a
+  runnable whose interface is *arguments* (`--user`/`--password`, not bare env
+  vars) couldn't be filled from a credential on the Forms run dialog. The run
+  dialog now applies the operator's **explicitly selected** credentials'
+  bindings (`bridge._apply_selected_credentials`, called from `invoke_runnable`):
+  the username **pre-fills** the arg field (visible + editable), the secret rides
+  the `RUNSPEC_*_ARG_*` env channel (and is popped from argv so the CLI can't
+  override it with a blank), and the required-arg check is relaxed for a bound
+  field. Each bound field shows a "from `<credential>`" badge so the fill is
+  never silent. This deliberately keeps the Forms/agent split's *intent*: it is
+  explicit-selection-driven (no scope auto-apply on the Forms path) and
+  bindings-only (no sole-password fallback), so every credential-supplied field
+  is one the dialog can label. The agent path keeps `_apply_credentials`
+  (scope auto-apply + sole-password fallback) unchanged. Per-arg badge logic is
+  `FormsView.bindingsForArgs`.
+
 ## [0.143.0] — 2026-06-28
 
 ### Added

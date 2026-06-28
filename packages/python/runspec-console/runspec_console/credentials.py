@@ -91,11 +91,19 @@ VALID_KINDS = ("userpass", "password", "token", "ssh-key")
 # which binds a typed password arg to its value. ``ssh-key`` is not env-injected.
 
 # Which env var suffix(es) each kind emits, keyed by the credential field that
-# supplies the value ("username" → metadata, "secret" → keyring).
-_KIND_ENV_FIELDS: dict[str, dict[str, str]] = {
-    "userpass": {"username": "USERNAME", "secret": "PASSWORD"},
-    "password": {"secret": "PASSWORD"},
-    "token": {"secret": "TOKEN"},
+# supplies the value ("username" → metadata, "secret" → keyring). Each field maps
+# to a LIST of suffixes — all set to the same value — so one credential covers the
+# common spellings a runnable might read. The first suffix is the canonical name
+# (used in messages); the rest are aliases. This is why a credential labelled
+# "JSM" works for runspec-jsm (`JSM_USER`/`JSM_PAT`) and runspec-snow
+# (`SNOW_USER`/`SNOW_TOKEN`) as well as the `*_USERNAME`/`*_TOKEN` convention:
+# userpass emits both `_USERNAME` and `_USER`; token emits both `_TOKEN` and
+# `_PAT`. Aliasing is additive and backward-compatible — the canonical names are
+# still emitted. Extra env vars a runnable doesn't read are harmless.
+_KIND_ENV_FIELDS: dict[str, dict[str, tuple[str, ...]]] = {
+    "userpass": {"username": ("USERNAME", "USER"), "secret": ("PASSWORD",)},
+    "password": {"secret": ("PASSWORD",)},
+    "token": {"secret": ("TOKEN", "PAT")},
     "ssh-key": {},
 }
 
@@ -109,25 +117,32 @@ def env_prefix(label: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_").upper()
 
 
-def env_field_map(kind: str) -> dict[str, str]:
-    """The {field: suffix} map for a credential kind (empty for unknown/ssh-key)."""
+def env_field_map(kind: str) -> dict[str, tuple[str, ...]]:
+    """The {field: (suffix, …)} map for a credential kind (empty for unknown/
+    ssh-key). Each field maps to one or more env var suffixes (canonical first)."""
     return _KIND_ENV_FIELDS.get(kind, {})
 
 
 def env_var_names(label: str, kind: str) -> list[str]:
-    """The env var names a credential would set — for UI previews (no values)."""
+    """The env var names a credential would set — for UI previews (no values).
+    Includes the alias names (e.g. both ``_USERNAME`` and ``_USER``)."""
     prefix = env_prefix(label)
     if not prefix:
         return []
-    return [f"{prefix}_{suffix}" for suffix in env_field_map(kind).values()]
+    return [
+        f"{prefix}_{suffix}"
+        for suffixes in env_field_map(kind).values()
+        for suffix in suffixes
+    ]
 
 
 def env_vars_for(entry: dict[str, Any], secret: str | None) -> dict[str, str]:
     """The plain env vars a credential sets, given its (already-fetched) secret.
 
     ``username`` comes from the entry metadata, the secret from the keyring (passed
-    in so this stays pure). Empty prefix, empty values, and the ``ssh-key`` kind
-    yield nothing."""
+    in so this stays pure). Each field's value is set under every suffix the kind
+    declares (canonical + aliases). Empty prefix, empty values, and the ``ssh-key``
+    kind yield nothing."""
     prefix = env_prefix(str(entry.get("label", "")))
     if not prefix:
         return {}
@@ -136,10 +151,11 @@ def env_vars_for(entry: dict[str, Any], secret: str | None) -> dict[str, str]:
         "secret": str(secret or ""),
     }
     out: dict[str, str] = {}
-    for field, suffix in env_field_map(str(entry.get("kind", "userpass"))).items():
+    for field, suffixes in env_field_map(str(entry.get("kind", "userpass"))).items():
         val = values.get(field, "")
         if val:
-            out[f"{prefix}_{suffix}"] = val
+            for suffix in suffixes:
+                out[f"{prefix}_{suffix}"] = val
     return out
 
 
