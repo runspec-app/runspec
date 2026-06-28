@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.146.1] — 2026-06-28
+
+### Fixed
+- **HTTPS git auth (Config Sync *and* Repos sync) with a token-only credential
+  sent no `Authorization` header at all — the server replied 401.** dulwich
+  attaches HTTP basic auth only when a username is present (it keys on
+  `username is not None`), but a **"Token / API key"** credential — the natural
+  choice for a GitLab/GitHub **personal access token** — carries no username, so
+  `_transport_kwargs` passed `username=None` and the token was never sent. When a
+  secret is present but the username is blank, the transport now defaults the
+  username to `oauth2` (accepted by GitLab and GitHub PAT auth) so the token rides
+  as the password. A `userpass` credential keeps its real username untouched; a
+  public/anonymous repo (no secret) still sends nothing. This unblocks using a
+  user-level PAT — which covers **every repo you can clone**, unlike a per-project
+  deploy token. For a provider that needs a specific basic-auth username (e.g.
+  Bitbucket app passwords), set the username on the credential as before.
+
+
 ## [0.146.0] — 2026-06-28
 
 ### Added

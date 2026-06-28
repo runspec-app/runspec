@@ -181,6 +181,31 @@ def test_ssh_vendor_factory_binds_passphrase():
     assert hasattr(vendor, "run_command")
 
 
+def test_https_transport_kwargs_userpass():
+    """A userpass credential sends its real username + secret as basic auth."""
+    auth = gitsync.GitAuth(scheme="https", username="alice", secret="s3cret")
+    kwargs = gitsync._transport_kwargs("https://gitlab.com/acme/app.git", auth)
+    assert kwargs["username"] == "alice"
+    assert kwargs["password"] == "s3cret"
+
+
+def test_https_transport_kwargs_token_only_defaults_username():
+    """A token-only credential (no username — the natural GitLab/GitHub PAT pick)
+    must still send an Authorization header. dulwich only attaches basic auth when
+    a username is present, so we default it so the token rides as the password."""
+    auth = gitsync.GitAuth(scheme="https", username="", secret="glpat-xxxx")
+    kwargs = gitsync._transport_kwargs("https://gitlab.com/acme/app.git", auth)
+    assert kwargs["username"] == "oauth2"  # placeholder so auth is sent (was 401)
+    assert kwargs["password"] == "glpat-xxxx"
+
+
+def test_https_transport_kwargs_no_secret_no_username():
+    """A public/anonymous repo (no secret) sends no credentials."""
+    auth = gitsync.GitAuth(scheme="https")
+    kwargs = gitsync._transport_kwargs("https://gitlab.com/acme/app.git", auth)
+    assert "username" not in kwargs and "password" not in kwargs
+
+
 def test_pool_manager_none_when_no_ca_or_proxy(monkeypatch):
     for var in (
         "SSL_CERT_FILE",

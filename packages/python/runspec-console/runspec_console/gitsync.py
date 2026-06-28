@@ -160,8 +160,19 @@ def _transport_kwargs(url: str, auth: GitAuth) -> dict[str, Any]:
     scheme = urlsplit(url).scheme
     if scheme in ("http", "https"):
         kwargs = {}
-        if auth.username:
-            kwargs["username"] = auth.username
+        username = auth.username
+        # dulwich attaches the HTTP basic-auth header only when a username is
+        # present (it keys on `username is not None`), so a token-only credential
+        # — the natural pick for a GitLab/GitHub personal access token, which
+        # carries no username — would otherwise send no Authorization at all and
+        # the server replies 401. When we have a secret but no username, default
+        # to the conventional token username so the secret rides as the password
+        # ("oauth2" is accepted by GitLab and GitHub PAT auth). A userpass
+        # credential keeps its real username untouched.
+        if auth.secret and not username:
+            username = "oauth2"
+        if username:
+            kwargs["username"] = username
         if auth.secret:
             kwargs["password"] = auth.secret
         pool = _https_pool_manager(auth)
