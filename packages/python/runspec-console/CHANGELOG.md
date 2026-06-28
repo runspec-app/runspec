@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.147.0] — 2026-06-28
+
+### Added
+- **`console_status` now reports the current wall-clock time.** The per-turn
+  system prompt carries only the **date** (kept date-only so the model's prompt
+  cache stays warm — a live clock would miss the cache every turn), so the agent
+  had no way to know the exact time, only whether it was inside/outside the rota
+  window. The on-demand, autonomous `console_status` tool now leads with the
+  **current local date and time** (`Weekday, YYYY-MM-DD HH:MM TZ`), and its
+  description tells the agent to call it when it needs the precise time — e.g.
+  before scheduling or running something time-sensitive. Zero prompt-cache cost
+  (it's a tool result, not part of the cached prefix). `bridge_agent_tools.py`
+  `_run_status_tool`/`_status_tools`.
+
 ## [0.146.1] — 2026-06-28
 
 ### Fixed

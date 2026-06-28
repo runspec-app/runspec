@@ -1443,21 +1443,24 @@ class AgentToolsMixin:
         }
 
     def _status_tools(self) -> list[dict[str, Any]]:
-        """Schema for the read-only ``console_status`` tool — lets the agent
-        re-check the working-hours rota (and whether it's inside/outside hours
-        right now) plus the configured triggers/schedules on demand, e.g. before
+        """Schema for the read-only ``console_status`` tool — lets the agent read
+        the **current local date and time** plus the working-hours rota (inside/
+        outside hours) and configured triggers/schedules on demand, e.g. before
         running something in a long session where the clock may have crossed a
         working-hours boundary since the turn began."""
         return [
             {
                 "name": "console_status",
                 "description": (
-                    "Report the live console automation state: the working-hours "
-                    "rota (on/off and whether it is currently INSIDE or OUTSIDE "
-                    "working hours), plus the configured triggers and schedules. "
-                    "Read-only. Use it to re-check working hours before running, "
-                    "scheduling, or triggering something — especially in a long "
-                    "conversation where the time may have crossed a rota boundary."
+                    "Report the live console state: the current local date and "
+                    "**time** (the system prompt carries only the date, so call "
+                    "this when you need the exact wall-clock time), the "
+                    "working-hours rota (on/off and whether it is currently INSIDE "
+                    "or OUTSIDE working hours), plus the configured triggers and "
+                    "schedules. Read-only. Use it to check the time or re-check "
+                    "working hours before running, scheduling, or triggering "
+                    "something — especially in a long conversation where the clock "
+                    "may have moved on."
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             }
@@ -1465,11 +1468,23 @@ class AgentToolsMixin:
 
     def _run_status_tool(self, ti: dict[str, Any]) -> str:
         """Execute ``console_status`` — return the live rota + triggers + schedules
-        snapshot (the autonomy gate has already let it run; it has no side effects)."""
+        snapshot (the autonomy gate has already let it run; it has no side effects).
+
+        Leads with the **current local date and time**: the per-turn system prompt
+        carries only the date (kept date-only so the prompt cache stays warm), so
+        this on-demand tool is where the agent gets the exact wall-clock time —
+        e.g. before scheduling or running something time-sensitive."""
+        now = datetime.now().astimezone()
+        tz = now.strftime("%Z")
+        time_line = (
+            "Current local date & time: "
+            f"{now.strftime('%A, %Y-%m-%d %H:%M')}{f' {tz}' if tz else ''}."
+        )
         snapshot = self._console_context() or (
             "Working-hours rota: OFF — automation runs at any time. No triggers or "
             "schedules are configured."
         )
+        snapshot = time_line + "\n\n" + snapshot
         # Zero-cost pointer (no fleet sweep): make the kill switch discoverable from
         # the status tool so the agent knows where to look when a run is blocked.
         if any(utils_mod._paths(h) for h in self._hosts):

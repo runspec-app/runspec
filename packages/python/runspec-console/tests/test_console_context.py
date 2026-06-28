@@ -147,6 +147,20 @@ def test_status_tool_fallback_when_unconfigured(monkeypatch):
     assert "manage_denylist" not in out  # no hosts ⇒ no denylist pointer
 
 
+def test_status_tool_leads_with_current_local_time(monkeypatch):
+    # The on-demand status tool is where the agent gets the exact wall-clock time
+    # (the per-turn prompt carries only the date, for prompt-cache stability).
+    from datetime import datetime
+
+    ns = _stub(monkeypatch, rota={}, triggers=[], schedules=[])
+    ns._run_status_tool = types.MethodType(Bridge._run_status_tool, ns)
+    out = ns._run_status_tool({})
+    assert "Current local date & time:" in out
+    now = datetime.now()
+    assert now.strftime("%Y-%m-%d") in out  # today's date
+    assert now.strftime("%H:%M")[:2] in out  # the hour (wall-clock time present)
+
+
 def test_status_tool_points_at_denylist_when_hosts_present(monkeypatch):
     # A host with a runspec path ⇒ the kill switch applies, so console_status
     # mentions manage_denylist (zero-cost text pointer, no fleet sweep).
