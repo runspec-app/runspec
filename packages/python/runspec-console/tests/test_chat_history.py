@@ -31,6 +31,7 @@ class _StubBridge:
         self._chat_lock = threading.Lock()
         self._chat_cancels: dict[str, threading.Event] = {}
         self._pending_confirms: dict = {}
+        self._in_flight: dict = {}
         self.dispatched: list = []
 
     def _dispatch(self, event, detail):

@@ -34,6 +34,66 @@ if TYPE_CHECKING:
 
 
 class ReportingMixin:
+    # Built-in agent-tool calls (repo_*, outlook_*, manage_denylist, action and
+    # memory tools) leave no run_summary the way a runnable does, so they used to
+    # be absent from History/Analytics. We write one run_summary-shaped JSON line
+    # per call to ~/logs/runspec-console-tools.log — a "local"-host log dir the
+    # history scanner already reads (*.log glob) — so they surface with no parser
+    # change. Attribution comes from the record body (extra.runnable = the tool
+    # label), not the filename.
+    _TOOL_AUDIT_FILE = "runspec-console-tools.log"
+
+    def _audit_builtin_tool(
+        self,
+        run_id: str,
+        tool_name: str,
+        label: str,
+        args: dict[str, Any],
+        outcome: str,
+        duration_ms: int,
+        chat_id: str = "",
+    ) -> None:
+        """Append a History/Analytics audit line for one built-in agent tool
+        call. ``outcome`` is "ok" | "error" | "cancelled" (→ exit_code 0/1/130).
+        Best-effort: a logging failure must never break the tool result."""
+        exit_code = {"ok": 0, "error": 1, "cancelled": 130}.get(outcome, 0)
+        # Carry the turn's provenance (set for trigger / runbook turns) so a
+        # built-in tool run is attributed like a runnable run is.
+        with self._lock:
+            origin = dict(self._run_origin.get(chat_id, {})) if chat_id else {}
+        extra = {
+            "event": "run_summary",
+            "run_id": run_id,
+            "runnable": label,
+            "tool": tool_name,
+            "user": self._current_user(),
+            "exit_code": exit_code,
+            "duration_ms": int(duration_ms),
+            "agent": bool(origin.get("agent", True)),
+            "trigger": origin.get("trigger", "") or "",
+            "runbook": origin.get("runbook", "") or "",
+            "cancelled": outcome == "cancelled",
+            "builtin": True,
+            "args": args,
+        }
+        record = {
+            "ts": utils_mod._iso_now(),
+            "level": "INFO" if exit_code == 0 else "WARNING",
+            "message": f"{label} ({outcome})",
+            "extra": extra,
+        }
+        try:
+            log_dir = Path.home() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(record, default=str) + "\n"
+            with self._audit_lock:
+                with (log_dir / self._TOOL_AUDIT_FILE).open(
+                    "a", encoding="utf-8"
+                ) as fh:
+                    fh.write(line)
+        except Exception:  # noqa: BLE001 — auditing is best-effort
+            logger.warning("could not write built-in tool audit line", exc_info=True)
+
     def get_history(
         self, host: str, runnable: str | None = None
     ) -> list[dict[str, Any]]:

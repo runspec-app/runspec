@@ -500,14 +500,29 @@ class InvokeMixin:
             return {"ok": False, "error": f"could not generate docs: {exc}"}
 
     def cancel_chat(self, chat_id: str) -> None:
-        """Signal an in-flight chat turn to stop. Best-effort: it halts at the
-        next safe checkpoint — no further model calls and no further tool runs.
-        A tool already executing (e.g. a remote command) is left to finish."""
+        """Signal an in-flight chat turn to stop. It halts at the next safe
+        checkpoint — no further model calls and no further tool runs — and any
+        built-in tool this turn is currently running (e.g. a repo clone/grep or a
+        denylist fan-out) is signalled to abort cooperatively. A *runnable*
+        already executing (a remote command) is still left to finish."""
         with self._lock:
             event = self._chat_cancels.get(chat_id)
         if event is not None:
             logger.info("chat %s: cancel requested", chat_id)
             event.set()
+        # Stop any built-in tool this turn is running mid-call: its in-flight
+        # record carries this chat_id and its own cancel Event. Without this the
+        # chat Stop button only took effect *between* tool calls, so a long
+        # repo_sync/repo_grep looked unstoppable until it finished.
+        with self._lock:
+            tool_events = [
+                ev
+                for inv in self._in_flight.values()
+                if inv.get("chatId") == chat_id
+                and (ev := inv.get(_CANCEL_KEY)) is not None
+            ]
+        for ev in tool_events:
+            ev.set()
         # Wake any confirmation prompt waiting on this turn — otherwise Stop does
         # nothing while the Approve/Deny dialog is up (the gate is parked in
         # event.wait, which the cancel flag alone never interrupts). Mark them

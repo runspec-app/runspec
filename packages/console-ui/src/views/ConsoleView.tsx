@@ -47,17 +47,24 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
       background: bg, border: `1px solid ${border}`, borderRadius: 6,
       marginBottom: 4,
     }}>
-      {inFlight.map(r => (
+      {inFlight.map(r => {
+        // Built-in agent tools (repo_*, outlook_*, denylist, …) show their label
+        // verbatim ("repo_sync: runspec"); a runnable run keeps the /name form.
+        const isTool = r.kind === 'builtin_tool'
+        return (
         <span key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <LoadingOutlined style={{ color: '#52c41a', fontSize: 11 }} spin />
-          <Text style={{ fontFamily: 'monospace', fontSize: 12, color: nameCol }}>/{r.runnable}</Text>
+          <Text style={{ fontFamily: 'monospace', fontSize: 12, color: nameCol }}>{isTool ? r.runnable : `/${r.runnable}`}</Text>
+          {isTool && (
+            <Tag color="green" style={{ fontSize: 11, margin: 0 }}>agent</Tag>
+          )}
           {r.trigger === 'schedule' && (
             <Tooltip title="Ran on a schedule">
               <ClockCircleOutlined style={{ color: '#8c8c8c', fontSize: 11 }} />
             </Tooltip>
           )}
-          <Tag style={{ fontSize: 11, margin: 0 }}>{r.host}</Tag>
-          <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{r.group}</Tag>
+          {r.host && <Tag style={{ fontSize: 11, margin: 0 }}>{r.host}</Tag>}
+          {r.group && <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{r.group}</Tag>}
           <Text type="secondary" style={{ fontSize: 11 }}>{r.operator}</Text>
           <Text style={{ fontSize: 11, color: '#52c41a' }}>{elapsed(r.startedAt)}</Text>
           <Popconfirm
@@ -71,7 +78,8 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
               style={{ padding: '0 4px', height: 18, lineHeight: 1 }} />
           </Popconfirm>
         </span>
-      ))}
+        )
+      })}
     </div>
   )
 }

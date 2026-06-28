@@ -365,6 +365,9 @@ export interface InFlightRecord {
   startedAt: string
   args: Record<string, unknown>
   trigger?: string                   // event source that caused the run ("schedule"/…), "" = interactive/manual
+  kind?: string                      // "builtin_tool" for a built-in agent tool (repo_*, outlook_*, …); absent for a runnable run
+  tool?: string                      // the raw built-in tool name (when kind === "builtin_tool")
+  chatId?: string                    // the chat turn this built-in tool belongs to
 }
 
 export interface TodayByRunnable {

@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config, gitsync
+from .bridge_const import ToolCancelled
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -290,13 +291,28 @@ def _safe_path(root: Path, rel: str) -> Path:
 # ── sync (clone / fetch + checkout) ───────────────────────────────────────────
 
 
-def sync_repo(url: str, ref: str, auth: Any, dest: Path) -> dict[str, Any]:
+def sync_repo(
+    url: str,
+    ref: str,
+    auth: Any,
+    dest: Path,
+    cancel_event: Any = None,
+    on_progress: Any = None,
+) -> dict[str, Any]:
     """Clone ``url`` (or fetch into the existing checkout) and check out ``ref``.
 
     Reuses ``gitsync``'s transport so SSH/HTTPS/CA/proxy behave exactly like Config
     Sync. The working tree is rewritten to match the ref — so a re-sync **discards**
     any uncommitted local edits (remote = source of truth). Returns
-    ``{action, ref, commit, path}``. Raises ``gitsync.GitSyncError`` on failure."""
+    ``{action, ref, commit, path}``. Raises ``gitsync.GitSyncError`` on failure.
+
+    ``cancel_event`` (anything with ``.is_set()``) and ``on_progress`` (a
+    ``str``-callback), when given, make the network fetch interruptible and
+    stream the remote's progress: dulwich invokes our ``progress`` callback as
+    sideband data arrives, where we emit it and raise ``ToolCancelled`` if a stop
+    was requested — aborting the transfer (a half-done fresh clone is removed by
+    the cleanup below). Cancellation lands at progress boundaries, so a fetch
+    stalled on a silent socket won't interrupt until data flows again."""
     if not available():
         raise gitsync.GitSyncError(
             "git engine unavailable — install the 'git-sync' extra "
@@ -317,13 +333,25 @@ def sync_repo(url: str, ref: str, auth: Any, dest: Path) -> dict[str, Any]:
     # "synced" repo with no files — so on a failed *fresh* clone we remove the
     # whole dir. An update (existing checkout) is left intact.
     try:
+
+        def _progress(data: bytes) -> None:
+            # dulwich calls this with the remote's sideband progress text. Use it
+            # as our interruption seam (raise to abort the transport) and to
+            # surface "Counting/Compressing/Receiving objects…" to the operator.
+            if cancel_event is not None and cancel_event.is_set():
+                raise ToolCancelled()
+            if on_progress is not None:
+                text = data.decode("utf-8", "replace").strip()
+                if text:
+                    on_progress(text)
+
         try:
             client, path = get_transport_and_path(
                 url, **gitsync._transport_kwargs(url, auth)
             )
-            fetch_result = client.fetch(path, repo)
+            fetch_result = client.fetch(path, repo, progress=_progress)
             refs = fetch_result.refs or {}
-        except gitsync.GitSyncError:
+        except (gitsync.GitSyncError, ToolCancelled):
             raise
         except Exception as exc:  # noqa: BLE001
             raise gitsync.GitSyncError(gitsync._human_error(exc)) from exc
@@ -334,6 +362,8 @@ def sync_repo(url: str, ref: str, auth: Any, dest: Path) -> dict[str, Any]:
                 f"ref {ref!r} not found in {url} — check the tag/branch name"
             )
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ToolCancelled()
             commit_sha = gitsync._peel_to_commit(repo, sha)
             repo.refs[b"HEAD"] = commit_sha  # detached at the synced commit
             # How many entries the commit's tree has — to tell an empty repo
@@ -344,7 +374,7 @@ def sync_repo(url: str, ref: str, auth: Any, dest: Path) -> dict[str, Any]:
             build_index_from_tree(
                 repo.path, repo.index_path(), repo.object_store, repo[commit_sha].tree
             )
-        except gitsync.GitSyncError:
+        except (gitsync.GitSyncError, ToolCancelled):
             raise
         except Exception as exc:  # noqa: BLE001
             raise gitsync.GitSyncError(
@@ -440,22 +470,37 @@ def read_file(dest: Path, rel: str, start: int = 0, end: int = 0) -> dict[str, A
 
 
 def grep_repo(
-    dest: Path, pattern: str, rel: str = "", max_results: int = 100
+    dest: Path,
+    pattern: str,
+    rel: str = "",
+    max_results: int = 100,
+    cancel_event: Any = None,
+    on_progress: Any = None,
 ) -> list[dict[str, Any]]:
     """Regex-search files under ``rel`` (default whole repo) for ``pattern``.
 
     Skips ``.git``/noise dirs, binary files, and files over
     ``_GREP_FILE_MAX_BYTES``. Returns up to ``max_results`` (≤ ``_GREP_MAX_RESULTS``)
-    rows: {path, line, text}. Raises ``re.error`` on a bad pattern."""
+    rows: {path, line, text}. Raises ``re.error`` on a bad pattern.
+
+    ``cancel_event``/``on_progress`` (when given) make a large scan interruptible
+    between files (raising ``ToolCancelled``) and stream a running file/match
+    count so the operator can see it is alive."""
     import re
 
     rx = re.compile(pattern)
     base = _safe_path(dest, rel)
     limit = min(max(1, max_results), _GREP_MAX_RESULTS)
     out: list[dict[str, Any]] = []
+    scanned = 0
     for root, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for fname in sorted(files):
+            if cancel_event is not None and cancel_event.is_set():
+                raise ToolCancelled()
+            scanned += 1
+            if on_progress is not None and scanned % 200 == 0:
+                on_progress(f"scanned {scanned} files, {len(out)} matches")
             fpath = Path(root) / fname
             try:
                 if fpath.stat().st_size > _GREP_FILE_MAX_BYTES:

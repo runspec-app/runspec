@@ -24,6 +24,7 @@ class _StubBridge:
         self._pending_confirms = {}
         self._pending_confirm_meta = {}
         self._chat_cancels = {}
+        self._in_flight = {}
         self._dispatched = []
         self._run_result = run_result
 

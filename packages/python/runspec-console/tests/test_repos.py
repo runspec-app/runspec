@@ -9,6 +9,7 @@ the real Bridge methods onto a light stub with repos.* monkeypatched.
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -216,6 +217,40 @@ def test_read_rejects_binary(tmp_path):
         repos.read_file(dest, "blob.bin")
 
 
+# ── cooperative cancellation (the "stop" control for repo tools) ──────────────
+
+
+def test_grep_cancels_when_event_set(tmp_path):
+    """A set cancel_event aborts a scan between files with ToolCancelled — the
+    seam the Console card Cancel / chat Stop pulls on a long repo_grep."""
+    from runspec_console.bridge_const import ToolCancelled
+
+    src = _make_origin(tmp_path)
+    dest = tmp_path / "co"
+    repos.sync_repo(str(src), "v1", gitsync.GitAuth(scheme="local"), dest)
+    ev = threading.Event()
+    ev.set()
+    with pytest.raises(ToolCancelled):
+        repos.grep_repo(dest, r".", cancel_event=ev)
+
+
+def test_sync_cancel_before_checkout_raises_and_cleans_up(tmp_path):
+    """A stop requested during a fresh clone surfaces as ToolCancelled (not a
+    GitSyncError) and removes the half-made checkout — same cleanup as a failed
+    fetch, so a cancelled sync never leaves a misleading 'synced' dir."""
+    from runspec_console.bridge_const import ToolCancelled
+
+    src = _make_origin(tmp_path)
+    dest = tmp_path / "co"
+    ev = threading.Event()
+    ev.set()  # already cancelled before the checkout step runs
+    with pytest.raises(ToolCancelled):
+        repos.sync_repo(
+            str(src), "v1", gitsync.GitAuth(scheme="local"), dest, cancel_event=ev
+        )
+    assert not dest.exists()
+
+
 # ── bridge dispatch + gating ──────────────────────────────────────────────────
 
 
@@ -300,7 +335,7 @@ def test_repo_sync_dispatch(monkeypatch):
     )
     monkeypatch.setattr(repos, "checkout_dir", lambda n: "/co/app")
 
-    def fake_sync(url, ref, auth, dest):
+    def fake_sync(url, ref, auth, dest, cancel_event=None, on_progress=None):
         seen.update(url=url, ref=ref, dest=dest)
         return {
             "action": "cloned",

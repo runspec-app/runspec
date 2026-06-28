@@ -70,6 +70,11 @@ class Bridge(
         )
         self._dispatch_thread.start()
         self._in_flight: dict[str, dict[str, Any]] = {}
+        # Serialises appends to the built-in-tool audit log (a single JSON line
+        # per built-in agent tool call → ~/logs/runspec-console-tools.log, read
+        # by History/Analytics). Kept separate from self._lock so an audit write
+        # from a worker thread never contends with _in_flight bookkeeping.
+        self._audit_lock = threading.Lock()
         # Cached ad-hoc SFTP connections for the relay source browser, keyed by
         # (jump, host, user, port) — so navigating directories on a slow link
         # handshakes the target once, then reuses the warm connection. Torn down

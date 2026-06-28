@@ -28,6 +28,7 @@ from .config import (
 from .bridge_const import (
     logger,
     _AUTONOMY_RANK,
+    _CANCEL_KEY,
     _CUSTOM_TOOL_NAMES,
     _READONLY_META,
     _MEMORY_TOOL_NAMES,
@@ -39,7 +40,9 @@ from .bridge_const import (
     _REPO_WRITE_TOOLS,
     _REPO_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
+    _BUILTIN_TOOL_NAMES,
     _AGENT_TOOL_OUTPUT_CAP,
+    ToolCancelled,
 )
 
 from typing import TYPE_CHECKING
@@ -487,9 +490,167 @@ class AutonomyMixin:
                 tool_input = edited
         if stage is not None:
             stage("running")
+        # Built-in tools (repo_*, outlook_*, manage_denylist, memory, status,
+        # action tools) run on a worker thread with no native run card — wrap
+        # them so they show as a live Console in-flight card, stream progress,
+        # and can be stopped mid-run. Runnable executions (run_runnable / search
+        # meta-tools) keep their own invoke_runnable card and are excluded.
+        if tool_name in _BUILTIN_TOOL_NAMES:
+            return await self._run_builtin_tool_tracked(tool_name, tool_input, chat_id)
         return await asyncio.to_thread(
             self._run_tool_sync, tool_name, tool_input, chat_id
         )
+
+    async def _run_builtin_tool_tracked(
+        self, tool_name: str, tool_input: dict[str, Any], chat_id: str
+    ) -> str:
+        """Run a built-in agent tool with a live Console card, cooperative
+        cancellation, progress streaming, and a History/Analytics audit record.
+
+        The card lives in the same ``self._in_flight`` dict runnable runs use, so
+        it appears in the Console strip with elapsed time and a Cancel button
+        (``cancel_invocation`` reaches its event) and the chat Stop button can
+        stop it (``cancel_chat`` sets every record whose ``chatId`` matches).
+        Per-tool Cancel stops just this tool — the agent gets a "⏹ stopped"
+        result and the turn keeps reasoning; the chat Stop also halts the turn at
+        its next checkpoint. Any tool failure is surfaced, audited, and returned
+        as a normal tool-result string so the turn never dies on a tool error."""
+        tool_run_id = uuid.uuid4().hex[:12]
+        cancel_event = threading.Event()
+        label = self._builtin_tool_label(tool_name, tool_input)
+        args_summary = self._builtin_tool_args(tool_input)
+        record = {
+            "id": tool_run_id,
+            "kind": "builtin_tool",
+            "runnable": label,
+            "tool": tool_name,
+            "group": "",
+            "host": self._builtin_tool_host(tool_name, tool_input),
+            "operator": self._current_user(),
+            "runAs": "",
+            "startedAt": utils_mod._iso_now(),
+            "args": args_summary,
+            "chatId": chat_id,
+            _CANCEL_KEY: cancel_event,
+        }
+        with self._lock:
+            self._in_flight[tool_run_id] = record
+        # Push the card immediately rather than waiting for the 5s in-flight poll.
+        self._dispatch("runspec:in_flight_updated", {})
+
+        def on_progress(message: str) -> None:
+            # Keyed to chat_id (the chat block) + tool_id (the card) so the chat
+            # tool segment shows a live progress line and the card reads as alive.
+            self._dispatch(
+                "runspec:tool_progress",
+                {
+                    "id": chat_id,
+                    "tool_id": tool_run_id,
+                    "tool_name": tool_name,
+                    "message": str(message),
+                },
+            )
+
+        start = time.monotonic()
+        outcome = "ok"
+        try:
+            output = await asyncio.to_thread(
+                self._run_tool_sync,
+                tool_name,
+                tool_input,
+                chat_id,
+                cancel_event,
+                on_progress,
+            )
+        except ToolCancelled:
+            outcome = "cancelled"
+            output = f"⏹ '{label}' was stopped."
+        except Exception as exc:  # noqa: BLE001 — surface + audit, never kill the turn
+            outcome = "error"
+            logger.warning("built-in tool %s failed", tool_name, exc_info=True)
+            output = f"✗ '{label}' failed: {exc}"
+        finally:
+            with self._lock:
+                self._in_flight.pop(tool_run_id, None)
+            self._dispatch("runspec:in_flight_updated", {})
+            duration_ms = int((time.monotonic() - start) * 1000)
+            self._audit_builtin_tool(
+                tool_run_id,
+                tool_name,
+                label,
+                args_summary,
+                outcome,
+                duration_ms,
+                chat_id,
+            )
+        return output
+
+    @staticmethod
+    def _builtin_tool_label(tool_name: str, tool_input: dict[str, Any]) -> str:
+        """A short human label for a built-in tool's Console card / audit record,
+        e.g. ``repo_sync: runspec`` — the tool plus its most salient argument."""
+        ti = tool_input or {}
+
+        def first(*keys: str) -> str:
+            for k in keys:
+                v = ti.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+                if isinstance(v, (list, tuple)) and v:
+                    return ", ".join(str(x) for x in v)
+            return ""
+
+        if tool_name.startswith("repo_"):
+            key = first("name", "path", "pattern")
+        elif tool_name == "manage_denylist":
+            key = first("action")
+        elif tool_name.startswith("outlook_"):
+            key = first("query", "folder", "subject", "to")
+        elif tool_name == "run_runbook":
+            key = first("id", "name")
+        elif tool_name == "create_document":
+            key = first("path", "name")
+        elif tool_name == "create_schedule":
+            key = first("action", "runnable", "id")
+        elif tool_name == "emit_event":
+            key = first("source", "type")
+        elif tool_name in ("remember", "search_memory"):
+            key = first("query", "text", "app")
+        elif tool_name in ("save_runbook", "load_runbook"):
+            key = first("id", "name")
+        else:
+            key = ""
+        key = key[:60]
+        return f"{tool_name}: {key}" if key else tool_name
+
+    @staticmethod
+    def _builtin_tool_host(tool_name: str, tool_input: dict[str, Any]) -> str:
+        """Host tag for the Console card when the call targets a host (download/
+        relay/denylist fan-outs); blank for local-only tools (repo/memory/etc.)."""
+        ti = tool_input or {}
+        for k in ("host", "dest_host", "source_host"):
+            v = ti.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        targets = ti.get("targets")
+        if isinstance(targets, (list, tuple)) and targets:
+            return ", ".join(str(t) for t in targets)
+        if isinstance(targets, str) and targets.strip():
+            return targets.strip()
+        return ""
+
+    @staticmethod
+    def _builtin_tool_args(tool_input: dict[str, Any]) -> dict[str, Any]:
+        """A bounded, JSON-safe copy of a built-in tool's input for the card +
+        audit record. Long string values (e.g. document bodies) are truncated so
+        the record stays small. Built-in tool inputs carry no secrets."""
+        out: dict[str, Any] = {}
+        for k, v in (tool_input or {}).items():
+            if isinstance(v, str) and len(v) > 200:
+                out[k] = v[:200] + "…"
+            else:
+                out[k] = v
+        return out
 
     def _gated_run_tool(
         self, tool_name: str, tool_input: dict[str, Any], chat_id: str
@@ -588,7 +749,12 @@ class AutonomyMixin:
             )
 
     def _run_tool_sync(
-        self, tool_name: str, tool_input: dict[str, Any], chat_id: str = ""
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        chat_id: str = "",
+        cancel_event: threading.Event | None = None,
+        on_progress: Callable[[str], None] | None = None,
     ) -> str:
         """Blocking runnable execution — call via asyncio.to_thread from the agentic loop.
 
@@ -596,13 +762,28 @@ class AutonomyMixin:
         a rule trigger run is recorded with its source and ``agent=False`` (not an
         LLM run), an agent trigger run with its source and ``agent=True``; a direct
         chat turn (no registered origin) defaults to an agent run with no trigger.
+
+        ``cancel_event``/``on_progress`` (set only when wrapped by
+        ``_run_builtin_tool_tracked``) let the slow built-in tools cooperatively
+        abort (raising ``ToolCancelled``) and stream progress; tools that don't
+        accept them ignore them harmlessly.
         """
         if tool_name in _CUSTOM_TOOL_NAMES:
-            return self._run_custom_tool(tool_name, dict(tool_input or {}))
+            return self._run_custom_tool(
+                tool_name,
+                dict(tool_input or {}),
+                cancel_event=cancel_event,
+                on_progress=on_progress,
+            )
         if tool_name in _OUTLOOK_TOOL_NAMES:
             return self._run_outlook_tool(tool_name, dict(tool_input or {}))
         if tool_name in _REPO_TOOL_NAMES:
-            return self._run_repo_tool(tool_name, dict(tool_input or {}))
+            return self._run_repo_tool(
+                tool_name,
+                dict(tool_input or {}),
+                cancel_event=cancel_event,
+                on_progress=on_progress,
+            )
         if tool_name in _MEMORY_TOOL_NAMES:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
         if tool_name in _STATUS_TOOL_NAMES:

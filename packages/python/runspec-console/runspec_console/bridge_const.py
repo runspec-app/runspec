@@ -97,6 +97,32 @@ _ACTION_TOOL_NAMES = frozenset(
     {"create_document", "run_runbook", "create_schedule", "emit_event"}
 )
 
+# Every built-in (non-runnable-backed) agent tool. ``_gated_run_tool_async``
+# wraps each of these — once past the autonomy gate — with a live Console
+# in-flight card, cooperative cancellation, progress streaming, and a
+# History/Analytics audit record, so the agent's own work is as visible and
+# stoppable as a runnable run. Deliberately EXCLUDES ``run_runnable`` and the
+# search meta-tools (``search_runnables``/``describe_runnable``): the former
+# resolves to a real runnable execution that already registers its own
+# ``_in_flight`` card via ``invoke_runnable`` (wrapping here would
+# double-register), the latter are pure read-only discovery.
+_BUILTIN_TOOL_NAMES = (
+    _CUSTOM_TOOL_NAMES
+    | _OUTLOOK_TOOL_NAMES
+    | _REPO_TOOL_NAMES
+    | _MEMORY_TOOL_NAMES
+    | _STATUS_TOOL_NAMES
+    | _ACTION_TOOL_NAMES
+)
+
+
+class ToolCancelled(Exception):
+    """Raised inside a built-in agent tool when its cancel Event is set — the
+    operator pressed the chat Stop button or the tool's Console-card Cancel.
+    Caught by ``_gated_run_tool_async``, which turns it into a "⏹ stopped" tool
+    result so the turn ends (Stop) or continues (per-tool Cancel) cleanly."""
+
+
 # Cap on a single runnable's output handed to the model as a tool result. The
 # old 16 KB cap sliced data-heavy runnables (e.g. list-processes / list-containers
 # emitting one compact JSON line) *mid-JSON*, so the model received invalid,

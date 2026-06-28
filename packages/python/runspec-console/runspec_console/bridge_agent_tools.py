@@ -10,7 +10,8 @@ import json
 import os
 import re
 import sys
-from collections.abc import Collection
+import threading
+from collections.abc import Callable, Collection
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from . import hosts as hosts_mod
 
 from .bridge_const import (
     logger,
+    ToolCancelled,
 )
 
 from typing import TYPE_CHECKING
@@ -1263,9 +1265,20 @@ class AgentToolsMixin:
             },
         ]
 
-    def _run_repo_tool(self, name: str, ti: dict[str, Any]) -> str:
+    def _run_repo_tool(
+        self,
+        name: str,
+        ti: dict[str, Any],
+        cancel_event: threading.Event | None = None,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> str:
         """Execute a git-repo tool. Reads return JSON; sync/write return a one-line
-        summary (the autonomy gate has already approved a side-effecting call)."""
+        summary (the autonomy gate has already approved a side-effecting call).
+
+        ``cancel_event``/``on_progress`` (set when the agent runs this) make the
+        slow ops — ``repo_sync`` (clone/fetch) and ``repo_grep`` — interruptible
+        and let them stream progress; a set ``cancel_event`` surfaces as
+        ``ToolCancelled``, re-raised so the tracking wrapper reports it."""
         import json as _json
 
         from . import repos
@@ -1296,7 +1309,14 @@ class AgentToolsMixin:
         try:
             if name == "repo_sync":
                 auth = self._sync_auth(entry["url"], entry.get("credential_id", ""))
-                res = repos.sync_repo(entry["url"], entry["ref"], auth, dest)
+                res = repos.sync_repo(
+                    entry["url"],
+                    entry["ref"],
+                    auth,
+                    dest,
+                    cancel_event=cancel_event,
+                    on_progress=on_progress,
+                )
                 return (
                     f"✓ {res['action']} {entry['name']} @ {res['ref']} "
                     f"({res['commit'][:10]}) → {res['path']}"
@@ -1316,6 +1336,8 @@ class AgentToolsMixin:
                     pattern,
                     str(ti.get("path") or ""),
                     int(ti.get("max_results") or 100),
+                    cancel_event=cancel_event,
+                    on_progress=on_progress,
                 )
                 return _json.dumps({"matches": rows, "count": len(rows)}, default=str)
             if name == "repo_read":
@@ -1339,6 +1361,8 @@ class AgentToolsMixin:
                     f"✓ {verb} {entry['name']}/{res['path']} ({res['bytes']} bytes) "
                     "in the local working copy — review with repo_diff (not committed)."
                 )
+        except ToolCancelled:
+            raise  # let the tracking wrapper report the stop (not a tool failure)
         except Exception as exc:  # noqa: BLE001 — surface git/FS failures to the agent
             return f"✗ Repo {name} failed: {exc}"
         return f"Error: unknown repo tool '{name}'."
@@ -2008,13 +2032,21 @@ class AgentToolsMixin:
             return json.dumps(runbook)
         return f"Error: unknown tool '{name}'"
 
-    def _run_custom_tool(self, name: str, ti: dict[str, Any]) -> str:
+    def _run_custom_tool(
+        self,
+        name: str,
+        ti: dict[str, Any],
+        cancel_event: threading.Event | None = None,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> str:
         """Execute a built-in file-transfer tool synchronously and report the
         outcome (the autonomy gate has already approved it). Kicks off the normal
         transfer — so the user sees live progress in the transfer panel — then
         blocks on the result via ``_await_transfer``."""
         if name == "manage_denylist":
-            return self._run_manage_denylist(ti)
+            return self._run_manage_denylist(
+                ti, cancel_event=cancel_event, on_progress=on_progress
+            )
         filter_name = str(ti.get("filter") or "")
         filter_value = ti.get("filter_value")
         dest_dir = ti.get("dest_dir")
@@ -2069,10 +2101,19 @@ class AgentToolsMixin:
             )
         return f"✗ {label} failed: {detail.get('error') or 'unknown error'}"
 
-    def _run_manage_denylist(self, ti: dict[str, Any]) -> str:
+    def _run_manage_denylist(
+        self,
+        ti: dict[str, Any],
+        cancel_event: threading.Event | None = None,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> str:
         """Run ``runspec deny <action>`` on the selected fleet hosts (one call per
         venv), aggregating per-host/per-venv results. The autonomy gate has
-        already approved this call."""
+        already approved this call.
+
+        ``cancel_event``/``on_progress`` (set when the agent runs this) make the
+        SSH fan-out interruptible between hosts and stream a per-host progress
+        line; a set ``cancel_event`` raises ``ToolCancelled``."""
         import shlex
         import subprocess
 
@@ -2114,8 +2155,13 @@ class AgentToolsMixin:
 
         lines: list[str] = []
         ok_count = 0
-        for h in hosts:
+        total = len(hosts)
+        for i, h in enumerate(hosts, 1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise ToolCancelled()
             host_name = str(h.get("name"))
+            if on_progress is not None:
+                on_progress(f"host {i} of {total}: {host_name}")
             ssh = h.get("ssh")
             idf = h.get("identityFile")
             for rp in utils_mod._paths(h):

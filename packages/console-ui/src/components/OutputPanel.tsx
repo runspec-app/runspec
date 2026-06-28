@@ -401,6 +401,7 @@ export interface ToolCallEntry {
   running: boolean
   startedAt?: number   // epoch ms when the tool call began (for per-tool duration)
   durationMs?: number  // set when the tool call finishes
+  progress?: string    // latest live progress line (built-in tools: repo clone/grep, denylist fan-out)
 }
 
 export type BlockSegment =
@@ -665,7 +666,9 @@ function ToolCallBlock({
           <Text style={{ color: '#e6a23c', fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>needs approval</Text>
         )}
         {!awaiting && entry.running && (
-          <Text style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>running…</Text>
+          <Text ellipsis style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0, maxWidth: '50%', fontFamily: entry.progress ? 'monospace' : undefined }}>
+            {entry.progress || 'running…'}
+          </Text>
         )}
         {!entry.running && entry.durationMs !== undefined && (
           <Tooltip title="Time this tool call took">
@@ -1298,6 +1301,26 @@ export function useInvocationBlocks() {
       }))
     }
 
+    const onToolProgress = (e: Event) => {
+      // Live progress for a still-running built-in tool (repo clone/grep, denylist
+      // fan-out): turns the silent gap between tool_start and tool_end into a
+      // moving status line on the tool segment.
+      const { id, tool_name, message } = (e as CustomEvent).detail as {
+        id: string; tool_name: string; message: string
+      }
+      if (!message) return
+      setBlocks(prev => prev.map(b => {
+        if (b.id !== id) return b
+        const newSegs = b.segments.map(seg => {
+          if (seg.kind === 'tool' && seg.entry.name === tool_name && seg.entry.running) {
+            return { ...seg, entry: { ...seg.entry, progress: message } }
+          }
+          return seg
+        })
+        return { ...b, segments: newSegs }
+      }))
+    }
+
     const onEnd = (e: Event) => {
       const { id, exit_code, duration_ms, stopped } = (e as CustomEvent).detail as { id: string; exit_code: number; duration_ms: number; stopped?: boolean }
       setBlocks(prev => prev.map(b => {
@@ -1332,6 +1355,7 @@ export function useInvocationBlocks() {
     window.addEventListener('runspec:token', onToken)
     window.addEventListener('runspec:tool_start', onToolStart)
     window.addEventListener('runspec:tool_end', onToolEnd)
+    window.addEventListener('runspec:tool_progress', onToolProgress)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:chat_usage', onChatUsage)
     return () => {
@@ -1339,6 +1363,7 @@ export function useInvocationBlocks() {
       window.removeEventListener('runspec:token', onToken)
       window.removeEventListener('runspec:tool_start', onToolStart)
       window.removeEventListener('runspec:tool_end', onToolEnd)
+      window.removeEventListener('runspec:tool_progress', onToolProgress)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:chat_usage', onChatUsage)
     }

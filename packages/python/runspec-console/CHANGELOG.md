@@ -8,6 +8,44 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.143.0] — 2026-06-28
+
+### Added
+- **Built-in agent tools are now visible and stoppable.** When the chat agent
+  ran a built-in tool — the `repo_*` repo tools, `outlook_*`, `manage_denylist`,
+  the action tools (`create_document`/`run_runbook`/`create_schedule`/
+  `emit_event`) and the memory tools — the work was invisible: no Console
+  in-flight card, no progress, and the Stop button had no effect until the tool
+  finished (a long `repo_sync` clone or `repo_grep` read as a hung console).
+  Each built-in tool now, once past the autonomy gate:
+  - **Shows a live Console in-flight card** (label like `repo_sync: runspec`,
+    elapsed time, Cancel button) in the same strip runnable runs use — pushed
+    immediately via `runspec:in_flight_updated`, not on the 5s poll.
+  - **Streams progress** into the chat tool segment via a new
+    `runspec:tool_progress` event: `repo_sync` surfaces dulwich's clone/fetch
+    progress, `repo_grep` a running "scanned N files" count, and
+    `manage_denylist` a "host i of n" line.
+  - **Is cooperatively cancellable.** The card's Cancel (`cancel_invocation`)
+    stops just that tool — the agent gets a "⏹ stopped" result and the turn
+    continues; the chat **Stop** (`cancel_chat`) now also aborts a built-in tool
+    mid-run and halts the turn. `repo_sync` aborts the transfer at a progress
+    boundary and removes a half-made checkout; `repo_grep`/denylist abort between
+    files/hosts. New `ToolCancelled` sentinel (`bridge_const`).
+  - **Leaves a History/Analytics audit record** — one `run_summary`-shaped line
+    per call to `~/logs/runspec-console-tools.log`, read by the existing history
+    scanner with no parser change (attributed to the tool label; outcome and
+    cancellation captured via `exit_code` 0/1/130).
+
+  Implemented as one uniform wrap in `bridge_autonomy._run_builtin_tool_tracked`
+  (with `_builtin_tool_label`/`_host`/`_args` helpers) around the existing
+  `_run_tool_sync` path; `repos.sync_repo`/`grep_repo`,
+  `bridge_agent_tools._run_repo_tool`/`_run_manage_denylist` gained
+  `cancel_event`/`on_progress`; audit via `bridge_reporting._audit_builtin_tool`.
+  Front end: `runspec:tool_progress` rendering in `OutputPanel` `ToolCallBlock`
+  and a `builtin_tool`-aware label in `ConsoleView`'s `InFlightStrip`. Runnable
+  executions (`run_runnable`/search meta-tools) are unaffected — they keep their
+  own `invoke_runnable` card.
+
 ## [0.142.0] — 2026-06-27
 
 ### Changed
