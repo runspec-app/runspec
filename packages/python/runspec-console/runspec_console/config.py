@@ -125,6 +125,14 @@ def repo_paths_path() -> Path:
     return app_dir() / "runspec_repo_paths.toml"
 
 
+def conversations_dir() -> Path:
+    """Directory holding saved chat conversations (one `{id}.json` per
+    conversation). **Machine-local** — transcripts can contain sensitive content
+    and are instance-specific, so they're **never** synced (not in Config Sync's
+    KNOWN_FILES). Bounded by the `[chat_history]` retention settings."""
+    return app_dir() / "conversations"
+
+
 def config_path() -> Path:
     return app_dir() / "config.toml"
 
@@ -219,6 +227,30 @@ def _read_rota_file() -> dict[str, Any]:
             return dict(tomllib.load(f))
     except Exception:
         return {}
+
+
+def read_chat_history() -> dict[str, Any]:
+    """The ``[chat_history]`` settings, with defaults applied.
+
+    ``enabled`` (default **true**): persist each chat conversation to disk so the
+    operator can reopen/resume past chats. ``max_conversations`` / ``max_age_days``
+    bound the on-disk store (retention; pruned on save + startup). Storage is
+    machine-local (``conversations_dir()``) — never synced."""
+    raw = read_config().get("chat_history")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "max_conversations": int(cfg.get("max_conversations", 200) or 0),
+        "max_age_days": int(cfg.get("max_age_days", 90) or 0),
+        # Resume-time compaction: keep the opening ``resume_keep_first`` turns and
+        # the recent ``resume_keep_recent`` turns verbatim when resuming a long
+        # chat; the overflow in between is condensed to a short note (default) —
+        # or, with ``compact_on_resume``, an LLM summary — so a long thread doesn't
+        # blow the context window. ``resume_keep_first`` = 0 keeps no opening turn.
+        "resume_keep_first": max(0, int(cfg.get("resume_keep_first", 1) or 0)),
+        "resume_keep_recent": int(cfg.get("resume_keep_recent", 20) or 0),
+        "compact_on_resume": bool(cfg.get("compact_on_resume", False)),
+    }
 
 
 def read_rota() -> dict[str, Any]:

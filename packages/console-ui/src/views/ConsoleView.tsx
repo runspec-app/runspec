@@ -1,11 +1,45 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
-import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined } from '@ant-design/icons'
-import { bridge, type InFlightRecord, type Runnable } from '../bridge'
-import { OutputPanel, useInvocationBlocks, type RerunData } from '../components/OutputPanel'
+import { Button, Drawer, Empty, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
+import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
+import { bridge, type ChatConversation, type ConversationMeta, type InFlightRecord, type Runnable } from '../bridge'
+import { OutputPanel, useInvocationBlocks, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
 import { useIsDark } from '../ThemeContext'
 
 const { Text } = Typography
+
+// Render a saved conversation's provider-agnostic transcript back into chat
+// blocks the OutputPanel can show — one block per turn (label = the user's
+// message; tool calls + the assistant's prose as segments). Read-only: every
+// block is `done`, nothing streams.
+export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] {
+  return (conv.turns || []).map((t, i) => {
+    const segments: BlockSegment[] = []
+    for (const tool of t.tools || []) {
+      segments.push({ kind: 'tool', entry: { name: tool.name, input: tool.input || {}, output: tool.output, running: false } })
+    }
+    if (t.assistant && t.assistant.trim()) segments.push({ kind: 'text', text: t.assistant })
+    const u = (t.usage || undefined) as Record<string, number> | undefined
+    return {
+      id: `${conv.id}:${i}`,
+      type: 'chat' as const,
+      label: t.user || '(no message)',
+      startedAt: t.ts || conv.updated || new Date().toISOString(),
+      lines: [],
+      segments,
+      currentText: '',
+      done: true,
+      model: t.model,
+      tokenUsage: u ? { input: u.input || 0, output: u.output || 0, cacheRead: u.cache_read || 0, cacheCreation: u.cache_creation || 0 } : undefined,
+    }
+  })
+}
+
+function fmtWhen(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
 
 interface ConsoleViewProps {
   inFlight: InFlightRecord[]
@@ -85,15 +119,65 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 }
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
-  const { blocks, addBlock, clearBlocks } = useInvocationBlocks()
+  const { blocks, addBlock, clearBlocks, hydrateBlocks } = useInvocationBlocks()
   const addBlockRef = useRef(addBlock)
   addBlockRef.current = addBlock
+
+  // Saved-conversation browser (chat history) state.
+  const [convOpen, setConvOpen] = useState(false)
+  const [convs, setConvs] = useState<ConversationMeta[]>([])
+  const [convLoading, setConvLoading] = useState(false)
+  // The reopened-and-resumed conversation, if any — new messages continue it.
+  const [viewing, setViewing] = useState<{ id: string; title: string } | null>(null)
+
+  const refreshConvs = async () => {
+    setConvLoading(true)
+    try {
+      setConvs(await bridge.list_conversations())
+    } catch {
+      setConvs([])
+    } finally {
+      setConvLoading(false)
+    }
+  }
+
+  const openConversations = async () => {
+    setConvOpen(true)
+    await refreshConvs()
+  }
+
+  // Reopen a saved conversation: render its transcript and resume it on the
+  // backend so the next message continues it (history rebuilt as text).
+  const openConversation = async (meta: ConversationMeta) => {
+    try {
+      const conv = await bridge.load_conversation(meta.id)
+      hydrateBlocks(conversationToBlocks(conv))
+      const res = await bridge.resume_conversation(meta.id)
+      if (!res.ok) { message.error(res.error || 'Could not resume conversation'); return }
+      setViewing({ id: meta.id, title: conv.title || meta.title })
+      setConvOpen(false)
+      if (res.compacted) {
+        message.info(res.summarized
+          ? 'Resumed — older turns were summarized to fit context (the saved transcript is unchanged).'
+          : 'Resumed — older turns were condensed to fit context (the saved transcript is unchanged).')
+      }
+    } catch {
+      message.error('Could not open conversation')
+    }
+  }
+
+  const deleteConversation = async (id: string) => {
+    await bridge.delete_conversation(id)
+    if (viewing?.id === id) { await bridge.clear_chat(); clearBlocks(); setViewing(null) }
+    await refreshConvs()
+  }
 
   // Reset the conversation: clear the transcript and the model's memory of
   // prior turns (the agent chat is otherwise one rolling conversation).
   const handleNewChat = async () => {
     await bridge.clear_chat()
     clearBlocks()
+    setViewing(null)
   }
 
   // Tell the command bar which chat turn (if any) is in flight, so its send
@@ -228,30 +312,101 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
       <InFlightStrip inFlight={inFlight} />
-      {blocks.length > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
-          <Button
-            size="small" type="text"
-            onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: true } }))}
-            style={{ fontSize: 11, color: '#888' }}
-          >
-            Collapse all
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
+        {viewing && (
+          <Tag color="blue" style={{ fontSize: 11, marginRight: 'auto', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Resumed: {viewing.title} — your next message continues it
+          </Tag>
+        )}
+        {blocks.length > 0 && (
+          <>
+            <Button
+              size="small" type="text"
+              onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: true } }))}
+              style={{ fontSize: 11, color: '#888' }}
+            >
+              Collapse all
+            </Button>
+            <Button
+              size="small" type="text"
+              onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: false } }))}
+              style={{ fontSize: 11, color: '#888' }}
+            >
+              Expand all
+            </Button>
+          </>
+        )}
+        <Tooltip title="Browse and reopen past conversations">
+          <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openConversations} style={{ fontSize: 11, color: '#888' }}>
+            History
           </Button>
-          <Button
-            size="small" type="text"
-            onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: false } }))}
-            style={{ fontSize: 11, color: '#888' }}
-          >
-            Expand all
-          </Button>
+        </Tooltip>
+        {blocks.length > 0 && (
           <Tooltip title="Clear the transcript and the assistant's memory of this conversation">
             <Button size="small" icon={<PlusOutlined />} onClick={handleNewChat}>
               New chat
             </Button>
           </Tooltip>
-        </div>
-      )}
+        )}
+      </div>
       <OutputPanel blocks={blocks} onRerun={handleRerun} onAskLlm={handleAskLlm} />
+
+      <Drawer
+        title="Conversations"
+        placement="right"
+        width={420}
+        open={convOpen}
+        onClose={() => setConvOpen(false)}
+        styles={{ body: { padding: '8px 0' } }}
+      >
+        {convs.length === 0 && !convLoading ? (
+          <Empty description="No saved conversations yet" style={{ marginTop: 40 }} />
+        ) : (
+          <List
+            loading={convLoading}
+            dataSource={convs}
+            renderItem={(c) => (
+              <List.Item
+                style={{ padding: '8px 16px', cursor: 'pointer' }}
+                onClick={() => openConversation(c)}
+                actions={[
+                  <Popconfirm
+                    key="del"
+                    title="Delete this conversation?"
+                    onConfirm={(e) => { e?.stopPropagation(); deleteConversation(c.id) }}
+                    onCancel={(e) => e?.stopPropagation()}
+                    okText="Delete" okButtonProps={{ danger: true }}
+                  >
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+                  </Popconfirm>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={
+                    <Text
+                      style={{ fontSize: 13 }}
+                      editable={{
+                        onChange: (v) => { const t = v.trim(); if (t && t !== c.title) { bridge.rename_conversation(c.id, t).then(refreshConvs) } },
+                        triggerType: ['icon'],
+                      }}
+                    >
+                      {c.title || 'Untitled'}
+                    </Text>
+                  }
+                  description={
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 11 }} ellipsis>{c.preview}</Text>
+                      <div style={{ fontSize: 10, color: '#999', marginTop: 2 }}>
+                        {fmtWhen(c.updated)} · {c.turn_count} message{c.turn_count === 1 ? '' : 's'}
+                      </div>
+                    </div>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Drawer>
     </div>
   )
 }

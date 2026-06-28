@@ -3011,6 +3011,78 @@ export function DenylistTab() {
 
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
+function ChatHistoryTab() {
+  const [enabled, setEnabled] = useState(true)
+  const [maxConvs, setMaxConvs] = useState<number>(200)
+  const [maxAge, setMaxAge] = useState<number>(90)
+  const [keepFirst, setKeepFirst] = useState<number>(1)
+  const [keepRecent, setKeepRecent] = useState<number>(20)
+  const [compactOnResume, setCompactOnResume] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    bridge.get_config().then(cfg => {
+      const ch = (cfg.chat_history ?? {}) as Record<string, unknown>
+      setEnabled(ch.enabled !== false)
+      setMaxConvs(typeof ch.max_conversations === 'number' ? ch.max_conversations : 200)
+      setMaxAge(typeof ch.max_age_days === 'number' ? ch.max_age_days : 90)
+      setKeepFirst(typeof ch.resume_keep_first === 'number' ? ch.resume_keep_first : 1)
+      setKeepRecent(typeof ch.resume_keep_recent === 'number' ? ch.resume_keep_recent : 20)
+      setCompactOnResume(ch.compact_on_resume === true)
+    })
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const cfg = await bridge.get_config()
+      await bridge.save_config({ ...cfg, chat_history: { enabled, max_conversations: maxConvs, max_age_days: maxAge, resume_keep_first: keepFirst, resume_keep_recent: keepRecent, compact_on_resume: compactOnResume } })
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } finally { setSaving(false) }
+  }
+
+  const row = (label: string, control: ReactNode) => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+      <span style={{ fontSize: 13 }}>{label}</span>
+      {control}
+    </div>
+  )
+
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        Save each chat so you can reopen and continue past conversations from the Console's <strong>History</strong> button.
+        Transcripts are stored <strong>only on this machine</strong> (never synced) and may contain sensitive content.
+        Old conversations are pruned to the limits below.
+      </Typography.Paragraph>
+      {row('Save chat history', <Switch checked={enabled} onChange={setEnabled} />)}
+      {row('Keep at most (conversations)', <InputNumber min={0} value={maxConvs} onChange={v => setMaxConvs(Number(v) || 0)} disabled={!enabled} />)}
+      {row('Delete after (days)', <InputNumber min={0} value={maxAge} onChange={v => setMaxAge(Number(v) || 0)} disabled={!enabled} />)}
+      <Typography.Paragraph type="secondary" style={{ fontSize: 11 }}>
+        0 = no limit. Disabling stops saving new conversations; existing files stay until pruned or deleted.
+      </Typography.Paragraph>
+
+      <Divider style={{ margin: '14px 0' }} />
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        When you reopen a long conversation, the opening turns and the most recent turns are kept word-for-word;
+        the turns in between are condensed so the chat fits the model's context. <strong>The saved transcript is never changed</strong> — only what the model sees on resume.
+      </Typography.Paragraph>
+      {row('Keep opening turns verbatim on resume', <InputNumber min={0} value={keepFirst} onChange={v => setKeepFirst(Number(v) || 0)} disabled={!enabled} />)}
+      {row('Keep recent turns verbatim on resume', <InputNumber min={1} value={keepRecent} onChange={v => setKeepRecent(Number(v) || 1)} disabled={!enabled} />)}
+      {row(
+        'Summarize older turns with a model call',
+        <Switch checked={compactOnResume} onChange={setCompactOnResume} disabled={!enabled} />,
+      )}
+      <Typography.Paragraph type="secondary" style={{ fontSize: 11 }}>
+        Off (default): older turns are condensed to a short note listing what they covered — no model call.
+        On: an LLM summarizes them on resume (one extra call, slight delay; falls back to the note if it fails).
+      </Typography.Paragraph>
+      <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+    </div>
+  )
+}
+
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
   return (
     <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
@@ -3031,6 +3103,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
           { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },
           { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
+          { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
         ]}
       />
     </Drawer>

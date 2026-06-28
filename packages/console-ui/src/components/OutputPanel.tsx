@@ -1371,6 +1371,8 @@ export function useInvocationBlocks() {
 
   const addBlock = (block: InvocationBlock) => setBlocks(prev => [...prev, block])
   const clearBlocks = () => setBlocks([])
+  // Replace the whole transcript — used to render a reopened saved conversation.
+  const hydrateBlocks = (next: InvocationBlock[]) => setBlocks(next)
 
-  return { blocks, addBlock, clearBlocks }
+  return { blocks, addBlock, clearBlocks, hydrateBlocks }
 }

@@ -1050,6 +1050,20 @@ export const mockApi: BridgeApi = {
   },
 
   clear_chat: async () => {},
+  list_conversations: async () => [
+    { id: 'mock-conv-1', title: 'Why did the nightly job fail?', created: '2026-06-27T20:00:00Z', updated: '2026-06-27T20:05:00Z', turn_count: 3, preview: 'Three jobs errored on host db1 — all OOM kills.' },
+    { id: 'mock-conv-2', title: 'Draft the release notes', created: '2026-06-26T09:00:00Z', updated: '2026-06-26T09:12:00Z', turn_count: 5, preview: 'Here are the release notes for 0.145.0…' },
+  ],
+  load_conversation: async (id: string) => ({
+    id, title: id === 'mock-conv-2' ? 'Draft the release notes' : 'Why did the nightly job fail?',
+    turns: [
+      { user: 'why did the nightly job fail?', assistant: 'Three jobs errored on host db1 — all OOM kills.', tools: [{ name: 'summarize-log', input: { path: '/var/log/app.log' }, output: '{"errors": 3}' }] },
+      { user: 'can you restart them?', assistant: 'Restarted all three; they are healthy now.', tools: [] },
+    ],
+  }),
+  resume_conversation: async (_id: string) => ({ ok: true, turns: 2, kept: 2, compacted: false, summarized: false, exact: false }),
+  delete_conversation: async (_id: string) => {},
+  rename_conversation: async (_id: string, _title: string) => {},
   get_runbooks: async () => [],
   save_runbooks: async () => ({ ok: true, count: 0 }),
   run_runbook: async (runbookId, _values, _extra) => ({ chat_id: `mock-runbook-${runbookId}`, message: `$${runbookId}` }),

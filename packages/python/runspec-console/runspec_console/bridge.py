@@ -167,6 +167,11 @@ class Bridge(
         # serialises turns so two quick sends can't interleave the history.
         self._chat_history: list[dict[str, Any]] = []
         self._chat_lock = threading.Lock()
+        # The saved-conversation id the current rolling chat persists to (chat
+        # history). Minted lazily on the first turn and re-minted by clear_chat();
+        # set by resume_conversation when continuing a past chat. Distinct from the
+        # per-turn chat_id (a UI correlation key). Guarded by self._chat_lock.
+        self._conversation_id: str = ""
         # chat_id → cancel Event, so a turn can be stopped mid-run (guarded by
         # self._lock, NOT _chat_lock — cancel must fire while a turn holds that).
         self._chat_cancels: dict[str, threading.Event] = {}

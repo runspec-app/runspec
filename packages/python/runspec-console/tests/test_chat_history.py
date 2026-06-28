@@ -32,10 +32,16 @@ class _StubBridge:
         self._chat_cancels: dict[str, threading.Event] = {}
         self._pending_confirms: dict = {}
         self._in_flight: dict = {}
+        self._conversation_id: str = ""
         self.dispatched: list = []
 
     def _dispatch(self, event, detail):
         self.dispatched.append((event, detail))
+
+    # Saved-conversation persistence is exercised in test_conversations.py; these
+    # in-memory-history tests stub it out so they don't touch the disk store.
+    def _persist_conversation_turn(self, *a, **k):
+        pass
 
     # Audio cue + window-focus helpers the chat turn calls (run-outcome / reply
     # cues); no-ops in these unit tests.

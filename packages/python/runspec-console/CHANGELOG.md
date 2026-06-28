@@ -8,6 +8,48 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.146.0] — 2026-06-28
+
+### Added
+- **Chat history — reopen and continue past conversations.** The agent chat was
+  in-memory only, so closing or "New chat" lost everything. Conversations now
+  **auto-save** to a machine-local store and the Console gains a **History**
+  button: browse past chats, reopen one (its full transcript renders), and just
+  keep typing to **continue** it (the model history is rebuilt from the
+  transcript). Rename or delete from the list.
+  - **Storage** is machine-local JSON, one `{id}.json` per conversation under
+    `conversations_dir()` (`app_dir()/conversations`) — **never synced**
+    (transcripts can be sensitive). A turn is stored as a provider-agnostic
+    transcript (user text + assistant prose + tool name/input/output + usage),
+    not the adapter-native history (which keeps raw SDK objects that don't
+    serialise) — so it renders and resumes across providers. New module
+    `conversations.py`; bridge `list_conversations`/`load_conversation`/
+    `resume_conversation`/`delete_conversation`/`rename_conversation`; each
+    completed chat turn is appended in `_agentic_chat_turn`; `clear_chat` starts
+    a fresh conversation.
+  - **On by default, with retention.** A `[chat_history]` config block
+    (Settings → Chat History): `enabled` (default true), `max_conversations`
+    (200) and `max_age_days` (90), pruned on each save. Disabling stops new
+    writes.
+  - **Resume fidelity:** the rebuilt history is plain user/assistant text (tool
+    calls folded into the assistant text as short notes), robust across
+    providers — exact provider-native tool_use/tool_result pairs are not
+    reconstructed (a possible future enhancement; the API reports `exact:false`).
+  - **Resume-time compaction:** reopening a long conversation keeps the opening
+    `resume_keep_first` turns (default 1) + the recent `resume_keep_recent` turns
+    (default 20) verbatim and
+    condenses the middle into one note, so a long thread doesn't blow the context
+    window. By default the note is a no-model summary (lists what the omitted
+    turns covered); `[chat_history] compact_on_resume` (off by default) swaps it
+    for an LLM summary, falling back to the note if that fails. **The saved
+    transcript is never modified** — compaction only shapes the working history
+    sent to the model (`conversations.split_for_compaction`, bridge
+    `_flatten_turns`/`_mechanical_resume_note`/`_summarize_middle_turns`; the note
+    is folded into the first recent message to keep strict user/assistant
+    alternation). `resume_conversation` now reports `{kept, compacted, summarized}`.
+  - Front end: a Conversations drawer + `conversationToBlocks` hydration (one
+    chat block per turn) + `useInvocationBlocks.hydrateBlocks`.
+
 ## [0.145.0] — 2026-06-28
 
 ### Fixed

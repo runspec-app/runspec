@@ -562,9 +562,217 @@ class InvokeMixin:
         """Start a fresh conversation — drop the model's memory of prior turns.
 
         Blocks on the conversation lock so it can't run mid-turn (a turn in
-        flight finishes against its history, then the next turn starts empty)."""
+        flight finishes against its history, then the next turn starts empty).
+
+        Also drops the active saved-conversation id, so the next turn opens a
+        fresh conversation file rather than appending to the one just left."""
         with self._chat_lock:
             self._chat_history = []
+            self._conversation_id = ""
+
+    # ── saved conversations (chat history) ──────────────────────────────────────
+
+    def _persist_conversation_turn(
+        self,
+        user: str,
+        assistant: str,
+        tools: list[dict[str, Any]],
+        usage: dict[str, int],
+        model: str,
+    ) -> None:
+        """Append a completed chat exchange to the active saved conversation.
+
+        Best-effort and gated on ``[chat_history] enabled``; a failure here never
+        breaks the chat turn. Caller holds ``self._chat_lock`` (owns
+        ``_conversation_id``). Prunes to the retention cap after writing."""
+        try:
+            cfg = config_mod.read_chat_history()
+            if not cfg.get("enabled", True):
+                return
+            from . import conversations as conv
+
+            if not self._conversation_id:
+                self._conversation_id = conv.new_id()
+            turn = {
+                "user": user,
+                "assistant": assistant,
+                "tools": tools,
+                "usage": {k: int(v) for k, v in (usage or {}).items()} or None,
+                "model": model,
+                "ts": _iso_now(),
+            }
+            directory = config_mod.conversations_dir()
+            provider = str(self.get_config().get("llm", {}).get("provider", ""))
+            conv.append_turn(
+                directory, self._conversation_id, turn, provider=provider, model=model
+            )
+            conv.prune(
+                directory,
+                max_conversations=int(cfg.get("max_conversations", 0) or 0),
+                max_age_days=int(cfg.get("max_age_days", 0) or 0),
+            )
+        except Exception:  # noqa: BLE001 — persistence is best-effort
+            logger.warning("could not persist chat conversation turn", exc_info=True)
+
+    def list_conversations(self) -> list[dict[str, Any]]:
+        """Metadata for every saved chat conversation, newest first:
+        ``{id, title, created, updated, turn_count, preview}``."""
+        from . import conversations as conv
+
+        try:
+            return conv.list_meta(config_mod.conversations_dir())
+        except Exception:  # noqa: BLE001
+            logger.warning("could not list conversations", exc_info=True)
+            return []
+
+    def load_conversation(self, conversation_id: str) -> dict[str, Any]:
+        """A saved conversation's metadata + provider-agnostic transcript (its
+        ``turns``), for rendering it in the Console. ``{}`` when not found."""
+        from . import conversations as conv
+
+        return conv.load(config_mod.conversations_dir(), str(conversation_id)) or {}
+
+    @staticmethod
+    def _flatten_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Render saved transcript turns into a plain user/assistant message list
+        (tool calls folded into the assistant text as short notes). Provider-
+        agnostic — every adapter accepts plain text messages."""
+        out: list[dict[str, Any]] = []
+        for turn in turns or []:
+            user = str(turn.get("user", "")).strip()
+            if user:
+                out.append({"role": "user", "content": user})
+            parts: list[str] = []
+            assistant = str(turn.get("assistant", "")).strip()
+            if assistant:
+                parts.append(assistant)
+            for t in turn.get("tools", []) or []:
+                out_text = str(t.get("output", ""))[:500]
+                parts.append(f"[ran {t.get('name', 'tool')} → {out_text}]")
+            out.append(
+                {"role": "assistant", "content": "\n\n".join(parts) or "(no response)"}
+            )
+        return out
+
+    @staticmethod
+    def _mechanical_resume_note(middle: list[dict[str, Any]]) -> str:
+        """A no-model note standing in for the omitted middle turns on resume —
+        lists what they were about (the operator's questions) so the agent keeps
+        the thread without an LLM call. This is the always-on default (compaction
+        path A)."""
+        qs = [
+            str(t.get("user", "")).strip().replace("\n", " ")[:80]
+            for t in middle
+            if str(t.get("user", "")).strip()
+        ]
+        preview = "; ".join(qs[:5])
+        extra = "" if len(qs) <= 5 else f" (+{len(qs) - 5} more)"
+        return (
+            f"[Context: {len(middle)} earlier turns were condensed to keep this "
+            f"resumed chat compact. They covered: {preview}{extra}.]"
+        )
+
+    def _summarize_middle_turns(self, middle: list[dict[str, Any]]) -> str:
+        """Best-effort LLM summary of the omitted middle turns (compaction path B,
+        off by default). Returns ``""`` on any failure or when no model provider is
+        configured, so the caller falls back to the mechanical note — this never
+        blocks or breaks a resume."""
+        try:
+            from . import conversations as conv
+
+            adapter = self._get_adapter()
+            if adapter is None:
+                return ""
+            prompt = (
+                "Summarize the earlier portion of this conversation in 3-5 "
+                "sentences, preserving key facts, decisions, hostnames/ids, and "
+                "anything the assistant needs to continue. Be concise.\n\n"
+                + conv.turns_to_text(middle)
+            )
+            resp = asyncio.run(adapter.chat([{"role": "user", "content": prompt}], []))
+            return (getattr(resp, "text", "") or "").strip()
+        except Exception:  # noqa: BLE001 — summary is best-effort
+            logger.warning(
+                "resume summary failed; using the mechanical note", exc_info=True
+            )
+            return ""
+
+    def resume_conversation(self, conversation_id: str) -> dict[str, Any]:
+        """Make a saved conversation the active rolling chat: rebuild the model
+        history from its transcript and point new turns at its file, so sending
+        continues it.
+
+        The history is flattened to plain user/assistant **text** (tool calls
+        folded in as short notes), not exact provider-native tool_use/tool_result
+        pairs — robust across providers (``exact`` is always ``False``).
+
+        **Resume-time compaction:** a long conversation keeps its opening turn +
+        the recent ``resume_keep_recent`` turns verbatim and condenses the middle
+        into one note, so it doesn't blow the context window. The note is a
+        no-model summary by default; with ``[chat_history] compact_on_resume`` it's
+        an LLM summary (falling back to the note if that fails). The **saved
+        transcript is never modified** — compaction only shapes the working
+        history. Returns ``{ok, turns, kept, compacted, summarized, exact}``."""
+        from . import conversations as conv
+
+        rec = conv.load(config_mod.conversations_dir(), str(conversation_id))
+        if not rec:
+            return {"ok": False, "error": "conversation not found"}
+        turns = rec.get("turns", []) or []
+        cfg = config_mod.read_chat_history()
+        head, middle, recent = conv.split_for_compaction(
+            turns,
+            keep_first=int(cfg.get("resume_keep_first", 1) or 0),
+            keep_recent=int(cfg.get("resume_keep_recent", 20) or 0),
+        )
+
+        summarized = False
+        if middle:
+            note_body = ""
+            if cfg.get("compact_on_resume"):
+                note_body = self._summarize_middle_turns(middle)
+                summarized = bool(note_body)
+            note = (
+                f"[Summary of {len(middle)} earlier turns: {note_body}]"
+                if note_body
+                else self._mechanical_resume_note(middle)
+            )
+            rebuilt = self._flatten_turns(head)
+            recent_msgs = self._flatten_turns(recent)
+            # Fold the note into the first (user) recent message so the history
+            # stays strictly alternating user/assistant (Anthropic requires it).
+            if recent_msgs and recent_msgs[0].get("role") == "user":
+                recent_msgs[0]["content"] = note + "\n\n" + recent_msgs[0]["content"]
+            else:
+                recent_msgs.insert(0, {"role": "user", "content": note})
+            rebuilt += recent_msgs
+            kept = len(head) + len(recent)
+        else:
+            rebuilt = self._flatten_turns(turns)
+            kept = len(turns)
+
+        with self._chat_lock:
+            self._chat_history = rebuilt
+            self._conversation_id = str(conversation_id)
+            self._trim_chat_history()
+        return {
+            "ok": True,
+            "turns": len(turns),
+            "kept": kept,
+            "compacted": bool(middle),
+            "summarized": summarized,
+            "exact": False,
+        }
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        from . import conversations as conv
+
+        conv.delete(config_mod.conversations_dir(), str(conversation_id))
+
+    def rename_conversation(self, conversation_id: str, title: str) -> None:
+        from . import conversations as conv
+
+        conv.rename(config_mod.conversations_dir(), str(conversation_id), str(title))
 
     def _trim_chat_history(self, max_messages: int = 60) -> None:
         """Bound the rolling conversation so a long-lived session doesn't grow
@@ -594,6 +802,12 @@ class InvokeMixin:
         usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         cancel = self._chat_cancels.get(chat_id) or threading.Event()
         stopped = False
+        # Provider-agnostic transcript of this turn, accumulated across iterations
+        # for the saved-conversation store (chat history). Separate from the
+        # adapter-native `history` above, which keeps raw SDK objects that don't
+        # serialise cleanly.
+        turn_assistant_parts: list[str] = []
+        turn_tools: list[dict[str, Any]] = []
 
         # Hold the conversation lock for the whole turn: it both serialises
         # concurrent sends and is the single owner of self._chat_history.
@@ -638,6 +852,10 @@ class InvokeMixin:
                 if response is not None:
                     for key, value in self._usage_from_response(response).items():
                         usage_total[key] += value
+
+                # Record this iteration's assistant prose for the saved transcript.
+                if assistant_text.strip():
+                    turn_assistant_parts.append(assistant_text.strip())
 
                 # Persisting any clean assistant text is always safe (text-only,
                 # no tool pairing); do it whenever we're about to leave the loop.
@@ -706,10 +924,25 @@ class InvokeMixin:
                         },
                     )
                     tool_results.append((tc, output))
+                    # Bounded copy for the saved transcript (the full output goes
+                    # to the model; the store keeps a readable excerpt).
+                    turn_tools.append(
+                        {"name": tc.name, "input": tc.input, "output": output[:4000]}
+                    )
 
                 history.extend(adapter.make_tool_turn(response, tool_results))
 
             self._trim_chat_history()
+            # Append this completed exchange to the saved conversation (chat
+            # history) — best-effort, gated on [chat_history] enabled. Inside the
+            # lock so _conversation_id stays consistent with the rolling history.
+            self._persist_conversation_turn(
+                message,
+                "\n\n".join(turn_assistant_parts),
+                turn_tools,
+                usage_total,
+                getattr(adapter, "model", "") or "",
+            )
 
         duration_ms = int((time.monotonic() - start) * 1000)
         if stopped:

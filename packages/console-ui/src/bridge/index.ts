@@ -355,6 +355,35 @@ export interface Schedule {
   nextRun?: string
 }
 
+export interface ConversationMeta {
+  id: string
+  title: string
+  created: string
+  updated: string
+  turn_count: number
+  preview: string
+}
+
+export interface ConversationTurn {
+  user: string
+  assistant: string
+  tools: { name: string; input: Record<string, unknown>; output: string }[]
+  usage?: Record<string, number> | null
+  model?: string
+  ts?: string
+}
+
+export interface ChatConversation {
+  id: string
+  title: string
+  created?: string
+  updated?: string
+  turn_count?: number
+  provider?: string
+  model?: string
+  turns: ConversationTurn[]
+}
+
 export interface InFlightRecord {
   id: string
   runnable: string
@@ -877,6 +906,18 @@ export interface BridgeApi {
   send_chat: (message: string, invocationId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>
   clear_chat: () => Promise<void>
+  // ── saved conversations (chat history) ────────────────────────────────────────
+  // Metadata for every saved chat, newest first (for the Conversations browser).
+  list_conversations: () => Promise<ConversationMeta[]>
+  // A saved conversation's full transcript, for rendering it read-only.
+  load_conversation: (id: string) => Promise<ChatConversation>
+  // Make a saved conversation the active rolling chat so new sends continue it
+  // (history rebuilt from the transcript as plain text; exact=false). On a long
+  // chat the middle is condensed on resume (compacted=true; summarized=true when
+  // an LLM summary was used) — the saved transcript itself is never changed.
+  resume_conversation: (id: string) => Promise<{ ok: boolean; turns?: number; kept?: number; compacted?: boolean; summarized?: boolean; exact?: boolean; error?: string }>
+  delete_conversation: (id: string) => Promise<void>
+  rename_conversation: (id: string, title: string) => Promise<void>
   // ── runbooks (user-invocable, parameterized runbooks) ─────────────────────────
   // All runbooks with their [runbook.args] parsed to ArgDef[] — feeds the `$` menu,
   // the run modal, and the Settings editor.
