@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs } from './FormsView'
+import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues } from './FormsView'
 import type { ArgDef } from '../bridge'
 
 const arg = (over: Partial<ArgDef>): ArgDef => ({ name: 'x', type: 'str', required: false, ...over })
@@ -47,6 +47,37 @@ describe('credEnvPrefix / credEnvNames', () => {
     expect(credEnvNames('CI', 'token')).toEqual(['CI_TOKEN', 'CI_PAT'])
     expect(credEnvNames('Repo', 'ssh-key')).toEqual([])
     expect(credEnvNames('', 'userpass')).toEqual([])
+  })
+})
+
+describe('initialFormValues (edit-and-rerun prefill)', () => {
+  const args: ArgDef[] = [
+    arg({ name: 'workers', type: 'int', default: 4 }),
+    arg({ name: 'mode', type: 'choice', options: ['a', 'b'], default: 'a' }),
+    arg({ name: 'verbose', type: 'flag', default: false }),
+    arg({ name: 'name', type: 'str', required: true }),
+    arg({ name: 'token', type: 'str', default: '$API_TOKEN' }),
+    arg({ name: 'password', type: 'password', required: true }),
+  ]
+
+  it('uses spec defaults with no prefill ($VAR refs left blank)', () => {
+    expect(initialFormValues(args)).toEqual({ workers: 4, mode: 'a', verbose: false })
+  })
+
+  it('overlays the previous run values onto the defaults', () => {
+    expect(initialFormValues(args, { workers: 8, mode: 'b', verbose: true, name: 'run-42' }))
+      .toEqual({ workers: 8, mode: 'b', verbose: true, name: 'run-42' })
+  })
+
+  it('drops prefill keys that are not declared args', () => {
+    const v = initialFormValues(args, { workers: 8, removed_arg: 'x' })
+    expect(v.workers).toBe(8)
+    expect('removed_arg' in v).toBe(false)
+  })
+
+  it('never pre-fills a password arg (secrets are not recorded)', () => {
+    const v = initialFormValues(args, { password: 'leaked' })
+    expect('password' in v).toBe(false)
   })
 })
 

@@ -73,6 +73,30 @@ export function bindingsForArgs(
   return out
 }
 
+// Initial run-form values: the spec defaults ($VAR refs left blank so they show
+// as placeholders), overlaid with a previous run's values for edit-and-rerun.
+// The overlay is filtered to declared args so a stale/removed key can't ride into
+// the run; a password arg is never pre-filled (secrets aren't recorded). Exported
+// for unit tests.
+export function initialFormValues(
+  args: ArgDef[],
+  prefill?: Record<string, unknown>,
+): Record<string, unknown> {
+  const values: Record<string, unknown> = {}
+  const declared = new Set(args.map(a => a.name))
+  for (const arg of args) {
+    if (arg.default !== undefined && !isVarRef(arg.default)) {
+      values[arg.name] = arg.default
+    }
+  }
+  for (const [k, v] of Object.entries(prefill ?? {})) {
+    const arg = args.find(a => a.name === k)
+    if (!declared.has(k) || arg?.type === 'password') continue
+    values[k] = v
+  }
+  return values
+}
+
 function resolveNode(root: Runnable, path: string[]): Runnable {
   let node = root
   for (const seg of path) {
@@ -366,6 +390,10 @@ interface ModalState {
   rootRunnable: Runnable
   commandPath: string[]
   currentNode: Runnable
+  // Previous run's arg values to pre-fill (edit-and-rerun from a Console card or
+  // History row). Overlaid on the spec defaults; only keys matching a declared
+  // arg are applied. Absent for a normal form open.
+  prefill?: Record<string, unknown>
 }
 
 interface RunModalProps {
@@ -404,13 +432,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
   // Reset form when the modal or node changes
   useEffect(() => {
     if (!state) return
-    const defaults: Record<string, unknown> = {}
-    for (const arg of state.currentNode.args ?? []) {
-      if (arg.default !== undefined && !isVarRef(arg.default)) {
-        defaults[arg.name] = arg.default
-      }
-    }
-    setValues(defaults)
+    setValues(initialFormValues(state.currentNode.args ?? [], state.prefill))
     setErrors({})
     setCredentialIds([])
     // All saved credentials are selectable — the runnable may read any env var
@@ -428,7 +450,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
         setCredentialIds(loadCredPrefs(runnableName).filter(id => existing.has(id)))
       })
       .catch(() => setCreds([]))
-  }, [state?.rootRunnable.name, state?.rootRunnable.host, state?.commandPath.join('/')])
+  }, [state?.rootRunnable.name, state?.rootRunnable.host, state?.commandPath.join('/'), state?.prefill])
 
   // Which of the selected credentials bind a declared arg (username/secret), so
   // the run dialog can pre-fill the username, mark the secret as supplied, and
@@ -782,6 +804,9 @@ function RunbookCard({ runbook, onClick }: { runbook: Runbook; onClick: () => vo
 export interface PendingForm {
   runnable: Runnable
   commandPath: string[]
+  // Prefill values for edit-and-rerun — opens the form populated with a previous
+  // run's choices instead of bare spec defaults.
+  prefill?: Record<string, unknown>
 }
 
 interface FormsViewProps {
@@ -812,6 +837,7 @@ export function FormsView({
       rootRunnable: pendingForm.runnable,
       commandPath: pendingForm.commandPath,
       currentNode: resolveNode(pendingForm.runnable, pendingForm.commandPath),
+      prefill: pendingForm.prefill,
     })
     onPendingFormClear?.()
   }, [pendingForm])

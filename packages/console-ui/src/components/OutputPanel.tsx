@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { Button, Input, Space, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Input, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
 import { useIsDark, textColor } from '../ThemeContext'
@@ -833,8 +833,6 @@ function BlockCard({
   onAnswerConfirm?: (approved: boolean) => void
 }) {
   const c = useCardTheme()
-  const [isEditing, setIsEditing] = useState(false)
-  const [editArgs, setEditArgs] = useState<Record<string, string>>({})
   const [collapsed, setCollapsed] = useState(false)
   const [showAll, setShowAll] = useState(false)
   const [viewRaw, setViewRaw] = useState(false)
@@ -880,15 +878,10 @@ function BlockCard({
         ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
         : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
 
-  const startEditing = () => {
-    setEditArgs(Object.fromEntries(Object.entries(args).map(([k, v]) => [k, String(v)])))
-    setIsEditing(true)
-  }
-
-  const handleEditRun = () => {
-    onRerun?.({ ...block.rerunData!, args: editArgs })
-    setIsEditing(false)
-  }
+  // Edit-and-rerun opens the Forms run dialog pre-filled with this run's values
+  // (rich typed inputs), rather than an inline plain-text arg editor. App owns the
+  // discovered-runnable lookup and form open.
+  const editInForm = () => window.dispatchEvent(new CustomEvent('runspec:edit_in_form', { detail: block.rerunData }))
 
   const logText = block.type === 'chat'
     ? [
@@ -1038,10 +1031,10 @@ function BlockCard({
         })()}
         {block.done && block.rerunData && onRerun && (
           <Fragment>
-            {hasArgs && !isEditing && (
-              <Tooltip title="Edit args and rerun">
+            {hasArgs && (
+              <Tooltip title="Edit in a form & rerun — opens the run dialog pre-filled with these values">
                 <EditOutlined
-                  onClick={startEditing}
+                  onClick={editInForm}
                   style={{ color: c.dim, cursor: 'pointer', fontSize: 13, marginLeft: 2 }}
                   onMouseEnter={e => (e.currentTarget.style.color = c.text)}
                   onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
@@ -1092,35 +1085,6 @@ function BlockCard({
       {/* Body — hidden when collapsed */}
       {!collapsed && (
         <Fragment>
-          {/* Edit args form */}
-          {isEditing && (
-            <div style={{
-              padding: '12px 14px',
-              borderBottom: `1px solid ${c.cardBorder}`,
-              background: c.rowAlt,
-            }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {Object.entries(editArgs).map(([k, v]) => (
-                  <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <Text code style={{ fontSize: 12, minWidth: 140, flexShrink: 0 }}>--{k}</Text>
-                    <Input
-                      size="small"
-                      value={v}
-                      onChange={e => setEditArgs(a => ({ ...a, [k]: e.target.value }))}
-                      style={{ maxWidth: 340, fontFamily: 'monospace', fontSize: 12 }}
-                    />
-                  </div>
-                ))}
-              </div>
-              <Space style={{ marginTop: 10 }}>
-                <Button size="small" type="primary" icon={<CaretRightOutlined />} onClick={handleEditRun}>
-                  Run with edits
-                </Button>
-                <Button size="small" onClick={() => setIsEditing(false)}>Cancel</Button>
-              </Space>
-            </div>
-          )}
-
           {/* Output body */}
           <div style={{ position: 'relative' }}>
             {hasContent && (

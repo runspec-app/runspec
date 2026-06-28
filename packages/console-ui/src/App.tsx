@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, Suspense } from 'react'
-import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover } from 'antd'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, message } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -280,6 +280,26 @@ export default function App() {
     setPendingForm({ runnable, commandPath })
     setView('forms')
   }
+
+  // Edit-and-rerun (Console card pencil / History "Edit & rerun") routes here: look
+  // up the full discovered runnable so the Forms run dialog can render its rich
+  // typed inputs — selectors, switches, path pickers — pre-filled with the
+  // previous run's values, instead of a flat plain-text arg editor.
+  useEffect(() => {
+    const onEditInForm = (e: Event) => {
+      const { host, runnable, args, commandPath = [] } =
+        (e as CustomEvent).detail as { host: string; runnable: string; args: Record<string, unknown>; commandPath?: string[] }
+      const found = runnables.find(r => r.host === host && r.name === runnable)
+      if (!found) {
+        message.warning(`Can't open a form for "${runnable}" — it isn't currently discovered on ${host}.`)
+        return
+      }
+      setPendingForm({ runnable: found, commandPath, prefill: args })
+      setView('forms')
+    }
+    window.addEventListener('runspec:edit_in_form', onEditInForm)
+    return () => window.removeEventListener('runspec:edit_in_form', onEditInForm)
+  }, [runnables])
 
   const handleSendChat = (message: string) => {
     setInputHistory(h => [...h, message])

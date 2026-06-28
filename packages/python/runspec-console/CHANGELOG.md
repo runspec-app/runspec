@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.148.0] — 2026-06-28
+
+### Changed
+- **Edit-and-rerun now opens the Forms run dialog, pre-filled.** The pencil
+  ("Edit args and rerun") on a Console transcript card and the **Edit & rerun**
+  button on a History row previously dropped an *inline plain-text editor* that
+  only listed the args that happened to be recorded — no selectors, switches,
+  range hints, or path pickers, and no way to set an arg the original run left at
+  its default. Both now route to the **Forms** tab and open that runnable's run
+  dialog with its full, rich, typed inputs (`choice` → Select, `flag` → Switch,
+  `path` → browsable picker, etc.) **pre-filled with the previous run's values**
+  — every available arg is shown for editing, not just the ones that were set.
+  The plain "Rerun with same args" action is unchanged. Wiring: cards/rows
+  dispatch a `runspec:edit_in_form` event; `App` resolves the discovered runnable
+  (warning if its host is no longer connected) and opens the form via a new
+  `prefill` field on `PendingForm`. The defaults+prefill merge is the exported,
+  unit-tested `initialFormValues` helper in `FormsView.tsx` — declared-arg
+  filtered, and a `password` arg is never pre-filled (secrets aren't recorded).
+
 ## [0.147.0] — 2026-06-28
 
 ### Added
