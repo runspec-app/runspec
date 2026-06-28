@@ -1811,6 +1811,10 @@ class TriggersMixin:
         non-empty) scopes the agent's runnable tools to that allowlist. ``record``
         logs per-tool steps to the card timeline. Returns a summary for the
         card."""
+        # Prepend the current local date so trigger/schedule agent turns resolve
+        # relative dates against the machine clock too (same helper the chat turn
+        # folds in). Schedules reach this via _invoke_scheduled_agent.
+        system = self._now_context() + "\n\n" + system
         try:
             adapter = self._get_adapter(system_override=system)
         except Exception as exc:  # noqa: BLE001 — surface, don't crash the worker

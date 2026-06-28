@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.145.0] — 2026-06-28
+
+### Fixed
+- **The agent now knows today's date.** Nothing in the agent's prompt told it
+  the current date, so it resolved relative dates ("last Friday", "the 26th")
+  from its training cutoff and got them wrong. Every agent turn — chat, trigger,
+  and schedule — now folds in a `_now_context()` block carrying the operator's
+  **local machine date** (weekday + ISO date) so relative dates resolve against
+  the real clock. Injected on the per-turn path (`_spawn_chat_turn`'s `extra`
+  for chat; the composed `system` in `_trigger_run_agent_turn` for triggers and
+  schedules) rather than the memoized adapter, so the date is always fresh. It's
+  **date-only** on purpose — the string is byte-identical across a day's turns,
+  so the model-side prompt cache keeps hitting (a per-minute clock would churn
+  it every turn).
+
 ## [0.144.0] — 2026-06-28
 
 ### Added

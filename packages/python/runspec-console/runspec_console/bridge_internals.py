@@ -797,6 +797,25 @@ class InternalsMixin:
 
     # ── event triggers ────────────────────────────────────────────────────────
 
+    def _now_context(self) -> str:
+        """A per-turn system-prompt block giving the agent the operator's current
+        local date, so it resolves relative dates ("last Friday", "yesterday")
+        against the real machine clock instead of guessing from its training
+        cutoff. Folded into every agent turn (chat, trigger, schedule).
+
+        Date-only (weekday + ISO date, no clock time) on purpose: it changes once
+        a day, so the composed system prompt stays byte-identical across a day's
+        turns and the model-side prompt cache keeps hitting (a per-minute
+        timestamp would miss the cache every turn). Local time — ``datetime.now()``
+        — because "last Friday" is the operator's local calendar."""
+        today = datetime.now()
+        return (
+            "## Current date\n"
+            f"The operator's machine date is **{today.strftime('%A, %Y-%m-%d')}** "
+            '(local time). Resolve relative dates like "last Friday", "yesterday", '
+            'or "next week" against this — do not assume any other date from training.'
+        )
+
     def _base_system(self) -> str:
         """Base system prompt for trigger agent turns: the configured assistant
         instructions if set, else a sensible default. compose_system() layers

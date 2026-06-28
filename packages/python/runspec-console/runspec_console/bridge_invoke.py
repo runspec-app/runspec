@@ -305,17 +305,23 @@ class InvokeMixin:
         def run() -> None:
             try:
                 try:
-                    # Fold the live console context (working-hours rota +
-                    # configured triggers/schedules) and the pinned-memory header
-                    # into this turn's system prompt via the one-off system_override
-                    # path, so they stay fresh without invalidating the cached
-                    # adapter. Both empty → cached adapter (and a byte-identical,
-                    # prompt-cached system prefix) for an unconfigured console.
+                    # Fold the current local date, the live console context
+                    # (working-hours rota + configured triggers/schedules) and the
+                    # pinned-memory header into this turn's system prompt via the
+                    # one-off system_override path, so they stay fresh without
+                    # invalidating the cached adapter. The date is always present,
+                    # so the override path is always taken — but it's date-only, so
+                    # the prompt stays byte-identical across a day's turns and the
+                    # model-side prompt cache still hits.
                     from . import memory
 
                     extra = "\n\n".join(
                         part
-                        for part in (self._console_context(), memory.build_header())
+                        for part in (
+                            self._now_context(),
+                            self._console_context(),
+                            memory.build_header(),
+                        )
                         if part
                     )
                     adapter = (
