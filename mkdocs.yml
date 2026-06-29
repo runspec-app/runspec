@@ -63,6 +63,8 @@ exclude_docs: |
   releasing.md
   console-ssh-capacity.md
   changelog.md
+  security-assessment.md
+  security-assessment-exec-brief.md
 
 # Catch a published page that links to an excluded or missing page, so an
 # internal doc can never leak into the public site via a stray link.
