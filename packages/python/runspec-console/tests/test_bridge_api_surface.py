@@ -31,6 +31,7 @@ EXPECTED = {
     "close_window",
     "config_dir",
     "copy_ssh_id",
+    "copy_ssh_id_all",
     "create_schedule",
     "credentials_backend",
     "credentials_for_runnable",

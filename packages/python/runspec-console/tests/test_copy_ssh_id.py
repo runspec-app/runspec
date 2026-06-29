@@ -108,6 +108,7 @@ class _StubBridge:
     _local_host_entry = Bridge._local_host_entry
     _host_entry = Bridge._host_entry
     _public_key_for = Bridge._public_key_for
+    _push_key_over_password = Bridge._push_key_over_password
     copy_ssh_id = Bridge.copy_ssh_id
 
 

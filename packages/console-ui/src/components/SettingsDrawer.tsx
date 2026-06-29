@@ -3,6 +3,7 @@ import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, S
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
+import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames } from '../views/FormsView'
 
@@ -448,6 +449,7 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
   const [keyCreatedAt, setKeyCreatedAt] = useState<string | null>(null)
   const [configDir, setConfigDir] = useState<string>('')
   const [rotationResult, setRotationResult] = useState<{ committed: boolean; perHost: RotateHostResult[]; publicKey: string } | null>(null)
+  const [copyAllOpen, setCopyAllOpen] = useState(false)
 
   const loadConfig = () => {
     bridge.get_config().then(cfg => {
@@ -816,6 +818,18 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
             </Button>
           </Popconfirm>
         )}
+        {keyPath && allRemoteHosts.length > 0 && (
+          <Tooltip title="Authorize this machine on every host at once over a one-off password — for bootstrapping a freshly synced fleet">
+            <Button
+              size="small"
+              icon={<KeyOutlined />}
+              disabled={generating}
+              onClick={() => setCopyAllOpen(true)}
+            >
+              Copy key to all hosts…
+            </Button>
+          </Tooltip>
+        )}
       </Space>
 
       {/* Per-host rotation results */}
@@ -930,6 +944,13 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
         Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
       </Text>
+
+      <CopyKeyAllModal
+        open={copyAllOpen}
+        hosts={allRemoteHosts.map(name => ({ name, connected: connectedHosts.includes(name) }))}
+        onClose={() => setCopyAllOpen(false)}
+        onDone={() => onKeyChanged?.()}
+      />
     </Form>
   )
 }

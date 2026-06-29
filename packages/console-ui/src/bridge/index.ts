@@ -1009,6 +1009,7 @@ export interface BridgeApi {
   rotate_ssh_key: () => Promise<{ ok: boolean; committed: boolean; public_key: string; key_path: string; per_host: RotateHostResult[]; message: string }>
   get_public_key: () => Promise<{ ok: boolean; public_key: string; message: string }>
   copy_ssh_id: (host: string, password: string) => Promise<{ ok: boolean; connected: boolean; message: string }>
+  copy_ssh_id_all: (password: string, targets?: string[]) => Promise<{ ok: boolean; per_host: { host: string; ok: boolean; connected: boolean; error: string }[]; message: string }>
   puttygen_path: () => Promise<string>
   launch_puttygen: () => Promise<void>
   open_putty_url: (url: string) => Promise<void>

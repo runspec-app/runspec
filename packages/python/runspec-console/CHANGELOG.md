@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.149.0] — 2026-06-29
+
+### Added
+- **Copy SSH public key to all hosts at once.** A new **Copy key to all hosts…**
+  button in Settings → SSH (the SSH key section, beside Generate / Rotate) opens
+  a dialog that authorises this machine on every selected remote host over a
+  one-off password connection — the bulk equivalent of the per-host *Copy SSH
+  public key* action (left sidebar right-click, Jump Hosts row icon). Built for
+  initial fleet bootstrap: when hosts arrive from a Config-Sync pull none of them
+  trust our key yet, so they all show disconnected and each would otherwise need
+  the single-host dialog one at a time. The disconnected hosts are pre-selected
+  (the ones still missing the key); one password is tried against every target
+  (the common shared-bootstrap-credential case) and per-host results report which
+  succeeded so the operator can retry the rest individually. The password is used
+  only for these connections — never stored, cached, or logged. New bridge method
+  `copy_ssh_id_all(password, targets=None)` (omit `targets` ⇒ every remote host
+  not already connected), reusing the same idempotent `grep -qF || append` push
+  and `[ssh]` proxy / host-key handling as `copy_ssh_id`; the single-host push is
+  refactored into a shared `_push_key_over_password` helper. UI: `CopyKeyAllModal`.
+
+
 ## [0.148.0] — 2026-06-28
 
 ### Changed

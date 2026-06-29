@@ -374,6 +374,79 @@ class ConfigSshMixin:
         idf = (cfg.get("ssh") or {}).get("identityFile", "")
         return self._public_key_for(idf)
 
+    def _push_key_over_password(
+        self, entry: dict[str, Any], password: str, global_ssh: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Append this machine's public key to one host's ``authorized_keys`` over
+        a one-off password connection. Returns ``{ok, error}`` — it does **not**
+        re-probe connectivity or dispatch events, so a bulk caller can batch those
+        once at the end. Shared by ``copy_ssh_id`` (single host) and
+        ``copy_ssh_id_all`` (fleet bootstrap).
+
+        Pushes the host's *effective* key — a per-host ``identityFile`` overrides
+        the global one, matching how ``_check_connected`` / ``_make_ssh_client``
+        pick the key the host's own key-auth sessions will use. Pushing the wrong
+        key would leave the host red even after a "successful" copy.
+        """
+        effective_idf = entry.get("identityFile") or global_ssh.get("identityFile", "")
+        key_res = self._public_key_for(effective_idf)
+        if not key_res["ok"]:
+            # No key at all → point the user at Generate key (we never auto-create
+            # one here; a surprise key could orphan keys other hosts authorize).
+            error = (
+                "No SSH key configured — generate one first, then copy it."
+                if not effective_idf
+                else key_res["message"]
+            )
+            return {"ok": False, "error": error}
+        public_key = key_res["public_key"]
+
+        # Same idempotent push the key-rotation path uses (grep -qF || append).
+        # public_key is single-quote-wrapped; an OpenSSH key contains no quotes.
+        push_cmd = (
+            f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+            f"touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
+            f"grep -qF '{public_key}' ~/.ssh/authorized_keys || "
+            f"printf '%s\\n' '{public_key}' >> ~/.ssh/authorized_keys"
+        )
+
+        import paramiko
+
+        from .executor import _make_ssh_client, friendly_ssh_error
+
+        # Connect with the password via the shared client builder so this goes
+        # through the same [ssh] proxy / host-key / ssh_config handling as every
+        # other connection — essential when the whole fleet sits behind an HTTP
+        # CONNECT proxy. Password auth disables agent/key fallback internally.
+        try:
+            client = _make_ssh_client(entry["ssh"], None, global_ssh, password=password)
+        except paramiko.AuthenticationException:
+            return {"ok": False, "error": "Authentication failed — check the password."}
+        except paramiko.BadHostKeyException:
+            return {
+                "ok": False,
+                "error": "Remote host key changed — refusing to connect.",
+            }
+        except Exception as exc:  # noqa: BLE001 — surface a friendly one-liner
+            return {"ok": False, "error": friendly_ssh_error(exc)}
+
+        try:
+            _stdin, stdout, stderr = client.exec_command(push_cmd)
+            exit_code = stdout.channel.recv_exit_status()
+            err = stderr.read().decode(errors="replace")
+        finally:
+            client.close()
+
+        if exit_code != 0:
+            return {
+                "ok": False,
+                "error": (
+                    "Could not update authorized_keys: "
+                    f"{err.strip() or f'exit {exit_code}'}"
+                ),
+            }
+        return {"ok": True, "error": ""}
+
     def copy_ssh_id(self, host_name: str, password: str) -> dict[str, Any]:
         """Copy this machine's public key to a host's ``authorized_keys`` over a
         one-off password connection — the in-app equivalent of ``ssh-copy-id``.
@@ -399,74 +472,10 @@ class ConfigSshMixin:
                 "message": "Password required to copy the key.",
             }
 
-        # Push the host's *effective* key — a per-host identityFile overrides the
-        # global one, matching how _check_connected / _make_ssh_client pick the
-        # key the host's own key-auth sessions will use. Pushing the wrong key
-        # would leave the host red even after a "successful" copy.
         global_ssh = self.get_config().get("ssh") or {}
-        effective_idf = entry.get("identityFile") or global_ssh.get("identityFile", "")
-        key_res = self._public_key_for(effective_idf)
-        if not key_res["ok"]:
-            # No key at all → point the user at Generate key (we never auto-create
-            # one here; a surprise key could orphan keys other hosts authorize).
-            message = (
-                "No SSH key configured — generate one first, then copy it."
-                if not effective_idf
-                else key_res["message"]
-            )
-            return {"ok": False, "connected": False, "message": message}
-        public_key = key_res["public_key"]
-
-        # Same idempotent push the key-rotation path uses (grep -qF || append).
-        # public_key is single-quote-wrapped; an OpenSSH key contains no quotes.
-        push_cmd = (
-            f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-            f"touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
-            f"grep -qF '{public_key}' ~/.ssh/authorized_keys || "
-            f"printf '%s\\n' '{public_key}' >> ~/.ssh/authorized_keys"
-        )
-
-        import paramiko
-
-        from .executor import _make_ssh_client, friendly_ssh_error
-
-        # Connect with the password via the shared client builder so this goes
-        # through the same [ssh] proxy / host-key / ssh_config handling as every
-        # other connection — essential when the whole fleet sits behind an HTTP
-        # CONNECT proxy. Password auth disables agent/key fallback internally.
-        try:
-            client = _make_ssh_client(entry["ssh"], None, global_ssh, password=password)
-        except paramiko.AuthenticationException:
-            return {
-                "ok": False,
-                "connected": False,
-                "message": "Authentication failed — check the password.",
-            }
-        except paramiko.BadHostKeyException:
-            return {
-                "ok": False,
-                "connected": False,
-                "message": "Remote host key changed — refusing to connect.",
-            }
-        except Exception as exc:  # noqa: BLE001 — surface a friendly one-liner
-            return {"ok": False, "connected": False, "message": friendly_ssh_error(exc)}
-
-        try:
-            _stdin, stdout, stderr = client.exec_command(push_cmd)
-            exit_code = stdout.channel.recv_exit_status()
-            err = stderr.read().decode(errors="replace")
-        finally:
-            client.close()
-
-        if exit_code != 0:
-            return {
-                "ok": False,
-                "connected": False,
-                "message": (
-                    "Could not update authorized_keys: "
-                    f"{err.strip() or f'exit {exit_code}'}"
-                ),
-            }
+        res = self._push_key_over_password(entry, password, global_ssh)
+        if not res["ok"]:
+            return {"ok": False, "connected": False, "message": res["error"]}
 
         # Re-probe just this host so we can report the result now and flip the
         # dot immediately; a background full cycle refreshes its runnables too.
@@ -484,6 +493,96 @@ class ConfigSshMixin:
                 else "Public key copied — verifying connection…"
             ),
         }
+
+    def copy_ssh_id_all(
+        self, password: str, targets: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Bulk ``ssh-copy-id``: authorise this machine on every selected remote
+        host over a one-off password connection.
+
+        Built for initial fleet bootstrap — when hosts arrive from a Config-Sync
+        pull none of them trust our key yet, so they all show disconnected and
+        each would otherwise need the single-host dialog one at a time. One
+        password is tried against every target (the common shared-bootstrap-
+        credential case); the per-host results report which succeeded so the
+        operator can retry the rest individually. The password is used only for
+        these connections — never stored, cached, or logged.
+
+        ``targets`` selects host names; omit it to target every configured remote
+        host that isn't already connected (i.e. the ones still missing the key).
+        Pushes happen sequentially, then connectivity is re-probed per host and a
+        single ``hosts_updated`` event + refresh cycle flips the sidebar at the
+        end.
+        """
+        if not (password or "").strip():
+            return {
+                "ok": False,
+                "per_host": [],
+                "message": "Password required to copy the key.",
+            }
+
+        self._reload_hosts()
+        global_ssh = self.get_config().get("ssh") or {}
+
+        # Snapshot connectivity once (same source as the green dot) to pick the
+        # default target set without holding the lock across the slow SSH loop.
+        with self._lock:
+            connected_snapshot = dict(self._connected_cache)
+
+        remote = [h for h in self._hosts if h.get("ssh")]
+        by_name = {h.get("name"): h for h in remote}
+        if targets:
+            names = [n for n in targets if n in by_name]
+        else:
+            names = [
+                h.get("name")
+                for h in remote
+                if not connected_snapshot.get(h.get("name"), False)
+            ]
+
+        if not names:
+            return {
+                "ok": False,
+                "per_host": [],
+                "message": "No matching remote hosts to copy the key to.",
+            }
+
+        per_host: list[dict[str, Any]] = []
+        for name in names:
+            entry = by_name[name]
+            res = self._push_key_over_password(entry, password, global_ssh)
+            if res["ok"]:
+                connected = self._check_connected(entry)
+                with self._lock:
+                    self._connected_cache[name] = connected
+                per_host.append(
+                    {"host": name, "ok": True, "connected": connected, "error": ""}
+                )
+            else:
+                per_host.append(
+                    {
+                        "host": name,
+                        "ok": False,
+                        "connected": False,
+                        "error": res["error"],
+                    }
+                )
+
+        self._dispatch("runspec:hosts_updated", {})
+        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+
+        ok_n = sum(1 for h in per_host if h["ok"])
+        fail_n = len(per_host) - ok_n
+        if ok_n and not fail_n:
+            message = f"Public key copied to all {ok_n} host(s)."
+        elif ok_n:
+            message = (
+                f"Public key copied to {ok_n} of {len(per_host)} host(s) "
+                f"— {fail_n} failed."
+            )
+        else:
+            message = f"Could not copy the key to any of the {len(per_host)} host(s)."
+        return {"ok": ok_n > 0, "per_host": per_host, "message": message}
 
     def rotate_ssh_key(self) -> dict[str, Any]:
         """Safely rotate the SSH key: generate new, push to all remote hosts using the

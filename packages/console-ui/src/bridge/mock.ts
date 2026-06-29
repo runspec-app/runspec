@@ -1006,6 +1006,23 @@ export const mockApi: BridgeApi = {
     return { ok: true, connected: true, message: `Public key copied — ${host} is now connected.` }
   },
 
+  copy_ssh_id_all: async (_password: string, targets?: string[]) => {
+    await new Promise(r => setTimeout(r, 1000))
+    const names = targets && targets.length ? targets : ['prod-1', 'prod-2']
+    const per_host = names.map((host, i) => i === names.length - 1 && names.length > 1
+      ? { host, ok: false, connected: false, error: 'Authentication failed — check the password.' }
+      : { host, ok: true, connected: true, error: '' })
+    const okN = per_host.filter(h => h.ok).length
+    const failN = per_host.length - okN
+    return {
+      ok: okN > 0,
+      per_host,
+      message: failN === 0
+        ? `Public key copied to all ${okN} host(s).`
+        : `Public key copied to ${okN} of ${per_host.length} host(s) — ${failN} failed.`,
+    }
+  },
+
   generate_ssh_key: async () => {
     await new Promise(r => setTimeout(r, 600))
     MOCK_KEY_CREATED_AT = new Date().toISOString()
