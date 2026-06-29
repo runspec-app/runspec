@@ -8,6 +8,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.152.0] — 2026-06-29
+
+### Added
+
+- **Package config seed — bundle a baseline config inside the deployment package.**
+  A white-label / corporate distribution that wraps the console can ship a baseline
+  config as package data, applied on launch so a fresh or **air-gapped** install is
+  configured with **no git host and no PyPI index reachable at run time** — the
+  floor for a disaster-recovery scenario. It's built on the existing Config Sync
+  merge engine (the seed is a new *source* feeding the same fold/merge pipeline a
+  git pull uses), and is the **lowest** config layer: a git pull above and the
+  operator's own edits always win, with `preserve` keys pinned local.
+  - **Discovery (`configseed.py`).** A contributor declares an entry point in group
+    `runspec_console.config_seed` pointing at a package that holds a `config_seed/`
+    data directory of config TOMLs (filenames in Config Sync's `KNOWN_FILES`).
+    `discover()` collects them into the `{name: bytes}` + `{dist: version}` shape
+    the apply pipeline consumes, folding multiple contributors low→high by sorted
+    distribution name. Best-effort — a broken contributor is skipped, never fatal.
+  - **Re-assert on upgrade.** `Bridge.seed_apply()` runs on bring-up and compares
+    the bundled `{dist: version}` stamp against a **machine-local**
+    `runspec_seed_state.toml` (never synced); equal ⇒ a pure no-op, changed ⇒ the
+    seed re-folds onto local config so a **package upgrade rolls the baseline
+    forward**. A seed may carry `[config_sync]` to bootstrap the live git layer;
+    the machine-local `last_*` run-state is preserved.
+  - **Secrets are never seeded** — the package delivers metadata and structure
+    only (same contract as Config Sync); secret bootstrap stays in the keyring.
+  - **Settings → Config Sync → Config seed.** A read-only status line ("Bundled:
+    `<dist> v<ver>`", last-applied time, an "update pending" hint) and a **Re-apply
+    seed** button (`seed_apply(force=true)`). New bridge methods `seed_status` /
+    `seed_apply`.
+  - Internals: `_apply_config_layers` was extracted from `sync_pull` as the shared,
+    source-agnostic apply half (validate → merge → hot-reload). See
+    `docs/design/config-seed.md`.
+
 ## [0.151.0] — 2026-06-29
 
 ### Changed

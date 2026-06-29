@@ -202,6 +202,15 @@ class Bridge(
         # break is naturally transient (lost on restart, which is fine).
         self._break_until: datetime | None = None
         self._install_ssh_log_forwarder()
+        # Apply any baseline config bundled in the deployment package before the
+        # first load, so a fresh / air-gapped install is configured with no git
+        # host or PyPI index reachable. A no-op unless the seed's version changed
+        # (re-assert-on-upgrade); never fatal — a broken seed must not stop the
+        # console starting. See docs/design/config-seed.md.
+        try:
+            self.seed_apply()
+        except Exception:
+            logger.warning("config seed apply at startup failed", exc_info=True)
         self._reload_hosts()
         self._reload_filters()
         self._reload_credentials()

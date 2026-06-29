@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,16 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
+
+
+# A package config seed may carry [config_sync] to bootstrap the live layer, but
+# must not clobber the machine-local run-state a git pull stamps. These paths are
+# pinned to the local value during a seed apply (on top of DEFAULT_PRESERVE).
+_SEED_PRESERVE: tuple[str, ...] = (
+    "config.toml:config_sync.last_ref",
+    "config.toml:config_sync.last_commit",
+    "config.toml:config_sync.last_synced",
+)
 
 
 class FleetMixin:
@@ -963,6 +974,70 @@ class FleetMixin:
                 "error": f"none of the configured files were found at {ref} in the repo",
             }
 
+        preserve = configmerge.parse_preserve(
+            [*configmerge.DEFAULT_PRESERVE, *(sync.get("preserve") or [])]
+        )
+
+        def _stamp() -> None:
+            # Re-inject the local [config_sync] into the freshly-written config.toml
+            # (so the repo pointer survives the overwrite) and stamp last_*. Runs
+            # after the merge, before the hot-reload, so _after_config_change sees
+            # the final config.
+            sync["last_ref"] = ref
+            sync["last_commit"] = result.commit
+            sync["last_synced"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            write_sync(sync)
+
+        applied = self._apply_config_layers(
+            safe,
+            fetched_layers,
+            preserve=preserve,
+            backups_keep=backups_keep_value(sync),
+            post_merge=_stamp,
+        )
+        if not applied.get("ok"):
+            return applied
+        return {
+            "ok": True,
+            "ref": ref,
+            "commit": result.commit,
+            "written": applied["written"],
+            "skipped": applied["skipped"],
+            "backups": applied["backups"],
+            "pruned": applied["pruned"],
+        }
+
+    def _apply_config_layers(
+        self,
+        requested: list[str],
+        fetched_layers: dict[str, list[bytes]],
+        *,
+        preserve: dict[str, list[list[str]]],
+        backups_keep: int,
+        post_merge: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        """Validate, merge, and hot-reload a set of already-fetched config files.
+
+        The **source-agnostic** half of a config update, shared by the git
+        ``sync_pull`` and (S2+) the package ``seed_apply``. ``fetched_layers``
+        maps each file name to its parsed layers' raw bytes (low→high);
+        ``requested`` is the ordered name list, so a name with no bytes is
+        reported as ``skipped``.
+
+        Validates every ``.toml`` before touching disk (a broken file writes
+        nothing). Per file: snapshots the prior file, folds its layers, merges
+        the effective table into local config non-destructively (collections by
+        identity, mappings by deep-overlay, ``preserve`` pinning machine-local
+        keys), keeps the backup only if the merge changed the file, and prunes
+        to ``backups_keep``. ``post_merge`` — caller-specific stamping that must
+        land before the reload — runs after the loop; then the running app
+        hot-reloads (hosts / filters / credentials / SSH / triggers) so no
+        restart is needed.
+
+        Returns ``{ok: True, written, skipped, backups, pruned}`` or, on a
+        validation failure, ``{ok: False, error}`` (nothing written)."""
+        from . import configmerge
+
         # Validate-before-replace: any unparseable TOML in any layer aborts it all.
         for name, datas in fetched_layers.items():
             if not name.endswith(".toml"):
@@ -973,12 +1048,9 @@ class FleetMixin:
                 except Exception as exc:  # noqa: BLE001
                     return {
                         "ok": False,
-                        "error": f"{name} at {ref} is not valid TOML — nothing was written: {exc}",
+                        "error": f"{name} is not valid TOML — nothing was written: {exc}",
                     }
 
-        preserve = configmerge.parse_preserve(
-            [*configmerge.DEFAULT_PRESERVE, *(sync.get("preserve") or [])]
-        )
         # Files the merge engine understands; anything else is written verbatim.
         mergeable = {
             "config.toml",
@@ -989,21 +1061,20 @@ class FleetMixin:
         old_cfg = self.get_config()
         app = config_mod.app_dir()
         ts = time.strftime("%Y%m%d-%H%M%S")
-        keep = backups_keep_value(sync)
         written: list[str] = []
         skipped: list[str] = []
         backups: list[str] = []
         pruned: list[str] = []
 
-        for name in safe:
+        for name in requested:
             datas = fetched_layers.get(name)
             if not datas:
                 skipped.append(name)
                 continue
             dest = app / name
             # Snapshot the prior file before the merge overwrites it, then keep the
-            # backup only if the pull actually changed the file (a re-pull at the
-            # same ref is a no-op and should leave no backup behind).
+            # backup only if the apply actually changed the file (a re-apply of the
+            # same content is a no-op and should leave no backup behind).
             backup: Path | None = None
             if dest.exists():
                 backup = dest.with_name(f"{name}.bak-{ts}")
@@ -1012,7 +1083,7 @@ class FleetMixin:
                 except Exception:
                     backup = None
                     logger.warning(
-                        "could not back up %s before pull", name, exc_info=True
+                        "could not back up %s before apply", name, exc_info=True
                     )
             if name in mergeable:
                 parsed_layers = [tomllib.loads(d.decode("utf-8")) for d in datas]
@@ -1032,14 +1103,10 @@ class FleetMixin:
                     backup.unlink(missing_ok=True)
                 else:
                     backups.append(backup.name)
-            pruned.extend(self._prune_backups(app, name, keep))
+            pruned.extend(self._prune_backups(app, name, backups_keep))
 
-        # Re-inject the local [config_sync] into the freshly-written config.toml
-        # (so the repo pointer survives the overwrite) and stamp last_*.
-        sync["last_ref"] = ref
-        sync["last_commit"] = result.commit
-        sync["last_synced"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        write_sync(sync)
+        if post_merge is not None:
+            post_merge()
 
         # Hot-reload so the running app picks up the new config without a restart.
         self._reload_hosts()
@@ -1049,19 +1116,118 @@ class FleetMixin:
         try:
             self.restart_triggers()
         except Exception:
-            logger.debug("restart_triggers after sync_pull failed", exc_info=True)
+            logger.debug("restart_triggers after config apply failed", exc_info=True)
         # Nudge the UI to re-read the merged runbooks (refreshes the `$` menu).
         if "runspec_runbooks.toml" in written:
             self._dispatch("runspec:runbooks_changed", {})
 
         return {
             "ok": True,
-            "ref": ref,
-            "commit": result.commit,
             "written": written,
             "skipped": skipped,
             "backups": backups,
             "pruned": pruned,
+        }
+
+    def seed_apply(self, force: bool = False) -> dict[str, Any]:
+        """Apply the baseline config bundled in the deployment package.
+
+        Discovers seed config contributed by installed distributions
+        (``runspec_console.config_seed`` entry points) and — when its
+        ``{dist: version}`` stamp differs from the machine-local record, or
+        ``force`` — folds it onto local config through the **same**
+        non-destructive merge a git pull uses (``_apply_config_layers``).
+        **Re-assert-on-upgrade:** a package upgrade rolls the baseline forward;
+        between upgrades the stamp is unchanged and this is a pure no-op (nothing
+        written, no backups). The seed is the **lowest** config layer — a later
+        git pull and the operator's own edits top up over it, with ``preserve``
+        and local-only entries winning. A seed may carry ``[config_sync]`` to
+        bootstrap the live layer, but the machine-local ``last_*`` run-state is
+        preserved (see ``_SEED_PRESERVE``).
+
+        Secrets are never carried in the package (same contract as Config Sync) —
+        the seed delivers metadata and structure only.
+
+        Returns ``{ok: True, applied: bool, ...}`` or ``{ok: False, error}``;
+        ``applied`` is False (with a ``reason``) when nothing is bundled or the
+        stamp is unchanged."""
+        from . import configmerge, configseed, gitsync
+
+        try:
+            fetched_layers, stamp = configseed.discover()
+        except Exception as exc:  # noqa: BLE001 - discovery must never be fatal
+            return {"ok": False, "error": f"seed discovery failed: {exc}"}
+        if not fetched_layers:
+            return {"ok": True, "applied": False, "reason": "no seed bundled"}
+
+        stored = config_mod.read_seed_state().get("applied", {})
+        if not force and stamp == stored:
+            return {"ok": True, "applied": False, "reason": "unchanged", "stamp": stamp}
+
+        # KNOWN_FILES order for a stable per-file apply sequence.
+        requested = [n for n in gitsync.KNOWN_FILES if n in fetched_layers]
+        preserve = configmerge.parse_preserve(
+            [
+                *configmerge.DEFAULT_PRESERVE,
+                *_SEED_PRESERVE,
+                *(self.get_config().get("config_sync", {}).get("preserve") or []),
+            ]
+        )
+
+        def _stamp() -> None:
+            # Record what we just applied so the next boot is a no-op until the
+            # package version changes again.
+            config_mod.write_seed_state(
+                {
+                    "applied": stamp,
+                    "last_applied": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+            )
+
+        applied = self._apply_config_layers(
+            requested,
+            fetched_layers,
+            preserve=preserve,
+            backups_keep=backups_keep_value(read_sync()),
+            post_merge=_stamp,
+        )
+        if not applied.get("ok"):
+            return applied
+        return {
+            "ok": True,
+            "applied": True,
+            "stamp": stamp,
+            "written": applied["written"],
+            "skipped": applied["skipped"],
+            "backups": applied["backups"],
+            "pruned": applied["pruned"],
+        }
+
+    def seed_status(self) -> dict[str, Any]:
+        """Read-only status of the package config seed, for the Settings UI.
+
+        Returns the discovered ``{dist: version}`` stamp (what the installed
+        package bundles now), the machine-local applied stamp + timestamp (what
+        was last applied here), whether any seed is bundled at all, and whether
+        the bundled version differs from the applied one (a re-assert is
+        ``pending`` — e.g. just after a package upgrade, before the next
+        launch). Never raises."""
+        from . import configseed
+
+        try:
+            _fetched, stamp = configseed.discover()
+        except Exception:  # noqa: BLE001 - status must never be fatal
+            stamp = {}
+        state = config_mod.read_seed_state()
+        applied = state.get("applied", {})
+        if not isinstance(applied, dict):
+            applied = {}
+        return {
+            "available": bool(stamp),
+            "stamp": stamp,
+            "applied": applied,
+            "last_applied": str(state.get("last_applied", "")),
+            "pending": bool(stamp) and stamp != applied,
         }
 
     def _prune_backups(self, app: Path, name: str, keep: int) -> list[str]:

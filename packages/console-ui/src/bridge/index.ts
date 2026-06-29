@@ -170,6 +170,30 @@ export interface SyncPullResult {
   error?: string
 }
 
+// Settings → Config Sync → Config seed. Read-only status of the baseline config
+// bundled inside the deployment package. `stamp`/`applied` map distribution name
+// → version; `pending` is true when what's bundled differs from what's applied
+// (a re-assert will run on next launch, or via the Re-apply button now).
+export interface SeedStatus {
+  available: boolean
+  stamp: Record<string, string>
+  applied: Record<string, string>
+  last_applied: string
+  pending: boolean
+}
+
+export interface SeedApplyResult {
+  ok: boolean
+  applied?: boolean
+  reason?: string
+  stamp?: Record<string, string>
+  written?: string[]
+  skipped?: string[]
+  backups?: string[]
+  pruned?: string[]
+  error?: string
+}
+
 // Settings → Config Sync → Runbook docs. Where the deterministic runbook wiki is
 // written (blank = the `default`, app_dir()/docs).
 export interface DocsConfig {
@@ -880,6 +904,11 @@ export interface BridgeApi {
   save_sync_config: (data: Partial<SyncConfig>) => Promise<void>
   list_sync_tags: () => Promise<{ tags?: string[]; error?: string }>
   sync_pull: () => Promise<SyncPullResult>
+  // Package config seed (Settings → Config Sync): baseline config bundled inside
+  // the deployment package, applied on launch when its version changed. Read-only
+  // status, and a force re-apply button.
+  seed_status: () => Promise<SeedStatus>
+  seed_apply: (force?: boolean) => Promise<SeedApplyResult>
   // Runbook docs: a deterministic markdown wiki generated from the local runbooks
   // + fleet, for humans to follow during an outage. get/save the output dir and
   // (re)generate the files.

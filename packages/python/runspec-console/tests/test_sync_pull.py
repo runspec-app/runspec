@@ -80,6 +80,7 @@ class _SyncBridge:
     """Borrows the real pull machinery; stubs the app-lifecycle reactions."""
 
     sync_pull = Bridge.sync_pull
+    _apply_config_layers = Bridge._apply_config_layers
     _atomic_write_bytes = Bridge._atomic_write_bytes
     _merge_synced_file = Bridge._merge_synced_file
     _merge_synced_triggers = Bridge._merge_synced_triggers

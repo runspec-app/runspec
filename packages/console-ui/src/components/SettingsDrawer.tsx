@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedApplyResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -2594,6 +2594,9 @@ function ConfigSyncTab() {
   const [docsDefault, setDocsDefault] = useState('')
   const [docsBusy, setDocsBusy] = useState(false)
   const [docsResult, setDocsResult] = useState<{ ok: boolean; dir?: string; written?: string[]; error?: string } | null>(null)
+  const [seed, setSeed] = useState<SeedStatus | null>(null)
+  const [seedBusy, setSeedBusy] = useState(false)
+  const [seedResult, setSeedResult] = useState<SeedApplyResult | null>(null)
 
   const load = useCallback(() => {
     bridge.get_sync_config().then(c => {
@@ -2664,6 +2667,22 @@ function ConfigSyncTab() {
       else message.error(r.error || 'Pull failed')
       load()
     } finally { setPulling(false) }
+  }
+
+  // Package config seed: read-only status of what the deployment package bundles.
+  const loadSeed = useCallback(() => { bridge.seed_status().then(setSeed) }, [])
+  useEffect(() => { loadSeed() }, [loadSeed])
+
+  const reapplySeed = async () => {
+    setSeedBusy(true); setSeedResult(null)
+    try {
+      const r = await bridge.seed_apply(true)
+      setSeedResult(r)
+      if (!r.ok) message.error(r.error || 'Seed apply failed')
+      else if (r.applied) message.success(`Applied seed (${r.written?.length ?? 0} file(s))`)
+      else message.info('Seed already up to date')
+      loadSeed()
+    } finally { setSeedBusy(false) }
   }
 
   // Runbook docs: load the configured output dir + the default it falls back to.
@@ -2791,6 +2810,54 @@ function ConfigSyncTab() {
       )}
       {result && !result.ok && (
         <Alert type="error" showIcon style={{ marginTop: 12 }} message="Pull failed" description={<span style={{ fontSize: 12 }}>{result.error}</span>} />
+      )}
+
+      <Divider style={{ margin: '18px 0 12px' }} />
+      <Text strong style={{ fontSize: 13, display: 'block' }}>Config seed</Text>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', margin: '4px 0 10px' }}>
+        Baseline config <strong>bundled inside this install's package</strong> — applied automatically on launch when the package version changes, so a fresh or air-gapped machine is configured with no repo or index reachable. It's the lowest layer: a git pull above and your own edits always win (except the keys you protect above).
+      </Text>
+      {seed?.available ? (
+        <>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+            Bundled: {Object.entries(seed.stamp).map(([d, v]) => <code key={d} style={{ marginRight: 6 }}>{d} v{v}</code>)}
+          </Text>
+          {seed.last_applied && (
+            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+              Last applied at {seed.last_applied}
+            </Text>
+          )}
+          {seed.pending && (
+            <Alert type="info" showIcon style={{ marginTop: 8 }}
+              message="A newer seed is bundled"
+              description={<span style={{ fontSize: 12 }}>It applies automatically on the next launch — or re-apply it now.</span>} />
+          )}
+          <div style={{ marginTop: 10 }}>
+            <Popconfirm
+              title="Re-apply the bundled config seed?"
+              description={<span style={{ fontSize: 12 }}>Re-asserts the package's baseline over local config (your own entries and protected keys are kept).<br />Each changed file is backed up first.</span>}
+              onConfirm={reapplySeed} okText="Re-apply" cancelText="Cancel" placement="topLeft">
+              <Button size="small" loading={seedBusy}>Re-apply seed</Button>
+            </Popconfirm>
+          </div>
+          {seedResult && seedResult.ok && seedResult.applied && (
+            <Alert type="success" showIcon style={{ marginTop: 10 }}
+              message="Seed applied"
+              description={<span style={{ fontSize: 12 }}>
+                Wrote: {seedResult.written?.length ? <code>{seedResult.written.join(', ')}</code> : 'nothing'}.
+                {seedResult.backups?.length ? <> Backed up {seedResult.backups.length} file(s).</> : null}
+                {' '}Hosts and triggers reloaded — no restart needed.
+              </span>} />
+          )}
+          {seedResult && seedResult.ok && !seedResult.applied && (
+            <Alert type="info" showIcon style={{ marginTop: 10 }} message="Seed already up to date" description={<span style={{ fontSize: 12 }}>Nothing changed.</span>} />
+          )}
+          {seedResult && !seedResult.ok && (
+            <Alert type="error" showIcon style={{ marginTop: 10 }} message="Seed apply failed" description={<span style={{ fontSize: 12 }}>{seedResult.error}</span>} />
+          )}
+        </>
+      ) : (
+        <Text type="secondary" style={{ fontSize: 12 }}>No config seed bundled in this install.</Text>
       )}
 
       <Divider style={{ margin: '18px 0 12px' }} />

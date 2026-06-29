@@ -76,6 +76,16 @@ def active_profile_path() -> Path:
     return app_dir() / "runspec_active_profile.toml"
 
 
+def seed_state_path() -> Path:
+    """Machine-local record of the package config-seed last applied
+    (`runspec_seed_state.toml`) — the `{distribution: version}` stamp the seed
+    apply compares against to stay idempotent (a changed version re-asserts).
+    Depends on what's installed on *this* machine, so it is **never** synced (not
+    in Config Sync's KNOWN_FILES), like the active-profile pointer and repo
+    checkout paths. See `docs/design/config-seed.md`."""
+    return app_dir() / "runspec_seed_state.toml"
+
+
 def filters_path() -> Path:
     return app_dir() / "runspec_filters.toml"
 
@@ -639,6 +649,41 @@ def write_sync(sync: dict[str, Any]) -> None:
             cfg.pop("config_sync", None)
 
     update_config(mutate)
+
+
+def read_seed_state() -> dict[str, Any]:
+    """The machine-local package-seed state (`runspec_seed_state.toml`), or `{}`.
+
+    Shape::
+
+        [seed]
+        applied = { "mycorp-console" = "1.4.0" }   # {dist: version} last applied
+        last_applied = "2026-06-29T09:15:00Z"
+
+    The `applied` stamp is what `Bridge.seed_apply` compares the freshly
+    discovered stamp against — equal ⇒ no-op, different ⇒ re-assert."""
+    path = seed_state_path()
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "rb") as f:
+            raw = dict(tomllib.load(f)).get("seed")
+    except Exception:
+        return {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def write_seed_state(state: dict[str, Any]) -> None:
+    """Write the package-seed state atomically (temp + os.replace).
+
+    Standalone machine-local file — never part of config.toml and never synced,
+    so a pull/seed on another machine can't clobber this machine's record."""
+    with _CONFIG_LOCK:
+        text = tomli_w.dumps({"seed": _strip_none(state)})
+        path = seed_state_path()
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
 
 
 def backups_keep_value(sync: dict[str, Any]) -> int:

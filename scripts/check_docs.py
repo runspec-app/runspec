@@ -55,6 +55,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   runbook                    → console `runspec_runbooks.toml` ([[runbook]] runbooks)
 #   mailboxes                  → console `config.toml` email folder-watch list
 #   config_sync                → console `config.toml` Config Sync settings
+#   config_seed / seed         → console `config.toml` seed / `runspec_seed_state.toml`
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
 # would be skipped — none exist in the docs (guarded by check below), and runnable
 # names are author-chosen, so this is acceptable.
@@ -71,6 +72,8 @@ NON_RUNSPEC_SECTIONS = {
     "rota",
     "mailboxes",
     "config_sync",
+    "config_seed",
+    "seed",
     "console",
     "llm",
     "denylist",

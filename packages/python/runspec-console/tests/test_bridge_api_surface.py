@@ -132,6 +132,8 @@ EXPECTED = {
     "save_trigger",
     "save_watches",
     "screen_state",
+    "seed_apply",
+    "seed_status",
     "send_chat",
     "send_room_message",
     "send_trigger_draft",
