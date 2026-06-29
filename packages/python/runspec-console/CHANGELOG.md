@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.150.1] — 2026-06-29
+
+### Fixed
+- **History "Edit & rerun" is now always offered, not gated on recorded args.**
+  Password-typed args are deliberately never written to the run-summary audit
+  record (core `parser.py` excludes `type == "password"`), so a runnable whose
+  required arg is a secret has an **empty `args`** in its History record. The
+  `hasArgs` gate then hid the **Edit & rerun** button, leaving only **Rerun** —
+  which re-invoked without the secret and failed with *"missing required
+  argument"*, with no way to supply it. The edit button is now always shown so
+  the operator can open the rich run form and type the secret (and any other
+  args). The Console card was unaffected — its rerun data is captured in the
+  browser at invoke time, so it still carries the value.
+
 ## [0.150.0] — 2026-06-29
 
 ### Added

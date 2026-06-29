@@ -75,13 +75,16 @@ function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
           <Button size="small" icon={<RedoOutlined />} onClick={() => onRerun(record)}>
             Rerun
           </Button>
-          {hasArgs && (
-            <Tooltip title="Open the run dialog pre-filled with these values — rich typed inputs and every available arg">
-              <Button size="small" icon={<EditOutlined />} onClick={editInForm}>
-                Edit & rerun
-              </Button>
-            </Tooltip>
-          )}
+          {/* Always offered — not gated on recorded args. Secrets (password-typed
+              args) are never written to the audit record, so a runnable whose
+              required arg is a secret has empty `args` here; plain Rerun would
+              fail with "missing required argument". The form is the way to supply
+              it, so the edit path must stay reachable even with nothing recorded. */}
+          <Tooltip title="Open the run dialog pre-filled with this run's values — rich typed inputs and every available arg, including required secrets that aren't recorded">
+            <Button size="small" icon={<EditOutlined />} onClick={editInForm}>
+              Edit & rerun
+            </Button>
+          </Tooltip>
         </div>
       )}
 
