@@ -208,9 +208,12 @@ export default function App() {
     // page title matches too.
     bridge.app_title().then(t => { document.title = t }).catch(() => {})
     bridge.brand_theme().then(setBrandTheme).catch(() => {})
+    // Always resolve the indicator — on `ok: false` (offline / private index
+    // unreachable, after the backend's pip timeout) keep `latest` null so the
+    // footer stops "checking…" without falsely claiming "up to date".
     bridge.check_for_update()
-      .then(r => { if (r.ok) setUpdateInfo({ latest: r.latest, updateAvailable: r.update_available }) })
-      .catch(() => {})
+      .then(r => setUpdateInfo({ latest: r.ok ? r.latest : null, updateAvailable: r.ok ? r.update_available : false }))
+      .catch(() => setUpdateInfo({ latest: null, updateAvailable: false }))
   }, [])
 
   useEffect(() => {
@@ -420,7 +423,11 @@ export default function App() {
   const headerBg  = isDark ? '#0d0d0d' : '#fafafa'
   const siderBg   = isDark ? '#111'    : '#fafafa'
   const borderCol = isDark ? '#222'    : '#e0e0e0'
-  const titleCol  = isDark ? '#4fc1ff' : '#0958d9'
+  // The app's signature accent — sidebar title, active nav tab, section/room
+  // highlights. A white-label accent_color (when set) drives it too, so the
+  // brand colour shows where it's actually visible (not just Ant's colorPrimary
+  // controls). Falls back to the built-in blue when no theme is set.
+  const titleCol  = brandTheme.accent_color || (isDark ? '#4fc1ff' : '#0958d9')
   const contentBg = isDark ? '#111'    : '#ffffff'
   const iconCol   = isDark ? '#888'    : '#595959'
   const textCol   = isDark ? '#ccc'    : '#333'
@@ -467,8 +474,14 @@ export default function App() {
           },
         }}>
         {/* White-label content watermark (faint tiled brand mark). When neither
-            text nor logo is set, Watermark renders nothing — a passthrough. */}
-        <Watermark content={brandTheme.watermark_text} image={brandTheme.watermark_logo}>
+            text nor logo is set, Watermark renders nothing — a passthrough. The
+            font colour is theme-aware: Ant's default rgba(0,0,0,.15) is invisible
+            on the dark UI, so brighten it on dark. */}
+        <Watermark
+          content={brandTheme.watermark_text}
+          image={brandTheme.watermark_logo}
+          font={{ color: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)' }}
+        >
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
           {/* Fixed host sidebar */}
@@ -767,13 +780,13 @@ export default function App() {
                       ↑ {updateInfo.latest}
                     </Tag>
                   </Tooltip>
-                ) : updateInfo ? (
+                ) : updateInfo?.latest ? (
                   <Tooltip title="You're on the latest version">
                     <span style={{ color: '#52c41a', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                       <CheckCircleOutlined style={{ fontSize: 11 }} /> up to date
                     </span>
                   </Tooltip>
-                ) : (
+                ) : updateInfo ? null : (
                   <Tooltip title="Checking for updates…">
                     <span style={{ opacity: 0.6, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                       <LoadingOutlined spin style={{ fontSize: 10 }} /> checking…

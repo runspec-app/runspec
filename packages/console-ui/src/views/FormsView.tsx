@@ -36,14 +36,17 @@ export function suppressPlainEnter(e: { key: string; shiftKey: boolean; preventD
   return false
 }
 
-// Split a group's args into the required ones (no default → kept always-visible)
-// and the defaulted/optional ones (folded into a collapsed "Default arguments"
-// section so the form leads with what the operator must fill). A $VAR-ref default
-// is still non-required, so it collapses too. Exported for unit tests.
-export function partitionArgs(args: ArgDef[]): { required: ArgDef[]; defaulted: ArgDef[] } {
+// Split a group's args for the run form. The collapsed "Default arguments"
+// section holds only args that actually carry a default value; everything else —
+// required args AND optional args with no default — stays visible, because an
+// optional arg with no default is still something the operator may need to type
+// (it doesn't belong under a "Default arguments" heading). A flag (default
+// `false`) or a `$VAR`-ref default counts as having a default. Exported for tests.
+export function partitionArgs(args: ArgDef[]): { visible: ArgDef[]; defaulted: ArgDef[] } {
+  const hasDefault = (a: ArgDef) => a.default !== undefined && a.default !== null
   return {
-    required: args.filter(a => a.required),
-    defaulted: args.filter(a => !a.required),
+    visible: args.filter(a => !hasDefault(a)),
+    defaulted: args.filter(a => hasDefault(a)),
   }
 }
 
@@ -378,16 +381,16 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange,
     />
   )
 
-  // Within a group, the defaulted args collapse into a "Default arguments" row
-  // near the top; the required args stay always-visible below it.
+  // Within a group, args that carry a default collapse into a "Default arguments"
+  // row near the top; required and optional-no-default args stay visible below it.
   const renderGroup = (groupArgs: ArgDef[]) => {
-    const { required, defaulted } = partitionArgs(groupArgs)
+    const { visible, defaulted } = partitionArgs(groupArgs)
     return (
       <>
         {defaulted.length > 0 && (
           <DefaultArgsCollapse count={defaulted.length}>{defaulted.map(row)}</DefaultArgsCollapse>
         )}
-        {required.map(row)}
+        {visible.map(row)}
       </>
     )
   }

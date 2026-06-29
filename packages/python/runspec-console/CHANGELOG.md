@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.153.1] — 2026-06-29
+
+### Fixed
+
+- **Update check pinned on "checking…" forever** when the package index is
+  unreachable (offline / a private index / a blocked network policy). The footer
+  only resolved on a successful check; now any outcome clears the spinner — a
+  failed/timed-out check (the backend already caps the pip call at 8s) shows just
+  the version with no update tag, and "up to date" is shown only when the latest
+  version was actually confirmed. (`App.tsx`.)
+- **Watermark invisible on the dark UI.** Ant `<Watermark>`'s default font colour
+  is `rgba(0,0,0,.15)` — invisible on the console's dark background. The
+  white-label content watermark now uses a theme-aware colour so it shows in both
+  light and dark. (`App.tsx`.)
+- **White-label `accent_color` now drives the app's signature accent**, not just
+  Ant's `colorPrimary`. The visible accent — sidebar title, active nav tab,
+  section/room highlights — was a hardcoded blue (`titleCol`), so a brand colour
+  only tinted Ant controls (buttons/switches) and looked like it "wasn't working".
+  `accent_color` now feeds `titleCol` too (falling back to the built-in blue when
+  unset), so the brand colour shows where it's actually visible. (`App.tsx`.)
+- **Forms "Default arguments" collapsed too much.** `partitionArgs` folded *every*
+  non-required arg into the collapsed section, including optional args with **no
+  default** — which then hid inputs the operator might need to type under a
+  "Default arguments" heading. Only args that actually carry a default (incl. a
+  flag's `false` and a `$VAR`-ref default) collapse now; required and
+  optional-no-default args stay visible. (`FormsView.tsx` `partitionArgs`.)
+
 ## [0.153.0] — 2026-06-29
 
 ### Added

@@ -82,22 +82,26 @@ describe('initialFormValues (edit-and-rerun prefill)', () => {
 })
 
 describe('partitionArgs', () => {
-  it('keeps required args visible and folds the rest into defaulted', () => {
+  it('collapses only args that carry a default; the rest stay visible', () => {
     const args: ArgDef[] = [
       arg({ name: 'name', type: 'str', required: true }),
+      arg({ name: 'note', type: 'str', required: false }),            // optional, NO default → visible
       arg({ name: 'workers', type: 'int', required: false, default: 4 }),
       arg({ name: 'verbose', type: 'flag', required: false, default: false }),
       arg({ name: 'token', type: 'str', required: false, default: '$API_TOKEN' }),
     ]
-    const { required, defaulted } = partitionArgs(args)
-    expect(required.map(a => a.name)).toEqual(['name'])
-    // A $VAR-ref default is still non-required → collapses with the rest.
+    const { visible, defaulted } = partitionArgs(args)
+    // required AND optional-no-default lead the form
+    expect(visible.map(a => a.name)).toEqual(['name', 'note'])
+    // only args with an actual default (incl. a flag's false and a $VAR ref) collapse
     expect(defaulted.map(a => a.name)).toEqual(['workers', 'verbose', 'token'])
   })
 
-  it('handles all-required and all-optional groups', () => {
+  it('a required arg and an optional-no-default arg are both visible, not defaulted', () => {
     expect(partitionArgs([arg({ required: true })]).defaulted).toEqual([])
-    expect(partitionArgs([arg({ required: false })]).required).toEqual([])
+    const opt = partitionArgs([arg({ name: 'note', required: false })])
+    expect(opt.defaulted).toEqual([])
+    expect(opt.visible.map(a => a.name)).toEqual(['note'])
   })
 })
 
