@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -965,6 +965,7 @@ interface HostFormValues {
   port?: number
   identityFile?: string
   group?: string
+  profiles?: string[]
   room?: string
   room_port?: number
   room_user?: string
@@ -1112,6 +1113,110 @@ function GroupsManager({
   )
 }
 
+// Manage the host-profile registry (runspec_profiles.toml) — the controlled
+// vocabulary of working-set names. Mirrors GroupsManager; profiles differ in
+// being many-per-host and switchable (the active one is machine-local).
+function ProfilesManager({
+  open,
+  profiles,
+  onClose,
+  onChanged,
+}: {
+  open: boolean
+  profiles: HostProfile[]
+  onClose: () => void
+  onChanged: () => void
+}) {
+  const [rows, setRows] = useState<HostProfile[]>([])
+  const [newName, setNewName] = useState('')
+
+  useEffect(() => {
+    if (open) { setRows(profiles.map(p => ({ ...p }))); setNewName('') }
+  }, [open, profiles])
+
+  const addProfile = async () => {
+    const n = newName.trim()
+    if (!n) return
+    if (rows.some(r => r.name.toLowerCase() === n.toLowerCase())) {
+      message.warning('A profile with that name already exists'); return
+    }
+    await bridge.save_profiles([...rows, { name: n, description: '' }])
+    setNewName(''); onChanged()
+  }
+
+  const removeProfile = async (name: string) => {
+    await bridge.save_profiles(rows.filter(r => r.name !== name))
+    onChanged()
+  }
+
+  const commitRename = async (oldName: string, nextName: string) => {
+    const nn = nextName.trim()
+    if (!nn || nn === oldName) { setRows(profiles.map(p => ({ ...p }))); return }
+    if (rows.some(r => r.name.toLowerCase() === nn.toLowerCase() && r.name !== oldName)) {
+      message.warning('A profile with that name already exists')
+      setRows(profiles.map(p => ({ ...p }))); return
+    }
+    await bridge.rename_profile(oldName, nn)
+    onChanged()
+  }
+
+  const commitDescription = async () => {
+    await bridge.save_profiles(rows)
+    onChanged()
+  }
+
+  return (
+    <Modal open={open} title="Host profiles" onCancel={onClose} footer={null} width={520}>
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        A profile is a named working-set of hosts. You load one at a time — only its
+        hosts stay connected. Definitions are shared across consoles (Config Sync);
+        which one you have loaded is local to this machine.
+      </Text>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        {rows.map((p, i) => (
+          <Space key={p.name} align="baseline" style={{ display: 'flex' }}>
+            <Input
+              size="small"
+              style={{ width: 150, fontFamily: 'monospace' }}
+              value={p.name}
+              onChange={e => setRows(r => r.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+              onBlur={e => commitRename(profiles[i]?.name ?? p.name, e.target.value)}
+              onPressEnter={e => (e.target as HTMLInputElement).blur()}
+            />
+            <Input
+              size="small"
+              style={{ width: 220 }}
+              placeholder="description (optional)"
+              value={p.description ?? ''}
+              onChange={e => setRows(r => r.map((x, j) => j === i ? { ...x, description: e.target.value } : x))}
+              onBlur={commitDescription}
+            />
+            <Popconfirm
+              title={`Delete profile "${p.name}"?`}
+              description="Hosts lose this tag; if it was loaded, you drop to All hosts."
+              onConfirm={() => removeProfile(p.name)}
+            >
+              <MinusCircleOutlined style={{ color: '#666', cursor: 'pointer' }} />
+            </Popconfirm>
+          </Space>
+        ))}
+        {rows.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No profiles yet" />}
+        <Space.Compact style={{ marginTop: 4 }}>
+          <Input
+            size="small"
+            style={{ width: 200, fontFamily: 'monospace' }}
+            placeholder="New profile name"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onPressEnter={addProfile}
+          />
+          <Button size="small" icon={<PlusOutlined />} onClick={addProfile}>Add profile</Button>
+        </Space.Compact>
+      </div>
+    </Modal>
+  )
+}
+
 function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [hosts, setHosts] = useState<JumpHost[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -1122,8 +1227,11 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
   const [groups, setGroups] = useState<HostGroup[]>([])
   const [groupsOpen, setGroupsOpen] = useState(false)
+  const [profiles, setProfiles] = useState<HostProfile[]>([])
+  const [profilesOpen, setProfilesOpen] = useState(false)
 
   const loadGroups = useCallback(() => { bridge.get_groups().then(setGroups) }, [])
+  const loadProfiles = useCallback(() => { bridge.get_profiles().then(setProfiles) }, [])
 
   // Live connection details of the host being added/edited — drive the runspec-
   // path browser so it lists the host straight from the form (before it's saved).
@@ -1149,7 +1257,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
   useEffect(() => {
     bridge.get_jump_hosts().then(setHosts)
     loadGroups()
-  }, [loadGroups])
+    loadProfiles()
+  }, [loadGroups, loadProfiles])
 
   // Tear down any browse connection opened from the add/edit form on unmount.
   useEffect(() => () => { bridge.close_adhoc().catch(() => {}) }, [])
@@ -1189,6 +1298,10 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
     // <Input type="number"> yields a string — coerce the room port, and drop the
     // room fields when no room is set (the backend wants an int port or nothing).
     const v: HostFormValues = { ...values }
+    v.profiles = Array.isArray(v.profiles)
+      ? v.profiles.map(s => s.toString().trim()).filter(Boolean)
+      : undefined
+    if (!v.profiles?.length) delete v.profiles
     v.room = (v.room ?? '').toString().trim() || undefined
     v.room_queue = (v.room_queue ?? '').toString().trim() || undefined
     v.room_user = (v.room_user ?? '').toString().trim() || undefined
@@ -1296,6 +1409,12 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         onClose={() => setGroupsOpen(false)}
         onChanged={() => { loadGroups(); bridge.get_jump_hosts().then(setHosts); onHostsChanged?.() }}
       />
+      <ProfilesManager
+        open={profilesOpen}
+        profiles={profiles}
+        onClose={() => setProfilesOpen(false)}
+        onChanged={() => { loadProfiles(); bridge.get_jump_hosts().then(setHosts); onHostsChanged?.() }}
+      />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
           Saved to <code>jump_hosts.toml</code>. Hosts are probed on startup.
@@ -1387,6 +1506,30 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                   { value: '', label: 'Ungrouped' },
                   ...groups.map(g => ({ value: g.name, label: g.name })),
                 ]}
+              />
+            </Form.Item>
+            <Form.Item
+              name="profiles"
+              label={
+                <Space size={6}>
+                  Profiles
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                    onClick={() => setProfilesOpen(true)}
+                  >
+                    Manage profiles…
+                  </Button>
+                </Space>
+              }
+              help="Working-sets this host belongs to. You load one profile at a time — only its hosts stay connected. Optional; a host in no profile shows only under All hosts."
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="No profiles (All hosts only)"
+                options={profiles.map(p => ({ value: p.name, label: p.name }))}
               />
             </Form.Item>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>

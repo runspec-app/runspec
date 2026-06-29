@@ -58,6 +58,24 @@ def groups_path() -> Path:
     return app_dir() / "runspec_groups.toml"
 
 
+def profiles_path() -> Path:
+    """Canonical host-profile registry (`runspec_profiles.toml`) — the controlled
+    vocabulary of profile (working-set) names, shared across consoles via Config
+    Sync like the group registry. Host→profile membership lives on the host
+    entry's `profiles` array; this file just pins the legal names. See
+    `docs/design/host-profiles.md`."""
+    return app_dir() / "runspec_profiles.toml"
+
+
+def active_profile_path() -> Path:
+    """Machine-local active-profile pointer (`runspec_active_profile.toml`) — which
+    host profile *this* console currently has loaded. Personal, moment-to-moment
+    state (like the rota / repo checkout paths), so it is **never** synced (not in
+    Config Sync's KNOWN_FILES). Absent/blank `active` = the built-in *All hosts*
+    scope (every host in scope, i.e. today's behavior)."""
+    return app_dir() / "runspec_active_profile.toml"
+
+
 def filters_path() -> Path:
     return app_dir() / "runspec_filters.toml"
 

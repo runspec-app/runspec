@@ -45,6 +45,7 @@ KNOWN_FILES: tuple[str, ...] = (
     "config.toml",
     "runspec_hosts.toml",
     "runspec_groups.toml",
+    "runspec_profiles.toml",
     "runspec_triggers.toml",
     "runspec_filters.toml",
     "runspec_credentials.toml",

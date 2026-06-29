@@ -79,6 +79,49 @@ def groups_map(hosts: list[dict[str, Any]]) -> dict[str, list[str]]:
     return out
 
 
+def host_profiles(host: dict[str, Any]) -> list[str]:
+    """A host's profile tags (its ``profiles`` array), as a clean list of strings.
+
+    Accepts the array form (``profiles = ["app-support", "devops"]``); blank/
+    non-string members are dropped. A host with no ``profiles`` belongs to no
+    custom profile (visible only under the built-in *All hosts*)."""
+    raw = host.get("profiles")
+    if not isinstance(raw, list):
+        return []
+    return [str(p).strip() for p in raw if str(p).strip()]
+
+
+def host_in_profile(host: dict[str, Any], profile: str) -> bool:
+    """True if ``host`` carries ``profile`` (exact, case-insensitive). A blank
+    ``profile`` means *All hosts* — every host is in scope."""
+    want = str(profile or "").strip().casefold()
+    if not want:
+        return True
+    return any(p.casefold() == want for p in host_profiles(host))
+
+
+def profile_members(hosts: list[dict[str, Any]], profile: str) -> list[str]:
+    """Host names tagged with ``profile`` (exact, case-insensitive), in config
+    order. A blank ``profile`` returns every named host (the *All hosts* scope)."""
+    out: list[str] = []
+    for h in hosts:
+        if h.get("name") and host_in_profile(h, profile):
+            out.append(str(h["name"]))
+    return out
+
+
+def profiles_map(hosts: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """``{profile name: [host names]}`` over all hosts that declare a non-empty
+    ``profiles`` tag, preserving first-seen profile order and member config order."""
+    out: dict[str, list[str]] = {}
+    for h in hosts:
+        if not h.get("name"):
+            continue
+        for p in host_profiles(h):
+            out.setdefault(p, []).append(str(h["name"]))
+    return out
+
+
 def venv_root(runspec_path: str) -> Path:
     """Derive the venv root from the runspec binary path."""
     return Path(runspec_path).parent.parent

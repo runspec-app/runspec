@@ -22,7 +22,7 @@ from .config import (
     filters_path,
 )
 from .discovery import discover_local, discover_remote
-from .hosts import group_members, groups_map
+from .hosts import group_members, groups_map, host_in_profile
 
 from .bridge_const import (
     logger,
@@ -443,12 +443,36 @@ class InternalsMixin:
         return next((h for h in self._hosts if h.get("name") == host), None)
 
     def _all_host_entries(self) -> list[dict[str, Any]]:
-        """The full host set (local first, then the configured remotes) — the one
-        definition shared by ``get_hosts``, the refresh cycle, and the group
-        resolvers below. Reloads from disk so callers see the current file."""
+        """The full host set (local first, then the configured remotes) — the
+        definition shared by the group resolvers and any caller that must reach
+        **every** configured host regardless of the active profile (explicit runs,
+        triggers, schedules — automation spans profiles). Reloads from disk so
+        callers see the current file. For the interactive working set (sidebar /
+        refresh cycle) use :meth:`_active_host_entries`."""
         self._reload_hosts()
         local = self._local_host_entry()
         return [local] + [h for h in self._hosts if h.get("name") != "local"]
+
+    def _active_profile_name(self) -> str:
+        """The machine-local active host profile (``""`` = the built-in *All hosts*
+        scope, i.e. no filter). See ``docs/design/host-profiles.md``."""
+        from . import profiles as profiles_mod
+
+        return profiles_mod.read_active_profile(config_mod.active_profile_path())
+
+    def _active_host_entries(self) -> list[dict[str, Any]]:
+        """The **interactive working set**: local + the remotes in the active
+        profile. This is what the sidebar (``get_hosts``) shows and what the
+        refresh cycle keeps probed/connected — so an unloaded profile's hosts hold
+        no standing connection. ``local`` is always in scope. A blank active
+        profile (*All hosts*) returns the full set (today's behavior)."""
+        self._reload_hosts()
+        local = self._local_host_entry()
+        active = self._active_profile_name()
+        remotes = [h for h in self._hosts if h.get("name") != "local"]
+        if active:
+            remotes = [h for h in remotes if host_in_profile(h, active)]
+        return [local] + remotes
 
     def _group_members(self, group: str) -> list[str]:
         """Host names in ``group`` (see :func:`hosts.group_members`)."""
@@ -555,9 +579,11 @@ class InternalsMixin:
 
         from .ssh_pool import pool_settings, refresh_settings
 
-        self._reload_hosts()
-        local = self._local_host_entry()
-        all_hosts = [local] + [h for h in self._hosts if h.get("name") != "local"]
+        # Only the active profile's hosts are probed and kept warm — an unloaded
+        # profile's hosts hold no standing connection (the point of profiles).
+        # Automation still reaches out-of-scope hosts on demand via _host_entry /
+        # _all_host_entries; the pool idle-reaps those transient transports.
+        all_hosts = self._active_host_entries()
         max_concurrent = pool_settings(self.get_config().get("ssh"))["max_concurrent"]
         settings = refresh_settings(
             self.get_config().get("refresh"), max_concurrent=max_concurrent

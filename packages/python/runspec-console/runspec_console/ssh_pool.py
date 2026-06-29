@@ -573,6 +573,19 @@ class SSHConnectionPool:
         if conn is not None:
             conn.close()
 
+    def drop(
+        self,
+        ssh_target: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> None:
+        """Close and evict one host's pooled transport (public wrapper over
+        ``_drop``). Used to tear down a host's standing connection immediately when
+        it leaves the active profile's scope — keyword args match ``run`` /
+        ``connectable`` so callers pass the same identity/config."""
+        self._drop(ssh_target, identity_file, global_ssh_config or {})
+
     def reap(self) -> int:
         """Close transports idle beyond ``idle_ttl``. Returns the count reaped.
 

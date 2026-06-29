@@ -21,9 +21,10 @@ if TYPE_CHECKING:
 
 class HostsMixin:
     def get_hosts(self) -> list[dict[str, Any]]:
-        self._reload_hosts()
-        local = self._local_host_entry()
-        all_hosts = [local] + [h for h in self._hosts if h.get("name") != "local"]
+        # The sidebar shows the active profile's working set only — out-of-profile
+        # hosts are dormant (no standing connection). _active_host_entries honours
+        # the machine-local active profile; All hosts (blank) returns the full set.
+        all_hosts = self._active_host_entries()
         result: list[dict[str, Any]] = []
         for h in all_hosts:
             paths = utils_mod._paths(h)
@@ -39,6 +40,7 @@ class HostsMixin:
                     "groups": [hosts_mod.venv_name(p) for p in paths],
                     "role": h.get("role"),
                     "group": h.get("group"),
+                    "profiles": hosts_mod.host_profiles(h),
                 }
             )
         return result

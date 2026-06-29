@@ -237,12 +237,23 @@ export interface Host {
   groups: string[]
   role?: 'primary' | 'secondary'  // undefined = local machine, always included
   group?: string                  // sidebar display group label, joined from JumpHost config
+  profiles?: string[]             // host-profile (working-set) tags this host belongs to
 }
 
 // An entry in the canonical host-group registry (runspec_groups.toml). The
 // registry pins the legal group NAMES (shared via Config Sync); membership lives
 // on each host's `group` field.
 export interface HostGroup {
+  name: string
+  description?: string
+}
+
+// An entry in the canonical host-profile registry (runspec_profiles.toml). A
+// profile is a named host working-set (which remotes are in scope / connected).
+// The registry pins the legal profile NAMES (shared via Config Sync); membership
+// lives on each host's `profiles` array; the *active* profile is machine-local.
+// See docs/design/host-profiles.md.
+export interface HostProfile {
   name: string
   description?: string
 }
@@ -287,6 +298,7 @@ export interface JumpHost {
   port?: number       // falls back to SSH default (22)
   identityFile?: string
   group?: string      // sidebar display group label (e.g. "Production", "Staging")
+  profiles?: string[] // host-profile (working-set) tags — which profiles load this host
   room?: string       // chat room hosted on this host (runspec-room) — opt-in
   room_port?: number  // the room server's localhost port on this host
   room_user?: string  // display name in the room (defaults to the SSH login)
@@ -826,6 +838,12 @@ export interface BridgeApi {
   get_groups: () => Promise<HostGroup[]>
   save_groups: (groups: HostGroup[]) => Promise<void>
   rename_group: (oldName: string, newName: string) => Promise<void>
+  // Host-profile registry + the machine-local active profile (working sets).
+  get_profiles: () => Promise<HostProfile[]>
+  save_profiles: (profiles: HostProfile[]) => Promise<void>
+  rename_profile: (oldName: string, newName: string) => Promise<void>
+  get_active_profile: () => Promise<string>
+  set_active_profile: (name: string) => Promise<{ active: string }>
   // Self-service catalog registry (runspec_self_service.toml) — which discovered
   // runnables are offered to visitors in the helpdesk room (Settings →
   // Self-Service). Replaces the runspec.toml `discoverable = ["self-service"]`

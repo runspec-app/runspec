@@ -179,6 +179,7 @@ class FleetMixin:
             "runspec_path",
             "identityFile",
             "group",
+            "profiles",
             "room",
             "room_port",
             "room_user",
@@ -219,6 +220,12 @@ class FleetMixin:
                 entry["identityFile"] = _normalize_path(h["identityFile"])
             if h.get("group"):
                 entry["group"] = h["group"]
+            # Host-profile (working-set) tags — which profiles load this host.
+            profiles = h.get("profiles")
+            if isinstance(profiles, list):
+                names = [str(p).strip() for p in profiles if str(p).strip()]
+                if names:
+                    entry["profiles"] = names
             # The room server on this fleet host: ``room_port`` alone is enough to
             # staff the helpdesk (the queue defaults server-side; no ``room_queue``
             # needed). A group-chat ``room`` and/or an explicit ``room_queue`` are
@@ -335,6 +342,143 @@ class FleetMixin:
             hosts_mod.save_hosts(config_mod.hosts_path(), self._hosts)
             self._reload_hosts()
         self._dispatch("runspec:hosts_updated", {})
+
+    # ── host-profile registry (runspec_profiles.toml) ─────────────────────────
+
+    def get_profiles(self) -> list[dict[str, Any]]:
+        """The canonical host-profile registry — ``[{name, description}]`` in
+        registry order — that the profile switcher and per-host profile picker are
+        populated from. See ``docs/design/host-profiles.md``.
+
+        Self-healing (like :meth:`get_groups`): any profile a host's ``profiles``
+        tag references that isn't registered yet is **absorbed** into the registry
+        (and persisted, so it syncs), so the picker always offers every in-use
+        profile and pre-registry tags migrate automatically."""
+        from .config import profiles_path
+        from .profiles import load_profiles, normalise_profiles
+        from .profiles import save_profiles as _save
+
+        registry = normalise_profiles(load_profiles(profiles_path()))
+        known = {p["name"].casefold() for p in registry}
+        added = False
+        for entry in self._all_host_entries():
+            for tag in hosts_mod.host_profiles(entry):
+                if tag.casefold() not in known:
+                    registry.append({"name": tag, "description": ""})
+                    known.add(tag.casefold())
+                    added = True
+        if added:
+            _save(profiles_path(), registry)
+        return registry
+
+    def save_profiles(self, profiles: list[dict[str, Any]]) -> None:
+        """Replace the registry (add / edit description / delete / reorder). On a
+        **delete**, the now-illegal tag is stripped from every host's ``profiles``
+        array so membership never dangles. Use :meth:`rename_profile` to rename
+        (a delete+add here would orphan membership). If the deleted profile was the
+        active one, the active pointer falls back to *All hosts*."""
+        from .config import active_profile_path, profiles_path
+        from .profiles import normalise_profiles, read_active_profile
+        from .profiles import save_profiles as _save
+        from .profiles import write_active_profile
+
+        norm = normalise_profiles(profiles)
+        _save(profiles_path(), norm)
+        legal = {p["name"].casefold() for p in norm}
+        self._reload_hosts()
+        changed = False
+        for h in self._hosts:
+            tags = hosts_mod.host_profiles(h)
+            kept = [t for t in tags if t.casefold() in legal]
+            if kept != tags:
+                if kept:
+                    h["profiles"] = kept
+                else:
+                    h.pop("profiles", None)
+                changed = True
+        if changed:
+            hosts_mod.save_hosts(config_mod.hosts_path(), self._hosts)
+            self._reload_hosts()
+        # If the active profile was just deleted, drop back to All hosts.
+        active = read_active_profile(active_profile_path())
+        if active and active.casefold() not in legal:
+            write_active_profile(active_profile_path(), "")
+            threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        self._dispatch("runspec:hosts_updated", {})
+
+    def rename_profile(self, old: str, new: str) -> None:
+        """Rename a profile in the registry AND re-point every host's ``profiles``
+        tag (and the active pointer if it named the old profile), so membership is
+        preserved across the rename."""
+        old_s = str(old or "").strip()
+        new_s = str(new or "").strip()
+        if not old_s or not new_s:
+            raise ValueError("rename needs both the old and new profile name")
+        from .config import active_profile_path, profiles_path
+        from .profiles import load_profiles, normalise_profiles, read_active_profile
+        from .profiles import save_profiles as _save
+        from .profiles import write_active_profile
+
+        registry = load_profiles(profiles_path())
+        for p in registry:
+            if str(p.get("name") or "").strip().casefold() == old_s.casefold():
+                p["name"] = new_s
+        _save(profiles_path(), normalise_profiles(registry))
+        self._reload_hosts()
+        changed = False
+        for h in self._hosts:
+            tags = hosts_mod.host_profiles(h)
+            repointed = [new_s if t.casefold() == old_s.casefold() else t for t in tags]
+            if repointed != tags:
+                h["profiles"] = repointed
+                changed = True
+        if changed:
+            hosts_mod.save_hosts(config_mod.hosts_path(), self._hosts)
+            self._reload_hosts()
+        if read_active_profile(active_profile_path()).casefold() == old_s.casefold():
+            write_active_profile(active_profile_path(), new_s)
+        self._dispatch("runspec:hosts_updated", {})
+
+    def get_active_profile(self) -> str:
+        """The machine-local active host profile (``""`` = *All hosts*)."""
+        return self._active_profile_name()
+
+    def set_active_profile(self, name: str) -> dict[str, Any]:
+        """Switch the active host profile (``""`` = *All hosts*) — the "reboot into
+        a scope" action. Hosts leaving scope have their pooled SSH transport
+        evicted immediately and their connected dot cleared; a refresh cycle then
+        probes/discovers the newly in-scope hosts. Machine-local — never synced."""
+        from .config import active_profile_path
+        from .profiles import write_active_profile
+
+        before = {h["name"] for h in self._active_host_entries() if h.get("ssh")}
+        write_active_profile(active_profile_path(), name)
+        after_entries = self._active_host_entries()
+        after = {h["name"] for h in after_entries if h.get("ssh")}
+        leaving = before - after
+
+        pool = self._ssh_pool
+        if leaving:
+            global_ssh = self.get_config().get("ssh") or {}
+            by_name = {h.get("name"): h for h in self._all_host_entries()}
+            for n in leaving:
+                h = by_name.get(n)
+                if pool is not None and h and h.get("ssh"):
+                    try:
+                        pool.drop(
+                            h["ssh"],
+                            identity_file=h.get("identityFile"),
+                            global_ssh_config=global_ssh,
+                        )
+                    except Exception:  # noqa: BLE001 — best-effort teardown
+                        pass
+            with self._lock:
+                for n in leaving:
+                    self._connected_cache.pop(n, None)
+
+        self._dispatch("runspec:hosts_updated", {})
+        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        return {"active": str(name or "").strip()}
 
     # ── self-service catalog registry (runspec_self_service.toml) ──────────────
 

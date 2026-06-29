@@ -336,9 +336,13 @@ const MOCK_JUMP_HOSTS: JumpHost[] = [
 
 const MOCK_HOSTS: Host[] = [
   { name: 'local',  connected: true,  runnableCount: 3, groups: ['ops-tools'] },
-  { name: 'prod-1', connected: true,  runnableCount: 3, groups: ['platform-core'], role: 'primary',   group: 'Production' },
-  { name: 'prod-2', connected: true,  runnableCount: 1, groups: ['platform-core'], role: 'secondary', group: 'Production' },
+  { name: 'prod-1', connected: true,  runnableCount: 3, groups: ['platform-core'], role: 'primary',   group: 'Production', profiles: ['app-support', 'devops'] },
+  { name: 'prod-2', connected: true,  runnableCount: 1, groups: ['platform-core'], role: 'secondary', group: 'Production', profiles: ['devops'] },
 ]
+
+// Machine-local active host profile in dev mode ("" = All hosts). get_hosts
+// filters MOCK_HOSTS by it so the sidebar profile switcher visibly scopes.
+let MOCK_ACTIVE_PROFILE = ''
 
 const MOCK_HISTORY: HistoryRecord[] = [
   {
@@ -593,7 +597,9 @@ const _pendingConfirms = new Map<string, (approved: boolean) => void>()
 let _activeChat: { id: string; cancelled: boolean } | null = null
 
 export const mockApi: BridgeApi = {
-  get_hosts: async () => MOCK_HOSTS,
+  get_hosts: async () => MOCK_ACTIVE_PROFILE
+    ? MOCK_HOSTS.filter(h => h.name === 'local' || (h.profiles ?? []).includes(MOCK_ACTIVE_PROFILE))
+    : MOCK_HOSTS,
 
   manage_denylist: async (payload) => {
     console.log('[mock] manage_denylist', payload)
@@ -682,6 +688,18 @@ export const mockApi: BridgeApi = {
   ],
   save_groups: async (groups) => { console.log('[mock] save_groups', groups) },
   rename_group: async (oldName, newName) => { console.log('[mock] rename_group', oldName, newName) },
+
+  get_profiles: async () => [
+    { name: 'app-support', description: 'App-support fleet' },
+    { name: 'devops', description: 'DevOps servers' },
+  ],
+  save_profiles: async (profiles) => { console.log('[mock] save_profiles', profiles) },
+  rename_profile: async (oldName, newName) => { console.log('[mock] rename_profile', oldName, newName) },
+  get_active_profile: async () => MOCK_ACTIVE_PROFILE,
+  set_active_profile: async (name) => {
+    MOCK_ACTIVE_PROFILE = name
+    return { active: name }
+  },
 
   get_self_service: async () => [
     { name: 'reset-password', description: 'Password resets' },

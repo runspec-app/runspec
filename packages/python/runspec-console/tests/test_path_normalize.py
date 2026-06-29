@@ -139,6 +139,29 @@ class TestSaveJumpHostsNormalisesPaths(unittest.TestCase):
         # Remote POSIX paths are already forward-slash so untouched.
         self.assertEqual(entries[0]["runspec_paths"], ["/home/jason/.venv/bin/runspec"])
 
+    def test_profiles_tags_persist(self) -> None:
+        # The host-profile (working-set) tags must round-trip through the
+        # whitelisting save_jump_hosts (blank entries dropped; empty → omitted).
+        b = _make_bridge()
+        with (
+            patch("runspec_console.hosts.save_hosts") as sh,
+            patch.object(b, "_reload_hosts"),
+            patch("threading.Thread"),
+        ):
+            b.save_jump_hosts(
+                [
+                    {
+                        "name": "prod-1",
+                        "hostname": "h1",
+                        "profiles": ["app-support", " devops ", ""],
+                    },
+                    {"name": "prod-2", "hostname": "h2", "profiles": []},
+                ]
+            )
+        entries = sh.call_args[0][1]
+        self.assertEqual(entries[0]["profiles"], ["app-support", "devops"])
+        self.assertNotIn("profiles", entries[1])  # empty list → omitted
+
 
 class TestBrowseSshBinaryNormalises(unittest.TestCase):
     def test_returns_forward_slash_path(self) -> None:

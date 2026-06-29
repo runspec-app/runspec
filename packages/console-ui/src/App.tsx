@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, Suspense } from 'react'
-import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, message } from 'antd'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, message } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -45,7 +45,7 @@ import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type Runnable, type Runbook, type RoomInfo } from './bridge'
+import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type RoomInfo } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
@@ -86,6 +86,11 @@ export default function App() {
   )
   const [hosts, setHosts] = useState<Host[]>([])
   const [selectedHost, setSelectedHost] = useState<string>('')
+  // Host profiles (working-sets): the registry to pick from + the machine-local
+  // active one. Switching tears down the old scope's connections and brings up
+  // the new — see docs/design/host-profiles.md.
+  const [profiles, setProfiles] = useState<HostProfile[]>([])
+  const [activeProfile, setActiveProfile] = useState<string>('')
   // Configured chat/helpdesk rooms + their live connection state, for the footer
   // indicator. Updated on every runspec:room_connection flip so a room server
   // going down (or coming back) is visible without digging through Dev logs.
@@ -167,6 +172,14 @@ export default function App() {
     setActiveScope([])
   }
 
+  // Switch the active host profile (working-set). "" = All hosts. The backend
+  // tears down the leaving hosts' connections and re-probes the new scope, then
+  // dispatches runspec:hosts_updated which refreshes the sidebar + active value.
+  const handleSwitchProfile = (name: string) => {
+    setActiveProfile(name)  // optimistic — corrected by the hosts_updated refetch
+    bridge.set_active_profile(name).catch(() => bridge.get_active_profile().then(setActiveProfile))
+  }
+
   const loadSshKeyAge = () => {
     bridge.get_config().then(cfg => {
       const ssh = (cfg.ssh ?? {}) as Record<string, string>
@@ -208,6 +221,13 @@ export default function App() {
       setSelectedHost(hs[0]?.name ?? '')
     })
     const onHostsUpdated = () => bridge.get_hosts().then(setHosts)
+    // Host-profile switcher: load the registry + the active selection, and keep
+    // them fresh as the registry changes (Settings edits / Config Sync pulls).
+    const loadProfiles = () => {
+      bridge.get_profiles?.().then(setProfiles).catch(() => {})
+      bridge.get_active_profile?.().then(setActiveProfile).catch(() => {})
+    }
+    loadProfiles()
     // Discovery completion arrives Python→JS via the dispatch queue, so it lands
     // even if the initial JS→Python call stalled — also clear loading here.
     const onRunnablesUpdated = () =>
@@ -229,12 +249,14 @@ export default function App() {
     const loadRooms = () => bridge.get_room_state().then(s => setRooms(s.rooms)).catch(() => {})
     loadRooms()
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
+    window.addEventListener('runspec:hosts_updated', loadProfiles)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
     window.addEventListener('runspec:runbooks_changed', loadRunbooks)
     window.addEventListener('runspec:discovery_state', onDiscoveryState)
     window.addEventListener('runspec:room_connection', loadRooms)
     return () => {
       window.removeEventListener('runspec:hosts_updated', onHostsUpdated)
+      window.removeEventListener('runspec:hosts_updated', loadProfiles)
       window.removeEventListener('runspec:runnables_updated', onRunnablesUpdated)
       window.removeEventListener('runspec:runbooks_changed', loadRunbooks)
       window.removeEventListener('runspec:discovery_state', onDiscoveryState)
@@ -451,6 +473,24 @@ export default function App() {
             }}>
               runspec
             </div>
+            {/* Host-profile switcher — only when profiles are defined. Picking one
+                scopes the sidebar + standing connections to that working-set. */}
+            {profiles.length > 0 && (
+              <div style={{ padding: '8px 10px', borderBottom: `1px solid ${borderCol}`, flexShrink: 0 }}>
+                <Select
+                  size="small"
+                  value={activeProfile}
+                  onChange={handleSwitchProfile}
+                  style={{ width: '100%' }}
+                  popupMatchSelectWidth={false}
+                  options={[
+                    { value: '', label: 'All hosts' },
+                    ...profiles.map(p => ({ value: p.name, label: p.name })),
+                  ]}
+                  title="Active host profile"
+                />
+              </div>
+            )}
             <div style={{ flex: 1, overflowY: 'auto', paddingTop: 4 }}>
               {(() => {
                 const hostRow = (h: typeof hosts[0]) => (

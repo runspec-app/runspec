@@ -8,6 +8,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.150.0] — 2026-06-29
+
+### Added
+- **Host profiles — a switchable, scoped working-set of hosts.** A profile is a
+  named set of remote hosts; you load one at a time and only its hosts are probed
+  and hold standing SSH connections — like rebooting the console into a different
+  host-scope. Built for operators who wear several hats (app-support *and* DevOps
+  *and* another region) and don't want connections to the whole fleet, all the
+  time. A new **profile switcher** in the left sidebar (shown once any profile
+  exists) flips between **All hosts** (the default = today's behavior) and each
+  profile; switching tears down the leaving hosts' pooled transports and re-probes
+  the new scope. Settings → Jump Hosts gains a per-host **Profiles** multi-select
+  and a **Manage profiles…** dialog (mirrors Manage groups).
+  - **Scope is interactive-only** (deliberate): profiles scope the sidebar,
+    discovery, and standing connections, but schedules/triggers/explicit runs
+    still reach any configured host on demand — automation spans profiles, so a
+    DevOps schedule still fires while you're in the App-Support profile.
+  - **Git-syncable:** profile *definitions* sync — membership is a `profiles`
+    array on each host in `runspec_hosts.toml`, and a new `runspec_profiles.toml`
+    name registry rides Config Sync (`KNOWN_FILES` / `COLLECTION_FILES`, merged by
+    `name`) like the group registry. The *active* profile is **machine-local**
+    (`runspec_active_profile.toml`, never synced) — which one you've loaded is
+    personal, moment-to-moment state.
+  - Bridge: `get_profiles` / `save_profiles` (self-healing + delete reconciliation)
+    / `rename_profile` (re-points membership) / `get_active_profile` /
+    `set_active_profile` (the switch). Profiles vs groups: a group is a *targeting
+    unit* (one per host, fan-out); a profile is a *working-set* (many per host,
+    switchable). See `docs/design/host-profiles.md`.
+
+### Profiles are orthogonal to groups
+- Groups still organize the sidebar and target fan-out; profiles scope which
+  hosts are live. A host can belong to several profiles but one group.
+
+
 ## [0.149.0] — 2026-06-29
 
 ### Added

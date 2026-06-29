@@ -132,6 +132,7 @@ def merge_collection(
 COLLECTION_FILES: dict[str, tuple[str, str]] = {
     "runspec_hosts.toml": ("host", "name"),
     "runspec_groups.toml": ("group", "name"),
+    "runspec_profiles.toml": ("profile", "name"),
     "runspec_filters.toml": ("filter", "name"),
     "runspec_credentials.toml": ("credential", "id"),
     "runspec_runbooks.toml": ("runbook", "id"),
