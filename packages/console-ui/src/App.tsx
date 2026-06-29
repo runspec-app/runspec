@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, Suspense } from 'react'
-import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, message } from 'antd'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, message, Watermark } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -45,7 +45,7 @@ import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type RoomInfo } from './bridge'
+import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type RoomInfo, type BrandTheme } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
@@ -106,6 +106,9 @@ export default function App() {
   const [version, setVersion] = useState<string>('')
   const [updateInfo, setUpdateInfo] = useState<{ latest: string | null; updateAvailable: boolean } | null>(null)
   const [docsUrl, setDocsUrl] = useState<string>('')
+  // White-label theme ([console.theme]) — accent colour, watermark, sidebar brand
+  // name. Read-only (set by a config seed or by hand); {} = the default look.
+  const [brandTheme, setBrandTheme] = useState<BrandTheme>({})
   // Triggers tab badge — pending human confirms + waiting (unclaimed) queue
   // conversations, so an approval or a new queue caller is visible from any tab.
   const [triggerAwaiting, setTriggerAwaiting] = useState(0)
@@ -204,6 +207,7 @@ export default function App() {
     // window title is set by the Python side; mirror it onto the document so the
     // page title matches too.
     bridge.app_title().then(t => { document.title = t }).catch(() => {})
+    bridge.brand_theme().then(setBrandTheme).catch(() => {})
     bridge.check_for_update()
       .then(r => { if (r.ok) setUpdateInfo({ latest: r.latest, updateAvailable: r.update_available }) })
       .catch(() => {})
@@ -456,8 +460,15 @@ export default function App() {
     <ThemeContext.Provider value={isDark}>
       <ConfigProvider theme={{
           algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
-          token: { fontFamily: 'monospace' },
+          token: {
+            fontFamily: 'monospace',
+            // White-label accent → drives buttons, links, active tabs, switches.
+            ...(brandTheme.accent_color ? { colorPrimary: brandTheme.accent_color } : {}),
+          },
         }}>
+        {/* White-label content watermark (faint tiled brand mark). When neither
+            text nor logo is set, Watermark renders nothing — a passthrough. */}
+        <Watermark content={brandTheme.watermark_text} image={brandTheme.watermark_logo}>
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
           {/* Fixed host sidebar */}
@@ -471,7 +482,7 @@ export default function App() {
               fontWeight: 700, fontSize: 14, color: titleCol,
               borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
             }}>
-              runspec
+              {brandTheme.brand_name || 'runspec'}
             </div>
             {/* Host-profile switcher — only when profiles are defined. Picking one
                 scopes the sidebar + standing connections to that working-set. */}
@@ -936,6 +947,7 @@ export default function App() {
           </div>
         </div>
         </div>
+        </Watermark>
 
         <TransferModal
           open={transferOpen}

@@ -72,19 +72,46 @@ def _start_static_server(dist: Path) -> int:
     return port
 
 
+def _icon_rgb() -> tuple[int, int, int]:
+    """The icon square's colour: the white-label `[console.theme] accent_color`
+    when set (so the app icon matches the brand), else runspec blue."""
+    from .config import theme_config, valid_accent
+
+    accent = valid_accent(theme_config().get("accent_color"))
+    if accent:
+        h = accent.lstrip("#")
+        if len(h) == 3:  # #rgb → #rrggbb
+            h = "".join(c * 2 for c in h)
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return 9, 88, 217  # runspec blue
+
+
 def _build_icon() -> Path | None:
-    """Generate a simple runspec-branded .ico on first launch, cached in app-data."""
+    """Generate a simple branded .ico, cached in app-data.
+
+    A white-label install can override the icon outright with `[console.theme]
+    icon` (a readable `.ico`/`.png` path); otherwise a solid 32×32 square is
+    painted in `accent_color` (the brand colour) or runspec blue. The cache key
+    includes the colour, so changing `accent_color` regenerates it."""
     import struct
     import zlib
 
-    from .config import config_path
+    from .config import config_path, theme_config
 
-    cache = config_path().parent / "runspec_console.ico"
+    # An explicit icon path wins — used verbatim.
+    icon_override = theme_config().get("icon")
+    if isinstance(icon_override, str) and icon_override.strip():
+        p = Path(icon_override.strip()).expanduser()
+        if p.is_file():
+            return p
+
+    r, g, b = _icon_rgb()
+    w = 32
+    cache = config_path().parent / f"runspec_console-{r:02x}{g:02x}{b:02x}.ico"
     if cache.exists():
         return cache
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        r, g, b, w = 9, 88, 217, 32  # runspec blue, 32×32
 
         def _chunk(tag: bytes, data: bytes) -> bytes:
             return (

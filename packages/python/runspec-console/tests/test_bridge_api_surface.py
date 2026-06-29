@@ -17,6 +17,7 @@ EXPECTED = {
     "add_team",
     "app_title",
     "app_version",
+    "brand_theme",
     "browse_folder",
     "browse_key_file",
     "browse_ssh_binary",

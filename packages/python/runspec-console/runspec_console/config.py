@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -750,6 +751,45 @@ def sounds_config() -> dict[str, Any]:
         if isinstance(sounds, dict):
             return sounds
     return {}
+
+
+# White-label theme (`[console.theme]`) — read-only, set by a config seed or by
+# hand. Rendered by the frontend (accent colour, watermark, sidebar brand name)
+# and the app icon. See docs/design/console-theme.md.
+
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def theme_config() -> dict[str, Any]:
+    """The `[console.theme]` table (or `{}` if unset)."""
+    console = read_config().get("console")
+    if isinstance(console, dict):
+        theme = console.get("theme")
+        if isinstance(theme, dict):
+            return theme
+    return {}
+
+
+def valid_accent(value: Any) -> str | None:
+    """Return ``value`` if it's a hex colour (``#rgb`` / ``#rrggbb``), else None.
+
+    ``colorPrimary`` is an Ant token rather than raw CSS, but validating keeps a
+    garbage value from poisoning the theme and bounds what reaches the icon's RGB
+    math."""
+    if isinstance(value, str) and _HEX_COLOR_RE.match(value.strip()):
+        return value.strip()
+    return None
+
+
+def valid_image_ref(value: Any) -> str | None:
+    """Return ``value`` if it's an http(s) or ``data:image/`` reference, else None.
+
+    So ``watermark_logo`` can't smuggle a ``javascript:`` URL into an ``<img>``."""
+    if isinstance(value, str):
+        v = value.strip()
+        if v.startswith(("https://", "http://", "data:image/")):
+            return v
+    return None
 
 
 def sound_enabled() -> bool:

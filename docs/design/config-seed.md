@@ -313,11 +313,10 @@ no per-boot churn.
 
 ## 12. Out of scope (follow-ups)
 
-* **Theme rendering.** The seed *delivers* `[console.theme]` values for free
-  (deep-overlay), but honouring accent colour / watermark in the UI is separate
-  frontend work — a distinct change that can land before or after the seed
-  mechanism. The seed feature ships without it; the keys simply sit in config
-  until the frontend reads them.
+* **Theme rendering.** ✅ **Shipped (0.153.0)** — the seed *delivers*
+  `[console.theme]` values, and the console now renders them (accent colour →
+  `colorPrimary` + app icon, watermark, sidebar brand name). See
+  `docs/design/console-theme.md`.
 * **Seed-as-bottom-fold-layer of a git pull** (§4) — v1 keeps seed and pull as two
   independent top-ups.
 * **Priority DSL for multiple contributors** — v1 folds by sorted dist name only.

@@ -109,6 +109,33 @@ class ConfigSshMixin:
         """The window/app title — branded to the active LLM plugin, else default."""
         return self._get_branding().title
 
+    def brand_theme(self) -> dict[str, Any]:
+        """The validated `[console.theme]` for the frontend (read-only white-label).
+
+        Returns only the keys the UI renders, each cleaned: `accent_color` (a hex
+        colour → Ant `colorPrimary`), `brand_name` (sidebar title), `watermark_text`,
+        and `watermark_logo` (an http(s)/`data:image` URL). An absent or invalid
+        value is dropped, so `{}` means "no theme — the default look". Source is
+        config only (set by a config seed or by hand); there is no Settings editor.
+        See docs/design/console-theme.md."""
+        from .config import theme_config, valid_accent, valid_image_ref
+
+        theme = theme_config()
+        out: dict[str, Any] = {}
+        accent = valid_accent(theme.get("accent_color"))
+        if accent:
+            out["accent_color"] = accent
+        name = theme.get("brand_name")
+        if isinstance(name, str) and name.strip():
+            out["brand_name"] = name.strip()
+        text = theme.get("watermark_text")
+        if isinstance(text, str) and text.strip():
+            out["watermark_text"] = text.strip()
+        logo = valid_image_ref(theme.get("watermark_logo"))
+        if logo:
+            out["watermark_logo"] = logo
+        return out
+
     def app_version(self) -> str:
         """The installed version of the branded package, for display in the UI."""
         from .version import installed_version

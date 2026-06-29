@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.153.0] — 2026-06-29
+
+### Added
+
+- **White-label theme rendering (`[console.theme]`).** The package config seed
+  (0.152.0) could *deliver* theme values; now the console *renders* them — four
+  surfaces, all **read-only from config** (set by a seed or by hand; no Settings
+  editor in v1):
+  - **Accent colour** — `accent_color` (a hex colour) drives Ant Design's
+    `colorPrimary` (buttons, links, active tabs, switches) in both light/dark,
+    **and** recolours the generated app icon, so the white-label "blue square"
+    becomes the brand colour with no file to ship.
+  - **Content watermark** — `watermark_text` / `watermark_logo` render a faint
+    tiled brand mark behind the content area (Ant `<Watermark>`); unset → nothing.
+  - **Sidebar brand name** — `brand_name` replaces the sidebar title; unset keeps
+    the literal `runspec`, so default installs are pixel-identical.
+  - **App icon** — an explicit `icon` path (a readable `.ico`/`.png`) overrides
+    the generated icon outright; otherwise the square is painted in `accent_color`.
+    The icon cache is keyed by colour so a changed accent regenerates it.
+  - New read-only bridge method `brand_theme()` (validated — a non-hex colour or a
+    non-`http(s)`/`data:image` logo is dropped); pure `config.valid_accent` /
+    `valid_image_ref` / `theme_config` shared by the bridge and the icon builder.
+    See `docs/design/console-theme.md`.
+
 ## [0.152.0] — 2026-06-29
 
 ### Added

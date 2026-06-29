@@ -182,6 +182,16 @@ export interface SeedStatus {
   pending: boolean
 }
 
+// Validated white-label theme (`[console.theme]`). Every field optional; an
+// empty object means no theme (the default runspec look). `accent_color` is a
+// hex colour → Ant `colorPrimary`; `watermark_logo` is an http(s)/data:image URL.
+export interface BrandTheme {
+  accent_color?: string
+  brand_name?: string
+  watermark_text?: string
+  watermark_logo?: string
+}
+
 export interface SeedApplyResult {
   ok: boolean
   applied?: boolean
@@ -837,6 +847,9 @@ export interface BridgeApi {
   save_watches: (watches: Watch[]) => Promise<void>
   // ── version / docs ─────────────────────────────────────────────────────────
   app_title: () => Promise<string>
+  // Validated [console.theme] for white-label rendering (read-only; set by a
+  // config seed or by hand). Empty object = the default look.
+  brand_theme: () => Promise<BrandTheme>
   app_version: () => Promise<string>
   check_for_update: () => Promise<{ ok: boolean; current: string; latest: string | null; update_available: boolean }>
   docs_url: () => Promise<string>
