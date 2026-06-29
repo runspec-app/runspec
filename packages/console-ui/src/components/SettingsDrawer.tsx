@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry } from '../bridge'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
+import { bridge, type JumpHost, type HostGroup, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames } from '../views/FormsView'
@@ -1627,16 +1627,25 @@ function FiltersTab() {
 
 // ── Self-Service tab (which runnables visitors may request in the room) ─────
 
+// Designations whose runnable isn't currently discovered anywhere on the fleet are
+// kept (a host being offline shouldn't silently drop them) but collected under this
+// synthetic group key so they stay visible and removable.
+const SS_ORPHAN_KEY = '__not_discovered__'
+
+interface SsItem { name: string; description?: string; missing: boolean }
+
 function SelfServiceTab() {
   const [entries, setEntries] = useState<SelfServiceEntry[]>([])
-  const [discovered, setDiscovered] = useState<string[]>([])
+  const [runnables, setRunnables] = useState<Runnable[]>([])
   const [saving, setSaving] = useState(false)
+  const [query, setQuery] = useState('')
+  // null = not yet touched → show every group open. Once the operator collapses a
+  // panel we honour their choice (search overrides both, see activeKeys below).
+  const [openKeys, setOpenKeys] = useState<string[] | null>(null)
 
   const load = useCallback(() => {
     bridge.get_self_service().then(setEntries)
-    bridge.get_runnables('all').then(rs => {
-      setDiscovered(Array.from(new Set(rs.map(r => r.name))).sort((a, b) => a.localeCompare(b)))
-    })
+    bridge.get_runnables('all').then(setRunnables)
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -1651,43 +1660,131 @@ function SelfServiceTab() {
     if (on) { if (!isOn(name)) await persist([...entries, { name }]) }
     else { await persist(entries.filter(e => e.name !== name)) }
   }
+  const toggleMany = async (names: string[], on: boolean) => {
+    if (on) {
+      const add = names.filter(n => !isOn(n)).map(n => ({ name: n }))
+      if (add.length) await persist([...entries, ...add])
+    } else {
+      const drop = new Set(names)
+      await persist(entries.filter(e => !drop.has(e.name)))
+    }
+  }
 
-  // Designations whose runnable isn't currently discovered anywhere on the fleet
-  // — kept (so a host being offline doesn't silently drop them) but flagged.
-  const orphaned = entries.filter(e => !discovered.includes(e.name))
+  // Dedupe discovered runnables by name (the same name can surface on several
+  // hosts), keeping the first group/description seen — the self-service entry is
+  // keyed by name only, so one toggle covers every host carrying it.
+  const byName = new Map<string, { group: string; description?: string }>()
+  for (const r of runnables) {
+    if (!byName.has(r.name)) byName.set(r.name, { group: r.group || 'ungrouped', description: r.description })
+  }
 
-  const row = (name: string, on: boolean, missing: boolean) => (
-    <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
-      <Switch size="small" checked={on} disabled={saving} onChange={v => toggle(name, v)} />
-      <Text style={{ fontFamily: 'monospace', fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</Text>
-      {missing && <Tag style={{ margin: 0, fontSize: 10 }} color="orange">not discovered</Tag>}
-    </div>
-  )
+  // group key → items (the runnable's venv `group` is the "category" chip)
+  const groups = new Map<string, SsItem[]>()
+  for (const [name, info] of byName) {
+    const arr = groups.get(info.group) ?? []
+    arr.push({ name, description: info.description, missing: false })
+    groups.set(info.group, arr)
+  }
+  const orphaned = entries.filter(e => !byName.has(e.name))
+  if (orphaned.length) groups.set(SS_ORPHAN_KEY, orphaned.map(e => ({ name: e.name, missing: true })))
+
+  // Real groups alphabetically, the "not discovered" bucket pinned last.
+  const groupKeys = [...groups.keys()].filter(k => k !== SS_ORPHAN_KEY).sort((a, b) => a.localeCompare(b))
+  if (groups.has(SS_ORPHAN_KEY)) groupKeys.push(SS_ORPHAN_KEY)
+
+  const q = query.trim().toLowerCase()
+  const hit = (it: SsItem, gk: string) =>
+    !q || it.name.toLowerCase().includes(q) || gk.toLowerCase().includes(q) || (it.description?.toLowerCase().includes(q) ?? false)
+
+  const totalOn = entries.length
+  const totalDiscovered = byName.size
+
+  const card = (it: SsItem) => {
+    const on = isOn(it.name)
+    return (
+      <div key={it.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 6, border: `1px solid ${on ? '#3b5161' : '#2a2a2a'}`, background: on ? 'rgba(64, 130, 180, 0.10)' : 'transparent', minWidth: 0 }}>
+        <Switch size="small" checked={on} disabled={saving} onChange={v => toggle(it.name, v)} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div title={it.name} style={{ fontFamily: 'monospace', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
+          {it.description && <div title={it.description} style={{ fontSize: 10, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.description}</div>}
+        </div>
+        {it.missing && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>missing</Tag>}
+      </div>
+    )
+  }
+
+  const panels = groupKeys.map(gk => {
+    const all = (groups.get(gk) ?? []).slice().sort((a, b) => a.name.localeCompare(b.name))
+    const shown = all.filter(it => hit(it, gk))
+    const onCount = all.filter(it => isOn(it.name)).length
+    const isOrphan = gk === SS_ORPHAN_KEY
+    return {
+      key: gk,
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Tag color={isOrphan ? 'orange' : 'geekblue'} style={{ margin: 0, fontFamily: 'monospace', fontSize: 11 }}>
+            {isOrphan ? 'not discovered' : gk}
+          </Tag>
+          <Text type="secondary" style={{ fontSize: 11 }}>{onCount}/{all.length} on</Text>
+          <span style={{ flex: 1 }} />
+          {!isOrphan && (
+            <span onClick={e => e.stopPropagation()}>
+              <Tooltip title={onCount === all.length ? 'Disable all in this category' : 'Enable all in this category'}>
+                <Switch size="small" checked={all.length > 0 && onCount === all.length} disabled={saving}
+                  onChange={v => toggleMany(all.map(i => i.name), v)} />
+              </Tooltip>
+            </span>
+          )}
+        </div>
+      ),
+      children: (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 6 }}>
+          {shown.map(card)}
+        </div>
+      ),
+      _hasMatch: shown.length > 0,
+    }
+  }).filter(p => p._hasMatch)
+
+  // When searching, force every matching panel open so results aren't hidden in a
+  // collapsed category; otherwise honour the operator's manual open/closed state.
+  const matchedKeys = panels.map(p => p.key)
+  const activeKeys = q ? matchedKeys : (openKeys ?? groupKeys)
 
   return (
     <div>
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
-        Saved to <code>runspec_self_service.toml</code> (synced). The checked runnables are offered to visitors in the helpdesk room's self-service catalogue — everything else stays operator-only. A queue's optional <code>room_catalog</code> allowlist narrows this set per queue.
+        Saved to <code>runspec_self_service.toml</code> (synced). The enabled runnables are offered to visitors in the helpdesk room's self-service catalogue — everything else stays operator-only. A queue's optional <code>room_catalog</code> allowlist narrows this set per queue.
       </Text>
 
-      {discovered.length === 0 && (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <Input
+          allowClear
+          size="small"
+          prefix={<SearchOutlined />}
+          placeholder="Search runnables or categories…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          style={{ maxWidth: 300 }}
+        />
+        <Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{totalOn} enabled · {totalDiscovered} discovered</Text>
+      </div>
+
+      {totalDiscovered === 0 && orphaned.length === 0 && (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No runnables discovered yet" />
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {discovered.map(name => row(name, isOn(name), false))}
-      </div>
+      {panels.length === 0 && q && (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No runnables match "${query}"`} />
+      )}
 
-      {orphaned.length > 0 && (
-        <>
-          <Divider style={{ margin: '14px 0 8px' }} />
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
-            Designated but not currently discovered on any connected host. Toggle off to remove.
-          </Text>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            {orphaned.map(e => row(e.name, true, true))}
-          </div>
-        </>
+      {panels.length > 0 && (
+        <Collapse
+          size="small"
+          activeKey={activeKeys}
+          onChange={keys => { if (!q) setOpenKeys(Array.isArray(keys) ? keys : [keys]) }}
+          items={panels.map(({ _hasMatch, ...rest }) => rest)}
+        />
       )}
     </div>
   )
