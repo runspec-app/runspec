@@ -51,6 +51,12 @@ def arg_to_property(arg: dict[str, Any]) -> dict[str, Any]:
     rng = arg.get("range")
     if isinstance(rng, (list, tuple)) and len(rng) == 2:
         prop["minimum"], prop["maximum"] = rng[0], rng[1]
+    # Pass the form-control hint through so the room form can render a matching
+    # control (e.g. a date picker for ui="date"/"datetime"). x-* prefix mirrors
+    # the x-kind/x-hosts convention and is ignored by anything that doesn't read it.
+    ui = arg.get("ui")
+    if ui:
+        prop["x-ui"] = str(ui)
     return prop
 
 

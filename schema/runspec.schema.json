@@ -395,8 +395,8 @@
         },
         "ui": {
           "type": "string",
-          "enum": ["text", "password", "number", "file", "directory", "checkbox", "radio", "select", "multiselect", "slider"],
-          "description": "Form control hint. Inferred from type and properties if omitted."
+          "enum": ["text", "password", "number", "file", "directory", "checkbox", "radio", "select", "multiselect", "slider", "date", "datetime"],
+          "description": "Form control hint. Inferred from type and properties if omitted. Set \"date\"/\"datetime\" on a str arg to request a date / date-time picker that writes an ISO-8601 string."
         },
         "hint": {
           "type": "string",

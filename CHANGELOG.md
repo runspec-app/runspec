@@ -7,6 +7,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.48.0] — 2026-06-29
+
+### Added
+
+- **`ui = "date"` / `ui = "datetime"` form-control hints.** The `ui` field gains
+  two explicit values that ask a UI to render a date / date-time picker for an
+  argument that stays `type = "str"`. The picked value is written as an ISO-8601
+  string — `YYYY-MM-DD` for `date`, a full timestamp for `datetime` — so the wire
+  contract is an ordinary string and nothing about parsing or validation changes.
+  These are explicit opt-ins (never inferred). Used by the runspec-console Forms
+  tab and the runspec-room web form to surface calendar controls for date
+  arguments. (`schema/runspec.schema.json`, `spec/SPEC.md`, `docs/format.md`.)
+
 ## [0.47.0] / [node-0.36.0] — 2026-06-27
 
 ### Changed

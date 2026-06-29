@@ -225,12 +225,12 @@ header .spacer { flex: 1; }
   z-index: -1;
   background: rgba(0, 0, 0, .55);
 }
-/* Title, description and the button row span every column. */
-#reqform h3, #reqform > p, #reqform .form-row { grid-column: 1 / -1; }
+/* Title, description, the button row and the collapsed defaults span every column. */
+#reqform h3, #reqform > p, #reqform .form-row, #reqform .default-args { grid-column: 1 / -1; }
 #reqform h3 { margin: 0; font-size: 16px; color: var(--accent); }
 #reqform p { margin: 0; }
 #reqform label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
-#reqform input:not([type="checkbox"]), #reqform select {
+#reqform input:not([type="checkbox"]), #reqform select, #reqform textarea {
   width: 100%;
   background: #0c0e12;
   border: 1px solid var(--line);
@@ -239,6 +239,23 @@ header .spacer { flex: 1; }
   padding: 7px 9px;
   font: inherit;
 }
+/* Auto-growing string fields: no manual resize, height driven by JS. */
+#reqform textarea { resize: none; overflow: hidden; min-height: 0; line-height: 1.4; }
+/* Native date pickers follow the dark palette. */
+#reqform input[type="date"], #reqform input[type="datetime-local"] { color-scheme: dark; }
+/* Collapsed "Default arguments" section. */
+#reqform .default-args {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+#reqform .default-args > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  user-select: none;
+}
+#reqform .default-args label { margin-top: 8px; }
 #reqform .form-row { display: flex; gap: 8px; justify-content: flex-end; }
 #reqform button {
   background: var(--accent);

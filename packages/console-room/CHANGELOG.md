@@ -4,6 +4,23 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.32.0]
+
+### Changed
+- **Web form parity with the desktop console.** The catalogue request form
+  (`web/frontend/`) now mirrors the runspec-console Forms tab:
+  - **"Default arguments" collapse.** Optional args (those not in the schema's
+    `required` set) fold into a collapsed `<details>` section near the top;
+    required args stay always-visible.
+  - **Date pickers.** A property carrying `x-ui = "date"` / `"datetime"` (emitted
+    by the console catalog for a `str` arg with `ui = "date"`/`"datetime"`) renders
+    a native `<input type="date">` / `datetime-local`; the value is submitted as a
+    string, unchanged.
+  - **Auto-growing string fields.** Plain string inputs are now auto-sizing
+    textareas — Shift+Enter inserts a newline (and the field grows), a bare Enter
+    is suppressed.
+  - Submission is unchanged (fields keep their `data-arg`/`data-argType`).
+
 ## [0.31.0]
 
 ### Added

@@ -20,6 +20,7 @@
     "@tiptap/suggestion": "^2.11.7",
     "antd": "^5.24.0",
     "cmdk": "^1.1.1",
+    "dayjs": "^1.11.11",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^9.0.3",

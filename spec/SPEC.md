@@ -1344,6 +1344,12 @@ When `ui` is not declared, implementations should infer the form control:
 | `range` present | Slider |
 | `multiple = true` | Multi-select |
 
+An author may also declare `ui` explicitly to request a specific control. In
+particular, `ui = "date"` or `ui = "datetime"` on a `str` arg requests a date /
+date-time picker; the type stays `str` and the picked value is written as an
+ISO-8601 string (`YYYY-MM-DD` for `date`, a full timestamp for `datetime`).
+These are explicit opt-ins — they are never inferred.
+
 When `hint` is declared, implementations should surface it as the field's
 placeholder text (an example or format hint shown in the empty control). It is
 advisory only — it never changes parsing or validation.

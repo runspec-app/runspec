@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.151.0] — 2026-06-29
+
+### Changed
+
+- **Forms tab: optional args collapse, date pickers, auto-growing strings.** Three
+  refinements so a run form leads with what the operator must fill:
+  - **"Default arguments" collapse.** Args with a default (i.e. non-required /
+    optional) now fold into a section that's **collapsed by default**, near the
+    top of each group; the required args stay always-visible below it. For a
+    runnable with subcommands the collapse applies *within* each section — the
+    **Inherited** section gets its own "Default arguments" sub-collapse and the
+    **This command** section gets its own — so inherited globals and the command's
+    own optional args each tuck away independently.
+  - **Date pickers.** A `str` arg that declares `ui = "date"` or `ui = "datetime"`
+    (the new core format hint) renders an Ant `DatePicker` (with time for
+    `datetime`); the value is written back as an ISO string, so the run contract is
+    unchanged. The arg's type badge reads `date`/`datetime`.
+  - **Auto-growing string fields.** Plain string inputs are now auto-sizing
+    textareas — **Shift+Enter inserts a newline** (and the field grows), while a
+    bare Enter is suppressed (no stray newline). Password fields stay single-line
+    and masked. (Runbook forms inherit all three via the shared `ArgInput`.)
+  - `console-ui/src/views/FormsView.tsx` (new `partitionArgs` / `suppressPlainEnter`
+    helpers, `DefaultArgsCollapse`); `dayjs` added as a direct dependency.
+- **Catalog passes the `ui` hint to the room.** `arg_to_property` now emits the
+  form-control hint as `x-ui` on each generated JSON-Schema property, so the
+  runspec-room web form can render the matching date picker. (`catalog.py`.)
+
 ## [0.150.1] — 2026-06-29
 
 ### Fixed

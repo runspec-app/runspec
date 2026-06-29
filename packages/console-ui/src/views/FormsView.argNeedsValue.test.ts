@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues } from './FormsView'
+import { describe, it, expect, vi } from 'vitest'
+import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter } from './FormsView'
 import type { ArgDef } from '../bridge'
 
 const arg = (over: Partial<ArgDef>): ArgDef => ({ name: 'x', type: 'str', required: false, ...over })
@@ -78,6 +78,46 @@ describe('initialFormValues (edit-and-rerun prefill)', () => {
   it('never pre-fills a password arg (secrets are not recorded)', () => {
     const v = initialFormValues(args, { password: 'leaked' })
     expect('password' in v).toBe(false)
+  })
+})
+
+describe('partitionArgs', () => {
+  it('keeps required args visible and folds the rest into defaulted', () => {
+    const args: ArgDef[] = [
+      arg({ name: 'name', type: 'str', required: true }),
+      arg({ name: 'workers', type: 'int', required: false, default: 4 }),
+      arg({ name: 'verbose', type: 'flag', required: false, default: false }),
+      arg({ name: 'token', type: 'str', required: false, default: '$API_TOKEN' }),
+    ]
+    const { required, defaulted } = partitionArgs(args)
+    expect(required.map(a => a.name)).toEqual(['name'])
+    // A $VAR-ref default is still non-required → collapses with the rest.
+    expect(defaulted.map(a => a.name)).toEqual(['workers', 'verbose', 'token'])
+  })
+
+  it('handles all-required and all-optional groups', () => {
+    expect(partitionArgs([arg({ required: true })]).defaulted).toEqual([])
+    expect(partitionArgs([arg({ required: false })]).required).toEqual([])
+  })
+})
+
+describe('suppressPlainEnter', () => {
+  it('suppresses a bare Enter', () => {
+    const e = { key: 'Enter', shiftKey: false, preventDefault: vi.fn() }
+    expect(suppressPlainEnter(e)).toBe(true)
+    expect(e.preventDefault).toHaveBeenCalled()
+  })
+
+  it('lets Shift+Enter through to insert a newline', () => {
+    const e = { key: 'Enter', shiftKey: true, preventDefault: vi.fn() }
+    expect(suppressPlainEnter(e)).toBe(false)
+    expect(e.preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('ignores other keys', () => {
+    const e = { key: 'a', shiftKey: false, preventDefault: vi.fn() }
+    expect(suppressPlainEnter(e)).toBe(false)
+    expect(e.preventDefault).not.toHaveBeenCalled()
   })
 })
 

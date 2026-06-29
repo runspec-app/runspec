@@ -363,12 +363,18 @@
     const props = schema.properties || {};
     const required = new Set(schema.required || []);
 
-    for (const [name, prop] of Object.entries(props)) {
+    // One schema property → a labelled control. Mirrors the desktop console's
+    // Forms tab: native date/datetime pickers for x-ui="date"/"datetime" on a
+    // string arg, and auto-growing textareas for plain strings (Shift+Enter for a
+    // newline, plain Enter suppressed). Keeps data-arg/data-argType so the submit
+    // handler is unchanged.
+    function buildField(name, prop) {
       const label = document.createElement("label");
       const caption = document.createElement("span");
       caption.textContent = name + (required.has(name) ? " *" : "");
       label.append(caption);
 
+      const xui = prop["x-ui"];
       let input;
       if (Array.isArray(prop.enum)) {
         input = document.createElement("select");
@@ -382,26 +388,69 @@
         input = document.createElement("input");
         input.type = "checkbox";
         input.checked = !!prop.default;
-      } else {
+      } else if (xui === "date" || xui === "datetime") {
         input = document.createElement("input");
-        input.type =
-          prop.type === "integer" || prop.type === "number" ? "number" : "text";
+        input.type = xui === "datetime" ? "datetime-local" : "date";
+        if (prop.default !== undefined) input.value = String(prop.default);
+        if (required.has(name)) input.required = true;
+        // The native datetime-local control yields a zoneless local string
+        // (YYYY-MM-DDTHH:MM); flag it so submit normalizes to a UTC ISO string
+        // with Z, matching the desktop console's DatePicker output. A plain date
+        // (YYYY-MM-DD) already matches, so it carries no flag.
+        if (xui === "datetime") input.dataset.argFmt = "datetime";
+      } else if (prop.type === "integer" || prop.type === "number") {
+        input = document.createElement("input");
+        input.type = "number";
         if (prop.type === "number") input.step = "any";
         if (prop.default !== undefined) input.value = String(prop.default);
         if (required.has(name)) input.required = true;
         if (prop.description) input.placeholder = prop.description;
+      } else {
+        // Plain string — auto-growing textarea, Shift+Enter = newline.
+        input = document.createElement("textarea");
+        input.rows = 1;
+        if (prop.default !== undefined) input.value = String(prop.default);
+        if (required.has(name)) input.required = true;
+        if (prop.description) input.placeholder = prop.description;
+        const grow = () => {
+          input.style.height = "auto";
+          input.style.height = input.scrollHeight + "px";
+        };
+        input.addEventListener("input", grow);
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) e.preventDefault();
+        });
+        requestAnimationFrame(grow);
       }
       input.dataset.arg = name;
-      input.dataset.argType = prop.type || "string";
+      input.dataset.argType =
+        xui === "date" || xui === "datetime" ? "string" : prop.type || "string";
       label.append(input);
-      if (prop.description && input.tagName !== "INPUT") {
+      if (prop.description && input.tagName === "SELECT") {
         const hint = document.createElement("span");
         hint.className = "cat-desc";
         hint.textContent = prop.description;
         label.append(hint);
       }
-      reqForm.append(label);
+      return label;
     }
+
+    // Optional/defaulted args fold into a collapsed "Default arguments" section
+    // near the top; required args stay always-visible. Required == in the schema
+    // `required` set (mirrors the React partition by !arg.required).
+    const entries = Object.entries(props);
+    const defaulted = entries.filter(([n]) => !required.has(n));
+    const requiredEntries = entries.filter(([n]) => required.has(n));
+    if (defaulted.length) {
+      const det = document.createElement("details");
+      det.className = "default-args";
+      const sum = document.createElement("summary");
+      sum.textContent = `Default arguments (${defaulted.length})`;
+      det.append(sum);
+      for (const [name, prop] of defaulted) det.append(buildField(name, prop));
+      reqForm.append(det);
+    }
+    for (const [name, prop] of requiredEntries) reqForm.append(buildField(name, prop));
 
     const row = document.createElement("div");
     row.className = "form-row";
@@ -426,12 +475,18 @@
         if (el.type === "checkbox") {
           if (el.checked) args[name] = true; // flags: present means on
         } else if (el.value !== "") {
-          args[name] =
-            type === "integer"
-              ? parseInt(el.value, 10)
-              : type === "number"
-                ? parseFloat(el.value)
-                : el.value;
+          if (type === "integer") {
+            args[name] = parseInt(el.value, 10);
+          } else if (type === "number") {
+            args[name] = parseFloat(el.value);
+          } else if (el.dataset.argFmt === "datetime") {
+            // Local zoneless value → UTC ISO string with Z (desktop parity);
+            // fall back to the raw value if the browser can't parse it.
+            const d = new Date(el.value);
+            args[name] = isNaN(d.getTime()) ? el.value : d.toISOString();
+          } else {
+            args[name] = el.value;
+          }
         }
       }
       const kind = tool["x-kind"] === "skill" ? "skill" : "runnable";

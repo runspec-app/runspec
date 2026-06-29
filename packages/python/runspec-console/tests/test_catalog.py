@@ -8,6 +8,7 @@ no I/O.
 from __future__ import annotations
 
 from runspec_console.catalog import (
+    arg_to_property,
     build_catalog,
     build_full_catalog,
     build_runbook_catalog,
@@ -65,6 +66,23 @@ def test_entry_carries_schema_in_visitor_contract():
     }
     assert schema["properties"]["force"] == {"type": "boolean"}
     assert "token" not in schema["properties"]  # secrets never cross the boundary
+
+
+def test_arg_to_property_passes_ui_hint_as_x_ui():
+    # The form-control hint rides through so the room can render a date picker.
+    assert arg_to_property({"type": "str", "ui": "date"})["x-ui"] == "date"
+    assert arg_to_property({"type": "str", "ui": "datetime"})["x-ui"] == "datetime"
+    # No hint declared → no x-ui key.
+    assert "x-ui" not in arg_to_property({"type": "str"})
+
+
+def test_entry_surfaces_ui_hint_in_schema():
+    runnable = _runnable(
+        "schedule-job",
+        args=[{"name": "when", "type": "str", "required": True, "ui": "datetime"}],
+    )
+    entry = runnable_to_catalog_entry(runnable)
+    assert entry["inputSchema"]["properties"]["when"]["x-ui"] == "datetime"
 
 
 # ── build_catalog ──────────────────────────────────────────────────────────────

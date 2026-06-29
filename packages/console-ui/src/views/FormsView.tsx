@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Collapse, DatePicker, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
 import type { ArgDef, Host, Runnable, Runbook } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark } from '../ThemeContext'
@@ -22,6 +23,28 @@ function isVarRef(val: unknown): val is string {
 export function argNeedsValue(arg: ArgDef, value: unknown): boolean {
   if (!arg.required) return false
   return value === undefined || value === ''
+}
+
+// String fields auto-grow on multiple lines, but a bare Enter should not insert a
+// newline (it's noise in a single-value field) — only Shift+Enter does. Returns
+// true when the key was suppressed. Exported for unit tests.
+export function suppressPlainEnter(e: { key: string; shiftKey: boolean; preventDefault: () => void }): boolean {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    return true
+  }
+  return false
+}
+
+// Split a group's args into the required ones (no default → kept always-visible)
+// and the defaulted/optional ones (folded into a collapsed "Default arguments"
+// section so the form leads with what the operator must fill). A $VAR-ref default
+// is still non-required, so it collapses too. Exported for unit tests.
+export function partitionArgs(args: ArgDef[]): { required: ArgDef[]; defaulted: ArgDef[] } {
+  return {
+    required: args.filter(a => a.required),
+    defaulted: args.filter(a => !a.required),
+  }
 }
 
 // Mirrors credentials.env_prefix / env_field_map in the Python bridge: a saved
@@ -208,11 +231,34 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     )
   }
 
+  if (arg.ui === 'date' || arg.ui === 'datetime') {
+    // Date / date-time picker on a `str` arg (type stays str). The form value is
+    // an ISO string — date-only `YYYY-MM-DD` for `date`, a full timestamp for
+    // `datetime` — so the wire contract is an ordinary string, as before.
+    const withTime = arg.ui === 'datetime'
+    const dt = typeof value === 'string' && value ? dayjs(value) : undefined
+    return (
+      <DatePicker
+        size="small"
+        value={dt && dt.isValid() ? dt : null}
+        showTime={withTime}
+        onChange={d => onChange(d ? (withTime ? d.toISOString() : d.format('YYYY-MM-DD')) : undefined)}
+        placeholder={placeholder ?? (withTime ? 'Select date & time…' : 'Select date…')}
+        style={{ width: '100%', ...inputStyle }}
+        status={error ? 'error' : undefined}
+      />
+    )
+  }
+
+  // Plain string field. A TextArea that auto-grows as the operator adds lines;
+  // Shift+Enter inserts a newline, a bare Enter is suppressed (no stray newline).
   return (
-    <Input
+    <Input.TextArea
       size="small"
       value={value as string ?? ''}
       onChange={e => onChange(e.target.value)}
+      onKeyDown={suppressPlainEnter}
+      autoSize={{ minRows: 1, maxRows: 8 }}
       placeholder={placeholder}
       style={inputStyle}
       status={error ? 'error' : undefined}
@@ -239,7 +285,9 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, bin
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
         <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
         <Tag color="default" style={{ fontSize: 10, margin: 0 }}>
-          {arg.type === 'path' && arg.ui === 'directory' ? 'folder' : arg.type}
+          {arg.type === 'path' && arg.ui === 'directory' ? 'folder'
+            : (arg.ui === 'date' || arg.ui === 'datetime') ? arg.ui
+              : arg.type}
         </Tag>
         {arg.inherited && (
           <Tooltip title="Inherited from a global arg or a parent command — applies to this run">
@@ -268,6 +316,24 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, bin
       <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} binding={binding} />
       {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
     </div>
+  )
+}
+
+// The defaulted/optional args of a group, folded into a section that is
+// collapsed by default (no defaultActiveKey) so the form leads with the required
+// fields. `ghost` keeps it visually light, matching the flat layout.
+function DefaultArgsCollapse({ count, children }: { count: number; children: ReactNode }) {
+  return (
+    <Collapse
+      size="small"
+      ghost
+      style={{ marginLeft: -8, marginRight: -8 }}
+      items={[{
+        key: 'defaults',
+        label: <Text type="secondary" style={{ fontSize: 11 }}>Default arguments ({count})</Text>,
+        children: <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>{children}</div>,
+      }]}
+    />
   )
 }
 
@@ -312,11 +378,25 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange,
     />
   )
 
-  // Flat runnable (no inheritance) — render exactly as before, no section chrome.
+  // Within a group, the defaulted args collapse into a "Default arguments" row
+  // near the top; the required args stay always-visible below it.
+  const renderGroup = (groupArgs: ArgDef[]) => {
+    const { required, defaulted } = partitionArgs(groupArgs)
+    return (
+      <>
+        {defaulted.length > 0 && (
+          <DefaultArgsCollapse count={defaulted.length}>{defaulted.map(row)}</DefaultArgsCollapse>
+        )}
+        {required.map(row)}
+      </>
+    )
+  }
+
+  // Flat runnable (no inheritance) — one group, no section chrome.
   if (inherited.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {own.map(row)}
+        {renderGroup(own)}
       </div>
     )
   }
@@ -325,12 +405,12 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange,
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <SectionLabel>Inherited</SectionLabel>
-        {inherited.map(row)}
+        {renderGroup(inherited)}
       </div>
       {own.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <SectionLabel>This command</SectionLabel>
-          {own.map(row)}
+          {renderGroup(own)}
         </div>
       )}
     </div>
