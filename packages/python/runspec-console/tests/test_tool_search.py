@@ -65,6 +65,7 @@ class _Bridge:
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _confirm_decision = Bridge._confirm_decision
     _run_tool_sync = Bridge._run_tool_sync
+    _tool_output_cap = Bridge._tool_output_cap
     # search-mode additions
     _search_mode_tools = Bridge._search_mode_tools
     _runnables_for_id = Bridge._runnables_for_id

@@ -8,6 +8,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -659,3 +660,87 @@ def _write_schedules(path: Path, schedules: list[dict[str, Any]]) -> None:
                 lines.append(f"{k} = {_toml_scalar(v)}")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+# ── context-window indicator helpers (docs/design/console-context-indicator.md) ──
+#
+# The model reports one exact prompt token count per turn; these split it across
+# the labelled buckets that built it (system / console-context / memory / tools /
+# catalog / history) by each bucket's *character* share, so the breakdown is an
+# honest estimate that always reconciles to the exact total shown on the gauge.
+
+# Context-window sizes (tokens) by a case-insensitive model-id substring, with a
+# default for anything unrecognised. A labelled estimate, like the price table —
+# the gauge shows fill against this, not a billing-exact figure.
+_MODEL_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("claude", 200_000),
+    ("gpt-4.1", 1_000_000),
+    ("gpt", 128_000),
+    ("gemini", 1_000_000),
+)
+_DEFAULT_CONTEXT_WINDOW = 200_000
+
+
+def model_context_window(model: str) -> int:
+    """Best-effort context-window size (tokens) for a model id, matched by
+    substring. Unknown models fall back to a conservative 200k."""
+    m = (model or "").lower()
+    for sub, win in _MODEL_WINDOWS:
+        if sub in m:
+            return win
+    return _DEFAULT_CONTEXT_WINDOW
+
+
+def estimate_context_buckets(
+    parts: dict[str, int], total_tokens: int
+) -> list[dict[str, Any]]:
+    """Split an exact prompt token count across labelled buckets by char share.
+
+    ``parts`` maps a bucket key to its character count. Returns one
+    ``{"key", "tokens", "est": True}`` per bucket, in ``parts`` insertion order,
+    whose ``tokens`` always sum to ``total_tokens`` (largest-remainder rounding)
+    so the breakdown reconciles to the exact gauge total. Slices are estimates;
+    the headline total they sum to is exact."""
+    keys = list(parts)
+    safe = {k: max(0, int(parts.get(k, 0))) for k in keys}
+    total_chars = sum(safe.values())
+    if total_chars <= 0 or total_tokens <= 0:
+        return [{"key": k, "tokens": 0, "est": True} for k in keys]
+    raw = {k: total_tokens * safe[k] / total_chars for k in keys}
+    floored = {k: int(v) for k, v in raw.items()}
+    remainder = total_tokens - sum(floored.values())
+    # Hand the leftover tokens to the largest fractional parts so the slices sum
+    # to the exact total without any single bucket drifting by more than 1.
+    for k in sorted(keys, key=lambda k: raw[k] - floored[k], reverse=True)[
+        : max(0, remainder)
+    ]:
+        floored[k] += 1
+    return [{"key": k, "tokens": floored[k], "est": True} for k in keys]
+
+
+# Marker appended to a tool result when it exceeds the per-call output cap. Kept
+# parseable (carries the original length + cap) so a tool card can badge the cut
+# without the tool-runner having to change its plain-string return contract.
+_TRUNCATION_SENTINEL = "[output truncated:"
+
+
+def make_truncation_suffix(orig_len: int, cap: int) -> str:
+    """The marker make truncation visible — both to the model (it says the JSON
+    above is incomplete) and, via ``parse_truncation``, to the tool-card badge."""
+    return (
+        f"\n{_TRUNCATION_SENTINEL} {int(orig_len)} chars cut to {int(cap)} — "
+        "incomplete; any JSON above is cut off mid-structure]"
+    )
+
+
+def parse_truncation(output: str) -> dict[str, int] | None:
+    """Detect the truncation marker; return ``{"orig_len", "cap"}`` or ``None``.
+    Lets the UI badge a cut-off tool result without the runner changing its
+    string return contract."""
+    idx = output.rfind(_TRUNCATION_SENTINEL)
+    if idx < 0:
+        return None
+    m = re.search(r"\[output truncated: (\d+) chars cut to (\d+)", output[idx:])
+    if not m:
+        return None
+    return {"orig_len": int(m.group(1)), "cap": int(m.group(2))}

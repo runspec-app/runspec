@@ -8,6 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.154.0] — 2026-06-30
+
+### Added
+
+- **Context-window indicator** (`docs/design/console-context-indicator.md`, Phase
+  1). A footer gauge shows the active chat's latest-turn context fill —
+  `48.2k / 200k · 24%` with a green/amber/red dot at 60/85 % of the model's
+  window — and a hover popover breaks the prompt down by source (System base /
+  Console context / Memory / Tool definitions / Catalog / History, largest first)
+  with cache-hit %. The headline total is exact (from the model's reported usage);
+  the per-section split is a char-proportioned estimate that always sums to it. The
+  row is hidden until a chat reports usage and resets when the chat is cleared.
+  New backend event `runspec:context_estimate`; pure helpers
+  `estimate_context_buckets` / `model_context_window` in `bridge_utils.py`.
+- **Tool-result truncation is now visible.** When a runnable's output is cut at
+  the per-call cap before the model sees it, the tool card shows a red
+  **⚠ output cut** badge (with the original → cap sizes) instead of the cut being
+  silent — previously the marker lived past the 2 KB the UI received. A
+  non-truncated but large result (> 50 KB) gets a dim size chip, since it stays in
+  the conversation context for the rest of the chat. New `output_chars` /
+  `truncated` fields on `runspec:tool_end`.
+- **`[llm] tool_output_cap`** makes the per-tool-output truncation cap
+  configurable (default unchanged at 1 MB — kept so data-heavy runnables emitting
+  one big JSON line aren't sliced mid-structure; lower it per-deployment to force a
+  chatty runnable to fail loudly and early). `bridge_autonomy.py` truncation site
+  now uses a parseable marker so the badge can read it.
+- **Context-management levers in the gauge hover** (Phase 2): a **search-mode
+  nudge** when tool/catalog definitions are ≥ 30 % of the window (opens Settings);
+  a **Compact now** action once the live history reaches ~24 messages —
+  `compact_chat` condenses the older prefix into a note and keeps the recent tail
+  (the same safe transform as resume-time compaction), freeing context without
+  losing the thread or clearing the chat; and a **pinned-memory hint** showing the
+  pin count and flagging when more facts are pinned than fold into the prompt. New
+  `compact_chat` JS API method; `runspec:context_estimate` now also carries
+  `tool_mode` / `history_msgs` / `memory_pins`.
+
+
 ## [0.153.1] — 2026-06-29
 
 ### Fixed

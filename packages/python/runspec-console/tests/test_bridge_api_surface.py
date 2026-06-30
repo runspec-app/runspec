@@ -30,6 +30,7 @@ EXPECTED = {
     "clear_chat",
     "close_adhoc",
     "close_window",
+    "compact_chat",
     "config_dir",
     "copy_ssh_id",
     "copy_ssh_id_all",

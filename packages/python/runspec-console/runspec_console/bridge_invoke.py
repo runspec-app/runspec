@@ -7,6 +7,7 @@ instance, so ``self`` carries all shared state.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 import uuid
@@ -315,22 +316,30 @@ class InvokeMixin:
                     # model-side prompt cache still hits.
                     from . import memory
 
+                    now_block = self._now_context()
+                    console_block = self._console_context()
+                    memory_block = memory.build_header()
+                    base_block = self._base_system()
                     extra = "\n\n".join(
                         part
-                        for part in (
-                            self._now_context(),
-                            self._console_context(),
-                            memory.build_header(),
-                        )
+                        for part in (now_block, console_block, memory_block)
                         if part
                     )
                     adapter = (
-                        self._get_adapter(
-                            system_override=self._base_system() + "\n\n" + extra
-                        )
+                        self._get_adapter(system_override=base_block + "\n\n" + extra)
                         if extra
                         else self._get_adapter()
                     )
+                    # Char counts of the system-prompt buckets, for the context
+                    # indicator's composition breakdown. The date block is tiny
+                    # (~250 chars) so it folds into "system" rather than earning
+                    # its own near-zero slice. Computed here where the blocks
+                    # already exist — no recomputation in the turn loop.
+                    system_parts = {
+                        "system": len(base_block) + len(now_block),
+                        "console_context": len(console_block),
+                        "memory": len(memory_block),
+                    }
                 except Exception as exc:
                     self._dispatch(
                         "runspec:token", {"id": chat_id, "token": f"⚠ {exc}"}
@@ -358,7 +367,9 @@ class InvokeMixin:
                         chat_id, trigger="", agent=True, runbook=runbook
                     )
                 try:
-                    asyncio.run(self._agentic_chat_turn(chat_id, message, adapter))
+                    asyncio.run(
+                        self._agentic_chat_turn(chat_id, message, adapter, system_parts)
+                    )
                 finally:
                     if runbook:
                         self._clear_run_origin(chat_id)
@@ -569,6 +580,75 @@ class InvokeMixin:
         with self._chat_lock:
             self._chat_history = []
             self._conversation_id = ""
+        # Reset the context-window gauge — the new conversation starts empty.
+        self._dispatch("runspec:chat_cleared", {})
+
+    def compact_chat(self) -> dict[str, Any]:
+        """Condense the *live* rolling chat history in place: drop the older
+        prefix, fold a note summarising it into the first kept user message, and
+        keep the recent tail verbatim. Same safe transformation as resume-time
+        compaction (``resume_conversation``), but on the in-session history — for
+        shrinking a long chat's context without losing the thread or starting
+        over. Holds the conversation lock, so it can't run mid-turn.
+
+        The cut lands on a plain user message so tool_use/tool_result pairs and
+        user/assistant alternation stay intact (the API requires both). Returns
+        ``{ok, compacted}`` — ``compacted`` is the number of messages dropped, 0
+        when there's nothing to safely compact."""
+        cfg = config_mod.read_chat_history()
+        keep_recent = max(0, int(cfg.get("resume_keep_recent", 20) or 0))
+        dropped_n = 0
+        with self._chat_lock:
+            hist = self._chat_history
+            # Need a meaningful prefix to drop beyond the kept tail.
+            if len(hist) <= keep_recent + 2:
+                return {"ok": True, "compacted": 0}
+            cut = len(hist) - keep_recent
+            while cut < len(hist) and not (
+                hist[cut].get("role") == "user"
+                and isinstance(hist[cut].get("content"), str)
+            ):
+                cut += 1
+            if cut <= 0 or cut >= len(hist):
+                return {"ok": True, "compacted": 0}  # no clean boundary — leave it
+            dropped, kept = hist[:cut], hist[cut:]
+            note = self._compact_note(dropped, cfg)
+            kept[0]["content"] = note + "\n\n" + kept[0]["content"]
+            self._chat_history = kept
+            dropped_n = len(dropped)
+        self._dispatch("runspec:chat_compacted", {"dropped": dropped_n})
+        return {"ok": True, "compacted": dropped_n}
+
+    def _compact_note(self, dropped: list[dict[str, Any]], cfg: dict[str, Any]) -> str:
+        """A note standing in for the dropped prefix on live compaction — an LLM
+        summary when ``[chat_history] compact_on_resume`` is on (best-effort), else
+        a no-model list of what those turns covered."""
+        turns: list[dict[str, Any]] = []
+        for m in dropped:
+            role, content = m.get("role"), m.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue  # tool blocks aren't part of the text summary
+            if role == "user":
+                turns.append({"user": content, "assistant": ""})
+            elif role == "assistant" and turns:
+                turns[-1]["assistant"] = content
+        if cfg.get("compact_on_resume"):
+            body = self._summarize_middle_turns(turns)
+            if body:
+                return f"[Summary of {len(turns)} earlier turns (compacted): {body}]"
+        qs = [
+            t["user"].strip().replace("\n", " ")[:80]
+            for t in turns
+            if t.get("user", "").strip()
+        ]
+        if not qs:
+            return "[Context: earlier turns were compacted to free up context.]"
+        preview = "; ".join(qs[:5])
+        extra = "" if len(qs) <= 5 else f" (+{len(qs) - 5} more)"
+        return (
+            f"[Context: {len(qs)} earlier turns were compacted to free up "
+            f"context. They covered: {preview}{extra}.]"
+        )
 
     # ── saved conversations (chat history) ──────────────────────────────────────
 
@@ -790,7 +870,11 @@ class InvokeMixin:
             hist.pop(0)
 
     async def _agentic_chat_turn(
-        self, chat_id: str, message: str, adapter: Any
+        self,
+        chat_id: str,
+        message: str,
+        adapter: Any,
+        system_parts: dict[str, int] | None = None,
     ) -> None:
         start = time.monotonic()
         tools = self._runnables_to_tools()
@@ -800,6 +884,12 @@ class InvokeMixin:
             self._build_catalog_index() if self._tool_mode() == "search" else ""
         )
         usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+        # For the context indicator: the *last* iteration's prompt size (not the
+        # cross-iteration sum usage_total accumulates) is the current window fill,
+        # plus the char size of the history actually sent that iteration.
+        last_usage = {"input": 0, "cache_read": 0, "cache_creation": 0}
+        last_history_chars = 0
+        last_history_msgs = 0
         cancel = self._chat_cancels.get(chat_id) or threading.Event()
         stopped = False
         # Provider-agnostic transcript of this turn, accumulated across iterations
@@ -825,6 +915,10 @@ class InvokeMixin:
                 # folded-in catalog index (search mode). A per-call copy, so the
                 # stored history is never polluted with the index.
                 model_messages = self._fold_catalog_index(history, index_text)
+                # Size of the history sent this iteration (the catalog index is
+                # measured separately as its own bucket, so use the raw history).
+                last_history_chars = self._messages_chars(history)
+                last_history_msgs = len(history)
                 # Diagnostic: the exact message list handed to the adapter — i.e.
                 # what the console sends to the model / proxy this iteration.
                 self._trace(
@@ -850,8 +944,14 @@ class InvokeMixin:
                     break
 
                 if response is not None:
-                    for key, value in self._usage_from_response(response).items():
+                    u = self._usage_from_response(response)
+                    for key, value in u.items():
                         usage_total[key] += value
+                    last_usage = {
+                        "input": u["input"],
+                        "cache_read": u["cache_read"],
+                        "cache_creation": u["cache_creation"],
+                    }
 
                 # Record this iteration's assistant prose for the saved transcript.
                 if assistant_text.strip():
@@ -909,6 +1009,11 @@ class InvokeMixin:
                             "id": chat_id,
                             "tool_name": tc.name,
                             "output": output[:2000],
+                            # Full output size + truncation marker (if the result
+                            # was cut at the cap) so the tool card can flag a large
+                            # or cut-off result — the [:2000] display can't show it.
+                            "output_chars": len(output),
+                            "truncated": utils_mod.parse_truncation(output),
                         },
                     )
                     # Diagnostic: the *full* tool-result string the model will
@@ -978,6 +1083,59 @@ class InvokeMixin:
                     "cache_creation_tokens": usage_total["cache_creation"],
                 },
             )
+        # Context-window indicator: the last iteration's prompt size is the
+        # current window fill. Split it across the buckets that built it by char
+        # share (exact total, estimated slices) — see docs/design/
+        # console-context-indicator.md.
+        last_prompt_tokens = (
+            last_usage["input"]
+            + last_usage["cache_read"]
+            + last_usage["cache_creation"]
+        )
+        if last_prompt_tokens > 0:
+            from . import memory as memory_mod
+
+            model = getattr(adapter, "model", "") or ""
+            parts = dict(system_parts or {})
+            parts["tools"] = self._messages_chars(tools)
+            parts["catalog"] = len(index_text)
+            parts["history"] = last_history_chars
+            try:
+                pins = memory_mod.pinned_count()
+            except Exception:  # noqa: BLE001 — pin count is decorative
+                pins = 0
+            self._dispatch(
+                "runspec:context_estimate",
+                {
+                    "id": chat_id,
+                    "model": model,
+                    "window": utils_mod.model_context_window(model),
+                    "total_tokens": last_prompt_tokens,
+                    "cache_hit_pct": round(
+                        100 * last_usage["cache_read"] / last_prompt_tokens
+                    ),
+                    "buckets": utils_mod.estimate_context_buckets(
+                        parts, last_prompt_tokens
+                    ),
+                    # Phase 2 levers: enough for the UI to nudge search mode, offer
+                    # live compaction, and surface a bloated pin set.
+                    "tool_mode": self._tool_mode(),
+                    "history_msgs": last_history_msgs,
+                    "memory_pins": pins,
+                    "memory_pins_shown": memory_mod.HEADER_MAX_FACTS,
+                },
+            )
+
+    @staticmethod
+    def _messages_chars(obj: Any) -> int:
+        """Serialised character size of a message list / tool-schema list, for the
+        context-indicator breakdown. JSON with ``default=str`` so provider-native
+        blocks (dicts, SDK objects) never raise; counts structural overhead too,
+        which is fine — the slices are scaled to the exact token total anyway."""
+        try:
+            return len(json.dumps(obj, default=str))
+        except (TypeError, ValueError):
+            return len(str(obj))
 
     @staticmethod
     def _usage_from_response(response: Any) -> dict[str, int]:

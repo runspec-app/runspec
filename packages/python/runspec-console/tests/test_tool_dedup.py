@@ -59,6 +59,7 @@ class _Bridge:
     _resolve_tool_target = Bridge._resolve_tool_target
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _run_tool_sync = Bridge._run_tool_sync
+    _tool_output_cap = Bridge._tool_output_cap
     # collaborators of the real methods (no-ops with empty credentials)
     _scoped_credentials = Bridge._scoped_credentials
     _scope_matches = staticmethod(Bridge._scope_matches)

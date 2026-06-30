@@ -44,6 +44,15 @@ def test_build_header_empty_when_no_pins(mem):
     assert mem.build_header() == ""
 
 
+def test_pinned_count(mem):
+    assert mem.pinned_count() == 0
+    mem.add_memory("unpinned", app="x")
+    mem.add_memory("pin a", app="x", pin=True)
+    mem.add_memory("pin b", app="x", pin=True)
+    # Counts every pinned fact, including ones beyond the header display cap.
+    assert mem.pinned_count() == 2
+
+
 def test_build_header_lists_pinned_capped(mem):
     for i in range(10):
         mem.add_memory(f"pinned fact number {i}", app="x", pin=True)

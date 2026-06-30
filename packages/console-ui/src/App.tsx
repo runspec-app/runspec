@@ -24,6 +24,7 @@ import {
   RightOutlined,
   CheckCircleOutlined,
   CommentOutlined,
+  DashboardOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
@@ -49,6 +50,39 @@ import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable,
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
+
+// Context-window fill of the active chat's latest turn (runspec:context_estimate).
+// total_tokens is exact (from the model's usage); bucket tokens are estimates that
+// sum to it. See docs/design/console-context-indicator.md.
+interface ContextEstimate {
+  model: string
+  window: number
+  total_tokens: number
+  cache_hit_pct: number
+  buckets: Array<{ key: string; tokens: number; est: boolean }>
+  // Phase 2 levers: drive the search-mode nudge, the live-compaction button, and
+  // the pinned-memory hint. Optional so older backends degrade gracefully.
+  tool_mode?: string
+  history_msgs?: number
+  memory_pins?: number
+  memory_pins_shown?: number
+}
+
+// Human label for each context bucket key the backend emits.
+const CTX_BUCKET_LABELS: Record<string, string> = {
+  system: 'System base',
+  console_context: 'Console context',
+  memory: 'Memory (pinned)',
+  tools: 'Tool definitions',
+  catalog: 'Catalog index',
+  history: 'History',
+}
+
+/** Compact token count for the gauge (e.g. "48.2k", "980"). */
+function fmtTokens(n: number): string {
+  if (n < 1000) return `${n}`
+  return `${(n / 1000).toFixed(1)}k`
+}
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -95,6 +129,11 @@ export default function App() {
   // indicator. Updated on every runspec:room_connection flip so a room server
   // going down (or coming back) is visible without digging through Dev logs.
   const [rooms, setRooms] = useState<RoomInfo[]>([])
+  // Context-window fill of the active chat (latest turn), for the footer gauge +
+  // composition hover. Null until a chat reports usage, so the row stays hidden
+  // on non-chat tabs (mirrors the Rooms row hiding when empty). See
+  // docs/design/console-context-indicator.md.
+  const [ctx, setCtx] = useState<ContextEstimate | null>(null)
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [pendingChat, setPendingChat] = useState<string | null>(null)
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
@@ -255,6 +294,15 @@ export default function App() {
     // a newly added room) so the footer indicator stays live.
     const loadRooms = () => bridge.get_room_state().then(s => setRooms(s.rooms)).catch(() => {})
     loadRooms()
+    // Context-window gauge: each chat turn reports its prompt size + composition.
+    // A cleared chat resets the gauge so it doesn't show a stale fill.
+    const onContextEstimate = (e: Event) => {
+      const d = (e as CustomEvent).detail as ContextEstimate | undefined
+      if (d && d.total_tokens > 0) setCtx(d)
+    }
+    const onChatCleared = () => setCtx(null)
+    window.addEventListener('runspec:context_estimate', onContextEstimate)
+    window.addEventListener('runspec:chat_cleared', onChatCleared)
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
     window.addEventListener('runspec:hosts_updated', loadProfiles)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
@@ -268,6 +316,8 @@ export default function App() {
       window.removeEventListener('runspec:runbooks_changed', loadRunbooks)
       window.removeEventListener('runspec:discovery_state', onDiscoveryState)
       window.removeEventListener('runspec:room_connection', loadRooms)
+      window.removeEventListener('runspec:context_estimate', onContextEstimate)
+      window.removeEventListener('runspec:chat_cleared', onChatCleared)
     }
   }, [])
 
@@ -275,6 +325,15 @@ export default function App() {
     const next = !isDark
     setIsDark(next)
     localStorage.setItem('theme', next ? 'dark' : 'light')
+  }
+
+  // Live-compaction lever from the context gauge: condense the older history so
+  // the next turn carries less context, without losing the thread.
+  const compactChat = () => {
+    bridge.compact_chat().then(r => {
+      if (r.compacted > 0) message.success(`Compacted ${r.compacted} older message${r.compacted === 1 ? '' : 's'} out of context.`)
+      else message.info('Nothing to compact yet — the conversation is still short.')
+    }).catch(() => message.error('Compaction failed.'))
   }
 
   const toggleAutoSwitch = () => {
@@ -759,6 +818,90 @@ export default function App() {
                   </span>
                 </div>
               </Popover>
+
+              {/* Context-window gauge: the active chat's latest-turn fill + a
+                  by-source composition hover. Hidden until a chat reports usage,
+                  so non-chat tabs don't show a stale/zero gauge. See
+                  docs/design/console-context-indicator.md. */}
+              {ctx && (() => {
+                const pct = ctx.window > 0 ? Math.round((ctx.total_tokens / ctx.window) * 100) : 0
+                const dot = pct >= 85 ? '#ff4d4f' : (pct >= 60 ? '#faad14' : '#52c41a')
+                const shown = ctx.buckets.filter(b => b.tokens > 0).slice().sort((a, b) => b.tokens - a.tokens)
+                const tok = (k: string) => ctx.buckets.find(b => b.key === k)?.tokens ?? 0
+                const pins = ctx.memory_pins ?? 0
+                const pinsShown = ctx.memory_pins_shown ?? 6
+                // Lever nudges (Phase 2): suggest search mode when tool/catalog
+                // definitions dominate, offer compaction when history is long, and
+                // flag a pin set larger than what folds into the prompt.
+                const toolShare = ctx.total_tokens > 0 ? (tok('tools') + tok('catalog')) / ctx.total_tokens : 0
+                const nudgeSearch = (ctx.tool_mode && ctx.tool_mode !== 'search') ? toolShare >= 0.30 : false
+                const canCompact = (ctx.history_msgs ?? 0) >= 24
+                const pinsOverflow = pins > pinsShown
+                const hasTips = nudgeSearch || canCompact || pinsOverflow
+                return (
+                  <Popover
+                    placement="topLeft"
+                    mouseEnterDelay={0.2}
+                    content={
+                      <div style={{ maxWidth: 320, fontSize: 12 }}>
+                        <div style={{ marginBottom: 6, color: iconCol }}>
+                          <span style={{ color: titleCol, fontVariantNumeric: 'tabular-nums' }}>{ctx.total_tokens.toLocaleString()}</span>
+                          {' '}of {ctx.window.toLocaleString()} tokens ({pct}%)
+                          {ctx.cache_hit_pct > 0 && <span> · {ctx.cache_hit_pct}% cached</span>}
+                        </div>
+                        {shown.map(b => (
+                          <div key={b.key} style={{ marginBottom: 4 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                              <span style={{ color: titleCol }}>
+                                {CTX_BUCKET_LABELS[b.key] || b.key}
+                                {b.key === 'memory' && pins > 0 && <span style={{ color: iconCol }}> · {pins} pinned</span>}
+                                {b.key === 'history' && (ctx.history_msgs ?? 0) > 0 && <span style={{ color: iconCol }}> · {ctx.history_msgs} msgs</span>}
+                              </span>
+                              <span style={{ color: iconCol, fontVariantNumeric: 'tabular-nums' }}>{fmtTokens(b.tokens)}</span>
+                            </div>
+                            <div style={{ height: 4, background: borderCol, borderRadius: 2, marginTop: 2 }}>
+                              <div style={{ height: 4, width: `${Math.round((b.tokens / ctx.total_tokens) * 100)}%`, background: dot, borderRadius: 2 }} />
+                            </div>
+                          </div>
+                        ))}
+                        {hasTips && (
+                          <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${borderCol}`, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {nudgeSearch && (
+                              <div style={{ color: iconCol }}>
+                                Tool definitions are {Math.round(toolShare * 100)}% of the window.{' '}
+                                <a onClick={() => setSettingsOpen(true)}>Switch to search mode</a> to replace them with a compact index.
+                              </div>
+                            )}
+                            {canCompact && (
+                              <div style={{ color: iconCol }}>
+                                History is {ctx.history_msgs} messages.{' '}
+                                <a onClick={compactChat}>Compact now</a> to condense older turns into a note.
+                              </div>
+                            )}
+                            {pinsOverflow && (
+                              <div style={{ color: iconCol }}>
+                                {pins} pinned memory facts — only the top {pinsShown} fold into the prompt. Ask the agent to unpin stale ones.
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div style={{ marginTop: 6, color: iconCol, fontSize: 11 }}>
+                          Total is exact (reported by the model); the per-section split is an estimate{ctx.model ? ` · ${ctx.model}` : ''}.
+                        </div>
+                      </div>
+                    }
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
+                      <DashboardOutlined style={{ fontSize: 11, color: dot }} />
+                      <span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums', color: titleCol }}>{fmtTokens(ctx.total_tokens)}</span>
+                        {' / '}{fmtTokens(ctx.window)}
+                        <span style={{ color: dot }}> · {pct}%</span>
+                      </span>
+                    </div>
+                  </Popover>
+                )
+              })()}
 
               {/* Version + update state */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

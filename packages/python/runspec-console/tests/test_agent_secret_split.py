@@ -18,6 +18,7 @@ from runspec_console.bridge import Bridge
 
 class _AgentBridge:
     _run_tool_sync = Bridge._run_tool_sync
+    _tool_output_cap = Bridge._tool_output_cap
     # Routing helpers _run_tool_sync delegates to. The host__name tool names below
     # resolve via the per-host fallback under either layout.
     _resolve_tool_target = Bridge._resolve_tool_target

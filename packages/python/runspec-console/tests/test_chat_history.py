@@ -65,10 +65,13 @@ class _StubBridge:
 
     _debug = False  # tracing off → _trace is a no-op in these unit tests
     _usage_from_response = staticmethod(Bridge._usage_from_response)
+    _messages_chars = staticmethod(Bridge._messages_chars)
     _trim_chat_history = Bridge._trim_chat_history
     _trace = Bridge._trace
     clear_chat = Bridge.clear_chat
     cancel_chat = Bridge.cancel_chat
+    compact_chat = Bridge.compact_chat
+    _compact_note = Bridge._compact_note
     _agentic_chat_turn = Bridge._agentic_chat_turn
 
 
@@ -275,3 +278,74 @@ def test_trim_noop_under_cap():
     b._chat_history = [{"role": "user", "content": "x"}]
     b._trim_chat_history(max_messages=60)
     assert b._chat_history == [{"role": "user", "content": "x"}]
+
+
+# ── compact_chat (live in-session compaction) ───────────────────────────────
+
+
+def _long_history(pairs: int) -> list[dict]:
+    """`pairs` user/assistant exchanges as a flat message list."""
+    hist: list[dict] = []
+    for i in range(pairs):
+        hist.append({"role": "user", "content": f"q{i}"})
+        hist.append({"role": "assistant", "content": f"a{i}"})
+    return hist
+
+
+def test_compact_drops_prefix_and_folds_note(monkeypatch):
+    import runspec_console.config as cfg
+
+    monkeypatch.setattr(cfg, "read_chat_history", lambda: {"resume_keep_recent": 4})
+    b = _StubBridge()
+    b._chat_history = _long_history(10)  # 20 messages
+    res = b.compact_chat()
+
+    assert res["ok"] and res["compacted"] > 0
+    hist = b._chat_history
+    # Kept tail is the recent messages; it still starts on a user message so
+    # alternation/pairing is intact.
+    assert hist[0]["role"] == "user"
+    assert len(hist) <= 4 + 1  # keep_recent tail, possibly +1 from the boundary walk
+    # The note summarising the dropped prefix is folded into the first kept user
+    # message (not a separate message that would break alternation).
+    assert "compacted to free up context" in hist[0]["content"]
+    assert "q0" in hist[0]["content"]  # an early question is named in the note
+    # The compaction event fired for the gauge.
+    assert any(e == "runspec:chat_compacted" for e, _ in b.dispatched)
+
+
+def test_compact_noop_when_short(monkeypatch):
+    import runspec_console.config as cfg
+
+    monkeypatch.setattr(cfg, "read_chat_history", lambda: {"resume_keep_recent": 20})
+    b = _StubBridge()
+    b._chat_history = _long_history(3)  # 6 messages, under keep_recent + 2
+    before = list(b._chat_history)
+    res = b.compact_chat()
+
+    assert res == {"ok": True, "compacted": 0}
+    assert b._chat_history == before  # untouched
+    assert not any(e == "runspec:chat_compacted" for e, _ in b.dispatched)
+
+
+def test_compact_preserves_tool_pairing(monkeypatch):
+    import runspec_console.config as cfg
+
+    monkeypatch.setattr(cfg, "read_chat_history", lambda: {"resume_keep_recent": 2})
+    b = _StubBridge()
+    # A tool_use/tool_result pair sits right at the prospective cut; the cut must
+    # walk forward to the next plain user message so the pair is never split.
+    b._chat_history = [
+        {"role": "user", "content": "q0"},
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t"}]},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "q2"},
+        {"role": "assistant", "content": "a2"},
+    ]
+    b.compact_chat()
+    hist = b._chat_history
+    # Never starts on an orphaned tool_result; first message is a plain user str.
+    assert hist[0]["role"] == "user" and isinstance(hist[0]["content"], str)

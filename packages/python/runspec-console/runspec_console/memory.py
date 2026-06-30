@@ -176,7 +176,20 @@ def search_memory(
         ]
 
 
-def build_header(max_facts: int = 6, max_chars: int = 700) -> str:
+#: Default count of pinned facts that fold into the system prompt (build_header).
+HEADER_MAX_FACTS = 6
+
+
+def pinned_count() -> int:
+    """How many memory facts are pinned (fold into the system prompt). Surfaced by
+    the context indicator so the operator can spot a bloated pin set — only the top
+    ``HEADER_MAX_FACTS`` actually reach the prompt."""
+    with _LOCK:
+        rows = _load(memory_path(), "memory")
+    return sum(1 for r in rows if r.get("pinned"))
+
+
+def build_header(max_facts: int = HEADER_MAX_FACTS, max_chars: int = 700) -> str:
     """The small block folded into the system prompt: the **pinned** facts only
     (most-used first), as ``- [app] fact`` bullets, hard-capped by count and chars.
 

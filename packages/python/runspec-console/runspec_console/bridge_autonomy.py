@@ -41,9 +41,9 @@ from .bridge_const import (
     _REPO_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
     _BUILTIN_TOOL_NAMES,
-    _AGENT_TOOL_OUTPUT_CAP,
     ToolCancelled,
 )
+from .bridge_utils import make_truncation_suffix
 
 from typing import TYPE_CHECKING
 
@@ -943,12 +943,10 @@ class AutonomyMixin:
             )
 
         output = "\n".join(output_lines)
-        if len(output) > _AGENT_TOOL_OUTPUT_CAP:
-            output = (
-                output[:_AGENT_TOOL_OUTPUT_CAP]
-                + f"\n[output truncated at {_AGENT_TOOL_OUTPUT_CAP} chars — "
-                "incomplete; any JSON above is cut off mid-structure]"
-            )
+        cap = self._tool_output_cap()
+        orig_len = len(output)
+        if orig_len > cap:
+            output = output[:cap] + make_truncation_suffix(orig_len, cap)
         if exit_code_holder[0] != 0:
             return f"[exit {exit_code_holder[0]}]\n{output}"
         return output or "(no output)"

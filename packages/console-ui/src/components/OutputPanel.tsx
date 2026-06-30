@@ -93,6 +93,17 @@ function fmtUsd(v: number): string {
   return `$${v.toFixed(2)}`
 }
 
+/** Human byte count for a char/byte length (e.g. "3.2 MB", "120 KB", "840 B"). */
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+// A non-truncated tool result above this many chars (~12k tokens) is flagged as
+// large — it stays in the conversation context for the rest of the chat.
+const LARGE_OUTPUT_CHARS = 50_000
+
 /** Copy text to the clipboard with an execCommand fallback for WebView2 / file://
  *  contexts where the async clipboard API may be absent. */
 function copyToClipboard(text: string): void {
@@ -402,6 +413,10 @@ export interface ToolCallEntry {
   startedAt?: number   // epoch ms when the tool call began (for per-tool duration)
   durationMs?: number  // set when the tool call finishes
   progress?: string    // latest live progress line (built-in tools: repo clone/grep, denylist fan-out)
+  outputChars?: number // full output size (the displayed output is clipped to 2000)
+  // Set when the result was cut at the output cap before the model saw it — the
+  // model received incomplete (mid-structure) JSON. Carries the original size.
+  truncated?: { orig_len: number; cap: number } | null
 }
 
 export type BlockSegment =
@@ -674,6 +689,20 @@ function ToolCallBlock({
           <Tooltip title="Time this tool call took">
             <Text style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0, fontFamily: 'monospace' }}>
               {fmtDurationMs(entry.durationMs)}
+            </Text>
+          </Tooltip>
+        )}
+        {!entry.running && entry.truncated && (
+          <Tooltip title={`This tool returned ${fmtBytes(entry.truncated.orig_len)} but was cut to ${fmtBytes(entry.truncated.cap)} before the model saw it — the JSON it received is incomplete. Have the runnable return a summary and let the agent request specifics, or raise [llm] tool_output_cap.`}>
+            <Text style={{ color: '#ff4d4f', fontSize: 11, flexShrink: 0, fontWeight: 600 }}>
+              ⚠ output cut
+            </Text>
+          </Tooltip>
+        )}
+        {!entry.running && !entry.truncated && entry.outputChars !== undefined && entry.outputChars > LARGE_OUTPUT_CHARS && (
+          <Tooltip title={`Large result (${fmtBytes(entry.outputChars)}). It stays in the conversation context for the rest of the chat — if it's data-heavy, a summary-first runnable keeps the window lean.`}>
+            <Text style={{ color: '#faad14', fontSize: 11, flexShrink: 0, fontFamily: 'monospace' }}>
+              {fmtBytes(entry.outputChars)}
             </Text>
           </Tooltip>
         )}
@@ -1249,15 +1278,16 @@ export function useInvocationBlocks() {
     }
 
     const onToolEnd = (e: Event) => {
-      const { id, tool_name, output } = (e as CustomEvent).detail as {
+      const { id, tool_name, output, output_chars, truncated } = (e as CustomEvent).detail as {
         id: string; tool_name: string; output: string
+        output_chars?: number; truncated?: { orig_len: number; cap: number } | null
       }
       setBlocks(prev => prev.map(b => {
         if (b.id !== id) return b
         const newSegs = b.segments.map(seg => {
           if (seg.kind === 'tool' && seg.entry.name === tool_name && seg.entry.running) {
             const durationMs = seg.entry.startedAt ? Date.now() - seg.entry.startedAt : undefined
-            return { ...seg, entry: { ...seg.entry, output, running: false, durationMs } }
+            return { ...seg, entry: { ...seg.entry, output, running: false, durationMs, outputChars: output_chars, truncated: truncated ?? null } }
           }
           return seg
         })

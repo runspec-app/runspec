@@ -1088,6 +1088,7 @@ export const mockApi: BridgeApi = {
   },
 
   clear_chat: async () => {},
+  compact_chat: async () => ({ ok: true, compacted: 0 }),
   list_conversations: async () => [
     { id: 'mock-conv-1', title: 'Why did the nightly job fail?', created: '2026-06-27T20:00:00Z', updated: '2026-06-27T20:05:00Z', turn_count: 3, preview: 'Three jobs errored on host db1 — all OOM kills.' },
     { id: 'mock-conv-2', title: 'Draft the release notes', created: '2026-06-26T09:00:00Z', updated: '2026-06-26T09:12:00Z', turn_count: 5, preview: 'Here are the release notes for 0.145.0…' },

@@ -24,6 +24,7 @@ from . import hosts as hosts_mod
 from .bridge_const import (
     logger,
     ToolCancelled,
+    _AGENT_TOOL_OUTPUT_CAP,
 )
 
 from typing import TYPE_CHECKING
@@ -62,6 +63,24 @@ class AgentToolsMixin:
         of how many distinct runnables the fleet installs."""
         mode = str(self.get_config().get("llm", {}).get("tool_mode", "dedup")).strip()
         return mode if mode in ("dedup", "per_host", "search") else "dedup"
+
+    def _tool_output_cap(self) -> int:
+        """Max chars of a single runnable's output handed to the model as a tool
+        result, from ``[llm] tool_output_cap`` (default ``_AGENT_TOOL_OUTPUT_CAP``,
+        1 MB). Beyond it the result is cut with a visible marker — the agent gets
+        incomplete JSON otherwise. Lower it per-deployment to force a chatty
+        runnable to fail loudly/early rather than silently at ~250k tokens; the
+        1 MB default is kept so data-heavy runnables emitting one big JSON line
+        aren't sliced mid-structure out of the box (see bridge_const)."""
+        try:
+            cap = int(
+                self.get_config()
+                .get("llm", {})
+                .get("tool_output_cap", _AGENT_TOOL_OUTPUT_CAP)
+            )
+        except (TypeError, ValueError):
+            return _AGENT_TOOL_OUTPUT_CAP
+        return cap if cap > 0 else _AGENT_TOOL_OUTPUT_CAP
 
     @staticmethod
     def _sanitize_tool_name(raw: str) -> str:

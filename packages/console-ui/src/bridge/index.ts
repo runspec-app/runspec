@@ -966,6 +966,10 @@ export interface BridgeApi {
   send_chat: (message: string, invocationId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>
   clear_chat: () => Promise<void>
+  // Condense the live chat history in place (drop the older prefix, fold a note,
+  // keep the recent tail) — frees context without losing the thread. Returns the
+  // number of messages dropped. See docs/design/console-context-indicator.md.
+  compact_chat: () => Promise<{ ok: boolean; compacted: number }>
   // ── saved conversations (chat history) ────────────────────────────────────────
   // Metadata for every saved chat, newest first (for the Conversations browser).
   list_conversations: () => Promise<ConversationMeta[]>
