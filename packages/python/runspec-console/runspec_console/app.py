@@ -200,7 +200,13 @@ def _build_icon() -> Path | None:
 
 
 def _apply_dwm_title_bar(title: str) -> None:
-    """Style the native Windows title bar: dark mode + runspec-blue caption color.
+    """Style the native Windows title bar: dark mode + caption colour.
+
+    The caption colour is the white-label `[console.theme] title_bar_color`
+    when set — an **independent** hex, deliberately separate from `accent_color`
+    so a brand can pair e.g. a blue accent UI with a red title bar — else
+    runspec blue. The caption text colour follows the caption's luminance
+    (`config.title_bar_colors`).
 
     Called from the webview `started` callback so the window HWND is available.
     Requires Windows 11 build 22000+ for DWMWA_CAPTION_COLOR (attr 35).
@@ -212,6 +218,11 @@ def _apply_dwm_title_bar(title: str) -> None:
         import win32gui
     except ImportError:
         return
+
+    from .config import title_bar_colors
+
+    # COLORREF is 0x00BBGGRR. Runspec blue #0958D9 → 0x00D95809, white text.
+    caption, text = title_bar_colors() or (0x00D95809, 0x00FFFFFF)
 
     # Brief wait for the window to be fully painted before we style it
     time.sleep(0.15)
@@ -226,14 +237,13 @@ def _apply_dwm_title_bar(title: str) -> None:
         dark = ctypes.c_int(1)
         dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark))
 
-        # DWMWA_CAPTION_COLOR = 35  (COLORREF is 0x00BBGGRR)
-        # Runspec blue #0958D9 = R=0x09 G=0x58 B=0xD9 → 0x00D95809
-        blue = ctypes.c_int(0x00D95809)
-        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(blue), ctypes.sizeof(blue))
+        # DWMWA_CAPTION_COLOR = 35
+        cap = ctypes.c_int(caption)
+        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap), ctypes.sizeof(cap))
 
-        # DWMWA_TEXT_COLOR = 36 — white
-        white = ctypes.c_int(0x00FFFFFF)
-        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(white), ctypes.sizeof(white))
+        # DWMWA_TEXT_COLOR = 36
+        txt = ctypes.c_int(text)
+        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), ctypes.sizeof(txt))
     except Exception:
         pass
 

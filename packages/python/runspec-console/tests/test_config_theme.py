@@ -60,6 +60,52 @@ def test_theme_config_shape(monkeypatch, tmp_path):
     assert cfg.theme_config() == {}
 
 
+# ── native title-bar colour ──────────────────────────────────────────────────────
+
+
+def test_title_bar_colors_unset_is_none(monkeypatch, tmp_path):
+    _cfg_path(monkeypatch, tmp_path)
+    cfg.write_config({"console": {"theme": {"accent_color": "#0958d9"}}})
+    # accent_color must NOT drive the title bar — it's an independent key.
+    assert cfg.title_bar_colors() is None
+
+
+def test_title_bar_colors_dark_caption_white_text(monkeypatch, tmp_path):
+    _cfg_path(monkeypatch, tmp_path)
+    cfg.write_config({"console": {"theme": {"title_bar_color": "#b3001b"}}})
+    caption, text = cfg.title_bar_colors()
+    # COLORREF is 0x00BBGGRR: R=b3 G=00 B=1b → 0x001B00B3
+    assert caption == 0x001B00B3
+    assert text == 0x00FFFFFF  # dark red → white text
+
+
+def test_title_bar_colors_bright_caption_black_text(monkeypatch, tmp_path):
+    _cfg_path(monkeypatch, tmp_path)
+    cfg.write_config({"console": {"theme": {"title_bar_color": "#ffff00"}}})
+    caption, text = cfg.title_bar_colors()
+    assert caption == 0x0000FFFF  # R=ff G=ff B=00 → 0x0000FFFF
+    assert text == 0x000000  # bright yellow → black text
+
+
+def test_title_bar_colors_rgb_shorthand_and_runspec_blue(monkeypatch, tmp_path):
+    _cfg_path(monkeypatch, tmp_path)
+    # #rgb shorthand expands like accent_color does
+    cfg.write_config({"console": {"theme": {"title_bar_color": "#09d"}}})
+    caption, _ = cfg.title_bar_colors()
+    assert caption == (0xDD << 16) | (0x99 << 8) | 0x00
+    # the runspec-blue default the app falls back to (#0958d9 → 0x00D95809)
+    cfg.write_config({"console": {"theme": {"title_bar_color": "#0958d9"}}})
+    caption, text = cfg.title_bar_colors()
+    assert caption == 0x00D95809
+    assert text == 0x00FFFFFF
+
+
+def test_title_bar_colors_invalid_is_none(monkeypatch, tmp_path):
+    _cfg_path(monkeypatch, tmp_path)
+    cfg.write_config({"console": {"theme": {"title_bar_color": "crimson"}}})
+    assert cfg.title_bar_colors() is None
+
+
 # ── Bridge.brand_theme ───────────────────────────────────────────────────────────
 
 

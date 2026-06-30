@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.157.0] — 2026-06-30
+
+### Added
+
+- **Native Windows title-bar tint — `[console.theme] title_bar_color`.** A new
+  white-label theme key tints the Windows 11 caption (via DWM `CAPTION_COLOR` /
+  `TEXT_COLOR`). It is an **independent** hex, deliberately *not* derived from
+  `accent_color`, so a brand can pair e.g. a blue accent UI with a red title bar.
+  Unset → the existing default runspec-blue caption (no change to default
+  installs). The (caption, text) COLORREFs are computed by the new pure
+  `config.title_bar_colors` (the caption-text colour is picked black or white for
+  contrast by luminance), consumed by `app.py` `_apply_dwm_title_bar`. Windows 11
+  build 22000+ only; a no-op on other platforms/builds. See
+  `docs/design/console-theme.md`.
+
 ## [0.156.0] — 2026-06-30
 
 ### Added
