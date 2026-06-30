@@ -1,0 +1,75 @@
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+# Per-invocation audit files — one {runnable}.{utc-ts}.{run_id}.log per deploy.
+# Multi-writer safe for shared venvs (view/compact/prune with `runspec logs`),
+# and the data the runspec-console history/analytics tabs read.
+store = "per-run"
+
+# ── Deploy a package via a bundled Ansible playbook ──────────────────────────────
+#
+# This runnable runs ENTIRELY ON THE LOCAL HOST. The runspec-console reaches the
+# host over its own SSH connection (the host listed in runspec_hosts.toml) and
+# invokes this runnable there; the playbook is then executed against localhost
+# (inventory pins ansible_connection=local), so Ansible uses NO SSH of its own.
+# This is the `ansible-pull` pattern driven by the console instead of cron.
+#
+# Secrets (e.g. Nexus credentials) are passed as ENVIRONMENT VARIABLES injected
+# by the console from the OS keychain — never packaged, never on the command
+# line, never in the audit log. See README.md → "Secrets".
+
+[run-playbook]
+description = "Deploy a Python package by running a bundled Ansible playbook locally on this host. Installs <package>[extras]==<version> from the configured index and runs the playbook's steps. Uses no Ansible SSH — the console already reached this host; the playbook acts on localhost (connection: local)."
+autonomy    = "confirm"
+output      = "json"
+examples    = [
+    "run-playbook myapp 1.4.2",
+    "run-playbook 'myapp[postgres]' 1.4.2 --check",
+    { cmd = "run-playbook myapp 1.4.2 --extra-var venv_path=/opt/myapp/venv -v", description = "Override the target venv and show task output" },
+]
+
+[run-playbook.args.package]
+type        = "str"
+position    = 1
+description = "Package to deploy. Supports extras, e.g. 'myapp' or 'myapp[postgres,redis]'."
+
+[run-playbook.args.version]
+type        = "str"
+position    = 2
+description = "Exact version to install (e.g. '1.4.2'). Pinned — composed into '<package>==<version>'."
+
+[run-playbook.args.playbook]
+type        = "choice"
+options     = ["deploy"]
+default     = "deploy"
+description = "Which bundled playbook to run (one of the playbooks shipped inside this package)."
+
+[run-playbook.args.check]
+type        = "flag"
+short       = "-C"
+default     = false
+description = "Dry run: execute the playbook in Ansible check mode — report what would change without applying it."
+
+[run-playbook.args.extra-var]
+type        = "str"
+multiple    = true
+required    = false
+description = "Extra Ansible variable as key=value (repeatable, e.g. --extra-var venv_path=/opt/app/venv). Merged into extra-vars after the deploy_* variables."
+
+[run-playbook.args.tags]
+type        = "str"
+required    = false
+description = "Comma-separated Ansible --tags: run only tasks with these tags."
+
+[run-playbook.args.skip-tags]
+type        = "str"
+required    = false
+description = "Comma-separated Ansible --skip-tags: skip tasks with these tags."
+
+[run-playbook.args.verbosity]
+type        = "int"
+short       = "-v"
+default     = 0
+range       = [0, 4]
+description = "Ansible verbosity, 0–4 (like -v … -vvvv)."

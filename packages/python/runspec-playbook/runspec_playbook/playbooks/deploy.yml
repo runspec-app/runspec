@@ -1,0 +1,56 @@
+---
+# Example deploy playbook for runspec-playbook.
+#
+# Runs LOCALLY on the target host: the inventory pins ansible_connection=local,
+# so Ansible uses NO SSH of its own. The runspec-console already reached this
+# host (over its own SSH, from runspec_hosts.toml) and invoked the run-playbook
+# runnable here; this playbook then acts on localhost.
+#
+# Variables provided automatically by the run-playbook runnable:
+#   deploy_package        e.g. "myapp" or "myapp[postgres]"
+#   deploy_version        e.g. "1.4.2"
+#   deploy_package_spec   e.g. "myapp[postgres]==1.4.2"
+# Override anything else with --extra-var key=value.
+#
+# Secrets (Nexus credentials, etc.) arrive as ENVIRONMENT VARIABLES injected by
+# the runspec-console from the OS keychain at run time — never packaged, never
+# on the command line, never in the audit log. Read them with
+# lookup('env', 'NAME'). Name the console credential so the label→env-var
+# convention yields the names this playbook expects (a token credential
+# labelled "Nexus" → NEXUS_TOKEN/NEXUS_PAT; a userpass "Nexus" → NEXUS_USERNAME).
+#
+# Replace the body below with your existing per-host playbook — the only
+# requirement for local execution is `hosts: all` (the inventory is localhost).
+- name: Deploy {{ deploy_package_spec }} locally
+  hosts: all
+  gather_facts: true
+  vars:
+    # Strip any [extras] suffix to derive a plain application name.
+    app_name: "{{ deploy_package | regex_replace('\\[.*$', '') }}"
+    venv_path: "/opt/{{ app_name }}/venv"
+  tasks:
+    - name: Ensure the venv parent directory exists
+      become: true
+      ansible.builtin.file:
+        path: "{{ venv_path | dirname }}"
+        state: directory
+        mode: "0755"
+
+    - name: Install {{ deploy_package_spec }} into {{ venv_path }} (idempotent)
+      become: true
+      ansible.builtin.pip:
+        name: "{{ deploy_package_spec }}"
+        state: present
+        virtualenv: "{{ venv_path }}"
+        virtualenv_command: python3 -m venv
+      environment:
+        # Point pip at Nexus using the injected credential env vars. If no
+        # credential is present, fall back to an already-exported PIP_INDEX_URL,
+        # or omit to use the system default index.
+        PIP_INDEX_URL: >-
+          {{
+            ('https://' ~ lookup('env', 'NEXUS_USERNAME') ~ ':' ~ lookup('env', 'NEXUS_TOKEN')
+             ~ '@nexus.example.com/repository/pypi/simple')
+            if lookup('env', 'NEXUS_TOKEN')
+            else (lookup('env', 'PIP_INDEX_URL') | default(omit, true))
+          }}

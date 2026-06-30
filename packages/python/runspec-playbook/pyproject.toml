@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-playbook"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Run bundled Ansible playbooks locally on a host the runspec-console is already connected to — no Ansible SSH, one host list (runspec_hosts.toml)"
+dependencies = [
+    "runspec>=0.38.0",
+    "ansible-core>=2.16",
+    "ansible-runner>=2.3",
+]
+
+[project.scripts]
+run-playbook = "runspec_playbook.run_playbook:main_run_playbook"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.15.20",
+    "pytest>=8.0",
+]
+
+# Ship the runnable interface and the bundled playbooks as package data.
+[tool.hatch.build.targets.wheel]
+packages = ["runspec_playbook"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
