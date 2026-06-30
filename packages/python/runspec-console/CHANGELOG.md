@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.155.1] — 2026-06-30
+
+### Fixed
+
+- **Generated app icon rendered with a dark-grey artifact.** The recoloured
+  fallback icon (a solid square in `accent_color`) embedded a **24-bit RGB** PNG
+  while the ICO directory entry declared **32bpp** — so Windows expected an alpha
+  channel, found none, and invented one, painting the square with a dark-grey
+  cast ("red and dark grey"). It now emits a true **opaque 32-bit RGBA** PNG
+  (colour type 6), so the square renders clean. The cache filename gained a
+  `-rgba` suffix to force a regenerate over any stale pre-fix icon. (`app.py`
+  `_build_icon`.) Note the generated icon is, by design, a solid square in your
+  brand colour — for a **real logo** set `[console.theme] icon` to an `.ico`/`.png`
+  path, which overrides the generated square entirely.
+
 ## [0.155.0] — 2026-06-30
 
 ### Added

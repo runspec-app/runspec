@@ -143,12 +143,29 @@ def test_build_icon_caches_per_colour(monkeypatch, tmp_path):
     _cfg_path(monkeypatch, tmp_path)
     cfg.write_config({"console": {"theme": {"accent_color": "#b3001b"}}})
     p = app_mod._build_icon()
-    assert p is not None and p.name == "runspec_console-b3001b.ico"
+    assert p is not None and p.name == "runspec_console-b3001b-rgba.ico"
     assert p.exists()
     # a different accent → a different cache file
     cfg.write_config({"console": {"theme": {"accent_color": "#0958d9"}}})
     p2 = app_mod._build_icon()
-    assert p2 is not None and p2.name == "runspec_console-0958d9.ico"
+    assert p2 is not None and p2.name == "runspec_console-0958d9-rgba.ico"
+
+
+def test_build_icon_emits_opaque_rgba(monkeypatch, tmp_path):
+    # The generated .ico must embed a true 32-bit RGBA PNG (colour type 6) so the
+    # declared 32bpp matches a real opaque alpha — otherwise Windows invents the
+    # alpha and renders the square with a dark-grey artifact.
+    from runspec_console import app as app_mod
+
+    _cfg_path(monkeypatch, tmp_path)
+    cfg.write_config({"console": {"theme": {"accent_color": "#b3001b"}}})
+    data = app_mod._build_icon().read_bytes()
+    png_start = data.index(b"\x89PNG\r\n\x1a\n")
+    ihdr = data[png_start + 8 :]
+    assert ihdr[4:8] == b"IHDR"
+    # IHDR payload: width(4) height(4) bitdepth(1) colourtype(1) …
+    assert ihdr[16] == 8  # 8-bit depth
+    assert ihdr[17] == 6  # colour type 6 = RGBA (was 2 = RGB before the fix)
 
 
 def test_build_icon_explicit_path_wins(monkeypatch, tmp_path):

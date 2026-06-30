@@ -107,7 +107,11 @@ def _build_icon() -> Path | None:
 
     r, g, b = _icon_rgb()
     w = 32
-    cache = config_path().parent / f"runspec_console-{r:02x}{g:02x}{b:02x}.ico"
+    # `-rgba` in the name forces a regenerate over any stale pre-0.155.1 cache,
+    # which declared 32bpp but embedded a 24-bit RGB PNG (no alpha) — Windows
+    # filled the missing alpha with garbage, rendering the square with a dark-grey
+    # artifact. The fix below emits a real opaque RGBA PNG.
+    cache = config_path().parent / f"runspec_console-{r:02x}{g:02x}{b:02x}-rgba.ico"
     if cache.exists():
         return cache
     try:
@@ -121,10 +125,13 @@ def _build_icon() -> Path | None:
                 + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
             )
 
-        scanlines = b"".join(b"\x00" + bytes([r, g, b] * w) for _ in range(w))
+        # 32-bit RGBA, every pixel fully opaque (alpha 255). Colour type 6 matches
+        # the ICO dir entry's declared 32bpp, so there's a real alpha channel
+        # instead of one Windows has to invent.
+        scanlines = b"".join(b"\x00" + bytes([r, g, b, 255] * w) for _ in range(w))
         png = (
             b"\x89PNG\r\n\x1a\n"
-            + _chunk(b"IHDR", struct.pack(">IIBBBBB", w, w, 8, 2, 0, 0, 0))
+            + _chunk(b"IHDR", struct.pack(">IIBBBBB", w, w, 8, 6, 0, 0, 0))
             + _chunk(b"IDAT", zlib.compress(scanlines))
             + _chunk(b"IEND", b"")
         )
