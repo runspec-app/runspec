@@ -93,6 +93,7 @@ EXPECTED = {
     "list_teams",
     "list_triggers",
     "load_conversation",
+    "log_client_error",
     "logs_compact",
     "logs_prune",
     "logs_status",

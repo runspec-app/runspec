@@ -1091,6 +1091,9 @@ export interface BridgeApi {
   // ── dev tools ────────────────────────────────────────────────────────────
   is_debug_enabled: () => Promise<boolean>
   open_devtools: () => Promise<void>
+  // Record a frontend error in the Python log file (so it isn't trapped in the
+  // web view console). Best-effort; the proxy forwards uncaught bridge errors here.
+  log_client_error: (context: string, message: string, detail?: unknown) => Promise<void>
 }
 
 declare global {
@@ -1135,6 +1138,64 @@ function resolveBridge(): Promise<BridgeApi> {
   return _bridge
 }
 
+// Forward a bridge error into the Python log file (best-effort). Guarded so the
+// very failure we're surfacing — an older Python that doesn't expose
+// `log_client_error` — can't recurse or throw; if it's missing we just skip, and
+// the descriptive error below still shows in the Dev tab.
+let _forwardingClientError = false
+function forwardClientError(name: string, err: unknown): void {
+  if (_forwardingClientError || name === 'log_client_error') return
+  const fn = (window.pywebview?.api as Partial<BridgeApi> | undefined)?.log_client_error
+  if (typeof fn !== 'function') return
+  _forwardingClientError = true
+  try {
+    void fn('bridge-call', `${name}: ${err instanceof Error ? err.message : String(err)}`)
+  } catch { /* logging must never break the UI */ }
+  finally { _forwardingClientError = false }
+}
+
+// Resolve a bridge method, tolerating pywebview's async startup.
+//
+// pywebview 6.x injects `window.pywebview.api` and then attaches its methods
+// **asynchronously** — so a mount-time call can land *before* a given method
+// exists on the api object yet (the failures cluster at startup and vary in
+// count run-to-run, the signature of a race, not a missing method). We read the
+// **live** api each time (the object may be replaced/extended after the first
+// ready-probe) and, on the real pywebview path, briefly retry while the method
+// is still being attached. A method that's still absent after the api has had
+// time to settle is a genuine "not exposed" (a real version mismatch).
+const _BRIDGE_READY_RETRIES = 40   // × 75ms ≈ 3s max wait, only when racing/absent
+const _BRIDGE_READY_DELAY_MS = 75
+
+async function resolveMethod(
+  name: string,
+  resolved: BridgeApi,
+): Promise<(...a: unknown[]) => unknown> {
+  const fromLive = (): ((...a: unknown[]) => unknown) | undefined => {
+    // Plain browser (mock): no window.pywebview — use the resolved mock, which
+    // always has every method. Real desktop: read the live pywebview api.
+    const api =
+      (window.pywebview?.api as Record<string, unknown> | undefined) ??
+      (resolved as unknown as Record<string, unknown>)
+    const fn = api[name]
+    return typeof fn === 'function' ? (fn as (...a: unknown[]) => unknown) : undefined
+  }
+  let fn = fromLive()
+  // Only retry on the real pywebview path (the mock has every method already).
+  for (let i = 0; !fn && window.pywebview?.api && i < _BRIDGE_READY_RETRIES; i++) {
+    await new Promise(r => setTimeout(r, _BRIDGE_READY_DELAY_MS))
+    fn = fromLive()
+  }
+  if (!fn) {
+    throw new Error(
+      `Bridge method "${name}" is not exposed by the Python API (still missing after ` +
+      `waiting for the bridge to settle) — likely a version mismatch between the ` +
+      `installed runspec-console and this UI bundle.`,
+    )
+  }
+  return fn
+}
+
 export const bridge: BridgeApi = new Proxy({} as BridgeApi, {
   get(_target, prop) {
     // Symbol probes (thenable checks, etc.) must not be mistaken for methods —
@@ -1145,12 +1206,14 @@ export const bridge: BridgeApi = new Proxy({} as BridgeApi, {
       const entryId = recordCallStart(name, args)
       const t0 = performance.now()
       try {
-        const api = await resolveBridge()
-        const result = await (api[prop as keyof BridgeApi] as (...a: unknown[]) => unknown)(...args)
+        const resolved = await resolveBridge()
+        const fn = await resolveMethod(name, resolved)
+        const result = await fn(...args)
         recordCallEnd(entryId, result, performance.now() - t0)
         return result
       } catch (err) {
         recordCallError(entryId, err, performance.now() - t0)
+        forwardClientError(name, err)
         throw err
       }
     }

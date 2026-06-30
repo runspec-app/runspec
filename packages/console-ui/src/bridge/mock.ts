@@ -1193,6 +1193,9 @@ export const mockApi: BridgeApi = {
   open_devtools: async (): Promise<void> => {
     console.log('mock: open_devtools')
   },
+  log_client_error: async (context, message): Promise<void> => {
+    console.error('[mock] log_client_error', context, message)
+  },
 
   // ── event triggers ─────────────────────────────────────────────────────────
   list_triggers: async () => ({

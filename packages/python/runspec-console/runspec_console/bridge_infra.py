@@ -190,6 +190,25 @@ class InfraMixin:
         """Exposed to the Dev tab so its inspector button behaves honestly."""
         return self._debug
 
+    def log_client_error(self, context: str, message: str, detail: Any = None) -> None:
+        """Record a frontend error in the Python log file.
+
+        The UI forwards uncaught bridge-call / render errors here so they land in
+        ``runspec-console.log`` instead of being trapped in the web view's console
+        (invisible without DevTools). The classic case: a bridge method the UI
+        calls that the **installed Python is too old to expose** — that used to
+        surface only as a minified ``… is not a function`` in the browser. Bounded
+        and best-effort; never raises back into the UI."""
+        try:
+            ctx = str(context)[:200]
+            msg = str(message)[:2000]
+            if detail is not None:
+                logger.error("UI error [%s]: %s | %s", ctx, msg, str(detail)[:2000])
+            else:
+                logger.error("UI error [%s]: %s", ctx, msg)
+        except Exception:  # noqa: BLE001 - logging must never break the UI
+            pass
+
     def open_devtools(self) -> None:
         """Best-effort open of the native Chromium inspector.
 

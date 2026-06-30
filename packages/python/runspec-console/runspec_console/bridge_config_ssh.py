@@ -137,10 +137,21 @@ class ConfigSshMixin:
         return out
 
     def app_version(self) -> str:
-        """The installed version of the branded package, for display in the UI."""
-        from .version import installed_version
+        """The version shown in the footer — the **branded** package's when it
+        resolves, else runspec-console's own. **Never blank.**
 
-        return installed_version(self._get_branding().version_package)
+        A white-label wrapper points `[llm] provider` at its adapter, so branding
+        targets that distribution. If that distribution's version can't be read
+        via importlib.metadata (an editable/renamed install, a provider that
+        can't be traced to a dist), fall back to runspec-console's version so the
+        footer still shows something useful instead of going empty."""
+        from .version import PACKAGE_NAME, installed_version
+
+        try:
+            package = self._get_branding().version_package or PACKAGE_NAME
+        except Exception:  # noqa: BLE001 - branding must never blank the footer
+            package = PACKAGE_NAME
+        return installed_version(package) or installed_version(PACKAGE_NAME)
 
     def check_for_update(self) -> dict[str, Any]:
         """Compare the installed version against the newest one the venv's

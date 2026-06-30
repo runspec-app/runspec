@@ -8,6 +8,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.154.1] — 2026-06-30
+
+### Fixed
+
+- **Version footer went blank on a white-label install.** `app_version()`
+  returned `""` when the **branded** package's version couldn't be read via
+  `importlib.metadata` (a renamed/editable install, or a provider that can't be
+  traced to a distribution) — which, combined with an update check that can't
+  reach a private index, left the bottom-left footer completely empty. It now
+  falls back to runspec-console's own version (and survives a branding-resolution
+  error), so the footer **never goes blank**. The branded version still shows
+  whenever it resolves. (`bridge_config_ssh.py` `app_version`.)
+- **Startup race with pywebview 6.x dropped bridge calls (incl. the white-label
+  theme).** pywebview 6.x injects `window.pywebview.api` and then attaches its
+  methods **asynchronously**, so a mount-time bridge call (`brand_theme`,
+  `list_action_tools`, …) could land **before that method was attached yet** and
+  fail with an opaque `(intermediate value)[t] is not a function`. The failures
+  clustered at startup and varied in count run-to-run — a race, not a missing
+  method (the methods exist in Python). For `brand_theme` the failure was
+  swallowed, so the theme silently never applied. The bridge proxy now reads the
+  **live** api and **briefly retries** while a method is still being attached, so
+  mount-time calls succeed once pywebview finishes wiring up. A method still
+  absent after the api settles raises a **named** error (a genuine version
+  mismatch) instead of the minified mystery, and every uncaught bridge error is
+  now **forwarded into the Python log file** via a new best-effort
+  `log_client_error` method — so `runspec-console.log` captures frontend failures
+  instead of leaving them trapped in the web view. (`bridge/index.ts`
+  `resolveMethod` + `bridge_infra.py` `log_client_error`.)
+
 ## [0.154.0] — 2026-06-30
 
 ### Added
