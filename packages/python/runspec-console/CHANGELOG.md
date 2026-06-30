@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.155.0] — 2026-06-30
+
+### Added
+
+- **Watermark styles (`[console.theme] watermark_style`).** The white-label
+  content watermark is no longer only the tiled/slanted Ant mark. A new
+  `watermark_style` key chooses how it's drawn: **`tiled`** (the current repeated
+  mark, default — existing configs unchanged), **`banner`** (a single large word
+  centered over the content area, upper third — a clean "brand banner" look), or
+  **`center`** (a single large word dead-center). All three honour a
+  `watermark_logo` image instead of text, are faint + theme-aware + non-interactive,
+  and remain a passthrough when no watermark is set. Validated server-side
+  (`config.valid_watermark_style`, surfaced via `brand_theme`); rendered by a new
+  `App.tsx` `BrandWatermark` component. See `docs/design/console-theme.md`.
+
 ## [0.154.1] — 2026-06-30
 
 ### Fixed

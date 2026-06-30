@@ -190,6 +190,7 @@ export interface BrandTheme {
   brand_name?: string
   watermark_text?: string
   watermark_logo?: string
+  watermark_style?: 'tiled' | 'banner' | 'center'  // default 'tiled'
 }
 
 export interface SeedApplyResult {

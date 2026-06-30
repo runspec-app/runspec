@@ -17,7 +17,7 @@ The seed can carry the values; this change makes four surfaces honour them:
 | Surface | Key | Where |
 |---|---|---|
 | Accent colour | `accent_color` (hex) | Ant `ConfigProvider` `token.colorPrimary` (`App.tsx`) **+** the generated app icon colour (`app.py _build_icon`) |
-| Content watermark | `watermark_text`, `watermark_logo` | Ant `<Watermark>` wrapping the content area (`App.tsx`) |
+| Content watermark | `watermark_text`, `watermark_logo`, `watermark_style` | `App.tsx` `BrandWatermark`: `tiled` (Ant `<Watermark>`, default), `banner` (single large mark, upper third of the content area), or `center` (single large mark, middle); a logo image is used instead of text when given |
 | Sidebar brand name | `brand_name` | the sidebar title (`App.tsx`) — unset keeps the literal `runspec`, so default installs are unchanged |
 | App icon | `icon` (path) + `accent_color` | `app.py _build_icon` — an explicit icon path wins; else the generated square is painted in `accent_color` (the "blue square" becomes the brand colour) |
 
@@ -33,8 +33,9 @@ of `config.toml`, so it flows through the seed/sync merge with no new plumbing.
 [console.theme]
 accent_color   = "#b3001b"                 # hex (#rgb or #rrggbb); drives colorPrimary + icon
 brand_name     = "MyCorp Ops"              # sidebar title (unset → "runspec")
-watermark_text = "MyCorp — Internal"       # faint tiled text behind content
-watermark_logo = "https://…/logo.png"      # optional; a URL or data:image/… (with watermark_text or alone)
+watermark_text = "MyCorp"                  # faint brand mark behind content
+watermark_logo = "https://…/logo.png"      # optional; a URL or data:image/… (instead of text)
+watermark_style = "banner"                 # tiled (default) | banner (large, upper third) | center
 icon           = "C:/brand/app.ico"        # optional; an explicit .ico/.png path overrides the generated icon
 ```
 

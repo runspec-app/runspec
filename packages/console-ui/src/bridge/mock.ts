@@ -647,7 +647,7 @@ export const mockApi: BridgeApi = {
 
   config_dir: async () => 'C:/Users/jason/AppData/Roaming/runspec-console',
   app_title: async () => 'runspec console',
-  brand_theme: async () => ({ accent_color: '#b3001b', brand_name: 'MyCorp Ops', watermark_text: 'MyCorp — Internal' }),
+  brand_theme: async () => ({ accent_color: '#b3001b', brand_name: 'MyCorp Ops', watermark_text: 'MyCorp', watermark_style: 'banner' as const }),
   app_version: async () => '0.19.0',
   check_for_update: async () => {
     await new Promise(r => setTimeout(r, 400))

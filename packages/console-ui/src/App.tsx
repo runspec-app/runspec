@@ -84,6 +84,54 @@ function fmtTokens(n: number): string {
   return `${(n / 1000).toFixed(1)}k`
 }
 
+const SIDEBAR_WIDTH = 180
+
+// White-label content watermark. `tiled` (default) is Ant's repeated/slanted
+// mark; `banner` / `center` draw a single large faint mark over the content area
+// (banner = upper third, center = middle) — your "brand banner" look. All honour
+// a logo image instead of text, are non-interactive (pointer-events: none), and
+// brighten on the dark UI. A passthrough when no text/logo is set.
+function BrandWatermark(
+  { theme: t, isDark, children }: { theme: BrandTheme; isDark: boolean; children: React.ReactNode },
+) {
+  const text = t.watermark_text
+  const logo = t.watermark_logo
+  if (!text && !logo) return <>{children}</>
+
+  const style = t.watermark_style ?? 'tiled'
+  if (style === 'tiled') {
+    // Theme-aware colour: Ant's default rgba(0,0,0,.15) is invisible on dark.
+    return (
+      <Watermark content={text} image={logo} font={{ color: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)' }}>
+        {children}
+      </Watermark>
+    )
+  }
+
+  // Single large mark over the content area (right of the sidebar).
+  const centered = style === 'center'
+  const markColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'
+  return (
+    <div style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
+      {children}
+      <div aria-hidden style={{
+        position: 'absolute', top: 0, bottom: 0, right: 0, left: SIDEBAR_WIDTH,
+        display: 'flex', justifyContent: 'center',
+        alignItems: centered ? 'center' : 'flex-start',
+        paddingTop: centered ? 0 : '13vh',
+        pointerEvents: 'none', userSelect: 'none', overflow: 'hidden', zIndex: 1,
+      }}>
+        {logo
+          ? <img src={logo} alt="" style={{ maxWidth: '45%', maxHeight: '35%', opacity: isDark ? 0.1 : 0.08 }} />
+          : <span style={{
+              fontSize: 'clamp(28px, 6.5vw, 92px)', fontWeight: 800, letterSpacing: 4,
+              textTransform: 'uppercase', whiteSpace: 'nowrap', color: markColor,
+            }}>{text}</span>}
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
   // Analytics is lazy-loaded; mount it on first visit, then keep it mounted so
@@ -532,15 +580,9 @@ export default function App() {
             ...(brandTheme.accent_color ? { colorPrimary: brandTheme.accent_color } : {}),
           },
         }}>
-        {/* White-label content watermark (faint tiled brand mark). When neither
-            text nor logo is set, Watermark renders nothing — a passthrough. The
-            font colour is theme-aware: Ant's default rgba(0,0,0,.15) is invisible
-            on the dark UI, so brighten it on dark. */}
-        <Watermark
-          content={brandTheme.watermark_text}
-          image={brandTheme.watermark_logo}
-          font={{ color: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)' }}
-        >
+        {/* White-label content watermark — style-aware (tiled / banner / center),
+            a passthrough when no watermark text/logo is set. */}
+        <BrandWatermark theme={brandTheme} isDark={isDark}>
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
           {/* Fixed host sidebar */}
@@ -1103,7 +1145,7 @@ export default function App() {
           </div>
         </div>
         </div>
-        </Watermark>
+        </BrandWatermark>
 
         <TransferModal
           open={transferOpen}

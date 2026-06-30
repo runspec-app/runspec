@@ -114,11 +114,17 @@ class ConfigSshMixin:
 
         Returns only the keys the UI renders, each cleaned: `accent_color` (a hex
         colour → Ant `colorPrimary`), `brand_name` (sidebar title), `watermark_text`,
-        and `watermark_logo` (an http(s)/`data:image` URL). An absent or invalid
-        value is dropped, so `{}` means "no theme — the default look". Source is
-        config only (set by a config seed or by hand); there is no Settings editor.
+        `watermark_logo` (an http(s)/`data:image` URL), and `watermark_style`
+        (`tiled` / `banner` / `center`). An absent or invalid value is dropped, so
+        `{}` means "no theme — the default look". Source is config only (set by a
+        config seed or by hand); there is no Settings editor.
         See docs/design/console-theme.md."""
-        from .config import theme_config, valid_accent, valid_image_ref
+        from .config import (
+            theme_config,
+            valid_accent,
+            valid_image_ref,
+            valid_watermark_style,
+        )
 
         theme = theme_config()
         out: dict[str, Any] = {}
@@ -134,6 +140,9 @@ class ConfigSshMixin:
         logo = valid_image_ref(theme.get("watermark_logo"))
         if logo:
             out["watermark_logo"] = logo
+        style = valid_watermark_style(theme.get("watermark_style"))
+        if style:
+            out["watermark_style"] = style
         return out
 
     def app_version(self) -> str:

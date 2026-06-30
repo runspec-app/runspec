@@ -44,6 +44,14 @@ def test_valid_image_ref_rejects_other_schemes():
         assert cfg.valid_image_ref(bad) is None
 
 
+def test_valid_watermark_style():
+    assert cfg.valid_watermark_style("tiled") == "tiled"
+    assert cfg.valid_watermark_style("banner") == "banner"
+    assert cfg.valid_watermark_style("  center  ") == "center"
+    for bad in ["diagonal", "BANNER", "", None, 1, "tiledd"]:
+        assert cfg.valid_watermark_style(bad) is None
+
+
 def test_theme_config_shape(monkeypatch, tmp_path):
     _cfg_path(monkeypatch, tmp_path)
     cfg.write_config({"console": {"theme": {"accent_color": "#b3001b"}}})
@@ -74,6 +82,7 @@ def test_brand_theme_passes_valid_drops_invalid(monkeypatch, tmp_path):
                     "brand_name": "  MyCorp Ops  ",
                     "watermark_text": "Internal",
                     "watermark_logo": "https://x/logo.png",
+                    "watermark_style": "banner",
                     "icon": "C:/brand/app.ico",  # not a UI field — not returned
                 }
             }
@@ -85,6 +94,7 @@ def test_brand_theme_passes_valid_drops_invalid(monkeypatch, tmp_path):
         "brand_name": "MyCorp Ops",
         "watermark_text": "Internal",
         "watermark_logo": "https://x/logo.png",
+        "watermark_style": "banner",
     }
 
 

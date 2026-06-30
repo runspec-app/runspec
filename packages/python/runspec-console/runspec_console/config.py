@@ -792,6 +792,20 @@ def valid_image_ref(value: Any) -> str | None:
     return None
 
 
+# How the content watermark is drawn. `tiled` = Ant's repeated/slanted mark
+# (default); `banner` = a single large mark over the content area, upper third;
+# `center` = a single large mark dead-centre. An unknown value falls back to
+# `tiled` in the UI.
+WATERMARK_STYLES: frozenset[str] = frozenset({"tiled", "banner", "center"})
+
+
+def valid_watermark_style(value: Any) -> str | None:
+    """Return ``value`` if it's a known `[console.theme] watermark_style`, else None."""
+    if isinstance(value, str) and value.strip() in WATERMARK_STYLES:
+        return value.strip()
+    return None
+
+
 def sound_enabled() -> bool:
     """`[console.sounds] enabled` master toggle — play audio cues for confirm
     gates, run outcomes, triggers, and messages. Defaults to True (on)."""
