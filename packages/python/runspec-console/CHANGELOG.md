@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.156.0] — 2026-06-30
+
+### Added
+
+- **Bundle the white-label app icon inside the package — `[console.theme] icon =
+  "pkg:<module>:<relpath>"`.** The `icon` override now accepts a package
+  reference (e.g. `pkg:mycorp_console:app.ico` or
+  `pkg:mycorp_console:assets/app.ico`) in addition to a filesystem path: the icon
+  shipped *inside* a package is resolved via `importlib.resources` and copied
+  into app-data (keyed by content hash) so pywebview always gets a stable real
+  path — even from a zip-imported wheel. So a white-label distribution can ship
+  its own icon with **no machine-specific absolute path** to hard-code (mirroring
+  how the config seed already rides in the package). A plain path still works;
+  a bad path / module / resource falls back to the generated accent square.
+  (`app.py` `_resolve_icon_override`.) See `docs/design/console-theme.md`.
+
 ## [0.155.1] — 2026-06-30
 
 ### Fixed

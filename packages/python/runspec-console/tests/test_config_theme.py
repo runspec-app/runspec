@@ -176,3 +176,60 @@ def test_build_icon_explicit_path_wins(monkeypatch, tmp_path):
     brand.write_bytes(b"icodata")
     cfg.write_config({"console": {"theme": {"icon": str(brand)}}})
     assert app_mod._build_icon() == brand
+
+
+class _FakeRes:
+    """Minimal importlib.resources Traversable for a single bundled file."""
+
+    def __init__(self, data: bytes | None):
+        self._data = data  # None ⇒ not a file
+
+    def __truediv__(self, _part: str) -> "_FakeRes":
+        return self
+
+    def is_file(self) -> bool:
+        return self._data is not None
+
+    def read_bytes(self) -> bytes:
+        assert self._data is not None
+        return self._data
+
+
+def test_build_icon_pkg_ref_resolves_and_caches(monkeypatch, tmp_path):
+    import importlib.resources as resources
+
+    from runspec_console import app as app_mod
+
+    _cfg_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(resources, "files", lambda module: _FakeRes(b"BRANDICO"))
+    cfg.write_config(
+        {"console": {"theme": {"icon": "pkg:mycorp_console:assets/app.ico"}}}
+    )
+    p = app_mod._build_icon()
+    assert p is not None
+    assert p.parent == tmp_path  # copied into app-data
+    assert p.suffix == ".ico"
+    assert p.read_bytes() == b"BRANDICO"
+
+
+def test_build_icon_pkg_ref_missing_falls_back_to_square(monkeypatch, tmp_path):
+    import importlib.resources as resources
+
+    from runspec_console import app as app_mod
+
+    _cfg_path(monkeypatch, tmp_path)
+    # Module resolves but the resource isn't a file → fall back to the generated
+    # accent square (not a crash).
+    monkeypatch.setattr(resources, "files", lambda module: _FakeRes(None))
+    cfg.write_config(
+        {
+            "console": {
+                "theme": {
+                    "icon": "pkg:mycorp_console:nope.ico",
+                    "accent_color": "#b3001b",
+                }
+            }
+        }
+    )
+    p = app_mod._build_icon()
+    assert p is not None and p.name == "runspec_console-b3001b-rgba.ico"

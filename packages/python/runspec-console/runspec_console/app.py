@@ -86,23 +86,76 @@ def _icon_rgb() -> tuple[int, int, int]:
     return 9, 88, 217  # runspec blue
 
 
+def _resolve_icon_override(value: str) -> Path | None:
+    """Resolve a `[console.theme] icon` value to a real filesystem path, or None.
+
+    Two forms:
+
+    * a plain filesystem path (``C:/brand/app.ico`` / ``~/app.ico``) — used as-is
+      when it's a readable file;
+    * a **package reference** ``pkg:<module>:<relpath>`` (e.g.
+      ``pkg:mycorp_console:app.ico`` or ``pkg:mycorp_console:assets/app.ico``) —
+      the icon bundled inside a package, resolved via ``importlib.resources``.
+      Its bytes are copied into app-data (keyed by content hash) so pywebview
+      always gets a stable real path, even from a zip-imported wheel. So a
+      white-label package ships its own icon with no machine-specific path.
+
+    Best-effort: a bad path / module / resource returns None (→ the caller falls
+    back to the generated square)."""
+    from .config import config_path
+
+    v = value.strip()
+    if v.lower().startswith("pkg:"):
+        module, _, rel = v[4:].partition(":")
+        module, rel = module.strip(), rel.strip()
+        if not module or not rel:
+            return None
+        try:
+            import hashlib
+            import importlib.resources as resources
+
+            res = resources.files(module)
+            for part in rel.replace("\\", "/").split("/"):
+                if part:
+                    res = res / part
+            if not res.is_file():
+                return None
+            data = res.read_bytes()
+            suffix = Path(rel).suffix or ".ico"
+            dest = (
+                config_path().parent
+                / f"runspec_console-icon-{hashlib.sha1(data).hexdigest()[:12]}{suffix}"
+            )
+            if not dest.exists():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+            return dest
+        except Exception:
+            return None
+
+    p = Path(v).expanduser()
+    return p if p.is_file() else None
+
+
 def _build_icon() -> Path | None:
     """Generate a simple branded .ico, cached in app-data.
 
     A white-label install can override the icon outright with `[console.theme]
-    icon` (a readable `.ico`/`.png` path); otherwise a solid 32×32 square is
-    painted in `accent_color` (the brand colour) or runspec blue. The cache key
-    includes the colour, so changing `accent_color` regenerates it."""
+    icon` — a readable `.ico`/`.png` path, or a `pkg:<module>:<relpath>`
+    reference to an icon bundled in a package (see `_resolve_icon_override`).
+    Otherwise a solid 32×32 square is painted in `accent_color` (the brand
+    colour) or runspec blue. The cache key includes the colour, so changing
+    `accent_color` regenerates it."""
     import struct
     import zlib
 
     from .config import config_path, theme_config
 
-    # An explicit icon path wins — used verbatim.
+    # An explicit icon (path or pkg: reference) wins — used verbatim.
     icon_override = theme_config().get("icon")
     if isinstance(icon_override, str) and icon_override.strip():
-        p = Path(icon_override.strip()).expanduser()
-        if p.is_file():
+        p = _resolve_icon_override(icon_override)
+        if p is not None:
             return p
 
     r, g, b = _icon_rgb()

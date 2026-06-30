@@ -19,7 +19,7 @@ The seed can carry the values; this change makes four surfaces honour them:
 | Accent colour | `accent_color` (hex) | Ant `ConfigProvider` `token.colorPrimary` (`App.tsx`) **+** the generated app icon colour (`app.py _build_icon`) |
 | Content watermark | `watermark_text`, `watermark_logo`, `watermark_style` | `App.tsx` `BrandWatermark`: `tiled` (Ant `<Watermark>`, default), `banner` (single large mark, upper third of the content area), or `center` (single large mark, middle); a logo image is used instead of text when given |
 | Sidebar brand name | `brand_name` | the sidebar title (`App.tsx`) — unset keeps the literal `runspec`, so default installs are unchanged |
-| App icon | `icon` (path) + `accent_color` | `app.py _build_icon` — an explicit icon path wins; else the generated square is painted in `accent_color` (the "blue square" becomes the brand colour) |
+| App icon | `icon` (path or `pkg:` ref) + `accent_color` | `app.py _build_icon` / `_resolve_icon_override` — an explicit `icon` wins (a filesystem path, or `pkg:<module>:<relpath>` for an icon **bundled in a package**, copied into app-data so pywebview gets a stable path even from a zipped wheel); else the generated square is painted in `accent_color` (the "blue square" becomes the brand colour, now emitted as opaque RGBA) |
 
 **Source is config only.** The frontend reads a new `brand_theme()` bridge method
 (parallel to `app_title`/`docs_url`); the sidebar name reuses the same channel. No
@@ -36,7 +36,7 @@ brand_name     = "MyCorp Ops"              # sidebar title (unset → "runspec")
 watermark_text = "MyCorp"                  # faint brand mark behind content
 watermark_logo = "https://…/logo.png"      # optional; a URL or data:image/… (instead of text)
 watermark_style = "banner"                 # tiled (default) | banner (large, upper third) | center
-icon           = "C:/brand/app.ico"        # optional; an explicit .ico/.png path overrides the generated icon
+icon           = "pkg:mycorp_console:app.ico"  # optional; overrides the generated icon — a path OR a pkg:<module>:<relpath> bundled-in-package reference
 ```
 
 Every field is optional; an absent/invalid one falls back (no theme = today's look).
