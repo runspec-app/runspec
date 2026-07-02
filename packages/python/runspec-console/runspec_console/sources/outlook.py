@@ -244,6 +244,7 @@ class OutlookSource:
     _SEEN_CAP = 50_000  # bound the EntryID dedupe set over a long session
     _RECONNECT_MIN = 5.0  # s: first wait before re-attaching to a restarted Outlook
     _RECONNECT_MAX = 60.0  # s: cap on the reconnect backoff
+    _STOP_JOIN_TIMEOUT = 5.0  # s: cap on waiting for the pump to unwind on stop()
 
     def __init__(self) -> None:
         self._emit: EmitFn | None = None
@@ -322,11 +323,35 @@ class OutlookSource:
 
     def stop(self) -> None:
         self._stop.set()  # the pump loop checks this and exits
+        self._queue.put(None)  # wake the dispatcher so it exits its blocking get()
+        # Join both threads before returning. The pump owns a COM apartment with
+        # WithEvents sinks bound to the *singleton* Outlook.Application; if stop()
+        # returned while they were still bound, a restart (every mailbox-settings
+        # save calls restart_triggers → stop + immediate start) would spin up a
+        # second STA pump that binds the same folders concurrently. Overlapping
+        # STA pumps on one Outlook instance deadlock on Windows — which froze the
+        # console ("not responding") whenever the mailbox settings were changed.
+        # Joining serialises teardown → rebuild so the old apartment (and its
+        # CoUninitialize) completes first. Bounded: a pump wedged inside a COM
+        # call (e.g. Dispatch launching Outlook) must not block the caller
+        # forever — log and move on rather than hang.
+        current = threading.current_thread()
+        for label, thread in (
+            ("pump", self._thread),
+            ("dispatch", self._dispatch_thread),
+        ):
+            if thread is not None and thread is not current:
+                thread.join(timeout=self._STOP_JOIN_TIMEOUT)
+                if thread.is_alive():
+                    logger.warning(
+                        "outlook: %s thread did not stop within %.0fs; a restart "
+                        "may briefly overlap COM apartments",
+                        label,
+                        self._STOP_JOIN_TIMEOUT,
+                    )
         self._thread = None
+        self._dispatch_thread = None
         self._app = None
-        if self._dispatch_thread is not None:
-            self._queue.put(None)  # wake the dispatcher so it exits
-            self._dispatch_thread = None
 
     def _enqueue(self, event: Event) -> None:
         """Hand an event from the COM pump thread to the dispatcher thread."""

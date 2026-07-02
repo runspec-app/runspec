@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.158.1] — 2026-07-02
+
+### Fixed
+
+- **Mailbox settings no longer freeze the app on save (Windows).** Saving in
+  Settings → Mailbox calls `restart_triggers` (`stop_triggers` then an immediate
+  `start_triggers`), and because a `[mailbox]` is configured the trigger engine
+  force-starts the Outlook COM source. `OutlookSource.stop()` previously only
+  *signalled* its pump/dispatch threads and orphaned the references without
+  waiting for them to exit, so the restart spun up a **second** STA COM pump that
+  bound `WithEvents` sinks to the singleton `Outlook.Application` while the old
+  pump was still bound. Overlapping STA pumps on one Outlook instance deadlock on
+  Windows, hanging the console ("not responding") until it was killed — and the
+  single **Save** button made it worse by restarting twice (`save_mailbox` then
+  `save_watches`). `stop()` now **joins** both threads (bounded by
+  `_STOP_JOIN_TIMEOUT`, logging if a pump is wedged in a COM call) so the old
+  apartment fully unwinds — including `CoUninitialize` — before a new pump starts,
+  serialising teardown → rebuild.
+
+
 ## [0.158.0] — 2026-07-02
 
 ### Changed

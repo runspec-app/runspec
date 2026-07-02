@@ -255,6 +255,45 @@ def test_start_is_noop_when_unavailable(monkeypatch):
     assert src._thread is None
 
 
+def test_stop_joins_pump_and_dispatch_threads():
+    """stop() must fully unwind its threads before returning — not just signal
+    them and orphan the references.
+
+    A configured [mailbox] force-starts this source, and every mailbox-settings
+    save calls restart_triggers → stop() then an *immediate* start(). If stop()
+    returned while the old COM pump was still bound to the singleton
+    Outlook.Application, the restart would bind a second STA pump to the same
+    folders concurrently — overlapping STA pumps deadlock on Windows and froze
+    the console. Joining serialises teardown → rebuild.
+    """
+    src = OutlookSource()
+    started = threading.Event()
+
+    # Stand in for the two daemon threads start() would spawn: a pump that spins
+    # until _stop is set, and the real dispatch loop (drained by the None
+    # sentinel stop() enqueues). Neither is the calling thread.
+    def fake_pump() -> None:
+        started.set()
+        while not src._stop.is_set():
+            src._stop.wait(0.01)
+
+    src._thread = threading.Thread(target=fake_pump, daemon=True)
+    src._dispatch_thread = threading.Thread(target=src._dispatch_loop, daemon=True)
+    pump, dispatch = src._thread, src._dispatch_thread
+    pump.start()
+    dispatch.start()
+    assert started.wait(2)
+
+    src.stop()
+
+    # Both threads have actually exited by the time stop() returns, and the
+    # references are cleared so a fresh start() builds new ones.
+    assert not pump.is_alive()
+    assert not dispatch.is_alive()
+    assert src._thread is None
+    assert src._dispatch_thread is None
+
+
 def test_dispatch_loop_marshals_events_and_stops():
     """Events enqueued (as the COM pump thread does) are delivered to the real
     emit by the dispatcher thread — never inline — and the None sentinel that
