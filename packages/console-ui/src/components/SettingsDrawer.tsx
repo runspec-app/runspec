@@ -182,6 +182,9 @@ export function LlmTab() {
   const [saved, setSaved] = useState(false)
   const [configDir, setConfigDir] = useState<string>('')
   const [providerOptions, setProviderOptions] = useState(BUILTIN_PROVIDER_OPTIONS)
+  // The operator-defined list of selectable models — the source for the strict
+  // Model dropdown, edited via the "Available models" tag field.
+  const [models, setModels] = useState<string[]>([])
 
   useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
   // Built-ins plus any discovered plugins (entry points / [plugins] modules).
@@ -196,10 +199,19 @@ export function LlmTab() {
       const llm = (cfg.llm ?? {}) as Record<string, unknown>
       const p = (llm.provider as string) ?? ''
       setProvider(p)
+      const modelVal = (llm.model as string) ?? ''
+      let list = Array.isArray(llm.models)
+        ? (llm.models as unknown[]).map(String).filter(Boolean)
+        : []
+      // Keep a hand-edited active model selectable even if it's not in the list.
+      if (modelVal && !list.includes(modelVal)) list = [modelVal, ...list]
+      // Seed an empty list with the provider default so the dropdown isn't empty.
+      if (list.length === 0 && PROVIDER_MODELS[p]) list = [PROVIDER_MODELS[p]]
+      setModels(list)
       form.setFieldsValue({
         provider: p,
         api_key: (llm.api_key as string) ?? '',
-        model: (llm.model as string) ?? '',
+        model: modelVal,
         base_url: (llm.base_url as string) ?? '',
         aws_region: (llm.aws_region as string) ?? '',
         system: (llm.system as string) ?? '',
@@ -220,8 +232,11 @@ export function LlmTab() {
 
   const handleProviderChange = (val: string) => {
     setProvider(val)
-    if (!form.getFieldValue('model') && PROVIDER_MODELS[val]) {
-      form.setFieldValue('model', PROVIDER_MODELS[val])
+    const def = PROVIDER_MODELS[val]
+    if (def) {
+      // Ensure the provider default is in the list so the strict dropdown can show it.
+      setModels(prev => (prev.includes(def) ? prev : [...prev, def]))
+      if (!form.getFieldValue('model')) form.setFieldValue('model', def)
     }
   }
 
@@ -263,6 +278,10 @@ export function LlmTab() {
       // LangServe boolean — only persist when on (keeps the section tidy).
       if (v.tools_in_config) llm.tools_in_config = true
       else delete llm.tools_in_config
+      // Operator-defined model list (strict Model dropdown source). Written when
+      // non-empty, removed when blank — mirrors the string set-or-delete above.
+      if (models.length) llm.models = models
+      else delete llm.models
       await bridge.save_config({ ...cfg, llm })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -292,9 +311,37 @@ export function LlmTab() {
             </Form.Item>
           )}
           {provider !== 'langserve' && (
-            <Form.Item name="model" label="Model">
-              <Input placeholder={PROVIDER_MODELS[provider] ?? ''} style={{ fontFamily: 'monospace' }} />
-            </Form.Item>
+            <>
+              <Form.Item
+                label="Available models"
+                help="The models this console offers. Add each model id you use — the Model dropdown below selects the active one from this list."
+              >
+                <Select
+                  mode="tags"
+                  value={models}
+                  onChange={next => {
+                    setModels(next)
+                    // If the active model was removed from the list, reset it so the
+                    // strict dropdown never shows a value that isn't an option.
+                    const active = form.getFieldValue('model')
+                    if (active && !next.includes(active)) form.setFieldValue('model', next[0] ?? '')
+                  }}
+                  notFoundContent={null}
+                  tokenSeparators={[',', ' ']}
+                  placeholder={PROVIDER_MODELS[provider] ? `e.g. ${PROVIDER_MODELS[provider]}` : 'Add model ids…'}
+                  style={{ fontFamily: 'monospace' }}
+                />
+              </Form.Item>
+              <Form.Item name="model" label="Model">
+                <Select
+                  showSearch
+                  allowClear
+                  placeholder={models.length ? 'Select a model' : 'Add a model above first'}
+                  options={models.map(m => ({ value: m, label: m }))}
+                  style={{ fontFamily: 'monospace' }}
+                />
+              </Form.Item>
+            </>
           )}
           <Form.Item
             name="system"

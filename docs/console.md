@@ -144,6 +144,12 @@ pip install "runspec-console[openai]"      # OpenAI
 pip install "runspec-console[bedrock]"     # Claude via AWS Bedrock
 ```
 
+Configure the provider, key and model under **Settings → LLM**. The **Model**
+field is a dropdown chosen from a per-console list of **Available models** you
+maintain in the same tab (persisted as `[llm] models` in `config.toml`); add the
+model ids you use and pick the active one. The list rides Config Sync like any
+other config key.
+
 ---
 
 ## White-labeling

@@ -82,3 +82,64 @@ describe('LlmTab Save round-trip', () => {
     expect(saved.llm.api_key_ttl_ms).toBe(300000)
   })
 })
+
+describe('LlmTab model selector', () => {
+  beforeEach(() => {
+    saveConfig.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('renders the operator-defined models as strict dropdown options and round-trips the list', async () => {
+    getConfig.mockReset().mockResolvedValue({
+      llm: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        models: ['claude-sonnet-4-6', 'claude-opus-4-1', 'claude-haiku-4-5'],
+      },
+    })
+    render(<LlmTab />)
+    await screen.findByText('Available models')
+
+    // The active-model field is a Select whose options are exactly the list.
+    const user = userEvent.setup()
+    // Opening the Model field shows exactly the operator-defined list as options
+    // (a strict dropdown, not a free-text input). findByRole throws if absent.
+    await user.click(screen.getByLabelText('Model'))
+    await screen.findByRole('option', { name: 'claude-sonnet-4-6' })
+    await screen.findByRole('option', { name: 'claude-opus-4-1' })
+
+    // An untouched Save round-trips both the active model and the full list intact.
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalled())
+    const saved = saveConfig.mock.calls[0][0] as { llm: Record<string, unknown> }
+    expect(saved.llm.model).toBe('claude-sonnet-4-6')
+    expect(saved.llm.models).toEqual(['claude-sonnet-4-6', 'claude-opus-4-1', 'claude-haiku-4-5'])
+  })
+
+  it('keeps an active model that is not in the list selectable (prepended on load)', async () => {
+    getConfig.mockReset().mockResolvedValue({
+      llm: {
+        provider: 'anthropic',
+        model: 'claude-experimental',
+        models: ['claude-sonnet-4-6', 'claude-opus-4-1'],
+      },
+    })
+    render(<LlmTab />)
+    await screen.findByText('Available models')
+
+    const user = userEvent.setup()
+    await user.click(screen.getByLabelText('Model'))
+    // The hand-edited model is offered even though it wasn't in `models`.
+    await screen.findByRole('option', { name: 'claude-experimental' })
+
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalled())
+    const saved = saveConfig.mock.calls[0][0] as { llm: Record<string, unknown> }
+    expect(saved.llm.model).toBe('claude-experimental')
+    // Prepended so it survives the round-trip and stays a valid option.
+    expect(saved.llm.models).toEqual(['claude-experimental', 'claude-sonnet-4-6', 'claude-opus-4-1'])
+  })
+})

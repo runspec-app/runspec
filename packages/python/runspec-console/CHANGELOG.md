@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.158.0] — 2026-07-02
+
+### Changed
+
+- **Settings → LLM: the Model field is now a dropdown.** The previously
+  freeform *Model* text input is a strict selector chosen from a per-console
+  list of **Available models** — a new tag-style editor in the same tab where
+  you maintain the model ids you use. The list persists as a new `[llm] models`
+  array in `config.toml` and rides Config Sync like any other config key; the
+  active `[llm] model` must be one of them. An existing hand-edited `model`
+  that isn't in the list is kept selectable (prepended on load), and switching
+  provider seeds the list with that provider's default. Frontend-only — the
+  `models` key is inert to the model adapters (never forwarded to a client).
+
+
 ## [0.157.0] — 2026-06-30
 
 ### Added
