@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Collapse, DatePicker, Input, InputNumber, Modal, Select, Switch, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, ColorPicker, Collapse, DatePicker, Input, InputNumber, Modal, Select, Slider, Switch, Tag, TimePicker, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import type { ArgDef, Host, Runnable, Runbook } from '../bridge'
@@ -201,13 +201,42 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
   }
 
   if (arg.type === 'int' || arg.type === 'float') {
+    const step = arg.type === 'float' ? 0.1 : 1
+    // A bounded numeric can render as a slider when it opts in with ui="slider"
+    // and declares a range; otherwise (and with no range) it's the number box.
+    if (arg.ui === 'slider' && arg.range) {
+      const [min, max] = arg.range
+      const current = typeof value === 'number' ? value : (typeof arg.default === 'number' ? arg.default : min)
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Slider
+            min={min}
+            max={max}
+            step={step}
+            value={current}
+            onChange={onChange}
+            style={{ flex: 1, margin: 0 }}
+          />
+          <InputNumber
+            size="small"
+            value={value as number | undefined}
+            onChange={onChange}
+            step={step}
+            min={min}
+            max={max}
+            style={{ width: 80, ...inputStyle }}
+            status={error ? 'error' : undefined}
+          />
+        </div>
+      )
+    }
     return (
       <InputNumber
         size="small"
         value={value as number | undefined}
         onChange={onChange}
         placeholder={placeholder}
-        step={arg.type === 'float' ? 0.1 : 1}
+        step={step}
         min={arg.range?.[0]}
         max={arg.range?.[1]}
         style={{ width: '100%', ...inputStyle }}
@@ -253,6 +282,54 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     )
   }
 
+  if (arg.ui === 'month') {
+    // Month-granularity picker on a `str` arg. Value stored as a `YYYY-MM` string;
+    // anchor to the first of the month to parse the string back into a Dayjs.
+    const m = typeof value === 'string' && value ? dayjs(`${value}-01`) : undefined
+    return (
+      <DatePicker
+        picker="month"
+        size="small"
+        value={m && m.isValid() ? m : null}
+        onChange={d => onChange(d ? d.format('YYYY-MM') : undefined)}
+        placeholder={placeholder ?? 'Select month…'}
+        style={{ width: '100%', ...inputStyle }}
+        status={error ? 'error' : undefined}
+      />
+    )
+  }
+
+  if (arg.ui === 'time') {
+    // Time-only picker on a `str` arg. Value stored as an `HH:mm:ss` string; the
+    // control needs a Dayjs, so anchor the string to an arbitrary date to parse
+    // and format just the time back out.
+    const t = typeof value === 'string' && value ? dayjs(`2000-01-01 ${value}`) : undefined
+    return (
+      <TimePicker
+        size="small"
+        value={t && t.isValid() ? t : null}
+        onChange={d => onChange(d ? d.format('HH:mm:ss') : undefined)}
+        placeholder={placeholder ?? 'Select time…'}
+        style={{ width: '100%', ...inputStyle }}
+        status={error ? 'error' : undefined}
+      />
+    )
+  }
+
+  if (arg.ui === 'color') {
+    // Colour picker on a `str` arg. Value stored as a `#rrggbb` hex string.
+    const hex = typeof value === 'string' && value ? value : undefined
+    return (
+      <ColorPicker
+        size="small"
+        value={hex ?? null}
+        onChange={c => onChange(c.toHexString())}
+        showText
+        format="hex"
+      />
+    )
+  }
+
   // Plain string field. A TextArea that auto-grows as the operator adds lines;
   // Shift+Enter inserts a newline, a bare Enter is suppressed (no stray newline).
   return (
@@ -289,7 +366,7 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, bin
         <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
         <Tag color="default" style={{ fontSize: 10, margin: 0 }}>
           {arg.type === 'path' && arg.ui === 'directory' ? 'folder'
-            : (arg.ui === 'date' || arg.ui === 'datetime') ? arg.ui
+            : (arg.ui === 'date' || arg.ui === 'datetime' || arg.ui === 'time' || arg.ui === 'month' || arg.ui === 'color') ? arg.ui
               : arg.type}
         </Tag>
         {arg.inherited && (

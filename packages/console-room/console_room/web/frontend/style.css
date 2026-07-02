@@ -241,8 +241,12 @@ header .spacer { flex: 1; }
 }
 /* Auto-growing string fields: no manual resize, height driven by JS. */
 #reqform textarea { resize: none; overflow: hidden; min-height: 0; line-height: 1.4; }
-/* Native date pickers follow the dark palette. */
-#reqform input[type="date"], #reqform input[type="datetime-local"] { color-scheme: dark; }
+/* Native date/time pickers follow the dark palette. */
+#reqform input[type="date"], #reqform input[type="datetime-local"], #reqform input[type="time"], #reqform input[type="month"] { color-scheme: dark; }
+/* Colour picker: a compact swatch, not a full-width text-style box. */
+#reqform input[type="color"] { width: 48px; height: 32px; padding: 2px; cursor: pointer; }
+/* Range slider: transparent track, no text-input chrome; value shows below it. */
+#reqform input[type="range"] { background: transparent; border: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
 /* Collapsed "Default arguments" section. */
 #reqform .default-args {
   border: 1px solid var(--line);

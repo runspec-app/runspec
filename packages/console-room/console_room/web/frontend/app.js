@@ -415,6 +415,46 @@
         // with Z, matching the desktop console's DatePicker output. A plain date
         // (YYYY-MM-DD) already matches, so it carries no flag.
         if (xui === "datetime") input.dataset.argFmt = "datetime";
+      } else if (xui === "time") {
+        // Native time picker with seconds (step=1). Value is HH:MM:SS.
+        input = document.createElement("input");
+        input.type = "time";
+        input.step = "1";
+        if (prop.default !== undefined) input.value = String(prop.default);
+        if (required.has(name)) input.required = true;
+      } else if (xui === "month") {
+        // Native month picker. Value is YYYY-MM.
+        input = document.createElement("input");
+        input.type = "month";
+        if (prop.default !== undefined) input.value = String(prop.default);
+        if (required.has(name)) input.required = true;
+      } else if (xui === "color") {
+        // Native colour picker. Value is a #rrggbb hex string.
+        input = document.createElement("input");
+        input.type = "color";
+        input.value = prop.default !== undefined ? String(prop.default) : "#000000";
+      } else if (
+        (prop.type === "integer" || prop.type === "number") &&
+        xui === "slider" &&
+        prop.minimum !== undefined &&
+        prop.maximum !== undefined
+      ) {
+        // Bounded numeric rendered as a slider with a live value readout.
+        input = document.createElement("input");
+        input.type = "range";
+        input.min = String(prop.minimum);
+        input.max = String(prop.maximum);
+        input.step = prop.type === "number" ? "any" : "1";
+        input.value =
+          prop.default !== undefined ? String(prop.default) : String(prop.minimum);
+        const readout = document.createElement("span");
+        readout.className = "cat-desc";
+        readout.textContent = input.value;
+        input.addEventListener("input", () => (readout.textContent = input.value));
+        input.dataset.arg = name;
+        input.dataset.argType = prop.type;
+        label.append(input, readout);
+        return label;
       } else if (prop.type === "integer" || prop.type === "number") {
         input = document.createElement("input");
         input.type = "number";
@@ -441,7 +481,13 @@
       }
       input.dataset.arg = name;
       input.dataset.argType =
-        xui === "date" || xui === "datetime" ? "string" : prop.type || "string";
+        xui === "date" ||
+        xui === "datetime" ||
+        xui === "time" ||
+        xui === "month" ||
+        xui === "color"
+          ? "string"
+          : prop.type || "string";
       label.append(input);
       if (prop.description && input.tagName === "SELECT") {
         const hint = document.createElement("span");

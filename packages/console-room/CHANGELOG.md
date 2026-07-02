@@ -4,6 +4,18 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.34.0]
+
+### Changed
+- **Web form: time, month, colour, and slider controls.** The catalogue request
+  form gains the desktop console's newer `ui` hints (emitted by the console catalog
+  as `x-ui`): `x-ui = "time"` on a string arg → a native `<input type="time" step="1">`
+  (HH:MM:SS); `x-ui = "month"` → `<input type="month">` (a `YYYY-MM` string);
+  `x-ui = "color"` → `<input type="color">` (a `#rrggbb` string);
+  `x-ui = "slider"` on a numeric arg with `minimum`/`maximum` → an
+  `<input type="range">` with a live value readout. Submission is unchanged (fields
+  keep their `data-arg`/`data-argType`; date/time/colour submit as strings).
+
 ## [0.33.0]
 
 ### Added

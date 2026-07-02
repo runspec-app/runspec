@@ -395,8 +395,8 @@
         },
         "ui": {
           "type": "string",
-          "enum": ["text", "password", "number", "file", "directory", "checkbox", "radio", "select", "multiselect", "slider", "date", "datetime"],
-          "description": "Form control hint. Inferred from type and properties if omitted. Set \"date\"/\"datetime\" on a str arg to request a date / date-time picker that writes an ISO-8601 string."
+          "enum": ["text", "password", "number", "file", "directory", "checkbox", "radio", "select", "multiselect", "slider", "date", "datetime", "time", "month", "color"],
+          "description": "Form control hint. Inferred from type and properties if omitted. On a str arg: \"date\"/\"datetime\"/\"time\"/\"month\" request a date / date-time / time / month picker (value written as an ISO-8601 string — a date, a timestamp, an HH:MM:SS time, or a YYYY-MM month); \"color\" requests a colour picker (value a #rrggbb hex string). \"slider\" on an int/float arg with a range renders a slider."
         },
         "hint": {
           "type": "string",

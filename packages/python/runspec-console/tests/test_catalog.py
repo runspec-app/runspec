@@ -72,6 +72,13 @@ def test_arg_to_property_passes_ui_hint_as_x_ui():
     # The form-control hint rides through so the room can render a date picker.
     assert arg_to_property({"type": "str", "ui": "date"})["x-ui"] == "date"
     assert arg_to_property({"type": "str", "ui": "datetime"})["x-ui"] == "datetime"
+    assert arg_to_property({"type": "str", "ui": "time"})["x-ui"] == "time"
+    assert arg_to_property({"type": "str", "ui": "month"})["x-ui"] == "month"
+    assert arg_to_property({"type": "str", "ui": "color"})["x-ui"] == "color"
+    assert (
+        arg_to_property({"type": "int", "ui": "slider", "range": [0, 10]})["x-ui"]
+        == "slider"
+    )
     # No hint declared → no x-ui key.
     assert "x-ui" not in arg_to_property({"type": "str"})
 

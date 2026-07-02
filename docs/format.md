@@ -208,7 +208,7 @@ description = "Output quality. Values below 60 are rarely useful."
 | `env` | string \| array | Environment variable fallback(s), checked after the CLI and before the default. |
 | `deprecated` | string | Deprecation message shown on use. |
 | `autonomy` | string | Per-arg autonomy override. Most restrictive level wins. |
-| `ui` | string | Form control hint. Inferred from type if omitted. `"date"`/`"datetime"` on a `str` arg request a date / date-time picker (value is an ISO-8601 string). |
+| `ui` | string | Form control hint. Inferred from type if omitted. On a `str` arg: `"date"`/`"datetime"`/`"time"`/`"month"` request a date / date-time / time / month picker (value an ISO-8601 string) and `"color"` a colour picker (`#rrggbb`). On an `int`/`float` arg with a `range`, `"slider"` renders a slider. |
 | `hint` | string | Placeholder text for a UI form field. Advisory for `str`/`path`/`password`; never affects parsing. |
 | `meta` | table | Developer-defined pass-through metadata. runspec never reads it. |
 | `position` | int | 1-based positional index. Makes the arg positional rather than a `--flag`. |

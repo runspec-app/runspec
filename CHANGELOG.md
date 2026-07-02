@@ -7,6 +7,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.49.0] — 2026-07-02
+
+### Added
+
+- **`ui = "time"` / `"month"` / `"color"` / `"slider"` form-control hints.** More
+  explicit `ui` values (never inferred), alongside `date`/`datetime`:
+  - `ui = "time"` on a `str` arg → a time picker; value written as an `HH:MM:SS`
+    string.
+  - `ui = "month"` on a `str` arg → a month picker; value a `YYYY-MM` string.
+  - `ui = "color"` on a `str` arg → a colour picker; value a `#rrggbb` hex string.
+  - `ui = "slider"` on an `int`/`float` arg **with a `range`** → a slider (falls
+    back to a number field when no range is declared).
+  Type and parsing are unchanged — a `str` stays a string, a numeric stays
+  numeric. Used by the runspec-console Forms tab and the runspec-room web form.
+  (`schema/runspec.schema.json`, `spec/SPEC.md`, `docs/format.md`.)
+
 ## [0.48.0] — 2026-06-29
 
 ### Added

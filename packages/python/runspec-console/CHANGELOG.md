@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.159.0] — 2026-07-02
+
+### Added
+
+- **Forms tab: time, month, colour, and slider controls.** More `ui` hints render
+  matching rich controls (extending the `date`/`datetime` pickers):
+  - `ui = "time"` on a `str` arg → an Ant `TimePicker` (hour/minute/second);
+    value stored as an `HH:MM:SS` string.
+  - `ui = "month"` on a `str` arg → an Ant month `DatePicker`; value stored as a
+    `YYYY-MM` string.
+  - `ui = "color"` on a `str` arg → an Ant `ColorPicker` with a hex readout; value
+    stored as a `#rrggbb` string.
+  - `ui = "slider"` on an `int`/`float` arg with a `range` → an Ant `Slider` paired
+    with a number box (this finally wires the long-listed `slider` enum value);
+    falls back to the number box when no range is declared.
+  The arg's type badge reads `time`/`color` where set. (`FormsView.tsx` `ArgInput`.)
+
 ## [0.158.1] — 2026-07-02
 
 ### Fixed
