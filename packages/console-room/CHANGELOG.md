@@ -4,6 +4,35 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.33.0]
+
+### Added
+- **White-label branding from the config file (`[branding]`).** A new
+  `[branding]` section in `console_room.toml` (mirroring the desktop console's
+  `[console.theme]` key names) themes the browser app **and** the server-rendered
+  login/verify pages with no adapter or plugin:
+  - `brand_name` — renames the browser-tab title + the join heading, prefixes the
+    login-page titles, and shows as a small brand label above the login card.
+  - `accent_color` — a hex colour (`#rgb` / `#rrggbb`, validated) that recolours
+    the app's `--accent` (primary button/accent) and the login-page button + links.
+  - `favicon` — a filesystem path served at `/favicon.ico` for every page (a 204
+    "no icon", as before, when unset or the path is unreadable).
+
+  Settings layer the usual way (**defaults < config < env < CLI**): the values
+  ride `CONSOLE_ROOM_BRAND_NAME` / `CONSOLE_ROOM_ACCENT_COLOR` /
+  `CONSOLE_ROOM_FAVICON`. The frontend reads the browser-safe subset from `/me`
+  (never the favicon *path*); an unbranded server is byte-for-byte the prior look.
+  New `config.Branding` / `branding_from_env` / `valid_hex_color`;
+  `create_app(..., branding=)` and `login_routes(..., branding)` thread it through.
+  See the `[branding]` docs in `console_room/config.py`.
+
+  ```toml
+  [branding]
+  brand_name   = "MyCorp Ops"          # browser tab + join heading + login title
+  accent_color = "#b3001b"             # #rgb / #rrggbb — primary button/accent
+  favicon      = "/srv/brand/app.ico"  # served at /favicon.ico
+  ```
+
 ## [0.32.0]
 
 ### Changed

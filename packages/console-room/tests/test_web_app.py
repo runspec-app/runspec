@@ -65,6 +65,7 @@ def test_me_in_dev_mode_has_no_session_error():
             "team": "",
             "operator": False,
             "queue": "helpdesk",
+            "branding": {},  # no [branding] configured → default look
         }
 
 
@@ -387,3 +388,44 @@ def test_visitor_request_for_unknown_tool_is_refused():
             got = alice.receive_json()
             assert got["type"] == "message" and got["text"] == "hello?"
     assert all(m.kind == "chat" for m in store.appended)
+
+
+# ── white-label branding (config's [branding]) ─────────────────────────────────
+
+from console_room.config import Branding  # noqa: E402
+
+
+def test_me_includes_branding_when_configured():
+    hub = Hub(FakeStore())
+    brand = Branding(brand_name="MyCorp Ops", accent_color="#b3001b", favicon_path="")
+    with TestClient(create_app(hub, branding=brand)) as client:
+        body = client.get("/me").json()
+        # Only the browser-safe subset — never the favicon filesystem path.
+        assert body["branding"] == {
+            "brand_name": "MyCorp Ops",
+            "accent_color": "#b3001b",
+        }
+
+
+def test_favicon_204_without_branding():
+    with _client() as client:
+        r = client.get("/favicon.ico")
+        assert r.status_code == 204
+
+
+def test_favicon_serves_configured_file(tmp_path):
+    icon = tmp_path / "brand.ico"
+    icon.write_bytes(b"ICODATA")
+    hub = Hub(FakeStore())
+    brand = Branding(favicon_path=str(icon))
+    with TestClient(create_app(hub, branding=brand)) as client:
+        r = client.get("/favicon.ico")
+        assert r.status_code == 200 and r.content == b"ICODATA"
+
+
+def test_favicon_204_when_configured_file_missing(tmp_path):
+    hub = Hub(FakeStore())
+    brand = Branding(favicon_path=str(tmp_path / "does-not-exist.ico"))
+    with TestClient(create_app(hub, branding=brand)) as client:
+        r = client.get("/favicon.ico")
+        assert r.status_code == 204

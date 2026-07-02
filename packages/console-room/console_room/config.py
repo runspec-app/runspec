@@ -21,6 +21,19 @@ Two things never round-trip through a plain string env var:
 - the **teams** list, parsed by :func:`config_teams` and applied authoritatively to
   the enrollment store on boot (server.py), so a fleet of rooms shares one list.
 
+**White-label branding** ``[branding]`` (mirrors the desktop console's
+``[console.theme]`` key names) themes the browser app + the server-rendered login
+pages with no adapter/plugin — see :class:`Branding` / :func:`branding_from_env`::
+
+    [branding]
+    brand_name   = "MyCorp Ops"          # browser tab + join heading + login title
+    accent_color = "#b3001b"             # #rgb / #rrggbb — primary button/accent
+    favicon      = "/srv/brand/app.ico"  # served at /favicon.ico
+
+These are plain scalars, so they layer through :func:`apply_config_to_env` like the
+``[server]``/``[auth]`` settings (``CONSOLE_ROOM_BRAND_NAME`` /
+``CONSOLE_ROOM_ACCENT_COLOR`` / ``CONSOLE_ROOM_FAVICON``).
+
 Stdlib only (``tomllib`` on 3.11+, ``tomli`` on 3.10; ``subprocess`` for the
 command). No I/O on import; a missing / unreadable file is an empty config.
 """
@@ -29,8 +42,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +79,11 @@ _ENV_MAP: dict[tuple[str, str], str] = {
     ("auth", "verify_ttl"): "CONSOLE_ROOM_VERIFY_TTL",
     ("auth", "session_ttl"): "CONSOLE_ROOM_SESSION_TTL",
     ("auth", "enroll_db"): "CONSOLE_ROOM_ENROLL_DB",
+    # White-label the browser app + login pages (mirrors the desktop console's
+    # `[console.theme]` keys, kept flat under `[branding]` for the room's config).
+    ("branding", "brand_name"): "CONSOLE_ROOM_BRAND_NAME",
+    ("branding", "accent_color"): "CONSOLE_ROOM_ACCENT_COLOR",
+    ("branding", "favicon"): "CONSOLE_ROOM_FAVICON",
 }
 
 
@@ -187,6 +207,57 @@ def config_operators(config: dict[str, Any]) -> list[str]:
     if isinstance(raw, (list, tuple)):
         return parse_emails(",".join(str(item) for item in raw))
     return []
+
+
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def valid_hex_color(value: Any) -> str:
+    """Return ``value`` if it's a hex colour (``#rgb`` / ``#rrggbb``), else ``""``.
+
+    Mirrors the desktop console's ``valid_accent`` — a garbage value is dropped
+    rather than injected raw into the page CSS."""
+    if isinstance(value, str) and _HEX_COLOR_RE.match(value.strip()):
+        return value.strip()
+    return ""
+
+
+@dataclass(frozen=True)
+class Branding:
+    """White-label look for the browser app + server-rendered login pages, from
+    ``[branding]`` (mirrors the desktop console's ``[console.theme]`` keys).
+
+    ``brand_name`` renames the browser tab + join heading (and prefixes the login
+    page titles); ``accent_color`` recolours the primary button / accent; a
+    ``favicon`` filesystem path is served at ``/favicon.ico``. Every field is
+    optional — an empty ``Branding`` reproduces today's default runspec look."""
+
+    brand_name: str = ""
+    accent_color: str = ""
+    favicon_path: str = ""
+
+    def public(self) -> dict[str, str]:
+        """The subset safe to hand the browser at ``/me`` — never the favicon
+        *path* (a server filesystem detail; the bytes are served at
+        ``/favicon.ico``). Empty keys are dropped so an unbranded server returns
+        ``{}`` and the frontend keeps its defaults."""
+        out: dict[str, str] = {}
+        if self.brand_name:
+            out["brand_name"] = self.brand_name
+        if self.accent_color:
+            out["accent_color"] = self.accent_color
+        return out
+
+
+def branding_from_env() -> Branding:
+    """Build :class:`Branding` from the ``CONSOLE_ROOM_*`` env vars (which
+    :func:`apply_config_to_env` has already populated from ``[branding]``). The
+    accent colour is hex-validated; a bad value is dropped, not raised."""
+    return Branding(
+        brand_name=(os.environ.get("CONSOLE_ROOM_BRAND_NAME") or "").strip(),
+        accent_color=valid_hex_color(os.environ.get("CONSOLE_ROOM_ACCENT_COLOR")),
+        favicon_path=(os.environ.get("CONSOLE_ROOM_FAVICON") or "").strip(),
+    )
 
 
 def config_teams(config: dict[str, Any]) -> list[Team]:

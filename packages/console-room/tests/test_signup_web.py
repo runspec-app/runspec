@@ -67,6 +67,44 @@ def _build():
     return TestClient(app), hub, enrollment
 
 
+def _build_branded(branding):
+    """Like ``_build`` but with a white-label ``Branding`` on the app."""
+    enrollment = EnrollmentStore(":memory:")
+    enrollment.add_team(Team(slug="it-support", name="IT Support"))
+    hub = Hub(
+        FakeStore(),
+        enrollment=enrollment,
+        email_verify=_config(),
+        mailbox="helpdesk@corp.com",
+    )
+    app = create_app(hub, email_verify=_config(), branding=branding)
+    return TestClient(app), hub, enrollment
+
+
+def test_login_page_reflects_branding():
+    from console_room.config import Branding
+
+    client, *_ = _build_branded(
+        Branding(brand_name="MyCorp Ops", accent_color="#b3001b")
+    )
+    body = client.get("/login").text
+    # Brand name → tab title prefix + the brand label above the heading.
+    assert "<title>MyCorp Ops — Log in to the helpdesk</title>" in body
+    assert '<p class="brand">MyCorp Ops</p>' in body
+    # Accent → button/link colour override + favicon link.
+    assert "button{background:#b3001b}" in body
+    assert '<link rel="icon" href="/favicon.ico">' in body
+
+
+def test_login_page_default_without_branding():
+    client, *_ = _build()
+    body = client.get("/login").text
+    assert "<title>Log in to the helpdesk</title>" in body  # no brand prefix
+    assert 'class="brand"' not in body  # no brand label
+    # The favicon link is always safe to emit (the route 204s when unconfigured).
+    assert '<link rel="icon" href="/favicon.ico">' in body
+
+
 def _seed_pending(enrollment, nonce="n1", email="jane@corp.com", queue="helpdesk"):
     enrollment.add_pending(
         PendingSignup(
@@ -143,6 +181,7 @@ def test_me_reports_auth_enabled():
         "team": "",
         "operator": False,
         "queue": "helpdesk",
+        "branding": {},
     }
 
 
@@ -272,6 +311,7 @@ def test_verify_enrolls_and_sets_session():
         "team": "",
         "operator": False,  # not in the operator allowlist → a plain visitor
         "queue": "helpdesk",
+        "branding": {},  # no [branding] configured → default look
     }
     assert client.get("/", follow_redirects=False).status_code == 200
 

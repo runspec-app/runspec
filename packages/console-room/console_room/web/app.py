@@ -43,6 +43,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from ..config import Branding
 from ..conversation import (
     DEFAULT_QUEUE,
     conversation_room,
@@ -120,6 +121,7 @@ def create_app(
     *,
     ndjson_addr: tuple[str, int] | None = None,
     email_verify: EmailVerifyConfig | None = None,
+    branding: Branding | None = None,
 ) -> Starlette:
     """Build the Starlette app around ``hub``. With ``ndjson_addr=(host, port)``
     the lifespan also serves the console NDJSON door on the same loop.
@@ -129,7 +131,11 @@ def create_app(
     built with its enrollment store + config (``hub.email_verify_enabled``) and a
     ``public_url`` (the verify links must point somewhere reachable); neither → dev
     mode (``?user=`` query param, nothing gated). The authenticated mode sets a
-    signed session cookie and gates the app shell + WebSocket on it."""
+    signed session cookie and gates the app shell + WebSocket on it.
+
+    ``branding`` white-labels the browser app + login pages (brand name, accent
+    colour, favicon); an empty/None ``Branding`` keeps the default runspec look."""
+    brand = branding or Branding()
     if email_verify is not None:
         if not hub.email_verify_enabled:
             raise ValueError(
@@ -251,6 +257,7 @@ def create_app(
                 "team": session_team(request) if gated else "",
                 "operator": is_operator(request),
                 "queue": DEFAULT_QUEUE,
+                "branding": brand.public(),
             }
         )
 
@@ -278,7 +285,16 @@ def create_app(
         return JSONResponse({"ok": True})
 
     async def favicon(_request: Any) -> Response:
-        return Response(status_code=204)  # no icon — silence the browser's 404
+        # Serve the white-label favicon when configured + readable; otherwise 204
+        # (no icon — silence the browser's 404), the prior behaviour.
+        if brand.favicon_path:
+            path = Path(brand.favicon_path)
+            if path.is_file():
+                return FileResponse(path)
+            logger.warning(
+                "room: branding favicon %s not found — serving no icon", path
+            )
+        return Response(status_code=204)
 
     # ── lifespan: also run the console NDJSON door ────────────────────────────
     @asynccontextmanager
@@ -313,7 +329,7 @@ def create_app(
         Route("/", index, name="index"),
     ]
     if email_verify is not None:
-        routes += login_routes(hub, email_verify)
+        routes += login_routes(hub, email_verify, brand)
     if FRONTEND_DIR.is_dir():
         # Static assets (app.js / style.css) — public so the shell can style the
         # login redirect. The app shell itself ("/") is gated above.

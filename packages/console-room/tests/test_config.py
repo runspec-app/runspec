@@ -11,12 +11,14 @@ import pytest
 
 from console_room.config import (
     apply_config_to_env,
+    branding_from_env,
     config_allowed_domains,
     config_operators,
     config_teams,
     find_config_path,
     load_config,
     resolve_session_secret,
+    valid_hex_color,
 )
 
 
@@ -70,6 +72,72 @@ def test_apply_config_does_not_clobber_real_env(tmp_path, monkeypatch):
     import os
 
     assert os.environ["CONSOLE_ROOM_PORT"] == "8080"
+
+
+# ── white-label branding ──────────────────────────────────────────────────────
+
+
+def test_valid_hex_color():
+    assert valid_hex_color("#b3001b") == "#b3001b"
+    assert valid_hex_color("#abc") == "#abc"
+    assert valid_hex_color("  #ABC123  ") == "#ABC123"  # trimmed
+    for bad in ["red", "b3001b", "#12", "#xyzxyz", "", None, 42, "rgb(1,2,3)"]:
+        assert valid_hex_color(bad) == ""
+
+
+def test_apply_config_to_env_sets_branding(tmp_path, monkeypatch):
+    for var in (
+        "CONSOLE_ROOM_BRAND_NAME",
+        "CONSOLE_ROOM_ACCENT_COLOR",
+        "CONSOLE_ROOM_FAVICON",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    config = load_config(
+        _write(
+            tmp_path,
+            '[branding]\nbrand_name = "MyCorp Ops"\naccent_color = "#b3001b"\n'
+            'favicon = "/srv/brand/app.ico"\n',
+        )
+    )
+    apply_config_to_env(config)
+    import os
+
+    assert os.environ["CONSOLE_ROOM_BRAND_NAME"] == "MyCorp Ops"
+    assert os.environ["CONSOLE_ROOM_ACCENT_COLOR"] == "#b3001b"
+    assert os.environ["CONSOLE_ROOM_FAVICON"] == "/srv/brand/app.ico"
+
+
+def test_branding_from_env_reads_and_validates(monkeypatch):
+    monkeypatch.setenv("CONSOLE_ROOM_BRAND_NAME", "  MyCorp Ops  ")
+    monkeypatch.setenv("CONSOLE_ROOM_ACCENT_COLOR", "#b3001b")
+    monkeypatch.setenv("CONSOLE_ROOM_FAVICON", "/srv/brand/app.ico")
+    b = branding_from_env()
+    assert b.brand_name == "MyCorp Ops"  # trimmed
+    assert b.accent_color == "#b3001b"
+    assert b.favicon_path == "/srv/brand/app.ico"
+    # public() drops the favicon path (a server-side detail) and empty keys.
+    assert b.public() == {"brand_name": "MyCorp Ops", "accent_color": "#b3001b"}
+
+
+def test_branding_from_env_drops_bad_accent(monkeypatch):
+    monkeypatch.delenv("CONSOLE_ROOM_BRAND_NAME", raising=False)
+    monkeypatch.delenv("CONSOLE_ROOM_FAVICON", raising=False)
+    monkeypatch.setenv("CONSOLE_ROOM_ACCENT_COLOR", "octarine")  # not hex → dropped
+    b = branding_from_env()
+    assert b.accent_color == ""
+    assert b.public() == {}  # nothing valid to hand the browser
+
+
+def test_branding_from_env_empty_when_unset(monkeypatch):
+    for var in (
+        "CONSOLE_ROOM_BRAND_NAME",
+        "CONSOLE_ROOM_ACCENT_COLOR",
+        "CONSOLE_ROOM_FAVICON",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    b = branding_from_env()
+    assert b.brand_name == "" and b.accent_color == "" and b.favicon_path == ""
+    assert b.public() == {}
 
 
 def test_session_secret_literal(tmp_path):

@@ -46,11 +46,28 @@
   // server the name + team come from the session, so there's nothing for the
   // visitor to fill in — we join straight away (no gate). In dev mode the visitor
   // declares them in the form (or on the link) and clicks Join.
+  // White-label look from /me (config's [branding]). accent_color recolours the
+  // --accent CSS variable; brand_name renames the browser tab + join heading. Both
+  // optional — an unbranded server sends {} and we keep the defaults. (The favicon
+  // is served at /favicon.ico, so the static <link> already picks it up.)
+  function applyBranding(b) {
+    if (!b || typeof b !== "object") return;
+    if (b.accent_color) {
+      document.documentElement.style.setProperty("--accent", b.accent_color);
+    }
+    if (b.brand_name) {
+      document.title = b.brand_name;
+      const h1 = join.querySelector("h1");
+      if (h1) h1.textContent = b.brand_name;
+    }
+  }
+
   async function whoami() {
     try {
       const info = await (await fetch("/me")).json();
       authed = !!info.auth;
       operator = !!info.operator; // elevated view: full catalogue + runbooks
+      applyBranding(info.branding); // white-label before the join form shows
       if (info.queue) queue = info.queue; // the single helpdesk queue
       if (authed) {
         if (info.name || info.user) $("user").value = info.name || info.user;

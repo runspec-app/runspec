@@ -29,6 +29,7 @@ from typing import Any
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Route
 
+from ..config import Branding
 from ..hub import Hub
 from ..signup import (
     EmailVerifyConfig,
@@ -90,11 +91,15 @@ async def _form(request: Any) -> dict[str, str]:
     return {key: values[0] for key, values in parsed.items() if values}
 
 
-def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
+def login_routes(
+    hub: Hub, email_verify: EmailVerifyConfig, branding: Branding | None = None
+) -> list[Route]:
     """Build the email-verify login routes bound to ``hub`` (which owns the team
     list, the room mailbox identity, the outbox, and the verify/enrol logic).
     ``email_verify`` supplies the ``Secure``-cookie flag for the remembered-email
-    cookie."""
+    cookie. ``branding`` white-labels the server-rendered pages (tab title, brand
+    heading, button/link accent); an empty/None ``Branding`` keeps the default."""
+    brand = branding or Branding()
 
     def _remembered_member(request: Any) -> Any:
         """The verified member behind the ``room_email`` cookie, when that email is
@@ -119,10 +124,14 @@ def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
 
         if request.method != "POST":
             if member is not None:
-                return HTMLResponse(_render_welcome_back(member.email, member.name))
+                return HTMLResponse(
+                    _render_welcome_back(member.email, member.name, branding=brand)
+                )
             # "Use a different email" clears the prefill; otherwise offer it.
             prefill = "" if switch else remembered_email
-            return HTMLResponse(_render_login(team_list, domains, email=prefill))
+            return HTMLResponse(
+                _render_login(team_list, domains, email=prefill, branding=brand)
+            )
 
         form = await _form(request)
         # The one-click path: a known email (from the cookie) reuses its name + team.
@@ -145,12 +154,13 @@ def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
                         email=email,
                         name=name,
                         team=team,
+                        branding=brand,
                     ),
                     status_code=400,
                 )
         # The hub records the pending row + dispatches (or queues) the verify mail.
         await hub.submit_signup(email, name, team)
-        return HTMLResponse(_render_sent(email))
+        return HTMLResponse(_render_sent(email, branding=brand))
 
     async def teams(_request: Any) -> JSONResponse:
         """The customer teams a visitor may pick when logging in."""
@@ -167,7 +177,7 @@ def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
         token = (request.query_params.get("token") or "").strip()
         member = hub.verify_token(token) if token else None
         if member is None:
-            return HTMLResponse(_render_verify_failed(), status_code=400)
+            return HTMLResponse(_render_verify_failed(branding=brand), status_code=400)
         # The verified email is the session identity the WS/catalog gate reads; the
         # name + team ride along for the operator card.
         request.session["user"] = member.email
@@ -201,13 +211,15 @@ def login_routes(hub: Hub, email_verify: EmailVerifyConfig) -> list[Route]:
 _PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
+<title>{title}</title>{favicon}
 <style>
  body{{font:16px/1.5 system-ui,sans-serif;background:#0f172a;color:#e2e8f0;
    margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}}
  .card{{background:#1e293b;padding:2rem;border-radius:12px;max-width:26rem;width:90%;
    box-shadow:0 10px 30px rgba(0,0,0,.4)}}
  h1{{font-size:1.3rem;margin:0 0 1rem}}
+ .brand{{font-size:.8rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+   color:#94a3b8;margin:0 0 1rem}}
  label{{display:block;margin:.8rem 0 .25rem;font-size:.9rem;color:#94a3b8}}
  input,select{{width:100%;padding:.55rem;border-radius:8px;border:1px solid #334155;
    background:#0f172a;color:#e2e8f0;box-sizing:border-box;font-size:1rem}}
@@ -218,7 +230,38 @@ _PAGE = """<!doctype html>
    margin-bottom:1rem;font-size:.9rem}}
  .muted{{color:#94a3b8;font-size:.9rem}}
  a{{color:#60a5fa}}
-</style></head><body><div class="card">{body}</div></body></html>"""
+ {extra_style}
+</style></head><body><div class="card">{brand}{body}</div></body></html>"""
+
+
+def _page(title: str, body: str, branding: Branding | None = None) -> str:
+    """Wrap ``body`` in the shared page shell, applying white-label ``branding``.
+
+    ``brand_name`` prefixes the browser-tab title and shows as a small brand label
+    above the card heading; ``accent_color`` overrides the button + link colour
+    (appended last in the ``<style>`` so it wins); the favicon ``<link>`` points at
+    ``/favicon.ico`` (served with the configured icon, or a 204 when none). An
+    empty ``Branding`` reproduces the prior default page byte-for-byte apart from
+    the always-safe favicon link."""
+    b = branding or Branding()
+    full_title = f"{b.brand_name} — {title}" if b.brand_name else title
+    brand_label = (
+        f'<p class="brand">{html.escape(b.brand_name)}</p>' if b.brand_name else ""
+    )
+    extra_style = (
+        f"button{{background:{b.accent_color}}}"
+        f"button:hover{{background:{b.accent_color};filter:brightness(.92)}}"
+        f"a{{color:{b.accent_color}}}"
+        if b.accent_color
+        else ""
+    )
+    return _PAGE.format(
+        title=full_title,
+        favicon='<link rel="icon" href="/favicon.ico">',
+        extra_style=extra_style,
+        brand=brand_label,
+        body=body,
+    )
 
 
 def _render_login(
@@ -229,6 +272,7 @@ def _render_login(
     email: str = "",
     name: str = "",
     team: str = "",
+    branding: Branding | None = None,
 ) -> str:
     err = f'<div class="err">{html.escape(error)}</div>' if error else ""
     options = "".join(
@@ -257,10 +301,12 @@ def _render_login(
         '<button type="submit">Send login link</button>'
         "</form>"
     )
-    return _PAGE.format(title="Log in to the helpdesk", body=body)
+    return _page("Log in to the helpdesk", body, branding)
 
 
-def _render_welcome_back(email: str, name: str) -> str:
+def _render_welcome_back(
+    email: str, name: str, branding: Branding | None = None
+) -> str:
     """The one-click login for a remembered, known visitor — no form to refill."""
     who = html.escape(name or email)
     body = (
@@ -275,24 +321,24 @@ def _render_welcome_back(email: str, name: str) -> str:
         '<p class="muted" style="margin-top:1rem">'
         '<a href="/login?switch=1">Use a different email</a></p>'
     )
-    return _PAGE.format(title="Welcome back", body=body)
+    return _page("Welcome back", body, branding)
 
 
-def _render_sent(email: str) -> str:
+def _render_sent(email: str, branding: Branding | None = None) -> str:
     body = (
         "<h1>Check your email</h1>"
         f"<p>If <strong>{html.escape(email)}</strong> can log in, we've sent a "
         "login link to that address. Click it to finish.</p>"
         '<p class="muted">The link expires shortly and can be used once.</p>'
     )
-    return _PAGE.format(title="Check your email", body=body)
+    return _page("Check your email", body, branding)
 
 
-def _render_verify_failed() -> str:
+def _render_verify_failed(branding: Branding | None = None) -> str:
     body = (
         "<h1>Link expired or already used</h1>"
         '<p class="muted">Login links can be used once and expire after a '
         "short time.</p>"
         '<p><a href="/login">Log in again</a></p>'
     )
-    return _PAGE.format(title="Login failed", body=body)
+    return _page("Login failed", body, branding)

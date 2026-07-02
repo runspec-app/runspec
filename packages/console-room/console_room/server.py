@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .config import (
     apply_config_to_env,
+    branding_from_env,
     config_teams,
     find_config_path,
     load_config,
@@ -143,10 +144,21 @@ def run_web(
         email_verify=email_verify,
         mailbox=mailbox,
     )
+    # White-label look (brand name / accent / favicon) from `[branding]`, which
+    # apply_config_to_env has already surfaced into CONSOLE_ROOM_* env vars.
+    branding = branding_from_env()
+    if branding.public() or branding.favicon_path:
+        logger.info(
+            "room: white-label branding active (brand_name=%r accent=%r favicon=%s)",
+            branding.brand_name or "-",
+            branding.accent_color or "-",
+            branding.favicon_path or "-",
+        )
     app = create_app(
         hub,
         ndjson_addr=(ndjson_host, ndjson_port),
         email_verify=email_verify,
+        branding=branding,
     )
     try:
         uvicorn.run(
