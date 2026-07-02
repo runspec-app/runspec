@@ -2465,8 +2465,12 @@ function MailboxesTab() {
             <Input placeholder="e.g. Helpdesk" />
           </Form.Item>
           <Form.Item name="once_per_thread" valuePropName="checked"
+            label="Suppress replies by default (once per thread)"
             help="Default for this mailbox: triggers fire on the first message in a conversation and ignore later replies. Each trigger can override this.">
-            <Switch size="small" /> <span style={{ fontSize: 12, color: '#888', marginLeft: 6 }}>Suppress replies by default (once per thread)</span>
+            {/* Switch must be the SINGLE child of Form.Item — Ant only injects the
+                checked/onChange binding into a lone child, so a sibling <span> here
+                left the switch unbound and its value was never saved or restored. */}
+            <Switch size="small" />
           </Form.Item>
           {!!(address ?? '').trim() && (
             <Alert

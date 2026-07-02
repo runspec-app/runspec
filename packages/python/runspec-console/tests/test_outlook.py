@@ -294,6 +294,70 @@ def test_stop_joins_pump_and_dispatch_threads():
     assert src._dispatch_thread is None
 
 
+class _FakeItems:
+    """A stand-in for a folder's ``Items`` collection: sortable + iterable, with
+    **no** ``Restrict`` method — so a poll that reaches for the locale-sensitive
+    date-string filter would AttributeError (caught → nothing emitted) and fail
+    the test."""
+
+    def __init__(self, mails: list) -> None:
+        self._mails = list(mails)
+        self.sorted_desc = False
+
+    def Sort(self, field: str, descending: bool) -> None:  # noqa: N802 — COM name
+        assert field == "[ReceivedTime]"
+        self._mails.sort(key=lambda m: m.ReceivedTime, reverse=bool(descending))
+        self.sorted_desc = bool(descending)
+
+    def __iter__(self):
+        return iter(self._mails)
+
+
+def _fake_mail(entry_id: str, received) -> SimpleNamespace:
+    return SimpleNamespace(
+        EntryID=entry_id,
+        Subject=f"s-{entry_id}",
+        Body="body",
+        SenderEmailAddress="x@y",
+        To="t@y",
+        ReceivedTime=received,
+        Categories="",
+        ConversationID="",
+    )
+
+
+def test_poll_emits_only_mail_after_high_water_locale_independent():
+    """The poll fallback must forward only mail received *after* the high-water
+    mark, comparing each item's own ReceivedTime in Python — never via
+    ``Items.Restrict`` with a formatted date string (which Outlook re-parses under
+    the OS regional settings, so a US ``MM/DD/YYYY`` stamp was misread on en-GB and
+    re-emitted the whole inbox on every startup)."""
+    from datetime import datetime, timedelta
+
+    src = OutlookSource()
+    cutoff = datetime(2026, 7, 2, 10, 0, 0)
+    src._poll_high_water = cutoff.timestamp()
+
+    older = _fake_mail("old", cutoff - timedelta(hours=1))
+    newer1 = _fake_mail("new1", cutoff + timedelta(hours=1))
+    newer2 = _fake_mail("new2", cutoff + timedelta(hours=2))
+    # Deliberately unsorted; the poll Sorts newest-first itself.
+    items = _FakeItems([older, newer2, older, newer1])
+    src._bound = [(object(), items, "me@corp.com", "Inbox")]
+
+    src._poll_all()
+
+    assert items.sorted_desc  # it sorted newest-first before scanning
+    subjects = []
+    while not src._queue.empty():
+        ev = src._queue.get_nowait()
+        subjects.append(ev.payload["subject"])
+    # Only the two newer mails, once each; the older one (and its dup) is skipped.
+    assert sorted(subjects) == ["s-new1", "s-new2"]
+    # High-water advanced to the newest mail seen.
+    assert src._poll_high_water == (cutoff + timedelta(hours=2)).timestamp()
+
+
 def test_dispatch_loop_marshals_events_and_stops():
     """Events enqueued (as the COM pump thread does) are delivered to the real
     emit by the dispatcher thread — never inline — and the None sentinel that

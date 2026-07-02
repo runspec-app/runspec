@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.159.1] — 2026-07-02
+
+### Fixed
+
+- **Outlook watch folders no longer replay the whole inbox as `new_mail` on every
+  startup.** The poll fallback (which catches bulk moves `ItemAdd` misses) filtered
+  with `Items.Restrict("[ReceivedTime] > '<stamp>'")`, formatting `<stamp>` as a
+  hardcoded US `MM/DD/YYYY`. Outlook re-parses that string under the **OS regional
+  settings**, so on a non-US-date locale (e.g. en-GB, `DD/MM/YYYY`) `07/02/2026`
+  was read as **7 Feb**, not 2 Jul — pushing the high-water mark months into the
+  past and re-emitting every message in the folder as `new_mail` on each launch,
+  worst on a large personal "also watch" Inbox. The poll now sorts newest-first and
+  compares each item's own `ReceivedTime` in Python (breaking at the first item at
+  or before the mark), so it's locale-independent and touches only the recent tail.
+- **Settings → Mailbox: "Suppress replies by default (once per thread)" now
+  persists.** The `Form.Item` wrapped two children (the `<Switch>` and a
+  description `<span>`), so Ant Design never bound the switch to the field — the
+  value was saved as `false` every time and never restored on reopen. The switch is
+  now the Form.Item's single child, with the description moved to the item label.
+- **`[[watch]]` is written as a proper table-array block instead of an inline array
+  floated to the top of `config.toml`.** `tomli_w` renders an array-of-tables inline
+  (`watch = [ { … } ]`); being a bare top-level key, TOML forces it above every
+  `[section]`, so it sat at the very top (empty entries as a bare `{}`) looking out
+  of place. `write_config` now emits top-level arrays-of-tables as idiomatic
+  `[[watch]]` blocks after the sections. Purely cosmetic — the on-disk value
+  re-parses identically.
+
+
 ## [0.159.0] — 2026-07-02
 
 ### Added

@@ -497,20 +497,32 @@ class OutlookSource:
 
     def _poll_all(self) -> None:
         """Fallback for bulk moves ItemAdd misses: scan each watched folder for
-        items received since the high-water mark, hand them to the deduped handler,
-        and advance the mark. Best-effort; a per-folder failure is logged, not fatal."""
-        stamp = time.strftime(
-            "%m/%d/%Y %I:%M %p", time.localtime(self._poll_high_water)
-        )
-        newest = self._poll_high_water
+        items received after the high-water mark, hand them to the deduped handler,
+        and advance the mark. Best-effort; a per-folder failure is logged, not fatal.
+
+        The cutoff is compared in Python from each item's own ``ReceivedTime`` — it
+        deliberately does **not** use ``Items.Restrict`` with a formatted date
+        string. Restrict re-parses that string using the OS **regional settings**,
+        so a hardcoded US ``MM/DD/YYYY`` stamp was misread on non-US-date locales
+        (en-GB reads ``07/02/2026`` as 7 Feb, not 2 Jul), pushing the cutoff months
+        into the past and re-emitting the whole inbox as ``new_mail`` on every
+        startup — worst on a large personal "also watch" Inbox. Sorting newest-first
+        + breaking at the first older item keeps this to the recent tail instead of
+        walking the whole folder."""
+        high = self._poll_high_water
+        newest = high
         for _sink, items, mailbox, folder in self._bound:
             try:
-                recent = items.Restrict(f"[ReceivedTime] > '{stamp}'")
-                for item in recent:
-                    self._handle_item(item, mailbox, folder)
+                items.Sort("[ReceivedTime]", True)  # newest first
+                for item in items:
                     ts = _to_dt(_attr(item, "ReceivedTime", None))
-                    if ts is not None:
-                        newest = max(newest, ts.timestamp())
+                    if ts is None:
+                        continue
+                    stamp = ts.timestamp()
+                    if stamp <= high:
+                        break  # sorted newest-first → everything after is older
+                    self._handle_item(item, mailbox, folder)
+                    newest = max(newest, stamp)
             except Exception:
                 logger.debug("outlook: poll of %r failed", folder, exc_info=True)
         self._poll_high_water = max(self._poll_high_water, newest)

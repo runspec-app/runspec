@@ -361,11 +361,46 @@ def write_config(data: dict[str, Any]) -> None:
     re-parse and wiped the file). ``None`` values are dropped — TOML has no null.
     """
     with _CONFIG_LOCK:
-        text = tomli_w.dumps(_strip_none(data))
+        text = _dumps_config(_strip_none(data))
         path = config_path()
         tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, path)
+
+
+def _is_flat_table_array(value: Any) -> bool:
+    """True for a non-empty list whose every element is a *flat* table (a dict
+    with no nested dict/list values) — i.e. a top-level array-of-tables such as
+    ``[[watch]]``."""
+    return (
+        isinstance(value, list)
+        and len(value) > 0
+        and all(isinstance(row, dict) for row in value)
+        and all(not isinstance(v, (dict, list)) for row in value for v in row.values())
+    )
+
+
+def _dumps_config(data: dict[str, Any]) -> str:
+    """Serialise like ``tomli_w.dumps`` but emit top-level arrays-of-tables as
+    idiomatic ``[[key]]`` blocks placed *after* the ordinary sections.
+
+    ``tomli_w`` (1.2.x) always renders an array-of-tables **inline**
+    (``watch = [ { … } ]``). A bare top-level key must, per TOML, precede every
+    ``[section]``, so that inline array floats to the very top of the file —
+    out of place above ``[mailbox]`` and friends, and an empty watch shows as a
+    bare ``{}``. Splitting those keys out and appending real ``[[key]]`` blocks
+    keeps the round-trip identical (they re-parse to the same list of dicts)
+    while producing the tidy layout the config docs describe."""
+    table_arrays = {k: v for k, v in data.items() if _is_flat_table_array(v)}
+    if not table_arrays:
+        return tomli_w.dumps(data)
+    rest = {k: v for k, v in data.items() if k not in table_arrays}
+    text = tomli_w.dumps(rest) if rest else ""
+    for key, rows in table_arrays.items():
+        for row in rows:
+            body = tomli_w.dumps(row)  # "" for an empty (default-Inbox) entry
+            text += f"\n[[{key}]]\n{body}"
+    return text
 
 
 def update_config(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:

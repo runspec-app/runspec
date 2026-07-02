@@ -12,8 +12,6 @@ import io
 import sys
 import unittest
 
-import tomli_w
-
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -25,7 +23,7 @@ from runspec_console.config import _toml_str
 
 def _roundtrip(data: dict) -> dict:
     """Serialise + parse with tomllib, exactly as write_config / read_config do."""
-    text = tomli_w.dumps(c._strip_none(data))
+    text = c._dumps_config(c._strip_none(data))
     return tomllib.load(io.BytesIO(text.encode("utf-8")))
 
 
@@ -290,6 +288,39 @@ class TestWriteWatches(unittest.TestCase):
             parsed["watch"],
             [{}, {"address": "b@corp", "folder": "Tickets/Open", "label": "B"}],
         )
+
+
+class TestTableArrayLayout(unittest.TestCase):
+    """A top-level array-of-tables (``[[watch]]``) must serialise as real
+    ``[[key]]`` blocks *after* the ordinary sections — not as an inline
+    ``watch = [ { … } ]`` floated to the top of the file (tomli_w's default,
+    which reads as out of place above ``[mailbox]``)."""
+
+    def test_watch_emitted_as_table_array_blocks_after_sections(self) -> None:
+        text = c._dumps_config(
+            c._strip_none(
+                {
+                    "mailbox": {"address": "help@corp.com"},
+                    "watch": [{"address": "me@corp.com", "folder": "Inbox"}],
+                }
+            )
+        )
+        self.assertIn("[[watch]]", text)
+        self.assertNotIn("watch = [", text)  # not the inline form
+        # The array-of-tables comes after the [mailbox] section, not floated above it.
+        self.assertLess(text.index("[mailbox]"), text.index("[[watch]]"))
+
+    def test_empty_default_inbox_watch_is_bare_block_not_inline_dict(self) -> None:
+        text = c._dumps_config(c._strip_none({"watch": [{}]}))
+        self.assertIn("[[watch]]", text)
+        self.assertNotIn("{}", text)  # never a bare inline empty table
+
+    def test_multiple_watch_entries_round_trip(self) -> None:
+        data = {
+            "mailbox": {"address": "h@corp"},
+            "watch": [{}, {"address": "b@corp", "label": "B"}],
+        }
+        self.assertEqual(_roundtrip(data), data)
 
 
 class TestTomlStringEscaper(unittest.TestCase):
