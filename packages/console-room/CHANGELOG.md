@@ -4,6 +4,22 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.35.1]
+
+### Fixed
+- **Oversized console frames (a large catalog) no longer flap the connection.**
+  The console NDJSON door used `asyncio.start_server`'s default `StreamReader`
+  line-buffer limit of **64 KiB**. A console's **catalog** frame — one NDJSON
+  line carrying every runnable's schema — exceeds that on any non-trivial fleet,
+  so `readline()` raised `LimitOverrunError` right after the console subscribed;
+  the connection dropped and reconnected in a tight loop (the "connects, then
+  instantly disconnects, backing off" symptom). Two fixes: the reader limit is
+  raised to **16 MiB** (`serve_ndjson(limit=…)`), and an over-limit frame is now
+  **skipped with a warning** instead of tearing the session down — asyncio has
+  already advanced its buffer, so the connection survives and keeps reading.
+  (Surfaced by the 0.35.0 lifecycle logging, which turned the silent drop into a
+  visible `read error … LimitOverrunError`.)
+
 ## [0.35.0]
 
 ### Added

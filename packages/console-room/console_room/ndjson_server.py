@@ -42,6 +42,15 @@ from .models import (
 
 logger = logging.getLogger("console_room.ndjson")
 
+# Max size of a single NDJSON frame (one line) the reader will buffer. asyncio's
+# StreamReader defaults to 64 KiB, which a console's **catalog** frame — one line
+# carrying every runnable's schema — blows past on any non-trivial fleet, raising
+# LimitOverrunError from readline() and (before this) tearing the connection down
+# right after subscribe: the deterministic "flap" symptom. 16 MiB gives ample
+# headroom for a large catalogue while still bounding a pathological frame. It's
+# a per-connection *ceiling*, not a preallocation.
+_NDJSON_READER_LIMIT = 16 * 1024 * 1024
+
 
 class NdjsonConsoleConnection:
     """One console connection. Satisfies the hub's ``Participant`` protocol.
@@ -237,10 +246,32 @@ class NdjsonConsoleConnection:
         returns b"") from a **read error** (the transport died mid-stream —
         ``readline`` raised) in the log, so a dropped console connection shows
         *why* it ended at ``--debug`` rather than vanishing silently. Both still
-        return ``None`` (the pump treats either as closed)."""
+        return ``None`` (the pump treats either as closed).
+
+        An **oversized frame** (one line larger than the reader's
+        ``_NDJSON_READER_LIMIT``) is skipped, not fatal: ``readline`` raises
+        ``LimitOverrunError`` (or a ``ValueError`` re-raise) after asyncio has
+        already advanced/cleared the buffer, so we log a clear warning and keep
+        reading rather than dropping the connection. This was the cause of the
+        connect→subscribe→instant-drop flap when a console's catalog frame
+        exceeded the old 64 KiB stdlib default — now the limit is 16 MiB *and* an
+        over-limit frame degrades gracefully instead of killing the session."""
         while True:
             try:
                 line = await self._reader.readline()
+            except (asyncio.LimitOverrunError, ValueError) as exc:
+                # One frame exceeded the buffer limit. asyncio has already
+                # discarded/advanced the buffer, so skip this frame and keep the
+                # connection alive (the usual culprit is an oversized catalog —
+                # raise the limit in serve_ndjson if a legitimate one is bigger).
+                logger.warning(
+                    "room: oversized frame from %s skipped (exceeds the %d-byte "
+                    "reader limit) — connection kept: %s",
+                    self._peername(),
+                    _NDJSON_READER_LIMIT,
+                    exc,
+                )
+                continue
             except Exception:
                 logger.debug(
                     "room: read error on %s — treating as closed",
@@ -272,18 +303,28 @@ class NdjsonConsoleConnection:
 
 
 async def serve_ndjson(
-    hub: Hub, host: str = "127.0.0.1", port: int = 8765
+    hub: Hub,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    *,
+    limit: int = _NDJSON_READER_LIMIT,
 ) -> asyncio.Server:
     """Start the NDJSON listener and return the running ``asyncio.Server`` (the
     caller awaits ``serve_forever`` / closes it). Binds localhost by default —
-    consoles only ever reach it over the SSH tunnel."""
+    consoles only ever reach it over the SSH tunnel.
+
+    ``limit`` is the StreamReader's per-line buffer ceiling (default
+    :data:`_NDJSON_READER_LIMIT`, 16 MiB). It must exceed the largest single
+    frame — in practice the console's catalog — or ``readline`` raises
+    ``LimitOverrunError`` on that frame; the stdlib default of 64 KiB is too
+    small for a real catalogue."""
 
     async def handle(
         reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         await NdjsonConsoleConnection(reader, writer).run(hub)
 
-    server = await asyncio.start_server(handle, host, port)
+    server = await asyncio.start_server(handle, host, port, limit=limit)
     sockets = server.sockets or ()
     for sock in sockets:
         logger.info("room: NDJSON listener on %s", sock.getsockname())

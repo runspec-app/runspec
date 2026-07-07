@@ -13,9 +13,14 @@ import asyncio
 import json
 from typing import Any
 
+import console_room.ndjson_server as ndjson_mod
 from console_room.hub import Hub
 from console_room.models import Message
-from console_room.ndjson_server import NdjsonConsoleConnection
+from console_room.ndjson_server import (
+    _NDJSON_READER_LIMIT,
+    NdjsonConsoleConnection,
+    serve_ndjson,
+)
 
 
 def run(coro):
@@ -102,6 +107,60 @@ def test_hello_and_clean_eof_are_logged_at_debug(caplog):
     # …and the clean EOF that ended it is logged distinctly (not a read error).
     assert any("clean EOF" in m for m in msgs)
     assert not any("read error" in m for m in msgs)
+
+
+def test_oversized_frame_is_skipped_not_fatal(caplog):
+    """A single frame larger than the reader limit (the classic case: an
+    oversized catalog) is skipped with a warning, and the connection keeps going
+    — it must not tear down the session. This was the connect→subscribe→instant
+    -drop flap."""
+    import logging
+
+    async def scenario():
+        store = FakeStore()
+        hub = Hub(store)
+        reader = asyncio.StreamReader()  # stdlib default 64 KiB line limit
+        reader.feed_data(
+            (json.dumps({"type": "hello", "room": "ops", "user": "a"}) + "\n").encode()
+        )
+        # One frame well over 64 KiB — like a big catalog line.
+        big = json.dumps({"type": "message", "room": "ops", "text": "x" * 70_000})
+        reader.feed_data((big + "\n").encode())
+        # A normal frame *after* the oversized one must still be processed,
+        # proving the connection survived the over-limit frame.
+        reader.feed_data(
+            (
+                json.dumps({"type": "message", "room": "ops", "text": "after"}) + "\n"
+            ).encode()
+        )
+        reader.feed_eof()
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+        return store
+
+    with caplog.at_level(logging.WARNING, logger="console_room.ndjson"):
+        store = run(scenario())
+    # The oversized frame was dropped; the following normal message survived.
+    assert [m.text for m in store.appended] == ["after"]
+    assert any("oversized frame" in r.message for r in caplog.records)
+
+
+def test_serve_ndjson_sets_large_reader_limit(monkeypatch):
+    """serve_ndjson passes a large per-line buffer limit to start_server so a
+    real catalog frame fits (the 64 KiB stdlib default is too small)."""
+    captured: dict[str, Any] = {}
+
+    async def fake_start_server(handle, host, port, **kw):
+        captured.update(kw)
+
+        class _Server:
+            sockets = ()
+
+        return _Server()
+
+    monkeypatch.setattr(ndjson_mod.asyncio, "start_server", fake_start_server)
+    run(serve_ndjson(Hub(FakeStore()), "127.0.0.1", 0))
+    assert captured.get("limit") == _NDJSON_READER_LIMIT
+    assert _NDJSON_READER_LIMIT >= 1_000_000  # comfortably over the 64 KiB default
 
 
 def test_read_error_logged_distinctly_from_clean_eof(caplog):
