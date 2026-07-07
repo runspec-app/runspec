@@ -153,11 +153,26 @@ def list_meta(directory: Path) -> list[dict[str, Any]]:
     return out
 
 
-def delete(directory: Path, conv_id: str) -> None:
+def delete(
+    directory: Path, conv_id: str, *, workspaces_root: Path | None = None
+) -> None:
+    """Delete a conversation and (when ``workspaces_root`` is given) the
+    sibling per-session workspace so retention drops both together — one
+    entity, one lifetime. The workspace argument is optional so this pure
+    module keeps its zero-dep contract; callers passing in the root also get
+    the workspace cleanup for free."""
     try:
         _path(directory, conv_id).unlink()
     except FileNotFoundError:
         pass
+    if workspaces_root is not None:
+        try:
+            from . import workspaces
+
+            ws = workspaces_root / workspaces._safe_id(conv_id)
+            workspaces.delete_workspace(ws)
+        except OSError:
+            pass
 
 
 def rename(directory: Path, conv_id: str, title: str) -> bool:
@@ -214,21 +229,29 @@ def _parse_ts(value: str) -> float | None:
         return None
 
 
-def prune(directory: Path, *, max_conversations: int = 0, max_age_days: int = 0) -> int:
+def prune(
+    directory: Path,
+    *,
+    max_conversations: int = 0,
+    max_age_days: int = 0,
+    workspaces_root: Path | None = None,
+) -> int:
     """Enforce retention: drop conversations older than ``max_age_days`` and keep
     at most ``max_conversations`` (newest). A non-positive bound disables that
-    check. Returns the number removed."""
+    check. When ``workspaces_root`` is given, each conversation's sibling
+    workspace is dropped alongside it — symmetric lifetime. Returns the number
+    removed."""
     removed = 0
     if max_age_days and max_age_days > 0:
         cutoff = datetime.now(timezone.utc).timestamp() - max_age_days * 86400
         for m in list_meta(directory):
             ts = _parse_ts(m.get("updated", ""))
             if ts is not None and ts < cutoff:
-                delete(directory, m["id"])
+                delete(directory, m["id"], workspaces_root=workspaces_root)
                 removed += 1
     if max_conversations and max_conversations > 0:
         metas = list_meta(directory)
         for m in metas[max_conversations:]:
-            delete(directory, m["id"])
+            delete(directory, m["id"], workspaces_root=workspaces_root)
             removed += 1
     return removed

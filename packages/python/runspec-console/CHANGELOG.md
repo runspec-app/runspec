@@ -8,8 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.159.1] — 2026-07-02
+## [0.160.0] — 2026-07-07
 
+### Added
+
+- **Per-session workspace sandbox for large tool outputs** — every chat
+  conversation (and every trigger/schedule agent turn) now owns a private folder
+  under `{app_dir}/workspaces/{session_id}/`. When a runnable's stdout exceeds
+  the spill threshold (`[workspace] spill_threshold`, default 32 KB) the raw
+  bytes are written to `tool-results/{tool}-{inv_id}.{json|txt}` in that
+  workspace instead of inlined; the model receives a short envelope with a head
+  preview and the file's workspace-relative path. Six new autonomous agent
+  tools (`workspace_ls` / `workspace_read` / `workspace_grep` / `workspace_head`
+  / `workspace_tail` / `workspace_write`) let the agent interrogate a spilled
+  output at its own pace — read a page, grep for the interesting rows, tail the
+  end, save a distilled note under `notes/` — without ever pulling the raw
+  bytes into model context. The whole point: **stop needing to hand-shrink
+  every runnable's output** just to fit the tool-result budget, and unblock
+  third-party tools (vendor CLIs, MCP tools, Outlook dumps) whose output shape
+  we don't control. Machine-local (never synced, same class as
+  `conversations/`); chat workspaces are pruned alongside their conversation
+  via `[chat_history]` retention, headless (trigger/schedule) workspaces via
+  the new `[workspace] headless_retention_days` (default 7). Startup runs a
+  cheap orphan sweep. All workspace tools are strictly path-jailed to the
+  current session's directory. See `docs/design/console-session-workspace.md`.
+
+
+## [0.159.1] — 2026-07-02
 ### Fixed
 
 - **Outlook watch folders no longer replay the whole inbox as `new_mail` on every

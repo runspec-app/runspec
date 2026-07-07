@@ -1827,6 +1827,13 @@ class TriggersMixin:
         cancel = threading.Event()
         with self._lock:
             self._chat_cancels[chat_id] = cancel
+            # Each isolated agent turn (trigger / schedule / room-driven) gets
+            # its own workspace so big spilled tool outputs stay hermetic to
+            # that turn — not leaking into a concurrent chat's workspace or
+            # another headless run. The prefix ("trigger-") drives the sweep
+            # retention path (headless_retention_days, not the chat_history
+            # settings). See workspaces.sweep_orphans.
+            self._workspace_by_chat[chat_id] = f"trigger-{chat_id}"
         # An agent trigger turn IS an LLM run; tag every runnable it calls with
         # the causing event source (agent=True). Direct chat turns register no
         # origin and default to the same agent=True with no trigger.
@@ -1850,6 +1857,7 @@ class TriggersMixin:
             self._clear_run_origin(chat_id)
             with self._lock:
                 self._chat_cancels.pop(chat_id, None)
+                self._workspace_by_chat.pop(chat_id, None)
 
     def _group_calls_level(self, calls: list[tuple[str, dict[str, Any]]]) -> str:
         """The autonomy a batch of calls must honour: the most restrictive across

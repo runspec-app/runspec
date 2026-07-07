@@ -115,6 +115,12 @@ class Bridge(
         # run_summary (RUNSPEC_TRIGGER) and set the right agent flag. Absent for a
         # direct chat turn (→ agent run, no trigger). Guarded by self._lock.
         self._run_origin: dict[str, dict[str, Any]] = {}
+        # Per-turn workspace id, keyed by chat_id. Trigger/schedule handlers
+        # register e.g. {"trigger-<chat_id>"} before an isolated agent turn so
+        # _run_tool_sync can spill big outputs into that session's own
+        # workspace. Absent for a chat turn (→ falls back to _conversation_id,
+        # the chat's persistent workspace). Guarded by self._lock.
+        self._workspace_by_chat: dict[str, str] = {}
         self._chat_stop = threading.Event()
         self._chat_supervisors: dict[str, threading.Thread] = {}
         # Per-room last logged connect-failure summary, so the reconnect loop logs a
@@ -211,6 +217,13 @@ class Bridge(
             self.seed_apply()
         except Exception:
             logger.warning("config seed apply at startup failed", exc_info=True)
+        # Drop workspaces whose owning session (a chat conversation, an old
+        # trigger/schedule turn) is gone — a cheap belt-and-braces on the
+        # inline retention already run by conv.prune and delete_conversation.
+        try:
+            self._sweep_workspaces()
+        except Exception:
+            logger.warning("workspace orphan sweep failed", exc_info=True)
         self._reload_hosts()
         self._reload_filters()
         self._reload_credentials()
@@ -266,6 +279,31 @@ class Bridge(
             import os
 
             return os.environ.get("USERNAME", "user")
+
+    def _sweep_workspaces(self) -> int:
+        """Drop workspace directories whose owning session is gone.
+
+        * Chat workspaces (dir name = a conversation id): removed if the
+          conversation file no longer exists in ``conversations_dir()``.
+          Symmetric with ``conv.prune`` — one entity, one lifetime.
+        * Headless workspaces (``trigger-…`` / ``schedule-…``): removed when
+          their mtime is older than ``[workspace] headless_retention_days``.
+
+        Returns the number removed (0 when the store is empty)."""
+        from . import conversations as conv
+        from . import workspaces as ws
+        from . import config as config_mod
+
+        cfg = config_mod.read_workspace()
+        try:
+            alive = {m["id"] for m in conv.list_meta(config_mod.conversations_dir())}
+        except OSError:
+            alive = set()
+        return ws.sweep_orphans(
+            config_mod.workspaces_root(),
+            alive,
+            headless_retention_days=int(cfg.get("headless_retention_days", 7)),
+        )
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

@@ -94,3 +94,81 @@ def test_over_cap_output_is_marked_incomplete(monkeypatch):
     assert len(out) > _AGENT_TOOL_OUTPUT_CAP
     assert out.startswith("x" * 100)
     assert "truncated" in out and "incomplete" in out  # the model is told it's cut
+
+
+# ── workspace spill ───────────────────────────────────────────────────────────
+
+
+def _run_with_workspace(
+    monkeypatch, tmp_path, line: str, conv_id: str = "convtest01"
+) -> tuple[str, "object"]:
+    """Same fake executor as _run_with_stdout, but the bridge carries a
+    conversation id and the workspaces_root points at ``tmp_path`` — so a
+    spilled output is written under it and we can inspect the on-disk file."""
+
+    def fake_run_local(rp, runnable, args, command_path, on_line, on_done, **kw):
+        on_line(line, "stdout")
+        on_done(0, 1)
+
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda _e: ["/opt/app/runspec"]
+    )
+    # Point workspaces_root + read_workspace at the tmp_path so no state
+    # touches the real user config.
+    monkeypatch.setattr("runspec_console.config.workspaces_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "runspec_console.config.workspace_dir",
+        lambda sid: tmp_path / sid,
+    )
+    monkeypatch.setattr(
+        "runspec_console.config.read_workspace",
+        lambda: {"spill_threshold": 32_768, "headless_retention_days": 7},
+    )
+    b = _AgentBridge(entry={"name": "local"}, cached=_cached("local"))
+    b._conversation_id = conv_id
+    b._workspace_by_chat = {}
+    return b._run_tool_sync("local__list-processes", {}), b
+
+
+def test_output_above_threshold_spills_to_workspace(monkeypatch, tmp_path):
+    """A 200 KB stdout with a workspace configured returns the short envelope
+    naming the file, and the FULL raw output lands on disk uncapped."""
+    payload = "x" * 200_000  # far above the 32 KB spill threshold
+    out, bridge = _run_with_workspace(monkeypatch, tmp_path, payload)
+
+    assert "Output spilled to workspace" in out  # envelope header
+    assert "tool-results/" in out  # path pointer
+    assert "workspace_read" in out  # reach for these next
+    assert len(out) < len(payload)  # envelope is much smaller than the raw
+
+    # The raw file on disk is uncapped and complete.
+    ws = tmp_path / bridge._conversation_id / "tool-results"
+    files = list(ws.glob("*"))
+    assert len(files) == 1
+    assert files[0].read_text() == payload
+
+
+def test_output_below_threshold_stays_inline(monkeypatch, tmp_path):
+    """Small outputs are unchanged — the whole point of the threshold is to
+    keep the fast path fast."""
+    payload = "hello world"
+    out, _bridge = _run_with_workspace(monkeypatch, tmp_path, payload)
+    assert out == payload
+    # No workspace directory created — nothing to spill.
+    assert not list(tmp_path.glob("*/tool-results/*"))
+
+
+def test_no_workspace_id_falls_back_to_truncation(monkeypatch, tmp_path):
+    """When no session workspace is active (a stand-alone runnable run from
+    the Console tab, or a first-turn tool call before persistence has minted
+    an id), the pre-workspace cap-and-truncate behaviour still applies."""
+    huge = "y" * (_AGENT_TOOL_OUTPUT_CAP + 5000)
+    # Bridge with NO conversation id and NO workspace mapping.
+    monkeypatch.setattr(
+        "runspec_console.config.read_workspace",
+        lambda: {"spill_threshold": 32_768, "headless_retention_days": 7},
+    )
+    out = _run_with_stdout(monkeypatch, huge)  # uses the plain _AgentBridge
+    # Same as the pre-workspace test: truncated with the visible marker.
+    assert "truncated" in out and "incomplete" in out

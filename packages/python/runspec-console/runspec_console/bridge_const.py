@@ -97,6 +97,24 @@ _ACTION_TOOL_NAMES = frozenset(
     {"create_document", "run_runbook", "create_schedule", "emit_event"}
 )
 
+# Per-session workspace file tools. When a runnable's stdout exceeds
+# ``_TOOL_OUTPUT_SPILL_THRESHOLD`` it is written to the current session's
+# ``workspaces/{id}/tool-results/`` folder instead of inlined, and the model
+# reaches for these tools to interrogate the file — list / read a window /
+# grep / head / tail / write a note. All are read-only or scoped to writing
+# inside the current session's workspace (path-jailed), so the autonomy gate
+# lets them run without a prompt (like the memory + repo-read tools).
+_WORKSPACE_TOOL_NAMES = frozenset(
+    {
+        "workspace_ls",
+        "workspace_read",
+        "workspace_grep",
+        "workspace_head",
+        "workspace_tail",
+        "workspace_write",
+    }
+)
+
 # Every built-in (non-runnable-backed) agent tool. ``_gated_run_tool_async``
 # wraps each of these — once past the autonomy gate — with a live Console
 # in-flight card, cooperative cancellation, progress streaming, and a
@@ -113,6 +131,7 @@ _BUILTIN_TOOL_NAMES = (
     | _MEMORY_TOOL_NAMES
     | _STATUS_TOOL_NAMES
     | _ACTION_TOOL_NAMES
+    | _WORKSPACE_TOOL_NAMES
 )
 
 
@@ -131,6 +150,21 @@ class ToolCancelled(Exception):
 # the marker says so explicitly so the model knows the JSON is incomplete rather
 # than silently trusting a corrupt tail.
 _AGENT_TOOL_OUTPUT_CAP = 1_000_000
+
+# Char threshold above which a runnable's joined stdout is spilled to the
+# session workspace (``workspaces/{session_id}/tool-results/``) instead of
+# handed to the model inline. Below the threshold the tool result is the raw
+# string, unchanged from the pre-workspace behaviour. 32 KB is small enough
+# that a normal structured JSON dump still inlines but a chatty log / dumped
+# process list spills — the operator can raise it via ``[workspace]
+# spill_threshold`` (0 disables spill, restoring the pre-workspace
+# cap-and-truncate behaviour of ``_AGENT_TOOL_OUTPUT_CAP``).
+_TOOL_OUTPUT_SPILL_THRESHOLD = 32_768
+
+# How much of the spilled output is quoted in the envelope handed to the model,
+# so it sees the shape (JSON keys, log format, error banner) without a
+# follow-up file read for trivial cases. Kept small: ~1 K tokens.
+_SPILL_ENVELOPE_HEAD_BYTES = 4_096
 
 PUTTY_PROXY_SESSION = "runspec-console-proxy"
 

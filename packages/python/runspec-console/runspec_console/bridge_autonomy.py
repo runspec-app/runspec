@@ -40,7 +40,10 @@ from .bridge_const import (
     _REPO_WRITE_TOOLS,
     _REPO_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
+    _WORKSPACE_TOOL_NAMES,
     _BUILTIN_TOOL_NAMES,
+    _TOOL_OUTPUT_SPILL_THRESHOLD,
+    _SPILL_ENVELOPE_HEAD_BYTES,
     ToolCancelled,
 )
 from .bridge_utils import make_truncation_suffix
@@ -80,6 +83,9 @@ class AutonomyMixin:
             return "autonomous"  # local memory/runbook store — no model-spend gate
         if tool_name in _STATUS_TOOL_NAMES:
             return "autonomous"  # read-only status report — no side effects
+        if tool_name in _WORKSPACE_TOOL_NAMES:
+            # read/write inside the current session's workspace only — no prompt
+            return "autonomous"
         if tool_name in _ACTION_TOOL_NAMES:
             return "confirm"  # side-effecting action tools — always prompt
         if tool_name == "run_runnable":
@@ -788,6 +794,14 @@ class AutonomyMixin:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
         if tool_name in _STATUS_TOOL_NAMES:
             return self._run_status_tool(dict(tool_input or {}))
+        if tool_name in _WORKSPACE_TOOL_NAMES:
+            return self._run_workspace_tool(
+                tool_name,
+                dict(tool_input or {}),
+                chat_id=chat_id,
+                cancel_event=cancel_event,
+                on_progress=on_progress,
+            )
         if tool_name in _ACTION_TOOL_NAMES:
             return self._run_action_tool(tool_name, dict(tool_input or {}), chat_id)
         # Read-only discovery meta-tools (search mode) — no side effects, return JSON.
@@ -943,10 +957,52 @@ class AutonomyMixin:
             )
 
         output = "\n".join(output_lines)
-        cap = self._tool_output_cap()
         orig_len = len(output)
-        if orig_len > cap:
-            output = output[:cap] + make_truncation_suffix(orig_len, cap)
+        # Workspace spill: above the threshold, write the full raw output to the
+        # active session's workspace/tool-results/ folder and hand the model a
+        # short envelope + head preview. The model then reaches for the
+        # workspace_* tools to interrogate the file at its own pace — the raw
+        # bytes never enter the model context. Below the threshold, or when
+        # there is no active workspace id, fall through to the classic
+        # cap-and-truncate behaviour so nothing regresses.
+        spilled = False
+        if orig_len > _TOOL_OUTPUT_SPILL_THRESHOLD:
+            spill_threshold = _TOOL_OUTPUT_SPILL_THRESHOLD
+            try:
+                ws_cfg = config_mod.read_workspace()
+                spill_threshold = ws_cfg.get(
+                    "spill_threshold", _TOOL_OUTPUT_SPILL_THRESHOLD
+                )
+            except (OSError, ValueError, TypeError):
+                pass
+            with self._lock:
+                ws_map = getattr(self, "_workspace_by_chat", {})
+                workspace_id = ws_map.get(chat_id, "")
+            if not workspace_id:
+                workspace_id = getattr(self, "_conversation_id", "")
+            if spill_threshold and orig_len > spill_threshold and workspace_id:
+                try:
+                    from . import workspaces as ws_mod
+
+                    ws_root = config_mod.workspace_dir(workspace_id)
+                    envelope, _rel_path = ws_mod.spill_output(
+                        ws_root,
+                        tool_name,
+                        uuid.uuid4().hex[:12],
+                        output,
+                        head_bytes=_SPILL_ENVELOPE_HEAD_BYTES,
+                    )
+                    output = envelope
+                    spilled = True
+                except OSError as e:
+                    logger.warning(
+                        "workspace spill failed (%s) — falling back to inline cap",
+                        e,
+                    )
+        if not spilled:
+            cap = self._tool_output_cap()
+            if orig_len > cap:
+                output = output[:cap] + make_truncation_suffix(orig_len, cap)
         if exit_code_holder[0] != 0:
             return f"[exit {exit_code_holder[0]}]\n{output}"
         return output or "(no output)"

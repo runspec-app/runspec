@@ -690,6 +690,7 @@ class InvokeMixin:
                 directory,
                 max_conversations=int(cfg.get("max_conversations", 0) or 0),
                 max_age_days=int(cfg.get("max_age_days", 0) or 0),
+                workspaces_root=config_mod.workspaces_root(),
             )
         except Exception:  # noqa: BLE001 — persistence is best-effort
             logger.warning("could not persist chat conversation turn", exc_info=True)
@@ -847,7 +848,11 @@ class InvokeMixin:
     def delete_conversation(self, conversation_id: str) -> None:
         from . import conversations as conv
 
-        conv.delete(config_mod.conversations_dir(), str(conversation_id))
+        conv.delete(
+            config_mod.conversations_dir(),
+            str(conversation_id),
+            workspaces_root=config_mod.workspaces_root(),
+        )
 
     def rename_conversation(self, conversation_id: str, title: str) -> None:
         from . import conversations as conv

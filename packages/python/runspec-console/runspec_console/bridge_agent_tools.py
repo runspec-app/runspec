@@ -418,6 +418,7 @@ class AgentToolsMixin:
                 *self._status_tools(),
                 *self._memory_tools(),
                 *self._action_tools(),
+                *self._workspace_tools(),
             ]
         self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
@@ -1513,6 +1514,285 @@ class AgentToolsMixin:
                 "currently disabled, on which hosts."
             )
         return snapshot
+
+    def _workspace_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the per-session workspace file tools. The workspace is a
+        sandboxed folder attached to the current chat conversation (or
+        trigger/schedule turn); when a runnable's output is too large to inline
+        (above ``[workspace] spill_threshold``) the raw bytes are written to
+        ``tool-results/{tool}-{inv_id}.{json|txt}`` in this workspace, and the
+        model reaches for these tools instead of re-running the runnable. All
+        six are autonomous (read-only or scoped to the workspace)."""
+        return [
+            {
+                "name": "workspace_ls",
+                "description": (
+                    "List entries in the current session's workspace folder "
+                    "(the sandbox that holds large tool outputs spilled to "
+                    "disk). Start here — ``tool-results/`` holds anything a "
+                    "runnable emitted above the inline threshold, and "
+                    "``notes/`` holds files you have written. Returns a list "
+                    "of ``{name, type, size, modified}`` rows."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Workspace-relative directory to list (empty "
+                                "or '.' = workspace root, 'tool-results' for "
+                                "spilled outputs)."
+                            ),
+                        }
+                    },
+                },
+            },
+            {
+                "name": "workspace_read",
+                "description": (
+                    "Read a page of lines from a workspace file — use this to "
+                    "inspect a spilled tool output without pulling the whole "
+                    "thing into the model context. Returns ``{path, offset, "
+                    "limit, total_lines, total_bytes, truncated, content}``."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Workspace-relative file path (e.g. "
+                                "'tool-results/local__list-processes-abc123.json')."
+                            ),
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "0-based line number to start at (default 0).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max lines to return (default 200, hard cap 2000).",
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "workspace_grep",
+                "description": (
+                    "Regex-search files in the workspace and return matching "
+                    "lines (``{path, line, text}``) — the fast way to find "
+                    "the interesting rows in a big spilled log/JSON without "
+                    "reading every page."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": (
+                                "Python regex (e.g. 'ERROR|WARN', 'user_id.*42')."
+                            ),
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Workspace-relative file or directory to search "
+                                "(default: whole workspace)."
+                            ),
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Cap on matches (default 100, hard cap 200).",
+                        },
+                        "context": {
+                            "type": "integer",
+                            "description": "Lines of context to include before/after each match (0-5).",
+                        },
+                    },
+                    "required": ["pattern"],
+                },
+            },
+            {
+                "name": "workspace_head",
+                "description": (
+                    "First N lines of a workspace file. Same shape as "
+                    "``workspace_read`` but skips the offset arg."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Workspace-relative file path.",
+                        },
+                        "lines": {
+                            "type": "integer",
+                            "description": "How many lines (default 50, hard cap 500).",
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "workspace_tail",
+                "description": (
+                    "Last N lines of a workspace file — good for seeing how "
+                    "a spilled run ended without pulling the whole thing."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Workspace-relative file path.",
+                        },
+                        "lines": {
+                            "type": "integer",
+                            "description": "How many lines (default 50, hard cap 500).",
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "workspace_write",
+                "description": (
+                    "Write an agent-authored file into the workspace (e.g. "
+                    "``notes/summary.md``, ``notes/extract.json``) — use this "
+                    "to save a distilled view of a spilled output, split a "
+                    "big file into smaller pieces, or capture intermediate "
+                    "work. Cannot write into ``tool-results/`` (that dir is "
+                    "system-owned, holding the raw runnable output)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Workspace-relative path (e.g. 'notes/summary.md'). "
+                                "Parent dirs are created."
+                            ),
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Text to write.",
+                        },
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+        ]
+
+    def _current_workspace_root(self, chat_id: str = "") -> Any:
+        """The workspace ``Path`` for whichever session (chat / trigger /
+        schedule) is currently active on this Bridge, or ``None`` when no
+        session id has been set — the tools then return a clear error rather
+        than falling back to a shared / unbounded path.
+
+        ``chat_id`` (the per-turn id) picks the trigger/schedule mapping the
+        active isolated-agent turn registered; chat turns leave it empty and
+        the resolver falls back to the persistent conversation id."""
+        session_id = ""
+        if chat_id:
+            with self._lock:
+                ws_map = getattr(self, "_workspace_by_chat", {})
+                session_id = ws_map.get(chat_id, "")
+        if not session_id:
+            session_id = getattr(self, "_conversation_id", "")
+        if not session_id:
+            return None
+        return config_mod.workspace_dir(session_id)
+
+    def _run_workspace_tool(
+        self,
+        name: str,
+        ti: dict[str, Any],
+        chat_id: str = "",
+        cancel_event: Any = None,
+        on_progress: Any = None,
+    ) -> str:
+        """Dispatch the ``workspace_*`` tools. All are pure filesystem
+        operations inside the current session's workspace root — no network,
+        no subprocess."""
+        from . import workspaces
+
+        root = self._current_workspace_root(chat_id)
+        if root is None:
+            return json.dumps(
+                {
+                    "error": (
+                        "No active session workspace — this tool is available "
+                        "inside a chat conversation or a trigger/schedule "
+                        "agent turn (each of which owns a per-session "
+                        "sandbox), not stand-alone."
+                    )
+                }
+            )
+        root.mkdir(parents=True, exist_ok=True)
+        try:
+            if name == "workspace_ls":
+                return json.dumps(
+                    {"entries": workspaces.list_dir(root, str(ti.get("path") or ""))}
+                )
+            if name == "workspace_read":
+                return json.dumps(
+                    workspaces.read_file(
+                        root,
+                        str(ti.get("path") or ""),
+                        offset=int(ti.get("offset") or 0),
+                        limit=int(ti.get("limit") or 200),
+                    )
+                )
+            if name == "workspace_grep":
+                pattern = str(ti.get("pattern") or "")
+                if not pattern:
+                    return json.dumps({"error": "workspace_grep needs a pattern"})
+                hits = workspaces.grep(
+                    root,
+                    pattern,
+                    rel=str(ti.get("path") or ""),
+                    max_results=int(ti.get("max_results") or 100),
+                    context=int(ti.get("context") or 0),
+                )
+                return json.dumps({"matches": hits, "count": len(hits)})
+            if name == "workspace_head":
+                return json.dumps(
+                    workspaces.head(
+                        root,
+                        str(ti.get("path") or ""),
+                        lines=int(ti.get("lines") or 50),
+                    )
+                )
+            if name == "workspace_tail":
+                return json.dumps(
+                    workspaces.tail(
+                        root,
+                        str(ti.get("path") or ""),
+                        lines=int(ti.get("lines") or 50),
+                    )
+                )
+            if name == "workspace_write":
+                return json.dumps(
+                    workspaces.write_file(
+                        root,
+                        str(ti.get("path") or ""),
+                        str(ti.get("content") or ""),
+                    )
+                )
+        except (
+            FileNotFoundError,
+            NotADirectoryError,
+            IsADirectoryError,
+            PermissionError,
+            ValueError,
+        ) as e:
+            return json.dumps({"error": str(e)})
+        except OSError as e:
+            return json.dumps({"error": f"filesystem error: {e}"})
+        return json.dumps({"error": f"unknown workspace tool: {name}"})
 
     def _memory_tools(self) -> list[dict[str, Any]]:
         """Schemas for the persistent-memory / runbook tools. Always available (the

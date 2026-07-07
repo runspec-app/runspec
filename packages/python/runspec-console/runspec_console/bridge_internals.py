@@ -1029,4 +1029,19 @@ class InternalsMixin:
                     "ONLY — no commit/push; review them with repo_diff."
                 )
 
+        # One-liner about the per-session workspace so the agent reaches for the
+        # workspace_* tools when a spilled envelope shows up. Deliberately
+        # id-free (the envelope tells you the file path each time) so the
+        # cached system prefix stays stable across turns of one conversation.
+        lines.append("")
+        lines.append(
+            "Session workspace: a runnable that emits more than a small page "
+            "of output is **spilled** to disk instead of inlined — its tool "
+            "result is a short envelope with a head preview and a "
+            "``tool-results/…`` path. Use workspace_ls to see what's there, "
+            "workspace_read / workspace_head / workspace_tail to page through "
+            "a file, workspace_grep to search, and workspace_write to save "
+            "a distilled note. All autonomous; scoped to this session only."
+        )
+
         return "\n".join(lines)

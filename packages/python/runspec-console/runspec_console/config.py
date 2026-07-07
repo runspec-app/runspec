@@ -162,6 +162,48 @@ def conversations_dir() -> Path:
     return app_dir() / "conversations"
 
 
+def workspaces_root() -> Path:
+    """Parent dir for per-session agent workspaces (one subdir per chat
+    conversation, trigger event, or schedule run). Large runnable outputs get
+    spilled here so the agent can interrogate them via the ``workspace_*`` file
+    tools without the raw bytes ever entering the model context. **Machine-local**
+    — spilled output can be sensitive and is only meaningful on the console that
+    ran the tool, so it's **never** synced (not in Config Sync's KNOWN_FILES).
+    Chat workspaces are pruned alongside the conversation they belong to
+    (``[chat_history]`` retention); headless (trigger/schedule) workspaces are
+    pruned by ``[workspace] headless_retention_days``."""
+    return app_dir() / "workspaces"
+
+
+def workspace_dir(session_id: str) -> Path:
+    """The workspace directory for one session id (a chat ``conversation_id``, a
+    ``trigger-<event_id>``, or a ``schedule-<run_id>``). Never trust the id
+    straight into a path — sanitised in :mod:`runspec_console.workspaces`."""
+    from .workspaces import _safe_id
+
+    return workspaces_root() / _safe_id(session_id)
+
+
+def read_workspace() -> dict[str, Any]:
+    """The ``[workspace]`` settings, with defaults applied.
+
+    ``spill_threshold`` (chars, default 32_768) — a runnable's tool output larger
+    than this is written to the session workspace instead of inlined; the model
+    gets a short envelope + head preview and reaches for the ``workspace_*``
+    tools. Set to 0 to disable spill and keep the pre-workspace cap-and-truncate
+    behaviour. ``headless_retention_days`` (default 7) — how long
+    trigger/schedule workspaces live after the isolated turn finishes (chat
+    workspaces follow ``[chat_history]`` retention)."""
+    raw = read_config().get("workspace")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    return {
+        "spill_threshold": max(0, int(cfg.get("spill_threshold", 32_768) or 0)),
+        "headless_retention_days": max(
+            0, int(cfg.get("headless_retention_days", 7) or 0)
+        ),
+    }
+
+
 def config_path() -> Path:
     return app_dir() / "config.toml"
 
