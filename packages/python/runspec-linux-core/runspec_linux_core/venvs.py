@@ -92,12 +92,17 @@ def create_venv(
 ) -> dict:
     """Create a virtualenv at ``dest`` from a specific ``python`` interpreter.
 
-    Always uses ``--symlinks``. Then creates ``<dest>/logs`` mode ``2775`` (setgid,
-    so new audit-log files inherit the directory's group) and, if ``group`` is set,
-    ``chgrp -R`` the venv to it — enabling a shared service-account venv that several
-    consoles read/write. With ``run_as`` set every step runs as that user (so the
-    venv is owned by it). Raises ValueError on a non-executable interpreter / bad
-    name, or CommandError on a failed step.
+    Always uses ``--symlinks``. Then normalises the tree to ``u=rwX,go=rX`` so
+    directories are ``755`` and executables in ``bin/`` keep their ``+x`` — matching
+    what a plain ``python -m venv`` produces under a default ``022`` umask, regardless
+    of the caller's umask (``sudo -n -u <svc>`` often lands at ``027``, which would
+    otherwise leave the venv at ``750`` and lock other consoles out). Then creates
+    ``<dest>/logs`` mode ``2775`` (setgid, so new audit-log files inherit the
+    directory's group) and, if ``group`` is set, ``chgrp -R`` the venv to it —
+    enabling a shared service-account venv that several consoles read/write. With
+    ``run_as`` set every step runs as that user (so the venv is owned by it). Raises
+    ValueError on a non-executable interpreter / bad name, or CommandError on a
+    failed step.
     """
     if not (os.path.isfile(python) and os.access(python, os.X_OK)):
         raise ValueError(f"not an executable file: {python!r} (pick a real interpreter, not the system default)")
@@ -113,6 +118,8 @@ def create_venv(
         flags += ["--prompt", prompt]
 
     _check(_run(_become([python, "-m", "venv", *flags, dest], run_as, become_method)), "venv creation", run_as)
+
+    _check(_run(_become(["chmod", "-R", "u=rwX,go=rX", dest], run_as, become_method)), "chmod venv", run_as)
 
     logs_dir = os.path.join(dest, "logs")
     _check(_run(_become(["mkdir", "-p", logs_dir], run_as, become_method)), "logs dir", run_as)

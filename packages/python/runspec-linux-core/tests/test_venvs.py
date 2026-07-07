@@ -69,9 +69,12 @@ def test_create_venv_uses_symlinks_and_logs(monkeypatch: pytest.MonkeyPatch) -> 
     venv_cmd = calls[0]
     assert venv_cmd[:4] == [sys.executable, "-m", "venv", "--symlinks"]
     assert venv_cmd[-1] == "/opt/v1"
+    # chmod -R u=rwX,go=rX normalises the tree to 755-dirs/644-files regardless of
+    # the caller's umask (a sudo -u <svc> shell often lands at 027 → 750).
+    assert calls[1] == ["chmod", "-R", "u=rwX,go=rX", "/opt/v1"]
     # mkdir -p logs, then chmod 2775 logs (no group → no chgrp step).
-    assert calls[1] == ["mkdir", "-p", "/opt/v1/logs"]
-    assert calls[2] == ["chmod", "2775", "/opt/v1/logs"]
+    assert calls[2] == ["mkdir", "-p", "/opt/v1/logs"]
+    assert calls[3] == ["chmod", "2775", "/opt/v1/logs"]
     assert result == {
         "python": sys.executable,
         "dest": "/opt/v1",
@@ -100,7 +103,8 @@ def test_create_venv_run_as_escalates_every_step(monkeypatch: pytest.MonkeyPatch
     venvs.create_venv(sys.executable, "/opt/v1", run_as="svc", group="consoles")
     for cmd in calls:
         assert cmd[:4] == ["sudo", "-n", "-u", "svc"]
-    # chgrp -R consoles /opt/v1 runs between mkdir and chmod.
+    # The umask-normalising chmod and the chgrp both run as svc too.
+    assert ["sudo", "-n", "-u", "svc", "chmod", "-R", "u=rwX,go=rX", "/opt/v1"] in calls
     assert ["sudo", "-n", "-u", "svc", "chgrp", "-R", "consoles", "/opt/v1"] in calls
 
 

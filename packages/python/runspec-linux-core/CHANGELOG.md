@@ -1,5 +1,23 @@
 # runspec-linux-core Changelog
 
+## [0.3.4] — 2026-07-07
+
+Fix `create_venv` producing an unreadable `750` venv directory when the caller's
+umask is `027` (typical under `sudo -n -u <svc>` with a PAM-set login umask).
+`python -m venv` honours the current umask, so a shared service-account venv
+was landing owner-only instead of the `755` a stock `python -m venv <dest>`
+produces under the default `022` umask, locking every non-owner console out —
+contrary to the "shared between several consoles" use case the helper is built
+for.
+
+After the venv-creation step, `create_venv` now runs
+`chmod -R u=rwX,go=rX <dest>` to normalise the tree to `755` on directories and
+`644` on files while preserving the `+x` on real executables in `bin/` (capital
+`X` only sets execute on directories and files that already have some execute
+bit). The subsequent `chmod 2775 <dest>/logs` still gets the last word on the
+logs directory, and `chgrp -R <group>` (when passed) still runs. When `run_as`
+is set the new chmod runs as that user too.
+
 ## [0.3.3] — 2026-06-22
 
 Add `commands.py` — the pure logic behind the new `runspec-linux` `which`

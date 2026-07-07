@@ -1,5 +1,13 @@
 # runspec-linux Changelog
 
+## [0.6.1] — 2026-07-07
+
+Pull in `runspec-linux-core >= 0.3.4` so `create-venv` normalises the venv tree
+to `755`-on-dirs / `644`-on-files after creation. Previously, under
+`sudo -n -u <svc>` with a PAM-set login umask of `027`, the venv directory
+landed at `750` and locked other consoles out — contrary to the shared-service-
+account venv the runnable is built for. See the core changelog.
+
 ## [0.6.0] — 2026-06-22
 
 Add a **`which`** runnable — locate a command on the PATH and return its full
