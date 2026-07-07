@@ -2035,8 +2035,9 @@ class AgentToolsMixin:
                     "'prompt' to schedule a reminder-to-act in natural language, and "
                     "'runbook' to re-run an existing runbook on a cadence. For a "
                     "runnable, target exactly one of: a single 'host', a 'group' "
-                    "(runs on every member), or 'hosts' (a candidate list — runs on "
-                    "the first connected one)."
+                    "(runs on every member), 'hosts' (a candidate list — runs on the "
+                    "first connected one), or 'selected_hosts' (an explicit list — "
+                    "runs on every host in it)."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -2079,7 +2080,7 @@ class AgentToolsMixin:
                             **({"enum": host_names} if host_names else {}),
                             "description": (
                                 "Single host to run on (action='runnable'). Use one "
-                                "of host / group / hosts."
+                                "of host / group / hosts / selected_hosts."
                             ),
                         },
                         "group": {
@@ -2087,7 +2088,8 @@ class AgentToolsMixin:
                             **({"enum": group_names} if group_names else {}),
                             "description": (
                                 "Host group to run on every member of "
-                                "(action='runnable'). Use one of host / group / hosts."
+                                "(action='runnable'). Use one of host / group / "
+                                "hosts / selected_hosts."
                             ),
                         },
                         "hosts": {
@@ -2099,7 +2101,21 @@ class AgentToolsMixin:
                             "description": (
                                 "Candidate hosts — runs on the first connected one "
                                 "(failover, action='runnable'). Use one of host / "
-                                "group / hosts."
+                                "group / hosts / selected_hosts."
+                            ),
+                        },
+                        "selected_hosts": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                **({"enum": host_names} if host_names else {}),
+                            },
+                            "description": (
+                                "Explicit list of hosts — runs on every host in the "
+                                "list (fan-out, one run per host, action='runnable'). "
+                                "Use for an ad-hoc multi-host run that doesn't warrant "
+                                "a registered host group. Use one of host / group / "
+                                "hosts / selected_hosts."
                             ),
                         },
                         "runnable": {
@@ -2267,6 +2283,7 @@ class AgentToolsMixin:
             "host",
             "group",
             "hosts",
+            "selected_hosts",
             "runnable",
             "args",
             "prompt",

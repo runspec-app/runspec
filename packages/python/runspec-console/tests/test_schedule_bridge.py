@@ -359,6 +359,56 @@ def test_run_now_hosts_list_runs_on_first_connected(tmp_path, monkeypatch):
     assert (host, runnable) == ("web02", "backup")
 
 
+def test_run_now_selected_hosts_fans_out_to_every_host(tmp_path, monkeypatch):
+    """selected_hosts is fan-out (not failover): every host in the list runs."""
+    ns = _stub(tmp_path, monkeypatch)
+    ns._host_has_runnable = lambda host, runnable: True
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "s1",
+                "action": "runnable",
+                "selected_hosts": ["web01", "web02", "web03"],
+                "runnable": "backup",
+                "when": {"every": "5m"},
+                "args": {"db": "main"},
+            }
+        ],
+    )
+    res = ns.run_schedule_now("s1")
+    assert res["action"] == "runnable"
+    assert res["host"] == "selected:web01,web02,web03"
+    # Every ticked host got its own invoke.
+    hosts_run = [row[0] for row in ns.runs]
+    assert hosts_run == ["web01", "web02", "web03"]
+    # Each got the same args + Scheduled Task metadata.
+    for host, runnable, args, kw in ns.runs:
+        assert (runnable, args) == ("backup", {"db": "main"})
+        assert kw["operator"] == "Scheduled Task" and kw["trigger"] == "schedule"
+
+
+def test_run_now_selected_hosts_skips_hosts_without_runnable(tmp_path, monkeypatch):
+    """A ticked host that doesn't carry the runnable is silently skipped."""
+    ns = _stub(tmp_path, monkeypatch)
+    ns._host_has_runnable = lambda host, runnable: host != "web02"
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "s1",
+                "action": "runnable",
+                "selected_hosts": ["web01", "web02", "web03"],
+                "runnable": "backup",
+                "when": {"every": "5m"},
+            }
+        ],
+    )
+    ns.run_schedule_now("s1")
+    hosts_run = [row[0] for row in ns.runs]
+    assert hosts_run == ["web01", "web03"]
+
+
 def test_scheduled_agent_message_prompt(tmp_path, monkeypatch):
     ns = _stub(tmp_path, monkeypatch)
     job = types.SimpleNamespace(action="prompt", prompt="  Do the thing.  ")

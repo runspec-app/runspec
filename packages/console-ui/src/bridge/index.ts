@@ -383,12 +383,14 @@ export interface Schedule {
   enabled?: boolean
   action: 'runnable' | 'event' | 'prompt' | 'runbook'
   when: ScheduleWhen
-  // action === 'runnable' — exactly one of host / group / hosts. group fans the
-  // run out across every member of the host group; hosts is a candidate list and
-  // the run goes to the first connected one (failover).
+  // action === 'runnable' — exactly one of host / group / hosts / selected_hosts.
+  // group fans the run out across every member of the host group; hosts is a
+  // candidate list and the run goes to the first connected one (failover);
+  // selected_hosts is an explicit list and the run fans out to every host in it.
   host?: string
   group?: string
   hosts?: string[]
+  selected_hosts?: string[]
   runnable?: string
   args?: Record<string, unknown>
   // action === 'event'

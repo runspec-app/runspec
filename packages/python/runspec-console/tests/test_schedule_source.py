@@ -191,6 +191,94 @@ def test_parse_entry_runnable_rejects_two_targets():
         )
 
 
+def test_parse_entry_runnable_selected_hosts():
+    """selected_hosts is a valid single targeting mode."""
+    job = parse_schedule_entry(
+        {
+            "id": "x",
+            "action": "runnable",
+            "selected_hosts": ["web01", "web02"],
+            "runnable": "backup",
+            "when": {"every": "5m"},
+        }
+    )
+    assert job.selected_hosts == ["web01", "web02"]
+    assert not job.host and not job.group and not job.hosts
+
+
+def test_parse_entry_runnable_selected_hosts_rejects_with_host():
+    with pytest.raises(ValueError):
+        parse_schedule_entry(
+            {
+                "id": "x",
+                "action": "runnable",
+                "host": "web01",
+                "selected_hosts": ["web02"],
+                "runnable": "r",
+                "when": {"every": "5m"},
+            }
+        )
+
+
+def test_parse_entry_runnable_selected_hosts_rejects_with_hosts():
+    with pytest.raises(ValueError):
+        parse_schedule_entry(
+            {
+                "id": "x",
+                "action": "runnable",
+                "hosts": ["a"],
+                "selected_hosts": ["b"],
+                "runnable": "r",
+                "when": {"every": "5m"},
+            }
+        )
+
+
+def test_parse_entry_runnable_selected_hosts_rejects_with_group():
+    with pytest.raises(ValueError):
+        parse_schedule_entry(
+            {
+                "id": "x",
+                "action": "runnable",
+                "group": "prod",
+                "selected_hosts": ["b"],
+                "runnable": "r",
+                "when": {"every": "5m"},
+            }
+        )
+
+
+def test_parse_entry_runnable_no_target_rejected():
+    """All four targeting fields absent → ValueError (unchanged behaviour)."""
+    with pytest.raises(ValueError):
+        parse_schedule_entry(
+            {
+                "id": "x",
+                "action": "runnable",
+                "runnable": "r",
+                "when": {"every": "5m"},
+            }
+        )
+
+
+def test_fire_runnable_selected_hosts_passed_through():
+    ran: list = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "s1",
+                "action": "runnable",
+                "selected_hosts": ["web01", "web02"],
+                "runnable": "backup",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_runnable=lambda s, h, r, a, g, hs, sel: ran.append((h, g, hs, sel)),
+    )
+    src._fire("s1")
+    assert ran == [("", "", [], ["web01", "web02"])]
+
+
 def test_fire_runnable_hosts_passed_through():
     ran: list = []
     src = ScheduleSource(
@@ -203,10 +291,10 @@ def test_fire_runnable_hosts_passed_through():
                 "when": {"every": "5m"},
             }
         ],
-        run_runnable=lambda s, h, r, a, g, hs: ran.append((h, g, hs)),
+        run_runnable=lambda s, h, r, a, g, hs, sel: ran.append((h, g, hs, sel)),
     )
     src._fire("r1")
-    assert ran == [("", "", ["web01", "web02"])]
+    assert ran == [("", "", ["web01", "web02"], [])]
 
 
 def test_parse_entry_prompt():
@@ -380,12 +468,12 @@ def test_fire_event_emits_matchable_event():
 
 
 def test_fire_runnable_calls_run_runnable():
-    ran: list[tuple[str, str, str, dict, str, list]] = []
+    ran: list[tuple[str, str, str, dict, str, list, list]] = []
     src = _source_with_jobs(
-        run_runnable=lambda s, h, r, a, g, hs: ran.append((s, h, r, a, g, hs))
+        run_runnable=lambda s, h, r, a, g, hs, sel: ran.append((s, h, r, a, g, hs, sel))
     )
     src._fire("r1")
-    assert ran == [("r1", "h", "backup", {"db": "main"}, "", [])]
+    assert ran == [("r1", "h", "backup", {"db": "main"}, "", [], [])]
 
 
 def test_fire_prompt_calls_run_agent():

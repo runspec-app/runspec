@@ -24,7 +24,7 @@ const CRON_PRESETS = [
 
 type Action = 'runnable' | 'event' | 'prompt' | 'runbook'
 type WhenKind = 'cron' | 'every'
-type Target = 'host' | 'group' | 'anyhost'
+type Target = 'host' | 'group' | 'anyhost' | 'selected'
 
 interface ScheduleModalProps {
   open: boolean
@@ -59,6 +59,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const hostName: string = Form.useWatch('host', form) ?? defaultHost
   const groupName: string = Form.useWatch('group', form) ?? ''
   const hostsList: string[] = Form.useWatch('hosts', form) ?? []
+  const selectedList: string[] = Form.useWatch('selected_hosts', form) ?? []
   // The chosen runbook (derived from the form's `runbook` id) drives the value
   // inputs, so it survives the async runbooks load with no extra state.
   const runbookId: string = Form.useWatch('runbook', form) ?? ''
@@ -69,6 +70,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const groupMemberNames = new Set(hosts.filter(h => h.group === groupName).map(h => h.name))
   const targetedHosts = target === 'group' ? groupMemberNames
     : target === 'anyhost' ? new Set(hostsList)
+    : target === 'selected' ? new Set(selectedList)
     : null
   const hostRunnables = targetedHosts
     ? [...new Map(
@@ -98,7 +100,12 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       return
     }
     setAction(editing.action)
-    setTarget(editing.group ? 'group' : (editing.hosts?.length ? 'anyhost' : 'host'))
+    setTarget(
+      editing.group ? 'group'
+      : editing.selected_hosts?.length ? 'selected'
+      : editing.hosts?.length ? 'anyhost'
+      : 'host',
+    )
     const kind: WhenKind = editing.when.every ? 'every' : 'cron'
     setWhenKind(kind)
     if (kind === 'cron') {
@@ -114,14 +121,18 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       setCronPreset('')
       setCustomCron('')
     }
+    const selectedNames = editing.selected_hosts ?? []
     const r = editing.group
       ? runnables.find(x => x.name === editing.runnable && hosts.some(h => h.group === editing.group && h.name === x.host)) ?? null
+      : selectedNames.length
+      ? runnables.find(x => x.name === editing.runnable && selectedNames.includes(x.host)) ?? null
       : runnables.find(x => x.host === editing.host && x.name === editing.runnable) ?? null
     setSelectedRunnable(r)
     const fv: Record<string, unknown> = {
       host: editing.host ?? defaultHost,
       group: editing.group ?? '',
       hosts: editing.hosts ?? [],
+      selected_hosts: editing.selected_hosts ?? [],
       runnable: editing.runnable,
       timezone: editing.when.timezone ?? '',
       cron: editing.when.cron ?? '',
@@ -218,6 +229,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         const list = (values.hosts ?? []) as string[]
         if (list.length === 0) { form.setFields([{ name: 'hosts', errors: ['Pick at least one host'] }]); return }
         base.hosts = list
+      } else if (target === 'selected') {
+        const list = (values.selected_hosts ?? []) as string[]
+        if (list.length === 0) { form.setFields([{ name: 'selected_hosts', errors: ['Pick at least one host'] }]); return }
+        base.selected_hosts = list
       } else {
         base.host = values.host
       }
@@ -419,6 +434,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 options={[
                   { label: 'One host', value: 'host' },
                   { label: 'Any of hosts', value: 'anyhost' },
+                  { label: 'Selected hosts', value: 'selected' },
                   { label: 'Host group', value: 'group', disabled: groupNames.length === 0 },
                 ]}
               />
@@ -427,6 +443,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                   ? 'Runs the runnable on every host in the group (one run card per host).'
                   : target === 'anyhost'
                   ? 'Runs on the first connected host from the list (failover) — one run.'
+                  : target === 'selected'
+                  ? 'Runs the runnable on every host you tick (one run card per host).'
                   : 'Runs the runnable on a single host.'}
               </div>
             </Form.Item>
@@ -449,6 +467,22 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 rules={[{ required: true, message: 'Pick at least one host' }]}
                 help="At fire time it runs on the first connected host in this list.">
                 <Select mode="multiple" onChange={handleHostChange} placeholder="Pick candidate hosts"
+                  optionFilterProp="value">
+                  {hosts.map(h => (
+                    <Select.Option key={h.name} value={h.name}>
+                      <Space size={6}>
+                        <span style={{ fontSize: 9, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
+                        {h.name}
+                      </Space>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            ) : target === 'selected' ? (
+              <Form.Item name="selected_hosts" label="Hosts (runs on every one)"
+                rules={[{ required: true, message: 'Pick at least one host' }]}
+                help="At fire time it runs on every host you tick — one run card per host.">
+                <Select mode="multiple" onChange={handleHostChange} placeholder="Pick hosts to run on"
                   optionFilterProp="value">
                   {hosts.map(h => (
                     <Select.Option key={h.name} value={h.name}>

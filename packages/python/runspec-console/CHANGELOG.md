@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.161.0] — 2026-07-07
+
+### Added
+
+- **Schedules — new "Selected hosts" run target.** The Schedules-tab "New
+  schedule" modal's *Run a runnable* target picker gains a fourth option:
+  **Selected hosts**. The operator ticks a set of hosts from a multi-select and
+  the runnable runs on **every** ticked host (fan-out, one run card per host —
+  same lifecycle as a host-group fire), skipping any ticked host that doesn't
+  carry the runnable. It complements the existing three modes and closes the
+  gap for an ad-hoc multi-host run that doesn't warrant registering a group in
+  `runspec_groups.toml`: **One host** (single host), **Any of hosts** (candidate
+  list, first connected — failover), **Selected hosts** (explicit list, all of
+  them — fan-out), **Host group** (registered group members). Wired end-to-end:
+  a new `selected_hosts: list[str]` field on `ScheduleJob` and the
+  `runspec_schedules.toml` schedule entry (parsed by `parse_schedule_entry`
+  with the mutex extended to XOR across `host`/`group`/`hosts`/`selected_hosts`);
+  a new branch in `_invoke_scheduled` that mirrors the group fan-out
+  (per-host `_host_has_runnable` filter → recursive per-member invoke); the
+  `create_schedule` autonomous agent-tool schema gains a `selected_hosts` array
+  property (host-name enum when available) so the chat agent can create the
+  same schedules from natural language; the Schedules event-log target label
+  reads `selected:h1,h2,…`. Fully additive — existing `host`/`group`/`hosts`
+  schedules fire unchanged.
+
+
 ## [0.160.1] — 2026-07-07
 
 ### Changed

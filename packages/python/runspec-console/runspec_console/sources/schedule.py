@@ -61,12 +61,14 @@ _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _INTERVAL_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 # What a runnable-action schedule calls to run its runnable:
-# (schedule_id, host, runnable, args, group, hosts). The id lets the bridge label
-# the run card; ``group`` is non-empty for a group-targeted schedule (then ``host``
-# is "") and the bridge fans the run out across the group's members; ``hosts`` is a
-# non-empty candidate list for an "any one of these" schedule (the bridge picks the
-# first connected one at fire time).
-RunFn = Callable[[str, str, str, dict[str, Any], str, list[str]], None]
+# (schedule_id, host, runnable, args, group, hosts, selected_hosts). The id lets
+# the bridge label the run card; ``group`` is non-empty for a group-targeted
+# schedule (then ``host`` is "") and the bridge fans the run out across the
+# group's members; ``hosts`` is a non-empty candidate list for an "any one of
+# these" schedule (the bridge picks the first connected one at fire time);
+# ``selected_hosts`` is a non-empty explicit list and the bridge fans the run out
+# to every host in it (like ``group`` but without a registered group entry).
+RunFn = Callable[[str, str, str, dict[str, Any], str, list[str], list[str]], None]
 
 # What a prompt/runbook-action schedule calls to run a headless agent turn. The
 # bridge gets the whole parsed job (it needs the prompt / runbook id + values to
@@ -114,12 +116,15 @@ class ScheduleJob:
     # action == "event"
     event: str = ""
     fields: dict[str, str] = field(default_factory=dict)
-    # action == "runnable" — exactly one of host / group / hosts is set. ``group``
-    # fans the run out across every member of the host group; ``hosts`` is a
-    # candidate list and the bridge runs it on the first connected one (failover).
+    # action == "runnable" — exactly one of host / group / hosts / selected_hosts
+    # is set. ``group`` fans the run out across every member of the host group;
+    # ``hosts`` is a candidate list and the bridge runs it on the first connected
+    # one (failover); ``selected_hosts`` is an explicit list and the bridge fans
+    # the run out to every host in it (ad-hoc group without a registered entry).
     host: str = ""
     group: str = ""
     hosts: list[str] = field(default_factory=list)
+    selected_hosts: list[str] = field(default_factory=list)
     runnable: str = ""
     args: dict[str, Any] = field(default_factory=dict)
     # action == "prompt" — the fixed instruction handed to the agent turn.
@@ -205,6 +210,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     host = ""
     group = ""
     hosts: list[str] = []
+    selected_hosts: list[str] = []
     runnable = ""
     args: dict[str, Any] = {}
     prompt = ""
@@ -221,19 +227,24 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         host = str(data.get("host") or "").strip()
         group = str(data.get("group") or "").strip()
         hosts = [str(h).strip() for h in (data.get("hosts") or []) if str(h).strip()]
+        selected_hosts = [
+            str(h).strip() for h in (data.get("selected_hosts") or []) if str(h).strip()
+        ]
         runnable = str(data.get("runnable") or "").strip()
         if not runnable:
             raise ValueError(
                 f"schedule '{sid}' uses action='runnable' but is missing 'runnable'"
             )
-        # Exactly one targeting mode: a single host, a group (fan out to all), or a
-        # candidate list (run on the first connected one).
-        modes = sum((bool(host), bool(group), bool(hosts)))
+        # Exactly one targeting mode: a single host, a registered group (fan out to
+        # every member), a candidate list (run on the first connected one), or an
+        # explicit selected list (fan out to every host in it).
+        modes = sum((bool(host), bool(group), bool(hosts), bool(selected_hosts)))
         if modes != 1:
             raise ValueError(
                 f"schedule '{sid}' (action='runnable') needs exactly one of 'host' "
-                "(a single host), 'group' (a host group to fan out across), or 'hosts' "
-                "(a candidate list to run on the first connected one)"
+                "(a single host), 'group' (a host group to fan out across), 'hosts' "
+                "(a candidate list to run on the first connected one), or "
+                "'selected_hosts' (an explicit list to run on all of them)"
             )
         args = dict(data.get("args") or {})
     elif action == "prompt":
@@ -262,6 +273,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         host=host,
         group=group,
         hosts=hosts,
+        selected_hosts=selected_hosts,
         runnable=runnable,
         args=args,
         prompt=prompt,
@@ -463,6 +475,7 @@ class ScheduleSource:
                     dict(job.args),
                     job.group,
                     list(job.hosts),
+                    list(job.selected_hosts),
                 )
             self._record(job, skipped=False)
         except Exception:
@@ -485,11 +498,14 @@ class ScheduleSource:
             summary = f"runbook: {job.runbook}"
         else:
             etype = job.runnable or "runnable"
-            where = (
-                f"group:{job.group}"
-                if job.group
-                else (f"any:{','.join(job.hosts)}" if job.hosts else job.host)
-            )
+            if job.group:
+                where = f"group:{job.group}"
+            elif job.selected_hosts:
+                where = f"selected:{','.join(job.selected_hosts)}"
+            elif job.hosts:
+                where = f"any:{','.join(job.hosts)}"
+            else:
+                where = job.host
             summary = f"/{job.runnable} on {where}"
         try:
             self._on_event(

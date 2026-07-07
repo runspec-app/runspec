@@ -167,13 +167,17 @@ class SchedulesMixin:
             schedule_id=job.id,
             group=job.group,
             hosts=list(job.hosts),
+            selected_hosts=list(job.selected_hosts),
         )
         self._record_schedule_fire(job)
-        where = (
-            f"group:{job.group}"
-            if job.group
-            else (f"any:{','.join(job.hosts)}" if job.hosts else job.host)
-        )
+        if job.group:
+            where = f"group:{job.group}"
+        elif job.selected_hosts:
+            where = f"selected:{','.join(job.selected_hosts)}"
+        elif job.hosts:
+            where = f"any:{','.join(job.hosts)}"
+        else:
+            where = job.host
         return {
             "action": "runnable",
             "inv_id": inv_id,
@@ -193,11 +197,14 @@ class SchedulesMixin:
             etype, summary = "runbook", f"runbook: {job.runbook}"
         else:
             etype = job.runnable or "runnable"
-            where = (
-                f"group:{job.group}"
-                if job.group
-                else (f"any:{','.join(job.hosts)}" if job.hosts else job.host)
-            )
+            if job.group:
+                where = f"group:{job.group}"
+            elif job.selected_hosts:
+                where = f"selected:{','.join(job.selected_hosts)}"
+            elif job.hosts:
+                where = f"any:{','.join(job.hosts)}"
+            else:
+                where = job.host
             summary = f"/{job.runnable} on {where}"
         self._on_schedule_event(
             {
@@ -219,16 +226,24 @@ class SchedulesMixin:
         args: dict[str, Any],
         group: str = "",
         hosts: list[str] | None = None,
+        selected_hosts: list[str] | None = None,
     ) -> None:
         """Run a runnable-action schedule on the timer: fire it directly and
         autonomously — no agent, no confirm gate (scheduling it is the
         authorization). A ``group``-targeted schedule fans the run out across every
         member of the host group (one run card per host); a ``hosts`` candidate list
-        runs on the first connected one (failover). The callback ignores the return;
-        the manual *Run now* path uses :meth:`_invoke_scheduled` so it can surface
-        the in-flight id."""
+        runs on the first connected one (failover); a ``selected_hosts`` list fans
+        the run out to every host in it. The callback ignores the return; the
+        manual *Run now* path uses :meth:`_invoke_scheduled` so it can surface the
+        in-flight id."""
         self._invoke_scheduled(
-            host, runnable, args, schedule_id=schedule_id, group=group, hosts=hosts
+            host,
+            runnable,
+            args,
+            schedule_id=schedule_id,
+            group=group,
+            hosts=hosts,
+            selected_hosts=selected_hosts,
         )
 
     def _pick_connected_host(self, hosts: list[str]) -> str:
@@ -377,6 +392,7 @@ class SchedulesMixin:
         schedule_id: str = "",
         group: str = "",
         hosts: list[str] | None = None,
+        selected_hosts: list[str] | None = None,
     ) -> str:
         """Invoke a runnable as the scheduler would and return its in-flight
         ``inv_id`` (``""`` on failure). Labelled as the 'Scheduled Task' operator
@@ -390,7 +406,27 @@ class SchedulesMixin:
         group that carries the runnable — each member gets its own run card (same
         autonomous, pre-authorised path); the first member's ``inv_id`` is
         returned. When ``hosts`` is a candidate list the run goes to a single host —
-        the first connected one (failover)."""
+        the first connected one (failover). When ``selected_hosts`` is an explicit
+        list the run fans out to every host in it (same per-host filter and per-
+        member recursion as ``group``, but the operator picked the set directly)."""
+        if selected_hosts:
+            members = [
+                h for h in selected_hosts if self._host_has_runnable(h, runnable)
+            ]
+            if not members:
+                logger.warning(
+                    "schedule: selected_hosts %r has no host carrying %r — nothing run",
+                    selected_hosts,
+                    runnable,
+                )
+                return ""
+            inv_ids = [
+                self._invoke_scheduled(
+                    m, runnable, dict(args or {}), schedule_id=schedule_id
+                )
+                for m in members
+            ]
+            return inv_ids[0] if inv_ids else ""
         if hosts:
             chosen = self._pick_connected_host(list(hosts))
             if not chosen:
