@@ -13,6 +13,10 @@ when it isn't already set*, so every existing env read (in ``signup.py`` and the
 argparse env-defaults in ``server.py``) keeps working unchanged and a real env var
 or CLI flag always wins.
 
+``[server]`` also accepts ``log_level`` (``debug``/``info``/``warning``/``error``)
+and ``log_file`` (an explicit path; otherwise the server rotates
+``{sys.prefix}/logs/room.log`` at midnight, keeping 7 days) — see ``server.py``.
+
 Two things never round-trip through a plain string env var:
 
 - the **session secret**, which can be a ``session_secret_command`` whose stdout is
@@ -76,6 +80,11 @@ _ENV_MAP: dict[tuple[str, str], str] = {
     ("server", "tls_cert"): "CONSOLE_ROOM_TLS_CERT",
     ("server", "tls_key"): "CONSOLE_ROOM_TLS_KEY",
     ("server", "assignment_timeout"): "CONSOLE_ROOM_ASSIGNMENT_TIMEOUT",
+    # Logging: verbosity + an optional explicit log-file path. Both layer through
+    # env like the other scalars (config < env < CLI). With no log_file the server
+    # defaults to a rotating {sys.prefix}/logs/room.log (see server.py).
+    ("server", "log_level"): "CONSOLE_ROOM_LOG_LEVEL",
+    ("server", "log_file"): "CONSOLE_ROOM_LOG_FILE",
     ("auth", "verify_ttl"): "CONSOLE_ROOM_VERIFY_TTL",
     ("auth", "session_ttl"): "CONSOLE_ROOM_SESSION_TTL",
     ("auth", "enroll_db"): "CONSOLE_ROOM_ENROLL_DB",

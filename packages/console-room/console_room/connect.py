@@ -15,10 +15,30 @@ stderr. See docs/design/console-room-server.md.
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import threading
+import time
 from typing import BinaryIO
+
+
+def _diag_enabled() -> bool:
+    """Opt-in stderr diagnostics for the exec relay. Off by default so a normal
+    relay is silent; ``CONSOLE_ROOM_CONNECT_DEBUG=1`` turns on lifecycle lines
+    (connect established / EOF / errors) to **stderr** — never stdout, which is
+    the data channel. In exec mode this is the only window into why a relay
+    exits (and thus why the console sees the room 'disconnect')."""
+    return os.environ.get("CONSOLE_ROOM_CONNECT_DEBUG", "").strip() not in ("", "0")
+
+
+def _diag(message: str) -> None:
+    if _diag_enabled():
+        try:
+            sys.stderr.write(f"console-room connect: {message}\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
 
 
 def relay(host: str, port: int, stdin: BinaryIO, stdout: BinaryIO) -> int:
@@ -27,13 +47,22 @@ def relay(host: str, port: int, stdin: BinaryIO, stdout: BinaryIO) -> int:
 
     Uses ``read1`` when available so a chat frame relays as soon as it arrives
     (rather than waiting for a full buffer) — low latency for an interactive
-    stream."""
+    stream.
+
+    Set ``CONSOLE_ROOM_CONNECT_DEBUG=1`` for stderr lifecycle diagnostics — the
+    only way to see why the relay ended (clean EOF vs socket error), since a
+    silent exit is exactly what makes the console report the room as 'down' in
+    exec mode."""
     try:
         sock = socket.create_connection((host, port))
     except OSError as exc:
+        # Always reported (not gated) — an unreachable room port is the headline
+        # exec-mode failure and worth surfacing even without the debug env.
         sys.stderr.write(f"console-room connect: cannot reach {host}:{port}: {exc}\n")
         return 1
 
+    started = time.monotonic()
+    _diag(f"connected to {host}:{port}")
     read = getattr(stdin, "read1", None) or stdin.read
 
     def stdin_to_sock() -> None:
@@ -41,10 +70,11 @@ def relay(host: str, port: int, stdin: BinaryIO, stdout: BinaryIO) -> int:
             while True:
                 data = read(65536)
                 if not data:
+                    _diag("stdin reached EOF (console closed the exec channel)")
                     break
                 sock.sendall(data)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _diag(f"stdin→socket error: {exc!r}")
         finally:
             # Half-close the write side so the server sees our EOF and closes,
             # rather than tearing down the socket while a reply is still in flight.
@@ -57,6 +87,7 @@ def relay(host: str, port: int, stdin: BinaryIO, stdout: BinaryIO) -> int:
     t_in.start()
     # Pump socket → stdout on this thread until the server closes the connection
     # (the session's real end). The daemon stdin thread dies with the process.
+    reason = "room closed the socket (clean EOF)"
     try:
         while True:
             data = sock.recv(65536)
@@ -64,12 +95,13 @@ def relay(host: str, port: int, stdin: BinaryIO, stdout: BinaryIO) -> int:
                 break
             stdout.write(data)
             stdout.flush()
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        reason = f"socket→stdout error: {exc!r}"
     try:
         sock.close()
     except OSError:
         pass
+    _diag(f"relay ended after {time.monotonic() - started:.1f}s — {reason}")
     return 0
 
 

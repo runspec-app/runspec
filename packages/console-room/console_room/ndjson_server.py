@@ -71,11 +71,24 @@ class NdjsonConsoleConnection:
     async def run(self, hub: Hub) -> None:
         """Drive this connection: handshake, then pump frames into ``hub`` until
         the channel closes. Always leaves the hub and closes the writer."""
+        peer = self._peername()
+        logger.debug("room: connection opened from %s — awaiting hello", peer)
         hello = parse_hello(await self._read_frame())
         if hello is None:
-            logger.info("room: connection sent no/invalid hello; closing")
+            logger.info("room: connection from %s sent no/invalid hello; closing", peer)
             await self._close()
             return
+        # Log exactly what the console declared *before* the checks, so a rejected
+        # or short-lived connection is diagnosable at --debug (e.g. a mailbox the
+        # console didn't send, or a namespace/room you didn't expect).
+        logger.debug(
+            "room: hello from %s — user=%r mode=%s target=%r mailbox=%r",
+            peer,
+            hello.user,
+            "agent" if hello.is_agent else "member",
+            hello.namespace if hello.is_agent else hello.room,
+            hello.mailbox or "(none)",
+        )
         # One email = one room: when the room is tied to a mailbox, only consoles
         # configured for that same mailbox may connect. A mismatch (or a console
         # that sent no mailbox) is refused so a console can't join the wrong
@@ -123,14 +136,17 @@ class NdjsonConsoleConnection:
             )
 
     async def _pump(self, hub: Hub) -> None:
+        who = self.user or self._peername()
         while True:
             frame = await self._read_frame()
             if frame is None:
+                logger.debug("room: frame pump for %r ended (channel closed)", who)
                 break  # EOF / channel closed
             await self._dispatch(hub, frame)
 
     async def _dispatch(self, hub: Hub, frame: dict[str, Any]) -> None:
         kind = frame.get("type")
+        logger.debug("room: ← %r frame from %r", kind, self.user or self._peername())
         if kind == MESSAGE:
             text = str(frame.get("text") or "")
             if not text:
@@ -202,15 +218,38 @@ class NdjsonConsoleConnection:
             await self.send(teams_frame(teams))
         # hello-after-hello, agent presence, and unknown types are ignored.
 
+    def _peername(self) -> str:
+        """Best-effort remote address for logging (the tunnel end, usually a
+        localhost ephemeral port). Never raises."""
+        try:
+            peer = self._writer.get_extra_info("peername")
+            if isinstance(peer, tuple) and len(peer) >= 2:
+                return f"{peer[0]}:{peer[1]}"
+            return str(peer) if peer else "?"
+        except Exception:
+            return "?"
+
     async def _read_frame(self) -> dict[str, Any] | None:
         """Read one JSON object, skipping blank / malformed lines; ``None`` at
-        EOF. Mirrors the console transport's decoder."""
+        EOF. Mirrors the console transport's decoder.
+
+        Distinguishes a **clean EOF** (the peer closed the channel — ``readline``
+        returns b"") from a **read error** (the transport died mid-stream —
+        ``readline`` raised) in the log, so a dropped console connection shows
+        *why* it ended at ``--debug`` rather than vanishing silently. Both still
+        return ``None`` (the pump treats either as closed)."""
         while True:
             try:
                 line = await self._reader.readline()
             except Exception:
+                logger.debug(
+                    "room: read error on %s — treating as closed",
+                    self._peername(),
+                    exc_info=True,
+                )
                 return None
             if not line:
+                logger.debug("room: clean EOF from %s (peer closed)", self._peername())
                 return None  # EOF
             text = line.strip()
             if not text:

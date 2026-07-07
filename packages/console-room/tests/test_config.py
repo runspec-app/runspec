@@ -74,6 +74,22 @@ def test_apply_config_does_not_clobber_real_env(tmp_path, monkeypatch):
     assert os.environ["CONSOLE_ROOM_PORT"] == "8080"
 
 
+def test_apply_config_sets_log_level_and_file(tmp_path, monkeypatch):
+    for var in ("CONSOLE_ROOM_LOG_LEVEL", "CONSOLE_ROOM_LOG_FILE"):
+        monkeypatch.delenv(var, raising=False)
+    config = load_config(
+        _write(
+            tmp_path,
+            '[server]\nlog_level = "debug"\nlog_file = "/var/log/room/room.log"\n',
+        )
+    )
+    apply_config_to_env(config)
+    import os
+
+    assert os.environ["CONSOLE_ROOM_LOG_LEVEL"] == "debug"
+    assert os.environ["CONSOLE_ROOM_LOG_FILE"] == "/var/log/room/room.log"
+
+
 # ── white-label branding ──────────────────────────────────────────────────────
 
 

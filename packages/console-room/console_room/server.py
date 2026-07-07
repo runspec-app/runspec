@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import sys
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from .config import (
@@ -85,6 +86,7 @@ def run_web(
     assignment_timeout: float = 300.0,
     mailbox: str = "",
     teams: list[Team] | None = None,
+    log_level: str = "info",
 ) -> None:
     """Serve the browser WebSocket door (and, via the app lifespan, the console
     NDJSON door) under uvicorn. Imports the web stack lazily so ``--ndjson-only``
@@ -165,7 +167,7 @@ def run_web(
             app,
             host=host,
             port=port,
-            log_level="info",
+            log_level=log_level,
             ssl_certfile=tls_cert,
             ssl_keyfile=tls_key,
             proxy_headers=True,
@@ -179,6 +181,63 @@ def run_web(
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
+
+
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+#: Days of rotated logs kept (one file per day; rotation happens at midnight).
+_LOG_BACKUP_DAYS = 7
+
+
+def _default_log_path() -> Path:
+    """The default log location: ``{sys.prefix}/logs/room.log`` — a ``logs/`` dir
+    inside the (virtual) environment the server is installed into. Created
+    (``exist_ok``) by :func:`_configure_logging`. ``sys.prefix`` points at the
+    active venv when the server runs from one, so logs live beside the install
+    rather than in an unpredictable CWD."""
+    return Path(sys.prefix) / "logs" / "room.log"
+
+
+def _configure_logging(
+    level_name: str, log_file: str | None
+) -> tuple[str | None, str | None]:
+    """Configure root logging for the room server: a level (from ``--log-level``
+    / ``--debug`` / ``CONSOLE_ROOM_LOG_LEVEL``) plus a **rotating file** on top of
+    the default stderr stream.
+
+    The file defaults to :func:`_default_log_path` (``{sys.prefix}/logs/room.log``,
+    the dir created ``exist_ok``); ``--log-file`` / ``CONSOLE_ROOM_LOG_FILE``
+    overrides the path. It uses a :class:`TimedRotatingFileHandler` that rolls at
+    **midnight** and keeps :data:`_LOG_BACKUP_DAYS` (7) days — so the server
+    always leaves a bounded, findable log instead of only stderr (which vanishes
+    when it runs backgrounded without a redirect).
+
+    Returns ``(warning, resolved_path)``: ``warning`` is a string when the log
+    dir/file couldn't be opened (logging then falls back to stderr only — never
+    fatal), and ``resolved_path`` is the file actually in use (or ``None``)."""
+    level = getattr(logging, str(level_name).upper(), logging.INFO)
+    handlers: list[logging.Handler] = [logging.StreamHandler()]  # stderr (always)
+    target = Path(log_file) if log_file else _default_log_path()
+    warning: str | None = None
+    resolved: str | None = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            TimedRotatingFileHandler(
+                str(target),
+                when="midnight",
+                backupCount=_LOG_BACKUP_DAYS,
+                encoding="utf-8",
+            )
+        )
+        resolved = str(target)
+    except OSError as exc:
+        warning = (
+            f"room: could not open log file {str(target)!r} ({exc}) — "
+            "logging to stderr only"
+        )
+    logging.basicConfig(level=level, format=_LOG_FORMAT, handlers=handlers, force=True)
+    return warning, resolved
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -268,6 +327,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="serve only the console NDJSON door (no web deps required)",
     )
+    parser.add_argument(
+        "--log-level",
+        default=_env("CONSOLE_ROOM_LOG_LEVEL", "info"),
+        choices=["debug", "info", "warning", "error"],
+        help="logging verbosity (default: info; also CONSOLE_ROOM_LOG_LEVEL). "
+        "Use 'debug' to see the per-connection handshake + frame lifecycle.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="shortcut for --log-level debug.",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=_env("CONSOLE_ROOM_LOG_FILE", ""),
+        help="path for the rotating log file (also CONSOLE_ROOM_LOG_FILE). "
+        "Defaults to {sys.prefix}/logs/room.log (a logs/ dir in the install's "
+        "venv). Rotates at midnight, keeps 7 days. Logs also always go to stderr.",
+    )
     return parser.parse_args(argv)
 
 
@@ -296,13 +374,25 @@ def main(argv: list[str] | None = None) -> None:
 
         raise SystemExit(connect_main(raw[1:]))
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
     # Load the optional config file first so its values populate the environment
     # the argparse defaults read from (config < env < CLI). Returns the team list.
     teams = _load_config(raw)
     args = _parse_args(raw)
+    # Configure logging from the parsed level/file (after config+args so --debug /
+    # --log-level / --log-file and any config-injected CONSOLE_ROOM_LOG_* win). A
+    # bare "INFO to stderr" was the old fixed behavior; --debug now unlocks the
+    # per-connection handshake/lifecycle detail and --log-file persists it.
+    level_name = "debug" if args.debug else args.log_level
+    file_warning, log_path = _configure_logging(level_name, args.log_file or None)
+    if file_warning:
+        logger.warning(file_warning)
+    if log_path:
+        logger.info(
+            "room: logging at %s → stderr + %s (rotates at midnight, keeps %d days)",
+            level_name,
+            log_path,
+            _LOG_BACKUP_DAYS,
+        )
     # --public-url is surfaced via the same env var the auth configs read, so the
     # flag and CONSOLE_ROOM_PUBLIC_URL stay a single source of truth.
     if args.public_url:
@@ -334,6 +424,7 @@ def main(argv: list[str] | None = None) -> None:
                 assignment_timeout=args.assignment_timeout,
                 mailbox=args.mailbox,
                 teams=teams,
+                log_level=level_name,
             )
     except KeyboardInterrupt:
         logger.info("room: shutting down")

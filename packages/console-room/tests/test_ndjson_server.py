@@ -77,6 +77,63 @@ def _reader(*frames: dict[str, Any]) -> asyncio.StreamReader:
     return r
 
 
+# ── connection-lifecycle logging ───────────────────────────────────────────────
+
+
+def test_hello_and_clean_eof_are_logged_at_debug(caplog):
+    """The received hello (before checks) and the clean-EOF close are logged at
+    DEBUG, so a short-lived console connection is diagnosable — the gap that made
+    a flapping room look silent server-side."""
+    import logging
+
+    async def scenario():
+        hub = Hub(FakeStore())
+        reader = _reader(
+            {"type": "hello", "room": "ops", "user": "alice@web01"},
+        )
+        await NdjsonConsoleConnection(reader, FakeWriter()).run(hub)
+
+    with caplog.at_level(logging.DEBUG, logger="console_room.ndjson"):
+        run(scenario())
+    msgs = [r.message for r in caplog.records]
+    # The hello is logged with what the console declared…
+    assert any("hello from" in m and "user='alice@web01'" in m for m in msgs)
+    assert any("mode=member" in m and "target='ops'" in m for m in msgs)
+    # …and the clean EOF that ended it is logged distinctly (not a read error).
+    assert any("clean EOF" in m for m in msgs)
+    assert not any("read error" in m for m in msgs)
+
+
+def test_read_error_logged_distinctly_from_clean_eof(caplog):
+    """A transport that raises mid-read logs a 'read error' line, separate from a
+    clean EOF — the 'why did it drop' signal, mirroring the console side."""
+    import logging
+
+    class BoomReader:
+        """First readline yields the hello; the second raises (transport died)."""
+
+        def __init__(self) -> None:
+            self._frames = [
+                (
+                    json.dumps({"type": "hello", "room": "ops", "user": "a"}) + "\n"
+                ).encode()
+            ]
+
+        async def readline(self) -> bytes:
+            if self._frames:
+                return self._frames.pop(0)
+            raise ConnectionResetError("transport died")
+
+    async def scenario():
+        hub = Hub(FakeStore())
+        await NdjsonConsoleConnection(BoomReader(), FakeWriter()).run(hub)
+
+    with caplog.at_level(logging.DEBUG, logger="console_room.ndjson"):
+        run(scenario())
+    msgs = [r.message for r in caplog.records]
+    assert any("read error" in m for m in msgs)
+
+
 # ── handshake ─────────────────────────────────────────────────────────────────
 
 

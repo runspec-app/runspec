@@ -4,6 +4,38 @@ All notable changes to `runspec-room` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 semantic versioning.
 
+## [0.35.0]
+
+### Added
+- **Log-level control + a rotating log file (on by default).** The server
+  hardcoded `INFO` to stderr with no way to raise verbosity and no file output —
+  so `--debug` was rejected (no such flag) and a backgrounded server left no
+  findable log. Now:
+  - `--log-level {debug,info,warning,error}` (+ a `--debug` shortcut,
+    `CONSOLE_ROOM_LOG_LEVEL`, and `[server] log_level` in the TOML config).
+    `--debug` unlocks the per-connection handshake/frame lifecycle; the level
+    also flows to uvicorn.
+  - Logs now **always** write to a rotating file **in addition to** stderr. The
+    default path is `{sys.prefix}/logs/room.log` — a `logs/` dir created
+    (`exist_ok`) inside the (virtual) environment the server is installed into —
+    overridable via `--log-file` / `CONSOLE_ROOM_LOG_FILE` / `[server] log_file`.
+    It uses a `TimedRotatingFileHandler` that **rolls at midnight and keeps 7
+    days**. If the dir/file can't be opened it logs a warning and falls back to
+    stderr only (never fatal).
+- **Richer console-connection lifecycle logging (NDJSON door).** The room now
+  logs the received `hello` (declared user / mode / room-or-namespace / mailbox)
+  *before* the accept checks, a per-frame DEBUG trace, and the pump-exit reason —
+  and, mirroring the console-side fix, `_read_frame` now distinguishes a **clean
+  EOF** (peer closed) from a **read error** (transport died mid-stream) instead
+  of returning silently on both. A console that connects, subscribes, then drops
+  is now diagnosable server-side at `--debug` rather than showing only
+  `subscribed` / `unsubscribed`.
+- **Exec-relay diagnostics.** `console-room connect` (the exec-channel transport)
+  gains opt-in stderr lifecycle logging via `CONSOLE_ROOM_CONNECT_DEBUG=1`
+  (connect established / EOF / socket errors, with the relay duration) — the only
+  window into why a relay exits, and thus why a console reports the room as down
+  in exec mode. Off by default; **never writes to stdout** (the data channel).
+
 ## [0.34.0]
 
 ### Changed

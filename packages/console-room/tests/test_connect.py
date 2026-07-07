@@ -57,3 +57,33 @@ def test_relay_reports_unreachable_port():
     rc = relay("127.0.0.1", 1, stdin, stdout)
     assert rc == 1
     assert stdout.getvalue() == b""
+
+
+def test_relay_diag_off_by_default_keeps_stderr_quiet(capsys, monkeypatch):
+    monkeypatch.delenv("CONSOLE_ROOM_CONNECT_DEBUG", raising=False)
+    port, server = _echo_server()
+    relay("127.0.0.1", port, io.BytesIO(b"hi\n"), io.BytesIO())
+    server.join(timeout=2)
+    # No lifecycle diagnostics without the opt-in env var.
+    assert capsys.readouterr().err == ""
+
+
+def test_relay_diag_writes_lifecycle_to_stderr_when_enabled(capsys, monkeypatch):
+    monkeypatch.setenv("CONSOLE_ROOM_CONNECT_DEBUG", "1")
+    port, server = _echo_server()
+    relay("127.0.0.1", port, io.BytesIO(b"hi\n"), io.BytesIO())
+    server.join(timeout=2)
+    err = capsys.readouterr().err
+    # Connect + a "relay ended … reason" line land on stderr, never stdout.
+    assert f"connected to 127.0.0.1:{port}" in err
+    assert "relay ended after" in err
+
+
+def test_relay_diagnostics_never_touch_stdout(capsys, monkeypatch):
+    monkeypatch.setenv("CONSOLE_ROOM_CONNECT_DEBUG", "1")
+    port, server = _echo_server()
+    stdout = io.BytesIO()
+    relay("127.0.0.1", port, io.BytesIO(b"payload\n"), stdout)
+    server.join(timeout=2)
+    # stdout is the data channel — it carries only the echoed bytes, no diag text.
+    assert stdout.getvalue() == b"payload\n"
