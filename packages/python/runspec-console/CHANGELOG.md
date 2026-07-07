@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.160.1] — 2026-07-07
+
+### Changed
+
+- **Richer debug logging around chat-room connect / subscribe / disconnect /
+  reconnect.** The room connection lifecycle was nearly silent — only the catalog
+  publish logged (`"chat: published N tool(s)"`), so a dropped-and-reconnected
+  room showed nothing but a repeated catalog line while the server logged only
+  `user subscribed` / `user unsubscribed`. Now: a successful connect logs at
+  **INFO** (`"chat: connected to <room> on host <host> as <user>"`), a genuine
+  drop after a healthy connection logs at **INFO**
+  (`"chat: <room> dropped after Ns up — reconnecting in Ns"`), and the
+  supervisor start/stop log a one-line summary. Under `--debug`: the hello (which
+  *is* the subscribe), presence, advertise, and catalog **sends** each log; the
+  tunnel/exec channel open logs; and — the key diagnostic — the transport now
+  distinguishes a **clean EOF** (peer/room server closed the channel) from a
+  **channel error** (SSH transport died mid-stream) at the byte level, so "why
+  did it drop" is answerable from the log. No behavior change beyond logging;
+  the flapping-detection dedup is preserved.
+
+
 ## [0.160.0] — 2026-07-07
 
 ### Added

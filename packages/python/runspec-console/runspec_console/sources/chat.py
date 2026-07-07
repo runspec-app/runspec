@@ -322,6 +322,10 @@ class ChatSource:
         self._thread.start()
 
     def stop(self) -> None:
+        logger.debug(
+            "chat: leaving %r (sending away + closing transport)",
+            self._namespace if self.is_agent else self._room,
+        )
         self._stop.set()
         self._send_presence("away")  # tell the room we're gone before closing
         transport = self._transport
@@ -366,6 +370,9 @@ class ChatSource:
             return
         try:
             transport.send({"type": "catalog", "tools": tools})
+            logger.debug(
+                "chat: → catalog (%d tool(s)) for %r", len(tools), self._namespace
+            )
         except Exception:
             logger.exception("chat: catalog send failed")
 
@@ -388,6 +395,7 @@ class ChatSource:
                     "display_name": self._queue_label or self._queue,
                 }
             )
+            logger.debug("chat: → advertise queue=%r email=%r", self._queue, email)
         except Exception:
             logger.exception("chat: advertise send failed")
 
@@ -445,6 +453,17 @@ class ChatSource:
             frame["mailbox"] = self._mailbox
         try:
             transport.send(frame)
+            # The hello IS the subscribe (the room derives "user subscribed" from
+            # it) — log it so the handshake is visible under --debug, since a
+            # dropped-then-resubscribed room otherwise shows nothing client-side.
+            logger.debug(
+                "chat: → hello (subscribe) as %r%s%s",
+                self._user or "(server-assigned)",
+                f" namespace={self._namespace!r}"
+                if self.is_agent
+                else f" room={self._room!r}",
+                f" mailbox={self._mailbox!r}" if self._mailbox else "",
+            )
         except Exception:
             logger.exception("chat: hello send failed")
 
@@ -461,6 +480,11 @@ class ChatSource:
             frame["room"] = self._room
         try:
             transport.send(frame)
+            logger.debug(
+                "chat: → presence %r for %r",
+                status,
+                self._namespace if self.is_agent else self._room,
+            )
         except Exception:
             logger.exception("chat: presence send failed")
 
@@ -516,6 +540,19 @@ class ChatSource:
                 logger.exception("chat: recv failed")
                 break
             if obj is None:  # channel closed
+                # The primary point a dropped room connection surfaces. Log which
+                # room/queue and whether we're stopping cleanly, so a --debug
+                # session shows the drop even before the supervisor's reconnect
+                # line. (The byte-level reason — clean EOF vs channel error — is
+                # logged one layer down in ChannelChatTransport._fill.)
+                target = self._namespace if self.is_agent else self._room
+                if self._stop.is_set():
+                    logger.debug("chat: channel closed for %r during stop()", target)
+                else:
+                    logger.debug(
+                        "chat: channel closed for %r — listener exiting (drop)",
+                        target,
+                    )
                 break
             self._handle(obj)
         # If the loop ended because the channel dropped (not a clean stop()),

@@ -115,12 +115,25 @@ class ChannelChatTransport:
             logger.debug("chat: channel send failed (channel closed?)", exc_info=True)
 
     def _fill(self) -> bool:
-        """Read one chunk into the buffer. ``False`` on EOF / closed / error."""
+        """Read one chunk into the buffer. ``False`` on EOF / closed / error.
+
+        Distinguishes the two ways a read ends so a dropped room connection is
+        diagnosable at ``--debug``: a **clean EOF** (peer/room server closed the
+        channel — ``recv`` returns b"") vs a **channel error** (the SSH transport
+        died mid-stream — ``recv`` raised). Both still return ``False`` (the recv
+        loop treats either as closed), but only now is the *reason* recorded."""
         try:
             chunk = self._chan.recv(_RECV_BYTES)
         except Exception:
+            # The SSH channel/transport died mid-stream (host dropped, tunnel
+            # collapsed). Kept at DEBUG with the stack for --debug investigation —
+            # the supervisor logs the user-facing "connection dropped" line.
+            logger.debug(
+                "chat: channel recv raised — treating as closed", exc_info=True
+            )
             return False
         if not chunk:
+            logger.debug("chat: channel EOF (peer closed the connection)")
             return False
         self._buf += chunk
         return True
@@ -153,7 +166,11 @@ class ChannelChatTransport:
             try:
                 chan.close()
             except Exception:
-                pass
+                # Closing an already-dead channel is expected on teardown; keep
+                # the detail for --debug without spilling a stack to the terminal.
+                logger.debug(
+                    "chat: channel close failed (already closed?)", exc_info=True
+                )
         release, self._release = self._release, None
         if release is not None:
             try:
@@ -180,6 +197,12 @@ def make_tunnel_transport_factory(
     """
 
     def factory() -> ChatTransport:
+        logger.debug(
+            "chat: opening direct-tcpip tunnel to %s:%d via %s",
+            dest_host,
+            dest_port,
+            ssh_target,
+        )
         channel, release = pool.open_direct_tcpip(
             ssh_target,
             dest_host,
@@ -367,6 +390,11 @@ def make_host_room_exec_factory(
     over its stdio. For networks that block SSH port-forwarding; no tunnel."""
 
     def factory() -> ChatTransport:
+        logger.debug(
+            "chat: opening exec channel on %s — %r",
+            spec.get("ssh_target"),
+            spec.get("exec_command"),
+        )
         channel, release = pool.open_exec(
             str(spec["ssh_target"]),
             str(spec["exec_command"]),

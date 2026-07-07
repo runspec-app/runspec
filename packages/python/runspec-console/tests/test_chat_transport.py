@@ -130,6 +130,31 @@ def test_recv_returns_none_on_channel_error():
     assert ChannelChatTransport(Boom()).recv() is None
 
 
+def test_clean_eof_logs_peer_closed(caplog):
+    """A clean EOF (recv → b"") is logged distinctly from a channel error, so a
+    dropped room connection is diagnosable at --debug."""
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger="runspec.console.triggers.chat"):
+        assert ChannelChatTransport(FakeChannel([])).recv() is None
+    assert any("EOF" in r.message for r in caplog.records)
+    assert not any("recv raised" in r.message for r in caplog.records)
+
+
+def test_channel_error_logs_recv_raised(caplog):
+    """A mid-stream channel error (recv raised) is logged with its own line +
+    stack, separate from the clean-EOF case — this is the 'why did it drop'."""
+    import logging
+
+    class Boom(FakeChannel):
+        def recv(self, n):
+            raise OSError("transport died")
+
+    with caplog.at_level(logging.DEBUG, logger="runspec.console.triggers.chat"):
+        assert ChannelChatTransport(Boom()).recv() is None
+    assert any("recv raised" in r.message for r in caplog.records)
+
+
 # ── close ─────────────────────────────────────────────────────────────────────
 
 

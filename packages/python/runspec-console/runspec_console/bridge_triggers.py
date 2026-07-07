@@ -309,6 +309,12 @@ class TriggersMixin:
                 )
             else:
                 factory = make_host_room_factory(pool, spec, global_ssh_config=ssh_cfg)
+            logger.debug(
+                "chat: starting supervisor for %r on host %r (via %s)",
+                room,
+                spec["host"],
+                spec.get("via") or "tunnel",
+            )
             threads[room] = threading.Thread(
                 target=self._chat_supervise,
                 args=(spec, factory),
@@ -319,6 +325,7 @@ class TriggersMixin:
             self._chat_supervisors = threads
         for thread in threads.values():
             thread.start()
+        logger.info("chat: started %d room supervisor(s)", len(threads))
 
     def _room_specs(self) -> list[dict[str, Any]]:
         """Room specs from fleet host entries, with a legacy ``[chat]`` fallback
@@ -366,6 +373,8 @@ class TriggersMixin:
         with self._lock:
             threads = list(self._chat_supervisors.values())
             self._chat_supervisors = {}
+        if threads:
+            logger.info("chat: stopping %d room supervisor(s)", len(threads))
         for thread in threads:
             thread.join(timeout=3)
         with self._lock:
@@ -446,6 +455,16 @@ class TriggersMixin:
                 if queue:
                     self._agent_rooms[room] = user
             connected_at = time.monotonic()
+            # A successful connect is a state change worth INFO (parallel to the
+            # catalog "published N tools" line) — this was previously silent, so a
+            # dropped-then-reconnected room only ever showed its catalog republish.
+            logger.info(
+                "chat: connected to %r on host %r as %r%s",
+                room,
+                host,
+                user,
+                f" (queue {queue!r})" if queue else "",
+            )
             if queue:
                 # Publish the queue's self-service catalog right after subscribing
                 # (forced — a fresh connection's hub has no catalog yet; later
@@ -474,18 +493,30 @@ class TriggersMixin:
                 "runspec:room_connection",
                 {"room": room, "host": host, "connected": False, "queue": queue},
             )
+            uptime = time.monotonic() - connected_at
             if self._chat_stop.is_set():
+                logger.debug("chat: %r closed on stop() after %.0fs up", room, uptime)
                 break
             # Reset the backoff only if the connection proved *healthy* (stayed up
             # past the min-healthy window). A connection the room opens then drops
             # almost immediately is flapping — typically the room rejecting this
             # console after the hello (the queue mailbox can't be watched, or an
-            # identity/mailbox mismatch). Keep backing off so we don't spin a tight
+            # identity/mismatch). Keep backing off so we don't spin a tight
             # reconnect + catalog-republish loop, and log the reason once.
-            if time.monotonic() - connected_at >= self._CHAT_MIN_HEALTHY:
+            if uptime >= self._CHAT_MIN_HEALTHY:
                 backoff = self._CHAT_BACKOFF_START
                 with self._lock:
                     self._chat_connect_log.pop(room, None)  # a later drop re-logs
+                # A genuine drop after a healthy connection is a state change worth
+                # INFO — the "connection disconnected" event that was previously
+                # invisible (only the catalog republish showed). See the byte-level
+                # reason (clean EOF vs channel error) in the chat.* DEBUG lines.
+                logger.info(
+                    "chat: %r dropped after %.0fs up — reconnecting in %.0fs",
+                    room,
+                    uptime,
+                    backoff,
+                )
             else:
                 message = (
                     "room closed the connection right after it opened — it may be "
@@ -497,6 +528,13 @@ class TriggersMixin:
                     self._chat_connect_log[room] = message
                 if not already:
                     logger.warning("chat: room %r — %s", room, message)
+                else:
+                    logger.debug(
+                        "chat: %r flapped again (%.1fs up) — backing off %.0fs",
+                        room,
+                        uptime,
+                        backoff,
+                    )
             # Unexpected drop → back off, then reconnect.
             if self._chat_stop.wait(backoff):
                 break

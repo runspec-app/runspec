@@ -172,6 +172,21 @@ def test_start_sends_hello_first_with_identity():
     assert first_presence > 0
 
 
+def test_hello_logs_subscribe_at_debug(caplog):
+    """The hello IS the subscribe — it should log at DEBUG so the handshake is
+    visible under --debug (the gap the user hit: a resubscribe showed nothing)."""
+    import logging
+
+    transport = FakeTransport()
+    src = ChatSource(room="ops", user="console-1", transport=transport)
+    with caplog.at_level(logging.DEBUG, logger="runspec.console.triggers.chat"):
+        src.start(lambda ev: None)
+        src.stop()
+    subscribe_logs = [r for r in caplog.records if "hello (subscribe)" in r.message]
+    assert subscribe_logs, "expected a DEBUG subscribe log from the hello"
+    assert "room='ops'" in subscribe_logs[0].message
+
+
 def test_hello_carries_mailbox_when_configured():
     transport = FakeTransport()
     src = ChatSource(
