@@ -1,5 +1,12 @@
 # venv-based scheduler service (`runspec-scheduler`)
 
+> **Status: shelved — standalone-bound.** The `runspec-scheduler` package is
+> published and works standalone. A console integration to *delegate* Schedules to
+> it shipped in runspec-console 0.162.0 and was **removed in 0.163.0** — see
+> [Decision: console delegation removed](#decision-console-delegation-removed).
+> The package is kept as the basis for a future **standalone, shared** scheduler,
+> not wired into the console today.
+
 ## Problem
 
 Console-driven schedules (the Schedules tab) only fire while the desktop
@@ -26,7 +33,7 @@ It is a long-running per-venv daemon managed by `systemctl --user` (like
 | `run` | the daemon (systemd `ExecStart`): APScheduler jobs from the config, exec on fire, mtime hot-reload |
 | `add` | append/replace a `[[schedule]]` by `--id`, then hot-reload |
 | `remove` | delete a schedule (+ its credential env file), then hot-reload |
-| `list` | print schedules as JSON — what the console reads to display/verify remote schedules |
+| `list` | print schedules as JSON |
 | `run-now` | fire one schedule immediately |
 | `install-service` | write + enable the per-venv systemd `--user` unit |
 
@@ -39,8 +46,9 @@ sees a half-written file. A rotating audit log lands at `{sys.prefix}/logs/sched
 **Timing** (`cron` / `every`) is a deliberate, small **duplicate** of the pure
 helpers in `runspec_console.sources.schedule` (`When`, `_parse_every`,
 `parse_when`, `when_to_trigger`, `next_fire_time`) — the "Node mirrors Python"
-parity pattern, so a delegated schedule fires *identically* whether the console or
-the host runs it. `tests/test_timing.py::test_parity_with_console` pins this.
+parity pattern, so this daemon fires a schedule *identically* to the way the
+console would. `tests/test_timing.py::test_parity_with_console` pins this (it
+skips when runspec-console isn't installed).
 
 **Multi-venv hosts** run one daemon per venv; `install-service` names the unit
 `runspec-scheduler-<venv>.service`. The daemon excludes `runspec-scheduler` and
@@ -56,69 +64,71 @@ resilient here: it always writes the unit file (a plain write, no bus), recovers
 `sudo -u` still works), and on a bus failure returns an actionable `hint` with
 the exact login-shell + lingering commands rather than a bare systemd error.
 
-## Console integration — source of truth = the host
+## Decision: console delegation removed
 
-Remote schedules are **shared across operators** and the **host is the source of
-truth**. The console is a shared editor/viewer, not the owner:
+A first attempt integrated this daemon into the runspec-console Schedules tab
+(console 0.162.0): a "Run from → Host's scheduler" toggle, the console reading
+each host's schedules live via `runspec-scheduler list` and CRUD-ing them over
+SSH (`runner="host"` schedules, source of truth = the host), and a credential
+picker that shipped the operator's selected credentials to the host's
+`RUNSPEC_ENV_FILE`. **This was removed in console 0.163.0.** Two reasons:
 
-- **Read.** Each refresh cycle, for every venv that has a `runspec-scheduler`
-  (found in `_runnables_cache`), the bridge runs `runspec-scheduler list` over
-  SSH and caches the result (`_remote_sched_cache`, keyed by `(host, group)`,
-  with an `ok`/`unreachable` status). `get_schedules` merges these (tagged
-  `runner="host"`) with the operator's own console schedules (tagged
-  `runner="console"`). Remote schedules are **never** written to the operator's
-  `runspec_schedules.toml`.
-- **Write.** Create/update/delete of a `runner="host"` schedule invokes the
-  scheduler's own `add`/`remove` verbs over the existing SSH executor
-  (`invoke_runnable`, which already handles subcommands + credential injection).
-  A short `Event`-gated wrapper (`_invoke_scheduler_sync`) makes the streaming
-  call synchronous so the UI gets success/failure inline.
-- **Display.** A **Runner** column badges each row Console vs Remote with a live
-  status dot. The "Run from" toggle in the modal is enabled only when the chosen
-  host has a `runspec-scheduler` in the **same venv** as the target runnable.
+1. **Model mismatch.** runspec-console is deliberately *single-user* — one
+   operator, one machine, personal state. "Shared, always-on, host-owned"
+   schedules are a different ownership model; grafting them onto the console
+   (host-as-source-of-truth, shared across all operators) fought that grain.
+2. **Trust blast radius (the deciding factor).** Making the console a path that
+   routes an *operator's* credentials onto a shared host for a shared daemon is a
+   risk we don't want. runspec-console's adoption depends on corporate IT trusting
+   it — a trust they can withdraw instantly. One mistake or one bad actor writing
+   credentials to a shared resource could taint that trust for everyone. Keeping
+   credentials sealed in the operator's own OS keychain — never shipped anywhere
+   by the console — protects that posture.
 
-All new bridge methods are private, so the frozen JS API surface is unchanged.
+So the console stays purely local (console-fired) schedules, and credential
+handling in the console stays keychain-only. This package is retained as the
+foundation for a **standalone** scheduler instead.
 
-## Secrets — `RUNSPEC_ENV_FILE`, owned by `run_as`
+## Credentials in the daemon — `RUNSPEC_ENV_FILE`, owned by `run_as`
 
-The console isn't present when a remote schedule fires, so selected credentials
-must be **persisted on the host**. `runspec-scheduler` leans on the core
-`RUNSPEC_ENV_FILE` mechanism (a tier-1 absolute-path env-var override read by
-`parse()`, with no reader-side permission check):
+Independent of any console, the daemon can run a `run_as` runnable with
+credentials via the core `RUNSPEC_ENV_FILE` mechanism (a tier-1 absolute-path
+env-var override read by `parse()`, no reader-side permission check):
 
-1. In the modal, for a runnable that declares `run_as`, the operator picks
-   credentials (reusing the Forms env-var derivation). The console passes the
-   selected `credential_ids` to `invoke_runnable` (which injects the derived
-   **values** into the remote `runspec-scheduler add` process's environment via
-   the existing `env(1)`-through-sudo channel) and the derived **names** as
-   `--cred-vars` (names aren't secret; values never touch argv).
-2. `runspec-scheduler add` writes those vars to a **600 dotenv file owned by the
-   `run_as` account**, in that account's own `$HOME`
-   (`~/.config/runspec-scheduler/env/<id>.env`). It is written **as** `run_as`
-   (`sudo -u <run_as>`, the same passwordless-sudo right that running the runnable
-   already needs) with the secret content on **stdin** — so no shared
-   world-writable directory and no `chown` (root) is required, and the secret
-   never appears in `/proc/<pid>/cmdline`.
-3. On fire, the daemon sets `RUNSPEC_ENV_FILE=<that file>` and escalates to
-   `run_as`; the runnable reads its own 600 file. One file **per schedule** (not
-   one shared file) isolates credentials, makes deletion trivial, and lets
-   different schedules use different `run_as` accounts.
+- `runspec-scheduler add --cred-vars '["JIRA_USER","JIRA_PASSWORD"]'` captures
+  those **named** variables from the `add` process's *own environment* (the caller
+  injects the values; only the non-secret names are arguments) and writes them to
+  a **600 dotenv file owned by the `run_as` account** in that account's `$HOME`
+  (`~/.config/runspec-scheduler/env/<id>.env`). It's written **as** `run_as`
+  (`sudo -u <run_as>`, secret on **stdin**) — no shared world-writable dir, no
+  `chown`/root, and the secret never lands in `/proc/<pid>/cmdline`.
+- On fire, the daemon sets `RUNSPEC_ENV_FILE=<that file>` and escalates to
+  `run_as`; the runnable reads its own 600 file. One file **per schedule** isolates
+  credentials and makes deletion trivial.
 
-### Limitations (documented)
+This is the mechanism a future front-end (below) — or an operator scripting `add`
+by hand — uses. It does **not** depend on the console, and the console no longer
+drives it.
 
-- A remote schedule for a **non-`run_as`** runnable runs as the daemon's own user
-  with the daemon's environment (systemd `EnvironmentFile`) — no console
-  credential injection; the credential picker is hidden.
-- **Secrets now rest on the host** in a 600 file owned by the service account (vs
-  the console keyring) — a deliberate trade-off for always-on unattended
-  execution.
-- Requires the daemon/SSH user to have passwordless `sudo -u <run_as>` — the same
-  precondition as running that `run_as` runnable at all (bootstrapped by
-  `runspec-linux enable-passwordless-sudo`).
+## Future direction — a standalone, shared scheduler
 
-## Not in scope
+The natural home for "shared, always-on, cross-host" scheduling is a **standalone
+service**, not the single-user console:
+
+- Its **own governed, shared credential store** (audited, owned by the service /
+  ops team) — never an individual operator's keychain. This is the crux: shared
+  scheduling needs shared, governed secrets, separate from the console's per-user
+  trust boundary.
+- **Cross-host / cross-venv** targeting and a fleet view — a "shared, always-on
+  console" in spirit, rather than a per-venv localhost daemon.
+- Likely built *on* this package's daemon/config/timing/envfile core (all
+  reusable), with a thin control plane on top.
+
+Until then, `runspec-scheduler` is usable directly on a host (CLI + systemd) for
+the single-venv, local case.
+
+## Not in scope (for the current package)
 
 Scheduling is **runnable-only** (the daemon runs runnables, not agent prompts or
-runbooks — those stay console-only, since they need the LLM/agent loop). Remote
-schedules are single-host (no group/anyhost/selected fan-out — that's a console
-targeting concern).
+runbooks — those need an LLM/agent loop). Config is **local-only** — no
+host/group targeting; the daemon runs its own venv on localhost.

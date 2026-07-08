@@ -35,10 +35,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
 
-# Display-only / routing keys that must never be persisted to a console
-# schedule's runspec_schedules.toml entry.
-_TRANSIENT_KEYS = ("runner", "status", "credential_ids", "nextRun")
-
 
 class SchedulesMixin:
     def _read_schedules(self) -> list[dict[str, Any]]:
@@ -59,25 +55,18 @@ class SchedulesMixin:
     def get_schedules(self) -> list[dict[str, Any]]:
         """The schedules for the Schedules tab, each with a computed ``nextRun``.
 
-        Two kinds are merged: this operator's own **console** schedules (from
-        ``runspec_schedules.toml``, fired by the console's APScheduler) tagged
-        ``runner="console"``, and the shared **remote** schedules read live from
-        each host's ``runspec-scheduler`` daemon (source of truth = the host)
-        tagged ``runner="host"`` with a live ``status``.
-
-        ``nextRun`` is the next fire time (ISO-8601) for an enabled schedule. It
-        is **display-only** — never written back to the TOML (see
-        :meth:`_read_schedules`)."""
+        ``nextRun`` is the next fire time (ISO-8601) for an enabled schedule,
+        derived from its ``when`` via APScheduler. It is **display-only** —
+        omitted when APScheduler isn't installed or the schedule is disabled, and
+        never written back to the TOML (see :meth:`_read_schedules`)."""
         out = []
         for s in self._read_schedules():
             entry = dict(s)
-            entry.setdefault("runner", "console")
             if entry.get("enabled", True):
                 nxt = self._schedule_next_run(s)
                 if nxt:
                     entry["nextRun"] = nxt
             out.append(entry)
-        out.extend(self._remote_schedules())
         return out
 
     def _schedule_next_run(self, raw: dict[str, Any]) -> str:
@@ -94,261 +83,10 @@ class SchedulesMixin:
         except Exception:
             return ""
 
-    # ── remote (host-run) schedules ─────────────────────────────────────────
-    #
-    # Remote schedules live on the host in its runspec-scheduler daemon and are
-    # SHARED across operators — the host is the source of truth. The console
-    # reads them live (``runspec-scheduler list``) and CRUDs against the host by
-    # invoking the scheduler's own verbs over SSH (reusing invoke_runnable, so
-    # subcommands + credential injection come for free). They are never written
-    # to this operator's user-specific runspec_schedules.toml.
-
-    def _strip_transient(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Drop display-only / routing keys before persisting a console schedule."""
-        return {k: v for k, v in data.items() if k not in _TRANSIENT_KEYS}
-
-    def _scheduler_targets(self) -> list[dict[str, Any]]:
-        """Each venv on the fleet with a ``runspec-scheduler`` installed:
-        ``{host, group, runspec_path, ssh, identityFile}`` (one per host+venv)."""
-        targets: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        with self._lock:
-            cache = list(self._runnables_cache)
-        for r in cache:
-            if r.get("name") != "runspec-scheduler":
-                continue
-            host, group = r.get("host", ""), r.get("group", "")
-            key = (host, group)
-            if not host or key in seen:
-                continue
-            entry = self._host_entry(host)
-            if entry is None:
-                continue
-            rp = next(
-                (p for p in utils_mod._paths(entry) if hosts_mod.venv_name(p) == group),
-                "",
-            )
-            if not rp:
-                continue
-            seen.add(key)
-            targets.append(
-                {
-                    "host": host,
-                    "group": group,
-                    "runspec_path": rp,
-                    "ssh": entry.get("ssh"),
-                    "identityFile": entry.get("identityFile"),
-                }
-            )
-        return targets
-
-    def _run_scheduler_list(self, target: dict[str, Any]) -> list[dict[str, Any]]:
-        """Run ``runspec-scheduler list`` on one venv; return its schedule dicts.
-        Raises on a non-zero exit or unparseable output."""
-        bin_dir = Path(target["runspec_path"]).parent
-        sched_bin = f"{bin_dir.as_posix()}/runspec-scheduler"
-        ssh = target.get("ssh")
-        if ssh:
-            runner = self._ssh_pool.run if self._ssh_pool is not None else None
-            if runner is None:
-                from .executor import ssh_run as runner
-            code, out, err = runner(
-                ssh,
-                f"{sched_bin} list",
-                identity_file=target.get("identityFile"),
-                global_ssh_config=self.get_config().get("ssh"),
-            )
-        else:
-            import subprocess
-
-            proc = subprocess.run([sched_bin, "list"], capture_output=True, text=True)
-            code, out, err = proc.returncode, proc.stdout, proc.stderr
-        if code != 0:
-            raise RuntimeError(err or f"runspec-scheduler list exited {code}")
-        data = json.loads(out)
-        return list(data.get("schedules", []))
-
-    def _refresh_remote_schedules(self) -> None:
-        """Read every scheduler venv's schedules into the cache (each refresh
-        cycle). An unreachable host keeps its last-known schedules but is flagged
-        ``status="unreachable"``."""
-        fresh: dict[tuple[str, str], dict[str, Any]] = {}
-        for t in self._scheduler_targets():
-            key = (t["host"], t["group"])
-            try:
-                fresh[key] = {"schedules": self._run_scheduler_list(t), "status": "ok"}
-            except Exception:
-                logger.debug(
-                    "schedule: remote list failed for %s/%s",
-                    t["host"],
-                    t["group"],
-                    exc_info=True,
-                )
-                with self._lock:
-                    prev = self._remote_sched_cache.get(key, {})
-                fresh[key] = {
-                    "schedules": prev.get("schedules", []),
-                    "status": "unreachable",
-                }
-        with self._lock:
-            self._remote_sched_cache = fresh
-
-    def _remote_schedules(self) -> list[dict[str, Any]]:
-        """Flatten the remote-schedule cache into UI schedule dicts (runner=host)."""
-        out: list[dict[str, Any]] = []
-        with self._lock:
-            cache = {k: dict(v) for k, v in self._remote_sched_cache.items()}
-        for (host, group), info in cache.items():
-            status = info.get("status", "ok")
-            for s in info.get("schedules", []):
-                entry = dict(s)
-                entry["runner"] = "host"
-                entry["host"] = host
-                entry["group"] = group
-                entry["status"] = status
-                if s.get("next_run"):
-                    entry["nextRun"] = s["next_run"]
-                out.append(entry)
-        return out
-
-    def _host_has_scheduler(self, host: str, group: str) -> bool:
-        """Whether ``host`` has a ``runspec-scheduler`` in the ``group`` venv."""
-        with self._lock:
-            return any(
-                r.get("name") == "runspec-scheduler"
-                and r.get("host") == host
-                and r.get("group") == group
-                for r in self._runnables_cache
-            )
-
-    def _remote_schedule_lookup(self, sid: str) -> tuple[str, str] | None:
-        """``(host, group)`` for a remote schedule id, or ``None``."""
-        with self._lock:
-            cache = {k: dict(v) for k, v in self._remote_sched_cache.items()}
-        for (host, group), info in cache.items():
-            if any(s.get("id") == sid for s in info.get("schedules", [])):
-                return host, group
-        return None
-
-    def _target_group(self, host: str, runnable: str) -> str:
-        """The venv group of ``runnable`` on ``host`` (so the scheduler in the same
-        venv is chosen for the delegated command)."""
-        with self._lock:
-            for r in self._runnables_cache:
-                if r.get("host") == host and r.get("name") == runnable:
-                    return str(r.get("group", ""))
-        return ""
-
-    def _cred_var_names(self, credential_ids: list[str] | None) -> list[str]:
-        """The env-var names the selected credentials would set (no values)."""
-        from . import credentials as cred_mod
-
-        names: list[str] = []
-        for cid in credential_ids or []:
-            entry = self._credential_entry(cid)
-            if not entry:
-                continue
-            for n in cred_mod.env_var_names(
-                str(entry.get("label", "")), str(entry.get("kind", "userpass"))
-            ):
-                if n not in names:
-                    names.append(n)
-        return names
-
-    def _invoke_scheduler_sync(
-        self,
-        host: str,
-        group: str,
-        command_path: list[str],
-        args: dict[str, Any],
-        credential_ids: list[str] | None = None,
-        timeout: float = 45.0,
-    ) -> tuple[int, str]:
-        """Run a ``runspec-scheduler`` verb on a host and block for its result.
-
-        Reuses ``invoke_runnable`` (SSH exec + credential injection); an ``Event``
-        set from the ``done`` progress event turns the streaming call synchronous
-        so the UI gets success/failure inline."""
-        done = threading.Event()
-        state: dict[str, Any] = {"exit_code": -1, "output": []}
-
-        def on_progress(kind: str, data: dict[str, Any]) -> None:
-            if kind == "line":
-                state["output"].append(data.get("line", ""))
-            elif kind == "done":
-                state["exit_code"] = int(data.get("exit_code", -1))
-                done.set()
-
-        self.invoke_runnable(
-            host,
-            "runspec-scheduler",
-            dict(args),
-            command_path=list(command_path),
-            group=group,
-            credential_ids=credential_ids,
-            operator="Console",
-            trigger="schedule-remote",
-            on_progress=on_progress,
-        )
-        if not done.wait(timeout):
-            raise RuntimeError("runspec-scheduler command timed out")
-        return int(state["exit_code"]), "\n".join(state["output"])
-
-    def _remote_add_args(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Build the ``runspec-scheduler add`` arg dict from a schedule payload."""
-        when = data.get("when") or {}
-        args: dict[str, Any] = {"id": data["id"], "runnable": data["runnable"]}
-        if when.get("cron"):
-            args["cron"] = when["cron"]
-        if when.get("every"):
-            args["every"] = when["every"]
-        if when.get("timezone"):
-            args["timezone"] = when["timezone"]
-        if data.get("args"):
-            args["args"] = json.dumps(data["args"])
-        args["enabled"] = bool(data.get("enabled", True))
-        names = self._cred_var_names(data.get("credential_ids"))
-        if names:
-            args["cred-vars"] = json.dumps(names)
-        return args
-
-    def _remote_create(self, data: dict[str, Any]) -> None:
-        """Create/replace a shared schedule on the host's scheduler daemon."""
-        host = data.get("host", "")
-        group = self._target_group(host, data.get("runnable", ""))
-        if not host or not group:
-            raise ValueError("a remote schedule needs a host that carries the runnable")
-        if not self._host_has_scheduler(host, group):
-            raise ValueError(
-                f"host {host!r} has no runspec-scheduler in the {group!r} venv"
-            )
-        args = self._remote_add_args(data)
-        code, out = self._invoke_scheduler_sync(
-            host,
-            group,
-            ["add"],
-            args,
-            credential_ids=data.get("credential_ids") or None,
-        )
-        if code != 0:
-            raise RuntimeError(f"remote add failed: {out.strip()[:400]}")
-        self._refresh_remote_schedules()
-        self._dispatch("runspec:schedules_changed", {})
-
-    def _remote_delete(self, host: str, group: str, sid: str) -> None:
-        code, out = self._invoke_scheduler_sync(host, group, ["remove"], {"id": sid})
-        if code != 0:
-            raise RuntimeError(f"remote remove failed: {out.strip()[:400]}")
-        self._refresh_remote_schedules()
-        self._dispatch("runspec:schedules_changed", {})
-
     def create_schedule(self, data: dict[str, Any]) -> None:
-        if data.get("runner") == "host":
-            self._remote_create(data)
-            return
         path = config_mod.hosts_path().parent / "runspec_schedules.toml"
         schedules = self._read_schedules()
-        schedules.append(self._strip_transient(data))
+        schedules.append(data)
         _write_schedules(path, schedules)
         # Rebuild the engine so the new schedule's APScheduler job starts now
         # (mirrors save_trigger / set_trigger_enabled).
@@ -361,12 +99,8 @@ class SchedulesMixin:
         toggle. Falls back to appending if no entry matches (so a stale id can't
         silently drop an edit). Restarts the engine so the change takes effect
         immediately — same as create/delete."""
-        if data.get("runner") == "host":
-            # A shared host schedule: re-add on the host (add replaces by id).
-            self._remote_create({**data, "id": id})
-            return
         path = config_mod.hosts_path().parent / "runspec_schedules.toml"
-        entry = self._strip_transient(data)
+        entry = {k: v for k, v in data.items() if k != "nextRun"}
         entry["id"] = id
         schedules = self._read_schedules()
         replaced = False
@@ -381,13 +115,6 @@ class SchedulesMixin:
         self.restart_triggers()
 
     def delete_schedule(self, id: str) -> None:
-        # A console schedule lives in the local TOML; a remote one on its host.
-        local_ids = {s.get("id") for s in self._read_schedules()}
-        if id not in local_ids:
-            found = self._remote_schedule_lookup(id)
-            if found is not None:
-                self._remote_delete(found[0], found[1], id)
-                return
         path = config_mod.hosts_path().parent / "runspec_schedules.toml"
         schedules = [s for s in self._read_schedules() if s.get("id") != id]
         _write_schedules(path, schedules)
@@ -405,27 +132,6 @@ class SchedulesMixin:
         way."""
         raw = next((s for s in self._read_schedules() if s.get("id") == id), None)
         if raw is None:
-            # Not a console schedule — try a shared host schedule (fire it on the
-            # host's daemon via run-now).
-            found = self._remote_schedule_lookup(id)
-            if found is not None:
-                host, group = found
-                code, out = self._invoke_scheduler_sync(
-                    host, group, ["run-now"], {"id": id}
-                )
-                payload: dict[str, Any] = {}
-                last = out.strip().splitlines()[-1] if out.strip() else ""
-                try:
-                    payload = json.loads(last) if last else {}
-                except Exception:
-                    payload = {}
-                return {
-                    "action": "runnable",
-                    "runner": "host",
-                    "host": host,
-                    "runnable": payload.get("runnable", ""),
-                    "exit_code": payload.get("exit_code"),
-                }
             raise ValueError(f"no schedule with id {id!r}")
         from .sources.schedule import event_payload, parse_schedule_entry
 

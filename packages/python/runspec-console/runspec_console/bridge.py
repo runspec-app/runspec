@@ -160,12 +160,6 @@ class Bridge(
         # binary path, which is wrong for pipx / ~/.local / system installs.
         self._remote_logdir_cache: dict[str, list[str]] = {}
         self._runnables_cache: list[dict[str, Any]] = []
-        # Remote (host-run) schedules read live from each host's runspec-scheduler
-        # daemon: (host, group) → {"schedules": [...], "status": "ok"|"unreachable"}.
-        # The host is the source of truth for these shared schedules; the console
-        # reads them each refresh cycle and displays them alongside its own
-        # user-specific (console) schedules. Guarded by ``self._lock``.
-        self._remote_sched_cache: dict[tuple[str, str], dict[str, Any]] = {}
         # Fleet-discovery readiness, so the agent isn't "blind" on the first turn
         # after launch (search mode's catalog index is empty until discovery runs)
         # and the UI can show a "discovering N/M hosts…" indicator. ``_discovery_ready``

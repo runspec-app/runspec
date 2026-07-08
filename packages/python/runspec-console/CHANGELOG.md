@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.163.0] — 2026-07-08
+
+### Removed
+
+- **Schedules — host-delegation (the "Run from → Host's scheduler" feature added
+  in 0.162.0) is removed.** On reflection it didn't fit the console's single-user
+  model, and — the deciding factor — routing an *operator's* credentials onto a
+  shared host for a shared always-on daemon is a trust risk we don't want in the
+  console: one mistake or one bad actor could taint corporate IT's trust in the
+  console for everyone. Credentials now stay sealed in the operator's own keychain
+  and are never shipped anywhere by the console. Reverts the `runner`/`status`/
+  `credential_ids` schedule fields, the remote-schedule read/CRUD bridge helpers +
+  `_remote_sched_cache` refresh hook, and the modal's "Run from" toggle / credential
+  picker / Runner column — the Schedules tab is back to purely local (console-fired)
+  schedules. The **`runspec-scheduler`** package remains on PyPI as the basis for a
+  future *standalone, shared* scheduler with its own governed credential store (see
+  `docs/design/venv-scheduler.md`).
+
 ## [0.162.0] — 2026-07-08
 
 ### Added

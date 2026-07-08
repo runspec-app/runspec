@@ -677,15 +677,6 @@ class InternalsMixin:
         except Exception:
             logger.exception("chat: catalog republish after discovery failed")
 
-        # Read the shared, host-run schedules from every venv that has a
-        # runspec-scheduler, so the Schedules tab shows them (with live status)
-        # alongside this operator's own console schedules.
-        try:
-            self._refresh_remote_schedules()
-            self._dispatch("runspec:schedules_changed", {})
-        except Exception:
-            logger.exception("schedule: remote-schedule refresh failed")
-
         # Close transports that have gone idle beyond their TTL (cheap, per-cycle
         # — no separate timer thread).
         if self._ssh_pool is not None:
