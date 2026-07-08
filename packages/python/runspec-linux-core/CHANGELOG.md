@@ -1,5 +1,24 @@
 # runspec-linux-core Changelog
 
+## [0.3.5] — 2026-07-08
+
+Apply the same umask-neutralising treatment to `install_into_venv` that `0.3.4`
+added to `create_venv`. After the `pip install`, the venv tree is now
+normalised with `chmod -R u=rwX,go=rX <venv>` so pip's new directories are
+`755` regardless of the caller's umask.
+
+The trigger was a `sudo pip install --upgrade runspec-linux` under a host
+where sudo/PAM had switched to a `027` login umask: pip's new
+`site-packages/runspec_linux/` and `site-packages/runspec_linux_core/`
+directories landed at `750`, and `runspec local` (walking `.dist-info` via
+`importlib.metadata`) stopped seeing the packs for any user but the owner.
+The equivalent bug for the venv root was fixed at build time in `0.3.4`; this
+release closes the same gap at upgrade time.
+
+If `<venv>/logs` exists (created by `create_venv`), its `2775` setgid mode is
+restored after the wide chmod — the `test -d` guard skips the restore for a
+venv built some other way. When `run_as` is set the new steps escalate too.
+
 ## [0.3.4] — 2026-07-07
 
 Fix `create_venv` producing an unreadable `750` venv directory when the caller's

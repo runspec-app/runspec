@@ -1,5 +1,17 @@
 # runspec-linux Changelog
 
+## [0.6.2] — 2026-07-08
+
+Pull in `runspec-linux-core >= 0.3.5` so `install-into-venv` now normalises the
+venv tree to `755`-on-dirs / `644`-on-files after `pip install`, matching what
+`create-venv` already does at build time. Fixes upgrades under `sudo` with a
+`027` login umask landing `site-packages/runspec_linux/` at `750` and hiding
+the runnables from `runspec local` for anyone but the venv owner. See the core
+changelog. Bare `sudo pip install --upgrade` (not going through the runnable)
+still needs a host-level fix — a manual `sudo chmod -R u=rwX,go=rX <venv>`
+one-shot, or a `Defaults umask=0022,umask_override` drop-in under
+`/etc/sudoers.d/`.
+
 ## [0.6.1] — 2026-07-07
 
 Pull in `runspec-linux-core >= 0.3.4` so `create-venv` normalises the venv tree

@@ -161,6 +161,48 @@ def test_install_into_venv_editable_project(tmp_path, monkeypatch: pytest.Monkey
     assert cmd[-2:] == ["-e", str(proj)]
 
 
+def test_install_into_venv_normalises_perms(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """After the pip install, the venv tree is chmodded so sudo's umask can't hide
+    site-packages entries at 750 from `runspec local` / `importlib.metadata`."""
+    venv = _fake_venv(tmp_path, monkeypatch)
+    calls = _record(monkeypatch)
+
+    venvs.install_into_venv(venv, "httpx", upgrade=True, run_as="svc")
+
+    assert ["sudo", "-n", "-u", "svc", "chmod", "-R", "u=rwX,go=rX", venv] in calls
+    # logs_dir exists (the default stub returns 0 for `test -d`), so the setgid
+    # mode is restored after the wide chmod would have stripped it.
+    assert ["sudo", "-n", "-u", "svc", "test", "-d", f"{venv}/logs"] in calls
+    assert ["sudo", "-n", "-u", "svc", "chmod", "2775", f"{venv}/logs"] in calls
+    # And the chmod steps run *after* the pip install (order matters — pip
+    # creates the dirs we're normalising).
+    pip_i = next(i for i, c in enumerate(calls) if "pip" in c and "install" in c)
+    chmod_i = next(i for i, c in enumerate(calls) if "chmod" in c and "u=rwX,go=rX" in c)
+    assert chmod_i > pip_i
+
+
+def test_install_into_venv_skips_logs_restore_when_absent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A venv without a logs/ dir (not built by create_venv) gets the wide chmod
+    but no 2775 restore — the test -d guard skips the logs step."""
+    venv = _fake_venv(tmp_path, monkeypatch)
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str]) -> subprocess.CompletedProcess:
+        calls.append(argv)
+        # Only the `test -d <venv>/logs` probe fails; everything else succeeds.
+        if argv[:2] == ["test", "-d"]:
+            return _completed(returncode=1)
+        return _completed("Successfully installed foo\n")
+
+    monkeypatch.setattr(venvs, "_run", fake_run)
+
+    venvs.install_into_venv(venv, "httpx")
+
+    assert ["chmod", "-R", "u=rwX,go=rX", venv] in calls
+    assert ["test", "-d", f"{venv}/logs"] in calls
+    assert not any(c[:2] == ["chmod", "2775"] for c in calls)
+
+
 def test_install_into_venv_requires_a_target(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     venv = _fake_venv(tmp_path, monkeypatch)
     _record(monkeypatch)

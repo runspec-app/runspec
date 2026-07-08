@@ -157,6 +157,14 @@ def install_into_venv(
     path to a directory with a ``pyproject.toml`` (or a wheel/sdist), installed
     editable when ``editable`` is set. At least one of ``packages``/``project`` is
     required. Raises ValueError on bad input, CommandError on a failed install.
+
+    After the install, the venv tree is normalised to ``u=rwX,go=rX`` (the same
+    step ``create_venv`` runs at build time) so pip's new directories are ``755``
+    regardless of the caller's umask — a ``sudo`` upgrade under a PAM-set ``027``
+    login umask otherwise lands site-packages entries at ``750`` and hides the
+    packs from ``runspec local`` / ``importlib.metadata`` for anyone but the
+    owner. If ``<venv>/logs`` exists (``create_venv`` leaves it there), its
+    ``2775`` setgid mode is restored after the wide chmod strips it.
     """
     from runspec_linux_core.packages import _validate_packages
 
@@ -187,6 +195,12 @@ def install_into_venv(
     cmd = _become([venv_python, "-m", "pip", "install", *opts, *target], run_as, become_method)
     result = _run(cmd)
     _check(result, "pip install", run_as)
+
+    _check(_run(_become(["chmod", "-R", "u=rwX,go=rX", venv], run_as, become_method)), "chmod venv", run_as)
+    logs_dir = os.path.join(venv, "logs")
+    if _run(_become(["test", "-d", logs_dir], run_as, become_method)).returncode == 0:
+        _check(_run(_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
+
     return {
         "venv": venv,
         "packages": names,
