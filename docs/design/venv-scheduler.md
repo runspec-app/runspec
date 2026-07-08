@@ -46,6 +46,16 @@ the host runs it. `tests/test_timing.py::test_parity_with_console` pins this.
 `runspec-scheduler-<venv>.service`. The daemon excludes `runspec-scheduler` and
 the reserved `runspec` from discovery (a scheduler never schedules itself).
 
+**Service accounts + `systemctl --user`.** `systemctl --user` needs the account's
+user session (`XDG_RUNTIME_DIR` + D-Bus), which a bare `sudo -u <acct>` doesn't
+set up — it fails with *"Failed to connect to bus: No medium found."* The fix is
+a **login shell** plus lingering: `sudo loginctl enable-linger <acct>` then
+`sudo -iu <acct> runspec-scheduler install-service`. `install-service` is
+resilient here: it always writes the unit file (a plain write, no bus), recovers
+`XDG_RUNTIME_DIR` from `/run/user/<uid>` when lingering is already on (so plain
+`sudo -u` still works), and on a bus failure returns an actionable `hint` with
+the exact login-shell + lingering commands rather than a bare systemd error.
+
 ## Console integration — source of truth = the host
 
 Remote schedules are **shared across operators** and the **host is the source of

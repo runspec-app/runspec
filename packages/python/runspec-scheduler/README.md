@@ -20,7 +20,7 @@ on the host and run whether or not a console is connected.
 # Into the same venv whose runnables you want to schedule:
 pip install runspec-scheduler
 
-# Install + enable the systemd --user service for this venv:
+# Install + enable the systemd --user service for this venv (as yourself):
 runspec-scheduler install-service
 loginctl enable-linger "$USER"     # survive logout
 ```
@@ -28,6 +28,25 @@ loginctl enable-linger "$USER"     # survive logout
 `install-service` writes `~/.config/systemd/user/runspec-scheduler-<venv>.service`
 (one daemon per venv) and runs `systemctl --user enable --now`. To do it by hand, see
 `deploy/runspec-scheduler.service`.
+
+### Running the daemon as a service account
+
+`systemctl --user` needs the account's own user session (`XDG_RUNTIME_DIR` +
+D-Bus). A bare `sudo -u <acct>` doesn't set that up, so systemctl fails with
+*"Failed to connect to bus: No medium found."* Run from a **login shell** and
+enable lingering:
+
+```bash
+sudo loginctl enable-linger serviceacc              # persistent user systemd, survives logout
+sudo -iu serviceacc runspec-scheduler install-service   # -i = login shell (sets up the session)
+sudo -iu serviceacc systemctl --user status runspec-scheduler-<venv>
+```
+
+The `-i` (login shell) is what wires up `XDG_RUNTIME_DIR`, D-Bus, and `HOME` for
+the account. If lingering is already on, `install-service` also recovers
+`XDG_RUNTIME_DIR` from `/run/user/<uid>` on its own; otherwise it returns a hint
+with the exact commands above (the unit file is written either way, so you can
+finish with a manual `systemctl --user enable --now`).
 
 ## Use
 

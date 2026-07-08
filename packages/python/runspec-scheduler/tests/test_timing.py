@@ -37,11 +37,12 @@ def test_parse_when_requires_exactly_one():
 
 
 def test_next_fire_interval_oracle():
-    now = datetime(2026, 7, 8, 12, 0, 0, tzinfo=timezone.utc)
+    # A far-future `now` so it's always past the trigger's construction-time
+    # start_date (APScheduler's default) regardless of the machine's wall clock —
+    # then the next fire is deterministically within one interval of `now`.
+    now = datetime(3000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     nxt = next_fire_time(When(every="15m", timezone="UTC"), now=now)
     assert nxt is not None
-    # An IntervalTrigger fires within one period of `now` (aligned to the
-    # trigger's own start, not exactly now + interval).
     delta = (nxt - now).total_seconds()
     assert 0 < delta <= 15 * 60 + 1
 

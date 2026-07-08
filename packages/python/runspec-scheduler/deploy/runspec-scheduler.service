@@ -10,6 +10,11 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now runspec-scheduler-<venv>
 #   loginctl enable-linger "$USER"      # keep it running after logout
+#
+# For a SERVICE ACCOUNT, systemctl --user needs its user session, so use a login
+# shell (-i) and enable lingering first:
+#   sudo loginctl enable-linger serviceacc
+#   sudo -iu serviceacc runspec-scheduler install-service
 
 [Unit]
 Description=runspec scheduler

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-scheduler"
-version = "0.1.0"
+version = "0.1.1"
 requires-python = ">=3.10"
 description = "Cron-style scheduler service for runspec runnables installed in one venv"
 readme = "README.md"

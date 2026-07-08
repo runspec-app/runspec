@@ -164,6 +164,10 @@ def _cmd_install_service(spec: rs.RunSpec) -> None:
 
     result = install_service(enable=bool(spec.enable.value))
     _emit(result)
+    # Non-zero exit when the enable step failed (the unit is still written; the
+    # emitted `hint` explains the fix), so scripts can detect it.
+    if not result.get("ok"):
+        sys.exit(1)
 
 
 def main() -> None:

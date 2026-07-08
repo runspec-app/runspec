@@ -2,6 +2,19 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.1.1]
+
+- `install-service`: handle the `systemctl --user` "Failed to connect to bus: No
+  medium found" case that hits service accounts run under a bare `sudo -u`. The
+  unit file is always written (a plain write, no bus needed); when lingering is
+  already enabled the call now recovers `XDG_RUNTIME_DIR` from `/run/user/<uid>`
+  on its own, and on a genuine bus failure it returns an actionable `hint`
+  (enable lingering + re-run from a login shell: `sudo -iu <acct>
+  runspec-scheduler install-service`) instead of a bare systemd error.
+- README / `deploy/runspec-scheduler.service` / design doc: document the
+  login-shell (`sudo -iu`) + `loginctl enable-linger` requirement for running the
+  daemon as a service account.
+
 ## [0.1.0]
 
 Initial release.
