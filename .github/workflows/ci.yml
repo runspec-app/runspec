@@ -44,6 +44,7 @@ jobs:
       logops-core: ${{ steps.filter.outputs.logops-core }}
       playbook: ${{ steps.filter.outputs.playbook }}
       claude: ${{ steps.filter.outputs.claude }}
+      scheduler: ${{ steps.filter.outputs.scheduler }}
       console: ${{ steps.filter.outputs.console }}
       console-room: ${{ steps.filter.outputs.console-room }}
       webops: ${{ steps.filter.outputs.webops }}
@@ -92,6 +93,9 @@ jobs:
               - '.github/workflows/ci.yml'
             claude:
               - 'packages/python/runspec-claude/**'
+              - '.github/workflows/ci.yml'
+            scheduler:
+              - 'packages/python/runspec-scheduler/**'
               - '.github/workflows/ci.yml'
             console:
               - 'packages/python/runspec-console/**'
@@ -873,6 +877,88 @@ jobs:
           from runspec_claude import run_claude, list_sessions
           print('Wheel contents OK')
           "
+
+  # ── runspec-scheduler (the venv scheduler service) ──────────────────────────
+
+  scheduler-quality:
+    name: "scheduler quality / ${{ matrix.check }}"
+    needs: changes
+    if: needs.changes.outputs.scheduler == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, format]
+    defaults:
+      run:
+        working-directory: packages/python/runspec-scheduler
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # The in-repo core isn't on PyPI yet — install it from the sibling source
+        # so the runspec dependency resolves. Non-editable so mypy finds py.typed.
+        run: |
+          pip install ../runspec
+          pip install -e ".[dev]"
+
+      - name: Lint
+        if: matrix.check == 'lint'
+        run: ruff check .
+
+      - name: Format check
+        if: matrix.check == 'format'
+        run: ruff format --check .
+
+  scheduler-test:
+    name: runspec-scheduler test
+    needs: changes
+    if: needs.changes.outputs.scheduler == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/runspec-scheduler
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install ../runspec
+          pip install -e ".[dev]"
+
+      - name: Type check
+        run: mypy runspec_scheduler
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Wheel smoke test
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install ../runspec
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/python -c "
+          from importlib.resources import files
+          pkg = files('runspec_scheduler')
+          assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
+          from runspec_scheduler import When, next_fire_time
+          print('Wheel contents OK')
+          "
+          # The runnable must be discoverable by the console over `runspec local`.
+          /tmp/smoke/bin/runspec local --format json | /tmp/smoke/bin/python -c "import json,sys; assert any(r['runnable']=='runspec-scheduler' for r in json.load(sys.stdin)), 'not discoverable'; print('discovery OK')"
 
   # ── runspec-room (the chat-room server) ─────────────────────────────────────
 

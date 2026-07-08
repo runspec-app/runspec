@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type RunCard, type TriggerEvent } from '../bridge'
+import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type RunCard, type TriggerEvent, type Credential } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
+import { credEnvNames } from './FormsView'
 
 interface SchedulesViewProps {
   hosts: Host[]
@@ -46,12 +47,18 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [customCron, setCustomCron] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [runbooks, setRunbooks] = useState<Runbook[]>([])
+  // Delegate this schedule to the target host's runspec-scheduler daemon (shared,
+  // always-on) instead of firing it from this console. Only for a single host.
+  const [runnerHost, setRunnerHost] = useState(false)
+  const [credentialIds, setCredentialIds] = useState<string[]>([])
+  const [creds, setCreds] = useState<Credential[]>([])
   const isDark = useIsDark()
 
   // Saved runbooks, for the "Run a runbook" action's picker. Loaded once per open.
   useEffect(() => {
     if (!open) return
     bridge.get_runbooks().then(setRunbooks).catch(console.error)
+    bridge.list_credentials().then(setCreds).catch(() => setCreds([]))
   }, [open])
 
   // Distinct host groups (from each host's `group` field), for group targeting.
@@ -72,11 +79,17 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     : target === 'anyhost' ? new Set(hostsList)
     : target === 'selected' ? new Set(selectedList)
     : null
-  const hostRunnables = targetedHosts
+  const hostRunnables = (targetedHosts
     ? [...new Map(
         runnables.filter(r => targetedHosts.has(r.host)).map(r => [r.name, r]),
       ).values()]
     : runnables.filter(r => r.host === hostName)
+  ).filter(r => r.name !== 'runspec-scheduler')  // never schedule the scheduler itself
+  // Whether the chosen single host has a runspec-scheduler in the SAME venv as
+  // the selected target runnable — the precondition for delegating to it.
+  const schedulerAvailable = !!selectedRunnable?.group && runnables.some(
+    r => r.name === 'runspec-scheduler' && r.host === hostName && r.group === selectedRunnable!.group,
+  )
   const isEdit = !!editing
 
   const resetAll = () => {
@@ -87,6 +100,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setCronPreset('')
     setCustomCron('')
     setSelectedRunnable(null)
+    setRunnerHost(false)
+    setCredentialIds([])
   }
 
   // Prefill from the schedule being edited (or a clean slate for a new one)
@@ -100,6 +115,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       return
     }
     setAction(editing.action)
+    setRunnerHost(editing.runner === 'host')
+    setCredentialIds(editing.credential_ids ?? [])
     setTarget(
       editing.group ? 'group'
       : editing.selected_hosts?.length ? 'selected'
@@ -235,6 +252,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         base.selected_hosts = list
       } else {
         base.host = values.host
+        // Delegating to the host's scheduler is a single-host-only option.
+        if (runnerHost && schedulerAvailable) {
+          base.runner = 'host'
+          if (credentialIds.length) base.credential_ids = credentialIds
+        }
       }
       base.runnable = values.runnable
       base.args = args
@@ -558,6 +580,58 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 ))}
               </>
             )}
+
+            {/* Console (this operator, this app) vs a shared, always-on schedule
+                delegated to the target host's runspec-scheduler daemon. */}
+            {target === 'host' && selectedRunnable && (
+              <Form.Item label="Run from" style={{ marginTop: 8 }}>
+                <Segmented
+                  value={runnerHost ? 'host' : 'console'}
+                  onChange={v => setRunnerHost(v === 'host')}
+                  options={[
+                    { label: 'This console', value: 'console' },
+                    { label: "Host's scheduler", value: 'host', disabled: !schedulerAvailable },
+                  ]}
+                />
+                <div style={{ ...labelStyle, marginTop: 4 }}>
+                  {runnerHost
+                    ? 'Shared & always-on: runs on the host’s runspec-scheduler daemon, even when this console is closed.'
+                    : schedulerAvailable
+                    ? 'Your own schedule — fires from this console while it’s open.'
+                    : 'Fires from this console. Install runspec-scheduler in this runnable’s venv for an always-on host schedule.'}
+                </div>
+                {runnerHost && selectedRunnable && !selectedRunnable.runAs && (
+                  <div style={{ ...labelStyle, marginTop: 4, color: '#d48806' }}>
+                    This runnable declares no <code>run_as</code> — it runs as the daemon’s user with the host’s own environment (console credentials can’t be attached).
+                  </div>
+                )}
+                {runnerHost && selectedRunnable?.runAs && creds.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ ...labelStyle, marginBottom: 4 }}>
+                      Credentials — written to a protected env file on the host owned by <code>{selectedRunnable.runAs}</code>
+                    </div>
+                    <Select
+                      mode="multiple"
+                      value={credentialIds}
+                      onChange={vs => setCredentialIds(vs as string[])}
+                      placeholder="Select service-account credentials…"
+                      style={{ width: '100%' }}
+                      options={creds.map(c => ({ label: c.label, value: c.id }))}
+                    />
+                    {credentialIds.map(id => {
+                      const c = creds.find(x => x.id === id)
+                      if (!c) return null
+                      const names = credEnvNames(c.label, c.kind)
+                      return (
+                        <div key={id} style={{ ...labelStyle, marginTop: 2 }}>
+                          <code>{c.label}</code> → {names.join(', ') || '(no vars)'}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </Form.Item>
+            )}
           </>
         )}
       </Form>
@@ -739,6 +813,23 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           : <span style={{ color: dimCol }}>—</span>,
     },
     {
+      title: 'Runner',
+      key: 'runner',
+      render: (_: unknown, s: Schedule) =>
+        s.runner === 'host'
+          ? (
+            <Tooltip title={s.status === 'unreachable'
+              ? 'Shared host schedule — the host or its scheduler is currently unreachable'
+              : 'Shared schedule running on the host’s always-on scheduler'}>
+              <Space size={4}>
+                <span style={{ fontSize: 9, color: s.status === 'unreachable' ? '#faad14' : '#52c41a' }}>●</span>
+                <Tag color="orange">Remote</Tag>
+              </Space>
+            </Tooltip>
+          )
+          : <Tooltip title="Your own schedule — fires from this console while it’s open"><Tag>Console</Tag></Tooltip>,
+    },
+    {
       title: 'Schedule',
       key: 'schedule',
       render: (_: unknown, s: Schedule) => <code style={{ fontSize: 12 }}>{whenText(s.when)}</code>,
@@ -786,7 +877,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     <Table
       dataSource={schedules}
       columns={columns}
-      rowKey="id"
+      rowKey={s => `${s.runner ?? 'console'}:${s.host ?? ''}:${s.id}`}
       size="small"
       pagination={false}
       rowClassName={s => (s.enabled === false ? 'rs-schedule-disabled' : '')}

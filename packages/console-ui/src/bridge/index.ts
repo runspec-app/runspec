@@ -402,6 +402,16 @@ export interface Schedule {
   runbook?: string
   values?: Record<string, unknown>
   nextRun?: string
+  // Where the schedule runs. 'console' (default) — this operator's own,
+  // fired by the console's own scheduler while it's open. 'host' — a shared,
+  // always-on schedule delegated to the target host's runspec-scheduler daemon
+  // (source of truth = the host); read live and shown with a live `status`.
+  runner?: 'console' | 'host'
+  status?: 'ok' | 'unreachable'
+  // For a runner === 'host' schedule on a run_as runnable: credentials to write
+  // into the host's RUNSPEC_ENV_FILE (ids only — never secrets). Not persisted
+  // in the console's own schedules file.
+  credential_ids?: string[]
 }
 
 export interface ConversationMeta {

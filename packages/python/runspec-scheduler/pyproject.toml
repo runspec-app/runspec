@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-scheduler"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Cron-style scheduler service for runspec runnables installed in one venv"
+readme = "README.md"
+license = "MIT"
+dependencies = [
+    # 0.48.0 for the `discoverable` boolean + serve leaf globals used by the console.
+    "runspec>=0.48.0",
+    # APScheduler drives the cron/interval timing. This package's whole reason to
+    # exist is scheduling, so it's a hard dependency (unlike runspec-console, which
+    # keeps it optional under the [schedule] extra).
+    "apscheduler>=3.10,<4",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.scripts]
+# Entry point name MUST match the runnable name in runspec.toml.
+runspec-scheduler = "runspec_scheduler.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.15.20",
+    "mypy",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[[tool.mypy.overrides]]
+# APScheduler ships no type stubs; tomli is the 3.10-only TOML reader.
+module = ["apscheduler.*", "tomli"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

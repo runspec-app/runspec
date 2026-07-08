@@ -48,11 +48,15 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
         "_on_schedule_card",
         "get_schedule_board",
         "get_schedule_events",
+        "_strip_transient",
+        "_remote_schedules",
+        "_remote_schedule_lookup",
     ):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
     ns.restart_triggers = lambda: None
     ns._trigger_engine = engine
     ns._lock = threading.Lock()
+    ns._remote_sched_cache = {}
     ns._schedule_cards = {}
     ns._schedule_events = []
     ns.dispatched = []

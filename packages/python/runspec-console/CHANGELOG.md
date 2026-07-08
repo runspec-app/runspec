@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.162.0] — 2026-07-08
+
+### Added
+
+- **Schedules — delegate a schedule to a host's always-on scheduler.** The
+  new-schedule modal (*Run a runnable* → **One host**) gains a **"Run from"**
+  toggle: **This console** (the operator's own, user-specific schedule, fired by
+  the console while it's open — unchanged) or **the host's scheduler** (a
+  **shared, always-on** schedule delegated to the target host's
+  [`runspec-scheduler`](../runspec-scheduler) daemon, which runs whether or not
+  any console is connected). The host option is enabled only when the selected
+  host has a `runspec-scheduler` in the **same venv** as the target runnable.
+  For these **remote schedules the host is the source of truth**: the console
+  reads them live via `runspec-scheduler list` each refresh cycle and CRUDs
+  against the host by invoking the scheduler's own `add`/`remove`/`run-now`
+  verbs over the existing SSH executor (so subcommands + credential injection
+  come for free); they are never written to this operator's user-specific
+  `runspec_schedules.toml`. The Schedules table gains a **Runner** column
+  badging each row **Console** vs **Remote** (with a live ok/unreachable status
+  dot). For a `run_as` runnable, a credential multi-select (reusing the Forms
+  env-var derivation) attaches service-account credentials, written to a
+  protected `RUNSPEC_ENV_FILE` on the host owned by the `run_as` account
+  (only the derived variable **names** travel as `--cred-vars`; the values ride
+  the executor's existing secret channel). New private bridge helpers
+  (`_remote_schedules`/`_remote_create`/`_remote_delete`/`_scheduler_targets`/…)
+  and a `_remote_sched_cache`; the frozen JS API surface is unchanged. See
+  `docs/design/venv-scheduler.md`.
+
 ## [0.161.0] — 2026-07-07
 
 ### Added

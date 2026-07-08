@@ -1,0 +1,29 @@
+# systemd --user unit for the runspec scheduler daemon.
+#
+# This is a template. `runspec-scheduler install-service` writes a per-venv copy
+# named runspec-scheduler-<venv>.service with ExecStart pointing at this venv's
+# binary — prefer that over copying this by hand. To install manually:
+#
+#   cp deploy/runspec-scheduler.service \
+#      ~/.config/systemd/user/runspec-scheduler-<venv>.service
+#   # edit ExecStart to your venv's bin/runspec-scheduler
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now runspec-scheduler-<venv>
+#   loginctl enable-linger "$USER"      # keep it running after logout
+
+[Unit]
+Description=runspec scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+# Point this at your venv's binary, e.g. %h/venvs/ops/bin/runspec-scheduler
+ExecStart=%h/.local/bin/runspec-scheduler run
+EnvironmentFile=-%h/.config/runspec-scheduler/runspec-scheduler.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

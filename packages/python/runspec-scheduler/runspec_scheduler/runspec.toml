@@ -1,0 +1,92 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-scheduler — a cron-style scheduler *service* for runspec runnables.
+#
+# A single runnable, `runspec-scheduler`, with verbs (subcommands):
+#
+#   runspec-scheduler run                     run the long-running daemon (systemd ExecStart)
+#   runspec-scheduler add     --id … …        add/replace a scheduled runnable, then hot-reload
+#   runspec-scheduler remove  --id …          remove a schedule, then hot-reload
+#   runspec-scheduler list                    print the configured schedules as JSON
+#   runspec-scheduler run-now --id …          fire one schedule immediately
+#   runspec-scheduler install-service         write + enable the per-venv systemd --user unit
+#
+# It is "cron, but limited to runnables installed in THIS venv". The daemon runs
+# runnables from its own venv on a cron/interval cadence, independent of any
+# desktop console. It is itself a runspec runnable (so runspec-console can detect
+# and drive it over SSH), but `discoverable = false` keeps it out of the Forms
+# tab / `runspec serve` MCP surface — it's an internal control-plane helper.
+
+[config]
+# Scheduling a runnable IS the authorization; the daemon fires non-interactively.
+# The management verbs are deliberate admin actions (invoked by the operator or
+# by runspec-console over SSH), so they default to autonomous too.
+autonomy-default = "autonomous"
+
+[runspec-scheduler]
+description     = "Cron-style scheduler for runnables installed in this venv (long-running --user service)"
+require-command = true
+# Hidden from the Forms tab / `runspec serve`, but still runnable directly AND
+# still listed by `runspec local --format json`, so the console can detect it.
+discoverable    = false
+
+examples = [
+  {cmd = "runspec-scheduler run", description = "Run the daemon in the foreground (systemd ExecStart)."},
+  {cmd = "runspec-scheduler add --id nightly-backup --runnable backup --cron '0 2 * * *'", description = "Run /backup every night at 02:00."},
+  {cmd = "runspec-scheduler add --id poll --runnable healthcheck --every 15m", description = "Run /healthcheck every 15 minutes."},
+  {cmd = "runspec-scheduler list", description = "Print configured schedules as JSON."},
+  {cmd = "runspec-scheduler install-service", description = "Install + enable the systemd --user service for this venv."},
+]
+
+# ---- Global arguments (inherited by every subcommand) --------------------
+[runspec-scheduler.args]
+config = {type = "path", required = false, description = "Path to the scheduler config TOML. Overrides $RUNSPEC_SCHEDULER_CONFIG and the default {venv}/runspec_scheduler.toml."}
+
+# ---- run: the long-running daemon ----------------------------------------
+[runspec-scheduler.commands.run]
+description = "Run the scheduler daemon: load config, build cron/interval jobs, exec runnables on fire. Hot-reloads on config change. This is the systemd ExecStart."
+
+[runspec-scheduler.commands.run.args]
+reload-interval = {type = "int", default = 5, description = "Seconds between config-file mtime checks for hot reload."}
+
+# ---- add: add or replace a schedule --------------------------------------
+[runspec-scheduler.commands.add]
+description = "Add or replace a schedule (keyed by --id), then hot-reload the daemon"
+
+[runspec-scheduler.commands.add.args]
+id       = {type = "str",  required = true,  description = "Stable schedule id (the replace-in-place key)."}
+runnable = {type = "str",  required = true,  description = "Name of a runnable installed in THIS venv to run on fire."}
+cron     = {type = "str",  required = false, description = "5-field cron expression, e.g. '0 2 * * *'. Exactly one of --cron / --every."}
+every    = {type = "str",  required = false, description = "Interval like 15m / 1h / 1d (number + s/m/h/d). Exactly one of --cron / --every."}
+timezone = {type = "str",  required = false, description = "IANA timezone (e.g. Europe/London). Blank = host local time."}
+args     = {type = "str",  required = false, description = "JSON object of arguments passed to the target runnable, e.g. '{\"level\":\"warn\"}'."}
+enabled  = {type = "flag", default = true,  description = "Whether the schedule fires (add it paused with --no-enabled)."}
+cred-vars = {type = "str", required = false, description = "JSON array of environment-variable NAMES to capture (from this process's env) into the schedule's run_as-protected env file. Values are injected by the caller; only names travel here."}
+
+# ---- remove: delete a schedule -------------------------------------------
+[runspec-scheduler.commands.remove]
+description = "Remove a schedule by id (and its credential env file), then hot-reload"
+
+[runspec-scheduler.commands.remove.args]
+id = {type = "str", required = true, description = "Schedule id to remove."}
+
+# ---- list: print schedules as JSON ---------------------------------------
+[runspec-scheduler.commands.list]
+description = "Print the configured schedules as JSON (read-only; what runspec-console reads to display + verify remote schedules)"
+output      = "json"
+
+# ---- run-now: fire one schedule immediately ------------------------------
+[runspec-scheduler.commands.run-now]
+description = "Fire one schedule immediately by id (ignores enabled state)"
+output      = "json"
+
+[runspec-scheduler.commands.run-now.args]
+id = {type = "str", required = true, description = "Schedule id to fire now."}
+
+# ---- install-service: systemd --user unit --------------------------------
+[runspec-scheduler.commands.install-service]
+description = "Write the per-venv systemd --user unit (runspec-scheduler-<venv>.service) and enable it"
+autonomy    = "confirm"
+
+[runspec-scheduler.commands.install-service.args]
+enable = {type = "flag", default = true, description = "Run `systemctl --user enable --now` after writing the unit."}
