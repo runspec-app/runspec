@@ -8,6 +8,55 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.164.0] — 2026-07-09
+
+### Added
+
+- **Schedules — attach console credentials to a runnable-action schedule.** The
+  "New schedule" modal now has a **Credentials** multi-select (runnable action),
+  mirroring the Forms run dialog: a selected credential is applied when the
+  schedule fires — as name-derived env vars (a credential `Jira` sets
+  `JIRA_USERNAME`/`JIRA_PASSWORD`, incl. the `_USER`/`_PAT` aliases) and into any
+  declared argument it binds (`username_arg` → argv, `secret_arg` → the env
+  channel). **Only the credential ids are stored** in `runspec_schedules.toml` —
+  the secret never leaves the OS keychain and is injected at fire time, so a
+  scheduled `runspec-jsm`/`runspec-snow`/etc. run gets its credentials without
+  the secret ever touching disk. This stays entirely local (the console's own
+  process, its own SSH, its own keychain) — the same trust model as Forms and
+  reactive Triggers, unrelated to the 0.163.0 shared-daemon delegation that was
+  removed. New `credential_ids` field on `ScheduleJob` + `[[schedule]]`, threaded
+  through every fire path (`ScheduleSource._fire` → `_run_scheduled` →
+  `_invoke_scheduled` incl. the group / any-of-hosts / selected-hosts fan-out, and
+  `run_schedule_now`) to `invoke_runnable(credential_ids=…)`. A schedule with **no**
+  credentials still passes `credential_ids=None`, preserving the prior scope-based
+  auto-apply behaviour. **Secrets are never persisted:** a `password`-typed arg is
+  no longer written into the schedule's stored `args` (a plaintext secret on disk)
+  and isn't required at save — supply it via a credential (or the runnable's own
+  env resolution) at fire time. Files: `runspec_console/sources/schedule.py`,
+  `runspec_console/bridge_schedules.py`, `packages/console-ui/src/views/SchedulesView.tsx`,
+  `packages/console-ui/src/bridge/index.ts` (`Schedule.credential_ids`).
+
+### Changed
+
+- **Schedules — "New schedule" modal args now render with the rich Forms controls.**
+  Previously every runnable arg / runbook parameter fell back to a plain text
+  input (so a Boolean `flag` arg was typed as `"true"`/`"false"`, a `choice` with
+  no options rendered as free text, and there was no picker for `int`/`float`,
+  `path`, `date`/`datetime`/`time`/`month`/`color`, or a masked `password`). The
+  modal now reuses the Forms tab's `ArgInput` verbatim so the same rich controls
+  appear in both places: `flag` → Switch, `choice` → Select, `int`/`float` →
+  InputNumber (with range/slider when declared), `path` → browsable PathInput,
+  `date`/`datetime`/`time`/`month`/`color` → the matching picker, `password` →
+  masked field; runbook values reuse `RunbookField` (which adds the `ui = "host"`
+  fleet dropdown). Layout matches Forms too — args with a default fold into a
+  collapsed "Default arguments" section near the top; required/optional-no-default
+  args lead the form. Values are now stored as native types (a flag is written as
+  `flag = true`, not `flag = "true"`), which the executor already handles. Edit
+  prefill goes through the same `initialFormValues` helper Forms uses. Front-line
+  validation (required + numeric range) mirrors the Forms run modal. Files:
+  `packages/console-ui/src/views/SchedulesView.tsx`,
+  `packages/console-ui/src/views/RunbookRunModal.tsx` (exports `RunbookField`).
+
 ## [0.163.0] — 2026-07-08
 
 ### Removed

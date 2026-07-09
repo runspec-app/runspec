@@ -61,14 +61,17 @@ _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _INTERVAL_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 # What a runnable-action schedule calls to run its runnable:
-# (schedule_id, host, runnable, args, group, hosts, selected_hosts). The id lets
-# the bridge label the run card; ``group`` is non-empty for a group-targeted
-# schedule (then ``host`` is "") and the bridge fans the run out across the
-# group's members; ``hosts`` is a non-empty candidate list for an "any one of
-# these" schedule (the bridge picks the first connected one at fire time);
+# (schedule_id, host, runnable, args, group, hosts, selected_hosts, credential_ids).
+# The id lets the bridge label the run card; ``group`` is non-empty for a
+# group-targeted schedule (then ``host`` is "") and the bridge fans the run out
+# across the group's members; ``hosts`` is a non-empty candidate list for an "any
+# one of these" schedule (the bridge picks the first connected one at fire time);
 # ``selected_hosts`` is a non-empty explicit list and the bridge fans the run out
 # to every host in it (like ``group`` but without a registered group entry).
-RunFn = Callable[[str, str, str, dict[str, Any], str, list[str], list[str]], None]
+# ``credential_ids`` are console credentials applied to the run at fire time.
+RunFn = Callable[
+    [str, str, str, dict[str, Any], str, list[str], list[str], list[str]], None
+]
 
 # What a prompt/runbook-action schedule calls to run a headless agent turn. The
 # bridge gets the whole parsed job (it needs the prompt / runbook id + values to
@@ -127,6 +130,12 @@ class ScheduleJob:
     selected_hosts: list[str] = field(default_factory=list)
     runnable: str = ""
     args: dict[str, Any] = field(default_factory=dict)
+    # action == "runnable" — ids of console credentials to apply to the run. Threaded
+    # to invoke_runnable exactly like the Forms tab's explicit selection: the secret
+    # stays in the keychain and is injected at fire time (name-derived env vars, e.g.
+    # JIRA_USERNAME/JIRA_PASSWORD, plus any username_arg/secret_arg bindings). Only
+    # the ids are stored in runspec_schedules.toml — never a secret.
+    credential_ids: list[str] = field(default_factory=list)
     # action == "prompt" — the fixed instruction handed to the agent turn.
     prompt: str = ""
     # action == "runbook" — the saved runbook id, plus values for its {{placeholders}}.
@@ -213,6 +222,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     selected_hosts: list[str] = []
     runnable = ""
     args: dict[str, Any] = {}
+    credential_ids: list[str] = []
     prompt = ""
     runbook = ""
     values: dict[str, Any] = {}
@@ -247,6 +257,9 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
                 "'selected_hosts' (an explicit list to run on all of them)"
             )
         args = dict(data.get("args") or {})
+        credential_ids = [
+            str(c).strip() for c in (data.get("credential_ids") or []) if str(c).strip()
+        ]
     elif action == "prompt":
         prompt = str(data.get("prompt") or "").strip()
         if not prompt:
@@ -276,6 +289,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         selected_hosts=selected_hosts,
         runnable=runnable,
         args=args,
+        credential_ids=credential_ids,
         prompt=prompt,
         runbook=runbook,
         values=values,
@@ -476,6 +490,7 @@ class ScheduleSource:
                     job.group,
                     list(job.hosts),
                     list(job.selected_hosts),
+                    list(job.credential_ids),
                 )
             self._record(job, skipped=False)
         except Exception:

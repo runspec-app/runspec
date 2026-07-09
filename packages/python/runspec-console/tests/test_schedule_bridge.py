@@ -192,8 +192,35 @@ def test_run_now_runnable_invokes_directly(tmp_path, monkeypatch):
         board[0]["column"] == "running" and board[0]["summary"] == "/backup on prod-1"
     )
     assert board[0]["card_id"] == kw["inv_id"]
+    # No credentials configured → the invoke gets credential_ids=None (preserving
+    # the scope-based auto-apply the scheduled path had before this feature).
+    assert kw["credential_ids"] is None
     events = ns.get_schedule_events()
     assert len(events) == 1 and events[0]["matched"] == ["r1"]
+
+
+def test_run_now_runnable_threads_credential_ids(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "jira-nightly",
+                "action": "runnable",
+                "host": "prod-1",
+                "runnable": "jsm-raise",
+                "when": {"cron": "0 2 * * *"},
+                "args": {"summary": "nightly"},
+                "credential_ids": ["cred-jira"],
+            }
+        ],
+    )
+    ns.run_schedule_now("jira-nightly")
+    _, runnable, _, kw = ns.runs[0]
+    assert runnable == "jsm-raise"
+    # An explicit credential selection is threaded to invoke_runnable, which
+    # injects the secret from the keychain at fire time.
+    assert kw["credential_ids"] == ["cred-jira"]
 
 
 def test_run_now_runnable_card_finalizes_on_exit(tmp_path, monkeypatch):

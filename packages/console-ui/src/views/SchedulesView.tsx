@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, message } from 'antd'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type RunCard, type TriggerEvent } from '../bridge'
+import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type RunCard, type TriggerEvent } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
+import { ArgInput, bindingsForArgs, credEnvNames, initialFormValues, partitionArgs } from './FormsView'
+import { RunbookField } from './RunbookRunModal'
+
+const { Text } = Typography
 
 interface SchedulesViewProps {
   hosts: Host[]
@@ -26,6 +30,23 @@ type Action = 'runnable' | 'event' | 'prompt' | 'runbook'
 type WhenKind = 'cron' | 'every'
 type Target = 'host' | 'group' | 'anyhost' | 'selected'
 
+// Front-line validation of a runnable/runbook arg map — required + numeric range,
+// mirroring the Forms tab's RunModal/RunbookRunModal. Exported for unit tests.
+export function validateArgs(args: ArgDef[], values: Record<string, unknown>): Record<string, string> {
+  const errs: Record<string, string> = {}
+  for (const a of args) {
+    const v = values[a.name]
+    if (a.required && (v === undefined || v === '')) {
+      errs[a.name] = 'Required'
+    } else if (a.range && (a.type === 'int' || a.type === 'float') && v !== undefined && v !== '') {
+      const n = Number(v)
+      const [lo, hi] = a.range
+      if (n < lo || n > hi) errs[a.name] = `Must be between ${lo} and ${hi}`
+    }
+  }
+  return errs
+}
+
 interface ScheduleModalProps {
   open: boolean
   hosts: Host[]
@@ -46,12 +67,32 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [customCron, setCustomCron] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [runbooks, setRunbooks] = useState<Runbook[]>([])
+  // Runnable/runbook arg values live outside the antd Form so we can reuse the
+  // FormsView `ArgInput` — a controlled component that stores native types
+  // (flag → boolean, int → number, etc.) rather than strings. The antd Form
+  // still owns everything else (cron, host, group, event fields, …).
+  const [argValues, setArgValues] = useState<Record<string, unknown>>({})
+  const [argErrors, setArgErrors] = useState<Record<string, string>>({})
+  const [runbookValues, setRunbookValues] = useState<Record<string, unknown>>({})
+  const [runbookErrors, setRunbookErrors] = useState<Record<string, string>>({})
+  // Console credentials to apply to a runnable-action run (secret injected from the
+  // keychain at fire time). Same explicit-selection model as the Forms tab; only
+  // the ids are persisted on the schedule, never a secret.
+  const [credentialIds, setCredentialIds] = useState<string[]>([])
+  const [creds, setCreds] = useState<Credential[]>([])
   const isDark = useIsDark()
 
   // Saved runbooks, for the "Run a runbook" action's picker. Loaded once per open.
   useEffect(() => {
     if (!open) return
     bridge.get_runbooks().then(setRunbooks).catch(console.error)
+  }, [open])
+
+  // All saved credentials, for the runnable-action credential picker. Loaded once
+  // per open (mirrors the Forms run dialog).
+  useEffect(() => {
+    if (!open) return
+    bridge.list_credentials().then(setCreds).catch(() => setCreds([]))
   }, [open])
 
   // Distinct host groups (from each host's `group` field), for group targeting.
@@ -87,6 +128,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setCronPreset('')
     setCustomCron('')
     setSelectedRunnable(null)
+    setArgValues({})
+    setArgErrors({})
+    setRunbookValues({})
+    setRunbookErrors({})
+    setCredentialIds([])
   }
 
   // Prefill from the schedule being edited (or a clean slate for a new one)
@@ -128,6 +174,15 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       ? runnables.find(x => x.name === editing.runnable && selectedNames.includes(x.host)) ?? null
       : runnables.find(x => x.host === editing.host && x.name === editing.runnable) ?? null
     setSelectedRunnable(r)
+    // Seed rich arg values: spec defaults overlaid with the schedule's stored
+    // args. `initialFormValues` (shared with Forms) preserves native types and
+    // drops stale keys that no longer match a declared arg.
+    setArgValues(initialFormValues(r?.args ?? [], editing.args))
+    setArgErrors({})
+    setCredentialIds(editing.credential_ids ?? [])
+    // Runbook value seeding is deferred to a second effect once the runbook list
+    // has loaded — its args come from the selected runbook, not the runnable.
+    setRunbookErrors({})
     const fv: Record<string, unknown> = {
       host: editing.host ?? defaultHost,
       group: editing.group ?? '',
@@ -142,25 +197,36 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       runbook: editing.runbook ?? undefined,
       fields: Object.entries(editing.fields ?? {}).map(([key, value]) => ({ key, value })),
     }
-    for (const [k, v] of Object.entries(editing.args ?? {})) fv[`arg_${k}`] = String(v)
-    for (const [k, v] of Object.entries(editing.values ?? {})) fv[`val_${k}`] = String(v)
     form.setFieldsValue(fv)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing])
 
+  // Seed the runbook value inputs whenever the chosen runbook resolves — this
+  // handles both the async load on edit (runbooks list arrives after the modal
+  // opens) and a manual switch of runbook in the picker. `initialFormValues`
+  // overlays a saved schedule's values on top of the runbook's own defaults.
+  useEffect(() => {
+    if (!open) return
+    if (!selectedRunbook) { setRunbookValues({}); return }
+    const prefill = editing?.runbook === selectedRunbook.id ? editing.values : undefined
+    setRunbookValues(initialFormValues(selectedRunbook.args ?? [], prefill))
+    setRunbookErrors({})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedRunbook?.id])
+
   const handleRunnableChange = (name: string) => {
     const r = hostRunnables.find(x => x.name === name) ?? null
     setSelectedRunnable(r)
-    // Reset args fields when runnable changes
-    const argKeys = r?.args.map(a => `arg_${a.name}`) ?? []
-    const resetObj: Record<string, undefined> = {}
-    argKeys.forEach(k => { resetObj[k] = undefined })
-    form.setFieldsValue(resetObj)
+    // Reset the rich arg state to the runnable's spec defaults.
+    setArgValues(initialFormValues(r?.args ?? []))
+    setArgErrors({})
   }
 
   const handleHostChange = () => {
     form.setFieldValue('runnable', undefined)
     setSelectedRunnable(null)
+    setArgValues({})
+    setArgErrors({})
   }
 
   const handleTargetChange = (t: Target) => {
@@ -169,6 +235,18 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     // differs), so clear it.
     form.setFieldsValue({ runnable: undefined })
     setSelectedRunnable(null)
+    setArgValues({})
+    setArgErrors({})
+  }
+
+  const changeArg = (name: string, v: unknown) => {
+    setArgValues(prev => ({ ...prev, [name]: v }))
+    setArgErrors(prev => { const next = { ...prev }; delete next[name]; return next })
+  }
+
+  const changeRunbookValue = (name: string, v: unknown) => {
+    setRunbookValues(prev => ({ ...prev, [name]: v }))
+    setRunbookErrors(prev => { const next = { ...prev }; delete next[name]; return next })
   }
 
   const handleSubmit = async () => {
@@ -207,20 +285,30 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     } else if (action === 'runbook') {
       const runbook = String(values.runbook ?? '').trim()
       if (!runbook) { form.setFields([{ name: 'runbook', errors: ['Required'] }]); return }
+      const errs = validateArgs(selectedRunbook?.args ?? [], runbookValues)
+      if (Object.keys(errs).length > 0) { setRunbookErrors(errs); return }
       const vals: Record<string, unknown> = {}
       for (const a of selectedRunbook?.args ?? []) {
-        const v = values[`val_${a.name}`]
+        const v = runbookValues[a.name]
         if (v !== undefined && v !== '') vals[a.name] = v
       }
       base.runbook = runbook
       base.values = vals
       if (!base.id) base.id = `rs-${runbook}-${Date.now()}`
     } else {
+      // A schedule is persisted to disk, so a typed secret would be written in
+      // plaintext — never do that. Password-typed args aren't required at save and
+      // aren't stored; supply them at fire time via a credential (below) or the
+      // runnable's own env resolution. Everything else validates as on the Forms tab.
+      const persistArgs = (selectedRunnable?.args ?? []).filter(a => a.type !== 'password')
+      const errs = validateArgs(persistArgs, argValues)
+      if (Object.keys(errs).length > 0) { setArgErrors(errs); return }
       const args: Record<string, unknown> = {}
-      for (const a of selectedRunnable?.args ?? []) {
-        const v = values[`arg_${a.name}`]
+      for (const a of persistArgs) {
+        const v = argValues[a.name]
         if (v !== undefined && v !== '') args[a.name] = v
       }
+      if (credentialIds.length > 0) base.credential_ids = credentialIds
       if (target === 'group') {
         const group = String(values.group ?? '').trim()
         if (!group) { form.setFields([{ name: 'group', errors: ['Required'] }]); return }
@@ -397,28 +485,19 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
             {selectedRunbook && selectedRunbook.args.length > 0 && (
               <>
                 <div style={{ ...labelStyle, marginBottom: 8, marginTop: 4 }}>Parameters</div>
-                {selectedRunbook.args.map(a => (
-                  <Form.Item
-                    key={a.name}
-                    name={`val_${a.name}`}
-                    label={<span style={{ fontFamily: 'monospace' }}>{a.name}</span>}
-                    rules={a.required ? [{ required: true, message: `${a.name} is required` }] : []}
-                    initialValue={a.default !== undefined ? String(a.default) : undefined}
-                  >
-                    {a.options ? (
-                      <Select>
-                        {a.options.map(o => (
-                          <Select.Option key={o} value={o}>{o}</Select.Option>
-                        ))}
-                      </Select>
-                    ) : (
-                      <Input
-                        placeholder={a.default !== undefined ? String(a.default) : undefined}
-                        style={{ fontFamily: 'monospace' }}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {selectedRunbook.args.map(a => (
+                    <ArgFieldRow key={a.name} arg={a} error={runbookErrors[a.name]}>
+                      <RunbookField
+                        arg={a}
+                        hostNames={hosts.map(h => h.name)}
+                        value={runbookValues[a.name]}
+                        error={runbookErrors[a.name]}
+                        onChange={v => changeRunbookValue(a.name, v)}
                       />
-                    )}
-                  </Form.Item>
-                ))}
+                    </ArgFieldRow>
+                  ))}
+                </div>
               </>
             )}
           </>
@@ -532,36 +611,176 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
             </Form.Item>
 
             {selectedRunnable && selectedRunnable.args.length > 0 && (
-              <>
-                <div style={{ ...labelStyle, marginBottom: 8, marginTop: 4 }}>Arguments</div>
-                {selectedRunnable.args.map(a => (
-                  <Form.Item
-                    key={a.name}
-                    name={`arg_${a.name}`}
-                    label={<span style={{ fontFamily: 'monospace' }}>{a.name}</span>}
-                    rules={a.required ? [{ required: true, message: `${a.name} is required` }] : []}
-                    initialValue={a.default !== undefined ? String(a.default) : undefined}
-                  >
-                    {a.options ? (
-                      <Select>
-                        {a.options.map(o => (
-                          <Select.Option key={o} value={o}>{o}</Select.Option>
-                        ))}
-                      </Select>
-                    ) : (
-                      <Input
-                        placeholder={a.default !== undefined ? String(a.default) : undefined}
-                        style={{ fontFamily: 'monospace' }}
-                      />
-                    )}
-                  </Form.Item>
-                ))}
-              </>
+              <RunnableArgsBlock
+                runnable={selectedRunnable}
+                values={argValues}
+                errors={argErrors}
+                onChange={changeArg}
+                labelStyle={labelStyle}
+              />
+            )}
+
+            {selectedRunnable && creds.length > 0 && (
+              <CredentialsSection
+                creds={creds}
+                selected={credentialIds}
+                onChange={setCredentialIds}
+                declaredArgNames={new Set((selectedRunnable.args ?? []).map(a => a.name))}
+                labelStyle={labelStyle}
+              />
             )}
           </>
         )}
       </Form>
     </Modal>
+  )
+}
+
+// The credential picker for a runnable-action schedule. Mirrors the Forms run
+// dialog: a multi-select of saved credentials, and a per-pick preview of the
+// env vars it sets (name-derived, e.g. JIRA_USERNAME/JIRA_PASSWORD) plus any
+// declared args it binds. Only ids are stored on the schedule; the secret stays
+// in the keychain and is injected at fire time.
+function CredentialsSection({
+  creds, selected, onChange, declaredArgNames, labelStyle,
+}: {
+  creds: Credential[]
+  selected: string[]
+  onChange: (ids: string[]) => void
+  declaredArgNames: Set<string>
+  labelStyle: CSSProperties
+}) {
+  const selectedCreds = selected
+    .map(id => creds.find(c => c.id === id))
+    .filter((c): c is Credential => !!c)
+  const bindings = bindingsForArgs(
+    selectedCreds.map(c => ({
+      id: c.id, label: c.label, kind: c.kind, has_secret: !!c.has_secret,
+      username: c.username ?? '', username_arg: c.username_arg ?? '', secret_arg: c.secret_arg ?? '',
+    })),
+    declaredArgNames,
+  )
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 12 }}>
+      <Text style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>Credentials</Text>
+      <Text type="secondary" style={{ ...labelStyle, display: 'block', marginBottom: 6 }}>
+        Applied when the schedule fires — as env vars named after the credential
+        (a credential <Text code style={{ fontSize: 10 }}>Jira</Text> sets{' '}
+        <Text code style={{ fontSize: 10 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 10 }}>JIRA_PASSWORD</Text>),
+        and into any argument it binds. The secret stays in the keychain; only the
+        credential id is saved on the schedule.
+      </Text>
+      <Select
+        size="small"
+        mode="multiple"
+        value={selected}
+        onChange={vs => onChange(vs as string[])}
+        placeholder="Select credentials to apply…"
+        style={{ width: '100%' }}
+        options={creds.map(c => ({ label: c.label, value: c.id }))}
+      />
+      {selected.length > 0 && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {selectedCreds.map(c => {
+            const names = credEnvNames(c.label, c.kind)
+            const bound = Object.entries(bindings)
+              .filter(([, b]) => b.label === c.label)
+              .map(([argName]) => `--${argName}`)
+            return (
+              <Text key={c.id} type="secondary" style={{ fontSize: 11 }}>
+                <Text style={{ fontSize: 11 }}>{c.label}</Text>
+                {' → '}
+                {names.length
+                  ? names.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)
+                  : <Text type="warning" style={{ fontSize: 11 }}>no env vars (rename or pick a userpass/password/token credential)</Text>}
+                {bound.length > 0 && (
+                  <span> · binds {bound.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)}</span>
+                )}
+                {c.kind !== 'ssh-key' && !c.has_secret && <Text type="warning" style={{ fontSize: 11 }}> · no secret stored</Text>}
+              </Text>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// One rich arg row — mirrors the Forms tab's ArgRow: monospace label + tags
+// (type / required / optional / description), the rich `children` input, and an
+// inline error message. Kept local so the Schedules modal owns its own
+// container/label styling (the FormsView ArgRow is not exported).
+function ArgFieldRow({ arg, error, children }: { arg: ArgDef; error?: string; children: ReactNode }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+        <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
+        <Tag style={{ fontSize: 10, margin: 0 }}>
+          {(arg.ui === 'date' || arg.ui === 'datetime' || arg.ui === 'time' || arg.ui === 'month' || arg.ui === 'color' || arg.ui === 'host') ? arg.ui : arg.type}
+        </Tag>
+        {arg.required
+          ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
+          : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
+        }
+        {arg.description && (
+          <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
+        )}
+      </div>
+      {children}
+      {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
+    </div>
+  )
+}
+
+// The runnable-args section of the Schedules modal. Uses the Forms tab's
+// `ArgInput` verbatim (flag→Switch, choice→Select, int/float→InputNumber,
+// path→PathInput, date/datetime/time/month/color→pickers, password→masked),
+// and matches the Forms layout — defaulted args fold into a collapsed
+// "Default arguments" section near the top; the rest lead the form.
+function RunnableArgsBlock({
+  runnable, values, errors, onChange, labelStyle,
+}: {
+  runnable: Runnable
+  values: Record<string, unknown>
+  errors: Record<string, string>
+  onChange: (name: string, v: unknown) => void
+  labelStyle: CSSProperties
+}) {
+  const args = runnable.args ?? []
+  const { visible, defaulted } = partitionArgs(args)
+  const row = (a: ArgDef) => (
+    <ArgFieldRow key={a.name} arg={a} error={errors[a.name]}>
+      <ArgInput
+        arg={a}
+        host={runnable.host}
+        runnable={runnable.name}
+        runAs={runnable.runAs}
+        group={runnable.group}
+        value={values[a.name]}
+        error={errors[a.name]}
+        onChange={v => onChange(a.name, v)}
+      />
+    </ArgFieldRow>
+  )
+  return (
+    <>
+      <div style={{ ...labelStyle, marginBottom: 8, marginTop: 4 }}>Arguments</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {defaulted.length > 0 && (
+          <Collapse
+            size="small"
+            ghost
+            style={{ marginLeft: -8, marginRight: -8 }}
+            items={[{
+              key: 'defaults',
+              label: <Text type="secondary" style={{ fontSize: 11 }}>Default arguments ({defaulted.length})</Text>,
+              children: <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>{defaulted.map(row)}</div>,
+            }]}
+          />
+        )}
+        {visible.map(row)}
+      </div>
+    </>
   )
 }
 

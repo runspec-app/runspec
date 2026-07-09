@@ -32,7 +32,9 @@ function defaultsFor(args: ArgDef[]): Record<string, unknown> {
 // Forms-tab ArgInput verbatim. Two runbook-specific cases: a `ui:"host"` slot → fleet
 // dropdown, and `path` → plain text (a runbook path is usually a *remote* path, so we
 // don't browse the local console filesystem).
-function RunbookField({ arg, hostNames, value, error, onChange }: {
+// Exported so the Schedules tab's "Run a runbook" section renders values with the
+// same rich, host-aware controls this modal uses.
+export function RunbookField({ arg, hostNames, value, error, onChange }: {
   arg: ArgDef
   hostNames: string[]
   value: unknown

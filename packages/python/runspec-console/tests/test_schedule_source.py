@@ -273,7 +273,7 @@ def test_fire_runnable_selected_hosts_passed_through():
                 "when": {"every": "5m"},
             }
         ],
-        run_runnable=lambda s, h, r, a, g, hs, sel: ran.append((h, g, hs, sel)),
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci: ran.append((h, g, hs, sel)),
     )
     src._fire("s1")
     assert ran == [("", "", [], ["web01", "web02"])]
@@ -291,7 +291,7 @@ def test_fire_runnable_hosts_passed_through():
                 "when": {"every": "5m"},
             }
         ],
-        run_runnable=lambda s, h, r, a, g, hs, sel: ran.append((h, g, hs, sel)),
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci: ran.append((h, g, hs, sel)),
     )
     src._fire("r1")
     assert ran == [("", "", ["web01", "web02"], [])]
@@ -468,12 +468,61 @@ def test_fire_event_emits_matchable_event():
 
 
 def test_fire_runnable_calls_run_runnable():
-    ran: list[tuple[str, str, str, dict, str, list, list]] = []
+    ran: list[tuple[str, str, str, dict, str, list, list, list]] = []
     src = _source_with_jobs(
-        run_runnable=lambda s, h, r, a, g, hs, sel: ran.append((s, h, r, a, g, hs, sel))
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci: ran.append(
+            (s, h, r, a, g, hs, sel, ci)
+        )
     )
     src._fire("r1")
-    assert ran == [("r1", "h", "backup", {"db": "main"}, "", [], [])]
+    assert ran == [("r1", "h", "backup", {"db": "main"}, "", [], [], [])]
+
+
+def test_parse_entry_credential_ids():
+    job = parse_schedule_entry(
+        {
+            "id": "jira-nightly",
+            "action": "runnable",
+            "host": "h",
+            "runnable": "jsm-raise",
+            "when": {"every": "5m"},
+            "credential_ids": ["cred-jira", " cred-extra ", ""],
+        }
+    )
+    # Ids are trimmed and blanks dropped.
+    assert job.credential_ids == ["cred-jira", "cred-extra"]
+
+
+def test_parse_entry_credential_ids_default_empty():
+    job = parse_schedule_entry(
+        {
+            "id": "r1",
+            "action": "runnable",
+            "host": "h",
+            "runnable": "backup",
+            "when": {"every": "5m"},
+        }
+    )
+    assert job.credential_ids == []
+
+
+def test_fire_runnable_threads_credential_ids():
+    ran: list = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "c1",
+                "action": "runnable",
+                "host": "h",
+                "runnable": "jsm-raise",
+                "when": {"every": "5m"},
+                "credential_ids": ["cred-jira"],
+            }
+        ],
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci: ran.append(ci),
+    )
+    src._fire("c1")
+    assert ran == [["cred-jira"]]
 
 
 def test_fire_prompt_calls_run_agent():

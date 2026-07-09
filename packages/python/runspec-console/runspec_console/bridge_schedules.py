@@ -168,6 +168,7 @@ class SchedulesMixin:
             group=job.group,
             hosts=list(job.hosts),
             selected_hosts=list(job.selected_hosts),
+            credential_ids=list(job.credential_ids),
         )
         self._record_schedule_fire(job)
         if job.group:
@@ -227,15 +228,17 @@ class SchedulesMixin:
         group: str = "",
         hosts: list[str] | None = None,
         selected_hosts: list[str] | None = None,
+        credential_ids: list[str] | None = None,
     ) -> None:
         """Run a runnable-action schedule on the timer: fire it directly and
         autonomously — no agent, no confirm gate (scheduling it is the
         authorization). A ``group``-targeted schedule fans the run out across every
         member of the host group (one run card per host); a ``hosts`` candidate list
         runs on the first connected one (failover); a ``selected_hosts`` list fans
-        the run out to every host in it. The callback ignores the return; the
-        manual *Run now* path uses :meth:`_invoke_scheduled` so it can surface the
-        in-flight id."""
+        the run out to every host in it. ``credential_ids`` are console credentials
+        applied to the run (secrets injected from the keychain at fire time). The
+        callback ignores the return; the manual *Run now* path uses
+        :meth:`_invoke_scheduled` so it can surface the in-flight id."""
         self._invoke_scheduled(
             host,
             runnable,
@@ -244,6 +247,7 @@ class SchedulesMixin:
             group=group,
             hosts=hosts,
             selected_hosts=selected_hosts,
+            credential_ids=credential_ids,
         )
 
     def _pick_connected_host(self, hosts: list[str]) -> str:
@@ -393,6 +397,7 @@ class SchedulesMixin:
         group: str = "",
         hosts: list[str] | None = None,
         selected_hosts: list[str] | None = None,
+        credential_ids: list[str] | None = None,
     ) -> str:
         """Invoke a runnable as the scheduler would and return its in-flight
         ``inv_id`` (``""`` on failure). Labelled as the 'Scheduled Task' operator
@@ -422,7 +427,11 @@ class SchedulesMixin:
                 return ""
             inv_ids = [
                 self._invoke_scheduled(
-                    m, runnable, dict(args or {}), schedule_id=schedule_id
+                    m,
+                    runnable,
+                    dict(args or {}),
+                    schedule_id=schedule_id,
+                    credential_ids=credential_ids,
                 )
                 for m in members
             ]
@@ -433,7 +442,11 @@ class SchedulesMixin:
                 logger.warning("schedule: no candidate host in %r — nothing run", hosts)
                 return ""
             return self._invoke_scheduled(
-                chosen, runnable, dict(args or {}), schedule_id=schedule_id
+                chosen,
+                runnable,
+                dict(args or {}),
+                schedule_id=schedule_id,
+                credential_ids=credential_ids,
             )
         if group:
             members = [
@@ -450,7 +463,11 @@ class SchedulesMixin:
                 return ""
             inv_ids = [
                 self._invoke_scheduled(
-                    m, runnable, dict(args or {}), schedule_id=schedule_id
+                    m,
+                    runnable,
+                    dict(args or {}),
+                    schedule_id=schedule_id,
+                    credential_ids=credential_ids,
                 )
                 for m in members
             ]
@@ -505,6 +522,7 @@ class SchedulesMixin:
                 host,
                 runnable,
                 dict(args or {}),
+                credential_ids=list(credential_ids) if credential_ids else None,
                 operator="Scheduled Task",
                 trigger="schedule",
                 inv_id=inv_id,
