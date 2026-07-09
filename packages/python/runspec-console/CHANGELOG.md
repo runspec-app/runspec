@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.164.1] — 2026-07-09
+
+### Fixed
+- **Relay modal — Jump host is no longer silently auto-picked.** The "Relay
+  between hosts" ad-hoc mode used to default Jump host to the first fleet
+  entry, so a Browse against a target whose default jump had
+  `AllowTcpForwarding no` failed with a paramiko
+  `ChannelException(1, 'Administratively prohibited')` before the target
+  credentials were consulted — reading as a credential problem when it was
+  really the wrong forwarder. Jump host now starts blank and the Browse
+  button stays disabled until it's chosen. Destination host and the
+  configured-mode Source host still auto-pick (those paths use the pool, not
+  a direct-tcpip forward, so the bug doesn't apply). Files:
+  `packages/console-ui/src/views/RelayModal.tsx`,
+  `packages/console-ui/src/views/RelayModal.test.tsx`.
+
+---
+
 ## [0.164.0] — 2026-07-09
 
 ### Added

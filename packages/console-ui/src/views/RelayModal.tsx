@@ -37,7 +37,12 @@ export function RelayModal({ open, onClose, hosts }: { open: boolean; onClose: (
   useEffect(() => {
     if (!open) return
     const first = remoteHosts.find(h => h.connected)?.name ?? remoteHosts[0]?.name ?? ''
-    setJump(prev => prev || first)
+    // Jump host is deliberately left blank on open — auto-picking the first
+    // host silently used one that may refuse direct-tcpip forwarding
+    // (AllowTcpForwarding no), surfacing as "Administratively prohibited" on
+    // Browse before the target credentials are even consulted. Force an
+    // explicit pick instead so it's obvious which host is being asked to
+    // forward.
     setDestHost(prev => prev || first)
     setConfiguredSource(prev => prev || first)
     bridge.list_credentials().then(setCreds).catch(() => { /* feature optional */ })
