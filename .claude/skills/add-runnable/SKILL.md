@@ -75,6 +75,40 @@ interview and just confirm the few genuine gaps; don't manufacture questions.
 
 ---
 
+## Anti-patterns — do NOT do these
+
+Common wrong turns models make around runspec. If your first instinct is any of
+these, stop — the right pattern is in "Python stub" and "Testing the runnable"
+below. Each of these looks like defensive/clean code but actively fights the
+library:
+
+- **`getattr(args, name)` or walking `args.__dict__`.** `parse()` returns a
+  `RunSpec`; `args.name` is an `Arg`. For an arg that only exists under some
+  subcommands use `name in args` and then `args.name.value`. Never `getattr` —
+  attribute access is already the right API, and `getattr` disables the
+  `TypeError` guard that catches the `if args.x:` / `args.x == y` mistakes.
+- **`types.SimpleNamespace`, `Mock()`, `argparse.Namespace`, or a hand-rolled
+  dataclass to fake args in tests.** You never need to fake a `RunSpec`. Either
+  use `ParseHarness` (real spec, no mocks) *or* factor `main()` to unpack
+  `.value` at the boundary and pass plain primitives to a worker function you
+  test directly. See "Testing the runnable — Layer 2".
+- **Wrapping `parse()` in an adapter class, a dict, or a dataclass "for cleaner
+  code".** The boundary-unpack pattern in `main()` (unpack each `.value` into a
+  local, hand it to a worker taking plain params) is the clean version — that's
+  what the shipped runnables do (see `runspec_linux.nc_command:main`). An
+  adapter layer just hides `.source`, `.type`, and the `TypeError` guards.
+- **Rebuilding argparse on top of runspec.** No `add_argument`, no `Namespace`,
+  no `sys.argv` munging. `parse()` already reads `sys.argv`; tests pass `argv=`
+  via `ParseHarness`, not by mutating `sys.argv`.
+- **Reading `args.name` as if it were the value.** `args.name` is an `Arg`; read
+  `.value`. `if args.dry_run:` raises `TypeError` on purpose — write
+  `if args.dry_run.value:`.
+- **Blanket `try/except` around `parse()` or `main()`.** See "Error handling" —
+  runspec already handles arg errors and, with `[config.logging]`, uncaught
+  runtime exceptions. Wrapping throws the structured audit record away.
+
+---
+
 ## Fast path: `runspec init`
 
 If runspec is already installed, prefer scaffolding the skeleton rather than hand-writing every file. From **inside the package directory**:
@@ -180,19 +214,38 @@ if args.runspec_agent and args.runspec_autonomy != "autonomous":
 
 ## Python stub
 
-```python
-from runspec import parse
+**Boundary-unpack pattern** — unpack each `.value` at the top of `main()` and
+hand plain primitives to a worker function. Nothing runspec-shaped crosses into
+your business logic. This is what the shipped runnables do (e.g.
+`runspec_linux.nc_command:main` → `nc_send(host, port, command, wait=…)`), and
+it's what makes tests trivial (see Layer 2 below):
 
-def main():
-    args = parse()
-    print("done")
+```python
+# mypkg/myrule.py — thin wiring, one runnable
+from runspec import parse
+from mypkg._core import do_the_work
+
+def main() -> None:
+    args = parse("myrule")
+    result = do_the_work(
+        directory=args.directory.value,
+        dry_run=args.dry_run.value,
+        format=args.format.value,
+    )
+    print(result)
+```
+
+```python
+# mypkg/_core.py — plain function, no runspec import, no Arg objects
+def do_the_work(*, directory: str, dry_run: bool, format: str) -> dict:
+    ...
 ```
 
 Read an argument's value with `args.<name>.value` (e.g. `args.directory.value`)
 — `args.<name>` is an `Arg`, and since 0.38.0 it is not a transparent proxy, so
 `if args.x:` / `args.x == y` raise a `TypeError` telling you to add `.value`. Use
 `name in args` / `args.get(name, default)` for args that only exist under some
-subcommands.
+subcommands (both return the `Arg`; still read `.value` off it).
 
 **The `Arg` carries metadata you can use in code** (not just `.value`). Each arg
 is self-describing — `args.x.type`, `.default`, `.options`, `.range`, `.env`,
@@ -320,6 +373,32 @@ def test_wiring():
 You can also pass an inline spec with `toml="..."` instead of `config_path=`.
 
 **Node:** `import { ParseHarness } from "runspec-node/testing"` — same API (`expectOk`, `expectExit({ code, contains })`, `smoke({ values })`).
+
+### Layer 2 — test the worker with plain primitives (no fake args)
+
+Because `main()` unpacks `.value` at the boundary and hands primitives to a
+worker function (see "Python stub"), Layer 2 tests never need a `RunSpec`, a
+`SimpleNamespace`, or a mock — just call the worker directly:
+
+```python
+# tests/test_core.py
+from unittest.mock import patch
+from mypkg._core import do_the_work
+
+def test_dry_run_does_not_write():
+    with patch("mypkg._core._write_file") as w:
+        result = do_the_work(directory=".", dry_run=True, format="json")
+    assert result["written"] == 0
+    w.assert_not_called()
+```
+
+If you find yourself building a `SimpleNamespace(directory=".", dry_run=True)`
+or `Mock(spec=…)` to pass into `main()` or a helper that takes `args`, the
+helper's signature is wrong — pull the `.value` unpack up into `main()` and give
+the helper plain params. Same rule for `argparse.Namespace(**{…})` — you're not
+using argparse; don't shape tests as if you were. For everything that *is*
+about parsing (types, choices, groups, `require-command`, `--help`, missing
+required args), use `ParseHarness` — it produces the real `RunSpec`.
 
 ### `runspec test` — the CI gate
 
