@@ -115,6 +115,16 @@ _WORKSPACE_TOOL_NAMES = frozenset(
     }
 )
 
+# Code-execution tools rooted in the current session's workspace (cwd jailed to
+# it). ``run_python`` executes an arbitrary snippet/file with the console's own
+# interpreter and is ALWAYS confirm-gated — it runs as the operator with full
+# privileges, so the confirm gate (not the path-jail) is the security control.
+# ``run_sql`` runs SQL against a sqlite file in the workspace; read-only queries
+# (SELECT/EXPLAIN/read PRAGMA) run autonomously via a read-only connection,
+# writes/DDL confirm-gate. Both dropped entirely when ``[workspace] code_exec``
+# is false. See _effective_tool_autonomy / _run_exec_tool / codeexec.py.
+_EXEC_TOOL_NAMES = frozenset({"run_python", "run_sql"})
+
 # Every built-in (non-runnable-backed) agent tool. ``_gated_run_tool_async``
 # wraps each of these — once past the autonomy gate — with a live Console
 # in-flight card, cooperative cancellation, progress streaming, and a
@@ -132,6 +142,7 @@ _BUILTIN_TOOL_NAMES = (
     | _STATUS_TOOL_NAMES
     | _ACTION_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
+    | _EXEC_TOOL_NAMES
 )
 
 
@@ -165,6 +176,18 @@ _TOOL_OUTPUT_SPILL_THRESHOLD = 32_768
 # so it sees the shape (JSON keys, log format, error banner) without a
 # follow-up file read for trivial cases. Kept small: ~1 K tokens.
 _SPILL_ENVELOPE_HEAD_BYTES = 4_096
+
+# One budget for a single chat turn's model round-trips: tool-calling iterations
+# AND auto-continuations after an output-ceiling cut-off (stop_reason ==
+# "max_tokens") both draw from it, so a cut-off-heavy turn can't starve tool use
+# or loop unbounded. Was a bare ``range(10)``.
+_MAX_AGENT_ITERATIONS = 10
+
+# Default wall-clock ceiling (seconds) for a ``run_python`` subprocess and the
+# default row cap for a ``run_sql`` result. Timeout is operator-overridable via
+# ``[workspace] exec_timeout``; the row cap via the tool's ``max_rows`` arg.
+_EXEC_TIMEOUT_S = 30
+_EXEC_MAX_ROWS = 1_000
 
 PUTTY_PROXY_SESSION = "runspec-console-proxy"
 

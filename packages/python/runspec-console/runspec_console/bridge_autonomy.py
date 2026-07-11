@@ -41,6 +41,7 @@ from .bridge_const import (
     _REPO_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
     _WORKSPACE_TOOL_NAMES,
+    _EXEC_TOOL_NAMES,
     _BUILTIN_TOOL_NAMES,
     _TOOL_OUTPUT_SPILL_THRESHOLD,
     _SPILL_ENVELOPE_HEAD_BYTES,
@@ -86,6 +87,17 @@ class AutonomyMixin:
         if tool_name in _WORKSPACE_TOOL_NAMES:
             # read/write inside the current session's workspace only — no prompt
             return "autonomous"
+        if tool_name == "run_python":
+            # Arbitrary code on the console machine as the operator — the confirm
+            # gate (not the path-jail) is the security control here. Always prompt.
+            return "confirm"
+        if tool_name == "run_sql":
+            # Read-only SQL against a workspace sqlite db runs autonomously (it
+            # can't mutate — opened mode=ro); writes/DDL confirm-gate.
+            from . import codeexec
+
+            q = str((tool_input or {}).get("query") or "")
+            return "autonomous" if codeexec.classify_sql(q) == "read" else "confirm"
         if tool_name in _ACTION_TOOL_NAMES:
             return "confirm"  # side-effecting action tools — always prompt
         if tool_name == "run_runnable":
@@ -796,6 +808,14 @@ class AutonomyMixin:
             return self._run_status_tool(dict(tool_input or {}))
         if tool_name in _WORKSPACE_TOOL_NAMES:
             return self._run_workspace_tool(
+                tool_name,
+                dict(tool_input or {}),
+                chat_id=chat_id,
+                cancel_event=cancel_event,
+                on_progress=on_progress,
+            )
+        if tool_name in _EXEC_TOOL_NAMES:
+            return self._run_exec_tool(
                 tool_name,
                 dict(tool_input or {}),
                 chat_id=chat_id,

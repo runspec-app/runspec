@@ -764,14 +764,27 @@ class InternalsMixin:
             kwargs["api_key_command"] = llm_cfg["api_key_command"]
         if llm_cfg.get("api_key_ttl_ms") is not None:
             kwargs["api_key_ttl_ms"] = int(llm_cfg["api_key_ttl_ms"])
-        # LangServe-only knobs — describe the gateway's input/output shape. Only
-        # forwarded when set (and only meaningful to the langserve adapter), so
-        # other providers never see them.
+        # Output-token ceiling. The anthropic/bedrock/langserve built-ins accept
+        # a max_tokens kwarg; the allowlist below forwards to whatever provider is
+        # configured, so guard it (openai would raise TypeError). A plugin adapter
+        # declaring max_tokens is auto-forwarded via adapter_config_keys and needs
+        # no entry here.
+        if llm_cfg.get("max_tokens") is not None and provider in {
+            "anthropic",
+            "bedrock",
+            "langserve",
+        }:
+            kwargs["max_tokens"] = int(llm_cfg["max_tokens"])
+        # LangServe-only knobs — describe the gateway's input/output shape and
+        # where max_tokens lands. Only forwarded when set (and only meaningful to
+        # the langserve adapter), so other providers never see them.
         for key in (
             "auth_header",
             "auth_scheme",
             "input_messages_key",
             "input_tools_key",
+            "max_tokens_key",
+            "max_tokens_in",
         ):
             if llm_cfg.get(key):
                 kwargs[key] = llm_cfg[key]
@@ -1043,5 +1056,14 @@ class InternalsMixin:
             "a file, workspace_grep to search, and workspace_write to save "
             "a distilled note. All autonomous; scoped to this session only."
         )
+        if config_mod.read_workspace().get("code_exec", True):
+            lines.append(
+                "You can also process what's in the workspace: run_python runs a "
+                "Python snippet with the workspace as its working dir (read a "
+                "spilled file, reshape/join data, compute, print) — it asks the "
+                "operator to approve first; run_sql queries a SQLite file in the "
+                "workspace (read-only queries run without asking). Prefer these "
+                "over doing heavy data-wrangling by hand."
+            )
 
         return "\n".join(lines)

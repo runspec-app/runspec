@@ -30,6 +30,14 @@ Knobs (set under ``[llm]`` in the config): ``input_messages_key`` (default
 instead of the input object (for chains that accept tools as a configurable
 field). Adjust these once you've seen the gateway's ``GET /input_schema``.
 
+``max_tokens`` forwards an output-token ceiling to the gateway (0 = don't send;
+the published chain usually pins its own). ``max_tokens_in`` picks the slot —
+``"kwargs"`` (default), ``"config"`` (``config.configurable.<key>``, only for a
+chain that declares it), or ``"input"`` — and ``max_tokens_key`` renames the
+field. The gateway's reported stop reason (``stop_reason`` / ``stopReason`` /
+``finish_reason`` in the message metadata) is surfaced so the agentic loop can
+auto-continue a reply the gateway truncated at that ceiling.
+
 Auth
 ----
 Bearer token in the ``Authorization`` header, taken from a static ``api_key`` or
@@ -51,7 +59,12 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
-from .base import ChatResponse, ModelAdapter, ToolCall
+from .base import (
+    ChatResponse,
+    ModelAdapter,
+    ToolCall,
+    _OUTPUT_TRUNCATION_STOPS,
+)
 
 DEFAULT_MODEL = ""  # the published chain usually pins its own model
 DEFAULT_SYSTEM = (
@@ -85,12 +98,22 @@ def build_payload(
     messages_key: str = "messages",
     tools_key: str = "tools",
     tools_in_config: bool = False,
+    max_tokens: int = 0,
+    max_tokens_key: str = "max_tokens",
+    max_tokens_in: str = "kwargs",
 ) -> dict[str, Any]:
     """Assemble the ``/invoke`` request body.
 
     The system prompt is prepended as a ``system`` role message — LangChain maps
     it to a ``SystemMessage`` — so it survives even when the chain doesn't expose
     a separate system slot.
+
+    ``max_tokens`` is sent only when > 0 (the published chain usually pins its
+    own, so it's off by default). Where it lands is gateway-specific, so
+    ``max_tokens_in`` selects the slot: ``"kwargs"`` (the LangServe extra-args
+    bucket, default), ``"config"`` (``config.configurable.<key>`` — only for a
+    chain that *declares* that configurable field, else LangChain rejects it), or
+    ``"input"``. ``max_tokens_key`` renames the field.
     """
     wire_messages: list[dict[str, Any]] = []
     if system.strip():
@@ -109,7 +132,64 @@ def build_payload(
             payload["config"] = {"configurable": {tools_key: oai_tools}}
         else:
             payload["input"][tools_key] = oai_tools
+    if max_tokens and int(max_tokens) > 0 and max_tokens_key:
+        if max_tokens_in == "config":
+            payload["config"].setdefault("configurable", {})[max_tokens_key] = int(
+                max_tokens
+            )
+        elif max_tokens_in == "input":
+            payload["input"][max_tokens_key] = int(max_tokens)
+        else:  # "kwargs" — the protocol's dedicated extra-args bucket
+            payload["kwargs"][max_tokens_key] = int(max_tokens)
     return payload
+
+
+# Raw finish/stop reasons a LangChain gateway may report, mapped to the
+# runspec-console loop's vocabulary. Bedrock-Converse uses ``stopReason`` with
+# ``max_tokens``; Anthropic uses ``stop_reason``; OpenAI-shaped chains use
+# ``finish_reason`` with ``length``. Normalising the truncation spellings to
+# ``"max_tokens"`` is what lets the agentic loop auto-continue a reply the
+# gateway truncated at the model's output ceiling. The truncation set is shared
+# with the loop's ``is_output_truncation`` so the two never drift.
+_STOP_TOOL = frozenset({"tool_use", "tool_calls", "function_call"})
+
+
+def extract_stop_reason(output: Any) -> str | None:
+    """Pull the raw finish/stop reason from a LangServe ``output`` message, or
+    ``None`` when the gateway didn't report one.
+
+    Looks in ``response_metadata`` / ``additional_kwargs`` (where LangChain puts
+    provider stop reasons) and at the top level, across the three spellings
+    ``stop_reason`` (Anthropic), ``stopReason`` (Bedrock Converse), and
+    ``finish_reason`` (OpenAI-shaped)."""
+    msg = _unwrap(output)
+    if not isinstance(msg, dict):
+        return None
+    sources = [
+        msg.get("response_metadata"),
+        msg.get("additional_kwargs"),
+        msg,  # some servers surface it at the top level
+    ]
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for key in ("stop_reason", "stopReason", "finish_reason"):
+            val = src.get(key)
+            if val:
+                return str(val)
+    return None
+
+
+def normalize_stop_reason(raw: str | None) -> str:
+    """Map a raw gateway stop reason to the loop's vocabulary
+    (``max_tokens`` / ``tool_use`` / ``end_turn``). Unknown ⇒ ``end_turn`` (a
+    safe terminal — never spins the continuation loop on a value we don't know)."""
+    s = (raw or "").strip().lower()
+    if s in _OUTPUT_TRUNCATION_STOPS:
+        return "max_tokens"
+    if s in _STOP_TOOL:
+        return "tool_use"
+    return "end_turn"
 
 
 def _unwrap(obj: Any) -> Any:
@@ -204,6 +284,9 @@ class LangServeAdapter(ModelAdapter):
         input_messages_key: str = "messages",
         input_tools_key: str = "tools",
         tools_in_config: bool = False,
+        max_tokens: int = 0,
+        max_tokens_key: str = "max_tokens",
+        max_tokens_in: str = "kwargs",
         timeout: float = 120.0,
         client: Any = None,
     ) -> None:
@@ -221,6 +304,12 @@ class LangServeAdapter(ModelAdapter):
         self._messages_key = input_messages_key
         self._tools_key = input_tools_key
         self._tools_in_config = tools_in_config
+        # Output-token ceiling forwarded to the gateway. 0 ⇒ don't send (the
+        # published chain usually pins its own). Exposed so a corporate proxy in
+        # front of Bedrock/Anthropic can raise it via `[llm] max_tokens`.
+        self.max_tokens = int(max_tokens or 0)
+        self._max_tokens_key = max_tokens_key
+        self._max_tokens_in = max_tokens_in
 
         self._api_key_command = api_key_command
         self._api_key_ttl_s = api_key_ttl_ms / 1000.0
@@ -292,6 +381,9 @@ class LangServeAdapter(ModelAdapter):
             messages_key=self._messages_key,
             tools_key=self._tools_key,
             tools_in_config=self._tools_in_config,
+            max_tokens=self.max_tokens,
+            max_tokens_key=self._max_tokens_key,
+            max_tokens_in=self._max_tokens_in,
         )
 
     def _parse_output(
@@ -310,11 +402,20 @@ class LangServeAdapter(ModelAdapter):
         body = resp.json()
         output = body.get("output", body) if isinstance(body, dict) else body
         text, tool_calls, usage = self._parse_output(output)
+        # Surface the gateway's real stop reason so the agentic loop can auto-
+        # continue a reply truncated at the output ceiling. Tool calls still win
+        # (the loop runs them next); otherwise normalise what the gateway reported
+        # (Bedrock/Anthropic/OpenAI spellings) — falling back to end_turn when it
+        # reported nothing, exactly the previous behaviour.
+        if tool_calls:
+            stop_reason = "tool_use"
+        else:
+            stop_reason = normalize_stop_reason(extract_stop_reason(output))
         raw = SimpleNamespace(output=output, usage=SimpleNamespace(**usage))
         return ChatResponse(
             text=text,
             tool_calls=tool_calls,
-            stop_reason="tool_use" if tool_calls else "end_turn",
+            stop_reason=stop_reason,
             _raw=raw,
         )
 

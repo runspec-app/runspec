@@ -25,6 +25,8 @@ from .bridge_const import (
     logger,
     ToolCancelled,
     _AGENT_TOOL_OUTPUT_CAP,
+    _EXEC_MAX_ROWS,
+    _SPILL_ENVELOPE_HEAD_BYTES,
 )
 
 from typing import TYPE_CHECKING
@@ -81,6 +83,19 @@ class AgentToolsMixin:
         except (TypeError, ValueError):
             return _AGENT_TOOL_OUTPUT_CAP
         return cap if cap > 0 else _AGENT_TOOL_OUTPUT_CAP
+
+    def _max_continuations(self) -> int:
+        """How many times a single chat turn may auto-continue after the model
+        stops at the output-token ceiling (``stop_reason == "max_tokens"``), from
+        ``[llm] max_continuations`` (default 3, floored at 0). Each continuation
+        re-prompts the model to pick up where it was cut, so a long reply streams
+        out whole instead of being silently truncated; past this budget the turn
+        ends with a visible cut-off marker."""
+        try:
+            n = int(self.get_config().get("llm", {}).get("max_continuations", 3))
+        except (TypeError, ValueError):
+            return 3
+        return n if n >= 0 else 3
 
     @staticmethod
     def _sanitize_tool_name(raw: str) -> str:
@@ -419,6 +434,7 @@ class AgentToolsMixin:
                 *self._memory_tools(),
                 *self._action_tools(),
                 *self._workspace_tools(),
+                *self._exec_tools(),
             ]
         self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
@@ -559,6 +575,8 @@ class AgentToolsMixin:
             *self._status_tools(),
             *self._memory_tools(),
             *self._action_tools(),
+            *self._workspace_tools(),
+            *self._exec_tools(),
         ]
 
     def _outlook_tools(self) -> list[dict[str, Any]]:
@@ -1686,6 +1704,86 @@ class AgentToolsMixin:
             },
         ]
 
+    def _exec_tools(self) -> list[dict[str, Any]]:
+        """Schemas for the workspace code-execution tools (``run_python`` /
+        ``run_sql``). Returns ``[]`` when ``[workspace] code_exec`` is false, so a
+        locked-down deployment never sees them (mirrors ``_outlook_tools`` when
+        Outlook is unavailable). ``run_python`` is confirm-gated; ``run_sql`` runs
+        read-only queries autonomously and confirm-gates writes (see
+        ``_effective_tool_autonomy``)."""
+        if not config_mod.read_workspace().get("code_exec", True):
+            return []
+        return [
+            {
+                "name": "run_python",
+                "description": (
+                    "Run a short Python script in the current session's workspace "
+                    "(the sandbox that holds spilled tool outputs). The working "
+                    "directory is the workspace, so you can read a spilled "
+                    "'tool-results/…' file, reshape or join data, compute a result, "
+                    "and print it. Use this to process what tools/prompts hand you "
+                    "instead of doing it by hand. Runs with the console's own "
+                    "Python (its installed packages are importable). stdout/stderr "
+                    "and the exit code are returned; large output spills to the "
+                    "workspace. This runs real code on the machine, so it always "
+                    "asks the operator to approve first."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": (
+                                "Python source to run (fed on stdin). Provide this "
+                                "OR 'file', not both."
+                            ),
+                        },
+                        "file": {
+                            "type": "string",
+                            "description": (
+                                "Workspace-relative path of a .py file to run "
+                                "instead of inline 'code'."
+                            ),
+                        },
+                    },
+                },
+            },
+            {
+                "name": "run_sql",
+                "description": (
+                    "Run a SQL statement against a SQLite database file inside the "
+                    "current session's workspace. Read-only queries "
+                    "(SELECT/EXPLAIN/PRAGMA) run without asking; anything that "
+                    "writes (INSERT/UPDATE/DELETE/CREATE/…) asks the operator to "
+                    "approve first. Returns ``{columns, rows, rowcount, "
+                    "returned, truncated}``; rows past 'max_rows' are dropped."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "db": {
+                            "type": "string",
+                            "description": (
+                                "Workspace-relative path of the SQLite database "
+                                "file (e.g. 'notes/data.db')."
+                            ),
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "The SQL statement to execute.",
+                        },
+                        "max_rows": {
+                            "type": "integer",
+                            "description": (
+                                f"Max rows to return (default {_EXEC_MAX_ROWS})."
+                            ),
+                        },
+                    },
+                    "required": ["db", "query"],
+                },
+            },
+        ]
+
     def _current_workspace_root(self, chat_id: str = "") -> Any:
         """The workspace ``Path`` for whichever session (chat / trigger /
         schedule) is currently active on this Bridge, or ``None`` when no
@@ -1793,6 +1891,96 @@ class AgentToolsMixin:
         except OSError as e:
             return json.dumps({"error": f"filesystem error: {e}"})
         return json.dumps({"error": f"unknown workspace tool: {name}"})
+
+    def _run_exec_tool(
+        self,
+        name: str,
+        ti: dict[str, Any],
+        chat_id: str = "",
+        cancel_event: Any = None,
+        on_progress: Any = None,
+    ) -> str:
+        """Dispatch ``run_python`` / ``run_sql``, rooted in the current session's
+        workspace. The autonomy gate has already approved this call (confirm-gated
+        for run_python and for a writing run_sql). Large output spills to the
+        workspace just like a big runnable result, so it never blows the model
+        context. ``cancel_event`` makes a long ``run_python`` interruptible."""
+        import uuid
+
+        from . import codeexec, workspaces
+
+        root = self._current_workspace_root(chat_id)
+        if root is None:
+            return json.dumps(
+                {
+                    "error": (
+                        "No active session workspace — this tool is available "
+                        "inside a chat conversation or a trigger/schedule agent "
+                        "turn (each of which owns a per-session sandbox), not "
+                        "stand-alone."
+                    )
+                }
+            )
+        root.mkdir(parents=True, exist_ok=True)
+        try:
+            if name == "run_python":
+                if on_progress is not None:
+                    on_progress("running python…")
+                result = codeexec.run_python(
+                    root,
+                    code=ti.get("code"),
+                    file_rel=ti.get("file"),
+                    timeout_s=config_mod.read_workspace().get("exec_timeout", 30),
+                    cancel=(
+                        (lambda: bool(cancel_event and cancel_event.is_set()))
+                        if cancel_event is not None
+                        else None
+                    ),
+                )
+            elif name == "run_sql":
+                query = str(ti.get("query") or "")
+                if not query.strip():
+                    return json.dumps({"error": "run_sql needs a query"})
+                db_path = workspaces.jail(root, str(ti.get("db") or ""))
+                if not db_path.is_file():
+                    return json.dumps(
+                        {"error": f"no such workspace database: {ti.get('db')}"}
+                    )
+                try:
+                    max_rows = int(ti.get("max_rows") or _EXEC_MAX_ROWS)
+                except (TypeError, ValueError):
+                    max_rows = _EXEC_MAX_ROWS
+                result = codeexec.run_sql(
+                    db_path,
+                    query,
+                    read_only=codeexec.classify_sql(query) == "read",
+                    max_rows=max(1, max_rows),
+                )
+            else:
+                return json.dumps({"error": f"unknown exec tool: {name}"})
+        except ToolCancelled:
+            raise  # handled by _run_builtin_tool_tracked → "⏹ stopped"
+        except ValueError as e:  # path-jail escape / bad args
+            return json.dumps({"error": str(e)})
+        except FileNotFoundError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:  # noqa: BLE001 — surface any exec failure as a result
+            return json.dumps({"error": f"{type(e).__name__}: {e}"})
+
+        payload = json.dumps(result)
+        # Spill a large exec result to the workspace, same as a big runnable
+        # output, so it never blows the model context.
+        threshold = config_mod.read_workspace().get("spill_threshold", 32_768)
+        if threshold and len(payload) > threshold:
+            envelope, _rel = workspaces.spill_output(
+                root,
+                name,
+                uuid.uuid4().hex[:12],
+                payload,
+                head_bytes=_SPILL_ENVELOPE_HEAD_BYTES,
+            )
+            return envelope
+        return payload
 
     def _memory_tools(self) -> list[dict[str, Any]]:
         """Schemas for the persistent-memory / runbook tools. Always available (the

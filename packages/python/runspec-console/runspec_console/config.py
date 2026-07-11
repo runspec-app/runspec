@@ -193,7 +193,12 @@ def read_workspace() -> dict[str, Any]:
     tools. Set to 0 to disable spill and keep the pre-workspace cap-and-truncate
     behaviour. ``headless_retention_days`` (default 7) — how long
     trigger/schedule workspaces live after the isolated turn finishes (chat
-    workspaces follow ``[chat_history]`` retention)."""
+    workspaces follow ``[chat_history]`` retention).
+
+    ``code_exec`` (default true) — whether the ``run_python`` / ``run_sql`` agent
+    tools are offered at all; a locked-down deployment sets it false to drop them
+    (defense-in-depth beyond the confirm gate). ``exec_timeout`` (seconds,
+    default 30) — the wall-clock ceiling for a ``run_python`` subprocess."""
     raw = read_config().get("workspace")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     return {
@@ -201,6 +206,8 @@ def read_workspace() -> dict[str, Any]:
         "headless_retention_days": max(
             0, int(cfg.get("headless_retention_days", 7) or 0)
         ),
+        "code_exec": bool(cfg.get("code_exec", True)),
+        "exec_timeout": max(1, int(cfg.get("exec_timeout", 30) or 30)),
     }
 
 

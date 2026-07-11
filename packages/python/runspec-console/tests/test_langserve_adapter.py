@@ -18,6 +18,8 @@ from runspec_console.adapters.langserve import (
     LangServeAdapter,
     _to_openai_tool,
     build_payload,
+    extract_stop_reason,
+    normalize_stop_reason,
     parse_output,
 )
 
@@ -86,6 +88,89 @@ def test_build_payload_custom_keys():
     )
     assert "chat_history" in payload["input"]
     assert "functions" in payload["input"]
+
+
+def test_build_payload_max_tokens_default_kwargs_slot():
+    payload = build_payload(
+        [{"role": "user", "content": "hi"}], [], "", max_tokens=8192
+    )
+    assert payload["kwargs"]["max_tokens"] == 8192
+    assert "max_tokens" not in payload["input"]
+
+
+def test_build_payload_max_tokens_off_by_default():
+    payload = build_payload([{"role": "user", "content": "hi"}], [], "")
+    assert payload["kwargs"] == {}  # nothing sent unless max_tokens > 0
+
+
+def test_build_payload_max_tokens_in_config_and_custom_key():
+    payload = build_payload(
+        [{"role": "user", "content": "hi"}],
+        [],
+        "",
+        max_tokens=4096,
+        max_tokens_in="config",
+        max_tokens_key="maxTokens",
+    )
+    assert payload["config"]["configurable"]["maxTokens"] == 4096
+
+
+def test_build_payload_max_tokens_config_merges_with_tools():
+    payload = build_payload(
+        [{"role": "user", "content": "hi"}],
+        TOOLS,
+        "",
+        tools_in_config=True,
+        max_tokens=1000,
+        max_tokens_in="config",
+    )
+    conf = payload["config"]["configurable"]
+    assert conf["tools"][0]["function"]["name"] == "host__restart"
+    assert conf["max_tokens"] == 1000  # both live under configurable, no clobber
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("max_tokens", "max_tokens"),
+        ("length", "max_tokens"),  # OpenAI-shaped truncation
+        ("MAX_TOKENS", "max_tokens"),
+        ("tool_use", "tool_use"),
+        ("tool_calls", "tool_use"),
+        ("end_turn", "end_turn"),
+        ("stop", "end_turn"),
+        (None, "end_turn"),
+        ("something_odd", "end_turn"),
+    ],
+)
+def test_normalize_stop_reason(raw, expected):
+    assert normalize_stop_reason(raw) == expected
+
+
+def test_extract_stop_reason_from_metadata_spellings():
+    # Anthropic
+    assert (
+        extract_stop_reason(
+            {"content": "x", "response_metadata": {"stop_reason": "max_tokens"}}
+        )
+        == "max_tokens"
+    )
+    # Bedrock Converse
+    assert (
+        extract_stop_reason(
+            {"content": "x", "response_metadata": {"stopReason": "max_tokens"}}
+        )
+        == "max_tokens"
+    )
+    # OpenAI-shaped
+    assert (
+        extract_stop_reason(
+            {"content": "x", "response_metadata": {"finish_reason": "length"}}
+        )
+        == "length"
+    )
+    # Nothing reported
+    assert extract_stop_reason({"content": "x"}) is None
 
 
 def test_parse_output_plain_string():
@@ -240,6 +325,41 @@ def test_chat_end_turn_when_no_tool_calls():
     resp = asyncio.run(adapter.chat([{"role": "user", "content": "hi"}], []))
     assert resp.stop_reason == "end_turn"
     assert resp.tool_calls == []
+
+
+def test_chat_forwards_max_tokens_to_gateway():
+    adapter, client = _adapter({"output": "hi"}, max_tokens=8192)
+    asyncio.run(adapter.chat([{"role": "user", "content": "hi"}], []))
+    assert client.calls[0]["json"]["kwargs"]["max_tokens"] == 8192
+
+
+def test_chat_surfaces_max_tokens_stop_reason():
+    # A gateway that truncated the reply at the output ceiling reports it in the
+    # message metadata; the adapter surfaces "max_tokens" so the agentic loop
+    # auto-continues instead of ending silently.
+    body = {
+        "output": {
+            "content": "a very long half-written answer",
+            "response_metadata": {"stopReason": "max_tokens"},
+        }
+    }
+    adapter, _ = _adapter(body)
+    resp = asyncio.run(adapter.chat([{"role": "user", "content": "write a lot"}], []))
+    assert resp.stop_reason == "max_tokens"
+    assert resp.tool_calls == []
+
+
+def test_chat_tool_calls_still_win_over_stop_metadata():
+    body = {
+        "output": {
+            "content": "",
+            "tool_calls": [{"name": "host__restart", "args": {}, "id": "1"}],
+            "response_metadata": {"stopReason": "max_tokens"},
+        }
+    }
+    adapter, _ = _adapter(body)
+    resp = asyncio.run(adapter.chat([{"role": "user", "content": "go"}], TOOLS))
+    assert resp.stop_reason == "tool_use"  # runs the tool next, doesn't continue-loop
 
 
 def test_custom_auth_scheme_and_header():

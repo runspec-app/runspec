@@ -11,6 +11,11 @@ import anthropic
 from .base import ChatResponse, ModelAdapter, ToolCall, apply_prompt_caching
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
+# Output-token ceiling per request. A ceiling, not a target — billed only when
+# produced, so raising it costs nothing on short replies. The agentic loop
+# auto-continues past it (bridge_invoke `_agentic_chat_turn`), so this is a
+# conservative default the operator can raise via `[llm] max_tokens`.
+DEFAULT_MAX_TOKENS = 8192
 DEFAULT_SYSTEM = (
     "You are a helpful assistant with access to runspec tools running on local and remote hosts. "
     "Use tools when they help answer the user's request. "
@@ -27,6 +32,7 @@ class AnthropicAdapter(ModelAdapter):
         base_url: str | None = None,
         api_key_command: str | None = None,
         api_key_ttl_ms: int = 0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
         """
         Args:
@@ -37,9 +43,11 @@ class AnthropicAdapter(ModelAdapter):
                 ignored and the client is (re)built from the command's output.
             api_key_ttl_ms: How long to cache the command's result before re-running
                 it. 0 re-runs the command on every request.
+            max_tokens: Output-token ceiling per request (``[llm] max_tokens``).
         """
         self.model = model
         self.system = system
+        self.max_tokens = int(max_tokens) or DEFAULT_MAX_TOKENS
         self._base_url = base_url
         self._api_key_command = api_key_command
         self._api_key_ttl_s = api_key_ttl_ms / 1000.0
@@ -94,7 +102,7 @@ class AnthropicAdapter(ModelAdapter):
         self._refresh_key_if_needed()
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=self.max_tokens,
             messages=messages,
             system=self.system,
         )
@@ -123,7 +131,7 @@ class AnthropicAdapter(ModelAdapter):
         self._refresh_key_if_needed()
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=self.max_tokens,
             messages=messages,
             system=self.system,
         )
@@ -142,7 +150,7 @@ class AnthropicAdapter(ModelAdapter):
         self._refresh_key_if_needed()
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=self.max_tokens,
             messages=messages,
             system=self.system,
         )

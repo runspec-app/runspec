@@ -165,3 +165,42 @@ def test_chat_triggers_refresh(monkeypatch):
         result = asyncio.run(adapter.chat([{"role": "user", "content": "hi"}], []))
     assert calls["n"] == 1  # chat() called _refresh_key_if_needed
     assert result.text == "hi"
+
+
+# ── max_tokens (output-ceiling knob) ──────────────────────────────────────────
+
+
+def test_max_tokens_default_and_override():
+    from runspec_console.adapters.anthropic import DEFAULT_MAX_TOKENS
+
+    with patch(CLIENT):
+        assert AnthropicAdapter(api_key="k").max_tokens == DEFAULT_MAX_TOKENS
+        assert AnthropicAdapter(api_key="k", max_tokens=16000).max_tokens == 16000
+        # A falsy/zero value falls back to the default (never sends max_tokens=0).
+        assert (
+            AnthropicAdapter(api_key="k", max_tokens=0).max_tokens == DEFAULT_MAX_TOKENS
+        )
+
+
+def test_max_tokens_forwarded_to_request():
+    import asyncio
+
+    seen: dict[str, object] = {}
+
+    class _FakeMessages:
+        async def create(self, **kwargs):
+            seen.update(kwargs)
+
+            class _Resp:
+                content: list = []
+                stop_reason = "end_turn"
+
+            return _Resp()
+
+    class _FakeClient:
+        messages = _FakeMessages()
+
+    with patch(CLIENT, return_value=_FakeClient()):
+        adapter = AnthropicAdapter(api_key="k", max_tokens=12345)
+        asyncio.run(adapter.chat([{"role": "user", "content": "hi"}], []))
+    assert seen["max_tokens"] == 12345

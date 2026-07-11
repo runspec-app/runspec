@@ -20,6 +20,8 @@ class _ActionBridge:
     _repo_tools = Bridge._repo_tools
     _memory_tools = Bridge._memory_tools
     _status_tools = Bridge._status_tools
+    _workspace_tools = Bridge._workspace_tools
+    _exec_tools = Bridge._exec_tools
     _action_tools = Bridge._action_tools
     _run_action_tool = Bridge._run_action_tool
     _action_create_document = Bridge._action_create_document

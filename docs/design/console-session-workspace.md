@@ -176,13 +176,51 @@ runs hermetic: each turn only ever sees its own workspace.
 - **No cross-conversation workspaces.** Each session is hermetic.
   Cross-run knowledge lives in `runspec_memory.toml` (facts) and
   `runspec_runbooks.toml` (procedures).
-- **No network / no shell out from workspace tools.** Pure Python file I/O
-  over a jailed path.
-- **No new persistence contract.** No SQLite, no index — a workspace is a
-  folder, the filesystem is the truth.
+- **No network / no shell out from the `workspace_*` tools.** The six file
+  tools are pure Python file I/O over a jailed path. (Code *execution* in the
+  workspace is a separate, confirm-gated tool family — see §10.)
+- **No new persistence contract for the file tools.** The `workspace_*` tools
+  treat the workspace as a folder; the filesystem is the truth. (`run_sql` in
+  §10 reads/writes a SQLite file the agent itself created there — that's a
+  data file inside the folder, not a workspace-level index.)
 - **Not a workflow engine.** The agent decides what to write and read; the
   console never orchestrates "step A → B" over workspace files.
 - **Not the same as `documents/` or `repos/`.** `create_document` writes
   operator-facing markdown (may upload to a fleet host); repo tools operate
   over long-lived git checkouts. Workspaces are ephemeral, per-session, and
   strictly agent-internal.
+
+## 10. Code execution in the workspace (`run_python` / `run_sql`, 0.166.0)
+
+Two **confirm-gated** agent tools let the agent *process* what the workspace
+holds — read a spilled `tool-results/…` file, reshape or join data, query a
+SQLite file — instead of doing heavy data-wrangling token-by-token. They live in
+the pure `codeexec.py` module (kept out of `workspaces.py`, whose contract stays
+"file I/O, no subprocess"); the dispatcher is `bridge_agent_tools._run_exec_tool`
+and the schemas are `_exec_tools()`.
+
+- **`run_python`** runs an inline snippet (fed on stdin) or a workspace-relative
+  `.py` file with the console's own `sys.executable`, `cwd` set to the workspace.
+  Interpreter output (`stdout`/`stderr`/`exit_code`/`timed_out`) is returned, and
+  a large result spills to `tool-results/` like any big tool output.
+- **`run_sql`** runs one SQL statement against a workspace-relative SQLite file
+  using stdlib `sqlite3` in-process (no code execution). Read-only statements
+  open the database `mode=ro`.
+
+**Trust posture (deliberate).** The console is single-user and runs *as the
+operator*. `run_python` executes arbitrary code with the operator's full
+privileges — the path-jail only bounds *which file the tool is pointed at* and
+the subprocess cwd; it does **not** sandbox what the code can touch. So **the
+confirm gate is the security control here, not the jail** — `run_python` is
+always `confirm`, exactly like `create_document` / `repo_write` / `outlook_send`.
+`run_sql` classifies the statement (`codeexec.classify_sql`): a read
+(`SELECT`/`EXPLAIN`/read `PRAGMA`/`VALUES`/`WITH … SELECT`) runs **autonomously**
+and can't mutate (enforced by the `mode=ro` connection, not just the classifier);
+anything else confirm-gates. We add a wall-clock timeout
+(`[workspace] exec_timeout`, default 30s) and output caps/spill as honest,
+proportionate rails, but deliberately do **not** attempt OS sandboxing / network
+isolation / hard rlimits — that would be security theater on a Windows-first
+desktop console whose operator already has shell-equivalent power over the whole
+fleet via SSH runnables. A locked-down deployment drops both tools with
+`[workspace] code_exec = false` (defense-in-depth beyond the confirm gate);
+`_exec_tools()` then returns `[]` so they never reach the model.

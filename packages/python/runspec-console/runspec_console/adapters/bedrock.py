@@ -17,6 +17,9 @@ import anthropic
 from .base import ChatResponse, ModelAdapter, ToolCall, apply_prompt_caching
 
 DEFAULT_MODEL = "anthropic.claude-sonnet-4-6"
+# Output-token ceiling per request (see anthropic.py). A ceiling, not a target;
+# the agentic loop auto-continues past it. Operator-overridable via `[llm] max_tokens`.
+DEFAULT_MAX_TOKENS = 8192
 DEFAULT_SYSTEM = (
     "You are a helpful assistant with access to runspec tools running on local and remote hosts. "
     "Use tools when they help answer the user's request. "
@@ -36,9 +39,11 @@ class BedrockAdapter(ModelAdapter):
         # Corporate proxy path: supply base_url + token instead of AWS creds
         base_url: str | None = None,
         api_key: str | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
         self.model = model
         self.system = system
+        self.max_tokens = int(max_tokens) or DEFAULT_MAX_TOKENS
         if base_url:
             # Corporate proxy — treat as a regular Anthropic-compatible endpoint
             self.client: anthropic.AsyncAnthropic | anthropic.AsyncAnthropicBedrock = (
@@ -61,7 +66,7 @@ class BedrockAdapter(ModelAdapter):
     ) -> ChatResponse:
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=self.max_tokens,
             messages=messages,
             system=self.system,
         )
@@ -89,7 +94,7 @@ class BedrockAdapter(ModelAdapter):
     ):  # type: ignore[override]
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=self.max_tokens,
             messages=messages,
             system=self.system,
         )
@@ -107,7 +112,7 @@ class BedrockAdapter(ModelAdapter):
 
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=self.max_tokens,
             messages=messages,
             system=self.system,
         )

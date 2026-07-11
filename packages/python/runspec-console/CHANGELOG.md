@@ -8,7 +8,62 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.165.0] — 2026-07-11
+## [0.166.0] — 2026-07-11
+
+### Fixed
+- **Long agent replies no longer truncate silently.** Every model call hardcoded
+  a 4096 output-token ceiling, and the agentic loop treated the resulting
+  `stop_reason == "max_tokens"` as a normal end-of-turn — so a reply past ~4096
+  tokens was cut off mid-sentence with no marker and no continuation. The
+  ceiling is now configurable via `[llm] max_tokens` (default raised to **8192**;
+  Anthropic + Bedrock adapters), and when the model does hit it the loop
+  **auto-continues** (`[llm] max_continuations`, default **3**) — re-prompting it
+  to pick up where it left off so the answer streams out whole. If the
+  continuation budget is spent, the turn ends with a visible
+  `_(response was cut off at the output limit)_` marker instead of stopping
+  silently. Tool-output truncation is unchanged (it was always deliberate and
+  flagged).
+- **The LangServe adapter now exposes the output ceiling and surfaces the
+  gateway's stop reason.** For a LangServe-style corporate proxy in front of
+  Bedrock/Anthropic: `[llm] max_tokens` is forwarded to the gateway (off by
+  default — the published chain usually pins its own — with `max_tokens_in`
+  = `kwargs`/`config`/`input` and `max_tokens_key` selecting where it lands),
+  and the adapter now reads the reply's real stop reason from the message
+  metadata (`stop_reason`/`stopReason`/`finish_reason`, `length`→`max_tokens`)
+  instead of hardcoding `end_turn` — so the auto-continue above actually fires
+  through the proxy. A custom plugin adapter that declares `max_tokens` on its
+  constructor already receives it (signature-forwarded), so no change is needed
+  there.
+- **The adapter plugin contract now covers auto-continue.** The agentic loop
+  detects an output-ceiling cutoff via `adapters.base.is_output_truncation()` —
+  which accepts any provider spelling (`max_tokens`/`length`/`max_output_tokens`
+  /…) — rather than one literal string, and runs tool calls whenever they're
+  present (not only on an exact `stop_reason == "tool_use"`). So a custom
+  provider adapter participates in continuation and tool execution regardless of
+  its provider's exact stop-reason spelling. The conformance harness
+  (`adapters/testing.py` `VALID_STOP_REASONS`) and the `ChatResponse.stop_reason`
+  contract now document the truncation stop reasons alongside `tool_use` /
+  `end_turn`.
+- **Workspace tools were missing on remote fleets.** The `workspace_*` file tools
+  were only offered to the agent on a local-only fleet — the remote-host branch
+  of the tool list omitted them, so on a fleet with SSH hosts a spilled output
+  pointed the agent at a `tool-results/…` file it had no tool to read. They are
+  now offered on both paths.
+
+### Added
+- **`run_python` / `run_sql` agent tools, rooted in the session workspace.** The
+  agent can now process what tools/prompts hand it — read a spilled output,
+  reshape or join data, query a SQLite file — instead of doing heavy
+  data-wrangling token-by-token. `run_python` runs a snippet (or a workspace
+  `.py` file) with the console's own interpreter and the workspace as its cwd;
+  `run_sql` runs SQL against a SQLite file in the workspace. **Trust posture:**
+  `run_python` is **always confirm-gated** — it runs arbitrary code as the
+  operator, so the confirm gate (not the path-jail) is the security control;
+  `run_sql` runs read-only queries autonomously (opened `mode=ro`) and
+  confirm-gates writes/DDL. Both apply a subprocess timeout
+  (`[workspace] exec_timeout`, default 30s) and spill large output to the
+  workspace like any big tool result. A locked-down deployment can drop them
+  entirely with `[workspace] code_exec = false`. New module `codeexec.py`.
 
 ### Changed
 - **History tab is bounded and reliable — no more spinner-then-trickle.** The

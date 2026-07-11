@@ -84,6 +84,27 @@ def test_chat_response_rejects_bad_stop_reason():
         assert_chat_response(ChatResponse(text="x", tool_calls=[], stop_reason="weird"))
 
 
+@pytest.mark.parametrize("stop", ["max_tokens", "length", "max_output_tokens"])
+def test_chat_response_accepts_truncation_stop_reasons(stop):
+    # A custom adapter reporting a length cutoff is conformant — the loop
+    # auto-continues on these, so the contract must accept them.
+    assert_chat_response(
+        ChatResponse(text="half a reply", tool_calls=[], stop_reason=stop),
+        expect_tool_calls=False,
+    )
+
+
+def test_is_output_truncation_helper():
+    from runspec_console.adapters.base import is_output_truncation
+
+    assert is_output_truncation("max_tokens")
+    assert is_output_truncation("length")  # OpenAI spelling
+    assert is_output_truncation("MAX_TOKENS")  # case-insensitive
+    assert not is_output_truncation("end_turn")
+    assert not is_output_truncation("tool_use")
+    assert not is_output_truncation(None)
+
+
 def test_chat_response_rejects_wrong_type():
     with pytest.raises(AssertionError, match="ChatResponse"):
         assert_chat_response({"text": "x"})

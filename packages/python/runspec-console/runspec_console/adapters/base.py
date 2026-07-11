@@ -23,8 +23,40 @@ class ToolCall:
 class ChatResponse:
     text: str | None
     tool_calls: list[ToolCall]
-    stop_reason: str  # "tool_use" | "end_turn" | "stop"
+    # Why the model stopped. The agent loop reads this:
+    #   • tool calls present            → the loop runs them (return "tool_use")
+    #   • hit the output-token ceiling  → the loop AUTO-CONTINUES the reply
+    #     (return "max_tokens", or any provider spelling is_output_truncation()
+    #     accepts — "length", "max_output_tokens", …)
+    #   • anything else ("end_turn" / "stop" / …) → the turn ends
+    # A custom adapter MUST surface a truncation stop reason for long replies to
+    # continue instead of being silently cut. See adapters/testing.py.
+    stop_reason: str
     _raw: Any = field(repr=False, default=None)
+
+
+# stop_reason values, across providers, that mean the model stopped because it
+# hit its output-token ceiling (not a natural end / a tool call). The agent loop
+# treats any of these as a truncation to auto-continue, so a custom adapter can
+# return whichever spelling its provider reports.
+_OUTPUT_TRUNCATION_STOPS = frozenset(
+    {
+        "max_tokens",  # Anthropic / Bedrock Converse
+        "length",  # OpenAI (finish_reason)
+        "model_length",
+        "max_output_tokens",
+        "max_completion_tokens",
+    }
+)
+
+
+def is_output_truncation(stop_reason: str | None) -> bool:
+    """True when ``stop_reason`` means the model hit its output-token ceiling
+    (any provider spelling). The agentic loop auto-continues the reply on these.
+
+    Part of the adapter contract: a custom adapter should return one of these
+    (canonically ``"max_tokens"``) when its provider reports a length cutoff."""
+    return (stop_reason or "").strip().lower() in _OUTPUT_TRUNCATION_STOPS
 
 
 class ModelAdapter(ABC):

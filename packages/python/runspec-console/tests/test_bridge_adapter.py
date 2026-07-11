@@ -82,6 +82,9 @@ def test_langserve_knobs_threaded():
             "tools_in_config": True,
             "input_messages_key": "chat_history",
             "auth_header": "X-Api-Key",
+            "max_tokens": 8192,
+            "max_tokens_key": "maxTokens",
+            "max_tokens_in": "config",
         }
     }
     bridge = _StubBridge(cfg)
@@ -92,8 +95,33 @@ def test_langserve_knobs_threaded():
     assert kwargs["tools_in_config"] is True
     assert kwargs["input_messages_key"] == "chat_history"
     assert kwargs["auth_header"] == "X-Api-Key"
+    # The output-ceiling knobs reach the langserve adapter.
+    assert kwargs["max_tokens"] == 8192
+    assert kwargs["max_tokens_key"] == "maxTokens"
+    assert kwargs["max_tokens_in"] == "config"
     # api_key_command path bypasses the bridge-level adapter cache.
     assert bridge._adapter is None
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "bedrock", "langserve"])
+def test_max_tokens_threaded_for_supported_providers(provider):
+    cfg = {"llm": {"provider": provider, "base_url": "https://x", "max_tokens": 12000}}
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert kwargs["max_tokens"] == 12000
+
+
+def test_max_tokens_not_threaded_to_openai():
+    # The OpenAI adapter's constructor has no max_tokens param — forwarding it
+    # would raise TypeError, so the guard must skip it.
+    cfg = {"llm": {"provider": "openai", "api_key": "k", "max_tokens": 12000}}
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert "max_tokens" not in kwargs
 
 
 def test_plugin_import_error_surfaces_cause_not_fake_extra():

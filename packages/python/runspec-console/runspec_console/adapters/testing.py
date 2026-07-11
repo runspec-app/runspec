@@ -29,11 +29,21 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-from .base import ChatResponse, ModelAdapter, ToolCall
+from .base import (
+    ChatResponse,
+    ModelAdapter,
+    ToolCall,
+    _OUTPUT_TRUNCATION_STOPS,
+)
 
-# Stop reasons the agent loop understands. Only "tool_use" triggers tool
-# execution; anything else ends the turn.
-VALID_STOP_REASONS = {"tool_use", "end_turn", "stop"}
+# Stop reasons the agent loop understands:
+#   • "tool_use"                → the loop runs the returned tool calls
+#   • a truncation spelling     → the loop AUTO-CONTINUES the reply
+#     (max_tokens / length / … — everything is_output_truncation() accepts)
+#   • "end_turn" / "stop"       → the turn ends normally
+# Return tool calls WITHOUT "tool_use" and the console ignores them; return a
+# truncation stop reason and a long reply continues instead of being cut.
+VALID_STOP_REASONS = {"tool_use", "end_turn", "stop"} | set(_OUTPUT_TRUNCATION_STOPS)
 
 
 def assert_adapter_contract(adapter: Any) -> None:

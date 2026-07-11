@@ -28,7 +28,9 @@ from .trace import jsonsafe_messages
 from .bridge_const import (
     logger,
     _CANCEL_KEY,
+    _MAX_AGENT_ITERATIONS,
 )
+from .adapters.base import is_output_truncation
 from .bridge_utils import (
     _iso_now,
 )
@@ -903,6 +905,9 @@ class InvokeMixin:
         # serialise cleanly.
         turn_assistant_parts: list[str] = []
         turn_tools: list[dict[str, Any]] = []
+        # How many times this turn has auto-continued after an output-ceiling
+        # cut-off (stop_reason == "max_tokens"). Bounded by _max_continuations().
+        continuations = 0
 
         # Hold the conversation lock for the whole turn: it both serialises
         # concurrent sends and is the single owner of self._chat_history.
@@ -910,7 +915,7 @@ class InvokeMixin:
             history = self._chat_history
             history.append({"role": "user", "content": message})
 
-            for _ in range(10):  # max agentic iterations
+            for _ in range(_MAX_AGENT_ITERATIONS):  # tool iters + continuations
                 if cancel.is_set():
                     stopped = True
                     break
@@ -969,16 +974,60 @@ class InvokeMixin:
                         history.append({"role": "assistant", "content": assistant_text})
                     break
 
+                # Read the two decisions off the response once, tolerating any
+                # adapter's spelling: tool calls run whenever present (not only on
+                # an exact stop_reason == "tool_use"), and a length cutoff is any
+                # spelling is_output_truncation() accepts (max_tokens / length / …)
+                # — so a custom adapter participates without matching one literal.
+                has_tools = response is not None and bool(response.tool_calls)
+                truncated = response is not None and is_output_truncation(
+                    response.stop_reason
+                )
+
+                # Output-ceiling cut-off: the model stopped mid-reply (no tool call,
+                # not a natural end). Auto-continue — persist the partial, ask it to
+                # pick up exactly where it left off, and loop — so a long answer
+                # streams out whole instead of being silently truncated. Append
+                # assistant+user (never re-request with a trailing assistant turn:
+                # prefill is rejected on current Claude models, and it would also
+                # make a malformed assistant/assistant pair). Bounded by
+                # _max_continuations(); the streamed tokens flow into the same chat
+                # bubble on the next iteration.
                 if (
-                    response is None
-                    or response.stop_reason != "tool_use"
-                    or not response.tool_calls
+                    truncated
+                    and not has_tools
+                    and assistant_text.strip()
+                    and continuations < self._max_continuations()
                 ):
+                    history.append({"role": "assistant", "content": assistant_text})
+                    history.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous message was cut off at the output "
+                                "limit. Continue exactly where you left off — do "
+                                "not repeat text you already sent."
+                            ),
+                        }
+                    )
+                    continuations += 1
+                    continue
+
+                if response is None or not has_tools:
                     # Final turn — persist the assistant's reply so the next user
                     # message sees it (tool-calling turns are persisted below via
                     # make_tool_turn, which already carries the assistant turn).
                     if response is not None and assistant_text.strip():
                         history.append({"role": "assistant", "content": assistant_text})
+                    # Still cut off at the ceiling after exhausting the continuation
+                    # budget — flag it visibly instead of ending silently
+                    # mid-sentence (mirrors the ⏹ / ⚠ inline markers).
+                    if truncated:
+                        marker = "\n\n_(response was cut off at the output limit)_"
+                        self._dispatch(
+                            "runspec:token", {"id": chat_id, "token": marker}
+                        )
+                        turn_assistant_parts.append(marker.strip())
                     break
 
                 # About to act on hosts — honour a stop requested while the model
