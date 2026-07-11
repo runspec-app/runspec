@@ -53,6 +53,7 @@ nav:
     - The wards: denylist.md
   - "Act IV · The Console Kingdom":
     - The Console kingdom: console.md
+    - Speaking in other tongues: console-adapters.md
 
 # Files kept in the repo but NOT built into the published (public) site.
 # The published surface is usage docs only — internal design notes, the

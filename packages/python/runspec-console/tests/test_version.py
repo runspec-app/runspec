@@ -100,6 +100,17 @@ class TestLatestVersion(unittest.TestCase):
         self.assertIn("mycorp-console", captured["cmd"])
         self.assertNotIn("runspec-console", captured["cmd"])
 
+    def test_timeout_threaded_into_subprocess(self) -> None:
+        captured: dict[str, float] = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+            return _completed(0, "runspec-console (0.19.0)\n")
+
+        with mock.patch("runspec_console.version.subprocess.run", fake_run):
+            version.latest_version(timeout=25.0)
+        self.assertEqual(captured["timeout"], 25.0)
+
     def test_subprocess_failure_returns_none(self) -> None:
         with mock.patch(
             "runspec_console.version.subprocess.run",
@@ -161,6 +172,33 @@ class TestDocsUrl(unittest.TestCase):
     def test_non_dict_console_section_ignored(self) -> None:
         with mock.patch.object(config, "read_config", return_value={"console": "x"}):
             self.assertEqual(config.docs_url(), config.DEFAULT_DOCS_URL)
+
+
+class TestUpdateCheckTimeout(unittest.TestCase):
+    def test_default_when_no_config(self) -> None:
+        with mock.patch.object(config, "read_config", return_value={}):
+            self.assertEqual(
+                config.update_check_timeout(), config.DEFAULT_UPDATE_CHECK_TIMEOUT
+            )
+
+    def test_override_from_console_section(self) -> None:
+        cfg = {"console": {"update_check_timeout": 30}}
+        with mock.patch.object(config, "read_config", return_value=cfg):
+            self.assertEqual(config.update_check_timeout(), 30.0)
+
+    def test_clamped_to_bounds(self) -> None:
+        for raw, expected in ((0, 1.0), (-5, 1.0), (999, 120.0)):
+            cfg = {"console": {"update_check_timeout": raw}}
+            with mock.patch.object(config, "read_config", return_value=cfg):
+                self.assertEqual(config.update_check_timeout(), expected)
+
+    def test_non_numeric_ignored(self) -> None:
+        for bad in ("20", True, None, {}):
+            cfg = {"console": {"update_check_timeout": bad}}
+            with mock.patch.object(config, "read_config", return_value=cfg):
+                self.assertEqual(
+                    config.update_check_timeout(), config.DEFAULT_UPDATE_CHECK_TIMEOUT
+                )
 
 
 if __name__ == "__main__":

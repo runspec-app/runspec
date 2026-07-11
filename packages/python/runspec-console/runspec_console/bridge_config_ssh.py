@@ -181,7 +181,12 @@ class ConfigSshMixin:
 
         package = self._get_branding().version_package
         current = installed_version(package)
-        latest = latest_version(package=package)
+        # Slow machines / internal mirrors can outrun the default pip timeout;
+        # the wait is configurable ([console] update_check_timeout) so the footer
+        # can still resolve to "up to date" instead of sticking on the check.
+        latest = latest_version(
+            package=package, timeout=config_mod.update_check_timeout()
+        )
         if latest is None:
             return {
                 "ok": False,

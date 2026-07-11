@@ -1726,7 +1726,9 @@ class AgentToolsMixin:
                     "Python (its installed packages are importable). stdout/stderr "
                     "and the exit code are returned; large output spills to the "
                     "workspace. This runs real code on the machine, so it always "
-                    "asks the operator to approve first."
+                    "asks the operator to approve first. **Provide exactly one of "
+                    "`code` (the Python source as a string) or `file` (a workspace "
+                    "path) — the call fails if you send neither.**"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -1924,12 +1926,30 @@ class AgentToolsMixin:
         root.mkdir(parents=True, exist_ok=True)
         try:
             if name == "run_python":
+                code = ti.get("code")
+                file_rel = ti.get("file")
+                # A model (often via a schema-loose gateway) sometimes emits the
+                # call with no `code`. Return a directive, self-describing error —
+                # naming the keys we did receive — so the agent recovers in one
+                # step instead of retrying the same empty call.
+                if bool(code) == bool(file_rel):
+                    return json.dumps(
+                        {
+                            "error": (
+                                "run_python: no Python source received. Call it "
+                                "again with the 'code' argument set to the Python "
+                                "source (a string), or 'file' set to a "
+                                "workspace-relative .py path — provide exactly one."
+                            ),
+                            "received_keys": sorted(str(k) for k in ti),
+                        }
+                    )
                 if on_progress is not None:
                     on_progress("running python…")
                 result = codeexec.run_python(
                     root,
-                    code=ti.get("code"),
-                    file_rel=ti.get("file"),
+                    code=code,
+                    file_rel=file_rel,
                     timeout_s=config_mod.read_workspace().get("exec_timeout", 30),
                     cancel=(
                         (lambda: bool(cancel_event and cancel_event.is_set()))

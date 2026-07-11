@@ -215,6 +215,23 @@ def test_exec_tool_no_workspace_is_error(monkeypatch, tmp_path):
     assert "No active session workspace" in json.loads(out)["error"]
 
 
+def test_exec_tool_python_missing_code_is_directive(monkeypatch, tmp_path):
+    # A model that emits run_python with no code gets a directive error naming the
+    # keys it did send, so it recovers in one step instead of retrying empty.
+    b = _exec_stub(monkeypatch, tmp_path)
+    out = b._run_exec_tool("run_python", {"reason": "compute something"})
+    data = json.loads(out)
+    assert "no Python source received" in data["error"]
+    assert "'code'" in data["error"]
+    assert data["received_keys"] == ["reason"]
+
+
+def test_exec_tool_python_both_code_and_file_rejected(monkeypatch, tmp_path):
+    b = _exec_stub(monkeypatch, tmp_path)
+    out = b._run_exec_tool("run_python", {"code": "print(1)", "file": "j.py"})
+    assert "no Python source received" in json.loads(out)["error"]
+
+
 # ── autonomy classification ────────────────────────────────────────────────────
 
 

@@ -10,6 +10,7 @@ real white-label deploy.)
 
 from __future__ import annotations
 
+from runspec_console import config as config_mod
 from runspec_console.branding import Branding
 from runspec_console.bridge import Bridge
 
@@ -51,3 +52,28 @@ def test_survives_branding_error():
 def test_empty_version_package_falls_back():
     v = _bridge_with_branding(_branding("")).app_version()
     assert v
+
+
+def test_check_for_update_threads_configured_timeout(monkeypatch):
+    """The footer's update check must pass the configured (longer) timeout to
+    pip — a slow PC / internal mirror otherwise times out at the default and the
+    footer never resolves to 'up to date'."""
+
+    class _B:
+        check_for_update = Bridge.check_for_update
+
+        def _get_branding(self):
+            return _branding("runspec-console")
+
+    captured: dict[str, float] = {}
+
+    def fake_latest(package, timeout):
+        captured["timeout"] = timeout
+        return "999.0.0"
+
+    monkeypatch.setattr(config_mod, "update_check_timeout", lambda: 42.0)
+    monkeypatch.setattr("runspec_console.version.latest_version", fake_latest)
+
+    result = _B().check_for_update()
+    assert captured["timeout"] == 42.0
+    assert result["ok"] is True and result["update_available"] is True

@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.166.1] — 2026-07-11
+
+### Fixed
+- **Footer update check no longer stalls to "no indicator" on a slow machine or
+  internal mirror.** The `pip index versions` query was capped at a hardcoded 8s;
+  when it timed out the check returned "unknown" and the footer showed just the
+  version, never resolving to "up to date". The timeout is now **20s** by default
+  and configurable via `[console] update_check_timeout` (seconds, clamped to
+  1–120). The version still renders instantly — this only bounds the background
+  indicator — so a longer wait is safe. `config.update_check_timeout()`, threaded
+  through `check_for_update` → `version.latest_version(timeout=…)`.
+- **`run_python` gives a directive error when a model omits the code.** Some
+  models (especially through a schema-loose gateway) occasionally emit a
+  `run_python` call with no `code` argument. The tool now returns a
+  self-describing error that names the keys it did receive and tells the agent to
+  retry with `code` (or `file`) set — so it recovers in one step instead of
+  repeating the empty call — and the tool description states exactly one of
+  `code`/`file` is required.
+
+
 ## [0.166.0] — 2026-07-11
 
 ### Fixed

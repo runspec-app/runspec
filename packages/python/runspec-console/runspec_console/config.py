@@ -501,6 +501,26 @@ def docs_url() -> str:
     return DEFAULT_DOCS_URL
 
 
+# How long the footer's update check waits on `pip index versions` before giving
+# up (and showing just the version, no "up to date" / "update available"). The
+# version renders instantly; this only bounds the background indicator, so a
+# generous default is safe — a slow PC / slow internal index needs the headroom.
+DEFAULT_UPDATE_CHECK_TIMEOUT = 20.0
+
+
+def update_check_timeout() -> float:
+    """`[console] update_check_timeout` (seconds) — the pip index-query timeout
+    for the footer update check. Default 20s; clamped to [1, 120]. Raise it when
+    a slow machine or internal mirror makes the check time out and the footer
+    never resolves to 'up to date'."""
+    console = read_config().get("console")
+    if isinstance(console, dict):
+        raw = console.get("update_check_timeout")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return max(1.0, min(120.0, float(raw)))
+    return DEFAULT_UPDATE_CHECK_TIMEOUT
+
+
 def read_chat() -> dict[str, Any]:
     """The ``[chat]`` room-source table from config.toml ({} when unset).
 

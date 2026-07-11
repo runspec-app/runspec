@@ -132,7 +132,10 @@ def run_python(
     it into a clean "⏹ stopped" result. Returns
     ``{stdout, stderr, exit_code, timed_out}``."""
     if bool(code) == bool(file_rel):
-        raise ValueError("run_python needs exactly one of `code` or `file`")
+        raise ValueError(
+            "run_python: provide exactly one of 'code' (the Python source as a "
+            "string) or 'file' (a workspace-relative .py path) — got neither or both"
+        )
 
     if file_rel:
         target = jail(root, file_rel)  # raises ValueError on escape
