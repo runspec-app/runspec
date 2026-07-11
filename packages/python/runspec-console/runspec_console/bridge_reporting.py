@@ -25,6 +25,7 @@ from .bridge_utils import (
     _parse_log,
     _parse_log_text,
     _aggregate_analytics,
+    _mtime_iso,
 )
 
 from typing import TYPE_CHECKING
@@ -94,6 +95,10 @@ class ReportingMixin:
         except Exception:  # noqa: BLE001 — auditing is best-effort
             logger.warning("could not write built-in tool audit line", exc_info=True)
 
+    # Cap on rows the History tab shows. Applied newest-first, and used as the
+    # early-stop target so we never read more files than needed to fill it.
+    _HISTORY_CAP = 200
+
     def get_history(
         self, host: str, runnable: str | None = None
     ) -> list[dict[str, Any]]:
@@ -103,26 +108,122 @@ class ReportingMixin:
         if entry.get("ssh"):
             return self._get_remote_history(entry, runnable)
         paths = utils_mod._paths(entry)
-        records: list[dict[str, Any]] = []
         globs = _log_globs(runnable)
-        # Scan every venv's logs dir AND ~/logs. A runnable writes to ~/logs when
-        # its venv dir isn't writable (managed machines) — but the venv dir is
-        # still *created* on the way to that fallback, so a "venv dir, else
-        # ~/logs" check reads an empty venv dir and misses the real records in
-        # ~/logs. The Logs tab works because the CLI's log_dirs() reads both.
-        log_dirs = [Path(rp).parent.parent / "logs" for rp in paths if rp]
-        log_dirs.append(Path.home() / "logs")
-        matches: set[Path] = set()
+        # Scan every venv's logs dir (tagged with its venv group) AND ~/logs. A
+        # runnable writes to ~/logs when its venv dir isn't writable (managed
+        # machines) — but the venv dir is still *created* on the way to that
+        # fallback, so a "venv dir, else ~/logs" check reads an empty venv dir
+        # and misses the real records in ~/logs. The Logs tab works because the
+        # CLI's log_dirs() reads both. ~/logs records inherit the primary venv's
+        # group (correct in the common single-venv case) — same as analytics.
+        dir_groups: list[tuple[Path, str]] = [
+            (Path(rp).parent.parent / "logs", hosts_mod.venv_name(rp))
+            for rp in paths
+            if rp
+        ]
+        fallback_group = hosts_mod.venv_name(paths[0]) if paths and paths[0] else ""
+        dir_groups.append((Path.home() / "logs", fallback_group))
+
+        files = self._history_files(dir_groups, globs)
+        records = self._read_newest(files, host)
+        records.sort(key=lambda r: r.get("ts", ""), reverse=True)
+        self._prune_history_cache({str(p) for p, *_ in files})
+        return records[: self._HISTORY_CAP]
+
+    # ── bounded newest-first history read (local) ──────────────────────────────
+
+    def _history_files(
+        self, dir_groups: list[tuple[Path, str]], globs: list[str]
+    ) -> list[tuple[Path, float, int, bool, str]]:
+        """(path, mtime, size, is_archive, group) for every matched log file.
+
+        One ``stat()`` per file, captured here and reused as the parse-cache key
+        and the mtime-vs-ts early-stop cutoff. Dirs are de-duplicated (a venv's
+        logs dir and ~/logs can coincide); files by path.
+        """
+        out: list[tuple[Path, float, int, bool, str]] = []
         seen_dirs: set[Path] = set()
-        for log_dir in log_dirs:
+        seen_files: set[Path] = set()
+        for log_dir, group in dir_groups:
             if log_dir in seen_dirs or not log_dir.exists():
                 continue
             seen_dirs.add(log_dir)
-            matches |= {f for pat in globs for f in log_dir.glob(pat)}
-        for log_file in sorted(matches, key=lambda p: p.stat().st_mtime, reverse=True):
-            records.extend(_parse_log(log_file, host))
-        records.sort(key=lambda r: r.get("ts", ""), reverse=True)
-        return records[:200]
+            for pat in globs:
+                for f in log_dir.glob(pat):
+                    if f in seen_files:
+                        continue
+                    try:
+                        st = f.stat()
+                    except OSError:
+                        continue
+                    seen_files.add(f)
+                    out.append(
+                        (f, st.st_mtime, st.st_size, utils_mod._is_archive(f), group)
+                    )
+        return out
+
+    def _read_newest(
+        self, files: list[tuple[Path, float, int, bool, str]], host: str
+    ) -> list[dict[str, Any]]:
+        """Read only the newest files needed to fill _HISTORY_CAP run rows.
+
+        Per-run files (store="per-run") are one-per-invocation whose run_summary
+        — the row anchor — is the file's final line, so ``summary.ts <= file
+        mtime``. Reading files newest-first, once we hold CAP rows any *unread*
+        file with an mtime older than the current CAP-th row's ts cannot contain
+        a newer run and is safely skipped. That invariant is why we can't just
+        "stop after CAP records": a compacted archive can have a recent *mtime*
+        but old *contents*, so we process fresh per-run/single files before
+        archives and gate the stop on the ts cutoff, not a raw count.
+        """
+        fresh = sorted((f for f in files if not f[3]), key=lambda t: t[1], reverse=True)
+        archives = sorted((f for f in files if f[3]), key=lambda t: t[1], reverse=True)
+        records: list[dict[str, Any]] = []
+
+        def consume(batch: list[tuple[Path, float, int, bool, str]]) -> None:
+            for path, mtime, size, _is_archive, group in batch:
+                if len(records) >= self._HISTORY_CAP:
+                    # Newest ts we've committed to the top CAP so far.
+                    cutoff = sorted((r.get("ts", "") for r in records), reverse=True)[
+                        : self._HISTORY_CAP
+                    ][-1]
+                    if _mtime_iso(mtime) < cutoff:
+                        break
+                records.extend(self._parse_log_cached(path, host, mtime, size, group))
+
+        consume(fresh)
+        if len(records) < self._HISTORY_CAP:
+            consume(archives)
+        return records
+
+    def _parse_log_cached(
+        self, path: Path, host: str, mtime: float, size: int, group: str
+    ) -> list[dict[str, Any]]:
+        """Parse one log file, reusing a cached parse when (mtime, size) match.
+
+        The parse itself runs outside the lock so concurrent History reads don't
+        serialise on it; a recompute-and-store race is harmless (same input →
+        same records). Records are group-tagged (the file's venv) so History's
+        "View full log" drill can resolve the right venv.
+        """
+        key = str(path)
+        with self._history_cache_lock:
+            cached = self._history_parse_cache.get(key)
+            if cached is not None and cached[0] == mtime and cached[1] == size:
+                return cached[2]
+        records = _parse_log(path, host)
+        for rec in records:
+            rec["group"] = group
+        with self._history_cache_lock:
+            self._history_parse_cache[key] = (mtime, size, records)
+        return records
+
+    def _prune_history_cache(self, live_paths: set[str]) -> None:
+        """Drop cache entries for files no longer on disk (prune/compact)."""
+        with self._history_cache_lock:
+            stale = [k for k in self._history_parse_cache if k not in live_paths]
+            for k in stale:
+                del self._history_parse_cache[k]
 
     def get_history_all(self) -> list[dict[str, Any]]:
         """History across every host — local plus *connected* remotes — newest
@@ -209,29 +310,39 @@ class ReportingMixin:
                     log_dirs.append(d)
         if not log_dirs:
             log_dirs = ["$HOME/logs"]
-        script = _remote_log_script(log_dirs, runnable)
+        # Stream only the newest ~cap files (a little headroom over the row cap
+        # for single-mode/archive files that carry several runs) so the SSH
+        # payload is bounded and can't be cut off by the timeout.
+        from pathlib import PurePosixPath
+
+        script = _remote_log_script(log_dirs, runnable, limit=self._HISTORY_CAP + 50)
         _, stdout, _ = self._ssh_run(ssh, script, identity_file=idf, timeout=20)
+        # Tag remote records with the primary venv's group (best-effort — the
+        # framed stream doesn't carry the source dir; correct in the common
+        # single-venv case). Lets History's "View full log" drill resolve a venv.
+        group = PurePosixPath(paths[0]).parent.parent.name if paths and paths[0] else ""
         records: list[dict[str, Any]] = []
         current_name: str | None = None
         current_lines: list[str] = []
+
+        def _flush() -> None:
+            if current_name is not None:
+                for rec in _parse_log_text(
+                    current_name, "\n".join(current_lines), entry["name"]
+                ):
+                    rec["group"] = group
+                    records.append(rec)
+
         for line in stdout.splitlines():
             if line.startswith("\x00RUNSPEC_LOG:"):
-                if current_name is not None:
-                    records.extend(
-                        _parse_log_text(
-                            current_name, "\n".join(current_lines), entry["name"]
-                        )
-                    )
+                _flush()
                 current_name = line[len("\x00RUNSPEC_LOG:") :]
                 current_lines = []
             else:
                 current_lines.append(line)
-        if current_name is not None:
-            records.extend(
-                _parse_log_text(current_name, "\n".join(current_lines), entry["name"])
-            )
+        _flush()
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
-        return records[:200]
+        return records[: self._HISTORY_CAP]
 
     # ── analytics ─────────────────────────────────────────────────────────────
 

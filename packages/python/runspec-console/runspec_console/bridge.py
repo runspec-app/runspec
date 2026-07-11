@@ -159,6 +159,16 @@ class Bridge(
         # for the session — they don't move). Avoids guessing the dir from the
         # binary path, which is wrong for pipx / ~/.local / system installs.
         self._remote_logdir_cache: dict[str, list[str]] = {}
+        # History parse cache: log-file path str → (mtime, size, records). The
+        # History tab re-reads on an interval; immutable files (compacted
+        # archives, completed per-run files) are parsed once and reused, so a
+        # re-poll only re-parses files whose (mtime, size) changed. Guarded by
+        # _history_cache_lock (a dedicated lock so a slow parse never contends
+        # with dispatch / _in_flight bookkeeping on self._lock).
+        self._history_parse_cache: dict[
+            str, tuple[float, int, list[dict[str, Any]]]
+        ] = {}
+        self._history_cache_lock = threading.Lock()
         self._runnables_cache: list[dict[str, Any]] = []
         # Fleet-discovery readiness, so the agent isn't "blind" on the first turn
         # after launch (search mode's catalog index is empty until discovery runs)

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, message, Input } from 'antd'
-import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert } from 'antd'
+import { RedoOutlined, CopyOutlined, RobotOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
-import { bridge, type HistoryRecord, type HistoryLogLine } from '../bridge'
+import { bridge, type HistoryRecord, type HistoryLogLine, type LogViewResult } from '../bridge'
+import { LogStream } from '../components/LogStream'
 
 const { Title, Text } = Typography
 
@@ -44,9 +45,10 @@ interface ExpandedRunProps {
   record: HistoryRecord
   onRerun?: (record: HistoryRecord) => void
   onAskLlm?: (text: string) => void
+  onViewFullLog?: (record: HistoryRecord) => void
 }
 
-function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
+function ExpandedRun({ record, onRerun, onAskLlm, onViewFullLog }: ExpandedRunProps) {
   const args = record.args ?? {}
   const logLines = record.logLines ?? []
   const hasArgs = Object.keys(args).length > 0
@@ -67,24 +69,42 @@ function ExpandedRun({ record, onRerun, onAskLlm }: ExpandedRunProps) {
     onAskLlm?.(formatLogsAsText(record, logLines))
   }
 
+  // The inline lines above are the ones recorded for this run. The full merged
+  // stream (every line, plus runs older than History's cap) lives in the venv
+  // log — fetched on demand via logs_view, which needs the venv (group) and the
+  // raw run_id. Hidden when either is unknown (e.g. a legacy no-run_id log, or a
+  // multi-venv remote where the group couldn't be resolved).
+  const canViewFullLog = !!(onViewFullLog && record.runId && record.group)
+
   return (
     <div style={{ padding: '12px 24px 12px 48px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Rerun controls */}
-      {onRerun && (
+      {(onRerun || canViewFullLog) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {onRerun && (
           <Button size="small" icon={<RedoOutlined />} onClick={() => onRerun(record)}>
             Rerun
           </Button>
+          )}
           {/* Always offered — not gated on recorded args. Secrets (password-typed
               args) are never written to the audit record, so a runnable whose
               required arg is a secret has empty `args` here; plain Rerun would
               fail with "missing required argument". The form is the way to supply
               it, so the edit path must stay reachable even with nothing recorded. */}
+          {onRerun && (
           <Tooltip title="Open the run dialog pre-filled with this run's values — rich typed inputs and every available arg, including required secrets that aren't recorded">
             <Button size="small" icon={<EditOutlined />} onClick={editInForm}>
               Edit & rerun
             </Button>
           </Tooltip>
+          )}
+          {canViewFullLog && (
+            <Tooltip title="Open the complete merged log for this run — every line (the inline preview may be truncated), read from the venv log on demand">
+              <Button size="small" icon={<ProfileOutlined />} onClick={() => onViewFullLog!(record)}>
+                View full log
+              </Button>
+            </Tooltip>
+          )}
         </div>
       )}
 
@@ -165,6 +185,45 @@ function LogLine({ line }: { line: HistoryLogLine }) {
   )
 }
 
+// Lazy per-run drill: opens the complete merged stream for one run via
+// logs_view (the same read the Logs tab's "View merged stream" uses, scoped to
+// a single run_id). Fetched only when a run is opened — never on every row
+// expand — so History's cheap inline preview stays the default.
+function RunLogDrawer({ record, onClose }: { record: HistoryRecord | null; onClose: () => void }) {
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<LogViewResult | null>(null)
+
+  useEffect(() => {
+    if (!record) { setResult(null); return }
+    let cancelled = false
+    setLoading(true)
+    bridge.logs_view(record.host, record.group, record.runnable, undefined, undefined, record.runId)
+      .then(r => { if (!cancelled) setResult(r) })
+      .catch(e => { if (!cancelled) message.error(String(e)) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [record])
+
+  return (
+    <Drawer
+      open={!!record}
+      onClose={onClose}
+      width={680}
+      title={record ? <span style={{ fontFamily: 'monospace' }}>/{record.runnable} — full log ({(record.runId ?? '').slice(0, 8)})</span> : ''}
+    >
+      {loading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>
+      ) : !result?.ok ? (
+        <Alert type="error" showIcon message={result?.error || 'Failed to read logs'} />
+      ) : result.records.length === 0 ? (
+        <Empty description="No records" />
+      ) : (
+        <LogStream records={result.records} />
+      )}
+    </Drawer>
+  )
+}
+
 interface HistoryViewProps {
   search: string
   onSearchChange: (s: string) => void
@@ -185,6 +244,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // or offline host.
   const [hostColumnFilter, setHostColumnFilter] = useState<string[]>([])
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
+  const [fullLogRecord, setFullLogRecord] = useState<HistoryRecord | null>(null)
 
   // Switching host drops the old host's rows, so we never briefly show another
   // host's runs and the reload below shows the spinner instead of stale data.
@@ -192,12 +252,20 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   useEffect(() => { setRecords([]) }, [selectedHost])
 
   // The view stays mounted across tab switches (App toggles display), so records
-  // persist — returning shows the last data instantly. Poll only while visible
-  // so a hidden History tab isn't doing an SSH round-trip every 8 s in the
-  // background. The spinner shows on the visible (re)load, not on silent polls.
+  // persist — returning shows the last data instantly. Reads only happen while
+  // visible. The backend read is now cheap (bounded newest-N + mtime cache), so
+  // the primary refresh is event-driven: a completed run fires runspec:run_end,
+  // and a debounced silent refetch pulls just the changed file. A slow fallback
+  // poll (25 s) catches anything the event path misses (a run on another venv,
+  // a missed event). The spinner shows on the first (re)load only.
   useEffect(() => {
     if (!selectedHost || !active) return
     let cancelled = false
+    let debounce: ReturnType<typeof setTimeout> | undefined
+
+    // Spinner shows only here (showSpinner=true is passed once, on mount/host
+    // change, while records is empty); silent polls and event refetches pass
+    // false so they never flash it.
     const fetch = (showSpinner: boolean) => {
       if (showSpinner) setLoading(true)
       return bridge.get_history(selectedHost)
@@ -205,28 +273,48 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         .catch(() => {})
         .finally(() => { if (!cancelled) setLoading(false) })
     }
+
     fetch(true)
-    const id = setInterval(() => fetch(false), 8000)
-    return () => { cancelled = true; clearInterval(id) }
+    const id = setInterval(() => fetch(false), 25000)
+
+    // A run just ended → its run_summary is now on disk. Debounce so a burst of
+    // events (a group fan-out) triggers a single refetch. Never shows a spinner.
+    const onRunEnd = () => {
+      if (debounce) clearTimeout(debounce)
+      debounce = setTimeout(() => { if (!cancelled) fetch(false) }, 750)
+    }
+    window.addEventListener('runspec:run_end', onRunEnd)
+
+    return () => {
+      cancelled = true
+      clearInterval(id)
+      if (debounce) clearTimeout(debounce)
+      window.removeEventListener('runspec:run_end', onRunEnd)
+    }
   }, [selectedHost, active])
 
-  const filtered = search
-    ? records.filter(r =>
-        r.runnable.toLowerCase().includes(search.toLowerCase()) ||
-        r.group.toLowerCase().includes(search.toLowerCase()) ||
-        r.host.toLowerCase().includes(search.toLowerCase()) ||
-        r.operator.toLowerCase().includes(search.toLowerCase()) ||
-        r.runAs.toLowerCase().includes(search.toLowerCase())
-      )
-    : records
+  const filtered = useMemo(() => {
+    if (!search) return records
+    const q = search.toLowerCase()
+    return records.filter(r =>
+      r.runnable.toLowerCase().includes(q) ||
+      r.group.toLowerCase().includes(q) ||
+      r.host.toLowerCase().includes(q) ||
+      r.operator.toLowerCase().includes(q) ||
+      r.runAs.toLowerCase().includes(q)
+    )
+  }, [records, search])
 
-  const hosts = [...new Set(records.map(r => r.host))]
-  const groups = [...new Set(records.map(r => r.group))]
-  const operators = [...new Set(records.map(r => r.operator))]
-  const runAsUsers = [...new Set(records.map(r => r.runAs))]
-  const runbooks = [...new Set(records.map(r => r.runbook).filter((s): s is string => !!s))]
+  const facets = useMemo(() => ({
+    hosts: [...new Set(records.map(r => r.host))],
+    groups: [...new Set(records.map(r => r.group))],
+    operators: [...new Set(records.map(r => r.operator))],
+    runAsUsers: [...new Set(records.map(r => r.runAs))],
+    runbooks: [...new Set(records.map(r => r.runbook).filter((s): s is string => !!s))],
+  }), [records])
+  const { hosts, groups, operators, runAsUsers, runbooks } = facets
 
-  const columns: ColumnType<HistoryRecord>[] = [
+  const columns: ColumnType<HistoryRecord>[] = useMemo(() => [
     {
       title: 'Runnable',
       key: 'runnable',
@@ -330,7 +418,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
       defaultSortOrder: 'descend',
     },
-  ]
+  ], [groups, runbooks, hosts, operators, runAsUsers, hostColumnFilter, activeScope, onScopeToggle])
 
   return (
     <div>
@@ -354,13 +442,14 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         onChange={(_, filters) => setHostColumnFilter((filters['host'] as string[]) || [])}
         expandable={{
           expandedRowRender: (record) => (
-            <ExpandedRun record={record} onRerun={onRerun} onAskLlm={onAskLlm} />
+            <ExpandedRun record={record} onRerun={onRerun} onAskLlm={onAskLlm} onViewFullLog={setFullLogRecord} />
           ),
           rowExpandable: () => true,
           expandedRowKeys: expandedKeys,
           onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]),
         }}
       />
+      <RunLogDrawer record={fullLogRecord} onClose={() => setFullLogRecord(null)} />
     </div>
   )
 }

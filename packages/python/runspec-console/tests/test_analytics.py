@@ -17,7 +17,7 @@ from __future__ import annotations
 import gzip
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -750,6 +750,184 @@ class TestHomeLogsFallback(unittest.TestCase):
                 recs = b.get_history("h", "backup")
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0]["runnable"], "backup")
+
+
+class TestRemoteLogScriptLimit(unittest.TestCase):
+    def test_limit_uses_ls_t_and_head(self) -> None:
+        s = _remote_log_script("/v/logs", "backup", limit=250)
+        self.assertIn("ls -1t", s)
+        self.assertIn("head -n 250", s)
+        self.assertIn("/v/logs/backup.*.log", s)
+        self.assertIn("gzip -dc", s)
+        self.assertIn("RUNSPEC_LOG", s)
+        # bounded form uses `while read`, not the unbounded `for` loop
+        self.assertIn("while", s)
+        self.assertNotIn("for f in", s)
+
+    def test_no_limit_keeps_unbounded_for_loop(self) -> None:
+        # Analytics (_collect_host_records) relies on the unbounded default.
+        s = _remote_log_script("/v/logs", "backup")
+        self.assertIn("for f in", s)
+        self.assertNotIn("ls -1t", s)
+
+
+def _per_run(td: str, files: dict[str, tuple[str, float]]) -> dict:
+    """Venv fixture whose per-run files each carry (content, mtime-epoch)."""
+    import os
+
+    venv = Path(td) / "ops-tools"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "logs").mkdir()
+    for fname, (content, mtime) in files.items():
+        p = venv / "logs" / fname
+        p.write_text(content, encoding="utf-8")
+        os.utime(p, (mtime, mtime))
+    return {
+        "name": "h",
+        "runspec_paths": [str(venv / "bin" / "runspec")],
+        "ssh": None,
+    }
+
+
+class TestGetHistoryBounded(unittest.TestCase):
+    """The History read must be bounded (newest-N files only) and cached across
+    re-polls, or the 8s interval re-reads/re-parses every log file on disk."""
+
+    def _spy_parse(self):
+        """Patch bridge_reporting._parse_log with a call-counting passthrough."""
+        import runspec_console.bridge_reporting as br
+
+        real = br._parse_log
+        calls: list[str] = []
+
+        def wrapped(path, host, include_extra=False):
+            calls.append(str(path))
+            return real(path, host, include_extra=include_extra)
+
+        return patch.object(br, "_parse_log", side_effect=wrapped), calls
+
+    def test_reads_only_newest_files_with_early_stop(self) -> None:
+        b = _make_bridge()
+        base = datetime(2026, 6, 3, 12, 0, 0, tzinfo=timezone.utc)
+        files: dict[str, tuple[str, float]] = {}
+        for i in range(250):
+            dt = base - timedelta(minutes=i)  # i=0 newest
+            ts = dt.isoformat()
+            rid = f"{i:08x}"
+            fname = f"backup.{dt.strftime('%Y%m%dT%H%M%SZ')}.{rid}.log"
+            files[fname] = (
+                _summary_line(run_id=rid, runnable="backup", ts=ts),
+                dt.timestamp(),
+            )
+        with TemporaryDirectory() as td:
+            entry = _per_run(td, files)
+            b._hosts = [entry]
+            spy, calls = self._spy_parse()
+            with spy:
+                recs = b.get_history("h", "backup")
+        self.assertEqual(len(recs), 200)  # capped at newest 200
+        # newest row is i=0, oldest kept is i=199
+        self.assertEqual(recs[0]["runId"], f"{0:08x}")
+        self.assertEqual(recs[-1]["runId"], f"{199:08x}")
+        # early stop: far fewer than all 250 files parsed
+        self.assertLess(len(calls), 210)
+
+    def test_parse_cache_reuses_unchanged_files(self) -> None:
+        b = _make_bridge()
+        base = datetime(2026, 6, 3, 12, 0, 0, tzinfo=timezone.utc)
+        files: dict[str, tuple[str, float]] = {}
+        for i in range(5):
+            dt = base - timedelta(minutes=i)
+            rid = f"{i:08x}"
+            fname = f"backup.{dt.strftime('%Y%m%dT%H%M%SZ')}.{rid}.log"
+            files[fname] = (
+                _summary_line(run_id=rid, runnable="backup", ts=dt.isoformat()),
+                dt.timestamp(),
+            )
+        with TemporaryDirectory() as td:
+            entry = _per_run(td, files)
+            b._hosts = [entry]
+            spy1, calls1 = self._spy_parse()
+            with spy1:
+                b.get_history("h", "backup")
+            self.assertEqual(len(calls1), 5)  # all parsed the first time
+            spy2, calls2 = self._spy_parse()
+            with spy2:
+                recs = b.get_history("h", "backup")
+            self.assertEqual(len(calls2), 0)  # all cache hits
+            self.assertEqual(len(recs), 5)
+
+    def test_recent_mtime_archive_does_not_displace_fresh(self) -> None:
+        """A compacted archive with a recent *mtime* but old *contents* must not
+        crowd fresh runs out of the newest-N, and shouldn't even be read when the
+        fresh per-run files already fill the cap."""
+        b = _make_bridge()
+        base = datetime(2026, 6, 3, 12, 0, 0, tzinfo=timezone.utc)
+        files: dict[str, tuple[str, float]] = {}
+        for i in range(200):
+            dt = base - timedelta(minutes=i)
+            rid = f"{i:08x}"
+            fname = f"backup.{dt.strftime('%Y%m%dT%H%M%SZ')}.{rid}.log"
+            files[fname] = (
+                _summary_line(run_id=rid, runnable="backup", ts=dt.isoformat()),
+                dt.timestamp(),
+            )
+        # Archive: old content (year 2000) but the newest mtime of all.
+        files["backup.archive.20000101.log"] = (
+            _summary_line(
+                run_id="deadbeef", runnable="backup", ts="2000-01-01T00:00:00+00:00"
+            ),
+            (base + timedelta(hours=1)).timestamp(),
+        )
+        with TemporaryDirectory() as td:
+            entry = _per_run(td, files)
+            b._hosts = [entry]
+            spy, calls = self._spy_parse()
+            with spy:
+                recs = b.get_history("h", "backup")
+        self.assertEqual(len(recs), 200)
+        self.assertNotIn("deadbeef", {r["runId"] for r in recs})
+        # fresh files fill the cap, so the archive is never read
+        self.assertFalse(any("archive" in c for c in calls))
+
+    def test_single_mode_reparsed_on_growth(self) -> None:
+        import os
+
+        b = _make_bridge()
+        base = datetime(2026, 6, 3, 12, 0, 0, tzinfo=timezone.utc)
+        with TemporaryDirectory() as td:
+            venv = Path(td) / "ops-tools"
+            (venv / "bin").mkdir(parents=True)
+            (venv / "logs").mkdir()
+            logf = venv / "logs" / "backup.log"
+            logf.write_text(
+                _summary_line(run_id="aaaaaaaa", runnable="backup", ts=base.isoformat())
+                + "\n",
+                encoding="utf-8",
+            )
+            os.utime(logf, (base.timestamp(), base.timestamp()))
+            entry = {
+                "name": "h",
+                "runspec_paths": [str(venv / "bin" / "runspec")],
+                "ssh": None,
+            }
+            b._hosts = [entry]
+            recs1 = b.get_history("h", "backup")
+            self.assertEqual(len(recs1), 1)
+            # Append a second run and bump mtime — the single growing file must be
+            # re-parsed (cache keyed on size+mtime), not served stale from cache.
+            later = base + timedelta(minutes=5)
+            with logf.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    _summary_line(
+                        run_id="bbbbbbbb", runnable="backup", ts=later.isoformat()
+                    )
+                    + "\n"
+                )
+            os.utime(logf, (later.timestamp(), later.timestamp()))
+            recs2 = b.get_history("h", "backup")
+        self.assertEqual(len(recs2), 2)
+        self.assertEqual({r["runId"] for r in recs2}, {"aaaaaaaa", "bbbbbbbb"})
 
 
 if __name__ == "__main__":

@@ -11,16 +11,9 @@ import {
   bridge,
   type LogStatusVenv, type LogStatusRunnable, type LogViewResult,
 } from '../bridge'
+import { LogStream } from '../components/LogStream'
 
 const { Title, Text } = Typography
-
-const LOG_LEVEL_COLOUR: Record<string, string> = {
-  INFO: '#4fc1ff',
-  WARNING: '#faad14',
-  ERROR: '#ff4d4f',
-  CRITICAL: '#ff4d4f',
-  DEBUG: '#888',
-}
 
 function humanSize(n: number | undefined): string {
   if (!n) return '0 B'
@@ -213,20 +206,7 @@ function StreamDrawer({ target, onClose }: { target: ViewTarget | null; onClose:
       ) : result.records.length === 0 ? (
         <Empty description="No records" />
       ) : (
-        <div style={{ background: '#0d0d0d', border: '1px solid #222', borderRadius: 6, padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.8 }}>
-          {result.records.map((rec, i) => {
-            const r = rec as { ts?: string; level?: string; message?: string; extra?: { run_id?: string } }
-            const colour = LOG_LEVEL_COLOUR[r.level ?? ''] ?? '#d4d4d4'
-            return (
-              <div key={i}>
-                <span style={{ color: '#555', marginRight: 8 }}>{r.ts ? new Date(r.ts).toLocaleTimeString() : '—'}</span>
-                <span style={{ color: colour, marginRight: 8, minWidth: 56, display: 'inline-block' }}>{r.level ?? ''}</span>
-                {r.extra?.run_id && <span style={{ color: '#7a6', marginRight: 8 }}>{String(r.extra.run_id).slice(0, 8)}</span>}
-                <span style={{ color: '#d4d4d4' }}>{r.message ?? ''}</span>
-              </div>
-            )
-          })}
-        </div>
+        <LogStream records={result.records} />
       )}
     </Drawer>
   )

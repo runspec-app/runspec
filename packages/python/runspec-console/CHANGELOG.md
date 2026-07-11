@@ -8,6 +8,52 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.165.0] — 2026-07-11
+
+### Changed
+- **History tab is bounded and reliable — no more spinner-then-trickle.** The
+  History read used to re-glob and fully re-parse *every* audit log file on
+  disk (decompressing every `.gz` archive, JSON-parsing every line) on an 8s
+  interval, then keep only the newest 200 rows — O(all logs) per poll. On a
+  `store="per-run"` fleet (one file per invocation) that is thousands of files
+  every 8 seconds, and on remote hosts the `cat`-everything SSH scan was
+  truncated by the 20s timeout, so rows arrived in dribs. Now the local read
+  is **bounded newest-first with a correct early stop**: files are read newest
+  by mtime, and once 200 rows are held any file whose mtime predates the
+  200th-newest row's timestamp is skipped (the run_summary — the row anchor —
+  is a file's last line, so `summary.ts <= mtime`; fresh per-run/single files
+  are read before archives so a recently-*touched* archive with old *contents*
+  can't crowd out real recent runs). A per-instance **parse cache** keyed on
+  `(mtime, size)` means the periodic refresh re-parses only files that actually
+  changed — immutable archives and completed per-run files are parsed once.
+  Remote reads stream only the newest ~250 files (`ls -1t | head`), so the SSH
+  payload is bounded and can't be truncated. Files: `bridge_reporting.py`
+  (`get_history`, `_history_files`/`_read_newest`/`_parse_log_cached`/
+  `_prune_history_cache`, `_get_remote_history`), `bridge_utils.py`
+  (`_remote_log_script(limit=…)`, `_is_archive`, `_mtime_iso`), `bridge.py`
+  (`_history_parse_cache`).
+- **History refreshes on run-completion, not on a busy poll.** The tab now
+  listens for `runspec:run_end` and does a single debounced silent refetch when
+  a run finishes; the fallback poll dropped from 8s to 25s (the read is cheap
+  now). Derived table columns, filters, and facet sets are memoised, so typing
+  in the search box no longer rebuilds the whole column config. The spinner
+  shows only on the first load / host switch. Files:
+  `packages/console-ui/src/views/HistoryView.tsx`.
+
+### Added
+- **History → "View full log".** An expanded run row gains an opt-in *View full
+  log* action that lazily opens the complete merged stream for that one run
+  (via `logs_view --run <id>` — the same read the Logs tab's stream drawer
+  uses, and reaching lines beyond History's inline preview / older than the row
+  cap). It's fetched only on click, so History's cheap inline preview stays the
+  default. Records now carry the raw `run_id` and their venv `group` to resolve
+  the drill (`bridge_utils.py` parsers; `HistoryRecord` in
+  `bridge/index.ts`). The stream-line renderer is shared between the Logs tab
+  and this drill (`packages/console-ui/src/components/LogStream.tsx`). Files:
+  `packages/console-ui/src/views/HistoryView.tsx`,
+  `packages/console-ui/src/views/LogsView.tsx`.
+
+
 ## [0.164.1] — 2026-07-09
 
 ### Fixed

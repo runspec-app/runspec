@@ -351,8 +351,9 @@ export interface HistoryLogLine {
 
 export interface HistoryRecord {
   id: string
+  runId?: string     // raw run_id (id is a hash of run_id+runnable) — drives the "View full log" drill
   runnable: string
-  group: string
+  group: string      // venv the run's logs live in — needed to resolve logs_view; "" when unknown (some remote)
   host: string
   operator: string   // who triggered the run (console user or "Scheduled Task")
   runAs: string      // OS user the runnable executed as on the host (from run_as in spec)

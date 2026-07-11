@@ -134,6 +134,31 @@ def _paths(entry: dict[str, Any]) -> list[str]:
     return [str(rp)] if rp else []
 
 
+# Compacted-archive filename: {runnable}.archive.{YYYYMMDD}.log[.gz]. Matched
+# locally (a small copy of runspec.logs._ARCHIVE_RE) to keep the console
+# decoupled from runspec internals — over/under-matching only reorders the
+# newest-first read, never changes attribution (that comes from the record body).
+_ARCHIVE_RE = re.compile(r"\.archive\.\d{8}\.log(?:\.gz)?$")
+
+
+def _is_archive(path: Path) -> bool:
+    """True for a compacted archive file (never a per-run or single-mode file)."""
+    return bool(_ARCHIVE_RE.search(path.name))
+
+
+def _mtime_iso(mtime: float) -> str:
+    """A file mtime → UTC ISO-8601 string in the same shape as a record ``ts``.
+
+    Records write ``ts`` as ``datetime.fromtimestamp(created, tz=utc).isoformat()``
+    (see runspec logging_setup). A per-run file's mtime is its last write, i.e.
+    ``>=`` the run_summary's ``created``, so ``_mtime_iso(mtime) >= summary.ts``
+    lexicographically — the invariant the History newest-first early-stop relies on.
+    """
+    from datetime import timezone
+
+    return datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+
+
 def _log_globs(runnable: str | None) -> list[str]:
     """Filename patterns to read for a runnable (or all of them).
 
@@ -149,26 +174,38 @@ def _log_globs(runnable: str | None) -> list[str]:
     return ["*.log", "*.log.gz"]
 
 
-def _remote_log_script(log_dir: str | list[str], runnable: str | None) -> str:
-    """Shell snippet that frames and streams every matching log file over SSH.
+def _remote_log_script(
+    log_dir: str | list[str], runnable: str | None, limit: int | None = None
+) -> str:
+    """Shell snippet that frames and streams matching log files over SSH.
 
     ``log_dir`` may be a single directory or several (e.g. each venv's ``logs``
     plus ``~/logs``); all are scanned. Each file is preceded by a
     ``\\x00RUNSPEC_LOG:<basename>`` frame (the name is only a fallback —
     attribution comes from the record body). Compacted ``.gz`` archives are
-    decompressed with ``gzip -dc``; plain files are ``cat``-ed. Non-matching
-    globs expand to themselves and are skipped by the ``[ -f ]`` guard, so no
-    ``nullglob`` is required.
+    decompressed with ``gzip -dc``; plain files are ``cat``-ed.
+
+    ``limit`` (History) streams only the newest ``limit`` files — ``ls -1t``
+    orders by mtime descending across every matched glob and ``head`` caps the
+    count, so a busy host's output can't be truncated by the SSH timeout (the
+    root cause of History's "rows trickle in" on remotes). Omitted (analytics)
+    keeps the unbounded ``for``-loop scan of every file. In both forms
+    non-matching globs are skipped (``[ -f ]`` guard / ``ls`` erroring to
+    ``/dev/null``), so no ``nullglob`` is required.
     """
     dirs = [log_dir] if isinstance(log_dir, str) else list(log_dir)
     patterns = " ".join(f"{d}/{g}" for d in dirs for g in _log_globs(runnable))
-    return (
-        f"for f in {patterns}; do "
-        f'[ -f "$f" ] || continue; '
-        f'printf "\\x00RUNSPEC_LOG:%s\\n" "$(basename "$f" .log)"; '
-        f'case "$f" in *.gz) gzip -dc "$f";; *) cat "$f";; esac; '
-        f"done 2>/dev/null"
+    body = (
+        '[ -f "$f" ] || continue; '
+        'printf "\\x00RUNSPEC_LOG:%s\\n" "$(basename "$f" .log)"; '
+        'case "$f" in *.gz) gzip -dc "$f";; *) cat "$f";; esac; '
     )
+    if limit is not None:
+        return (
+            f"ls -1t {patterns} 2>/dev/null | head -n {int(limit)} | "
+            f"while IFS= read -r f; do {body}done 2>/dev/null"
+        )
+    return f"for f in {patterns}; do {body}done 2>/dev/null"
 
 
 def _write_ppk_v2(
@@ -370,6 +407,9 @@ def _parse_log_by_run_id(
         stable_id = hashlib.md5((run_id + runnable).encode()).hexdigest()[:12]
         record = {
             "id": stable_id,
+            # Raw run_id (the record id is a hash of run_id+runnable) — carried
+            # so History's "View full log" drill can ask `logs_view --run <id>`.
+            "runId": run_id,
             "runnable": runnable,
             "group": "",
             "host": host,
@@ -421,6 +461,9 @@ def _parse_log_sequential(
             stable_id = hashlib.md5((ts_raw + runnable).encode()).hexdigest()[:12]
             record = {
                 "id": stable_id,
+                # Legacy logs (runspec <0.18) have no run_id — the drill can't
+                # target a single run, so "" (the frontend hides the button).
+                "runId": extra.get("run_id", "") or "",
                 "runnable": runnable,
                 "group": "",
                 "host": host,
