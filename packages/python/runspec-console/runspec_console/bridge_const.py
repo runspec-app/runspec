@@ -189,6 +189,19 @@ _MAX_AGENT_ITERATIONS = 10
 _EXEC_TIMEOUT_S = 30
 _EXEC_MAX_ROWS = 1_000
 
+# Backstop on how many stdout/stderr lines a *direct* Console run streams to the
+# UI card, and the total bytes across them. A runnable that dumps a huge blob
+# (e.g. 10k lines of pretty-printed JSON) otherwise floods the WebView with one
+# ``runspec:output`` event per line — O(n) IPC round-trips plus O(n²) React
+# reconciliation of a growing <pre> — hanging the card for minutes. Past the cap
+# the bridge stops dispatching and emits a single sentinel line; the full result
+# is unaffected in the runnable's own audit log. Operator-overridable via
+# ``[console] output_line_cap`` / ``output_byte_cap`` (0 disables that limit).
+# This is a UI-flood guard only — the agent tool-result path has its own
+# ``_AGENT_TOOL_OUTPUT_CAP`` and is untouched.
+_UI_OUTPUT_LINE_CAP = 5_000
+_UI_OUTPUT_BYTE_CAP = 2_000_000
+
 PUTTY_PROXY_SESSION = "runspec-console-proxy"
 
 _EVENT_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")

@@ -29,6 +29,8 @@ from .bridge_const import (
     logger,
     _CANCEL_KEY,
     _MAX_AGENT_ITERATIONS,
+    _UI_OUTPUT_LINE_CAP,
+    _UI_OUTPUT_BYTE_CAP,
 )
 from .adapters.base import is_output_truncation
 from .bridge_utils import (
@@ -55,6 +57,27 @@ class InvokeMixin:
         raw = (cached or {}).get("rawSpec") or {}
         run_as = resolve_run_as(raw.get("run_as"), hostname)
         return run_as, str(raw.get("become_method") or "sudo"), raw.get("become_flags")
+
+    def _ui_output_caps(self) -> tuple[int, int]:
+        """(line_cap, byte_cap) for a *direct* Console run's streamed output,
+        from ``[console] output_line_cap`` / ``output_byte_cap`` (defaults in
+        bridge_const). A value of 0 disables that limit. Past the cap the bridge
+        stops dispatching ``runspec:output`` and emits one sentinel line — a
+        UI-flood guard so a huge dump can't hang the card. The runnable's own
+        audit log is unaffected."""
+        console = self.get_config().get("console", {})
+
+        def _read(key: str, default: int) -> int:
+            try:
+                v = int(console.get(key, default))
+            except (TypeError, ValueError):
+                return default
+            return v if v >= 0 else default
+
+        return (
+            _read("output_line_cap", _UI_OUTPUT_LINE_CAP),
+            _read("output_byte_cap", _UI_OUTPUT_BYTE_CAP),
+        )
 
     @staticmethod
     def _positionals_for(
@@ -186,8 +209,42 @@ class InvokeMixin:
                 _CANCEL_KEY: cancel_event,
             }
 
+        line_cap, byte_cap = self._ui_output_caps()
+
         def run() -> None:
+            # Backstop against a runnable that dumps a huge blob (e.g. 10k lines of
+            # pretty-printed JSON): one dispatch per line otherwise floods the
+            # WebView and hangs the card. Past the line/byte cap we stop
+            # dispatching and emit a single sentinel; `capped` latches so the
+            # sentinel is emitted exactly once. Counters live in a dict so the
+            # closure can mutate them without `nonlocal` gymnastics.
+            counts = {"lines": 0, "bytes": 0, "capped": False}
+
             def on_line(line: str, stream: str) -> None:
+                if counts["capped"]:
+                    return
+                counts["lines"] += 1
+                counts["bytes"] += len(line)
+                over_lines = line_cap and counts["lines"] > line_cap
+                over_bytes = byte_cap and counts["bytes"] > byte_cap
+                if over_lines or over_bytes:
+                    counts["capped"] = True
+                    reason = (
+                        f"{line_cap:,} lines" if over_lines else f"{byte_cap:,} bytes"
+                    )
+                    sentinel = (
+                        f"⚠  Output truncated in the console at {reason} — this "
+                        "runnable returned more than the console renders inline. "
+                        "The full result is in its audit log; a summary/filtered "
+                        "runnable keeps the card responsive."
+                    )
+                    self._dispatch(
+                        "runspec:output",
+                        {"id": inv_id, "line": sentinel, "stream": "stderr"},
+                    )
+                    if on_progress is not None:
+                        on_progress("line", {"line": sentinel, "stream": "stderr"})
+                    return
                 self._dispatch(
                     "runspec:output", {"id": inv_id, "line": line, "stream": stream}
                 )

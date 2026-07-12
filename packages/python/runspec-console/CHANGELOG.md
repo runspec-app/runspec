@@ -8,6 +8,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.167.0] — 2026-07-12
+
+### Fixed
+- **A direct Console run of a runnable that returns a huge blob no longer hangs
+  the card.** A runnable emitting e.g. 10k lines of pretty-printed JSON (~520 KB)
+  used to freeze the Console tab for minutes with no way to stop it. Three
+  compounding causes are fixed:
+  - **Per-line UI churn (frontend).** Each `runspec:output` line did its own
+    `setBlocks(prev => … [...b.lines, line])` — an O(n) array copy per line, so
+    streaming was O(n²) plus a React render per line. Output events are now
+    **coalesced and flushed once per animation frame** in `useInvocationBlocks`,
+    and the run's `parseOutput` is **memoized** so a 520 KB `JSON.parse` runs once
+    instead of on every re-render.
+  - **Unbounded growing `<pre>` while streaming.** The raw view rendered every
+    line as it arrived (the 20-line truncation only applied once the run was
+    *done*). While streaming it now renders a **bounded live tail**
+    (`STREAM_MAX_LINES`, 500) with a "showing the last N of M lines" note.
+  - **No backstop at the source (backend).** `invoke_runnable` dispatched one
+    `runspec:output` per line with no cap. It now **stops dispatching past a
+    line/byte cap** and emits a single sentinel line — configurable via
+    `[console] output_line_cap` (default 5,000) / `output_byte_cap` (default
+    2 MB); `0` disables either limit. The runnable's own audit log is unaffected.
+    (The agent tool-result path keeps its separate `[llm] tool_output_cap`.)
+  - **Unbounded structured table (completion phase).** When a large result
+    *parses* into a JSON table (e.g. a 10k-row array-of-objects returned as one
+    compact line — so the streaming caps above don't apply), `JsonTable` mounted
+    a cell per column per row all at once. It now renders a **bounded initial
+    slice** (`TABLE_ROW_CAP`, 200) and reveals the rest in `TABLE_ROW_STEP`
+    (2,000) chunks via a "showing N of M rows — show more" affordance (rows are
+    appended, not re-rendered). Scalar cells were also made **hook-free** —
+    `JsonCell` routes a primitive/scalar-array cell to plain text before any
+    hook runs, delegating only nested object/array cells to the stateful
+    disclosure — so a wide table of scalars no longer pays a `useState` + theme
+    subscription per cell. Applies everywhere the table renders (run cards,
+    `StructuredOutput` in chat/trigger transcripts, nested disclosures).
+- **Run cards gained a Stop button.** A still-running `/runnable` card now shows a
+  Stop button (mirroring chat turns; `bridge.cancel_invocation`) so a run can be
+  cancelled from the card, not only the in-flight strip.
+
 ## [0.166.1] — 2026-07-11
 
 ### Fixed

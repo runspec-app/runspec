@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Input, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
@@ -13,6 +13,20 @@ import {
 const { Text } = Typography
 
 const TRUNCATE_AT = 20
+
+// While a run is still streaming, the raw <pre> renders a live tail of at most
+// this many lines. Rendering every line as it arrives grows the <pre> without
+// bound and reconciles O(n²) DOM, hanging the card on a big dump; the full set
+// (subject to the completed-view expand) is shown once the run finishes.
+const STREAM_MAX_LINES = 500
+
+// A structured JSON table renders a cell per column per row. Past this many rows
+// the initial mount is capped and the rest revealed on demand — a 10k-row
+// array-of-objects otherwise mounts tens of thousands of cells at once and hangs
+// the card even after the stream completes. Each "show more" reveals up to
+// TABLE_ROW_STEP additional rows (appended, so existing rows aren't re-rendered).
+const TABLE_ROW_CAP = 200
+const TABLE_ROW_STEP = 2000
 
 // Theme-aware palette for the output cards (header, body, tool blocks, tables).
 // The cards were hard-coded dark; this lets console + trigger cards follow the
@@ -266,18 +280,25 @@ function sectionsToText(meta: Record<string, unknown> | undefined, sections: Tab
 
 // ── JSON table renderer ───────────────────────────────────────────────────────
 
-/** Render one value: primitives and scalar arrays inline via `_humanVal`; a
- *  nested object or array-of-objects as an expandable disclosure (sub-table or
- *  pretty JSON) so it never collapses to "[object Object]". */
+/** Render one value: primitives and scalar arrays inline as text — with NO hooks,
+ *  so a data-heavy table of scalars stays as cheap as plain text. A nested object
+ *  or array-of-objects delegates to the stateful disclosure cell below so it
+ *  never collapses to "[object Object]". */
 function JsonCell({ keyName, value }: { keyName: string; value: unknown }) {
-  const c = useCardTheme()
-  const [open, setOpen] = useState(false)
   const isObj = typeof value === 'object' && value !== null
   const isScalarArray = Array.isArray(value)
     && (value.length === 0 || value.every(x => x === null || typeof x !== 'object'))
-  // primitives + arrays of scalars render inline as text
   if (!isObj || isScalarArray) return <>{_humanVal(keyName, value)}</>
+  return <JsonCellDisclosure value={value} />
+}
 
+/** Expandable disclosure for a nested object / array-of-objects cell (sub-table
+ *  or pretty JSON). Owns the open state + theme subscription so the common
+ *  scalar cell — routed away in `JsonCell` before any hook runs — pays for
+ *  neither; that's what keeps a wide table of thousands of scalar cells fast. */
+function JsonCellDisclosure({ value }: { value: unknown }) {
+  const c = useCardTheme()
+  const [open, setOpen] = useState(false)
   const rowArray = isRowArray(value)
   const label = Array.isArray(value) ? `[${(value as unknown[]).length}]` : '{…}'
   return (
@@ -297,8 +318,14 @@ function JsonCell({ keyName, value }: { keyName: string; value: unknown }) {
 
 function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
   const c = useCardTheme()
+  // Cap the rendered rows; reveal the rest in TABLE_ROW_STEP chunks on demand.
+  // Slicing always from 0 keeps earlier rows' keys stable, so expanding appends
+  // rows rather than re-rendering the whole table.
+  const [limit, setLimit] = useState(TABLE_ROW_CAP)
   if (!rows.length) return null
   const keys = Object.keys(rows[0])
+  const shown = rows.length > limit ? rows.slice(0, limit) : rows
+  const hidden = rows.length - shown.length
   return (
     <div style={{ overflowX: 'auto', padding: '8px 14px' }}>
       <table style={{
@@ -319,7 +346,7 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {shown.map((row, i) => (
             <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : c.rowAlt }}>
               {keys.map(k => (
                 <td key={k} style={{
@@ -334,6 +361,19 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
           ))}
         </tbody>
       </table>
+      {hidden > 0 && (
+        <div
+          onClick={() => setLimit(l => l + TABLE_ROW_STEP)}
+          style={{
+            padding: '6px 0 2px', fontSize: 12, color: c.dim,
+            cursor: 'pointer', fontFamily: 'monospace',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = c.text)}
+          onMouseLeave={e => (e.currentTarget.style.color = c.dim)}
+        >
+          ↓ showing {shown.length.toLocaleString()} of {rows.length.toLocaleString()} rows — show {Math.min(hidden, TABLE_ROW_STEP).toLocaleString()} more
+        </div>
+      )}
     </div>
   )
 }
@@ -891,13 +931,28 @@ function BlockCard({
   const args = block.rerunData?.args ?? {}
   const hasArgs = Object.keys(args).length > 0
 
-  // Smart output parsing — only for completed run blocks
-  const parsed = (block.type === 'run' && block.done) ? parseOutput(block.lines) : null
+  // Smart output parsing — only for completed run blocks. Memoized: once the
+  // block is done its `lines` array is stable, so a 520 KB JSON.parse runs once
+  // rather than on every re-render (scroll, theme, parent update).
+  const parsed = useMemo(
+    () => (block.type === 'run' && block.done) ? parseOutput(block.lines) : null,
+    [block.type, block.done, block.lines],
+  )
 
-  // Truncation — only for completed run blocks with many lines (raw view only)
-  const extraLines = block.lines.length - TRUNCATE_AT
+  // Raw-view line windowing:
+  // - streaming: render only a live tail (STREAM_MAX_LINES) so a runnable dumping
+  //   thousands of lines can't grow the <pre> to an O(n²) reconciliation hang.
+  // - completed: show the first TRUNCATE_AT with a "N more — click to expand".
+  const total = block.lines.length
+  const streaming = block.type === 'run' && !block.done
+  const streamCapped = streaming && total > STREAM_MAX_LINES
+  const extraLines = total - TRUNCATE_AT
   const shouldTruncate = block.type === 'run' && block.done && !showAll && extraLines > 0
-  const displayLines = shouldTruncate ? block.lines.slice(0, TRUNCATE_AT) : block.lines
+  const displayLines = streamCapped
+    ? block.lines.slice(total - STREAM_MAX_LINES)
+    : shouldTruncate
+      ? block.lines.slice(0, TRUNCATE_AT)
+      : block.lines
 
   const statusIcon = !block.done
     ? <LoadingOutlined style={{ color: '#1677ff' }} />
@@ -1007,6 +1062,17 @@ function BlockCard({
               size="small" danger icon={<StopOutlined />}
               style={{ marginLeft: 4 }}
               onClick={(e) => { e.stopPropagation(); bridge.cancel_chat(block.id) }}
+            >
+              Stop
+            </Button>
+          </Tooltip>
+        )}
+        {block.type === 'run' && !block.done && (
+          <Tooltip title="Stop — cancel this run">
+            <Button
+              size="small" danger icon={<StopOutlined />}
+              style={{ marginLeft: 4 }}
+              onClick={(e) => { e.stopPropagation(); bridge.cancel_invocation(block.id) }}
             >
               Stop
             </Button>
@@ -1177,19 +1243,26 @@ function BlockCard({
 
                 {/* Raw / plain-text view — shown when: still running, raw output, or user toggled raw */}
                 {(viewRaw || !parsed || parsed.kind === 'raw') && (
-                  <pre style={{
-                    margin: 0, padding: '10px 14px',
-                    fontFamily: 'monospace', fontSize: 13,
-                    color: c.mono, lineHeight: 1.6,
-                    whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-                  }}>
-                    {displayLines.map((l, i) => (
-                      <span key={i} style={{ color: _lineColor(l, c.mono) }}>
-                        {l.line}{'\n'}
-                      </span>
-                    ))}
-                    {!block.done && <span style={{ color: c.faint }}>▌</span>}
-                  </pre>
+                  <Fragment>
+                    {streamCapped && (
+                      <div style={{ padding: '6px 14px 0', fontSize: 11, color: c.dim, fontFamily: 'monospace' }}>
+                        streaming — showing the last {STREAM_MAX_LINES.toLocaleString()} of {total.toLocaleString()} lines
+                      </div>
+                    )}
+                    <pre style={{
+                      margin: 0, padding: '10px 14px',
+                      fontFamily: 'monospace', fontSize: 13,
+                      color: c.mono, lineHeight: 1.6,
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    }}>
+                      {displayLines.map((l, i) => (
+                        <span key={i} style={{ color: _lineColor(l, c.mono) }}>
+                          {l.line}{'\n'}
+                        </span>
+                      ))}
+                      {!block.done && <span style={{ color: c.faint }}>▌</span>}
+                    </pre>
+                  </Fragment>
                 )}
 
                 {/* Truncation footer — raw view only */}
@@ -1239,11 +1312,35 @@ export function useInvocationBlocks() {
   const [blocks, setBlocks] = useState<InvocationBlock[]>([])
 
   useEffect(() => {
+    // Batch runspec:output line events. A runnable that dumps thousands of lines
+    // would otherwise fire one setBlocks per line — each `[...b.lines, line]` is
+    // an O(n) copy, so streaming is O(n²) and React re-renders the growing <pre>
+    // every line, hanging the tab for minutes. We coalesce incoming lines into a
+    // per-block buffer and flush them in a single setBlocks once per frame.
+    const pending = new Map<string, OutputLine[]>()
+    let raf: number | null = null
+
+    const flush = () => {
+      raf = null
+      if (pending.size === 0) return
+      const drained = new Map(pending)
+      pending.clear()
+      setBlocks(prev => prev.map(b => {
+        const add = drained.get(b.id)
+        return add && add.length ? { ...b, lines: [...b.lines, ...add] } : b
+      }))
+    }
+
+    const scheduleFlush = () => {
+      if (raf === null) raf = requestAnimationFrame(flush)
+    }
+
     const onOutput = (e: Event) => {
       const { id, line, stream } = (e as CustomEvent).detail as OutputLine
-      setBlocks(prev => prev.map(b =>
-        b.id === id ? { ...b, lines: [...b.lines, { id, line, stream }] } : b
-      ))
+      const buf = pending.get(id)
+      if (buf) buf.push({ id, line, stream })
+      else pending.set(id, [{ id, line, stream }])
+      scheduleFlush()
     }
 
     const onToken = (e: Event) => {
@@ -1316,6 +1413,10 @@ export function useInvocationBlocks() {
     }
 
     const onEnd = (e: Event) => {
+      // Drain any buffered output first so the block is marked done with its full
+      // line set — otherwise parseOutput would run once on a short set, then again
+      // when the trailing batch flushes (a visible flash of the raw view).
+      flush()
       const { id, exit_code, duration_ms, stopped } = (e as CustomEvent).detail as { id: string; exit_code: number; duration_ms: number; stopped?: boolean }
       setBlocks(prev => prev.map(b => {
         if (b.id !== id) return b
@@ -1353,6 +1454,7 @@ export function useInvocationBlocks() {
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:chat_usage', onChatUsage)
     return () => {
+      if (raf !== null) cancelAnimationFrame(raf)
       window.removeEventListener('runspec:output', onOutput)
       window.removeEventListener('runspec:token', onToken)
       window.removeEventListener('runspec:tool_start', onToolStart)
