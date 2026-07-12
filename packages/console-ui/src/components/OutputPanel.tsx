@@ -28,6 +28,15 @@ const STREAM_MAX_LINES = 500
 const TABLE_ROW_CAP = 200
 const TABLE_ROW_STEP = 2000
 
+// A completed run whose output exceeds this many chars renders behind a brief
+// "Rendering result…" placeholder: the block flips done, paints the placeholder,
+// then commits the heavy parse/table build on a later frame. Without it the
+// parse + initial mount runs synchronously in the same commit that marks the
+// block done — a multi-second UI freeze with no signal (the in-flight strip,
+// which tracks the backend process, is already gone). Small results render
+// inline as before (no placeholder flash).
+const HEAVY_RENDER_CHARS = 100_000
+
 // Theme-aware palette for the output cards (header, body, tool blocks, tables).
 // The cards were hard-coded dark; this lets console + trigger cards follow the
 // light/dark toggle consistently. Returned by useCardTheme() per component.
@@ -888,6 +897,22 @@ export function StructuredOutput({ text }: { text: string }) {
   return null
 }
 
+/** Brief holding view while a large completed result's parse + table build is
+ *  deferred a frame, so the transition reads as "rendering…" instead of a frozen
+ *  card (or thousands of raw lines flashing before the table replaces them). */
+function RenderingPlaceholder({ chars, lines }: { chars: number; lines: number }) {
+  const c = useCardTheme()
+  return (
+    <div style={{
+      padding: '18px 14px', display: 'flex', alignItems: 'center', gap: 10,
+      color: c.dim, fontFamily: 'monospace', fontSize: 12,
+    }}>
+      <LoadingOutlined style={{ color: '#1677ff' }} />
+      Rendering result… ({fmtBytes(chars)}{lines > 1 ? `, ${lines.toLocaleString()} lines` : ''})
+    </div>
+  )
+}
+
 function BlockCard({
   block,
   onRerun,
@@ -931,13 +956,38 @@ function BlockCard({
   const args = block.rerunData?.args ?? {}
   const hasArgs = Object.keys(args).length > 0
 
-  // Smart output parsing — only for completed run blocks. Memoized: once the
-  // block is done its `lines` array is stable, so a 520 KB JSON.parse runs once
-  // rather than on every re-render (scroll, theme, parent update).
-  const parsed = useMemo(
-    () => (block.type === 'run' && block.done) ? parseOutput(block.lines) : null,
+  // Total output size — the heaviness proxy for the deferred render. Only summed
+  // once the block is done (short-circuits while streaming, so no per-frame O(n)).
+  const outputChars = useMemo(
+    () => (block.type === 'run' && block.done)
+      ? block.lines.reduce((n, l) => n + l.line.length, 0) : 0,
     [block.type, block.done, block.lines],
   )
+  const heavy = outputChars >= HEAVY_RENDER_CHARS
+
+  // Deferred render for a heavy result: on completion, paint a "rendering…"
+  // placeholder first, then flip ready two frames later so the placeholder
+  // actually paints before the synchronous parse/table build runs. A light
+  // result is ready immediately (renderReady stays true — no placeholder flash).
+  const [deferredReady, setDeferredReady] = useState(false)
+  useEffect(() => {
+    if (!heavy) return
+    setDeferredReady(false)
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => setDeferredReady(true)) })
+    return () => { cancelAnimationFrame(raf1); if (raf2) cancelAnimationFrame(raf2) }
+  }, [heavy])
+  const renderReady = !heavy || deferredReady
+
+  // Smart output parsing — only for completed run blocks, and (when heavy) only
+  // once the deferred tick has painted the placeholder. Memoized: the block's
+  // `lines` array is stable once done, so a 520 KB JSON.parse runs once rather
+  // than on every re-render (scroll, theme, parent update).
+  const parsed = useMemo(
+    () => (block.type === 'run' && block.done && renderReady) ? parseOutput(block.lines) : null,
+    [block.type, block.done, renderReady, block.lines],
+  )
+  const deferredPending = block.type === 'run' && block.done && !renderReady
 
   // Raw-view line windowing:
   // - streaming: render only a live tail (STREAM_MAX_LINES) so a runnable dumping
@@ -1204,7 +1254,10 @@ function BlockCard({
             )}
 
             {/* run block: smart JSON table/object or flat log lines */}
-            {block.type === 'run' && (
+            {block.type === 'run' && deferredPending && (
+              <RenderingPlaceholder chars={outputChars} lines={total} />
+            )}
+            {block.type === 'run' && !deferredPending && (
               <Fragment>
                 {/* View toggle — only shown when structured JSON was detected */}
                 {parsed && parsed.kind !== 'raw' && block.done && (

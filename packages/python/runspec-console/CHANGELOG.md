@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.168.0] — 2026-07-12
+
+### Changed
+- **A large completed run renders behind a brief "Rendering result…" placeholder
+  instead of freezing the card.** After 0.167.0 bounded the streaming and table
+  costs, a data-heavy result (e.g. a ~520 KB JSON array) still ran its parse +
+  initial table build **synchronously in the same commit that marks the block
+  done** — a couple of seconds of frozen, unlabelled UI, made more noticeable by
+  the in-flight strip (which tracks the *backend process*, already finished)
+  having disappeared. A completed run whose output exceeds `HEAVY_RENDER_CHARS`
+  (100 KB) now paints a placeholder with a spinner + size first, yields two
+  frames so it actually shows, then commits the heavy build — keeping the UI
+  responsive (Stop stays clickable) and reading as "rendering…" rather than a
+  hang or a flash of raw lines being replaced by the table. Small results render
+  inline as before, with no placeholder flash. (`OutputPanel.tsx`
+  `RenderingPlaceholder` + the deferred-ready gate on `parseOutput`.)
+
 ## [0.167.0] — 2026-07-12
 
 ### Fixed
