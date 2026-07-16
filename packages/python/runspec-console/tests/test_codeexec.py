@@ -202,6 +202,21 @@ def test_exec_tool_sql_jail_escape_is_error(monkeypatch, tmp_path):
     assert "escapes the workspace" in json.loads(out)["error"]
 
 
+def test_exec_tool_spill_failure_falls_back_inline(monkeypatch, tmp_path):
+    # A disk-full/unwritable spill during a large exec result must NOT fail the
+    # tool call — it falls back to returning the payload inline (audit #5). Before
+    # the fix the spill ran outside the try/except and the OSError escaped.
+    b = _exec_stub(monkeypatch, tmp_path)
+
+    def boom(*a, **k):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr("runspec_console.workspaces.spill_output", boom)
+    out = b._run_exec_tool("run_python", {"code": "print('y' * 40000)"})
+    data = json.loads(out)  # valid JSON payload, not an exception
+    assert data["exit_code"] == 0 and "y" * 100 in data["stdout"]
+
+
 def test_exec_tool_sql_missing_db_is_error(monkeypatch, tmp_path):
     b = _exec_stub(monkeypatch, tmp_path)
     out = b._run_exec_tool("run_sql", {"db": "nope.db", "query": "SELECT 1"})

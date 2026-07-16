@@ -370,6 +370,7 @@ class SchedulesMixin:
                     record=record,
                     stage=stage,
                     trigger="schedule",
+                    workspace_prefix="schedule",
                 )
             except Exception:
                 logger.exception("schedule: agent turn failed for %r", job.id)

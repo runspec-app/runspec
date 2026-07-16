@@ -37,9 +37,12 @@ Session ids:
 - **Chat conversation** — the persistent `_conversation_id` (uuid4 hex,
   minted lazily on the first turn, resets on `clear_chat`, same one that keys
   `conversations/{id}.json`).
-- **Trigger / schedule turn** — `trigger-{chat_id}` where `chat_id` is the
-  per-turn uuid the isolated-agent loop already uses. Deliberately prefixed
-  so the orphan sweep can tell headless from chat.
+- **Trigger / schedule turn** — `trigger-{chat_id}` for a reactive trigger and
+  `schedule-{chat_id}` for a schedule-sourced turn (`_trigger_run_agent_turn`'s
+  `workspace_prefix`, passed as `"schedule"` by `bridge_schedules`), where
+  `chat_id` is the per-turn uuid the isolated-agent loop already uses.
+  Deliberately prefixed so the orphan sweep can tell headless from chat, and the
+  two headless kinds apart.
 
 **Nothing new to configure by default.** The workspace is created on first
 spill (or first `workspace_write`) — an unused session leaves no directory
@@ -67,8 +70,40 @@ stdout lines and then decides:
   ```
 
   The head chunk (`_SPILL_ENVELOPE_HEAD_BYTES`, 4 KB) gives the model the
-  shape (JSON keys, log format, error banner) so trivial cases don't need a
-  follow-up call.
+  shape (log format, error banner) so trivial cases don't need a follow-up
+  call.
+
+### 3.1 JSON legibility (0.172.0)
+
+Large tool output is very often **minified JSON** (a runnable with `output =
+"json"`, an Outlook COM dump, an MCP result). For those, a raw 4 KB byte prefix
+is a mangled, near-useless fragment of one giant line. So when the spilled
+output parses as JSON (`workspaces._parse_json_bounded`, bounded at 25 M chars so
+a pathological dump can't wedge the spill), the envelope carries a **structural
+shape summary** instead of the byte slice:
+
+```
+[Output spilled to workspace — 4.2 MB written to tool-results/local__list-processes-abc123.json]
+JSON array — shape: array[8000] of {pid: int, name: str, cpu: float, rss: int, user: str}
+[A line-per-record view of the 8000 array items was written to tool-results/local__list-processes-abc123.jsonl — use workspace_grep / workspace_read / workspace_head on it to filter or page records.]
+[… 4400001 bytes total; use workspace_read / … on 'tool-results/local__list-processes-abc123.json' to see the raw output.]
+```
+
+- `_json_shape` renders a compact, depth-bounded (`_JSON_SHAPE_MAX_DEPTH = 2`)
+  descriptor: an object as `{key: type, …}` (capped at 40 keys), an array as
+  `array[len] of <element-shape>` where an array of records shows the **union**
+  of the sampled records' fields — the field set the model needs to know which
+  columns it can grep / query.
+- **JSONL companion.** For a top-level JSON *array*, a line-per-record
+  `{stem}.jsonl` is written alongside the raw file, so the **autonomous** line
+  tools (`workspace_grep`/`read`/`head`/`tail`) can filter or page records
+  without reaching for a confirm-gated `run_python`. The raw `.json` stays the
+  verbatim record of what the runnable emitted; the `.jsonl` is a derived view.
+  Writing it is best-effort — a failure just omits the companion, the raw file
+  is untouched.
+
+Non-JSON output (logs, plain text) is unchanged: it keeps the raw head-slice
+preview and gets no companion.
 
 The 1 MB `_AGENT_TOOL_OUTPUT_CAP` stays as a hard belt-and-braces on the
 envelope, but it's no longer the primary shaping mechanism. A spill failure
@@ -83,9 +118,9 @@ path-jailed under the current session's workspace root.
 
 | Tool               | Shape                                             |
 |--------------------|---------------------------------------------------|
-| `workspace_ls`     | List entries (name/type/size/mtime) under a path  |
-| `workspace_read`   | Read `limit` lines starting at `offset` (paged)   |
-| `workspace_grep`   | Regex search, `{path, line, text}` + `context`    |
+| `workspace_ls`     | List entries (name/type/size/mtime) under a path; `sort="modified"` puts the newest file first (grab the latest spill) |
+| `workspace_read`   | Read `limit` lines starting at `offset` — streams the whole file so a window deep in a multi-MB spill is reachable; accurate `total_lines` (+ `total_lines_exact`) |
+| `workspace_grep`   | Search, `{path, line, text}` + `context`; regex by default or `fixed` literal, `ignore_case`, `glob` file filter, `truncated` signal at the cap |
 | `workspace_head`   | First N lines                                     |
 | `workspace_tail`   | Last N lines (seeks near EOF for huge files)      |
 | `workspace_write`  | Write agent-authored notes (refuses `tool-results/`) |
@@ -97,9 +132,25 @@ non-reserved path).
 
 Caps mirror the repo tools (`repos.py`):
 
-- Reads capped at 512 KB / 2000 lines per call.
+- Reads return at most 512 KB of `content` / 2000 lines per call, and the
+  per-call line scan is bounded at 64 MB (beyond which `total_lines` is a lower
+  bound flagged by `total_lines_exact = false`).
 - Grep capped at 200 hits, per-file byte budget 5 MB.
 - Head/tail capped at 500 lines.
+
+`tool-results/` is system-owned: `workspace_write` refuses it — checked against
+the **resolved** target's first segment, case-insensitively, so a `..` re-entry
+(`notes/../tool-results/x`) or a case variant (`Tool-Results/x`) can't slip past.
+Spilled files are written atomically (temp + `os.replace`) so an interrupted
+write never leaves a truncated provenance record.
+
+Path + line grammar (uniform across all six tools): `jail` treats a backslash as
+a separator (normalised to `/`), so a Windows-minded `notes\summary.md` means the
+same nested path in `read`/`grep`/`ls` as in `write` — a leading separator or
+drive letter is still refused as absolute. Line-oriented tools split on `\n`
+only (normalising CRLF), not `str.splitlines()`'s wider set (`\f`, `\x85`, …), so
+line counts and grep line numbers agree with newline-based tools even when a
+value contains an exotic control char.
 
 ## 5. Retention
 

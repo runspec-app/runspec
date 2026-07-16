@@ -1856,6 +1856,7 @@ class TriggersMixin:
         record: Callable[[str], None] | None = None,
         stage: Callable[[str], None] | None = None,
         trigger: str = "",
+        workspace_prefix: str = "trigger",
     ) -> str:
         """BridgeOps: run an isolated headless agent turn for a trigger card.
 
@@ -1888,10 +1889,16 @@ class TriggersMixin:
             # Each isolated agent turn (trigger / schedule / room-driven) gets
             # its own workspace so big spilled tool outputs stay hermetic to
             # that turn — not leaking into a concurrent chat's workspace or
-            # another headless run. The prefix ("trigger-") drives the sweep
-            # retention path (headless_retention_days, not the chat_history
-            # settings). See workspaces.sweep_orphans.
-            self._workspace_by_chat[chat_id] = f"trigger-{chat_id}"
+            # another headless run. The prefix ("trigger-"/"schedule-") drives the
+            # sweep retention path (headless_retention_days, not the chat_history
+            # settings) and lets the sweep tell the two kinds apart. See
+            # workspaces.sweep_orphans.
+            kind = (
+                workspace_prefix
+                if workspace_prefix in ("trigger", "schedule")
+                else "trigger"
+            )
+            self._workspace_by_chat[chat_id] = f"{kind}-{chat_id}"
         # An agent trigger turn IS an LLM run; tag every runnable it calls with
         # the causing event source (agent=True). Direct chat turns register no
         # origin and default to the same agent=True with no trigger.

@@ -467,3 +467,41 @@ def test_scheduled_agent_message_runbook_missing_is_empty(tmp_path, monkeypatch)
     monkeypatch.setattr("runspec_console.memory.load_runbook", lambda sid: None)
     job = types.SimpleNamespace(action="runbook", runbook="nope", values={}, id="s1")
     assert ns._scheduled_agent_message(job) == ""
+
+
+def _agent_turn_stub():
+    """Bare bridge exposing just what `_trigger_run_agent_turn` touches, with the
+    isolated turn stubbed to capture the workspace id registered for the run."""
+    ns = types.SimpleNamespace()
+    ns._trigger_run_agent_turn = types.MethodType(Bridge._trigger_run_agent_turn, ns)
+    ns._now_context = lambda: "NOW"
+    ns._get_adapter = lambda system_override=None: object()
+    ns._lock = threading.Lock()
+    ns._chat_cancels = {}
+    ns._workspace_by_chat = {}
+    ns._set_run_origin = lambda *a, **k: None
+    ns._clear_run_origin = lambda *a, **k: None
+    ns.captured = {}
+
+    async def fake_turn(chat_id, message, adapter, **kwargs):
+        ns.captured[chat_id] = ns._workspace_by_chat.get(chat_id)
+        return "ok"
+
+    ns._run_isolated_agent_turn = fake_turn
+    return ns
+
+
+def test_schedule_agent_turn_uses_schedule_workspace_prefix():
+    # A schedule-sourced agent turn names its workspace `schedule-<id>` (audit
+    # #9) so the sweep can tell it from a reactive `trigger-<id>` turn.
+    ns = _agent_turn_stub()
+    assert (
+        ns._trigger_run_agent_turn(
+            "card-9", "SYS", "go", draft=False, workspace_prefix="schedule"
+        )
+        == "ok"
+    )
+    assert ns.captured["card-9"] == "schedule-card-9"
+    # A reactive turn keeps the default trigger- prefix.
+    ns._trigger_run_agent_turn("card-10", "SYS", "go", draft=False)
+    assert ns.captured["card-10"] == "trigger-card-10"

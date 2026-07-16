@@ -1589,7 +1589,10 @@ class AgentToolsMixin:
                     "disk). Start here — ``tool-results/`` holds anything a "
                     "runnable emitted above the inline threshold, and "
                     "``notes/`` holds files you have written. Returns a list "
-                    "of ``{name, type, size, modified}`` rows."
+                    "of ``{name, type, size, modified}`` rows. Pass "
+                    "sort='modified' to put the newest file first — handy to "
+                    "grab the most recent spill (e.g. ls 'tool-results' "
+                    "sort='modified')."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -1601,7 +1604,15 @@ class AgentToolsMixin:
                                 "or '.' = workspace root, 'tool-results' for "
                                 "spilled outputs)."
                             ),
-                        }
+                        },
+                        "sort": {
+                            "type": "string",
+                            "enum": ["name", "modified"],
+                            "description": (
+                                "Order files by name (default) or by "
+                                "most-recently-modified first."
+                            ),
+                        },
                     },
                 },
             },
@@ -1638,10 +1649,14 @@ class AgentToolsMixin:
             {
                 "name": "workspace_grep",
                 "description": (
-                    "Regex-search files in the workspace and return matching "
-                    "lines (``{path, line, text}``) — the fast way to find "
-                    "the interesting rows in a big spilled log/JSON without "
-                    "reading every page."
+                    "Search files in the workspace and return matching lines "
+                    "(``{path, line, text}``) — the fast way to find the "
+                    "interesting rows in a big spilled log/JSON without reading "
+                    "every page. The pattern is a regex by default; set fixed=true "
+                    "to match it literally (metacharacters like ( ) . [ escaped). "
+                    "Search is case-sensitive unless ignore_case=true. Use glob to "
+                    "restrict to files (e.g. 'tool-results/*.json' or '*.log'). If "
+                    "the result is 'truncated', narrow the pattern, glob, or path."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -1649,7 +1664,8 @@ class AgentToolsMixin:
                         "pattern": {
                             "type": "string",
                             "description": (
-                                "Python regex (e.g. 'ERROR|WARN', 'user_id.*42')."
+                                "Regex (e.g. 'ERROR|WARN', 'user_id.*42'), or a "
+                                "literal string when fixed=true."
                             ),
                         },
                         "path": {
@@ -1657,6 +1673,25 @@ class AgentToolsMixin:
                             "description": (
                                 "Workspace-relative file or directory to search "
                                 "(default: whole workspace)."
+                            ),
+                        },
+                        "glob": {
+                            "type": "string",
+                            "description": (
+                                "Only scan files matching this shell-style glob; "
+                                "comma-separate several, e.g. 'tool-results/*.json' "
+                                "or '*.log,*.txt' (optional)."
+                            ),
+                        },
+                        "ignore_case": {
+                            "type": "boolean",
+                            "description": "Case-insensitive search (default false).",
+                        },
+                        "fixed": {
+                            "type": "boolean",
+                            "description": (
+                                "Match the pattern literally instead of as a regex "
+                                "(default false)."
                             ),
                         },
                         "max_results": {
@@ -1874,7 +1909,13 @@ class AgentToolsMixin:
         try:
             if name == "workspace_ls":
                 return json.dumps(
-                    {"entries": workspaces.list_dir(root, str(ti.get("path") or ""))}
+                    {
+                        "entries": workspaces.list_dir(
+                            root,
+                            str(ti.get("path") or ""),
+                            sort=str(ti.get("sort") or "name"),
+                        )
+                    }
                 )
             if name == "workspace_read":
                 return json.dumps(
@@ -1889,14 +1930,26 @@ class AgentToolsMixin:
                 pattern = str(ti.get("pattern") or "")
                 if not pattern:
                     return json.dumps({"error": "workspace_grep needs a pattern"})
+                req_max = int(ti.get("max_results") or 100)
                 hits = workspaces.grep(
                     root,
                     pattern,
                     rel=str(ti.get("path") or ""),
-                    max_results=int(ti.get("max_results") or 100),
+                    max_results=req_max,
                     context=int(ti.get("context") or 0),
+                    ignore_case=bool(ti.get("ignore_case")),
+                    fixed=bool(ti.get("fixed")),
+                    glob=str(ti.get("glob") or ""),
                 )
-                return json.dumps({"matches": hits, "count": len(hits)})
+                payload: dict[str, Any] = {"matches": hits, "count": len(hits)}
+                if len(hits) >= min(max(1, req_max), workspaces._GREP_MAX_RESULTS):
+                    payload["truncated"] = True
+                    payload["hint"] = (
+                        "Result cap reached — more matches may exist. Narrow with a "
+                        "more specific pattern, a 'glob' (e.g. 'tool-results/*.json'),"
+                        " or a 'path'."
+                    )
+                return json.dumps(payload)
             if name == "workspace_head":
                 return json.dumps(
                     workspaces.head(
@@ -2026,19 +2079,27 @@ class AgentToolsMixin:
         except Exception as e:  # noqa: BLE001 — surface any exec failure as a result
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
-        payload = json.dumps(result)
+        try:
+            payload = json.dumps(result)
+        except (TypeError, ValueError):
+            payload = json.dumps({"error": "exec result was not JSON-serialisable"})
         # Spill a large exec result to the workspace, same as a big runnable
-        # output, so it never blows the model context.
-        threshold = config_mod.read_workspace().get("spill_threshold", 32_768)
-        if threshold and len(payload) > threshold:
-            envelope, _rel = workspaces.spill_output(
-                root,
-                name,
-                uuid.uuid4().hex[:12],
-                payload,
-                head_bytes=_SPILL_ENVELOPE_HEAD_BYTES,
-            )
-            return envelope
+        # output, so it never blows the model context. A spill failure (disk
+        # full, unwritable results dir) must not fail the tool call — fall back
+        # to returning the payload inline, mirroring the runnable-output path.
+        try:
+            threshold = config_mod.read_workspace().get("spill_threshold", 32_768)
+            if threshold and len(payload) > threshold:
+                envelope, _rel = workspaces.spill_output(
+                    root,
+                    name,
+                    uuid.uuid4().hex[:12],
+                    payload,
+                    head_bytes=_SPILL_ENVELOPE_HEAD_BYTES,
+                )
+                return envelope
+        except OSError:
+            pass
         return payload
 
     def _memory_tools(self) -> list[dict[str, Any]]:

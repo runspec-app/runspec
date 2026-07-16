@@ -8,6 +8,90 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.172.0] — 2026-07-16
+
+### Added
+- **`workspace_grep` gained the same search options as `repo_grep` (0.171.0) —
+  case-insensitive, literal, file-glob, and a truncation signal.** The workspace
+  search the agent uses to sift big spilled tool output (logs/JSON in
+  `tool-results/`) was regex-only and case-sensitive with no way to scope the
+  scan, so an `error`/`ERROR` sweep needed a case fold it couldn't ask for, a
+  literal token containing regex metacharacters (`price[0]`, a bracketed log
+  prefix) matched the wrong thing or raised `re.error`, and a broad pattern
+  silently hit the result cap with no sign more existed. `workspaces.grep` now
+  takes `ignore_case`, `fixed` (match literally — metacharacters escaped, immune
+  to `re.error`), and `glob` (restrict the scan to files matching a shell-style
+  pattern, comma-separated list allowed, e.g. `tool-results/*.json` or
+  `*.log,*.txt`); the `workspace_grep` tool schema/description surface all three,
+  and the payload is flagged `truncated` with a hint to narrow when the row count
+  reaches the effective cap. This brings the two agent grep tools to parity so
+  the model doesn't have to remember which one supports what (`workspaces.grep`,
+  `bridge_agent_tools` `workspace_grep`). The `context` option (0-5 lines each
+  side) that `workspace_grep` already had is unchanged.
+- **Spilled JSON is now legible at a glance.** Large tool output is very often
+  *minified* JSON (a runnable with `output = "json"`, an Outlook COM dump, an MCP
+  result), for which the spill envelope's raw 4 KB byte prefix was a mangled,
+  useless fragment of one giant line. When the spilled output parses as JSON the
+  envelope now carries a compact **shape summary** instead — top-level type, an
+  object's `{key: type, …}`, an array's `array[len] of {field: type, …}` (the
+  union of the sampled records' fields) — so the agent knows exactly which fields
+  it can grep/query without a wasted read. For a top-level JSON **array**, a
+  line-per-record `.jsonl` companion is written alongside the raw file so the
+  *autonomous* line tools (`workspace_grep`/`read`/`head`/`tail`) can filter or
+  page records without a confirm-gated `run_python`. The raw file stays the
+  verbatim record; the `.jsonl` is a best-effort derived view (`workspaces`
+  `_json_shape`/`json_preview`/`_parse_json_bounded`, `spill_output`). See
+  `docs/design/console-session-workspace.md` §3.1.
+
+### Fixed
+- **`workspace_read` can now page the whole of a large spilled file.** It read
+  only the first ~512 KB and treated `offset` as a line index into *that* window,
+  so lines past ~512 KB were unreachable and `total_lines` was wrong for bigger
+  files — exactly the multi-MB spills (and new `.jsonl` companions) the agent
+  needs to page. It now streams the file line by line to the requested window
+  (bounded by a 64 MB per-call scan cap), reports an accurate `total_lines` plus a
+  `total_lines_exact` flag, caps returned `content` at 512 KB, and normalises CRLF
+  (`workspaces.read_file`).
+- **`workspace_write` can no longer be tricked into overwriting a system-owned
+  `tool-results/` provenance file.** The reserved-dir guard compared the raw
+  first path segment, so `notes/../tool-results/x` (a `..` re-entry) and, on a
+  case-insensitive filesystem, `Tool-Results/x` both slipped past. It now checks
+  the *resolved* target's first segment case-insensitively (`workspaces.write_file`).
+- **`workspace_tail` no longer returns empty on a huge single-line file.** For a
+  file over the read cap it seeks near EOF and drops the (likely partial) first
+  line — but for a minified single-line JSON dump that lone line *was* the tail,
+  so the result came back empty. It now only drops the first line when more than
+  one remains (`workspaces.tail`).
+- **A failed spill of a large `run_python`/`run_sql` result no longer fails the
+  tool call.** The exec-result spill ran outside the handler's try/except, so a
+  disk-full/unwritable-dir `OSError` escaped instead of degrading; it now falls
+  back to returning the payload inline, matching the runnable-output path and the
+  design's "a hiccup can never fail a tool call" promise (`bridge_agent_tools`
+  `_run_exec_tool`).
+- **Spilled files are written atomically** (temp file + `os.replace`), so an
+  interrupted/disk-full write can't leave a truncated file masquerading as a
+  complete `tool-results/` record (`workspaces._atomic_write_bytes`).
+- **`workspace_grep`/`read`/`tail` line numbers no longer skew on exotic control
+  chars.** They used `str.splitlines()`, which also breaks on `\f`, `\x85`,
+  ` `, … — a form feed inside a spilled log/JSON value invented a line and
+  threw off grep line numbers relative to newline-based tools. They now split on
+  `\n` only (normalising CRLF), via a shared `workspaces._split_lines`.
+- **Backslash paths work in every workspace tool, not just `workspace_write`.**
+  `jail` now normalises `\` → `/`, so a Windows-minded `notes\summary.md` means
+  the same nested path in `read`/`grep`/`ls` as in `write` (a leading separator /
+  drive letter is still refused as absolute).
+
+### Added
+- **`workspace_ls` gained `sort="modified"`** — list a directory newest-first so
+  the agent can grab the most recent spill (`ls tool-results/ sort=modified`)
+  without reading mtimes (`workspaces.list_dir`, `workspace_ls` schema).
+- **Schedule-sourced agent turns now name their workspace `schedule-<id>`**
+  (was always `trigger-<id>`), so the orphan sweep can tell a schedule run from a
+  reactive trigger run — the `schedule-` prefix the design always described is now
+  actually produced (`_trigger_run_agent_turn` `workspace_prefix`, passed by
+  `bridge_schedules`).
+
+
 ## [0.171.0] — 2026-07-16
 
 ### Added
