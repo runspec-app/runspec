@@ -8,6 +8,47 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.170.0] — 2026-07-16
+
+### Added
+- **Every email-verify send is now audited in the console log.** The console
+  mails the room's login link *as the queue mailbox* (Outlook send-as), but only
+  a *failure* was logged — a send that succeeds at the COM level yet is bounced
+  downstream (missing Send-As rights / NDR / junk) was silent, making "the login
+  email never arrived" undiagnosable. `_handle_send_verify` now logs the outcome
+  of every attempt at INFO on success / ERROR on failure, with the recipient and
+  the mailbox identity it sent as, so the operator can tell whether the console
+  even attempted the send and as whom (`sources/chat.py`).
+
+### Fixed
+- **Removing a room (or clearing profiles) in the host editor now sticks.** The
+  editor merges the cleared form over the loaded host (`{ ...h, ...v }`), but
+  cleared fields were removed with `delete` — a deleted key is *absent* from the
+  patch, so the spread fell back to the host's previously-saved value and the
+  room config "came back" after save/restart (only a manual `runspec_hosts.toml`
+  edit removed it). Cleared fields are now set to `undefined` (which overwrites
+  and is dropped on serialize) via a new pure, unit-tested `normalizeHostForm`
+  (`SettingsDrawer.tsx` + `SettingsDrawer.hostform.test.ts`). Same root cause as
+  the profile-tag wipe below — both are the `delete`-vs-`undefined` merge trap.
+- **Saving a host in the editor no longer wipes every host's profile tags.**
+  `get_jump_hosts` (the Settings → Hosts load) omitted the per-host `profiles`
+  array, while `save_jump_hosts` rebuilds every *managed* key on write — so a
+  round-trip through the editor dropped all profile assignments and the operator
+  had to re-tag them (most visible right after startup, on the first host add).
+  `get_jump_hosts` now returns `profiles` (like `group`/`room`), so the save
+  round-trip preserves them. Covered by `tests/test_jump_hosts_profiles.py`.
+
+### Changed
+- **The host editor's "Queue name" field now validates the queue token.** A
+  helpdesk queue name becomes the room namespace `helpdesk/<name>`, so the
+  server's `valid_queue` rejects whitespace and `/`. Typing a space previously
+  saved silently and then built no helpdesk spec — the room just never
+  connected. The field now rejects spaces / `/` inline with a clear message
+  ("use a dash, e.g. `it-support`") and the help text spells out the rule.
+
+---
+
+
 ## [0.169.0] — 2026-07-16
 
 ### Changed

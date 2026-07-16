@@ -667,7 +667,7 @@ def test_no_advertise_in_room_mode():
     assert [m for m in transport.sent if m["type"] == "advertise"] == []
 
 
-def test_send_verify_mails_and_acks_ok():
+def test_send_verify_mails_and_acks_ok(caplog):
     transport = FakeTransport()
     calls: list[dict[str, Any]] = []
 
@@ -677,17 +677,18 @@ def test_send_verify_mails_and_acks_ok():
     src = _ev_agent(
         transport, queue_email="it-support@corp.com", verify_sender=fake_sender
     )
-    src._handle(
-        {
-            "type": "send_verify",
-            "nonce": "n1",
-            "to": "jane@corp.com",
-            "name": "Jane Doe",
-            "queue": "it-support",
-            "queue_email": "it-support@corp.com",
-            "verify_url": "https://room.test/verify?token=t",
-        }
-    )
+    with caplog.at_level("INFO"):
+        src._handle(
+            {
+                "type": "send_verify",
+                "nonce": "n1",
+                "to": "jane@corp.com",
+                "name": "Jane Doe",
+                "queue": "it-support",
+                "queue_email": "it-support@corp.com",
+                "verify_url": "https://room.test/verify?token=t",
+            }
+        )
     # The mail was composed + sent as the queue mailbox…
     assert len(calls) == 1
     assert calls[0]["to"] == "jane@corp.com"
@@ -695,29 +696,38 @@ def test_send_verify_mails_and_acks_ok():
     assert "https://room.test/verify?token=t" in calls[0]["body"]
     # …and acked ok.
     assert {"type": "verify_sent", "nonce": "n1", "ok": True} in transport.sent
+    # A successful send is audited with recipient + the identity it sent as, so
+    # "the login email never arrived" is diagnosable from the console log.
+    assert "verify mail sent" in caplog.text
+    assert "jane@corp.com" in caplog.text
+    assert "it-support@corp.com" in caplog.text
     # send_verify is a protocol action, not a trigger event.
     assert src.event_types() and "send_verify" not in src.event_types()
 
 
-def test_send_verify_acks_failure_when_sender_raises():
+def test_send_verify_acks_failure_when_sender_raises(caplog):
     transport = FakeTransport()
 
     def boom(*, to, subject, body, from_mailbox):
         raise RuntimeError("no Outlook here")
 
     src = _ev_agent(transport, queue_email="it-support@corp.com", verify_sender=boom)
-    src._handle(
-        {
-            "type": "send_verify",
-            "nonce": "n2",
-            "to": "jane@corp.com",
-            "name": "Jane",
-            "queue": "it-support",
-            "queue_email": "it-support@corp.com",
-            "verify_url": "https://room.test/verify?token=t",
-        }
-    )
+    with caplog.at_level("ERROR"):
+        src._handle(
+            {
+                "type": "send_verify",
+                "nonce": "n2",
+                "to": "jane@corp.com",
+                "name": "Jane",
+                "queue": "it-support",
+                "queue_email": "it-support@corp.com",
+                "verify_url": "https://room.test/verify?token=t",
+            }
+        )
     assert {"type": "verify_sent", "nonce": "n2", "ok": False} in transport.sent
+    # The failure is audited with the same context (recipient + identity).
+    assert "verify mail send failed" in caplog.text
+    assert "jane@corp.com" in caplog.text
 
 
 def test_send_verify_without_nonce_is_ignored():

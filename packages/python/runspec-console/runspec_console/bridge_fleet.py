@@ -155,6 +155,12 @@ class FleetMixin:
                 entry["identityFile"] = h["identityFile"]
             if h.get("group"):
                 entry["group"] = h["group"]
+            # Host-profile (working-set) tags — the editor round-trips the full
+            # host list on save (save_jump_hosts rebuilds every managed key), so
+            # omitting ``profiles`` here made a save wipe every host's tags.
+            prof = hosts_mod.host_profiles(h)
+            if prof:
+                entry["profiles"] = prof
             if h.get("room"):
                 entry["room"] = h["room"]
             if isinstance(h.get("room_port"), int) and not isinstance(

@@ -410,23 +410,37 @@ class ChatSource:
         from .verify_mail import compose_verify_mail, outlook_verify_sender
 
         sender = self._verify_sender or outlook_verify_sender
+        to = _str(frame.get("to"))
+        from_mailbox = _str(frame.get("queue_email"))
+        queue = _str(frame.get("queue"))
         subject, body = compose_verify_mail(
             _str(frame.get("name")),
-            _str(frame.get("queue")),
-            _str(frame.get("queue_email")),
+            queue,
+            from_mailbox,
             _str(frame.get("verify_url")),
         )
         ok = False
         try:
-            sender(
-                to=_str(frame.get("to")),
-                subject=subject,
-                body=body,
-                from_mailbox=_str(frame.get("queue_email")),
-            )
+            sender(to=to, subject=subject, body=body, from_mailbox=from_mailbox)
             ok = True
+            # Audit every verify send so "the login email never arrived" is
+            # diagnosable: this line means the console attempted *and completed*
+            # the send-as. If it appears but no mail lands, the failure is
+            # downstream (Exchange send-as rights / NDR / junk filtering), not the
+            # room message pipe. ``from_mailbox`` names the identity it sent as.
+            logger.info(
+                "chat: verify mail sent to %r as %r (queue %r)",
+                to,
+                from_mailbox or "(console default account)",
+                queue,
+            )
         except Exception:
-            logger.exception("chat: verify mail send failed")
+            logger.exception(
+                "chat: verify mail send failed — to %r as %r (queue %r)",
+                to,
+                from_mailbox or "(console default account)",
+                queue,
+            )
         try:
             transport.send({"type": "verify_sent", "nonce": nonce, "ok": ok})
         except Exception:

@@ -1022,6 +1022,49 @@ interface HostFormValues {
   room_catalog?: string[]
 }
 
+// Normalise raw host-form values into a host patch, ready to merge over the
+// host being edited (`{ ...h, ...normalizeHostForm(values) }`) or spread into a
+// new host. Pure + exported so the room/profile removal behaviour is unit-tested.
+//
+// IMPORTANT: to *clear* a field, set it to `undefined` — never `delete` it. The
+// edit path merges `{ ...h, ...v }`, and a deleted key is absent from `v`, so
+// the spread falls back to the originally-loaded host's value (the room /
+// profiles you cleared would "come back" after save). `undefined` overwrites,
+// and the bridge drops undefined keys on serialize, so the backend receives a
+// host without the field and removes it.
+export function normalizeHostForm(values: HostFormValues): HostFormValues {
+  const v: HostFormValues = { ...values }
+  v.profiles = Array.isArray(v.profiles)
+    ? v.profiles.map(s => s.toString().trim()).filter(Boolean)
+    : undefined
+  if (!v.profiles?.length) v.profiles = undefined
+  v.room = (v.room ?? '').toString().trim() || undefined
+  v.room_queue = (v.room_queue ?? '').toString().trim() || undefined
+  v.room_user = (v.room_user ?? '').toString().trim() || undefined
+  v.room_exec_command = (v.room_exec_command ?? '').toString().trim() || undefined
+  v.room_via = v.room_via === 'exec' ? 'exec' : undefined
+  v.room_catalog = Array.isArray(v.room_catalog)
+    ? v.room_catalog.map(s => s.toString().trim()).filter(Boolean)
+    : undefined
+  // A host with a room_port runs the room — that alone staffs the helpdesk (the
+  // queue name defaults server-side; no room_queue needed). A group-chat room is
+  // optional. room_port alone is enough. No port → clear every room field so
+  // removing a room through the editor actually removes it.
+  if (v.room_port != null && `${v.room_port}` !== '') {
+    v.room_port = Number(v.room_port)
+  } else {
+    v.room = undefined
+    v.room_queue = undefined
+    v.room_port = undefined
+    v.room_user = undefined
+    v.room_via = undefined
+    v.room_exec_command = undefined
+  }
+  // The catalog allowlist only means anything on a host that runs the room.
+  if (!v.room_port || !v.room_catalog?.length) v.room_catalog = undefined
+  return v
+}
+
 function toToml(hosts: JumpHost[]): string {
   return hosts.map(h => {
     const lines = [`[${h.name}]`, `hostname = "${h.hostname}"`]
@@ -1342,36 +1385,9 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
 
   const save = async () => {
     const values = await form.validateFields()
-    // <Input type="number"> yields a string — coerce the room port, and drop the
-    // room fields when no room is set (the backend wants an int port or nothing).
-    const v: HostFormValues = { ...values }
-    v.profiles = Array.isArray(v.profiles)
-      ? v.profiles.map(s => s.toString().trim()).filter(Boolean)
-      : undefined
-    if (!v.profiles?.length) delete v.profiles
-    v.room = (v.room ?? '').toString().trim() || undefined
-    v.room_queue = (v.room_queue ?? '').toString().trim() || undefined
-    v.room_user = (v.room_user ?? '').toString().trim() || undefined
-    v.room_exec_command = (v.room_exec_command ?? '').toString().trim() || undefined
-    v.room_via = v.room_via === 'exec' ? 'exec' : undefined
-    v.room_catalog = Array.isArray(v.room_catalog)
-      ? v.room_catalog.map(s => s.toString().trim()).filter(Boolean)
-      : undefined
-    // A host with a room_port runs the room — that alone staffs the helpdesk (the
-    // queue name defaults server-side; no room_queue needed). A group-chat room is
-    // optional. room_port alone is enough.
-    if (v.room_port != null && `${v.room_port}` !== '') {
-      v.room_port = Number(v.room_port)
-    } else {
-      delete v.room
-      delete v.room_queue
-      delete v.room_port
-      delete v.room_user
-      delete v.room_via
-      delete v.room_exec_command
-    }
-    // The catalog allowlist only means anything on a host that runs the room.
-    if (!v.room_port || !v.room_catalog?.length) delete v.room_catalog
+    // Coerce the room port, clear empty fields, and (crucially) clear removed
+    // fields with `undefined` not delete — see normalizeHostForm.
+    const v = normalizeHostForm(values)
     if (editingKey === '') {
       await persist([...hosts, v as JumpHost])
     } else {
@@ -1615,7 +1631,18 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <Form.Item
                 name="room_queue"
                 label="Queue name"
-                help='The helpdesk queue this host staffs — becomes the room "helpdesk/<name>". Defaults to "helpdesk"; set a distinct name on each host so two rooms do not collide (a same-named room is skipped).'
+                help='The helpdesk queue this host staffs — becomes the room "helpdesk/<name>". Defaults to "helpdesk"; set a distinct name on each host so two rooms do not collide (a same-named room is skipped). Letters, digits, dashes — no spaces or "/" (it is a URL token; use a dash, e.g. "it-support").'
+                rules={[
+                  {
+                    // Mirror the server's valid_queue: a queue token must not
+                    // contain whitespace or the namespace separator, or no
+                    // helpdesk spec is built and the room silently never connects.
+                    validator: (_, value) =>
+                      !value || /^[^\s/]+$/.test(String(value))
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('No spaces or "/" — use a dash, e.g. "it-support"')),
+                  },
+                ]}
               >
                 <Input placeholder="helpdesk" />
               </Form.Item>
