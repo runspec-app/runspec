@@ -776,6 +776,39 @@ def make_truncation_suffix(orig_len: int, cap: int) -> str:
     )
 
 
+def format_result_for_room(output: str) -> str:
+    """Format a runnable's raw result string for posting into a chat room.
+
+    A runnable's stdout is often compact JSON. Posted verbatim it reads as a
+    dense one-liner in the room — the "raw json" the operator sees. The desktop
+    console renders the same string richly in its ``OutputPanel``; the room web
+    app has no such renderer and shows message bodies as plain (``pre-wrap``)
+    text. Since the tool runs console-side, mirror the console's raw-JSON view
+    here — pretty-print a JSON object/array with a 2-space indent (the same
+    shape as the console's ``<pre>`` fallback, ``JSON.stringify(v, null, 2)``)
+    so it lands readable in the room and the two stay in line.
+
+    Anything that isn't a JSON object/array — plain text, an already-formatted
+    string, a gate failure prefix (``✗`` / ``[exit …]``), or a truncated
+    (hence unparseable) blob — is returned unchanged.
+    """
+    text = output.strip()
+    # Only pretty-print a JSON *container*: a bare scalar (``true``, a number, a
+    # quoted string) is left exactly as the runnable wrote it.
+    if not text or text[0] not in "{[":
+        return output
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return output
+    if not isinstance(parsed, (dict, list)):
+        return output
+    try:
+        return json.dumps(parsed, indent=2, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return output
+
+
 def parse_truncation(output: str) -> dict[str, int] | None:
     """Detect the truncation marker; return ``{"orig_len", "cap"}`` or ``None``.
     Lets the UI badge a cut-off tool result without the runner changing its

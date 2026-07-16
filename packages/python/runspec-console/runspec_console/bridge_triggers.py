@@ -29,6 +29,7 @@ from .bridge_helpers import (
     _classify_room_connection,
     _RotaPresenceWatcher,
 )
+from .bridge_utils import format_result_for_room
 
 from typing import TYPE_CHECKING
 
@@ -277,6 +278,7 @@ class TriggersMixin:
         supervisor per room, each tunnelling over that host's own pooled
         connection. Idempotent; a no-op with no SSH pool or no rooms configured."""
         from .sources.chat_transport import (
+            HELPDESK_PREFIX,
             make_host_room_exec_factory,
             make_host_room_factory,
         )
@@ -297,8 +299,20 @@ class TriggersMixin:
         for spec in specs:
             room = spec["room"]
             if room in threads:
+                # Two hosts resolved to the same room namespace — most often two
+                # helpdesk hosts both defaulting to the "helpdesk" queue
+                # (``helpdesk/helpdesk``). Only the first connects; point the
+                # operator at the fix rather than silently dropping the second.
+                hint = (
+                    " — set a distinct room_queue on this host"
+                    if room.startswith(f"{HELPDESK_PREFIX}/")
+                    else " — set a distinct room name on this host"
+                )
                 logger.warning(
-                    "chat: duplicate room %r (host %r) — skipping", room, spec["host"]
+                    "chat: duplicate room %r (host %r) — skipping%s",
+                    room,
+                    spec["host"],
+                    hint,
                 )
                 continue
             if spec.get("via") == "exec":
@@ -812,7 +826,13 @@ class TriggersMixin:
         # The gate marks a refusal/non-zero run with a leading ✗ / [exit …].
         failed = output.startswith("✗ ") or output.startswith("[exit ")
         try:
-            source.send_message(output, room=room)  # deliver the result on the thread
+            # Pretty-print JSON output so it reads in the room the way the console
+            # renders it (the room web app shows message bodies as plain pre-wrap
+            # text — see format_result_for_room). Failure prefixes / plain text
+            # pass through unchanged.
+            source.send_message(
+                format_result_for_room(output), room=room
+            )  # deliver the result on the thread
         except Exception:
             logger.exception("portal: posting result for %r failed", runnable)
         source.send_request_complete(

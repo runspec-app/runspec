@@ -1603,15 +1603,21 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <Form.Item name="room_exec_command" label="Relay command" help="Optional override run on the host when via=exec, e.g. socat - TCP:127.0.0.1:8765. Defaults to console-room connect.">
                 <Input placeholder="defaults to console-room connect" style={{ fontFamily: 'monospace' }} />
               </Form.Item>
-              {/* Group-chat `room` and an explicit `room_queue` override are hidden
-                  in the helpdesk-focused build (the queue defaults to "helpdesk").
-                  Kept hidden so an existing config still round-trips; remove
-                  `hidden` to re-expose. */}
+              {/* The group-chat `room` stays hidden in the helpdesk-focused build
+                  (kept so an existing config still round-trips; remove `hidden` to
+                  re-expose). The queue name IS exposed: it defaults to "helpdesk",
+                  so two hosts that both run the room collide on the namespace
+                  `helpdesk/helpdesk` and only the first connects — give each a
+                  distinct name here. */}
               <Form.Item name="room" hidden>
                 <Input />
               </Form.Item>
-              <Form.Item name="room_queue" hidden>
-                <Input />
+              <Form.Item
+                name="room_queue"
+                label="Queue name"
+                help='The helpdesk queue this host staffs — becomes the room "helpdesk/<name>". Defaults to "helpdesk"; set a distinct name on each host so two rooms do not collide (a same-named room is skipped).'
+              >
+                <Input placeholder="helpdesk" />
               </Form.Item>
               <Form.Item name="room_catalog" label="Catalogue allowlist" help="Optional: limit the helpdesk's self-service catalogue to these runnables. Empty = every self-service-marked runnable.">
                 <Select

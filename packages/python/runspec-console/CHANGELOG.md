@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.169.0] — 2026-07-16
+
+### Changed
+- **A runnable's JSON result posted into a chat room is now pretty-printed.**
+  When an operator enacts a runnable for a room (`_run_assignment`), its raw
+  stdout was posted verbatim — often dense one-line JSON, the "raw json" seen in
+  the room. The room web app renders message bodies as plain (`pre-wrap`) text
+  and has no rich renderer like the desktop console's `OutputPanel`, so the tool
+  runs console-side and is now formatted console-side to match: a new pure
+  `bridge_utils.format_result_for_room` pretty-prints a JSON object/array with a
+  2-space indent (the same shape as the console's `<pre>` fallback) before it is
+  sent. Plain text, gate-failure prefixes (`✗` / `[exit …]`), bare scalars, and
+  truncated/unparseable output pass through unchanged.
+- **The helpdesk queue name is now editable in the host editor (Settings →
+  Hosts).** A fleet host with a `room_port` staffs a helpdesk queue whose name
+  defaults to `"helpdesk"`, and the room namespace is `helpdesk/<queue>`. With
+  two such hosts and no `room_queue` set, both resolved to `helpdesk/helpdesk`,
+  so only the first connected and the second was silently skipped (`chat:
+  duplicate room … — skipping`). The `room_queue` field was present in the host
+  form but `hidden`, leaving no UI to give each room a distinct name — it is now
+  a visible **Queue name** input (`SettingsDrawer.tsx`). The skip warning is also
+  actionable now, naming the fix (`set a distinct room_queue on this host`).
+
+---
+
+
 ## [0.168.0] — 2026-07-12
 
 ### Changed
