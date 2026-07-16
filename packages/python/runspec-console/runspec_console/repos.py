@@ -476,21 +476,37 @@ def grep_repo(
     max_results: int = 100,
     cancel_event: Any = None,
     on_progress: Any = None,
+    *,
+    ignore_case: bool = False,
+    fixed: bool = False,
+    glob: str = "",
 ) -> list[dict[str, Any]]:
-    """Regex-search files under ``rel`` (default whole repo) for ``pattern``.
+    """Search files under ``rel`` (default whole repo) for ``pattern``.
 
     Skips ``.git``/noise dirs, binary files, and files over
     ``_GREP_FILE_MAX_BYTES``. Returns up to ``max_results`` (≤ ``_GREP_MAX_RESULTS``)
-    rows: {path, line, text}. Raises ``re.error`` on a bad pattern.
+    rows: {path, line, text}.
+
+    ``pattern`` is a **regular expression** by default (matched anywhere on a line,
+    so leading whitespace/tabs never matter); pass ``fixed=True`` to match it as a
+    **literal** string instead — regex metacharacters are escaped, which is also
+    immune to ``re.error``. ``ignore_case=True`` folds case. ``glob`` limits the
+    scan to files whose repo-relative posix path (or bare name) matches a
+    shell-style pattern — a comma-separated list is allowed (e.g. ``"*.py"`` or
+    ``"*.ts,*.tsx"``) — narrower and faster on large trees. Raises ``re.error`` on
+    a bad regex (only when ``fixed`` is false).
 
     ``cancel_event``/``on_progress`` (when given) make a large scan interruptible
     between files (raising ``ToolCancelled``) and stream a running file/match
     count so the operator can see it is alive."""
     import re
+    from fnmatch import fnmatch
 
-    rx = re.compile(pattern)
+    flags = re.IGNORECASE if ignore_case else 0
+    rx = re.compile(re.escape(pattern) if fixed else pattern, flags)
     base = _safe_path(dest, rel)
     limit = min(max(1, max_results), _GREP_MAX_RESULTS)
+    globs = [g.strip() for g in glob.split(",") if g.strip()]
     out: list[dict[str, Any]] = []
     scanned = 0
     for root, dirs, files in os.walk(base):
@@ -498,10 +514,15 @@ def grep_repo(
         for fname in sorted(files):
             if cancel_event is not None and cancel_event.is_set():
                 raise ToolCancelled()
+            fpath = Path(root) / fname
+            relpath = fpath.relative_to(dest).as_posix()
+            if globs and not any(
+                fnmatch(relpath, g) or fnmatch(fname, g) for g in globs
+            ):
+                continue
             scanned += 1
             if on_progress is not None and scanned % 200 == 0:
                 on_progress(f"scanned {scanned} files, {len(out)} matches")
-            fpath = Path(root) / fname
             try:
                 if fpath.stat().st_size > _GREP_FILE_MAX_BYTES:
                     continue
@@ -510,7 +531,6 @@ def grep_repo(
                 continue
             if _is_binary(data):
                 continue
-            relpath = fpath.relative_to(dest).as_posix()
             for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
                 if rx.search(line):
                     out.append({"path": relpath, "line": n, "text": line[:400]})

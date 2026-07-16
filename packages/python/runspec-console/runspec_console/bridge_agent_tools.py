@@ -1204,7 +1204,16 @@ class AgentToolsMixin:
             },
             {
                 "name": "repo_grep",
-                "description": "Regex-search a synced repo's files for a pattern (subject/body of code).",
+                "description": (
+                    "Search a synced repo's files for a pattern. The pattern is a "
+                    "regular expression by default and matches anywhere on a line "
+                    "(leading whitespace/tabs never matter); set fixed=true to match "
+                    "it as a literal string (regex metacharacters like ( ) . [ are "
+                    "escaped). Search is case-sensitive unless ignore_case=true. Use "
+                    "glob to restrict to file types (e.g. '*.py' or '*.ts,*.tsx') — "
+                    "faster on large trees. If the result is 'truncated', narrow the "
+                    "pattern, glob, or path and search again."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -1214,15 +1223,34 @@ class AgentToolsMixin:
                         },
                         "pattern": {
                             "type": "string",
-                            "description": "Regular expression to search for.",
+                            "description": "Regex to search for (or a literal string when fixed=true).",
                         },
                         "path": {
                             "type": "string",
                             "description": "Limit the search to this subdirectory (optional).",
                         },
+                        "glob": {
+                            "type": "string",
+                            "description": (
+                                "Only scan files matching this shell-style glob; "
+                                "comma-separate several, e.g. '*.py' or '*.ts,*.tsx' "
+                                "(optional)."
+                            ),
+                        },
+                        "ignore_case": {
+                            "type": "boolean",
+                            "description": "Case-insensitive search (default false).",
+                        },
+                        "fixed": {
+                            "type": "boolean",
+                            "description": (
+                                "Match the pattern literally instead of as a regex "
+                                "(default false)."
+                            ),
+                        },
                         "max_results": {
                             "type": "integer",
-                            "description": "Max matches to return (default 100).",
+                            "description": "Max matches to return (default 100, hard cap 200).",
                         },
                     },
                     "required": ["name", "pattern"],
@@ -1369,15 +1397,26 @@ class AgentToolsMixin:
                 pattern = str(ti.get("pattern") or "")
                 if not pattern:
                     return "Error: 'pattern' is required for repo_grep."
+                req_max = int(ti.get("max_results") or 100)
                 rows = repos.grep_repo(
                     dest,
                     pattern,
                     str(ti.get("path") or ""),
-                    int(ti.get("max_results") or 100),
+                    req_max,
                     cancel_event=cancel_event,
                     on_progress=on_progress,
+                    ignore_case=bool(ti.get("ignore_case")),
+                    fixed=bool(ti.get("fixed")),
+                    glob=str(ti.get("glob") or ""),
                 )
-                return _json.dumps({"matches": rows, "count": len(rows)}, default=str)
+                payload: dict[str, Any] = {"matches": rows, "count": len(rows)}
+                if len(rows) >= min(max(1, req_max), repos._GREP_MAX_RESULTS):
+                    payload["truncated"] = True
+                    payload["hint"] = (
+                        "Result cap reached — more matches may exist. Narrow with a "
+                        "more specific pattern, a 'glob' (e.g. '*.py'), or a 'path'."
+                    )
+                return _json.dumps(payload, default=str)
             if name == "repo_read":
                 path = str(ti.get("path") or "")
                 if not path:

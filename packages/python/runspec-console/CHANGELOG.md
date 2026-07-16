@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.171.0] — 2026-07-16
+
+### Added
+- **`repo_grep` gained case-insensitive, literal, and file-glob search plus a
+  truncation signal.** The agent's repo search was regex-only and
+  case-sensitive with no way to scope the scan, so a `resumeTask` lookup that
+  needed a case fold or a `price[0]`-style literal (regex metacharacters) came
+  back empty, and a broad pattern silently hit the result cap with no indication
+  more matches existed. `grep_repo` now takes `ignore_case` (fold case), `fixed`
+  (match the pattern literally — metacharacters escaped, also immune to
+  `re.error`), and `glob` (restrict the scan to files matching a shell-style
+  pattern, comma-separated list allowed, e.g. `*.py` or `*.ts,*.tsx` — narrower
+  and faster on large trees). The `repo_grep` tool schema/description surface all
+  three, and when the row count reaches the effective cap the payload is flagged
+  `truncated` with a hint to narrow — so the agent knows to refine rather than
+  assume it saw everything. Glob filtering is applied before the file is
+  stat-ed/read, so a scoped search skips the bulk of a large tree
+  (`repos.grep_repo`, `bridge_agent_tools` `repo_grep`).
+
+### Fixed
+- **A `repo_grep` pattern containing regex metacharacters no longer silently
+  misfires.** It was always compiled as a regex, so a search meant literally
+  (e.g. `price[0]`, `foo(bar)`) matched the wrong thing or raised `re.error`;
+  pass `fixed=true` for a literal match. (A match already succeeds anywhere on a
+  line, so leading whitespace/tabs were never the cause — that part of the
+  earlier diagnosis was a red herring.)
+
+
 ## [0.170.0] — 2026-07-16
 
 ### Added

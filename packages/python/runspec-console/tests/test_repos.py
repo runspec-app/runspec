@@ -158,6 +158,41 @@ def test_sync_read_grep_edit_diff_roundtrip(tmp_path):
     assert repos.read_file(dest, "a.txt")["content"] == "hello\nworld"
 
 
+def test_grep_options_case_literal_and_glob(tmp_path):
+    """The repo_grep search options the console agent relies on: a match is found
+    anywhere on a line (leading tabs/spaces are irrelevant), ignore_case folds
+    case, fixed matches regex metacharacters literally, and glob narrows the
+    scanned file set."""
+    src = _make_origin(tmp_path)
+    dest = tmp_path / "co"
+    repos.sync_repo(str(src), "v1", gitsync.GitAuth(scheme="local"), dest)
+    # craft files in the local checkout to exercise each option
+    repos.write_file(dest, "svc.ts", "  \tresumeTask(id)\nfunction ResumeTask() {}\n")
+    repos.write_file(dest, "note.md", "price[0] literal here\n")
+
+    # a leading tab/spaces before the token never prevents a match
+    hits = repos.grep_repo(dest, r"resumeTask", glob="*.ts")
+    assert [h["line"] for h in hits] == [1]
+
+    # ignore_case folds the CamelCase variant on line 2 in as well
+    folded = repos.grep_repo(dest, r"resumetask", ignore_case=True, glob="*.ts")
+    assert {h["line"] for h in folded} == {1, 2}
+
+    # fixed=True matches the metacharacters literally; the same string as a regex
+    # (a char class) does not match the literal text
+    assert repos.grep_repo(dest, "price[0]", fixed=True, glob="*.md")[0]["path"] == (
+        "note.md"
+    )
+    assert repos.grep_repo(dest, "price[0]", glob="*.md") == []
+
+    # glob restricts the scan to the matching files (comma-separated list allowed)
+    only_md = repos.grep_repo(dest, r".", glob="*.md,*.rst")
+    assert {h["path"] for h in only_md} == {"note.md"}
+
+    # max_results caps the rows returned (the truncation the handler flags)
+    assert len(repos.grep_repo(dest, r".", max_results=1)) == 1
+
+
 def test_is_checked_out_requires_working_tree(tmp_path, monkeypatch):
     """A bare .git with no working tree reads as not-checked-out (honest status)."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
@@ -369,6 +404,46 @@ def test_repo_write_reports(monkeypatch):
         "repo_write", {"name": "app", "path": "a.txt", "content": "hi"}
     )
     assert out.startswith("✓ Created app/a.txt") and "not committed" in out
+
+
+def test_repo_grep_dispatch_passes_options_and_flags_truncation(monkeypatch):
+    """The handler forwards the ignore_case/fixed/glob options to grep_repo and
+    marks the payload 'truncated' once the row count reaches the effective cap,
+    so the agent knows to narrow rather than assume it saw everything."""
+    monkeypatch.setattr(
+        repos, "find_repo", lambda n: {"name": "app", "url": "u", "ref": "main"}
+    )
+    monkeypatch.setattr(repos, "is_checked_out", lambda n: True)
+    monkeypatch.setattr(repos, "checkout_dir", lambda n: "/co/app")
+    seen = {}
+
+    def fake_grep(dest, pattern, rel, mx, *, ignore_case, fixed, glob, **kw):
+        seen.update(
+            pattern=pattern, ignore_case=ignore_case, fixed=fixed, glob=glob, mx=mx
+        )
+        return [{"path": "f.py", "line": i, "text": "x"} for i in range(mx)]
+
+    monkeypatch.setattr(repos, "grep_repo", fake_grep)
+    out = _StubBridge()._run_repo_tool(
+        "repo_grep",
+        {
+            "name": "app",
+            "pattern": "price[0]",
+            "ignore_case": True,
+            "fixed": True,
+            "glob": "*.py",
+            "max_results": 3,
+        },
+    )
+    data = json.loads(out)
+    assert seen == {
+        "pattern": "price[0]",
+        "ignore_case": True,
+        "fixed": True,
+        "glob": "*.py",
+        "mx": 3,
+    }
+    assert data["count"] == 3 and data["truncated"] is True and "Narrow" in data["hint"]
 
 
 # ── Settings → Repos bridge methods ───────────────────────────────────────────
