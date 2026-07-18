@@ -77,6 +77,16 @@ def active_profile_path() -> Path:
     return app_dir() / "runspec_active_profile.toml"
 
 
+def active_room_path() -> Path:
+    """Machine-local active-room pointer (`runspec_active_room.toml`) — which
+    room-configured host *this* console connects to (single-select; only one room
+    at a time). Personal, per-console state, so it is **never** synced (not in
+    Config Sync's KNOWN_FILES). Absent = the default (auto-connect the sole room
+    host, else none); blank `active` = explicitly *no room*; a host name = that
+    host's room only."""
+    return app_dir() / "runspec_active_room.toml"
+
+
 def seed_state_path() -> Path:
     """Machine-local record of the package config-seed last applied
     (`runspec_seed_state.toml`) — the `{distribution: version}` stamp the seed

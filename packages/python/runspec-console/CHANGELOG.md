@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.173.0] — 2026-07-16
+
+### Added
+- **Single-room selector (Settings → Self-Service) for redundant helpdesk
+  hosts.** When several fleet hosts each run the *same* helpdesk room (for
+  redundancy), joining more than one collides on the namespace `helpdesk/<queue>`
+  and only one wins non-deterministically (the old silent "duplicate room —
+  skipping"). The Self-Service tab now has a **Connected room** dropdown listing
+  every room-configured host; this console connects to exactly **one at a time**,
+  and switching live re-joins (`restart_chat`). The choice is **machine-local**
+  and **never synced** (a new `runspec_active_room.toml`, mirroring the active-
+  profile pointer), so two consoles can't disagree over a shared flag and there's
+  no way to have two active. Defaults are back-compatible: a lone room host
+  auto-connects; 2+ hosts with no pick connect to none (logged) until one is
+  chosen; an explicit "None" detaches. New pure `active_room` module
+  (`read/write_active_room`, `select_room_specs`), bridge `get_room_hosts` /
+  `get_active_room` / `set_active_room`, and `_active_room_specs` gating
+  `start_chat`. This is the redundancy/failover model — pair a switch here with
+  repointing the visitor front door at the selected host.
+
+---
+
+
 ## [0.172.0] — 2026-07-16
 
 ### Added

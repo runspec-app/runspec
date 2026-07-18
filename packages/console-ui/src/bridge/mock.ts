@@ -343,6 +343,7 @@ const MOCK_HOSTS: Host[] = [
 // Machine-local active host profile in dev mode ("" = All hosts). get_hosts
 // filters MOCK_HOSTS by it so the sidebar profile switcher visibly scopes.
 let MOCK_ACTIVE_PROFILE = ''
+let MOCK_ACTIVE_ROOM = 'web01'
 
 const MOCK_HISTORY: HistoryRecord[] = [
   {
@@ -700,6 +701,16 @@ export const mockApi: BridgeApi = {
   set_active_profile: async (name) => {
     MOCK_ACTIVE_PROFILE = name
     return { active: name }
+  },
+
+  get_room_hosts: async () => [
+    { host: 'web01', room: 'helpdesk/helpdesk', queue: 'helpdesk' },
+    { host: 'web02', room: 'helpdesk/helpdesk', queue: 'helpdesk' },
+  ],
+  get_active_room: async () => MOCK_ACTIVE_ROOM,
+  set_active_room: async (host) => {
+    MOCK_ACTIVE_ROOM = host
+    return { active: host }
   },
 
   get_self_service: async () => [

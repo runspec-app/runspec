@@ -730,6 +730,13 @@ export interface RoomsState {
   rooms: RoomInfo[]
 }
 
+// A room-configured host offered in the single-room selector (bridge.get_room_hosts).
+export interface RoomHost {
+  host: string
+  room: string
+  queue: string
+}
+
 // bridge.test_room_connection — an isolated, on-demand diagnosis of a room's
 // connection over the real paramiko path (proxy/key/channel). `stage` localises
 // a failure: ssh (reach/auth the host), channel (tunnel/exec relay), room (relay
@@ -895,6 +902,13 @@ export interface BridgeApi {
   // marking; saving republishes every connected queue's catalog.
   get_self_service: () => Promise<SelfServiceEntry[]>
   save_self_service: (entries: SelfServiceEntry[]) => Promise<void>
+  // Machine-local single-room selector (Settings → Self-Service): which
+  // room-configured host this console connects to. get_room_hosts lists the
+  // candidates; get_active_room returns the effectively-connected host ("" =
+  // none); set_active_room picks one ("" = no room) and live re-joins.
+  get_room_hosts: () => Promise<RoomHost[]>
+  get_active_room: () => Promise<string>
+  set_active_room: (host: string) => Promise<{ active: string }>
   // Git-repo registry (runspec_repos.toml) — the agent's read/edit allowlist
   // (Settings → Repos). sync_repo clones/fetches a repo on operator demand.
   get_repos: () => Promise<Repo[]>

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 
+from . import active_room as active_room_mod
 from . import config as config_mod
 from . import notify
 
@@ -289,7 +290,7 @@ class TriggersMixin:
             pool = self._ssh_pool
         if pool is None:
             return
-        specs = self._room_specs()
+        specs = self._active_room_specs()
         if not specs:
             return
         ssh_cfg = self.get_config().get("ssh")
@@ -380,6 +381,70 @@ class TriggersMixin:
                 or default_room_user(ssh_target, ssh_user),
             }
         ]
+
+    def _active_room_specs(self) -> list[dict[str, Any]]:
+        """The room specs this console should actually join — ``_room_specs`` (all
+        configured rooms) narrowed to the single machine-local selection. See
+        ``active_room.select_room_specs`` for the rule (sole host auto-connects;
+        2+ need an explicit pick; ``""`` = deliberately no room)."""
+        from .active_room import select_room_specs
+        from .config import active_room_path
+
+        active = active_room_mod.read_active_room(active_room_path())
+        specs = select_room_specs(self._room_specs(), active)
+        if not specs and active in (None, ""):
+            all_hosts = {str(s.get("host") or "") for s in self._room_specs()}
+            if len(all_hosts) > 1:
+                logger.info(
+                    "chat: %d room-configured hosts but none selected — pick one "
+                    "in Settings → Self-Service (connecting to no room)",
+                    len(all_hosts),
+                )
+        return specs
+
+    def get_room_hosts(self) -> list[dict[str, Any]]:
+        """Fleet hosts that have a room configured — the Self-Service tab's room
+        selector. One entry per host: ``{host, room, queue}``. Unfiltered (every
+        candidate), so the operator can pick any of them (incl. a standby)."""
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for s in self._room_specs():
+            host = str(s.get("host") or "")
+            if not host or host in seen:
+                continue
+            seen.add(host)
+            out.append(
+                {
+                    "host": host,
+                    "room": str(s.get("room") or ""),
+                    "queue": str(s.get("queue") or ""),
+                }
+            )
+        return out
+
+    def get_active_room(self) -> str:
+        """The host whose room this console is *effectively* connected to
+        (``""`` = none). Resolves the machine-local selection through the same
+        filter ``start_chat`` uses, so the UI shows what's actually joined (incl.
+        the sole-host auto-connect default)."""
+        hosts: list[str] = []
+        for s in self._active_room_specs():
+            host = str(s.get("host") or "")
+            if host and host not in hosts:
+                hosts.append(host)
+        return hosts[0] if len(hosts) == 1 else ""
+
+    def set_active_room(self, host: str) -> dict[str, Any]:
+        """Pick the single room-configured host this console connects to
+        (machine-local, never synced). ``""`` = connect to no room. Live-applies
+        by re-joining (``restart_chat``); returns the effective selection."""
+        from .config import active_room_path
+
+        active_room_mod.write_active_room(active_room_path(), str(host or ""))
+        self.restart_chat()
+        active = self.get_active_room()
+        self._dispatch("runspec:room_connection", {"selection": active})
+        return {"active": active}
 
     def stop_chat(self) -> None:
         """Leave every room and stop all reconnect supervisors. Idempotent."""
@@ -631,7 +696,7 @@ class TriggersMixin:
     def _publish_catalogs(self) -> None:
         """Republish every connected agent queue's catalog — called after a
         discovery refresh so the room always offers what the fleet can run now."""
-        specs = [s for s in self._room_specs() if s.get("queue")]
+        specs = [s for s in self._active_room_specs() if s.get("queue")]
         with self._lock:
             sources = dict(self._chat_sources)
         for spec in specs:

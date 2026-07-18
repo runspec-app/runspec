@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedApplyResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedApplyResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -1881,6 +1881,9 @@ interface SsItem { name: string; description?: string; missing: boolean }
 function SelfServiceTab() {
   const [entries, setEntries] = useState<SelfServiceEntry[]>([])
   const [runnables, setRunnables] = useState<Runnable[]>([])
+  const [roomHosts, setRoomHosts] = useState<RoomHost[]>([])
+  const [activeRoom, setActiveRoom] = useState('')
+  const [switchingRoom, setSwitchingRoom] = useState(false)
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
   // null = not yet touched → show every group open. Once the operator collapses a
@@ -1890,8 +1893,18 @@ function SelfServiceTab() {
   const load = useCallback(() => {
     bridge.get_self_service().then(setEntries)
     bridge.get_runnables('all').then(setRunnables)
+    bridge.get_room_hosts().then(setRoomHosts)
+    bridge.get_active_room().then(setActiveRoom)
   }, [])
   useEffect(() => { load() }, [load])
+
+  const changeRoom = async (host: string) => {
+    setSwitchingRoom(true)
+    try {
+      const res = await bridge.set_active_room(host)
+      setActiveRoom(res.active)
+    } finally { setSwitchingRoom(false) }
+  }
 
   const persist = async (next: SelfServiceEntry[]) => {
     setEntries(next)
@@ -1997,6 +2010,33 @@ function SelfServiceTab() {
 
   return (
     <div>
+      {roomHosts.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>Connected room</Text>
+          <Space wrap>
+            <Select
+              size="small"
+              style={{ minWidth: 280 }}
+              value={activeRoom}
+              loading={switchingRoom}
+              disabled={switchingRoom}
+              onChange={changeRoom}
+              options={[
+                { value: '', label: 'None — not connected' },
+                ...roomHosts.map(r => ({
+                  value: r.host,
+                  label: `${r.host} · ${r.queue || r.room || 'room'}`,
+                })),
+              ]}
+            />
+          </Space>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
+            {roomHosts.length > 1
+              ? 'These hosts all run the same helpdesk, for redundancy. This console connects to one at a time — pick which host staffs it (machine-local; for failover, switch here and repoint your front door to that host).'
+              : 'The room-configured host this console connects to (machine-local).'}
+          </Text>
+        </div>
+      )}
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
         Saved to <code>runspec_self_service.toml</code> (synced). The enabled runnables are offered to visitors in the helpdesk room's self-service catalogue — everything else stays operator-only. A queue's optional <code>room_catalog</code> allowlist narrows this set per queue.
       </Text>
