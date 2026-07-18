@@ -1898,6 +1898,22 @@ function SelfServiceTab() {
   }, [])
   useEffect(() => { load() }, [load])
 
+  // Keep the room selector fresh: a host edited elsewhere (e.g. its room config
+  // removed) must drop out of the dropdown without an app restart. hosts_updated
+  // fires on every host save; room_connection catches live connect/drop flips.
+  useEffect(() => {
+    const reloadRooms = () => {
+      bridge.get_room_hosts().then(setRoomHosts)
+      bridge.get_active_room().then(setActiveRoom)
+    }
+    window.addEventListener('runspec:hosts_updated', reloadRooms)
+    window.addEventListener('runspec:room_connection', reloadRooms)
+    return () => {
+      window.removeEventListener('runspec:hosts_updated', reloadRooms)
+      window.removeEventListener('runspec:room_connection', reloadRooms)
+    }
+  }, [])
+
   const changeRoom = async (host: string) => {
     setSwitchingRoom(true)
     try {

@@ -50,6 +50,7 @@ def test_save_jump_hosts_preserves_unmanaged_keys(tmp_path, monkeypatch):
     s._reload_hosts = lambda: None
     s.restart_chat = lambda: None
     s._refresh_cycle = lambda: None
+    s._dispatch = lambda *a, **k: None
     s.save_jump_hosts = types.MethodType(Bridge.save_jump_hosts, s)
 
     # The editor sends the host WITHOUT room_dest_host (a field it doesn't manage).
@@ -78,6 +79,7 @@ def _save_host_stub(bridge_mod, hosts_file, monkeypatch):
     s._reload_hosts = lambda: None
     s.restart_chat = lambda: None
     s._refresh_cycle = lambda: None
+    s._dispatch = lambda *a, **k: None
     s.save_jump_hosts = types.MethodType(Bridge.save_jump_hosts, s)
     s.get_jump_hosts = types.MethodType(Bridge.get_jump_hosts, s)
     return s
@@ -914,11 +916,18 @@ def test_forced_resend_of_unchanged_catalog_does_not_log_info(caplog):
 # ── get_room_state ────────────────────────────────────────────────────────────
 
 
-def _state_stub(specs: list[dict[str, Any]], sources: dict[str, Any]):
+def _state_stub(
+    specs: list[dict[str, Any]],
+    sources: dict[str, Any],
+    active: list[dict[str, Any]] | None = None,
+):
+    # ``active`` = the room specs the console is selected to staff (defaults to all,
+    # reproducing the "every configured room is active" case).
     s = types.SimpleNamespace()
     s._lock = threading.Lock()
     s._chat_sources = sources
     s._room_specs = lambda: specs
+    s._active_room_specs = lambda: specs if active is None else active
     s.get_room_state = types.MethodType(Bridge.get_room_state, s)
     return s
 
@@ -939,6 +948,7 @@ def test_get_room_state_lists_rooms_with_connection():
                 "room": "ops",
                 "host": "web01",
                 "user": "alice@web01",
+                "active": True,
                 "connected": True,
                 "queue": "",
             },
@@ -946,6 +956,7 @@ def test_get_room_state_lists_rooms_with_connection():
                 "room": "dba",
                 "host": "db01",
                 "user": "alice@db01",
+                "active": True,
                 "connected": False,
                 "queue": "",
             },
@@ -959,9 +970,33 @@ def test_get_room_state_marks_queue_entry():
     ]
     out = _state_stub(specs, {"helpdesk/it": _FakeSource()}).get_room_state()
     entry = out["rooms"][0]
-    assert entry["queue"] == "it" and entry["connected"] is True
+    assert entry["queue"] == "it" and entry["connected"] is True and entry["active"]
     # The claim-based per-thread state is gone — request lifecycle rides events.
     assert "threads" not in entry
+
+
+def test_get_room_state_standby_not_connected():
+    # Two redundant hosts share the namespace; only the active one is connected —
+    # a namespace-only check would flip the standby green off the live source.
+    specs = [
+        {"room": "helpdesk/hd", "host": "web01", "user": "a@web01", "queue": "hd"},
+        {"room": "helpdesk/hd", "host": "web02", "user": "a@web02", "queue": "hd"},
+    ]
+    out = _state_stub(
+        specs, {"helpdesk/hd": _FakeSource()}, active=[specs[0]]
+    ).get_room_state()
+    web01, web02 = out["rooms"]
+    assert web01["active"] is True and web01["connected"] is True
+    assert web02["active"] is False and web02["connected"] is False  # standby
+
+
+def test_get_room_state_detached_when_none_active():
+    specs = [{"room": "helpdesk/hd", "host": "web01", "user": "a@web01", "queue": "hd"}]
+    # Nothing selected (empty active set) → no room is active/connected even though
+    # a source lingers.
+    out = _state_stub(specs, {"helpdesk/hd": _FakeSource()}, active=[]).get_room_state()
+    assert out["rooms"][0]["active"] is False
+    assert out["rooms"][0]["connected"] is False
 
 
 # ── _room_specs (host entries + legacy [chat] fallback) ───────────────────────

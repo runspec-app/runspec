@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.174.0] — 2026-07-18
+
+### Changed
+- **The footer room indicator is now selection-aware.** With the single-room
+  selector, the footer's old "N/M rooms · K down" count was misleading: a
+  deselected standby showed as **down** (with a "server unreachable" alarm), and
+  because redundant hosts share the room namespace, the one live connection
+  flipped **every** same-named host green ("2/2 connected" when only one was).
+  The footer now reflects the **active** room's health — green when it's up, red
+  (with the reachability hint scoped to that host) when it isn't, and a calm grey
+  **"no room"** when nothing is selected. Non-selected hosts are labelled
+  **standby**, not down. `get_room_state` now reports `connected` per **host**
+  (only the active host with a live source) plus an `active` flag, so a standby
+  never inherits the active host's status (`bridge_triggers.get_room_state`,
+  `App.tsx` footer).
+
+### Fixed
+- **The Self-Service room selector now refreshes when host config changes.** A
+  host whose room config was just removed (or added) in the Hosts editor kept
+  showing in the "Connected room" dropdown — and was still selectable/connectable
+  — until the app restarted, because the tab only fetched the room list on mount.
+  `save_jump_hosts` now emits the `runspec:hosts_updated` signal (like the other
+  host-mutating paths), and the Self-Service tab reloads its room list on both
+  `runspec:hosts_updated` and `runspec:room_connection`, so the dropdown tracks
+  the live host config without a restart. (The backend already read hosts fresh
+  from disk each call — this was purely a stale-frontend refresh gap.)
+
+---
+
+
 ## [0.173.0] — 2026-07-16
 
 ### Added

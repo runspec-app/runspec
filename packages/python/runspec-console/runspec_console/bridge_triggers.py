@@ -1291,20 +1291,32 @@ class TriggersMixin:
         return {"ok": True}
 
     def get_room_state(self) -> dict[str, Any]:
-        """For the Rooms view: every configured room (from the fleet host entries),
-        each with its host, this console's display name there, and whether it's
-        currently connected. ``{"rooms": []}`` when none are configured — the view
-        shows a 'no rooms' state."""
+        """For the footer indicator: every configured room (from the fleet host
+        entries), each with its host, this console's display name, whether it's
+        the **active** selection (the single host this console staffs), and
+        whether it's actually **connected**. ``{"rooms": []}`` when none are
+        configured.
+
+        ``connected`` is per-**host** accurate: redundant hosts share the room
+        namespace (``helpdesk/<queue>``), so a namespace-only check would flip a
+        *standby* green off the active host's live source. A room is connected
+        only when it is the active selection *and* its namespace has a live
+        source; every non-selected host is a standby (``active=False,
+        connected=False``), and when nothing is selected no room is active."""
         specs = self._room_specs()
+        active_hosts = {s["host"] for s in self._active_room_specs()}
         with self._lock:
-            connected = set(self._chat_sources)
+            connected_ns = set(self._chat_sources)
         rooms = []
         for s in specs:
+            host = s["host"]
+            is_active = host in active_hosts
             entry: dict[str, Any] = {
                 "room": s["room"],
-                "host": s["host"],
+                "host": host,
                 "user": s["user"],
-                "connected": s["room"] in connected,
+                "active": is_active,
+                "connected": is_active and s["room"] in connected_ns,
                 "queue": str(s.get("queue") or ""),
             }
             rooms.append(entry)

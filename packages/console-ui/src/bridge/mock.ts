@@ -1357,10 +1357,10 @@ export const mockApi: BridgeApi = {
   },
   get_room_state: async () => ({
     rooms: [
-      { room: 'ops', host: 'web01', user: 'alice@web01', connected: true, queue: '' },
-      { room: 'dba', host: 'db01', user: 'alice@db01', connected: false, queue: '' },
+      { room: 'ops', host: 'web01', user: 'alice@web01', active: true, connected: true, queue: '' },
+      { room: 'dba', host: 'db01', user: 'alice@db01', active: false, connected: false, queue: '' },
       {
-        room: 'helpdesk/it-support', host: 'web01', user: 'alice@web01', connected: true, queue: 'it-support',
+        room: 'helpdesk/it-support', host: 'web01', user: 'alice@web01', active: true, connected: true, queue: 'it-support',
         threads: {
           'helpdesk/it-support/bob@corp': { state: 'open', assignee: null },
           'helpdesk/it-support/carol@corp': { state: 'assigned', assignee: 'alice@web01' },

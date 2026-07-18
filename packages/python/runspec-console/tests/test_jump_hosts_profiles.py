@@ -29,12 +29,16 @@ class _StubBridge:
     def __init__(self) -> None:
         self._hosts: list[dict] = []
         self._lock = threading.Lock()
+        self.dispatched: list[str] = []
 
     def restart_chat(self) -> None:  # save_jump_hosts re-joins rooms
         pass
 
     def _refresh_cycle(self) -> None:  # spawned on a daemon thread by save
         pass
+
+    def _dispatch(self, event: str, detail: dict) -> None:  # hosts_updated signal
+        self.dispatched.append(event)
 
     _reload_hosts = Bridge._reload_hosts
     _MANAGED_HOST_KEYS = Bridge._MANAGED_HOST_KEYS
@@ -85,3 +89,12 @@ def test_saving_one_host_preserves_every_hosts_profiles(app):
     # Before the fix, both of these were [] after the save.
     assert _on_disk_profiles("h1") == ["app-support"]
     assert _on_disk_profiles("h2") == ["devops", "app-support"]
+
+
+def test_save_signals_hosts_updated(app):
+    # The host-list-changed signal lets consumers (the Self-Service room selector)
+    # refetch, so a host whose room config was removed drops out without a restart.
+    _write(app, [{"name": "h1", "ssh": "u@h1"}])
+    b = _StubBridge()
+    b.save_jump_hosts(b.get_jump_hosts())
+    assert "runspec:hosts_updated" in b.dispatched

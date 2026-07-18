@@ -720,7 +720,8 @@ export interface RoomInfo {
   room: string         // the room name (or queue namespace in agent mode)
   host: string         // the fleet host it's hosted on
   user: string         // this console's display name in the room
-  connected: boolean   // currently joined (tunnel up)
+  connected: boolean   // currently joined (per-host accurate; only the active host)
+  active: boolean      // the single host this console is currently selected to staff
   queue: string        // bare queue name in agent mode; '' for group chat
   threads?: Record<string, ThreadState>
 }

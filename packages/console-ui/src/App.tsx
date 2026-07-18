@@ -764,33 +764,56 @@ export default function App() {
                   room, so a room server going down is visible at a glance instead
                   of buried in the Dev tab. Hidden entirely when none are set. */}
               {rooms.length > 0 && (() => {
-                const up = rooms.filter(r => r.connected).length
-                const allUp = up === rooms.length
-                const dot = allUp ? '#52c41a' : (up === 0 ? '#ff4d4f' : '#faad14')
+                // The selector connects to one room at a time, so the footer
+                // reflects the *active* room's health — not a count of every
+                // configured room. A non-selected host is a standby (grey, calm),
+                // and "no room selected" is detached, not a failure.
+                const GREEN = '#52c41a', RED = '#ff4d4f', GREY = '#8c8c8c'
+                const active = rooms.find(r => r.active)
+                const activeUp = !!active?.connected
+                const roomState = (r: RoomInfo) =>
+                  r.active ? (r.connected ? 'connected' : 'connecting') : 'standby'
+                const stateColor = (r: RoomInfo) =>
+                  r.active ? (r.connected ? GREEN : RED) : GREY
+                // Dot: green = active & up; red = active but not reachable;
+                // grey = detached (nothing selected).
+                const dot = !active ? GREY : (activeUp ? GREEN : RED)
+                const label = !active
+                  ? 'no room'
+                  : `${active.queue || active.room}${activeUp ? '' : ' · connecting'}`
                 return (
                   <Popover
                     placement="topLeft"
                     mouseEnterDelay={0.2}
                     content={
-                      <div style={{ maxWidth: 300, maxHeight: 320, overflowY: 'auto', fontSize: 12 }}>
+                      <div style={{ maxWidth: 320, maxHeight: 320, overflowY: 'auto', fontSize: 12 }}>
                         <div style={{ marginBottom: 6, color: iconCol }}>
-                          {up}/{rooms.length} room{rooms.length === 1 ? '' : 's'} connected
+                          {!active
+                            ? 'No room selected — this console is detached'
+                            : `Connected to ${active.queue || active.room} · ${active.host}`}
+                          {rooms.length > 1 && <> · {rooms.length} configured</>}
                         </div>
-                        {rooms.map(r => (
-                          <div key={`${r.host}/${r.room}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              <span style={{ color: r.connected ? '#52c41a' : '#ff4d4f', marginRight: 6 }}>●</span>
-                              <span style={{ color: titleCol }}>{r.queue || r.room}</span>
-                              <span style={{ color: iconCol }}> · {r.host}</span>
-                            </span>
-                            <span style={{ color: r.connected ? '#52c41a' : '#ff4d4f', flexShrink: 0 }}>
-                              {r.connected ? 'connected' : 'down'}
-                            </span>
-                          </div>
-                        ))}
-                        {up < rooms.length && (
+                        {rooms.map(r => {
+                          const st = roomState(r)
+                          return (
+                            <div key={`${r.host}/${r.room}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span style={{ color: stateColor(r), marginRight: 6 }}>●</span>
+                                <span style={{ color: titleCol }}>{r.queue || r.room}</span>
+                                <span style={{ color: iconCol }}> · {r.host}</span>
+                              </span>
+                              <span style={{ color: stateColor(r), flexShrink: 0 }}>{st}</span>
+                            </div>
+                          )
+                        })}
+                        {active && !activeUp && (
                           <div style={{ marginTop: 6, color: iconCol, fontSize: 11 }}>
-                            A “down” room means its server isn’t reachable on the host — check the room process is running on its port.
+                            The active room’s server isn’t reachable on {active.host} — check the room process is running on its port.
+                          </div>
+                        )}
+                        {rooms.length > 1 && (
+                          <div style={{ marginTop: 6, color: iconCol, fontSize: 11 }}>
+                            Standby hosts run the same room for redundancy; switch the active one in Settings → Self-Service.
                           </div>
                         )}
                       </div>
@@ -798,10 +821,8 @@ export default function App() {
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
                       <CommentOutlined style={{ fontSize: 11, color: dot }} />
-                      <span>
-                        <span style={{ fontVariantNumeric: 'tabular-nums', color: titleCol }}>{up}/{rooms.length}</span>
-                        {' '}room{rooms.length === 1 ? '' : 's'}
-                        {!allUp && <span style={{ color: dot }}> · {rooms.length - up} down</span>}
+                      <span style={{ color: titleCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+                        {label}
                       </span>
                     </div>
                   </Popover>
