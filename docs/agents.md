@@ -130,6 +130,23 @@ input   = {type = "path"}
 api-key = {type = "str", env = "PIPELINE_API_KEY", autonomy = "manual"}
 ```
 
+The declaration surfaces in emitted schemas too — the arg's property carries
+its own `x-autonomy` — so an agent host can compute the effective level per
+call from the schema alone:
+
+```json
+{
+  "name": "pipeline",
+  "x-autonomy": "confirm",
+  "inputSchema": {
+    "properties": {
+      "input":   { "type": "string" },
+      "api-key": { "type": "string", "x-autonomy": "manual" }
+    }
+  }
+}
+```
+
 The runspec library calculates the effective autonomy for you and exposes it
 on the parsed result:
 

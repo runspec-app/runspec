@@ -558,6 +558,12 @@ function argToJsonSchema(arg: ArgSpec): Record<string, unknown> {
   if (arg.maxLength !== undefined) prop['maxLength'] = arg.maxLength;
   if (arg.multiple) prop = { type: 'array', items: prop };
 
+  // Per-arg autonomy escalation: providing this arg raises the effective
+  // autonomy of the call (most restrictive wins). Emitted so schema consumers
+  // can reproduce effective autonomy per call. After the `multiple` wrap so it
+  // always sits on the property itself, not the array items.
+  if (arg.autonomy) prop['x-autonomy'] = arg.autonomy;
+
   return prop;
 }
 

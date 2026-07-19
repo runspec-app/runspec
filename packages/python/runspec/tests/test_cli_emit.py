@@ -215,3 +215,30 @@ def test_inferred_required_listed_in_schema():
     script = _script(args={"label": {"description": "title"}, "limit": {"default": 10}})
     schema = _build_schema("sysreport", script, "mcp")
     assert schema["inputSchema"]["required"] == ["label"]
+
+
+# ── per-arg autonomy surfaces on the property (x-autonomy) ─────────────────────
+
+
+def test_arg_autonomy_emitted_on_property():
+    """An arg declaring its own autonomy carries it as x-autonomy so schema
+    consumers can reproduce effective_autonomy() per call."""
+    script = _script(args={"force": {"default": False, "autonomy": "supervised"}})
+    props = _build_schema("deploy", script, "mcp")["inputSchema"]["properties"]
+    assert props["force"]["x-autonomy"] == "supervised"
+
+
+def test_arg_without_autonomy_has_no_x_autonomy():
+    script = _script(args={"name": {"default": "world"}})
+    props = _build_schema("greeter", script, "mcp")["inputSchema"]["properties"]
+    assert "x-autonomy" not in props["name"]
+
+
+def test_arg_autonomy_sits_outside_multiple_wrap():
+    """With multiple = true the property becomes an array wrapper; x-autonomy
+    belongs on the property itself, not the items."""
+    script = _script(args={"target": {"type": "str", "multiple": True, "autonomy": "manual"}})
+    props = _build_schema("rollout", script, "mcp")["inputSchema"]["properties"]
+    assert props["target"]["type"] == "array"
+    assert props["target"]["x-autonomy"] == "manual"
+    assert "x-autonomy" not in props["target"]["items"]

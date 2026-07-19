@@ -1264,6 +1264,14 @@ def _arg_to_json_schema(arg: dict[str, Any]) -> dict[str, Any]:
     if arg.get("meta"):
         prop["x-meta"] = arg["meta"]
 
+    # Per-arg autonomy escalation: providing this arg raises the effective
+    # autonomy of the call (most restrictive wins). Emitted so schema consumers
+    # (MCP hosts, the Claude Code plugin gate) can reproduce
+    # effective_autonomy() per call. After the `multiple` wrap so it always
+    # sits on the property itself, not the array items.
+    if arg.get("autonomy"):
+        prop["x-autonomy"] = arg["autonomy"]
+
     return prop
 
 

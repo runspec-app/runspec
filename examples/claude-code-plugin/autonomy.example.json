@@ -1,0 +1,23 @@
+{
+  "_comment": "Example only — generate the real autonomy.json with scripts/generate_manifest.py. The hook fails closed (ask) for any tool not listed here.",
+  "host": "user@myhost",
+  "server_info": {
+    "name": "fleet-demo",
+    "version": "0.48.0"
+  },
+  "tools": {
+    "greeter": {
+      "autonomy": "autonomous"
+    },
+    "deploy_app": {
+      "autonomy": "confirm",
+      "reason": "restarts the app service",
+      "args": {
+        "force": "supervised"
+      }
+    },
+    "rotate_keys": {
+      "autonomy": "manual"
+    }
+  }
+}

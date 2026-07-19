@@ -1,0 +1,21 @@
+{
+  "name": "runspec-fleet",
+  "version": "0.1.0",
+  "description": "Remote runspec runnables as MCP tools in Claude Code, gated by their declared autonomy",
+  "author": {
+    "name": "runspec"
+  },
+  "mcpServers": {
+    "fleet": {
+      "type": "stdio",
+      "command": "ssh",
+      "args": [
+        "-o",
+        "BatchMode=yes",
+        "${RUNSPEC_PLUGIN_HOST}",
+        "${RUNSPEC_PLUGIN_BIN:-runspec}",
+        "serve"
+      ]
+    }
+  }
+}

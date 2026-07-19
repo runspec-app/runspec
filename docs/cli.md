@@ -193,6 +193,11 @@ Every emitted tool carries:
 | `x-output` | `output` field (`"text"` if not declared) |
 | `inputSchema` | JSON Schema for all args |
 
+An argument that declares its own `autonomy` additionally carries it as
+`x-autonomy` on its property inside `inputSchema`, so schema consumers can
+apply per-arg escalation (most restrictive level wins when the arg is
+provided) without reading the TOML.
+
 ---
 
 ## `runspec stubs`

@@ -54,3 +54,36 @@ test('runnable-level discoverable=false emits x-discoverable', () => {
   const visible = schemaFor(`\n[deploy]\n`, 'deploy');
   expect(visible).not.toHaveProperty('x-discoverable');
 });
+
+test('per-arg autonomy emits x-autonomy on the property', () => {
+  const schema = schemaFor(
+    `
+[deploy]
+autonomy = "confirm"
+[deploy.args]
+force = {default = false, autonomy = "supervised"}
+version = {type = "str"}
+`,
+    'deploy',
+  );
+  const props = (schema['inputSchema'] as Record<string, Record<string, unknown>>)['properties'];
+  expect((props['force'] as Record<string, unknown>)['x-autonomy']).toBe('supervised');
+  // Undeclared per-arg autonomy stays absent — no schema noise.
+  expect(props['version']).not.toHaveProperty('x-autonomy');
+});
+
+test('per-arg autonomy sits outside the multiple wrap', () => {
+  const schema = schemaFor(
+    `
+[rollout]
+[rollout.args]
+target = {type = "str", multiple = true, autonomy = "manual"}
+`,
+    'rollout',
+  );
+  const props = (schema['inputSchema'] as Record<string, Record<string, unknown>>)['properties'];
+  const target = props['target'] as Record<string, unknown>;
+  expect(target['type']).toBe('array');
+  expect(target['x-autonomy']).toBe('manual');
+  expect(target['items']).not.toHaveProperty('x-autonomy');
+});

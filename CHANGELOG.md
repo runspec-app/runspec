@@ -7,6 +7,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [node-0.37.0] — 2026-07-19
+
+### Added
+
+- **Per-argument autonomy in emitted schemas** — parity with Python 0.50.0. An
+  argument that declares its own `autonomy` now carries it as `x-autonomy` on
+  its property in every emitted tool schema (`runspec local --format
+  mcp/openai/anthropic` and the `runspec serve` `tools/list`), placed on the
+  property itself even when `multiple = true` wraps it in an array. Lets
+  schema consumers reproduce per-call effective autonomy (most restrictive
+  level wins when the arg is provided). (`cli.ts` `argToJsonSchema`.)
+
+## [0.50.0] — 2026-07-19
+
+### Added
+
+- **Per-argument autonomy in emitted schemas.** An argument that declares its
+  own `autonomy` now carries it as `x-autonomy` on its property in every
+  emitted tool schema (`runspec local --format mcp/openai/anthropic` and the
+  `runspec serve` `tools/list`). Previously only the runnable-level
+  `x-autonomy` was emitted, so a schema consumer could not see per-arg
+  escalation (most restrictive level wins when the arg is provided) and could
+  under-gate an `autonomous` runnable with an escalating arg. Lets client-side
+  gates reproduce `effective_autonomy()` per call — e.g. the new Claude Code
+  plugin example. (`cli.py` `_arg_to_json_schema`; `docs/agents.md`,
+  `docs/cli.md`.)
+- **Claude Code plugin example** (`examples/claude-code-plugin/`): a working
+  Claude Code plugin that exposes a remote venv's runnables as MCP tools over
+  the `runspec jump` SSH transport (`ssh <host> runspec serve`), with declared
+  autonomy carried over as permission decisions by a PreToolUse hook
+  (`autonomous` → allow, `confirm`/`supervised` → ask, `manual` → deny;
+  fail-closed to ask). Includes a stdlib-only manifest generator baking
+  `autonomy.json` from the serve's `tools/list`. Design notes in
+  `docs/design/emit-claude-plugin.md`.
+
 ## [0.49.0] — 2026-07-02
 
 ### Added
