@@ -6,16 +6,22 @@ the `runspec` core library installed in one or more Python environments. The
 console keeps one pooled, keepalive'd SSH connection per host and discovers
 each host's runnables by running `runspec local --format json` over it.
 
-Adding hosts is a **Settings UI** task (the agent can't edit the fleet), but
-once a host is connected, everything on it — running, file transfer, log
-analysis, denylist control — is agent-drivable.
+Add hosts either in **Settings → Jump Hosts** or by asking the agent — its
+`manage_hosts` tool edits the same config behind a confirmation card. Once a
+host is connected, everything on it — running, file transfer, log analysis,
+denylist control — is agent-drivable too.
 
 ---
 
 ## Add a host
 
-Open **Settings → Jump Hosts** and add an entry. Hosts are stored in
-`runspec_hosts.toml`:
+The fastest way is to tell the agent:
+
+> Add a host called app-01: deploy@app-01.internal, runspec at /opt/venvs/ops/bin/runspec.
+
+Approve the confirmation card (editing any detail first) and the fleet
+reconnects and re-discovers. The same entry can be made in **Settings → Jump
+Hosts**; either way it lands in `runspec_hosts.toml`:
 
 ```toml
 [[host]]
@@ -70,8 +76,9 @@ every member at once, behind a single grouped confirmation.
 Group names are a controlled vocabulary kept in a registry
 (`runspec_groups.toml`) that syncs across consoles, so a shared runbook
 targeting `web` means the same thing everywhere. Manage them from the host
-editor's group picker ("Manage groups"). Groups also work in schedules and
-runbooks.
+editor's group picker ("Manage groups") or via the agent (`manage_groups` —
+"create a `db` group and put nas-01 and nas-02 in it"). Groups also work in
+schedules and runbooks.
 
 ## Profiles
 

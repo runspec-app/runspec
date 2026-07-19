@@ -14,9 +14,12 @@ Everything automated goes through the **same autonomy gate as chat** —
 confirm-by-default, with run cards parked at *Awaiting human* until you
 approve or deny.
 
-The agent can **create schedules for you** in conversation. Triggers and the
-rota are configured in the UI — the agent can explain them and test them
-(`emit_event` fires a synthetic event), but not write them.
+The chat agent can set all of this up in conversation — `create_schedule`,
+`manage_triggers`, and `manage_rota` each show a confirmation card before
+writing anything, and `emit_event` fires synthetic events for testing. The
+reverse is deliberately impossible: a turn that was *started by* a trigger or
+schedule can never use the config tools, so automation cannot rewrite its own
+rules. See [Configure the console](console-agent.md#configure-the-console).
 
 ---
 
@@ -50,9 +53,11 @@ The Triggers tab shows each source's availability and the reason any is off.
 
 ### Configuring triggers
 
-Create and edit triggers on the **Triggers** tab. The editor has a
-host/group + runnable picker that lists the runnable's declared arguments as
-labelled rows, so you rarely hand-write the config — but it lands in
+Create and edit triggers on the **Triggers** tab, or describe one to the
+agent ("when an email about an outage arrives from bigcustomer.com, …") and
+approve the validated config it proposes. The tab's editor has a host/group +
+runnable picker that lists the runnable's declared arguments as labelled
+rows, so you rarely hand-write the config — but it lands in
 `runspec_triggers.toml` as named tables you can also edit directly:
 
 ```toml

@@ -272,6 +272,13 @@ export function RotaView() {
 
   useEffect(() => { loadRota() }, [])
 
+  // Agent-driven rota/trigger edits (manage_rota) refresh the tab live.
+  useEffect(() => {
+    const onUpdated = () => loadRota()
+    window.addEventListener('runspec:triggers_updated', onUpdated)
+    return () => window.removeEventListener('runspec:triggers_updated', onUpdated)
+  }, [])
+
   return (
     <div style={{ color: textColor(isDark) }}>
       <Collapse

@@ -214,6 +214,9 @@ export function TriggersView() {
     window.addEventListener('runspec:tool_confirm', onConfirm)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:trigger_status', onStatus)
+    // Agent-driven config edits (manage_triggers / manage_rota) — the view
+    // stays mounted behind display:none, so it must refetch on the event.
+    window.addEventListener('runspec:triggers_updated', onStatus)
     window.addEventListener('runspec:room_message', onMessage)
     window.addEventListener('runspec:room_draft', onRoomDraft)
     window.addEventListener('runspec:trigger_event', onEvent)
@@ -226,6 +229,7 @@ export function TriggersView() {
       window.removeEventListener('runspec:tool_confirm', onConfirm)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:trigger_status', onStatus)
+      window.removeEventListener('runspec:triggers_updated', onStatus)
       window.removeEventListener('runspec:room_message', onMessage)
       window.removeEventListener('runspec:room_draft', onRoomDraft)
       window.removeEventListener('runspec:trigger_event', onEvent)

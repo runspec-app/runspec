@@ -34,6 +34,7 @@ from .bridge_fleet import FleetMixin
 from .bridge_invoke import InvokeMixin
 from .bridge_agent_tools import AgentToolsMixin
 from .bridge_autonomy import AutonomyMixin
+from .bridge_config_tools import ConfigToolsMixin
 from .bridge_search import SearchMixin
 from .bridge_internals import InternalsMixin
 from .bridge_triggers import TriggersMixin
@@ -50,6 +51,7 @@ class Bridge(
     InvokeMixin,
     AgentToolsMixin,
     AutonomyMixin,
+    ConfigToolsMixin,
     SearchMixin,
     InternalsMixin,
     TriggersMixin,

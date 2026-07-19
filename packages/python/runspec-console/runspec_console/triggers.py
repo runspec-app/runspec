@@ -105,6 +105,43 @@ def _parse_hhmm(value: str) -> int:
         return 0
 
 
+def validate_rota(rota: dict[str, Any]) -> list[str]:
+    """Problems with a rota dict, or ``[]`` when it is saveable. The runtime
+    consumers (``within_rota``/``_parse_hhmm``) tolerate any shape by design, so
+    this is the pre-flight for callers (the agent's ``manage_rota``) that must
+    refuse bad input with a message instead of silently defaulting it.
+    """
+    errors: list[str] = []
+    source = rota.get("source")
+    if source not in (None, "", "console", "outlook"):
+        errors.append('\'source\' must be "console" or "outlook"')
+    known = set(_DAYS) | {
+        "enabled",
+        "source",
+        "shift_marker",
+        "hold_during_meetings",
+        "lock_suspend",
+    }
+    for key in rota:
+        if key not in known:
+            errors.append(f"unknown rota key '{key}'")
+    hhmm = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d$")
+    for day in _DAYS:
+        entry = rota.get(day)
+        if entry is None:
+            continue
+        if not isinstance(entry, dict):
+            errors.append(
+                f'\'{day}\' must be a table like {{on = true, start = "09:00", end = "17:30"}}'
+            )
+            continue
+        for bound in ("start", "end"):
+            value = entry.get(bound)
+            if value is not None and not hhmm.match(str(value)):
+                errors.append(f"'{day}.{bound}' must be \"HH:MM\" (got {value!r})")
+    return errors
+
+
 def within_rota(rota: dict[str, Any] | None, now: datetime) -> bool:
     """Whether ``now`` (local) falls inside the working-hours rota.
 

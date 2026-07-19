@@ -23,6 +23,7 @@ from .bridge_const import (
     _AUTONOMY_RANK,
     _OUTLOOK_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
+    _CONFIG_TOOL_NAMES,
 )
 from .bridge_helpers import (
     _BridgeTriggerOps,
@@ -2191,6 +2192,31 @@ class TriggersMixin:
             logger.debug("pre-turn: extraction failed", exc_info=True)
             return {}
 
+    @staticmethod
+    def _filter_headless_tools(
+        tools: list[dict[str, Any]], action_allow: list[str] | None
+    ) -> list[dict[str, Any]]:
+        """Restrict a headless (trigger/schedule-originated) turn's toolset.
+
+        The console-config tools are stripped UNCONDITIONALLY — before and
+        regardless of ``action_allow`` — so automation can never edit hosts,
+        groups, triggers, or the rota (a trigger turn that could edit triggers
+        could widen its own allowlist). No allowlist can re-admit them; a rule
+        trigger calling one directly is separately refused by the
+        ``_run_config_tool`` origin guard.
+
+        A non-empty ``action_allow`` then narrows the governed built-in action /
+        Outlook tools to that set, exactly as before; non-governed tools pass.
+        """
+        tools = [t for t in tools if t["name"] not in _CONFIG_TOOL_NAMES]
+        if action_allow:
+            governed = _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES
+            allow = set(action_allow)
+            tools = [
+                t for t in tools if t["name"] not in governed or t["name"] in allow
+            ]
+        return tools
+
     async def _run_isolated_agent_turn(
         self,
         chat_id: str,
@@ -2232,14 +2258,7 @@ class TriggersMixin:
             if (self._tool_mode() == "search" and not allowed_runnables)
             else ""
         )
-        if action_allow:
-            # Keep every non-governed tool; among the governed built-in action /
-            # Outlook tools keep only the allowlisted ones.
-            governed = _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES
-            allow = set(action_allow)
-            tools = [
-                t for t in tools if t["name"] not in governed or t["name"] in allow
-            ]
+        tools = self._filter_headless_tools(tools, action_allow)
         if allowed_runnables and not tools:
             # A non-empty allowlist that matched no installed runnable — the agent
             # would run tool-less. Surface it (a config typo / a host not yet

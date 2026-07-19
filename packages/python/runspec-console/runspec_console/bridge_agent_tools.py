@@ -435,6 +435,7 @@ class AgentToolsMixin:
                 *self._action_tools(),
                 *self._workspace_tools(),
                 *self._exec_tools(),
+                *self._config_tools(),
             ]
         self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
@@ -577,6 +578,7 @@ class AgentToolsMixin:
             *self._action_tools(),
             *self._workspace_tools(),
             *self._exec_tools(),
+            *self._config_tools(),
         ]
 
     def _outlook_tools(self) -> list[dict[str, Any]]:

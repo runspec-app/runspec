@@ -40,6 +40,7 @@ from .bridge_const import (
     _REPO_WRITE_TOOLS,
     _REPO_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
+    _CONFIG_TOOL_NAMES,
     _WORKSPACE_TOOL_NAMES,
     _EXEC_TOOL_NAMES,
     _BUILTIN_TOOL_NAMES,
@@ -100,6 +101,12 @@ class AutonomyMixin:
             return "autonomous" if codeexec.classify_sql(q) == "read" else "confirm"
         if tool_name in _ACTION_TOOL_NAMES:
             return "confirm"  # side-effecting action tools — always prompt
+        if tool_name in _CONFIG_TOOL_NAMES:
+            # Reading config (list/get) is read-only — free; every mutation
+            # (add/update/remove/save/rename/enable/disable/set — and an
+            # unknown/missing action, gated by default) prompts first.
+            action = str((tool_input or {}).get("action") or "").lower()
+            return "autonomous" if action in ("list", "get") else "confirm"
         if tool_name == "run_runnable":
             # Resolve the inner runnable so the gate reflects what actually runs —
             # not the generic wrapper. The level + per-arg escalation come from the
@@ -824,6 +831,8 @@ class AutonomyMixin:
             )
         if tool_name in _ACTION_TOOL_NAMES:
             return self._run_action_tool(tool_name, dict(tool_input or {}), chat_id)
+        if tool_name in _CONFIG_TOOL_NAMES:
+            return self._run_config_tool(tool_name, dict(tool_input or {}), chat_id)
         # Read-only discovery meta-tools (search mode) — no side effects, return JSON.
         if tool_name == "search_runnables":
             return self._run_search_tool(dict(tool_input or {}))

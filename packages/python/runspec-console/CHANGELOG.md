@@ -8,6 +8,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.175.0] — 2026-07-19
+
+### Added
+- **The chat agent can now configure the console — hosts, groups, triggers,
+  and the rota.** Four new built-in tools close the "ask the agent to set it
+  up" gap for config that was Settings-UI-only: `manage_hosts` (add/update/
+  remove fleet entries — core keys only; room/helpdesk settings stay in the
+  UI and survive updates untouched), `manage_groups` (registry add/update/
+  remove/rename, delegating to the orphan-safe bridge paths), `manage_triggers`
+  (save/delete/enable/disable, with the save validated by
+  `triggers.Trigger.from_config` *before* writing so bad agent input is
+  rejected with the human-first message instead of landing in
+  `runspec_triggers.toml`), and `manage_rota` (partial-merge `set` validated
+  by a new strict `triggers.validate_rota`). Read actions (`list`/`get`) run
+  autonomously; every mutation confirm-gates with editable args, and the
+  handlers delegate to the same public bridge methods the Settings UI calls,
+  so persistence, engine restarts, and UI refresh stay single-pathed. A new
+  `hosts.validate_editor_hosts` pre-flight rejects bad host input
+  (`save_jump_hosts` alone coerces rather than refuses). The Triggers and
+  Rota tabs refresh live on a new `runspec:triggers_updated` signal.
+  Credentials and `[llm]`/theme config remain deliberately UI-only.
+- **Config tools are chat-only, enforced twice.** A trigger- or
+  schedule-originated agent turn can never use them — automation must not be
+  able to rewrite itself (a trigger turn that could edit triggers could widen
+  its own `action_allow` or mint new triggers). Layer 1: the headless turn's
+  toolset strips `_CONFIG_TOOL_NAMES` unconditionally (new
+  `_filter_headless_tools`, extracted from `_run_isolated_agent_turn`) —
+  no `action_allow` can re-admit them, and they are absent from the
+  `list_action_tools` vocabulary. Layer 2: `_run_config_tool` refuses any
+  turn whose registered run origin names a trigger, covering a hand-written
+  rule trigger that names a config tool as its `run` directly.
+
 ## [0.174.0] — 2026-07-18
 
 ### Changed

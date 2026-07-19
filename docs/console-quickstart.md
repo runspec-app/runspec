@@ -149,9 +149,11 @@ marked `manual` are never run by the agent at all.
 
 > **What features does this console have that I haven't set up yet? Walk me through what each one is for.**
 
-The agent knows its own configuration state — rota, triggers, schedules,
-memory, and more — and can explain each feature and, for many of them, set
-them up with you directly in chat.
+The agent knows its own configuration state — hosts, triggers, schedules,
+rota, memory, and more — and can both explain each feature and set it up with
+you directly in chat: adding your SSH hosts, creating triggers and schedules,
+setting working hours. Every change shows a confirmation card first. The one
+thing it can never configure is its own Model / API setup (step 3).
 
 From here, the [working with the agent](console-agent.md) page is a cookbook
 of prompts for everything the agent can do — and is honest about the few

@@ -48,6 +48,48 @@ def save_hosts(path: Path, hosts: list[dict[str, Any]]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def validate_editor_hosts(hosts: list[dict[str, Any]]) -> list[str]:
+    """Problems with an editor-shaped host list (``get_jump_hosts`` shape), or
+    ``[]`` when it is saveable. ``save_jump_hosts`` coerces rather than rejects,
+    so this is the pre-flight for callers (the agent's ``manage_hosts``) that
+    must refuse bad input with a message instead of silently normalising it.
+    """
+    errors: list[str] = []
+    seen: set[str] = set()
+    for i, h in enumerate(hosts):
+        label = str(h.get("name") or "").strip() or f"entry {i + 1}"
+        name = str(h.get("name") or "").strip()
+        if not name:
+            errors.append(f"{label}: host 'name' is required and cannot be blank")
+        elif name.casefold() in seen:
+            errors.append(f"{label}: duplicate host name")
+        else:
+            seen.add(name.casefold())
+        paths = h.get("runspec_paths")
+        if paths is not None and (
+            not isinstance(paths, list)
+            or any(not isinstance(p, str) or not p.strip() for p in paths)
+        ):
+            errors.append(
+                f"{label}: 'runspec_paths' must be a list of non-empty strings"
+            )
+        port = h.get("port")
+        if port not in (None, ""):
+            try:
+                port_n = int(port)
+            except (TypeError, ValueError):
+                port_n = 0
+            if not 1 <= port_n <= 65535:
+                errors.append(f"{label}: 'port' must be an integer between 1 and 65535")
+        profiles = h.get("profiles")
+        if profiles is not None and (
+            not isinstance(profiles, list)
+            or any(not isinstance(p, str) for p in profiles)
+        ):
+            errors.append(f"{label}: 'profiles' must be a list of strings")
+    return errors
+
+
 def group_members(hosts: list[dict[str, Any]], group: str) -> list[str]:
     """Host names whose ``group`` equals ``group`` (exact, case-insensitive), in
     config order. The single source of truth for "which hosts are in this group",

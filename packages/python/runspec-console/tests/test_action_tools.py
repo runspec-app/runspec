@@ -23,6 +23,7 @@ class _ActionBridge:
     _workspace_tools = Bridge._workspace_tools
     _exec_tools = Bridge._exec_tools
     _action_tools = Bridge._action_tools
+    _config_tools = Bridge._config_tools
     _run_action_tool = Bridge._run_action_tool
     _action_create_document = Bridge._action_create_document
     _action_run_runbook = Bridge._action_run_runbook

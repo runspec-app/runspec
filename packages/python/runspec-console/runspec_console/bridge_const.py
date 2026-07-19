@@ -125,6 +125,21 @@ _WORKSPACE_TOOL_NAMES = frozenset(
 # is false. See _effective_tool_autonomy / _run_exec_tool / codeexec.py.
 _EXEC_TOOL_NAMES = frozenset({"run_python", "run_sql"})
 
+# Console-configuration tools — edit the fleet (runspec_hosts.toml), the group
+# registry (runspec_groups.toml), triggers (runspec_triggers.toml), and the
+# working-hours rota. Read actions (list/get) are autonomous; every mutation
+# confirm-gates. These are CHAT-ONLY: a trigger- or schedule-originated agent
+# turn must never see them (a trigger turn that can edit triggers could widen
+# its own ``action_allow`` or mint new triggers — automation must not rewrite
+# itself). Enforced in two layers: stripped unconditionally from the isolated
+# turn's toolset (``_filter_headless_tools``) and refused at dispatch when the
+# run originates from a trigger (``_run_config_tool`` origin guard) — the
+# latter covers a hand-written rule trigger naming one of these as its ``run``.
+# Deliberately NOT part of the ``action_allow`` vocabulary (list_action_tools).
+_CONFIG_TOOL_NAMES = frozenset(
+    {"manage_hosts", "manage_groups", "manage_triggers", "manage_rota"}
+)
+
 # Every built-in (non-runnable-backed) agent tool. ``_gated_run_tool_async``
 # wraps each of these — once past the autonomy gate — with a live Console
 # in-flight card, cooperative cancellation, progress streaming, and a
@@ -143,6 +158,7 @@ _BUILTIN_TOOL_NAMES = (
     | _ACTION_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
     | _EXEC_TOOL_NAMES
+    | _CONFIG_TOOL_NAMES
 )
 
 

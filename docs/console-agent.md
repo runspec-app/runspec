@@ -29,17 +29,21 @@ grouped confirmation** for the whole batch.
 
 ## What the agent can do — and what it can't
 
-The agent can enact most of the product. A few configuration areas are
-deliberately UI-only today; the docs below always tell you which is which.
+The agent can enact almost all of the product, including its own setup. Two
+configuration areas are deliberately UI-only; the docs below always tell you
+which is which.
 
 | The agent can… | UI-only (Settings) |
 |---|---|
-| Run any discovered runnable on any connected host, or fan out across a [host group](console-hosts.md#groups) | Add/edit **hosts** (Settings → Jump Hosts) |
-| Search and describe runnables (`search_runnables`, `describe_runnable`) | Create/edit **triggers** (Triggers tab) |
-| Save, load, and run **[runbooks](console-runbooks.md)** | Store **credentials** (Settings → Credentials) |
-| Create **[schedules](console-automation.md#schedules)** — cron/interval, running a runnable, a prompt, or a runbook | Set the **rota** (Rota tab) |
-| Manage the fleet **denylist** (disable/re-enable runnables per host) | **Groups & profiles** registries |
-| Transfer files between hosts (`download_file`, `relay_file`) | **Model / API** and theme configuration |
+| Run any discovered runnable on any connected host, or fan out across a [host group](console-hosts.md#groups) | Store **credentials** (Settings → Credentials — the agent *uses* credentials but never reads, creates, or sees secret values) |
+| Add, update, and remove **[hosts](console-hosts.md)** and the **group** registry (`manage_hosts`, `manage_groups`) | **Model / API** and theme configuration (the agent editing its own model setup is a bootstrap problem) |
+| Create, edit, enable/disable **[triggers](console-automation.md#triggers-windows)** (`manage_triggers`) | **Profiles** registry (sidebar working sets) |
+| Set the working-hours **[rota](console-automation.md#rota-working-hours-for-automation)** (`manage_rota`) | |
+| Search and describe runnables (`search_runnables`, `describe_runnable`) | |
+| Save, load, and run **[runbooks](console-runbooks.md)** | |
+| Create **[schedules](console-automation.md#schedules)** — cron/interval, running a runnable, a prompt, or a runbook | |
+| Manage the fleet **denylist** (disable/re-enable runnables per host) | |
+| Transfer files between hosts (`download_file`, `relay_file`) | |
 | Read and locally edit registered **git repos** (`repo_*` tools) | |
 | Work with session **workspace files** — list, read, grep, write | |
 | Execute **Python and SQL** in the session workspace (confirm-gated) | |
@@ -48,12 +52,32 @@ deliberately UI-only today; the docs below always tell you which is which.
 | Read and act on **Outlook** mail/calendar (**Windows**; send is confirm-gated) | |
 | Report its own state (`console_status` — time, rota, triggers, schedules) | |
 
+The configuration tools (`manage_hosts`, `manage_groups`, `manage_triggers`,
+`manage_rota`) are **chat-only by design**: a trigger- or schedule-fired agent
+turn can never use them, so your automation can never rewrite its own
+configuration. Reading config is autonomous; every change shows a
+confirmation card you can edit before approving.
+
 ---
 
 ## Prompt cookbook
 
 Paste these into the Console tab and adapt. Where a confirmation card will
 appear, it's noted.
+
+### Configure the console
+
+> Add a host called web-01: deploy@web-01.internal, runspec at /opt/venvs/ops/bin/runspec, in the `web` group.
+
+> Create a trigger: when an email arrives with "outage" in the subject from anyone at bigcustomer.com, run the diagnostics runnable against the affected host and draft (don't send) a reply with the findings.
+
+> Set my working hours to Monday–Friday 09:00–17:30 and enable the rota.
+
+Each change presents one confirmation card with the exact config it will
+write — edit it before approving if the agent got a detail wrong. Trigger
+definitions are validated before saving, so an invalid one comes back with
+the reason instead of landing in your config. (The one setup step the agent
+can never do is its own Model / API configuration.)
 
 ### Explore what's installed
 
@@ -89,9 +113,10 @@ it. See [Runbooks](console-runbooks.md).
 > Every night at 02:00, run log-rotate on whichever of app-01 or app-02 is reachable.
 
 `create_schedule` is confirm-gated; the schedule then appears on the
-Schedules tab. (Reactive **triggers** — "when an email arrives…" — are
-UI-created; the agent can explain them but not write them. See
-[Automation](console-automation.md).)
+Schedules tab. Reactive **triggers** — "when an email arrives…" — work the
+same way via `manage_triggers` (see
+[Configure the console](#configure-the-console) above and
+[Automation](console-automation.md)).
 
 ### Analyse logs and output
 
