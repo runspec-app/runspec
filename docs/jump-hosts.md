@@ -1,8 +1,4 @@
-# Crossing the borderlands
-
-*Act III · Toward the Kingdom — reach across the SSH fleet.*
-
-The kingdom spans many machines; jump hosts let you run a runnable on any of them across a single SSH bridge.
+# Jump hosts
 
 `runspec jump` runs a runspec tool on a remote machine over SSH+MCP. Pass the
 SSH connection string directly on the command line; connection details (user,
@@ -254,4 +250,4 @@ used by runspec — the protocol-level requirement is OpenSSH semantics.
 
 ---
 
-→ **Next:** [The wards](denylist.md) — set your defenses before you rule.
+**Next:** [Denylist](denylist.md) — disable runnables by name, user, or host.

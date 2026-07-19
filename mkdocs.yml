@@ -14,6 +14,8 @@ theme:
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - pymdownx.details
   - pymdownx.superfences
   - pymdownx.tabbed:
@@ -33,27 +35,35 @@ hooks:
   - hooks/copy_schema.py
 
 nav:
-  - The trailhead: index.md
-  - "Act I · Into the Forest":
-    - First steps: quickstart.md
-    - Carving your first path: authoring.md
-    - The field guide: format.md
-  - "Act II · Learning the Craft":
-    - Leaving the old country: migration.md
-    - Lighting the way: logging.md
-    - Sharpening the blade: typed-args.md
-    - Proving your mettle: testing.md
-    - The Python tongue: python.md
-    - The Node tongue: node.md
-    - Packing the caravan: node-deploy.md
-    - Tools of the trade: cli.md
-  - "Act III · Toward the Kingdom":
-    - Meeting your companion: agents.md
-    - Crossing the borderlands: jump-hosts.md
-    - The wards: denylist.md
-  - "Act IV · The Console Kingdom":
-    - The Console kingdom: console.md
-    - Speaking in other tongues: console-adapters.md
+  - Home: index.md
+  - Console:
+    - Get started: console-quickstart.md
+    - Working with the agent: console-agent.md
+    - Hosts & fleet: console-hosts.md
+    - Automation — triggers, schedules, rota: console-automation.md
+    - Runbooks: console-runbooks.md
+    - Forms & credentials: console-forms.md
+    - Team config — sync & rooms: console-team.md
+    - Settings & config reference: console-reference.md
+  - Authoring runnables:
+    - Adding your own runnables: authoring-intro.md
+    - Quickstart: quickstart.md
+    - Authoring guide: authoring.md
+    - Format reference: format.md
+    - Typed arguments: typed-args.md
+    - Logging: logging.md
+    - Testing: testing.md
+    - Python library: python.md
+    - Node library: node.md
+    - Node deployment: node-deploy.md
+    - CLI reference: cli.md
+    - Migrating from argparse: migration.md
+    - Agent integration (MCP): agents.md
+    - Jump hosts: jump-hosts.md
+    - Denylist: denylist.md
+  - Distribution:
+    - White-label walkthrough: white-label.md
+    - Custom model adapters: console-adapters.md
 
 # Files kept in the repo but NOT built into the published (public) site.
 # The published surface is usage docs only — internal design notes, the

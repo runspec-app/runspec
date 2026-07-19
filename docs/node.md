@@ -1,8 +1,4 @@
-# The Node tongue
-
-*Act II · Learning the Craft — the same craft, spoken in Node.*
-
-One interface, two tongues: `parse()`, validation, and MCP in Node, mirroring Python.
+# Node library
 
 The Node package (`runspec-node`) brings the same interface specification to
 Node.js and TypeScript projects. Same TOML format, same CLI, same MCP server
@@ -163,8 +159,8 @@ It's a pure helper (not a field on the spec); custom registered types fall back
 to `'unknown'`. The canonical machine-readable shape is the emitted JSON Schema
 (`runspec local --format json`), where a `multiple` arg is
 `{"type":"array","items":{…}}`. (Per-argument editor types via generated `.d.ts`
-are a possible future follow-up — see the
-[stubs design](https://github.com/JasonFinestone/runspec/blob/main/docs/design/emit-stubs.md).)
+are a possible future follow-up, mirroring the Python `runspec stubs` generator
+— see [Typed arguments](typed-args.md).)
 
 ### Metadata properties
 
@@ -581,4 +577,4 @@ switches the output format automatically.
 
 ---
 
-→ **Next:** [Packing the caravan](node-deploy.md) — ready your Node runnables for the road.
+**Next:** [Node deployment](node-deploy.md) — deploy Node runnables as a self-contained folder.

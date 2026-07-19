@@ -1,8 +1,4 @@
-# The wards
-
-*Act III · Toward the Kingdom — set the wards before you rule.*
-
-Power needs limits. The denylist is your ward: a kill switch that refuses a runnable by name, user, or host.
+# Denylist
 
 The denylist is a fast, uniform way to **disable runnables** installed in a
 Python virtual environment — a single one, a set, or all of them — scoped by
@@ -93,7 +89,7 @@ rule. To re-enable on a remote host, run `runspec deny clear` over SSH (or delet
 
 ## From the desktop console
 
-The [desktop console](console.md) drives the same `runspec deny` across your
+The [desktop console](console-quickstart.md) drives the same `runspec deny` across your
 fleet over the SSH connections it already holds — one call per venv on each host
 — in two ways:
 
@@ -129,4 +125,4 @@ RUNSPEC_DENYLIST_FILE=/tmp/deny.toml deploy   # refused
 
 ---
 
-→ **Next:** [The Console kingdom](console.md) — claim your throne and command the fleet.
+**Next:** [Console quickstart](console-quickstart.md) — the runspec-console desktop app.

@@ -1,57 +1,75 @@
 # runspec
 
-**Write `runspec.toml`. Get a real CLI. Your CLI is also an agent tool.**
+**A desktop console where an AI agent runs your operations — safely.**
 
-A single TOML interface specification for anything runnable. Define your
-arguments once, get a fully validated CLI with `--help`, structured logging,
-and MCP-ready tool schemas — without writing argument-parsing code.
+`runspec-console` discovers every runnable tool on your machine and across
+your SSH fleet, and puts an AI agent in front of them: ask for something in
+plain language, approve what it proposes, and let it automate the rest with
+schedules, triggers, and shared runbooks. Underneath is **runspec** — a
+single TOML interface specification that turns any script into a validated
+CLI, a typed form, and an agent tool at once.
+
+<div class="grid cards" markdown>
+
+- **Operate** — install the console, connect an AI model, and drive your
+  tooling from conversation and typed forms.
+  [Get started →](console-quickstart.md)
+
+- **Author** — turn your own scripts into runnables the console, the forms,
+  and the agent can use.
+  [Add a runnable →](authoring-intro.md)
+
+- **Distribute** — package a branded, pre-configured console for your whole
+  team.
+  [White-label walkthrough →](white-label.md)
+
+</div>
 
 !!! info "Versions"
-    This reference tracks the latest published `runspec` (Python) and
-    `runspec-node` (Node) releases; features below are annotated with the
-    version that introduced them.
+    This documentation tracks the latest published releases:
+    `runspec-console` (the desktop app), `runspec` (Python) and
+    `runspec-node` (Node) — the core libraries — and the runnable packs
+    below.
 
 ---
 
-## The path ahead
+## How it fits together
 
-This documentation is a journey. You arrive a pilgrim at the forest's edge with a
-single `runspec.toml`; you leave as the hero of the Console kingdom, running full
-runbooks across a fleet of machines beside your AI companion.
+1. A **runnable** is a script or tool with its interface declared in a
+   [`runspec.toml`](format.md): arguments, types, validation, and an
+   **autonomy level** that says how much an agent may do with it.
+2. Installing a runnable's package into a Python environment makes it
+   discoverable — no registry, no configuration.
+3. The **console** discovers runnables locally and on remote hosts over
+   plain SSH (nothing to install server-side beyond `runspec` itself), and
+   exposes them three ways at once: typed **forms**, an **AI agent**, and
+   **automation** (triggers, schedules, runbooks).
+4. Every agent-driven run passes the **autonomy gate** — confirm-by-default,
+   with arguments editable at approval time, and a fleet-wide
+   [denylist](denylist.md) as the kill switch.
 
-- **Act I · Into the Forest** — write your first runnable and get a real CLI.
-- **Act II · Learning the Craft** — logging, typed args, testing, and the language packs.
-- **Act III · Toward the Kingdom** — meet your AI companion, reach across an SSH fleet, set the wards.
-- **Act IV · The Console Kingdom** — command the fleet from the desktop console, running legendary runbooks together.
+## Batteries included
 
-Follow the **→ Next** signpost at the foot of each page, or set out now with
-[your first steps](quickstart.md).
+Install-and-go packs give the agent real capabilities on day one:
 
-## Install
+| Package | What you get |
+|---|---|
+| [`runspec-windows`](https://pypi.org/project/runspec-windows/) | 43 runnables: Windows system administration, Microsoft 365 (Outlook, Teams, Calendar, OneDrive), and web/TLS diagnostics. Installed automatically with the console on Windows. |
+| [`runspec-linux`](https://pypi.org/project/runspec-linux/) | 31 runnables: Linux administration, package management, Python venv bootstrap, and the same web/TLS diagnostics. |
+| [`runspec-jsm`](https://pypi.org/project/runspec-jsm/) | Jira Service Management: raise, comment, transition, discover request types. |
+| [`runspec-snow`](https://pypi.org/project/runspec-snow/) | ServiceNow ITSM: create, comment, state changes, catalog discovery. |
+| [`runspec-logops`](https://pypi.org/project/runspec-logops/) | Log triage: cluster errors into bounded digests, map traces to source. |
+| [`runspec-claude`](https://pypi.org/project/runspec-claude/) | Drive the Claude Code CLI headlessly — delegate bounded coding sub-tasks. |
+| [`runspec-room`](https://pypi.org/project/runspec-room/) | Team chat rooms and helpdesk queues with a self-service request portal. |
 
-=== "Python"
+## For developers
 
-    ```bash
-    pip install runspec
-    ```
-
-    Requires Python 3.10+. Zero runtime dependencies on Python 3.11+; on 3.10
-    the only dependency is the `tomli` backport.
-
-=== "Node"
-
-    ```bash
-    npm install runspec-node
-    ```
-
-    Requires Node 18+. One runtime dependency: `smol-toml` (TOML parsing).
-
----
-
-## Define your interface
-
-Put `runspec.toml` inside your package directory, alongside the code it
-describes. The same file works for both languages:
+The same `runspec.toml` that powers the console gives any script a real CLI —
+generated `--help`, type coercion, validation, subcommands, structured
+logging — with zero argument-parsing code, in
+[Python](python.md) or [Node](node.md). And every runnable is an agent tool
+for free: `runspec serve` exposes the whole environment over
+[MCP](agents.md) to Claude Desktop, Cursor, or any MCP host.
 
 ```toml
 # greet/runspec.toml
@@ -65,94 +83,17 @@ loud  = {default = false}
 times = {default = 1}
 ```
 
-The section name `[greet]` is what users type on the command line. Your entry
-point name must match — that's how runspec links the spec to your code.
+```python
+from runspec import parse
 
-## Use it in your runnable
+def main():
+    args = parse()
+    message = f"Hello, {args.name.value}!"
+    if args.loud.value:
+        message = message.upper()
+    for _ in range(args.times.value):
+        print(message)
+```
 
-=== "Python"
-
-    ```python
-    from runspec import parse
-
-    def main():
-        args = parse()
-        message = f"Hello, {args.name.value}!"
-        if args.loud.value:
-            message = message.upper()
-        for _ in range(args.times.value):
-            print(message)
-    ```
-
-=== "Node"
-
-    ```typescript
-    import { parse } from 'runspec-node';
-
-    function main(): void {
-      const args = parse();
-      let message = `Hello, ${args.name}!`;
-      if (args.loud) message = message.toUpperCase();
-      for (let i = 0; i < (args.times as number); i++) console.log(message);
-    }
-
-    main();
-    ```
-
-That's it. runspec handles the rest.
-
-## What you get
-
-For developers building a CLI:
-
-- **`--help` generated** from your spec — no help text written
-- **Type coercion** — args arrive as native types, no casting
-- **Validation** — missing required args, bad choices, out-of-range values
-  surface as clean, human-first errors
-- **Inference** — `type` and `required` are inferred from defaults and
-  `options` where possible
-- **Subcommands and groups** — exclusive, inclusive, at-least-one,
-  exactly-one, conditional
-- **Built-in `--debug` flag, file rotation, sensitive-data redaction** — just
-  add `[config.logging]`; see [Logging](logging.md)
-- **`runspec init`** scaffolds a complete project — `pyproject.toml`,
-  package layout, a working code stub
-
-For agent tooling (free):
-
-- **MCP / OpenAI / Anthropic tool schemas** — `runspec local --format mcp`
-- **Live MCP stdio server** — `runspec serve` exposes every installed
-  runnable as an agent tool
-- **Autonomy control** — declare `autonomous` / `confirm` / `supervised` /
-  `manual` per runnable or per argument
-- **Remote execution** — `runspec jump` runs tools on `[config.jump-hosts]`
-  over SSH+MCP; see [Jump Hosts](jump-hosts.md)
-
----
-
-## Built with runspec
-
-Both `runspec` and `runspec-node` define their own CLI in `runspec.toml`. The
-help output you get from `runspec --help`, the argument validation, the
-schemas at `runspec local --format mcp` — all of it goes through the same
-parser your CLI uses. The bundled specs live at:
-
-- `packages/python/runspec/runspec/runspec.toml`
-- `packages/node/src/runspec.toml`
-
-See [CLI Reference](cli.md) for the full command surface and a walkthrough of
-the dogfooding.
-
----
-
-## Next
-
-- [Quickstart](quickstart.md) — zero to a working CLI in five minutes
-- [Migrating from argparse](migration.md) — convert an existing Python script
-- [Format Reference](format.md) — every field, every option
-- [Python Library](python.md) — `parse()`, `RunSpec`, `Arg`, custom types
-- [Node Library](node.md) — `parse()`, `ParsedArgs`, `getLogger`, custom types
-- [CLI Reference](cli.md) — `runspec init`, `local`, `serve`, `jump`
-- [Logging](logging.md) — `[config.logging]`, rotation, redaction, extras
-- [Agent Integration](agents.md) — MCP schemas, autonomy, agent-aware output
-- [Jump Hosts](jump-hosts.md) — remote execution over SSH+MCP
+That's a complete, validated CLI — and a typed form and agent tool in the
+console. Start with the [quickstart](quickstart.md).

@@ -1,8 +1,4 @@
-# First steps
-
-*Act I · Into the Forest — your very first runnable.*
-
-Every journey begins with one step: write a `runspec.toml`, and a real CLI appears — `--help`, validation, and all.
+# Quickstart
 
 Zero to a working CLI in five minutes. The TOML format is identical across
 Python and Node — only the install step and the import differ.
@@ -264,4 +260,4 @@ available as a tool. See [Agent Integration](agents.md) for the wiring.
 
 ---
 
-→ **Next:** [Carving your first path](authoring.md) — author a runnable properly, end to end.
+**Next:** [Authoring guide](authoring.md) — add a runnable to a project, end to end.

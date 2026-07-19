@@ -1,13 +1,9 @@
-# Packing the caravan
-
-*Act II · Learning the Craft — ready your Node runnables for the road.*
-
-Before the long road ahead, pack your Node runnables into a folder that travels well.
+# Node deployment
 
 A `runspec-node` runnable set deploys as a **self-contained folder** — no Python
 on the box, no global install. The folder *is* the unit: its own `runspec.toml`,
 runnable scripts, and `node_modules`, shaped into a venv-like layout by
-[`runspec bin`](cli.md). A controller (the [Desktop Console](console.md)) drives
+[`runspec bin`](cli.md). A controller (the [Desktop Console](console-quickstart.md)) drives
 it over SSH exactly like a Python venv — it can't tell the difference.
 
 !!! note "“Venv-shaped” means"
@@ -156,4 +152,4 @@ Schedule those from cron or a systemd timer (see
 
 ---
 
-→ **Next:** [Tools of the trade](cli.md) — every command, for when you need one.
+**Next:** [CLI reference](cli.md) — every command, for when you need one.

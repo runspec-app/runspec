@@ -1,11 +1,9 @@
-# Meeting your companion
-
-*Act III · Toward the Kingdom — an AI companion joins the road.*
-
-Your runnables were built for hands and for minds alike: expose them over MCP and an AI companion can wield them beside you.
+# Agent integration (MCP)
 
 runspec turns any runnable into something an agent can understand and safely
-use — without any extra code beyond defining your interface in TOML.
+use — without any extra code beyond defining your interface in TOML. The
+runspec-console desktop app is the flagship consumer of these schemas — see
+[the console agent](console-agent.md).
 
 There are two ways agents discover runspec runnables:
 
@@ -428,4 +426,4 @@ runnable without human help.
 
 ---
 
-→ **Next:** [Crossing the borderlands](jump-hosts.md) — reach across the SSH fleet.
+**Next:** [Jump hosts](jump-hosts.md) — run tools on remote machines over SSH.

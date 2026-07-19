@@ -1,6 +1,4 @@
-# CLI Reference
-
-*Act II · Learning the Craft — every command, for when you need one.*
+# CLI reference
 
 The `runspec` binary ships with both `runspec` (Python) and `runspec-node`.
 It scaffolds new projects, validates configs, smoke-tests runnables for CI,
@@ -690,4 +688,4 @@ calls tools as needed.
 
 ---
 
-→ **Next:** [Meeting your companion](agents.md) — an AI companion joins the road.
+**Next:** [Agent integration (MCP)](agents.md) — expose runnables as agent tools.

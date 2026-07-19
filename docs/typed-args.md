@@ -1,8 +1,4 @@
-# Sharpening the blade
-
-*Act II · Learning the Craft — precise types, caught typos.*
-
-A sharp tool cuts true: `runspec stubs` types every arg precisely, so a slip is caught before it draws blood.
+# Typed arguments
 
 `runspec stubs` makes your editor and type checker understand each runnable's
 arguments. After running it, `args = parse("deploy")` is precisely typed at the
@@ -196,4 +192,4 @@ That's the `runspec init` placeholder: you haven't generated real types yet. Run
 
 ---
 
-→ **Next:** [Proving your mettle](testing.md) — prove every runnable worthy.
+**Next:** [Testing](testing.md) — test runnables with the built-in harness.

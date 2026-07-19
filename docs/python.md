@@ -1,8 +1,4 @@
-# The Python tongue
-
-*Act II · Learning the Craft — runspec spoken in Python.*
-
-The reference implementation: parse, read `.value`, and learn where each value came from.
+# Python library
 
 The Python library is the reference implementation. Install it, call
 `parse()`, and you get a fully validated, type-coerced `RunSpec` object back.
@@ -373,11 +369,10 @@ args.input.python_type     # 'Path'
 
 !!! tip "Precise editor types"
     `python_type` is a runtime/debug aid — to a static type checker `args.tags`
-    is still `Any` (see [`parse()`](#parse)). Per-argument **editor** type hints
-    (`args.tags: list[str]`) are slated for a generated `.pyi` via
-    `runspec emit --stubs`; see the
-    [stubs design](https://github.com/JasonFinestone/runspec/blob/main/docs/design/emit-stubs.md).
-    Not yet implemented.
+    is still `Any` (see [`parse()`](#parse)). For precise per-argument
+    **editor** types (`args.tags.value: list[str]`, typo detection, choices as
+    `Literal[...]`), generate a stub with `runspec stubs` — see
+    [Typed arguments](typed-args.md).
 
 ### `meta` — pass-through data
 
@@ -596,4 +591,4 @@ def main():
 
 ---
 
-→ **Next:** [The Node tongue](node.md) — the same craft in Node.
+**Next:** [Node library](node.md) — the same API in Node.

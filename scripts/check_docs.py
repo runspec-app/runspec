@@ -56,6 +56,13 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   mailboxes                  → console `config.toml` email folder-watch list
 #   config_sync                → console `config.toml` Config Sync settings
 #   config_seed / seed         → console `config.toml` seed / `runspec_seed_state.toml`
+#   host                       → console `runspec_hosts.toml` ([[host]] fleet entries)
+#   group / profile            → console `runspec_groups.toml` / `runspec_profiles.toml`
+#   filter                     → console `runspec_filters.toml` ([[filter]])
+#   credential                 → console `runspec_credentials.toml` ([[credential]] metadata)
+#   repo                       → console `runspec_repos.toml` ([[repo]] registry)
+#   self_service               → console `runspec_self_service.toml`
+#   chat_history/workspace/plugins → console `config.toml` sections
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
 # would be skipped — none exist in the docs (guarded by check below), and runnable
 # names are author-chosen, so this is acceptable.
@@ -64,6 +71,7 @@ NON_RUNSPEC_SECTIONS = {
     "tool",
     "build-system",
     "hosts",
+    "host",
     "ssh",
     "refresh",
     "triggers",
@@ -77,6 +85,15 @@ NON_RUNSPEC_SECTIONS = {
     "console",
     "llm",
     "denylist",
+    "group",
+    "profile",
+    "filter",
+    "credential",
+    "repo",
+    "self_service",
+    "chat_history",
+    "workspace",
+    "plugins",
 }
 
 

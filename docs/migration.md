@@ -1,8 +1,4 @@
-# Leaving the old country
-
-*Act II · Learning the Craft — for travelers from argparse.*
-
-If you arrived carrying argparse, this is where you set down the old ways and pick up runspec's.
+# Migrating from argparse
 
 If you have working `argparse` scripts, runspec replaces the boilerplate —
 `ArgumentParser`, every `add_argument`, the manual `if`-checks that call
@@ -385,4 +381,4 @@ agent interface — define the interface once.
 
 ---
 
-→ **Next:** [Lighting the way](logging.md) — leave an audit trail through the dark.
+**Next:** [Logging](logging.md) — structured logs and an audit trail from one TOML block.

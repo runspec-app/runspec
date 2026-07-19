@@ -214,8 +214,9 @@ The console resolves `provider` from three sources, in order:
 
 A provider name outside the built-in set also signals **white-label branding**:
 the console derives its title, docs link, and the package its update check
-targets from the distribution that supplies the provider. (Version/branding is a
-separate concern — see `docs/design/console-theme.md`.)
+targets from the distribution that supplies the provider. The full
+distribution story — config seeds, theming, branded launcher — is the
+[white-label walkthrough](white-label.md).
 
 ---
 
