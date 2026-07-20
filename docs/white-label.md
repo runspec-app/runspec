@@ -149,10 +149,26 @@ watermark_style = "banner"                       # tiled | banner | center
 [config_sync]
 repo = "https://git.mycorp.example/ops/console-config.git"
 tag  = "v1"
+# Keys you expect each operator to own — a seed/pull re-assert never overwrites
+# these; the local value always wins. "<file>:<dotted.path>", * = any entry.
+preserve = [
+  "runspec_credentials.toml:*.username",   # every credential's username stays local
+  "config.toml:llm.api_key_command",       # a machine-specific key command wins
+]
 
 [ssh]
 proxy = "http://proxy.mycorp.example:8080"       # your network's realities
 ```
+
+The whole `preserve` list lives here, in `[config_sync]` — **it is not a field on
+the entries it protects.** You never add anything to a `[[credential]]` or
+`[[host]]` table; each preserve string names its target by path:
+`"<file>:<entry>.<field>"`, where `<entry>` is a specific `id`/`name` or `*` for
+**every entry in that file**. So one line —
+`"runspec_credentials.toml:*.username"` — pins the username across *all* seeded
+credentials; `"runspec_credentials.toml:jira-prod.username"` would pin just that
+one. (For `config.toml`, which isn't a list of entries, the path is simply the
+dotted key: `"config.toml:llm.api_key_command"`.)
 
 **`api_key_command` resolves relative to the install.** A seeded key helper is
 commonly a console-script you ship in the *same wheel*
@@ -223,8 +239,12 @@ overwrite** — with their `local → seed` values and a hint to add the key to
 *Preserve* — and, separately, the ones a `preserve` rule already protects. So an
 operator can spot and pin a machine-specific edit *before* an upgrade reverts it.
 Design a key you expect operators to own (a machine-local path, a personal
-account name) to be `preserve`d from the start, or seed it as a separate entry
-they can override.
+account name) to be `preserve`d from the start — via the `[config_sync].preserve`
+list in the seed's `config.toml` above — or seed it as a separate entry they can
+override. A common one is a credential's `username`: seed the credential's id /
+label / kind / arg-bindings so the entry exists, but `preserve`
+`runspec_credentials.toml:*.username` so each operator's own account name (and
+the keychain secret, which is never seeded regardless) survives every upgrade.
 
 ---
 
