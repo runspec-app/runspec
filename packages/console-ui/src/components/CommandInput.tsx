@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Button, Tooltip } from 'antd'
+import { Button, Tooltip, message } from 'antd'
 import { SendOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
 import type { Runnable, Runbook } from '../bridge'
 import { ThemeContext } from '../ThemeContext'
@@ -210,9 +210,14 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
       selectSlashItem(filteredItems[slashIndex])
       return
     }
-    // While a chat turn is in flight the primary action is Stop, not send —
-    // ignore Enter/submit so we don't queue a second turn behind the lock.
-    if (activeChatId) return
+    // While a chat turn is in flight the primary action is Stop, not send.
+    // Don't queue a second turn behind the lock — but give visible feedback
+    // instead of silently swallowing the prompt (which reads as "app frozen").
+    // The typed value is left intact so it can be resent after Stop.
+    if (activeChatId) {
+      message.info('Agent is working — press Stop to interrupt', 2)
+      return
+    }
     onSendChat(trimmed)
     setValue('')
     setSlashOpen(false)

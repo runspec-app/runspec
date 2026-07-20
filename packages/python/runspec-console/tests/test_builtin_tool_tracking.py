@@ -11,11 +11,18 @@ used across the suite) and exercise the tracking wrapper + helpers directly.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
+import time
 
 from runspec_console.bridge import Bridge
 from runspec_console.bridge_const import ToolCancelled, _CANCEL_KEY
 from runspec_console.bridge_utils import _parse_log_text
+
+# The bridge mixins share one logger (``logging.getLogger(__name__)`` resolves to
+# this name in bridge_const.py), so caplog captures the built-in-tool log lines
+# under it.
+_BRIDGE_LOGGER = "runspec_console.bridge_const"
 
 
 class _Stub:
@@ -123,28 +130,120 @@ def test_tracked_run_registers_card_streams_progress_and_audits(tmp_path, monkey
     assert recs[0]["initiatedBy"] == "llm"  # built-in tools are agent runs
 
 
-def test_tracked_run_cancelled_reports_stop_and_audits_130(tmp_path, monkeypatch):
+def test_tracked_run_cancelled_reports_stop_and_audits_130(
+    tmp_path, monkeypatch, caplog
+):
     monkeypatch.setenv("HOME", str(tmp_path))
     b = _Stub()
     b._raise = ToolCancelled()
-    out = asyncio.run(b._run_builtin_tool_tracked("repo_grep", {"pattern": "x"}, "c1"))
+    with caplog.at_level(logging.INFO, logger=_BRIDGE_LOGGER):
+        out = asyncio.run(
+            b._run_builtin_tool_tracked("repo_grep", {"pattern": "x"}, "c1")
+        )
     assert "stopped" in out.lower()
     assert b._in_flight == {}  # card always cleaned up
     log = (tmp_path / "logs" / "runspec-console-tools.log").read_text(encoding="utf-8")
     rec = _parse_log_text("t", log, "local", include_extra=True)[0]
     assert rec["exitCode"] == 130  # cancelled
     assert rec["extra"]["agent"] is True
+    # A finish line reporting the cancelled outcome is logged (complements audit).
+    assert any(
+        "repo_grep finished" in m and "outcome=cancelled" in m
+        for m in (r.getMessage() for r in caplog.records)
+    )
 
 
-def test_tracked_run_error_is_surfaced_not_raised(tmp_path, monkeypatch):
+def test_tracked_run_error_is_surfaced_not_raised(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("HOME", str(tmp_path))
     b = _Stub()
     b._raise = RuntimeError("boom")
-    out = asyncio.run(b._run_builtin_tool_tracked("repo_read", {"path": "a"}, "c2"))
+    with caplog.at_level(logging.INFO, logger=_BRIDGE_LOGGER):
+        out = asyncio.run(b._run_builtin_tool_tracked("repo_read", {"path": "a"}, "c2"))
     assert out.startswith("✗") and "boom" in out  # surfaced as a tool result
     assert b._in_flight == {}
     log = (tmp_path / "logs" / "runspec-console-tools.log").read_text(encoding="utf-8")
     assert _parse_log_text("t", log, "local")[0]["exitCode"] == 1
+    # The finish line reports outcome=error (alongside the existing warning log).
+    assert any(
+        "repo_read finished" in m and "outcome=error" in m
+        for m in (r.getMessage() for r in caplog.records)
+    )
+
+
+# ── log visibility: started / finished / progress / heartbeat ─────────────────
+
+
+def test_tracked_run_logs_start_and_finish(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    b = _Stub()
+    with caplog.at_level(logging.INFO, logger=_BRIDGE_LOGGER):
+        asyncio.run(b._run_builtin_tool_tracked("repo_sync", {"name": "runspec"}, "cS"))
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("repo_sync started" in m for m in msgs)
+    assert any(
+        "repo_sync finished" in m and "outcome=ok" in m and "ms" in m for m in msgs
+    )
+
+
+def test_progress_mirrored_to_log_at_debug(tmp_path, monkeypatch, caplog):
+    # _Stub._run_tool_sync calls on_progress("working…") once.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    b = _Stub()
+    with caplog.at_level(logging.DEBUG, logger=_BRIDGE_LOGGER):
+        asyncio.run(b._run_builtin_tool_tracked("repo_grep", {"pattern": "x"}, "cD"))
+    # Producer progress is mirrored to the log, but only at DEBUG.
+    assert any(
+        r.levelno == logging.DEBUG
+        and "progress" in r.getMessage()
+        and "working…" in r.getMessage()
+        for r in caplog.records
+    )
+    # It must NOT surface at INFO — that keeps the default log clean.
+    assert all(
+        r.levelno != logging.INFO or "progress" not in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def _slow_tool_sync(name, ti, chat_id="", cancel_event=None, on_progress=None):
+    # Block long enough for several heartbeat ticks; emits no progress of its own.
+    time.sleep(0.06)
+    return "OK"
+
+
+def test_heartbeat_emits_progress_and_logs(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    # Patch the module binding the heartbeat reads (imported into bridge_autonomy).
+    monkeypatch.setattr("runspec_console.bridge_autonomy._TOOL_HEARTBEAT_SECS", 0.01)
+    b = _Stub()
+    b._run_tool_sync = _slow_tool_sync
+    with caplog.at_level(logging.INFO, logger=_BRIDGE_LOGGER):
+        out = asyncio.run(
+            b._run_builtin_tool_tracked("repo_read", {"path": "big"}, "chatH")
+        )
+    assert out == "OK"
+    # The card animates during the silent stretch via a heartbeat tool_progress...
+    prog = [d for e, d in b.events if e == "runspec:tool_progress"]
+    assert any("still working" in d["message"] for d in prog)
+    # ...and the same signal lands in the log so a long gap is explained.
+    assert any("still running" in r.getMessage() for r in caplog.records)
+
+
+def test_heartbeat_empty_chat_id_logs_without_ui_event(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("runspec_console.bridge_autonomy._TOOL_HEARTBEAT_SECS", 0.01)
+    b = _Stub()
+    b._run_tool_sync = _slow_tool_sync
+    with caplog.at_level(logging.INFO, logger=_BRIDGE_LOGGER):
+        asyncio.run(b._run_builtin_tool_tracked("repo_read", {"path": "big"}, ""))
+    # Empty chat_id (trigger/runbook turn): no card to match → no heartbeat event.
+    assert not [
+        d
+        for e, d in b.events
+        if e == "runspec:tool_progress" and "still working" in d.get("message", "")
+    ]
+    # But the heartbeat still logs — the headless turn's gap is still explained.
+    assert any("still running" in r.getMessage() for r in caplog.records)
 
 
 def test_audit_carries_turn_provenance(tmp_path, monkeypatch):

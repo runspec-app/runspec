@@ -7,6 +7,7 @@ instance, so ``self`` carries all shared state.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 import threading
 import time
@@ -41,6 +42,7 @@ from .bridge_const import (
     _REPO_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
     _CONFIG_TOOL_NAMES,
+    _TOOL_HEARTBEAT_SECS,
     _WORKSPACE_TOOL_NAMES,
     _EXEC_TOOL_NAMES,
     _BUILTIN_TOOL_NAMES,
@@ -564,8 +566,17 @@ class AutonomyMixin:
         self._dispatch("runspec:in_flight_updated", {})
 
         def on_progress(message: str) -> None:
-            # Keyed to chat_id (the chat block) + tool_id (the card) so the chat
-            # tool segment shows a live progress line and the card reads as alive.
+            # Mirror to the log (DEBUG — producer progress like repo_grep's
+            # every-200-files line is bursty, so keep it out of the default log
+            # but available under --debug) then drive the UI. Keyed to chat_id
+            # (the chat block) + tool_id (the card) so the chat tool segment
+            # shows a live progress line and the card reads as alive.
+            logger.debug(
+                "built-in tool %s progress (id=%s): %s",
+                tool_name,
+                tool_run_id,
+                message,
+            )
             self._dispatch(
                 "runspec:tool_progress",
                 {
@@ -577,6 +588,42 @@ class AutonomyMixin:
             )
 
         start = time.monotonic()
+        logger.info(
+            "built-in tool %s started (id=%s) args=%s",
+            tool_name,
+            tool_run_id,
+            args_summary,
+        )
+
+        async def _heartbeat() -> None:
+            # Keep the log and the chat card alive during producer-silent
+            # stretches (a big repo_read, or gaps between repo_grep progress).
+            # Elapsed is read from the shared ``start`` so it stays truthful even
+            # if a tick is late. The INFO line is the default-visible "still
+            # alive" signal (progress mirroring above is DEBUG-only).
+            while True:
+                await asyncio.sleep(_TOOL_HEARTBEAT_SECS)
+                secs = int(time.monotonic() - start)
+                logger.info(
+                    "built-in tool %s still running, %ds elapsed (id=%s)",
+                    tool_name,
+                    secs,
+                    tool_run_id,
+                )
+                # chat_id is empty for non-chat turns (trigger/runbook): there is
+                # no card to match, so skip the UI event but still log above.
+                if chat_id:
+                    self._dispatch(
+                        "runspec:tool_progress",
+                        {
+                            "id": chat_id,
+                            "tool_id": tool_run_id,
+                            "tool_name": tool_name,
+                            "message": f"still working… {secs}s elapsed",
+                        },
+                    )
+
+        hb_task = asyncio.create_task(_heartbeat())
         outcome = "ok"
         try:
             output = await asyncio.to_thread(
@@ -595,10 +642,23 @@ class AutonomyMixin:
             logger.warning("built-in tool %s failed", tool_name, exc_info=True)
             output = f"✗ '{label}' failed: {exc}"
         finally:
+            # Stop the heartbeat before tearing down the card so no stray
+            # tool_progress fires for a gone card; await it (suppressing the
+            # expected CancelledError) to avoid a "Task was destroyed" warning.
+            hb_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hb_task
             with self._lock:
                 self._in_flight.pop(tool_run_id, None)
             self._dispatch("runspec:in_flight_updated", {})
             duration_ms = int((time.monotonic() - start) * 1000)
+            logger.info(
+                "built-in tool %s finished outcome=%s in %dms (id=%s)",
+                tool_name,
+                outcome,
+                duration_ms,
+                tool_run_id,
+            )
             self._audit_builtin_tool(
                 tool_run_id,
                 tool_name,

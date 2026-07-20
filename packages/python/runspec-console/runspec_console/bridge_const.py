@@ -218,6 +218,18 @@ _EXEC_MAX_ROWS = 1_000
 _UI_OUTPUT_LINE_CAP = 5_000
 _UI_OUTPUT_BYTE_CAP = 2_000_000
 
+# Cadence (seconds) of the "still running" heartbeat emitted while a built-in
+# agent tool executes (see ``_run_builtin_tool_tracked``). It bounds the silent
+# stretch when a tool produces no output of its own — a ``repo_read`` of a big
+# file, or the gaps between ``repo_grep``'s sparse every-200-files progress —
+# by emitting one INFO log line per interval (so the log explains a multi-minute
+# gap instead of looking dead) and one ``runspec:tool_progress`` event (so the
+# chat card's status line keeps ticking). 12s is long enough that fast tools
+# finish before the first tick — adding zero noise for the common case — yet
+# short enough that a slow tool (~5 lines/min) reads as alive without bloating
+# the log.
+_TOOL_HEARTBEAT_SECS = 12
+
 PUTTY_PROXY_SESSION = "runspec-console-proxy"
 
 _EVENT_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")

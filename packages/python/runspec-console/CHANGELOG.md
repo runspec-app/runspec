@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.177.0] — 2026-07-20
+
+### Changed
+- **Long built-in tool calls no longer look frozen.** When the chat agent runs a
+  built-in tool (`repo_*`, `outlook_*`, `manage_denylist`, action/memory tools),
+  a slow one — e.g. reading a large synced git repo — could leave the Console
+  chat card static and the log file silent for minutes, making the app look
+  broken even though good work was happening. `_run_builtin_tool_tracked` now:
+  - **logs the tool lifecycle** — an INFO `started` line, an INFO
+    `finished outcome=… in Nms` line on every exit path (ok / cancelled /
+    error), and mirrors the tool's own progress messages to the log at **DEBUG**
+    (so a chatty `repo_grep` stays out of the default log but is available under
+    `--debug`); previously the `on_progress` callback only drove the UI and was
+    never logged, and there were no start/finish/elapsed lines at all.
+  - **emits a ~12s "still running, Ns elapsed" heartbeat** (new
+    `_TOOL_HEARTBEAT_SECS`) to both the log (INFO — the default-visible
+    "work is happening" signal) and the chat card (via the existing
+    `runspec:tool_progress` path, so the card's status line keeps ticking with
+    no frontend change). Fast tools finish before the first tick, so the common
+    case adds no noise; a headless trigger/runbook turn (empty `chat_id`) still
+    gets the log heartbeat even though there is no card to animate.
+- **Composer gives feedback while the agent is busy.** Pressing Enter (or Send)
+  during an in-flight chat turn previously did nothing silently — reinforcing
+  the "app is frozen" impression. It now shows a transient
+  *"Agent is working — press Stop to interrupt"* hint and leaves the typed text
+  intact so it can be resent after Stop.
+
+
 ## [0.176.0] — 2026-07-20
 
 ### Changed
