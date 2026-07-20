@@ -217,11 +217,11 @@ def test_adhoc_jumpless_download_succeeds(kr):
     assert b.captured["source"]["jump"] == ""
 
 
-def test_open_source_conn_jumpless_connects_directly(monkeypatch):
-    # The jumpless ad-hoc branch: no jump-host lookup, no direct-tcpip channel —
-    # paramiko connects straight to the target (sock=None).
-    import paramiko
-
+def test_open_source_conn_jumpless_uses_proxy_aware_client(monkeypatch):
+    # Jumpless must route through _make_ssh_client — the same builder every
+    # configured host uses, which applies the [ssh] proxy / ~/.ssh/config routing.
+    # A raw paramiko connect would bypass that routing (the reported timeout bug).
+    # It must also touch no jump host or channel.
     import runspec_console.executor as executor_mod
 
     calls: dict = {}
@@ -231,9 +231,6 @@ def test_open_source_conn_jumpless_connects_directly(monkeypatch):
             return object(), (lambda: None)
 
     class _FakeClient:
-        def connect(self, **kw):
-            calls["connect"] = kw
-
         def open_sftp(self):
             return "SFTP"
 
@@ -243,8 +240,13 @@ def test_open_source_conn_jumpless_connects_directly(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(paramiko, "SSHClient", _FakeClient)
-    monkeypatch.setattr(executor_mod, "_apply_host_key_policy", lambda *a, **k: None)
+    def fake_make(ssh_target, identity_file, cfg, password=None):
+        calls["ssh_target"] = ssh_target
+        calls["password"] = password
+        calls["cfg"] = cfg
+        return _FakeClient()
+
+    monkeypatch.setattr(executor_mod, "_make_ssh_client", fake_make)
 
     class _B:
         _open_source_conn = Bridge._open_source_conn
@@ -257,11 +259,41 @@ def test_open_source_conn_jumpless_connects_directly(monkeypatch):
 
     b = _B()
     sftp, _sf, release = b._open_source_conn(
-        {"kind": "adhoc", "host": "box", "jump": "", "user": "svc"}, "pw", {}
+        {"kind": "adhoc", "host": "box", "jump": "", "user": "svc", "port": 2222},
+        "pw",
+        {"proxy": "http://p:8080"},
     )
     assert sftp == "SFTP"
-    assert calls["connect"]["hostname"] == "box"
-    assert calls["connect"]["sock"] is None  # direct connect, no tunnel
-    assert calls["connect"]["password"] == "pw"
-    assert calls["connect"]["username"] == "svc"
+    assert calls["ssh_target"] == "svc@box:2222"  # user + non-default port composed
+    assert calls["password"] == "pw"
+    assert calls["cfg"] == {"proxy": "http://p:8080"}  # routing config threaded in
     release()
+
+
+def test_open_source_conn_jumpless_default_port_no_user(monkeypatch):
+    import runspec_console.executor as executor_mod
+
+    calls: dict = {}
+
+    class _FakeClient:
+        def open_sftp(self):
+            return "SFTP"
+
+        def get_transport(self):
+            return None
+
+        def close(self):
+            pass
+
+    def fake_make(ssh_target, identity_file, cfg, password=None):
+        calls["ssh_target"] = ssh_target
+        return _FakeClient()
+
+    monkeypatch.setattr(executor_mod, "_make_ssh_client", fake_make)
+
+    class _B:
+        _open_source_conn = Bridge._open_source_conn
+
+    b = _B()
+    b._open_source_conn({"kind": "adhoc", "host": "box", "jump": ""}, None, {})
+    assert calls["ssh_target"] == "box"  # no user, default port → bare hostname

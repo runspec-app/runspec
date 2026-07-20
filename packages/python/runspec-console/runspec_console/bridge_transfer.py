@@ -661,27 +661,54 @@ class TransferMixin:
 
             return sftp, session_factory, sftp_release
 
-        # ad-hoc: SSH to the target (keys/agent, then password). With a jump, go
-        # over a direct-tcpip channel through it (warm pooled transport); without
-        # one, connect straight (``sock=None``) — for a target the console can
-        # already reach directly, no jump host needed.
+        target = str(source["host"])
+        port = int(source.get("port") or 22)
+        user = source.get("user") or ""
+        jump = source.get("jump")
+
+        # Jumpless: connect straight to the target through the **same** builder
+        # every configured host uses, so it inherits the ``[ssh] proxy`` (HTTP
+        # CONNECT) and ``~/.ssh/config`` (incl. ProxyCommand) routing + host-key
+        # handling. A raw paramiko connect here would bypass that routing, so on a
+        # proxied / ProxyCommand network the target has no route and the connect
+        # times out — which is only masked by adding a jump. (Same path as the
+        # unsaved-host browser, which connects jumpless and works.)
+        if not jump:
+            from .executor import _make_ssh_client
+
+            ssh_target = f"{user}@{target}" if user else target
+            if port and port != 22:
+                ssh_target = f"{ssh_target}:{port}"
+            tclient = _make_ssh_client(ssh_target, None, cfg, password=password or None)
+            sftp = tclient.open_sftp()
+
+            def session_factory() -> tuple[Any, Callable[[], None]]:
+                transport = tclient.get_transport()
+                if transport is None:
+                    raise OSError("source transport closed")
+                return transport.open_session(), (lambda: None)
+
+            def release() -> None:
+                for c in (sftp, tclient):
+                    try:
+                        c.close()
+                    except Exception:
+                        pass
+
+            return sftp, session_factory, release
+
+        # With a jump: tunnel a direct-tcpip channel through it (warm pooled
+        # transport), then SSH to the target over it (keys/agent, then password).
         import paramiko
 
         from .executor import _apply_host_key_policy
 
-        target = str(source["host"])
-        port = int(source.get("port") or 22)
-        jump = source.get("jump")
-
-        if jump:
-            jump_entry = self._host_entry(jump)
-            if jump_entry is None or not jump_entry.get("ssh"):
-                raise OSError(f"jump host {jump} is not reachable")
-            chan, chan_release, jump_client = self._jump_channel(
-                jump_entry, target, port, cfg
-            )
-        else:
-            chan, chan_release, jump_client = None, (lambda: None), None
+        jump_entry = self._host_entry(jump)
+        if jump_entry is None or not jump_entry.get("ssh"):
+            raise OSError(f"jump host {jump} is not reachable")
+        chan, chan_release, jump_client = self._jump_channel(
+            jump_entry, target, port, cfg
+        )
 
         tclient = paramiko.SSHClient()
         _apply_host_key_policy(tclient, cfg or {})
@@ -689,7 +716,7 @@ class TransferMixin:
             tclient.connect(
                 hostname=target,
                 port=port,
-                username=source.get("user") or None,
+                username=user or None,
                 password=password or None,
                 sock=chan,
                 allow_agent=True,

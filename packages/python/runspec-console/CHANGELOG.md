@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.177.1] — 2026-07-20
+
+### Fixed
+- **Jumpless ad-hoc hosts timed out on proxied networks.** The jumpless
+  connection path (0.176.0) used a raw paramiko connect, which bypassed the
+  `[ssh] proxy` (HTTP CONNECT) and `~/.ssh/config` (incl. `ProxyCommand`) routing
+  that every configured host — and the jump connection itself — goes through. On a
+  network where the console reaches hosts via a proxy / ProxyCommand, a blank-jump
+  ad-hoc browse/transfer therefore had no route and timed out; adding a jump only
+  masked it. Jumpless now connects through the same `_make_ssh_client` builder the
+  rest of the console uses (as the unsaved-host browser already did), so it
+  inherits that routing and host-key handling. Affects relay, transfer, and the
+  ad-hoc directory browser uniformly (`bridge_transfer._open_source_conn`).
+
+
 ## [0.177.0] — 2026-07-20
 
 ### Changed
