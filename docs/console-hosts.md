@@ -66,6 +66,69 @@ pre-configured fleet.
 
 ---
 
+## File transfer & filters
+
+The console moves files between hosts over its existing SSH connections. The
+**Transfer files** dialog handles every direction from one place: **Source**
+and **Destination** can each be *this computer*, a *configured host*, or an
+**ad-hoc host** — an SSH machine not in your fleet, reached through a
+configured host as a jump (password auth can reference a saved credential by
+id). One local side transfers directly; two remote sides relay through the
+console. You can also **rename the file on the target** instead of keeping
+the source's name.
+
+The agent has the same reach: `download_file` (remote → local, including
+ad-hoc sources via `source_via` + `source_target`) and `relay_file`
+(host → host), both with an optional `dest_name` to rename on target.
+
+A **filter** is a named, reusable stream transform applied to the file **on
+the source host** during a transfer, so only the matching output crosses the
+network — the way to pull a few relevant lines out of a gigabyte log. Define
+filters under **Settings → Filters**; they're stored in
+`runspec_filters.toml` (which rides [Config Sync](console-team.md), so a team
+shares one set):
+
+```toml
+[[filter]]
+name        = "id-lines"
+pipeline    = "grep -E -- {{arg}} | cut -d, -f1,4"
+description = "Lines matching a pattern, keep cols 1 & 4"
+param_label = "id or regex"
+```
+
+How a filter runs:
+
+- The source file is fed to the `pipeline` **on stdin**, through the source
+  host's POSIX shell (`sh -c '<pipeline>' < '<file>'`). The pipeline is
+  ordinary shell you author — pipes (`|`), `grep`, `sed`, `awk`, `cut`,
+  multi-stage chains are all fine. For a download it runs on the remote host;
+  for an upload or a relay's source side, wherever the source file lives (a
+  local source needs `sh` on PATH — effectively remote-source on Windows).
+- **One runtime value, not multiple.** The literal token `{{arg}}` marks
+  where the operator-supplied value goes; `param_label` labels that input in
+  the Transfer dialog (and tells the agent what `filter_value` means). The
+  token may appear several times, but every occurrence gets the *same single*
+  value — there is no `{{arg2}}`.
+- The value is **shell-quoted on substitution**: it always arrives as one
+  inert token, so it can't add pipeline stages or escape the command — only
+  the pipeline you authored is interpreted shell. A filter whose pipeline has
+  `{{arg}}` refuses to run without a value, and a value passed to a filter
+  with no `{{arg}}` is an error (never silently dropped).
+
+Because the quoted value lands inside your command as a single argument,
+**regex alternation is how you match "multiple values"**: with the
+`grep -E -- {{arg}}` filter above, supplying `12345|Jason` as the value
+matches lines containing either — the `|` is regex alternation *inside* the
+pattern, safely quoted on its way there. (With `grep -F` the value is matched
+literally, `|` included — use `-E`/`egrep` semantics when you want
+alternation.)
+
+Ask the agent:
+
+> Download /var/log/app/audit.log from app-01 using the id-lines filter with the value 12345|Jason.
+
+---
+
 ## Groups
 
 A host's `group` is a **targeting unit**: naming a group runs a runnable on
