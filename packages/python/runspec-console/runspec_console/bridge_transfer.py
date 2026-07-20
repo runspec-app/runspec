@@ -54,37 +54,114 @@ class TransferMixin:
 
         return sftp, release
 
+    def _normalise_transfer_side(
+        self, side: Any
+    ) -> tuple[str, dict[str, Any] | None, str | None]:
+        """Normalise one transfer endpoint (the source or the destination side).
+
+        ``side`` is either a host-name string (``"local"`` or a configured fleet
+        host) or an **ad-hoc** descriptor dict ``{"kind": "adhoc", "host", "jump",
+        "user"?, "port"?, "password"?, "credential_id"?}`` — an SSH host not in the
+        fleet, reached through a configured jump (the same shape the Relay dialog
+        uses).
+
+        Returns ``(label, opener_desc, password)``: a plain string label used for
+        planning + display; the ``{"kind": ...}`` descriptor
+        :meth:`_open_source_conn` opens (``None`` for the local side); and the
+        resolved ad-hoc SSH password (``None`` otherwise), pulled out here so it
+        never reaches ``_in_flight`` / logs. Raises :class:`ValueError` on a
+        malformed ad-hoc side.
+        """
+        from .fs_transfer import LOCAL
+
+        if not isinstance(side, dict):
+            label = str(side)
+            if label == LOCAL:
+                return label, None, None
+            return label, {"kind": "host", "host": label}, None
+
+        host = str(side.get("host") or "").strip()
+        if not host:
+            raise ValueError("no ad-hoc host specified")
+        # A jump is optional: with one, the target is reached through it; without,
+        # the console connects to the target directly.
+        desc: dict[str, Any] = {
+            "kind": "adhoc",
+            "host": host,
+            "jump": str(side.get("jump") or "").strip(),
+        }
+        if side.get("port"):
+            desc["port"] = int(side["port"])
+        # A typed password wins; otherwise a credential_id's stored secret is used
+        # and its username fills an empty user — resolved from the keyring at
+        # connect time, never stored on the descriptor / in_flight / logs.
+        resolved_user, password = self._resolve_adhoc_credential(
+            side.get("credential_id"), side.get("user"), side.get("password")
+        )
+        if resolved_user:
+            desc["user"] = resolved_user
+        return host, desc, password
+
     def start_transfer(
         self,
-        source_host: str,
+        source_host: Any,
         source_paths: list[str],
-        dest_host: str,
+        dest_host: Any,
         dest_dir: str,
         filter_name: str = "",
         filter_arg: str | None = None,
+        dest_name: str | None = None,
     ) -> dict[str, Any]:
         """Copy files between the local machine and a remote host over SFTP.
 
-        v1 supports **local↔remote only** (exactly one side is ``"local"``).
+        Exactly one side is ``"local"``; the other is the remote endpoint, given
+        either as a configured-host name string or as an **ad-hoc** descriptor
+        dict (``{"kind": "adhoc", "host", "jump", ...}`` — an SSH host not in the
+        fleet, reached through a configured jump, as the Relay dialog does). So a
+        download can pull from an ad-hoc host and an upload can push to one.
         ``filter_name`` selects a saved source-side filter (``filter_arg`` is the
         runtime value for its ``{{arg}}`` placeholder); it applies only to a
         host and only the output is written. For a **download** (pull) the filter
         runs on the remote source; for an **upload** (push) it runs locally over
-        the local source (needs a POSIX ``sh`` on PATH). Returns ``{"id": ...}``
-        and then streams ``runspec:transfer_progress`` / ``runspec:transfer_end``
-        events, or ``{"error": ...}`` on a bad request.
+        the local source (needs a POSIX ``sh`` on PATH). ``dest_name`` optionally
+        renames the (single) file on the destination — a bare filename, not a
+        path. Returns ``{"id": ...}`` and then streams
+        ``runspec:transfer_progress`` / ``runspec:transfer_end`` events, or
+        ``{"error": ...}`` on a bad request.
         """
 
-        from .fs_transfer import plan_transfer, render_pipeline
+        from .fs_transfer import LOCAL, plan_transfer, render_pipeline
 
+        # A side may be an ad-hoc descriptor dict rather than a host-name string.
+        # Normalise both to a string label (for planning + display) plus, for the
+        # remote side, the {"kind": ...} descriptor _open_source_conn understands;
+        # ad-hoc secrets are pulled out here so they never reach _in_flight / logs.
         try:
-            plan = plan_transfer(source_host, source_paths, dest_host, dest_dir)
+            src_label, src_desc, src_pw = self._normalise_transfer_side(source_host)
+            dst_label, dst_desc, dst_pw = self._normalise_transfer_side(dest_host)
         except ValueError as e:
             return {"error": str(e)}
 
-        entry = self._host_entry(plan.remote_host)
-        if entry is None or not entry.get("ssh"):
-            return {"error": f"{plan.remote_host} is not a reachable remote host"}
+        try:
+            plan = plan_transfer(
+                src_label, source_paths, dst_label, dest_dir, dest_name
+            )
+        except ValueError as e:
+            return {"error": str(e)}
+
+        # The non-local side is the remote endpoint; _open_source_conn opens it
+        # (configured host or ad-hoc) and also yields the exec-session factory the
+        # download-filter path needs.
+        remote_desc = dst_desc if src_label == LOCAL else src_desc
+        remote_pw = dst_pw if src_label == LOCAL else src_pw
+        if remote_desc is None:
+            return {"error": "a transfer must have one local side and one remote side"}
+        if remote_desc.get("kind") == "host":
+            entry = self._host_entry(remote_desc["host"])
+            if entry is None or not entry.get("ssh"):
+                return {
+                    "error": f"{remote_desc['host']} is not a reachable remote host"
+                }
 
         rendered = None
         if filter_name:
@@ -123,26 +200,12 @@ class TransferMixin:
             release: Callable[[], None] | None = None
             count = len(plan.items)
 
-            def session_factory() -> tuple[Any, Callable[[], None]]:
-                pool = self._ssh_pool
-                if pool is not None:
-                    return pool.open_session(
-                        entry["ssh"],
-                        identity_file=entry.get("identityFile"),
-                        global_ssh_config=cfg,
-                    )
-                from .executor import _make_ssh_client
-
-                client = _make_ssh_client(entry["ssh"], entry.get("identityFile"), cfg)
-                transport = client.get_transport()
-                if transport is None:
-                    client.close()
-                    raise OSError("source transport unavailable")
-                return transport.open_session(), client.close
-
             try:
-                sftp, release = self._open_sftp(
-                    entry["ssh"], entry.get("identityFile"), cfg
+                # The remote endpoint (configured or ad-hoc) opens through the same
+                # path the relay source uses — sftp for the straight copy, plus the
+                # exec-session factory the download-filter path drives.
+                sftp, session_factory, release = self._open_source_conn(
+                    remote_desc, remote_pw, cfg
                 )
                 for idx, item in enumerate(plan.items):
                     if cancel_event.is_set():
@@ -343,19 +406,21 @@ class TransferMixin:
         dest_dir: str,
         filter_name: str = "",
         filter_arg: str | None = None,
+        dest_name: str | None = None,
     ) -> dict[str, Any]:
         """Upload the same local source file(s) to ``dest_dir`` on **many** remote hosts.
 
         Push-only (local → N remotes), one SFTP transfer per host in parallel over
         each host's pooled transport. When ``filter_name`` is set, each source is
         filtered **once** locally (needs a POSIX ``sh``) and the filtered output is
-        what gets fanned out. Returns ``{"id": ...}`` and streams
-        ``runspec:transfer_progress`` events carrying a ``host`` field, then a
-        single ``runspec:transfer_end`` whose ``hosts`` lists each host's result —
+        what gets fanned out. ``dest_name`` optionally renames the (single) file on
+        every target — a bare filename, not a path. Returns ``{"id": ...}`` and
+        streams ``runspec:transfer_progress`` events carrying a ``host`` field, then
+        a single ``runspec:transfer_end`` whose ``hosts`` lists each host's result —
         or ``{"error": ...}`` on a bad request.
         """
 
-        from .fs_transfer import plan_transfer, render_pipeline
+        from .fs_transfer import _clean_dest_name, plan_transfer, render_pipeline
 
         paths = [p for p in (source_paths or []) if p and p.strip()]
         targets = [h for h in (dest_hosts or []) if h and h != "local"]
@@ -365,6 +430,12 @@ class TransferMixin:
             return {"error": "no target hosts selected"}
         if not dest_dir or not dest_dir.strip():
             return {"error": "no destination folder selected"}
+        try:
+            clean_name = _clean_dest_name(dest_name)
+        except ValueError as e:
+            return {"error": str(e)}
+        if clean_name and len(paths) > 1:
+            return {"error": "a new filename can only be set for a single file"}
 
         rendered = None
         if filter_name:
@@ -413,7 +484,7 @@ class TransferMixin:
                 sftp, release = self._open_sftp(
                     entry["ssh"], entry.get("identityFile"), cfg
                 )
-                plan = plan_transfer("local", send_paths, h, dest_dir)
+                plan = plan_transfer("local", send_paths, h, dest_dir, dest_name)
                 count = len(plan.items)
                 for idx, item in enumerate(plan.items):
                     if cancel_event.is_set():
@@ -590,21 +661,27 @@ class TransferMixin:
 
             return sftp, session_factory, sftp_release
 
-        # ad-hoc: tunnel a direct-tcpip channel through the configured jump (warm
-        # pooled transport), then SSH to the target over it (keys/agent, then password).
+        # ad-hoc: SSH to the target (keys/agent, then password). With a jump, go
+        # over a direct-tcpip channel through it (warm pooled transport); without
+        # one, connect straight (``sock=None``) — for a target the console can
+        # already reach directly, no jump host needed.
         import paramiko
 
         from .executor import _apply_host_key_policy
 
-        jump_entry = self._host_entry(source["jump"])
-        if jump_entry is None or not jump_entry.get("ssh"):
-            raise OSError(f"jump host {source.get('jump')} is not reachable")
         target = str(source["host"])
         port = int(source.get("port") or 22)
+        jump = source.get("jump")
 
-        chan, chan_release, jump_client = self._jump_channel(
-            jump_entry, target, port, cfg
-        )
+        if jump:
+            jump_entry = self._host_entry(jump)
+            if jump_entry is None or not jump_entry.get("ssh"):
+                raise OSError(f"jump host {jump} is not reachable")
+            chan, chan_release, jump_client = self._jump_channel(
+                jump_entry, target, port, cfg
+            )
+        else:
+            chan, chan_release, jump_client = None, (lambda: None), None
 
         tclient = paramiko.SSHClient()
         _apply_host_key_policy(tclient, cfg or {})
@@ -1054,6 +1131,7 @@ class TransferMixin:
         dest_dir: str,
         filter_name: str = "",
         filter_arg: str | None = None,
+        dest_name: str | None = None,
     ) -> dict[str, Any]:
         """Relay file(s) from one host to another, streaming through the console.
 
@@ -1063,13 +1141,14 @@ class TransferMixin:
         and is **never** stored, logged, or pooled. ``filter_name`` selects a saved
         source-side filter (``filter_arg`` is the runtime value for its ``{{arg}}``
         placeholder); when set, the file is filtered on the source host and only
-        the output is relayed. Returns ``{"id": ...}`` and streams the usual
-        transfer events, or ``{"error": ...}``.
+        the output is relayed. ``dest_name`` optionally renames the (single) file
+        on the destination — a bare filename, not a path. Returns ``{"id": ...}``
+        and streams the usual transfer events, or ``{"error": ...}``.
         """
         from .fs_transfer import relay_items, render_pipeline
 
         try:
-            items = relay_items(source_paths, dest_dir)
+            items = relay_items(source_paths, dest_dir, dest_name)
         except ValueError as e:
             return {"error": str(e)}
 
@@ -1080,8 +1159,8 @@ class TransferMixin:
         kind = source.get("kind")
         if kind not in ("host", "adhoc") or not source.get("host"):
             return {"error": "no source host specified"}
-        if kind == "adhoc" and not source.get("jump"):
-            return {"error": "no jump host selected"}
+        # An ad-hoc source may omit the jump — the console then connects to the
+        # target directly (a jump is only needed when it can't reach it directly).
 
         rendered = None
         if filter_name:
@@ -1214,8 +1293,7 @@ class TransferMixin:
         only when (re)establishing and is never stored or logged."""
         if not host:
             return {"error": "no source host specified"}
-        if not jump:
-            return {"error": "no jump host selected"}
+        # ``jump`` may be empty — the console then browses the target directly.
         user, password = self._resolve_adhoc_credential(credential_id, user, password)
         key = (jump, host, user or "", int(port or 22))
         cfg = self.get_config().get("ssh")

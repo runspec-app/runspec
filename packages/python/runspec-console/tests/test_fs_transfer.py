@@ -84,6 +84,54 @@ def test_relay_items_validation():
         relay_items(["/a/x"], "")
 
 
+# --- rename on target (dest_name) -----------------------------------------
+
+
+def test_plan_transfer_renames_single_file():
+    plan = plan_transfer(
+        "local", ["/home/me/config.cfg"], "prod-1", "/opt/app/etc", "app.conf"
+    )
+    assert plan.items[0].dst == "/opt/app/etc/app.conf"
+    assert plan.items[0].name == "app.conf"
+    assert plan.items[0].src == "/home/me/config.cfg"  # source unchanged
+
+
+def test_pull_renames_on_local():
+    plan = plan_transfer(
+        "prod-1", ["/var/log/fix.log"], "local", "/home/me", "fix-2026.log"
+    )
+    assert plan.items[0].dst == "/home/me/fix-2026.log"
+
+
+def test_relay_items_renames_single_file():
+    items = relay_items(["/var/log/app/fix.log"], "/incoming", "renamed.log")
+    assert (items[0].src, items[0].dst, items[0].name) == (
+        "/var/log/app/fix.log",
+        "/incoming/renamed.log",
+        "renamed.log",
+    )
+
+
+def test_blank_dest_name_keeps_source_basename():
+    plan = plan_transfer("local", ["/a/orig.txt"], "h", "/dest", "   ")
+    assert plan.items[0].dst == "/dest/orig.txt"
+
+
+def test_rename_rejects_multiple_files():
+    with pytest.raises(ValueError, match="single file"):
+        plan_transfer("local", ["/a/one.txt", "/a/two.txt"], "h", "/dest", "merged.txt")
+    with pytest.raises(ValueError, match="single file"):
+        relay_items(["/a/one.txt", "/a/two.txt"], "/dest", "merged.txt")
+
+
+@pytest.mark.parametrize(
+    "bad", ["../escape", "/abs/name", "sub/dir.txt", "a\\b", ".", ".."]
+)
+def test_rename_rejects_path_like_names(bad):
+    with pytest.raises(ValueError, match="bare filename"):
+        plan_transfer("local", ["/a/x"], "h", "/dest", bad)
+
+
 # --- source-side filter helpers -------------------------------------------
 
 

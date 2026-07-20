@@ -333,6 +333,7 @@ def test_relay_one_filtered_builds_command_and_delegates(monkeypatch):
 class _ValidationBridge:
     start_relay = Bridge.start_relay
     start_transfer = Bridge.start_transfer
+    _normalise_transfer_side = Bridge._normalise_transfer_side
     _emit_transfer_end = Bridge._emit_transfer_end
 
     def __init__(self, filters):
@@ -378,6 +379,7 @@ def _push_bridge(filters):
     b._lock = threading.Lock()
     b._in_flight = {}
     b._open_sftp = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop"))
+    b._open_source_conn = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop"))
     b._dispatch = lambda *a, **k: None
     return b
 
@@ -491,10 +493,85 @@ def test_run_download_tool_success_and_args():
     )
     assert out.startswith("✓ Completed download of app.log from prod")
     assert "/tmp" in out
-    # start_transfer called local-bound with the filter threaded through.
+    # start_transfer called local-bound with the filter threaded through
+    # (trailing None = no rename).
     kind, args, _ = b.calls[0]
     assert kind == "transfer"
-    assert args == ("prod", ["/var/log/app.log"], "local", "/tmp", "errs", None)
+    assert args == ("prod", ["/var/log/app.log"], "local", "/tmp", "errs", None, None)
+
+
+def test_download_schema_offers_adhoc_source_and_credentials():
+    b = _ToolBridge(
+        hosts=[{"name": "jump", "ssh": "x"}],
+        filters=[],
+        credentials=[{"id": "svc", "label": "Svc"}],
+    )
+    dl = next(t for t in b._custom_agent_tools() if t["name"] == "download_file")
+    props = dl["input_schema"]["properties"]
+    assert props["source_via"]["enum"] == ["jump"]
+    assert "source_target" in props
+    assert props["source_credential"]["enum"] == ["svc"]
+    # host is no longer required — an ad-hoc source is an alternative.
+    assert dl["input_schema"]["required"] == ["path", "dest_dir"]
+
+
+def test_run_download_tool_adhoc_builds_credentialed_source():
+    b = _ToolBridge(
+        hosts=[{"name": "jump", "ssh": "x"}],
+        filters=[],
+        credentials=[{"id": "svc", "label": "Svc"}],
+    )
+    out = b._run_custom_tool(
+        "download_file",
+        {
+            "source_via": "jump",
+            "source_target": "10.0.0.9",
+            "source_credential": "svc",
+            "path": "/v/x.log",
+            "dest_dir": "/tmp",
+        },
+    )
+    assert out.startswith("✓ Completed download of x.log from 10.0.0.9 via jump")
+    kind, args, _ = b.calls[0]
+    assert kind == "transfer"
+    # An ad-hoc source descriptor is passed as start_transfer's source; dest local.
+    assert args[0] == {
+        "kind": "adhoc",
+        "host": "10.0.0.9",
+        "jump": "jump",
+        "credential_id": "svc",
+    }
+    assert args[2] == "local"
+
+
+def test_run_download_tool_requires_a_source():
+    b = _ToolBridge(hosts=[{"name": "prod", "ssh": "x"}], filters=[])
+    out = b._run_custom_tool("download_file", {"path": "/v/x.log", "dest_dir": "/tmp"})
+    assert "provide host" in out
+    assert b.calls == []  # never started a transfer
+
+
+def test_run_download_tool_threads_dest_name():
+    b = _ToolBridge(hosts=[{"name": "prod", "ssh": "x"}], filters=[])
+    out = b._run_custom_tool(
+        "download_file",
+        {
+            "host": "prod",
+            "path": "/v/x.log",
+            "dest_dir": "/tmp",
+            "dest_name": "renamed.log",
+        },
+    )
+    assert out.startswith("✓ Completed download of renamed.log from prod")
+    _, args, _ = b.calls[0]
+    # dest_name is the 7th positional arg to start_transfer.
+    assert args == ("prod", ["/v/x.log"], "local", "/tmp", "", None, "renamed.log")
+
+
+def test_download_schema_offers_dest_name():
+    b = _ToolBridge(hosts=[{"name": "prod", "ssh": "x"}], filters=[])
+    dl = next(t for t in b._custom_agent_tools() if t["name"] == "download_file")
+    assert "dest_name" in dl["input_schema"]["properties"]
 
 
 def test_run_relay_tool_success():

@@ -11,7 +11,6 @@ import {
   MoonOutlined,
   SettingOutlined,
   SwapOutlined,
-  NodeIndexOutlined,
   CodeOutlined,
   BellOutlined,
   ClockCircleOutlined,
@@ -36,7 +35,6 @@ import { RotaView } from './views/RotaView'
 import { DevView } from './views/DevView'
 import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
-import { RelayModal } from './views/RelayModal'
 import { CopyKeyModal } from './views/CopyKeyModal'
 import { RunbookRunModal } from './views/RunbookRunModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
@@ -155,7 +153,6 @@ export default function App() {
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
-  const [relayOpen, setRelayOpen] = useState(false)
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
   const [sshKeyAgeDays, setSshKeyAgeDays] = useState<number | null>(null)
   const [runnables, setRunnables] = useState<Runnable[]>([])
@@ -1039,11 +1036,8 @@ export default function App() {
                 <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
                   <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
                 </Tooltip>
-                <Tooltip title="Transfer files (SFTP)">
+                <Tooltip title="Transfer files (SFTP) — download, upload, fan-out, or relay between hosts">
                   <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setTransferOpen(true)} style={{ color: iconCol }} />
-                </Tooltip>
-                <Tooltip title="Relay files between hosts">
-                  <Button type="text" size="small" icon={<NodeIndexOutlined />} onClick={() => setRelayOpen(true)} style={{ color: iconCol }} />
                 </Tooltip>
                 <Tooltip title={sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : 'Settings'}>
                   <Badge dot={sshKeyAgeDays !== null && sshKeyAgeDays >= 75} color="orange" offset={[-4, 4]}>
@@ -1173,12 +1167,6 @@ export default function App() {
           onClose={() => setTransferOpen(false)}
           hosts={hosts}
           defaultRemoteHost={selectedHost}
-        />
-
-        <RelayModal
-          open={relayOpen}
-          onClose={() => setRelayOpen(false)}
-          hosts={hosts}
         />
 
         <RunbookRunModal

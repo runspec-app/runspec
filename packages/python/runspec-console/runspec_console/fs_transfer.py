@@ -45,17 +45,52 @@ def _join(directory: str, name: str) -> str:
     return directory.rstrip(sep) + sep + name
 
 
+def _clean_dest_name(dest_name: str | None) -> str | None:
+    """Validate an optional rename-on-target basename. Returns the stripped name
+    (``None`` when unset). Raises :class:`ValueError` if it isn't a bare filename
+    — a path separator or ``.``/``..`` would let the file escape ``dest_dir``.
+    """
+    name = (dest_name or "").strip()
+    if not name:
+        return None
+    if re.search(r"[\\/]", name) or name in (".", ".."):
+        raise ValueError("a new filename must be a bare filename, not a path")
+    return name
+
+
+def _dest_items(
+    paths: list[str], dest_dir: str, dest_name: str | None
+) -> list[TransferItem]:
+    """Build the per-file items, applying an optional rename. When ``dest_name``
+    is set the (single) file lands under that basename instead of the source's;
+    renaming several files at once is rejected."""
+    name = _clean_dest_name(dest_name)
+    if name and len(paths) > 1:
+        raise ValueError("a new filename can only be set for a single file")
+    return [
+        TransferItem(
+            src=p,
+            dst=_join(dest_dir, name or _basename(p)),
+            name=name or _basename(p),
+        )
+        for p in paths
+    ]
+
+
 def plan_transfer(
     source_host: str,
     source_paths: list[str],
     dest_host: str,
     dest_dir: str,
+    dest_name: str | None = None,
 ) -> TransferPlan:
     """Resolve a local↔remote transfer into per-file ``(src, dst)`` items.
 
-    Exactly one of ``source_host`` / ``dest_host`` must be ``"local"``. Raises
-    :class:`ValueError` on an empty selection, a missing destination, or a
-    same-side request (local↔local or remote↔remote — out of scope for v1).
+    Exactly one of ``source_host`` / ``dest_host`` must be ``"local"``. An optional
+    ``dest_name`` renames the (single) transferred file on the destination side —
+    it must be a bare filename. Raises :class:`ValueError` on an empty selection, a
+    missing destination, a same-side request (local↔local or remote↔remote), or a
+    rename of more than one file.
     """
     paths = [p for p in (source_paths or []) if p and p.strip()]
     if not paths:
@@ -70,29 +105,26 @@ def plan_transfer(
 
     direction = "push" if src_local else "pull"
     remote_host = dest_host if src_local else source_host
-    items = [
-        TransferItem(src=p, dst=_join(dest_dir, _basename(p)), name=_basename(p))
-        for p in paths
-    ]
+    items = _dest_items(paths, dest_dir, dest_name)
     return TransferPlan(direction=direction, remote_host=remote_host, items=items)
 
 
-def relay_items(source_paths: list[str], dest_dir: str) -> list[TransferItem]:
+def relay_items(
+    source_paths: list[str], dest_dir: str, dest_name: str | None = None
+) -> list[TransferItem]:
     """Per-file ``(src, dst)`` items for a remote→remote relay (host → host).
 
     The console streams each ``src`` (read from the source host) to ``dst``
-    (written on the destination host, ``dest_dir`` + the source basename). Raises
-    :class:`ValueError` on an empty selection or missing destination.
+    (written on the destination host, ``dest_dir`` + the source basename, or
+    ``dest_name`` when a single file is being renamed). Raises :class:`ValueError`
+    on an empty selection, a missing destination, or a multi-file rename.
     """
     paths = [p for p in (source_paths or []) if p and p.strip()]
     if not paths:
         raise ValueError("no source files selected")
     if not dest_dir or not dest_dir.strip():
         raise ValueError("no destination folder selected")
-    return [
-        TransferItem(src=p, dst=_join(dest_dir, _basename(p)), name=_basename(p))
-        for p in paths
-    ]
+    return _dest_items(paths, dest_dir, dest_name)
 
 
 def render_pipeline(pipeline: str, arg: str | None) -> str:

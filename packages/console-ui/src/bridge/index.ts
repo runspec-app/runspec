@@ -96,6 +96,20 @@ export interface RelaySource {
   credential_id?: string  // optional, a saved credential whose secret is the password
 }
 
+// An ad-hoc transfer endpoint: an SSH host not in the fleet, reached via a
+// configured jump — the same shape a RelaySource ad-hoc source uses. A transfer
+// side is 'local', a configured host name, or this descriptor.
+export interface AdHocEndpoint {
+  kind: 'adhoc'
+  host: string
+  jump: string
+  user?: string
+  port?: number
+  password?: string
+  credential_id?: string
+}
+export type TransferEndpoint = string | AdHocEndpoint
+
 // A named, reusable source-side stream filter (Settings → Filters). The pipeline
 // runs on the file's host (file fed on stdin), so only matching output crosses
 // the network. `{{arg}}` in the pipeline is a runtime value the dialog prompts
@@ -960,20 +974,24 @@ export interface BridgeApi {
   // a runnable, the remote listing runs as that runnable's run_as (sudo/become).
   list_dir: (host: string, path?: string, group?: string, dirsOnly?: boolean, runnable?: string, asServiceAccount?: boolean) => Promise<DirListing>
   cancel_invocation: (invId: string) => Promise<void>
-  // Copy files between the local machine and a remote host over SFTP (local↔remote
-  // only). Returns an id, then streams runspec:transfer_progress / transfer_end.
-  // filterName/filterArg select a saved source-side filter; they apply only to a
-  // download (pull) — the remote file is filtered at the source, output written local.
-  start_transfer: (sourceHost: string, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string) => Promise<{ id?: string; error?: string }>
+  // Copy files between the local machine and a remote host over SFTP (exactly one
+  // side is 'local'). The remote side is a configured host name or an AdHocEndpoint
+  // (an SSH host not in the fleet, reached via a jump). Returns an id, then streams
+  // runspec:transfer_progress / transfer_end. filterName/filterArg select a saved
+  // source-side filter (download: filtered at the source; upload: filtered locally).
+  // destName optionally renames the (single) file on the destination (bare filename).
+  start_transfer: (sourceHost: TransferEndpoint, sourcePaths: string[], destHost: TransferEndpoint, destDir: string, filterName?: string, filterArg?: string, destName?: string) => Promise<{ id?: string; error?: string }>
   // Fan-out: upload the same local source file(s) to dest_dir on many remote hosts.
   // filterName/filterArg apply a saved filter locally (once) before fanning out.
-  start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string, filterName?: string, filterArg?: string) => Promise<{ id?: string; error?: string }>
+  // destName optionally renames the (single) file on every target (bare filename).
+  start_fanout: (sourcePaths: string[], destHosts: string[], destDir: string, filterName?: string, filterArg?: string, destName?: string) => Promise<{ id?: string; error?: string }>
   // Relay: stream file(s) from one host to another through the console. Source is a
   // configured host, or an ad-hoc host reached via a configured jump (key first,
   // then an optional password — used once, never stored/logged).
   // filterName/filterArg select a saved source-side filter run on the source host,
   // so only matching output is relayed (handy for pulling a few lines from a huge log).
-  start_relay: (source: RelaySource, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string) => Promise<{ id?: string; error?: string }>
+  // destName optionally renames the (single) file on the destination (bare filename).
+  start_relay: (source: RelaySource, sourcePaths: string[], destHost: string, destDir: string, filterName?: string, filterArg?: string, destName?: string) => Promise<{ id?: string; error?: string }>
   // Browse a directory on an ad-hoc relay source (reached via a jump). Password
   // is used only for this listing connection, never stored.
   list_dir_adhoc: (jump: string, host: string, path?: string, user?: string, password?: string, port?: number, dirsOnly?: boolean, credentialId?: string) => Promise<DirListing>

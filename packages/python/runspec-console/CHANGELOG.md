@@ -8,6 +8,54 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.176.0] — 2026-07-20
+
+### Changed
+- **Transfer and Relay are now one dialog, with ad-hoc hosts on both sides.**
+  The toolbar's separate Transfer and Relay buttons collapse into a single
+  **Transfer files** dialog: pick a **Source** and a **Destination**, each of
+  which can be **This computer**, a **configured host**, or an **ad-hoc host**
+  (an SSH host not in the fleet, reached through a configured jump — the shape
+  the old Relay dialog offered only as a *source*). The right engine is chosen
+  on submit — one local side routes to `start_transfer` (or `start_fanout` for a
+  local→many upload); two remote sides relay through the console via
+  `start_relay`. This fills the gap that mattered: **download from / upload to an
+  ad-hoc host** (ad-hoc ↔ local), which neither engine could do before.
+  `start_transfer` now accepts an ad-hoc descriptor dict on its remote side
+  (`_normalise_transfer_side`), reusing the relay source opener
+  (`_open_source_conn`); the ad-hoc secret is resolved from the keyring at
+  connect time and stripped before `_in_flight`/logs, exactly as relay does. An
+  ad-hoc *destination* is only offered from **This computer** (relay always
+  writes to a configured host); a local→local pick is disabled.
+- **Agent parity — `download_file` gains an ad-hoc source.** To keep the agent
+  and human capabilities in sync, the built-in `download_file` tool now takes the
+  same optional `source_via` / `source_target` / `source_credential` fields
+  `relay_file` already had, so the chat agent can pull a file from a non-fleet
+  host via a jump straight to local. Purely additive: the required inputs stay
+  `path` + `dest_dir`, and `host` still names a configured fleet host when set.
+  New frontend: shared `AdHocHostFields` component (used by the merged dialog),
+  `AdHocEndpoint`/`TransferEndpoint` bridge types. The Relay-specific
+  `RelayModal` is removed (folded into `TransferModal`).
+- **Ad-hoc hosts no longer require a jump.** An ad-hoc endpoint now needs only a
+  target hostname; the **jump host is optional** — leave it blank and the console
+  connects to the target directly (add a jump only when the target isn't directly
+  reachable). The single connection seam (`_open_source_conn`) connects with
+  `sock=None` when no jump is given, so relay, transfer, directory browsing, and
+  the agent tools all get it; `download_file` / `relay_file` `source_via` is now
+  optional. More intuitive for a flat network — type a host and go.
+
+### Added
+- **Rename a file on the target.** The Transfer dialog now offers an optional
+  **"Rename on target"** field (shown when a single file is selected) so the
+  landed file can have a different name than the source — download/upload/relay/
+  fan-out all honour it. Threaded as an optional `dest_name` through
+  `start_transfer` / `start_fanout` / `start_relay` and the pure planner
+  (`fs_transfer._dest_items` / `_clean_dest_name`), which validates it is a bare
+  filename (a path separator or `.`/`..` is rejected so the file can't escape the
+  destination folder) and refuses a multi-file rename. The agent tools
+  `download_file` / `relay_file` gain a matching optional `dest_name`.
+
+
 ## [0.175.0] — 2026-07-19
 
 ### Added

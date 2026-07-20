@@ -1,17 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
-import { Modal, Segmented, Select, Button, Progress, Typography, Tag, message } from 'antd'
-import { CloudUploadOutlined, CloudDownloadOutlined, SwapOutlined, FolderOpenOutlined } from '@ant-design/icons'
-import type { Host, TransferProgress, TransferEnd } from '../bridge'
+import { Modal, Select, Button, Progress, Typography, Tag, Input, message } from 'antd'
+import { SwapOutlined, FolderOpenOutlined } from '@ant-design/icons'
+import type { Host, TransferProgress, TransferEnd, TransferEndpoint, RelaySource, Credential } from '../bridge'
 import { bridge } from '../bridge'
 import { PathInput, BrowseModal } from './PathInput'
 import { FilterPicker, humanBytes } from './FilterPicker'
+import { AdHocHostFields, emptyAdHoc, adHocValid, adHocToEndpoint, type AdHocState } from './AdHocHostFields'
 
 const { Text } = Typography
 const LOCAL = 'local'
 
-type Direction = 'upload' | 'download'
+// Kind of one endpoint (source or destination). 'local' = this computer; 'host'
+// = a configured fleet host; 'adhoc' = an SSH host not in the fleet, reached via
+// a jump. A transfer needs one 'local' side; two remote sides is a relay (the
+// bytes stream through this machine); an ad-hoc destination is only reachable
+// from 'local' (relay always writes to a configured host).
+type Kind = 'local' | 'host' | 'adhoc'
 type HostProg = { transferred: number; total: number; done?: boolean; ok?: boolean; error?: string | null }
 
+const KIND_OPTIONS = [
+  { label: 'This computer', value: 'local' },
+  { label: 'Configured host', value: 'host' },
+  { label: 'Ad-hoc host', value: 'adhoc' },
+]
+
+// One modal for every SFTP move: download (host→local), upload (local→host, incl.
+// fan-out to several), and relay (host→host, or an ad-hoc source via a jump).
+// Pick a source and a destination — each This computer / a configured host / an
+// ad-hoc host — and the right engine is chosen on submit.
 export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   open: boolean
   onClose: () => void
@@ -19,9 +35,18 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   defaultRemoteHost?: string
 }) {
   const remoteHosts = hosts.filter(h => h.name !== LOCAL)
-  const [direction, setDirection] = useState<Direction>('download')
-  const [selectedHosts, setSelectedHosts] = useState<string[]>([])
+  const hostOptions = remoteHosts.map(h => ({ label: h.name, value: h.name, disabled: !h.connected }))
+
+  const [srcKind, setSrcKind] = useState<Kind>('host')
+  const [srcHost, setSrcHost] = useState('')
+  const [srcAdhoc, setSrcAdhoc] = useState<AdHocState>(emptyAdHoc)
+  const [dstKind, setDstKind] = useState<Kind>('local')
+  const [dstHosts, setDstHosts] = useState<string[]>([])
+  const [dstAdhoc, setDstAdhoc] = useState<AdHocState>(emptyAdHoc)
+  const [creds, setCreds] = useState<Credential[]>([])
+
   const [sourcePaths, setSourcePaths] = useState<string[]>([])
+  const [destName, setDestName] = useState('')
   const [filterName, setFilterName] = useState('')
   const [filterArg, setFilterArg] = useState('')
   const [browseSourceOpen, setBrowseSourceOpen] = useState(false)
@@ -35,42 +60,43 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   const idRef = useRef<string | null>(null)
   const checkRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const primaryHost = selectedHosts[0] ?? ''
-  const isFanout = direction === 'upload' && selectedHosts.length > 1
-  // Hosts the destination folder is missing on (flagged by the pre-flight check),
-  // and the hosts a fan-out will actually push to (the rest).
-  const missingHosts = isFanout && destChecks ? selectedHosts.filter(h => destChecks[h]?.exists === false) : []
-  const validHosts = isFanout ? selectedHosts.filter(h => !destChecks || destChecks[h]?.exists !== false) : selectedHosts
-  // upload = local → remote(s);  download = remote → local
-  const sourceHost = direction === 'upload' ? LOCAL : primaryHost
-  const destBrowseHost = direction === 'upload' ? primaryHost : LOCAL
+  // Fan-out (one local source → several configured hosts) is the only many-target
+  // shape; relay and ad-hoc are single-target.
+  const isFanout = srcKind === 'local' && dstKind === 'host' && dstHosts.length > 1
+  const bothLocal = srcKind === 'local' && dstKind === 'local'
+  const bothRemote = srcKind !== 'local' && dstKind !== 'local'
+  const relayDestUnsupported = bothRemote && dstKind !== 'host'
 
-  // Default the target host(s) once the modal opens and hosts have loaded — the
-  // list is empty on first mount (async get_hosts), so a plain useState
-  // initializer would leave the selector unset.
+  const srcOk = srcKind === 'local' || (srcKind === 'host' ? !!srcHost : adHocValid(srcAdhoc))
+  const dstOk = dstKind === 'local' || (dstKind === 'host' ? dstHosts.length > 0 : adHocValid(dstAdhoc))
+
+  const missingHosts = isFanout && destChecks ? dstHosts.filter(h => destChecks[h]?.exists === false) : []
+  const validHosts = isFanout ? dstHosts.filter(h => !destChecks || destChecks[h]?.exists !== false) : dstHosts
+
+  // Default the endpoints once the modal opens and hosts have loaded (the list is
+  // empty on first mount — a plain useState initializer would leave it unset).
   useEffect(() => {
     if (!open) return
-    setSelectedHosts(prev => {
-      const valid = prev.filter(h => remoteHosts.some(r => r.name === h))
-      if (valid.length) return valid
-      const def = (defaultRemoteHost && defaultRemoteHost !== LOCAL && remoteHosts.some(r => r.name === defaultRemoteHost))
-        ? defaultRemoteHost
-        : (remoteHosts.find(r => r.connected)?.name ?? remoteHosts[0]?.name)
-      return def ? [def] : []
-    })
+    const first = (defaultRemoteHost && defaultRemoteHost !== LOCAL && remoteHosts.some(r => r.name === defaultRemoteHost))
+      ? defaultRemoteHost
+      : (remoteHosts.find(r => r.connected)?.name ?? remoteHosts[0]?.name ?? '')
+    setSrcHost(prev => prev || first)
+    bridge.list_credentials().then(setCreds).catch(() => { /* feature optional */ })
   }, [open, hosts])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flipping direction swaps which side is local — clear the picked paths/progress
-  // and the chosen filter (the operator re-picks for the new direction).
-  useEffect(() => { setSourcePaths([]); setDestDir(''); setProgress(null); setHostProgress({}); setResult(null); setFilterName(''); setFilterArg('') }, [direction])
+  // Changing which machine the source is clears the picked (host-specific) paths.
+  useEffect(() => { setSourcePaths([]); setDestName(''); setProgress(null); setHostProgress({}); setResult(null); setFilterName(''); setFilterArg('') },
+    [srcKind, srcHost, srcAdhoc.jump, srcAdhoc.target])  // eslint-disable-line react-hooks/exhaustive-deps
+  // Changing the destination clears the (host-specific) destination folder.
+  useEffect(() => { setDestDir(''); setProgress(null); setHostProgress({}); setResult(null) },
+    [dstKind, dstAdhoc.jump, dstAdhoc.target, dstHosts.join(',')])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fan-out pre-flight: does the destination folder exist on every target host?
-  // (It's only browsed on the first host, so the others are unverified.)
   useEffect(() => {
     setDestChecks(null)
     if (!isFanout || !destDir) { setChecking(false); return }
     setChecking(true)
-    const hostsSnapshot = [...selectedHosts]
+    const hostsSnapshot = [...dstHosts]
     const dir = destDir
     if (checkRef.current) clearTimeout(checkRef.current)
     checkRef.current = setTimeout(async () => {
@@ -79,7 +105,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
       finally { setChecking(false) }
     }, 400)
     return () => { if (checkRef.current) clearTimeout(checkRef.current) }
-  }, [isFanout, destDir, selectedHosts.join(',')])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isFanout, destDir, dstHosts.join(',')])  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onProgress = (e: Event) => {
@@ -121,15 +147,30 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
     }
   }, [])
 
+  const srcEndpoint = (): TransferEndpoint => srcKind === 'local' ? LOCAL : srcKind === 'host' ? srcHost : adHocToEndpoint(srcAdhoc)
+  const dstEndpoint = (): TransferEndpoint => dstKind === 'local' ? LOCAL : dstKind === 'host' ? dstHosts[0] : adHocToEndpoint(dstAdhoc)
+
   const start = async () => {
     setProgress(null)
     setResult(null)
     setHostProgress(isFanout ? Object.fromEntries(validHosts.map(h => [h, { transferred: 0, total: 0 }])) : {})
-    const res = isFanout
-      ? await bridge.start_fanout(sourcePaths, validHosts, destDir, filterName || undefined, filterArg || undefined)
-      : direction === 'upload'
-        ? await bridge.start_transfer(LOCAL, sourcePaths, primaryHost, destDir, filterName || undefined, filterArg || undefined)
-        : await bridge.start_transfer(primaryHost, sourcePaths, LOCAL, destDir, filterName || undefined, filterArg || undefined)
+    // A new filename only applies to a single file (the backend rejects renaming
+    // several at once — the UI only offers it for one).
+    const rename = sourcePaths.length === 1 ? (destName.trim() || undefined) : undefined
+    let res: { id?: string; error?: string }
+    if (isFanout) {
+      res = await bridge.start_fanout(sourcePaths, validHosts, destDir, filterName || undefined, filterArg || undefined, rename)
+    } else if (!bothRemote) {
+      // Exactly one local side — a plain download/upload (either side may be ad-hoc).
+      res = await bridge.start_transfer(srcEndpoint(), sourcePaths, dstEndpoint(), destDir, filterName || undefined, filterArg || undefined, rename)
+    } else {
+      // Two remote sides — relay through this machine. The dest is a configured host.
+      const source: RelaySource = srcKind === 'adhoc' ? adHocToEndpoint(srcAdhoc) : { kind: 'host', host: srcHost }
+      res = await bridge.start_relay(source, sourcePaths, dstHosts[0], destDir, filterName || undefined, filterArg || undefined, rename)
+    }
+    // Never retain a typed ad-hoc password after handing it off.
+    setSrcAdhoc(a => ({ ...a, password: '' }))
+    setDstAdhoc(a => ({ ...a, password: '' }))
     if (res.error || !res.id) {
       message.error(res.error || 'Could not start transfer')
       setHostProgress({})
@@ -141,29 +182,56 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
 
   const cancel = () => { if (idRef.current) bridge.cancel_transfer(idRef.current) }
 
-  const canRun = (isFanout ? validHosts.length > 0 : selectedHosts.length > 0) && sourcePaths.length > 0 && !!destDir && !running
+  // Closing tears down any cached ad-hoc browse connection and drops passwords.
+  const handleClose = () => {
+    bridge.close_adhoc().catch(() => {})
+    setSrcAdhoc(a => ({ ...a, password: '' }))
+    setDstAdhoc(a => ({ ...a, password: '' }))
+    onClose()
+  }
+
+  const disabledReason = bothLocal
+    ? 'Pick a remote source or destination — a local-to-local copy isn’t a transfer.'
+    : relayDestUnsupported
+      ? 'An ad-hoc destination is only supported from This computer (relay writes to a configured host).'
+      : ''
+  const canRun = srcOk && dstOk && !bothLocal && !relayDestUnsupported
+    && sourcePaths.length > 0 && !!destDir && !running
+    && (!isFanout || validHosts.length > 0)
   const pct = progress && progress.total > 0 ? Math.round((progress.transferred / progress.total) * 100) : 0
   const fanRows = Object.keys(hostProgress)
 
-  const label = (t: string, host: string) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-      <Text style={{ fontSize: 12 }}>{t}</Text>
-      <Tag style={{ fontSize: 10, margin: 0 }}>{host || '—'}</Tag>
-    </div>
-  )
+  const srcBrowseHost = srcKind === 'local' ? LOCAL : srcKind === 'host' ? srcHost : (srcAdhoc.target.trim() || 'source')
+  const srcLister = srcKind === 'adhoc'
+    ? (path: string, dirsOnly: boolean) => bridge.list_dir_adhoc(srcAdhoc.jump, srcAdhoc.target.trim(), path, srcAdhoc.user.trim() || undefined, srcAdhoc.password || undefined, undefined, dirsOnly, srcAdhoc.credentialId || undefined)
+    : undefined
+  const dstBrowseHost = dstKind === 'local' ? LOCAL : dstKind === 'host' ? (dstHosts[0] || '') : (dstAdhoc.target.trim() || 'dest')
+  const dstLister = dstKind === 'adhoc'
+    ? (path: string, dirsOnly: boolean) => bridge.list_dir_adhoc(dstAdhoc.jump, dstAdhoc.target.trim(), path, dstAdhoc.user.trim() || undefined, dstAdhoc.password || undefined, undefined, dirsOnly, dstAdhoc.credentialId || undefined)
+    : undefined
+
+  const endpointLabel = (kind: Kind, host: string, adhoc: AdHocState) =>
+    kind === 'local' ? 'local' : kind === 'host' ? (host || '—') : (adhoc.target.trim() || 'ad-hoc')
+
+  const runLabel = isFanout ? `Push to ${validHosts.length} host${validHosts.length === 1 ? '' : 's'}` : bothRemote ? 'Relay' : 'Transfer'
 
   return (
     <Modal
       open={open}
-      onCancel={onClose}
-      width={560}
+      onCancel={handleClose}
+      width={600}
       title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><SwapOutlined /> Transfer files</span>}
       footer={
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Button onClick={onClose}>Close</Button>
-          {running
-            ? <Button danger onClick={cancel}>Cancel transfer</Button>
-            : <Button type="primary" disabled={!canRun} onClick={start}>{isFanout ? `Push to ${validHosts.length} host${validHosts.length === 1 ? '' : 's'}` : 'Transfer'}</Button>}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            {bothRemote ? 'Bytes stream through this machine — the two hosts never connect directly.' : ''}
+          </Text>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button onClick={handleClose}>Close</Button>
+            {running
+              ? <Button danger onClick={cancel}>Cancel transfer</Button>
+              : <Button type="primary" disabled={!canRun} onClick={start}>{runLabel}</Button>}
+          </div>
         </div>
       }
     >
@@ -171,61 +239,44 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
         <Text type="secondary">No remote hosts configured — add one to transfer files.</Text>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <Segmented
-              value={direction}
-              onChange={v => setDirection(v as Direction)}
-              options={[
-                { label: 'Download (remote → local)', value: 'download', icon: <CloudDownloadOutlined /> },
-                { label: 'Upload (local → remote)', value: 'upload', icon: <CloudUploadOutlined /> },
-              ]}
-            />
-            {direction === 'download' ? (
-              <Select
-                size="small"
-                value={primaryHost || undefined}
-                onChange={v => setSelectedHosts([v])}
-                placeholder="Remote host"
-                style={{ minWidth: 160 }}
-                options={remoteHosts.map(h => ({ label: h.name, value: h.name, disabled: !h.connected }))}
-              />
-            ) : (
-              <Select
-                size="small"
-                mode="multiple"
-                value={selectedHosts}
-                onChange={setSelectedHosts}
-                placeholder="Target host(s) — pick several to fan out"
-                style={{ minWidth: 240 }}
-                maxTagCount="responsive"
-                options={remoteHosts.map(h => ({ label: h.name, value: h.name, disabled: !h.connected }))}
-              />
+          {/* Source */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Text style={{ fontSize: 12, width: 76 }}>Source</Text>
+              <Select size="small" value={srcKind} onChange={v => setSrcKind(v as Kind)} style={{ width: 150 }} options={KIND_OPTIONS} />
+              {srcKind === 'host' && (
+                <Select size="small" value={srcHost || undefined} onChange={setSrcHost} placeholder="Source host" style={{ minWidth: 170 }} options={hostOptions} />
+              )}
+            </div>
+            {srcKind === 'adhoc' && (
+              <div style={{ marginLeft: 84 }}>
+                <AdHocHostFields value={srcAdhoc} onChange={setSrcAdhoc} hostOptions={hostOptions} creds={creds} />
+              </div>
             )}
           </div>
 
+          {/* Source files */}
           <div>
-            {label('Source files', sourceHost)}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <Text style={{ fontSize: 12 }}>Source files</Text>
+              <Tag style={{ fontSize: 10, margin: 0 }}>{endpointLabel(srcKind, srcHost, srcAdhoc)}</Tag>
+            </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
               {sourcePaths.map(p => (
-                <Tag
-                  key={p}
-                  closable
-                  title={p}
-                  onClose={() => setSourcePaths(prev => prev.filter(x => x !== p))}
-                  style={{ fontFamily: 'monospace', fontSize: 11 }}
-                >
+                <Tag key={p} closable title={p} onClose={() => setSourcePaths(prev => prev.filter(x => x !== p))} style={{ fontFamily: 'monospace', fontSize: 11 }}>
                   {p.split(/[\\/]/).pop()}
                 </Tag>
               ))}
-              <Button size="small" icon={<FolderOpenOutlined />} disabled={!sourceHost} onClick={() => setBrowseSourceOpen(true)}>
+              <Button size="small" icon={<FolderOpenOutlined />} disabled={!srcOk} onClick={() => setBrowseSourceOpen(true)}>
                 {sourcePaths.length ? 'Add files' : 'Choose files'}
               </Button>
             </div>
           </div>
           {browseSourceOpen && (
             <BrowseModal
-              host={sourceHost}
+              host={srcBrowseHost}
               multiSelect
+              lister={srcLister}
               onPickMany={paths => setSourcePaths(prev => Array.from(new Set([...prev, ...paths])))}
               onClose={() => setBrowseSourceOpen(false)}
             />
@@ -233,12 +284,52 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
 
           <FilterPicker filterName={filterName} filterArg={filterArg} onFilterName={setFilterName} onFilterArg={setFilterArg} />
 
+          {/* Destination */}
           <div>
-            {label('Destination folder', isFanout ? `${selectedHosts.length} hosts` : destBrowseHost)}
-            <PathInput host={destBrowseHost} value={destDir} onChange={setDestDir} dirsOnly placeholder="destination folder" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Text style={{ fontSize: 12, width: 76 }}>Destination</Text>
+              <Select size="small" value={dstKind} onChange={v => setDstKind(v as Kind)} style={{ width: 150 }} options={KIND_OPTIONS} />
+              {dstKind === 'host' && (
+                srcKind === 'local' ? (
+                  <Select
+                    size="small"
+                    mode="multiple"
+                    value={dstHosts}
+                    onChange={setDstHosts}
+                    placeholder="Target host(s) — pick several to fan out"
+                    style={{ minWidth: 240 }}
+                    maxTagCount="responsive"
+                    options={hostOptions}
+                  />
+                ) : (
+                  <Select size="small" value={dstHosts[0] || undefined} onChange={v => setDstHosts([v])} placeholder="Destination host" style={{ minWidth: 170 }} options={hostOptions} />
+                )
+              )}
+            </div>
+            {dstKind === 'adhoc' && (
+              <div style={{ marginLeft: 84, marginBottom: 6 }}>
+                <AdHocHostFields value={dstAdhoc} onChange={setDstAdhoc} hostOptions={hostOptions} creds={creds} />
+              </div>
+            )}
+            {relayDestUnsupported ? (
+              <Text type="warning" style={{ fontSize: 11 }}>{disabledReason}</Text>
+            ) : dstKind !== 'local' && (
+              <PathInput
+                host={dstBrowseHost}
+                value={destDir}
+                onChange={setDestDir}
+                dirsOnly
+                lister={dstLister}
+                browseDisabled={dstKind === 'adhoc' ? !adHocValid(dstAdhoc) : !dstBrowseHost}
+                placeholder="destination folder"
+              />
+            )}
+            {dstKind === 'local' && (
+              <PathInput host={LOCAL} value={destDir} onChange={setDestDir} dirsOnly placeholder="destination folder" />
+            )}
             {isFanout && (
               <Text type="secondary" style={{ fontSize: 10 }}>
-                Browsing {primaryHost} — the same path is written to all {selectedHosts.length} hosts.
+                Browsing {dstHosts[0]} — the same path is written to all {dstHosts.length} hosts.
               </Text>
             )}
             {isFanout && destDir && (
@@ -248,11 +339,29 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
                 missingHosts.length > 0 ? (
                   <div><Text type="warning" style={{ fontSize: 11 }}>⚠ Folder not found on {missingHosts.join(', ')} — these hosts will be skipped.</Text></div>
                 ) : (
-                  <div><Text type="success" style={{ fontSize: 11 }}>✓ Folder exists on all {selectedHosts.length} hosts.</Text></div>
+                  <div><Text type="success" style={{ fontSize: 11 }}>✓ Folder exists on all {dstHosts.length} hosts.</Text></div>
                 )
               ) : null
             )}
+            {sourcePaths.length === 1 && !bothLocal && !relayDestUnsupported && (
+              <div style={{ marginTop: 8 }}>
+                <Text style={{ fontSize: 12 }}>
+                  Rename on {dstKind === 'local' ? 'this computer' : 'target'}{' '}
+                  <Text type="secondary" style={{ fontSize: 11 }}>(optional)</Text>
+                </Text>
+                <Input
+                  size="small"
+                  allowClear
+                  value={destName}
+                  onChange={e => setDestName(e.target.value)}
+                  placeholder={`keep source name (${sourcePaths[0].split(/[\\/]/).pop()})`}
+                  style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}
+                />
+              </div>
+            )}
           </div>
+
+          {bothLocal && <Text type="warning" style={{ fontSize: 11 }}>{disabledReason}</Text>}
 
           {fanRows.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

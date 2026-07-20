@@ -470,13 +470,53 @@ class AgentToolsMixin:
                 },
             }
 
+        cred_ids = [str(c.get("id")) for c in self._credentials if c.get("id")]
+
+        def adhoc_source_props() -> dict[str, Any]:
+            """Ad-hoc source fields shared by download_file and relay_file — read
+            from an SSH host that is NOT in the fleet. Set source_target to the
+            hostname; add source_via only when the console can't reach it directly
+            (a jump to tunnel through), and source_credential for its password."""
+            props: dict[str, Any] = {
+                "source_target": {
+                    "type": "string",
+                    "description": (
+                        "Hostname of an ad-hoc source NOT in the fleet. The console "
+                        "connects to it directly unless source_via is also set."
+                    ),
+                },
+                "source_via": {
+                    "type": "string",
+                    "enum": remote,
+                    "description": (
+                        "Optional configured jump host to tunnel to source_target "
+                        "through — set only when the console can't reach the ad-hoc "
+                        "host directly. Omit for a directly reachable host."
+                    ),
+                },
+            }
+            if cred_ids:
+                props["source_credential"] = {
+                    "type": "string",
+                    "enum": cred_ids,
+                    "description": (
+                        "Saved credential id providing the SSH password for the ad-hoc "
+                        "source (source_via + source_target). Its secret is read from "
+                        "secure storage at connect time — you never see the value. "
+                        f"Available: {', '.join(cred_ids)}."
+                    ),
+                }
+            return props
+
         download = {
             "name": "download_file",
             "description": (
-                "Download a file from a remote host to the local machine. Optionally "
-                "filter it on the remote host first — only the matching output is "
-                "transferred, so pulling a few relevant lines out of a multi-gigabyte "
-                "log is cheap."
+                "Download a file from a remote host to the local machine. The source "
+                "is either a configured fleet host (host) or an ad-hoc host not in "
+                "the fleet, reached through a configured jump (source_via + "
+                "source_target). Optionally filter it on the remote host first — only "
+                "the matching output is transferred, so pulling a few relevant lines "
+                "out of a multi-gigabyte log is cheap."
             ),
             "input_schema": {
                 "type": "object",
@@ -484,7 +524,11 @@ class AgentToolsMixin:
                     "host": {
                         "type": "string",
                         "enum": remote,
-                        "description": "Remote host to download from.",
+                        "description": (
+                            "Configured fleet host to download from. Omit when "
+                            "reading from an ad-hoc host via source_via + "
+                            "source_target instead."
+                        ),
                     },
                     "path": {
                         "type": "string",
@@ -494,12 +538,19 @@ class AgentToolsMixin:
                         "type": "string",
                         "description": "Local destination directory.",
                     },
+                    "dest_name": {
+                        "type": "string",
+                        "description": (
+                            "Optional new filename for the downloaded file (a bare "
+                            "filename, no path). Omit to keep the source's name."
+                        ),
+                    },
+                    **adhoc_source_props(),
                     **filter_props(),
                 },
-                "required": ["host", "path", "dest_dir"],
+                "required": ["path", "dest_dir"],
             },
         }
-        cred_ids = [str(c.get("id")) for c in self._credentials if c.get("id")]
         relay_source_props: dict[str, Any] = {
             "source_host": {
                 "type": "string",
@@ -509,33 +560,8 @@ class AgentToolsMixin:
                     "ad-hoc host via source_via + source_target instead."
                 ),
             },
-            "source_via": {
-                "type": "string",
-                "enum": remote,
-                "description": (
-                    "To read from a host that is NOT in the fleet, the configured "
-                    "jump host to tunnel through. Use with source_target (and "
-                    "source_credential if the ad-hoc host needs a password)."
-                ),
-            },
-            "source_target": {
-                "type": "string",
-                "description": (
-                    "Hostname of the ad-hoc source reached through source_via."
-                ),
-            },
+            **adhoc_source_props(),
         }
-        if cred_ids:
-            relay_source_props["source_credential"] = {
-                "type": "string",
-                "enum": cred_ids,
-                "description": (
-                    "Saved credential id providing the SSH password for the ad-hoc "
-                    "source (source_via + source_target). Its secret is read from "
-                    "secure storage at connect time — you never see the value. "
-                    f"Available: {', '.join(cred_ids)}."
-                ),
-            }
         relay = {
             "name": "relay_file",
             "description": (
@@ -561,6 +587,13 @@ class AgentToolsMixin:
                     "dest_dir": {
                         "type": "string",
                         "description": "Destination directory on dest_host.",
+                    },
+                    "dest_name": {
+                        "type": "string",
+                        "description": (
+                            "Optional new filename on dest_host (a bare filename, no "
+                            "path). Omit to keep the source's name."
+                        ),
                     },
                     **filter_props(),
                 },
@@ -2691,38 +2724,58 @@ class AgentToolsMixin:
         filter_name = str(ti.get("filter") or "")
         filter_value = ti.get("filter_value")
         dest_dir = ti.get("dest_dir")
+        dest_name = ti.get("dest_name")
         if name == "download_file":
-            host, path = ti.get("host"), ti.get("path")
-            if not host or not path or not dest_dir:
-                return "Error: host, path and dest_dir are required."
+            path = ti.get("path")
+            if not path or not dest_dir:
+                return "Error: path and dest_dir are required."
+            host = ti.get("host")
+            via, target = ti.get("source_via"), ti.get("source_target")
+            if target:
+                src: Any = {
+                    "kind": "adhoc",
+                    "host": target,
+                    "jump": via or "",
+                    "credential_id": ti.get("source_credential"),
+                }
+                src_label = f"{target} via {via}" if via else str(target)
+            elif host:
+                src = host
+                src_label = str(host)
+            else:
+                return (
+                    "Error: provide host (a fleet host), or source_target (an "
+                    "ad-hoc host, with source_via only if a jump is needed)."
+                )
             res = self.start_transfer(
-                host, [path], "local", dest_dir, filter_name, filter_value
+                src, [path], "local", dest_dir, filter_name, filter_value, dest_name
             )
-            label = f"download of {os.path.basename(path)} from {host}"
+            landed = dest_name or os.path.basename(path)
+            label = f"download of {landed} from {src_label}"
         elif name == "relay_file":
             path, dh = ti.get("path"), ti.get("dest_host")
             if not path or not dh or not dest_dir:
                 return "Error: path, dest_host and dest_dir are required."
             sh = ti.get("source_host")
             via, target = ti.get("source_via"), ti.get("source_target")
-            if via and target:
+            if target:
                 source: dict[str, Any] = {
                     "kind": "adhoc",
                     "host": target,
-                    "jump": via,
+                    "jump": via or "",
                     "credential_id": ti.get("source_credential"),
                 }
-                src_label = f"{target} via {via}"
+                src_label = f"{target} via {via}" if via else str(target)
             elif sh:
                 source = {"kind": "host", "host": sh}
                 src_label = str(sh)
             else:
                 return (
-                    "Error: provide source_host (a fleet host), or source_via + "
-                    "source_target for an ad-hoc source."
+                    "Error: provide source_host (a fleet host), or source_target "
+                    "(an ad-hoc host, with source_via only if a jump is needed)."
                 )
             res = self.start_relay(
-                source, [path], dh, dest_dir, filter_name, filter_value
+                source, [path], dh, dest_dir, filter_name, filter_value, dest_name
             )
             label = f"relay of {os.path.basename(path)} from {src_label} to {dh}"
         else:
