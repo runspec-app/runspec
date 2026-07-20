@@ -15,7 +15,8 @@ import pytest
 from runspec_console.adapters.anthropic import AnthropicAdapter
 
 CLIENT = "runspec_console.adapters.anthropic.anthropic.AsyncAnthropic"
-RUN = "runspec_console.adapters.anthropic.subprocess.run"
+# api_key_command now runs through the shared helper in adapters.base.
+RUN = "runspec_console.adapters.base.subprocess.run"
 MONOTONIC = "runspec_console.adapters.anthropic.time.monotonic"
 
 

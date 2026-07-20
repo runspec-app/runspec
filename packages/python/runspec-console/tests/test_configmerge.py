@@ -119,3 +119,81 @@ def test_fold_layers_collection_merges_by_identity():
 def test_fold_layers_single_layer_is_identity():
     one = {"runbook": [{"id": "a"}]}
     assert cm.fold_layers("runspec_runbooks.toml", [one]) == one
+
+
+# ── seed_overrides (what a re-assert would silently revert) ───────────────────────
+
+
+def test_seed_overrides_mapping_reports_only_differing_existing_keys():
+    seed = {
+        "llm": {"provider": "mycorp", "api_key_command": "get-key"},
+        "new": {"k": 1},
+    }
+    local = {"llm": {"provider": "mycorp", "api_key_command": "C:/venv/Scripts/gk"}}
+    rows = cm.seed_overrides("config.toml", seed, local, [])
+    # provider matches (no row); api_key_command differs (a row); llm.* new key and
+    # the whole [new] table are ADDs (local unset) → omitted.
+    assert [r["path"] for r in rows] == ["llm.api_key_command"]
+    r = rows[0]
+    assert r["file"] == "config.toml"
+    assert r["seed"] == "get-key"
+    assert r["local"] == "C:/venv/Scripts/gk"
+    assert r["preserved"] is False
+
+
+def test_seed_overrides_mapping_flags_preserved_leaf():
+    seed = {"llm": {"api_key_command": "get-key"}}
+    local = {"llm": {"api_key_command": "my-local-cmd"}}
+    preserve = [["llm", "api_key_command"]]
+    rows = cm.seed_overrides("config.toml", seed, local, preserve)
+    assert len(rows) == 1 and rows[0]["preserved"] is True
+
+
+def test_seed_overrides_mapping_preserving_a_table_covers_its_leaves():
+    seed = {"llm": {"api_key_command": "get-key"}}
+    local = {"llm": {"api_key_command": "mine"}}
+    rows = cm.seed_overrides("config.toml", seed, local, [["llm"]])
+    assert rows[0]["preserved"] is True  # preserving [llm] protects the leaf
+
+
+def test_seed_overrides_collection_diffs_by_identity_field():
+    seed = {"credential": [{"id": "svc", "label": "Svc", "username": "seed-user"}]}
+    local = {"credential": [{"id": "svc", "label": "Svc", "username": "real-user"}]}
+    rows = cm.seed_overrides("runspec_credentials.toml", seed, local, [])
+    assert [r["path"] for r in rows] == ["svc.username"]
+    assert rows[0]["seed"] == "seed-user" and rows[0]["local"] == "real-user"
+
+
+def test_seed_overrides_collection_new_entry_or_field_is_not_an_override():
+    seed = {
+        "credential": [
+            {"id": "svc", "label": "Svc", "username": "u", "secret_arg": "pw"},
+            {"id": "brand-new", "label": "New"},
+        ]
+    }
+    local = {"credential": [{"id": "svc", "label": "Svc", "username": "u"}]}
+    rows = cm.seed_overrides("runspec_credentials.toml", seed, local, [])
+    # svc.username matches; svc.secret_arg is a new field (add); brand-new is a new
+    # entry (add) → nothing reported.
+    assert rows == []
+
+
+def test_seed_overrides_collection_flags_preserved_field_wildcard():
+    seed = {"credential": [{"id": "svc", "username": "seed-user"}]}
+    local = {"credential": [{"id": "svc", "username": "real-user"}]}
+    rows = cm.seed_overrides(
+        "runspec_credentials.toml", seed, local, [["*", "username"]]
+    )
+    assert rows[0]["preserved"] is True
+
+
+def test_seed_overrides_absent_local_yields_nothing():
+    seed = {"llm": {"api_key_command": "get-key"}}
+    assert cm.seed_overrides("config.toml", seed, {}, []) == []
+
+
+def test_seed_overrides_truncates_long_values():
+    seed = {"a": {"b": "x" * 500}}
+    local = {"a": {"b": "y"}}
+    rows = cm.seed_overrides("config.toml", seed, local, [])
+    assert len(rows[0]["seed"]) == 200 and rows[0]["seed"].endswith("…")

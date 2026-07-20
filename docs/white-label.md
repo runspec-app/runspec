@@ -154,6 +154,21 @@ tag  = "v1"
 proxy = "http://proxy.mycorp.example:8080"       # your network's realities
 ```
 
+**`api_key_command` resolves relative to the install.** A seeded key helper is
+commonly a console-script you ship in the *same wheel*
+(`[project.scripts] mycorp-auth = "mycorp_console.auth:main"`), but the venv can
+be created anywhere — so `api_key_command` runs with **this venv's script
+directory prepended to `PATH`**, and seeding the bare command
+(`api_key_command = "mycorp-auth token --scope llm"`) resolves wherever the venv
+lives (a hardcoded `Scripts/`/`bin/` path would not). Two env vars are also
+exported for a module-style helper: **`RUNSPEC_PYTHON`** (this venv's
+interpreter) and **`RUNSPEC_VENV`** (its root) —
+`api_key_command = '"$RUNSPEC_PYTHON" -m mycorp_console.auth token'`
+(`%RUNSPEC_PYTHON%` under `cmd`). The secret itself is never seeded — only the
+command that fetches it. Because a venv-relative command is correct on every
+machine, no operator ever needs to override it locally, so re-assert-on-upgrade
+(below) never fights you over this key.
+
 **`runspec_hosts.toml`** — the fleet, ready in the sidebar on first launch:
 
 ```toml
@@ -195,9 +210,21 @@ the seed re-folds onto the local config through the same non-destructive
 merge Config Sync uses — collections merge by `name`/`id`, `config.toml`
 deep-overlays, and the operator's local edits and `preserve`-pinned keys win.
 So shipping `mycorp-console 1.1.0` with an updated seed rolls the baseline
-forward on the next launch, without stomping local changes. Operators can see
-the seed's status (and force a re-apply) under **Settings → Config Sync →
-Config seed**.
+forward on the next launch, without stomping local changes.
+
+The one thing to brief operators on: a re-assert **does** overlay the seed's
+value on top of local for any *seed-shipped* key it declares — so an operator
+who edited a seeded key in place (rather than adding their own entry or
+`preserve`-ing it) sees it revert on the next upgrade. That's the point of a
+package-controlled baseline, but it shouldn't surprise anyone. **Settings →
+Config Sync → Config seed** makes it visible: alongside the seed's status and a
+**Re-apply seed** button, it lists any **local values a re-assert would
+overwrite** — with their `local → seed` values and a hint to add the key to
+*Preserve* — and, separately, the ones a `preserve` rule already protects. So an
+operator can spot and pin a machine-specific edit *before* an upgrade reverts it.
+Design a key you expect operators to own (a machine-local path, a personal
+account name) to be `preserve`d from the start, or seed it as a separate entry
+they can override.
 
 ---
 

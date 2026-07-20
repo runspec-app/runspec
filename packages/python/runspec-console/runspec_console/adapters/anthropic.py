@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-import subprocess
 import time
 from typing import Any
 
 import anthropic
 
-from .base import ChatResponse, ModelAdapter, ToolCall, apply_prompt_caching
+from .base import (
+    ChatResponse,
+    ModelAdapter,
+    ToolCall,
+    apply_prompt_caching,
+    run_api_key_command,
+)
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 # Output-token ceiling per request. A ceiling, not a target — billed only when
@@ -40,7 +45,11 @@ class AnthropicAdapter(ModelAdapter):
             base_url: Override the Anthropic API endpoint (e.g. a corporate AI proxy).
             api_key_command: Shell command whose stdout (stripped) is used as the
                 API key. Mirrors Claude Code's apiKeyHelper. When set, api_key is
-                ignored and the client is (re)built from the command's output.
+                ignored and the client is (re)built from the command's output. Run
+                with the current venv made discoverable (this venv's script dir on
+                PATH, plus RUNSPEC_PYTHON / RUNSPEC_VENV) so a helper shipped into
+                the venv resolves wherever the venv was created — see
+                ``base.run_api_key_command``.
             api_key_ttl_ms: How long to cache the command's result before re-running
                 it. 0 re-runs the command on every request.
             max_tokens: Output-token ceiling per request (``[llm] max_tokens``).
@@ -81,17 +90,7 @@ class AnthropicAdapter(ModelAdapter):
             and (now - self._key_fetched_at) < self._api_key_ttl_s
         ):
             return  # cached key still valid
-        result = subprocess.run(
-            self._api_key_command,
-            capture_output=True,
-            text=True,
-            shell=True,
-        )
-        key = result.stdout.strip()
-        if not key:
-            raise RuntimeError(
-                f"api_key_command returned no output (exit {result.returncode}): {result.stderr.strip()}"
-            )
+        key = run_api_key_command(self._api_key_command)
         self._cached_key = key
         self._key_fetched_at = now
         self.client = anthropic.AsyncAnthropic(**self._client_kwargs(key))

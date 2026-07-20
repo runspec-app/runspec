@@ -8,6 +8,48 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.179.0] — 2026-07-20
+
+### Added
+- **Config seed surfaces which local values it would overwrite.** The seed is the
+  lowest config layer, but on a re-assert (a package upgrade, or **Re-apply
+  seed**) it overlays its values on top of local for every key it declares — so an
+  operator who edited a seed-shipped key (an `api_key_command`, a credential
+  `username`, a host field) saw it silently revert unless it was `preserve`d.
+  `seed_status()` now also returns **`overrides`** — the seeded leaf keys whose
+  current *local* value differs from the seed's, each flagged `preserved` when a
+  preserve rule already pins it local. Settings → Config Sync → **Config seed**
+  renders them ahead of the next upgrade: a warning listing the unprotected local
+  edits a re-assert would overwrite (with `local → seed` values and the hint to
+  add the key to *Preserve*), plus a separate, non-alarming list of the ones a
+  preserve rule already keeps. The diff is the pure, unit-tested
+  `configmerge.seed_overrides` computed against each bundled file folded to its
+  effective table (the custom-merged `runspec_triggers.toml` is skipped);
+  read-only and best-effort — it never blocks the status. See
+  `docs/design/config-seed.md` §8.
+
+
+## [0.178.0] — 2026-07-20
+
+### Changed
+- **`api_key_command` now runs venv-relative, so a seeded key helper resolves
+  wherever the venv lives.** A config-seed (or Config Sync) commonly ships the
+  API-key helper into the same venv as the console rather than seeding a static
+  `[llm] api_key` (a secret, never seeded), but the venv can be created anywhere —
+  a seeded command hardcoding a path into `Scripts/`/`bin/` broke on a machine
+  whose venv lived elsewhere. `api_key_command` is now executed with the current
+  venv made discoverable: the venv's script dir is **prepended to `PATH`** (ship
+  the helper as a console-script and seed the bare name, e.g.
+  `api_key_command = "get-key"`), and **`RUNSPEC_PYTHON`** (`sys.executable`) +
+  **`RUNSPEC_VENV`** (`sys.prefix`) are exported for a module helper
+  (`api_key_command = '"$RUNSPEC_PYTHON" -m yourpkg.getkey'`). Because a
+  venv-relative command is correct on every machine, re-assert-on-upgrade is no
+  longer a hazard for this key. The anthropic and langserve adapters now share one
+  `adapters/base.run_api_key_command` / `api_key_command_env` helper instead of
+  each running the command with the bare inherited environment. See
+  `docs/design/config-seed.md` §11a.
+
+
 ## [0.177.1] — 2026-07-20
 
 ### Fixed

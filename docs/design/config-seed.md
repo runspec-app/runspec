@@ -258,6 +258,19 @@ The stamp guard (§6) is what makes this cheap: between upgrades the seed is a p
 no-op (stamp unchanged → return early, zero file writes, zero backups), so there's
 no per-boot churn.
 
+**Making the tension visible.** So a re-assert doesn't silently revert an
+operator's edit, `seed_status` also returns an **`overrides`** list — the seeded
+leaf keys whose *current local* value differs from the seed's, each flagged
+`preserved` when a `preserve` rule already pins it local. The Settings → Config
+Sync → Config seed panel shows these ahead of the next upgrade / **Re-apply**: a
+warning listing the unprotected local edits a re-assert would overwrite (with the
+`local → seed` values and the hint to add the key to *Preserve*), and a separate,
+non-alarming list of the ones a preserve rule already keeps. The diff is computed
+by the pure `configmerge.seed_overrides(name, effective, local, preserve)` against
+each bundled file folded to its effective table (the custom-merged
+`runspec_triggers.toml` is skipped); it's read-only and best-effort — never
+blocks status.
+
 ## 9. Reused vs. new
 
 **Reused:**
@@ -310,6 +323,41 @@ no per-boot churn.
 | S4 | UI status (small) | Config Sync tab: "Bundled: `<dist> v<ver>`" + last-applied + **Re-apply seed** (`seed_status`/`seed_apply`). | ✅ |
 | S5 | Tests | `test_configseed.py`, `test_seed_apply.py` (see §13). | ✅ |
 | S6 | Docs + version | This doc → "shipped"; CLAUDE.md status note; console version bump + `## [x]` CHANGELOG entry. | ✅ |
+
+## 11a. Seeding an `api_key_command` (venv-relative execution)
+
+A brand package usually fetches the API key from a helper it ships **into the
+same venv** rather than seeding a static `[llm] api_key` (which is a secret and
+never seeded, §10). The catch: the venv can be created anywhere, so a seeded
+`api_key_command` that hardcodes a path into the venv's `Scripts/` (Windows) or
+`bin/` (POSIX) breaks on a machine whose venv lives elsewhere.
+
+`api_key_command` is therefore executed with the **current venv made
+discoverable** (`adapters/base.run_api_key_command` / `api_key_command_env`),
+so a seeded command can be **venv-relative** and resolve wherever the venv was
+created:
+
+* **`PATH`** — this venv's script dir is prepended. Ship your key helper as a
+  console-script entry point in the same wheel and seed the bare name:
+
+  ```toml
+  # config_seed/config.toml
+  [llm]
+  api_key_command = "get-key"        # a console-script installed into this venv
+  ```
+
+* **`RUNSPEC_PYTHON`** — the venv interpreter (`sys.executable`), for a module
+  helper: `api_key_command = '"$RUNSPEC_PYTHON" -m mycorp_console.getkey'`
+  (`%RUNSPEC_PYTHON%` under `cmd`).
+* **`RUNSPEC_VENV`** — the venv root (`sys.prefix`), to locate other bundled
+  files relative to the install.
+
+Because a venv-relative command is correct on every machine, re-assert-on-upgrade
+(§8) is a feature here, not a hazard — there's no per-machine local override to
+protect. If you *do* keep a machine-specific command, pin it with
+`preserve = ["config.toml:llm.api_key_command"]` so the seed can't re-assert over
+it. (The **secret** itself — a service-account password, an `api_key` — is never
+seeded; only its *fetch command* is.)
 
 ## 12. Out of scope (follow-ups)
 

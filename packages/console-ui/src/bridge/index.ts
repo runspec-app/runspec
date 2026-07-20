@@ -188,12 +188,25 @@ export interface SyncPullResult {
 // bundled inside the deployment package. `stamp`/`applied` map distribution name
 // → version; `pending` is true when what's bundled differs from what's applied
 // (a re-assert will run on next launch, or via the Re-apply button now).
+// One seeded leaf key whose current *local* value differs from the seed's — what
+// a re-assert (or the next package upgrade) would silently revert. `path` is the
+// dotted key (mapping files) or `<id>.<field>` (collection files); `preserved` is
+// true when a `preserve` rule pins it local, so a re-assert would NOT override it.
+export interface SeedOverride {
+  file: string
+  path: string
+  seed: string
+  local: string
+  preserved: boolean
+}
+
 export interface SeedStatus {
   available: boolean
   stamp: Record<string, string>
   applied: Record<string, string>
   last_applied: string
   pending: boolean
+  overrides?: SeedOverride[]
 }
 
 // Validated white-label theme (`[console.theme]`). Every field optional; an

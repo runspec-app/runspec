@@ -757,7 +757,10 @@ export const mockApi: BridgeApi = {
   save_sync_config: async (data) => { console.log('[mock] save_sync_config', data) },
   list_sync_tags: async () => ({ tags: ['v1.2.0', 'v1.1.0', 'v1.0.0'] }),
   sync_pull: async () => { console.log('[mock] sync_pull'); return { ok: true, ref: 'v1.2.0', commit: 'a1b2c3d4e5f6', written: ['config.toml', 'runspec_hosts.toml'], skipped: [], backups: ['config.toml.bak-20260616-043000'], pruned: [] } },
-  seed_status: async () => ({ available: true, stamp: { 'mycorp-console': '1.4.0' }, applied: { 'mycorp-console': '1.4.0' }, last_applied: '2026-06-29T09:15:00Z', pending: false }),
+  seed_status: async () => ({ available: true, stamp: { 'mycorp-console': '1.4.0' }, applied: { 'mycorp-console': '1.4.0' }, last_applied: '2026-06-29T09:15:00Z', pending: false, overrides: [
+    { file: 'config.toml', path: 'llm.api_key_command', seed: 'get-key', local: 'C:/venv/Scripts/get-key.exe', preserved: false },
+    { file: 'runspec_credentials.toml', path: 'svc-prod.username', seed: 'svc_runner', local: 'j.finestone', preserved: true },
+  ] }),
   seed_apply: async (force) => { console.log('[mock] seed_apply', force); return { ok: true, applied: true, stamp: { 'mycorp-console': '1.4.0' }, written: ['config.toml'], skipped: [], backups: [], pruned: [] } },
   get_docs_config: async () => ({ dir: '', default: '/home/user/.config/runspec-console/docs' }),
   save_docs_config: async (dest_dir) => { console.log('[mock] save_docs_config', dest_dir) },

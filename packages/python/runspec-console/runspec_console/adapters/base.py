@@ -7,6 +7,10 @@ can be ported between the two packages without changes.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import sysconfig
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable
@@ -57,6 +61,65 @@ def is_output_truncation(stop_reason: str | None) -> bool:
     Part of the adapter contract: a custom adapter should return one of these
     (canonically ``"max_tokens"``) when its provider reports a length cutoff."""
     return (stop_reason or "").strip().lower() in _OUTPUT_TRUNCATION_STOPS
+
+
+# ── api_key_command execution ─────────────────────────────────────────────────
+#
+# A corporate deployment often fetches the API key from a shipped helper rather
+# than storing a static key. The helper is commonly a console-script installed
+# into the same venv as the console — but the venv can be created anywhere, so a
+# hardcoded path into its ``Scripts/`` / ``bin/`` breaks. These functions run the
+# command with the current venv made discoverable, so a config-seed can carry a
+# venv-relative command that resolves wherever the venv lives.
+
+
+def api_key_command_env() -> dict[str, str]:
+    """Environment for running ``api_key_command``, made venv-location-independent.
+
+    Starts from the current process environment and adds, so a key helper shipped
+    alongside the console is reachable no matter where the venv was created:
+
+      * ``PATH``           — the venv's script dir (``sysconfig`` ``scripts`` path,
+        i.e. ``Scripts`` on Windows / ``bin`` on POSIX) is **prepended**, so a
+        console-script installed into this venv (e.g. ``get-key``) resolves by
+        bare name — the seed can ship ``api_key_command = "get-key"``.
+      * ``RUNSPEC_PYTHON`` — ``sys.executable`` (this venv's interpreter), for a
+        module helper: ``api_key_command = '"$RUNSPEC_PYTHON" -m yourpkg.getkey'``
+        (``%RUNSPEC_PYTHON%`` under ``cmd``).
+      * ``RUNSPEC_VENV``   — ``sys.prefix`` (the venv root), for anything that
+        needs to locate other bundled files relative to the install.
+    """
+    env = dict(os.environ)
+    scripts = sysconfig.get_path("scripts") or os.path.dirname(sys.executable)
+    if scripts:
+        env["PATH"] = scripts + os.pathsep + env.get("PATH", "")
+    env["RUNSPEC_PYTHON"] = sys.executable
+    env["RUNSPEC_VENV"] = sys.prefix
+    return env
+
+
+def run_api_key_command(command: str) -> str:
+    """Run ``api_key_command`` via the shell and return its stripped stdout (the key).
+
+    Executed with :func:`api_key_command_env`, so a helper shipped into the venv
+    resolves wherever the venv was created. Raises ``RuntimeError`` (exit code +
+    stderr) when the command produces no output — the shared error every adapter
+    surfaced individually before.
+    """
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        shell=True,
+        env=api_key_command_env(),
+    )
+    key = result.stdout.strip()
+    if not key:
+        raise RuntimeError(
+            f"api_key_command returned no output (exit {result.returncode}): "
+            f"{result.stderr.strip()}"
+        )
+    return key
 
 
 class ModelAdapter(ABC):

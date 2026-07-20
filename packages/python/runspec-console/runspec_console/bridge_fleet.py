@@ -1218,16 +1218,18 @@ class FleetMixin:
 
         Returns the discovered ``{dist: version}`` stamp (what the installed
         package bundles now), the machine-local applied stamp + timestamp (what
-        was last applied here), whether any seed is bundled at all, and whether
+        was last applied here), whether any seed is bundled at all, whether
         the bundled version differs from the applied one (a re-assert is
         ``pending`` — e.g. just after a package upgrade, before the next
-        launch). Never raises."""
+        launch), and **``overrides``** — the seeded keys whose current *local*
+        value differs from the seed's, so an operator can see what a re-assert
+        (or the next upgrade) would silently revert. Never raises."""
         from . import configseed
 
         try:
             _fetched, stamp = configseed.discover()
         except Exception:  # noqa: BLE001 - status must never be fatal
-            stamp = {}
+            _fetched, stamp = {}, {}
         state = config_mod.read_seed_state()
         applied = state.get("applied", {})
         if not isinstance(applied, dict):
@@ -1238,7 +1240,60 @@ class FleetMixin:
             "applied": applied,
             "last_applied": str(state.get("last_applied", "")),
             "pending": bool(stamp) and stamp != applied,
+            "overrides": self._seed_overrides(_fetched),
         }
+
+    def _seed_overrides(self, fetched: dict[str, list[bytes]]) -> list[dict[str, Any]]:
+        """The seeded leaf keys whose current local value differs from the seed's.
+
+        For each bundled file, folds the seed's layers to its effective table and
+        diffs it against the on-disk local file, honouring the same ``preserve``
+        list ``seed_apply`` uses (so a protected key is flagged, not hidden). The
+        custom-merged triggers file is skipped (its diff would be misleading).
+        Best-effort — any failure yields ``[]`` rather than breaking the status."""
+        from . import configmerge, gitsync
+
+        if not fetched:
+            return []
+        try:
+            preserve = configmerge.parse_preserve(
+                [
+                    *configmerge.DEFAULT_PRESERVE,
+                    *_SEED_PRESERVE,
+                    *(self.get_config().get("config_sync", {}).get("preserve") or []),
+                ]
+            )
+            rows: list[dict[str, Any]] = []
+            for name in gitsync.KNOWN_FILES:
+                if name not in fetched or name == "runspec_triggers.toml":
+                    continue
+                parsed_layers = [
+                    tomllib.loads(d.decode("utf-8")) for d in fetched[name]
+                ]
+                effective = configmerge.fold_layers(name, parsed_layers)
+                local = self._local_native_table(name)
+                rows.extend(
+                    configmerge.seed_overrides(
+                        name, effective, local, preserve.get(name, [])
+                    )
+                )
+            return rows
+        except Exception:  # noqa: BLE001 - status must never be fatal
+            logger.debug("seed override computation failed", exc_info=True)
+            return []
+
+    def _local_native_table(self, name: str) -> dict[str, Any]:
+        """Parse the on-disk local config file ``name`` into its native top-level
+        shape (``{}`` when absent/unreadable) — the operator's actual values, for
+        comparing against the folded seed."""
+        path = config_mod.app_dir() / name
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "rb") as fh:
+                return tomllib.load(fh)
+        except Exception:  # noqa: BLE001
+            return {}
 
     def _prune_backups(self, app: Path, name: str, keep: int) -> list[str]:
         """Delete all but the ``keep`` most recent ``<name>.bak-<ts>`` files.

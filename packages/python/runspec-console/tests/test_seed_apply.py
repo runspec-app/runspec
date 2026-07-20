@@ -26,6 +26,9 @@ class _SeedBridge:
     """Borrows the real seed/apply machinery; stubs the app-lifecycle reactions."""
 
     seed_apply = Bridge.seed_apply
+    seed_status = Bridge.seed_status
+    _seed_overrides = Bridge._seed_overrides
+    _local_native_table = Bridge._local_native_table
     _apply_config_layers = Bridge._apply_config_layers
     _atomic_write_bytes = Bridge._atomic_write_bytes
     _merge_synced_file = Bridge._merge_synced_file
@@ -227,6 +230,61 @@ def test_seed_config_sync_keeps_local_last_state(monkeypatch, tmp_path):
     assert sync["ref"] == "v2"
     assert sync["last_ref"] == "v1"  # machine-local run-state preserved
     assert sync["last_commit"] == "deadbeef"
+
+
+# ── seed_status overrides (what a re-assert would silently revert) ────────────────
+
+
+def test_seed_status_reports_local_overrides(monkeypatch, tmp_path):
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {"config.toml": [b'[llm]\nprovider = "mycorp"\napi_key_command = "get-key"\n']},
+        {"mycorp-console": "1.0.0"},
+    )
+    # the operator set a different api_key_command locally (venv-specific path)
+    cfg.write_config(
+        {"llm": {"provider": "mycorp", "api_key_command": "C:/venv/Scripts/gk"}}
+    )
+    st = _SeedBridge().seed_status()
+
+    over = {r["path"]: r for r in st["overrides"]}
+    assert "llm.api_key_command" in over  # differs → surfaced
+    assert "llm.provider" not in over  # matches → not surfaced
+    row = over["llm.api_key_command"]
+    assert row["file"] == "config.toml"
+    assert row["seed"] == "get-key"
+    assert row["local"] == "C:/venv/Scripts/gk"
+    assert row["preserved"] is False
+
+
+def test_seed_status_flags_preserved_override(monkeypatch, tmp_path):
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {"config.toml": [b'[llm]\napi_key_command = "get-key"\n']},
+        {"mycorp-console": "1.0.0"},
+    )
+    cfg.write_config(
+        {
+            "llm": {"api_key_command": "mine"},
+            "config_sync": {"preserve": ["config.toml:llm.api_key_command"]},
+        }
+    )
+    st = _SeedBridge().seed_status()
+    row = next(r for r in st["overrides"] if r["path"] == "llm.api_key_command")
+    assert row["preserved"] is True  # a re-assert would NOT override it
+
+
+def test_seed_status_no_overrides_when_local_matches(monkeypatch, tmp_path):
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {"config.toml": [b'[llm]\nprovider = "mycorp"\n']},
+        {"mycorp-console": "1.0.0"},
+    )
+    cfg.write_config({"llm": {"provider": "mycorp"}})
+    assert _SeedBridge().seed_status()["overrides"] == []
 
 
 def test_malformed_seed_aborts(monkeypatch, tmp_path):

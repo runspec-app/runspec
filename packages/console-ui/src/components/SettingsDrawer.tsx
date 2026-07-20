@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedApplyResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -2967,6 +2967,42 @@ function ConfigSyncTab() {
               Last applied at {seed.last_applied}
             </Text>
           )}
+          {seed.overrides && seed.overrides.length > 0 && (() => {
+            const active = seed.overrides.filter(o => !o.preserved)
+            const kept = seed.overrides.filter(o => o.preserved)
+            const row = (o: SeedOverride, i: number) => (
+              <div key={`${o.file}:${o.path}:${i}`} style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 3 }}>
+                <Tag style={{ margin: '0 4px 0 0', fontSize: 10 }}>{o.file}</Tag>
+                <span>{o.path}</span>: local <code>{o.local || '(empty)'}</code> → seed <code>{o.seed || '(empty)'}</code>
+                {o.preserved && <Tag color="green" style={{ marginLeft: 6, fontSize: 10 }}>protected</Tag>}
+              </div>
+            )
+            return (
+              <Alert
+                type={active.length ? 'warning' : 'info'}
+                showIcon
+                style={{ marginTop: 8 }}
+                message={active.length
+                  ? `${active.length} local value${active.length > 1 ? 's' : ''} would be overwritten by the seed`
+                  : 'Seeded keys differ from local (all protected)'}
+                description={<div style={{ fontSize: 12 }}>
+                  {active.length > 0 && (
+                    <div style={{ marginBottom: kept.length ? 10 : 0 }}>
+                      <div style={{ marginBottom: 2 }}>
+                        These local edits are <strong>not</strong> protected — re-applying the seed (or the next package upgrade) reverts them to the seed value. Add the key to <em>Preserve</em> above to keep your value.
+                      </div>
+                      {active.map(row)}
+                    </div>
+                  )}
+                  {kept.length > 0 && (
+                    <div>
+                      <div style={{ marginBottom: 2 }}>Protected by a preserve rule — your local value is kept on re-apply:</div>
+                      {kept.map(row)}
+                    </div>
+                  )}
+                </div>} />
+            )
+          })()}
           {seed.pending && (
             <Alert type="info" showIcon style={{ marginTop: 8 }}
               message="A newer seed is bundled"

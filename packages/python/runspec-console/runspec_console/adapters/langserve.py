@@ -54,7 +54,6 @@ turns without the bookkeeping of reassembling a token stream.
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -64,6 +63,7 @@ from .base import (
     ModelAdapter,
     ToolCall,
     _OUTPUT_TRUNCATION_STOPS,
+    run_api_key_command,
 )
 
 DEFAULT_MODEL = ""  # the published chain usually pins its own model
@@ -344,18 +344,7 @@ class LangServeAdapter(ModelAdapter):
             and (now - self._key_fetched_at) < self._api_key_ttl_s
         ):
             return self._cached_key
-        result = subprocess.run(
-            self._api_key_command,
-            capture_output=True,
-            text=True,
-            shell=True,
-        )
-        key = result.stdout.strip()
-        if not key:
-            raise RuntimeError(
-                f"api_key_command returned no output (exit {result.returncode}): "
-                f"{result.stderr.strip()}"
-            )
+        key = run_api_key_command(self._api_key_command)
         self._cached_key = key
         self._key_fetched_at = now
         return key

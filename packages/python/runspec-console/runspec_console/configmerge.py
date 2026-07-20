@@ -164,6 +164,121 @@ def fold_layers(name: str, parsed_layers: list[dict[str, Any]]) -> dict[str, Any
     return eff
 
 
+# ── override detection (seed/pull vs local) ──────────────────────────────────────
+#
+# A seed (or pull) is the lowest layer, but on a re-assert it overlays its values
+# on top of local for every key it declares — so an operator who edited a
+# seed-shipped key sees it silently reverted on the next package upgrade unless
+# it's `preserve`d. `seed_overrides` surfaces exactly those keys ahead of time:
+# where the incoming table and the local file hold a *different* value. Adds (a
+# key local doesn't have yet) are not overrides and are omitted.
+
+
+def seed_overrides(
+    name: str,
+    incoming: dict[str, Any],
+    local: dict[str, Any],
+    preserve: list[list[str]],
+) -> list[dict[str, Any]]:
+    """Leaf keys ``incoming`` would overwrite in ``local`` (both native-shaped).
+
+    Returns ``[{file, path, seed, local, preserved}, …]`` — one per leaf the seed
+    declares where local already holds a **different** value (values stringified +
+    truncated). ``preserved`` is True when a ``preserve`` path pins the key local,
+    so a re-assert would *not* actually override it (still surfaced, but flagged as
+    protected). Collection files (hosts/credentials/…) diff by entry identity and
+    report ``<id>.<field>``; mapping files report the dotted key. Pure."""
+    out: list[dict[str, Any]] = []
+    coll = COLLECTION_FILES.get(name)
+    if coll is not None:
+        key_name, id_key = coll
+        local_by = {
+            str(e.get(id_key)): e
+            for e in (local.get(key_name) or [])
+            if isinstance(e, dict) and e.get(id_key) is not None
+        }
+        for entry in incoming.get(key_name) or []:
+            if not isinstance(entry, dict):
+                continue
+            k = entry.get(id_key)
+            if k is None:
+                continue
+            sk = str(k)
+            le = local_by.get(sk)
+            if le is None:
+                continue  # a new entry is an add, not an override
+            for field, sval in entry.items():
+                if field == id_key or field not in le:
+                    continue  # identity, or a new field on an existing entry
+                if le.get(field) != sval:
+                    out.append(
+                        _override_row(
+                            name,
+                            [sk, str(field)],
+                            sval,
+                            le.get(field),
+                            _preserved_collection(sk, [str(field)], preserve),
+                        )
+                    )
+    else:
+        for segs, sval in _iter_leaves(incoming, []):
+            lval = _get_path(local, segs)
+            if lval is _MISSING or lval == sval:
+                continue  # add, or unchanged
+            out.append(
+                _override_row(
+                    name, segs, sval, lval, _preserved_mapping(segs, preserve)
+                )
+            )
+    return out
+
+
+def _iter_leaves(node: Any, prefix: list[str]):
+    """Yield ``(segs, value)`` for every non-dict leaf under ``node`` (lists and
+    scalars are leaves — ``deep_overlay`` replaces them wholesale)."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _iter_leaves(v, prefix + [str(k)])
+    else:
+        yield prefix, node
+
+
+def _preserved_mapping(segs: list[str], preserve: list[list[str]]) -> bool:
+    """True when a preserve path is a prefix of (or equals) ``segs`` — preserving a
+    table (``llm``) protects every leaf under it (``llm.api_key_command``)."""
+    return any(segs[: len(p)] == p for p in preserve)
+
+
+def _preserved_collection(
+    key: str, field_segs: list[str], preserve: list[list[str]]
+) -> bool:
+    """True when a collection preserve entry (``<key|*>.<field…>``) pins this field."""
+    for segs in preserve:
+        head, *rest = segs
+        if rest and (head == "*" or head == key) and field_segs[: len(rest)] == rest:
+            return True
+    return False
+
+
+def _override_row(
+    file: str, segs: list[str], seed_val: Any, local_val: Any, preserved: bool
+) -> dict[str, Any]:
+    return {
+        "file": file,
+        "path": ".".join(segs),
+        "seed": _short(seed_val),
+        "local": _short(local_val),
+        "preserved": preserved,
+    }
+
+
+def _short(value: Any, limit: int = 200) -> str:
+    """A compact display string for a config value (truncated)."""
+    s = value if isinstance(value, str) else repr(value)
+    s = str(s)
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
 # ── path helpers ────────────────────────────────────────────────────────────────
 
 
