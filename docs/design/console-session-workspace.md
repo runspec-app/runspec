@@ -110,7 +110,7 @@ envelope, but it's no longer the primary shaping mechanism. A spill failure
 (disk full, jailed path resolution failed) logs and falls through to the old
 cap-and-truncate behaviour, so a hiccup can never fail a tool call.
 
-## 4. The six agent tools
+## 4. The workspace agent tools
 
 All autonomous (registered in `_WORKSPACE_TOOL_NAMES`; hit the "read-only or
 scoped-to-my-own-sandbox" branch of `_effective_tool_autonomy`), all
@@ -118,7 +118,8 @@ path-jailed under the current session's workspace root.
 
 | Tool               | Shape                                             |
 |--------------------|---------------------------------------------------|
-| `workspace_ls`     | List entries (name/type/size/mtime) under a path; `sort="modified"` puts the newest file first (grab the latest spill) |
+| `workspace_info`   | Report this session's id + the **absolute** workspace root and the console documents dir — so the agent can tell the operator where a file is, and knows the roots `open_file` / `reveal_in_folder` take paths relative to (previously it had to `ls` and be told the path) |
+| `workspace_ls`     | List entries (name/type/size/mtime) under a path; `sort="modified"` puts the newest file first (grab the latest spill). The response also carries the absolute `root` |
 | `workspace_read`   | Read `limit` lines starting at `offset` — streams the whole file so a window deep in a multi-MB spill is reachable; accurate `total_lines` (+ `total_lines_exact`) |
 | `workspace_grep`   | Search, `{path, line, text}` + `context`; regex by default or `fixed` literal, `ignore_case`, `glob` file filter, `truncated` signal at the cap |
 | `workspace_head`   | First N lines                                     |
@@ -151,6 +152,32 @@ drive letter is still refused as absolute. Line-oriented tools split on `\n`
 only (normalising CRLF), not `str.splitlines()`'s wider set (`\f`, `\x85`, …), so
 line counts and grep line numbers agree with newline-based tools even when a
 value contains an exotic control char.
+
+## 4.1 Opening / revealing a workspace file on the desktop
+
+Two **confirm-gated action tools** (in `_ACTION_TOOL_NAMES`, so allowlistable per
+trigger and listed by `list_action_tools`) let the agent surface a workspace file
+to the operator on the console machine. Both take a `path` **relative** to a
+`location` root — `workspace` (this session's sandbox, default) or `documents`
+(where `create_document` writes locally) — resolved through the same
+`workspaces.jail` used by the read tools (`_resolve_jailed_path`), so neither can
+touch anything outside those two console-owned roots.
+
+| Tool               | Effect                                            |
+|--------------------|---------------------------------------------------|
+| `open_file`        | Open the file in its OS default app (`_launch_open`). **Restricted to a passive-viewer extension allowlist** (`_OPENABLE_EXTS`: pdf/txt/md/csv/log/json + common images) so "open" can't become code execution |
+| `reveal_in_folder` | Show the file/folder in the OS file manager, highlighted where supported (Explorer `/select`, Finder `-R`; `_launch_reveal`). **Any file type** — it only reveals, never opens/executes |
+
+The split is deliberate and is the security model. "Open by default app"
+delegates to the OS shell, where the **extension** picks the handler — and many
+extensions execute (`.exe/.bat/.ps1/.js/.lnk/.hta/.reg`, Office macro formats,
+`.html`/`.svg` that run script in a browser). Since the console's agent routinely
+acts on **untrusted external input** (emails, room/PR messages, saved
+attachments), a generic "open any file" tool would be an arbitrary-code-execution
+path gated only by a confirm the operator might rubber-stamp. So `open_file` is
+held to passive viewers; for anything else the agent uses `reveal_in_folder` and
+the **human** makes the final open/execute decision with full context. The
+confirm gate is a speed bump, not the boundary — the allowlist + jail are.
 
 ## 5. Retention
 

@@ -6,6 +6,7 @@ that borrows just the methods under test, so no pywebview/COM/LLM is needed."""
 
 from __future__ import annotations
 
+import json
 import threading
 
 from runspec_console import memory
@@ -29,6 +30,12 @@ class _ActionBridge:
     _action_run_runbook = Bridge._action_run_runbook
     _action_create_schedule = Bridge._action_create_schedule
     _action_emit_event = Bridge._action_emit_event
+    _action_open_url = Bridge._action_open_url
+    _action_open_file = Bridge._action_open_file
+    _action_reveal_in_folder = Bridge._action_reveal_in_folder
+    _resolve_jailed_path = Bridge._resolve_jailed_path
+    _current_workspace_root = Bridge._current_workspace_root
+    _run_workspace_tool = Bridge._run_workspace_tool
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
 
     def __init__(self, hosts=None, runnables=None):
@@ -38,6 +45,8 @@ class _ActionBridge:
         self._credentials = []
         self._lock = threading.Lock()
         self._trigger_engine = None
+        self._conversation_id = "convact01"
+        self._workspace_by_chat = {}
         self.transfers: list = []
         self.created_schedules: list = []
 
@@ -58,8 +67,16 @@ class _ActionBridge:
 def test_action_tools_present_in_custom_agent_tools():
     b = _ActionBridge(hosts=[{"name": "prod", "ssh": "deploy@prod"}])
     names = {t["name"] for t in b._custom_agent_tools()}
-    # create_document / create_schedule / emit_event are always offered.
-    assert {"create_document", "create_schedule", "emit_event"} <= names
+    # create_document / create_schedule / emit_event / open_url / open_file /
+    # reveal_in_folder are always offered.
+    assert {
+        "create_document",
+        "create_schedule",
+        "emit_event",
+        "open_url",
+        "open_file",
+        "reveal_in_folder",
+    } <= names
 
 
 def test_create_document_dest_enum_includes_remote_hosts():
@@ -83,6 +100,149 @@ def test_all_action_tools_are_confirm_gated():
     b = _ActionBridge()
     for name in _ACTION_TOOL_NAMES:
         assert b._effective_tool_autonomy(name, {}) == "confirm"
+
+
+def test_open_url_schema():
+    b = _ActionBridge()
+    tool = next(t for t in b._action_tools() if t["name"] == "open_url")
+    assert tool["input_schema"]["required"] == ["url"]
+
+
+def test_open_url_opens_web_url(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "webbrowser.open", lambda url, new=0: seen.update(url=url, new=new) or True
+    )
+    b = _ActionBridge()
+    out = b._run_action_tool(
+        "open_url", {"url": "https://teams.microsoft.com/l/meetup-join/xyz"}
+    )
+    assert seen["url"] == "https://teams.microsoft.com/l/meetup-join/xyz"
+    assert out.startswith("✓ Opened")
+
+
+def test_open_url_rejects_non_web_scheme(monkeypatch):
+    called = []
+    monkeypatch.setattr("webbrowser.open", lambda *a, **k: called.append(a) or True)
+    b = _ActionBridge()
+    for bad in ("file:///etc/passwd", "javascript:alert(1)", "not a url", ""):
+        out = b._run_action_tool("open_url", {"url": bad})
+        assert out.startswith("Error:")
+    assert called == []  # never handed a non-web URL to the browser
+
+
+def test_open_url_reports_no_browser(monkeypatch):
+    monkeypatch.setattr("webbrowser.open", lambda *a, **k: False)
+    b = _ActionBridge()
+    out = b._run_action_tool("open_url", {"url": "https://example.com"})
+    assert out.startswith("✗ No browser")
+
+
+# ── open_file / reveal_in_folder / workspace_info ─────────────────────────────
+
+
+def _ws_stub(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "runspec_console.config.workspace_dir", lambda sid: tmp_path / "ws" / sid
+    )
+    monkeypatch.setattr("runspec_console.config.app_dir", lambda: tmp_path / "app")
+    return _ActionBridge()
+
+
+def test_openable_ext():
+    from runspec_console.bridge_agent_tools import _openable_ext
+
+    assert _openable_ext("report.pdf") and _openable_ext("IMG.PNG")
+    # executables and script-capable formats are refused
+    assert not _openable_ext("payload.exe")
+    assert not _openable_ext("page.html")
+    assert not _openable_ext("noext")
+
+
+def test_workspace_info_reports_paths(monkeypatch, tmp_path):
+    b = _ws_stub(monkeypatch, tmp_path)
+    out = json.loads(b._run_workspace_tool("workspace_info", {}))
+    assert out["session_id"] == "convact01"
+    assert out["workspace_root"].endswith("convact01")
+    assert out["documents_dir"].endswith("documents")
+
+
+def test_workspace_ls_includes_root(monkeypatch, tmp_path):
+    b = _ws_stub(monkeypatch, tmp_path)
+    out = json.loads(b._run_workspace_tool("workspace_ls", {}))
+    assert out["root"].endswith("convact01")
+    assert out["entries"] == []
+
+
+def test_open_file_opens_allowlisted(monkeypatch, tmp_path):
+    b = _ws_stub(monkeypatch, tmp_path)
+    notes = tmp_path / "ws" / "convact01" / "notes"
+    notes.mkdir(parents=True)
+    (notes / "report.pdf").write_bytes(b"%PDF-1.4")
+    opened = []
+    monkeypatch.setattr(
+        "runspec_console.bridge_agent_tools._launch_open", opened.append
+    )
+    out = b._run_action_tool("open_file", {"path": "notes/report.pdf"}, "")
+    assert out.startswith("✓ Opened")
+    assert opened and opened[0].endswith("report.pdf")
+
+
+def test_open_file_rejects_executable(monkeypatch, tmp_path):
+    b = _ws_stub(monkeypatch, tmp_path)
+    ws = tmp_path / "ws" / "convact01"
+    ws.mkdir(parents=True)
+    (ws / "payload.exe").write_bytes(b"MZ")
+    called = []
+    monkeypatch.setattr(
+        "runspec_console.bridge_agent_tools._launch_open", called.append
+    )
+    out = b._run_action_tool("open_file", {"path": "payload.exe"}, "")
+    assert out.startswith("Error:") and "not allowed" in out
+    assert called == []  # never handed a non-allowlisted file to the OS
+
+
+def test_open_file_rejects_jail_escape(monkeypatch, tmp_path):
+    b = _ws_stub(monkeypatch, tmp_path)
+    (tmp_path / "ws" / "convact01").mkdir(parents=True)
+    out = b._run_action_tool("open_file", {"path": "../../secret.pdf"}, "")
+    assert out.startswith("Error:") and "escape" in out.lower()
+
+
+def test_open_file_from_documents_location(monkeypatch, tmp_path):
+    b = _ws_stub(monkeypatch, tmp_path)
+    docs = tmp_path / "app" / "documents"
+    docs.mkdir(parents=True)
+    (docs / "note.md").write_text("# hi")
+    opened = []
+    monkeypatch.setattr(
+        "runspec_console.bridge_agent_tools._launch_open", opened.append
+    )
+    out = b._run_action_tool(
+        "open_file", {"path": "note.md", "location": "documents"}, ""
+    )
+    assert out.startswith("✓ Opened") and opened
+
+
+def test_reveal_in_folder_allows_any_type(monkeypatch, tmp_path):
+    b = _ws_stub(monkeypatch, tmp_path)
+    ws = tmp_path / "ws" / "convact01"
+    ws.mkdir(parents=True)
+    (ws / "payload.exe").write_bytes(b"MZ")  # open_file would refuse this
+    revealed = []
+    monkeypatch.setattr(
+        "runspec_console.bridge_agent_tools._launch_reveal", revealed.append
+    )
+    out = b._run_action_tool("reveal_in_folder", {"path": "payload.exe"}, "")
+    assert out.startswith("✓ Revealed")
+    assert revealed and revealed[0].endswith("payload.exe")
+
+
+def test_reveal_in_folder_rejects_missing(monkeypatch, tmp_path):
+    b = _ws_stub(monkeypatch, tmp_path)
+    (tmp_path / "ws" / "convact01").mkdir(parents=True)
+    out = b._run_action_tool("reveal_in_folder", {"path": "nope.txt"}, "")
+    assert out.startswith("Error:") and "does not exist" in out
 
 
 def test_create_document_local_write(tmp_path):

@@ -1627,6 +1627,9 @@ class TriggersMixin:
             {"name": "run_runbook", "label": "Run runbook (runbook)"},
             {"name": "create_schedule", "label": "Create schedule"},
             {"name": "emit_event", "label": "Emit event"},
+            {"name": "open_url", "label": "Open URL in browser"},
+            {"name": "open_file", "label": "Open file (default app)"},
+            {"name": "reveal_in_folder", "label": "Reveal in file manager"},
         ]
         if self._outlook_tools():
             items += [

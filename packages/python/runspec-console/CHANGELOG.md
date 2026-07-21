@@ -8,6 +8,64 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.184.0] — 2026-07-21
+
+### Added
+- **`open_file` + `reveal_in_folder` agent action tools, and `workspace_info`.**
+  The agent can now surface a workspace file to the operator on the console
+  machine: `open_file` opens it in its OS default app, `reveal_in_folder` shows it
+  (highlighted) in the file manager. Both are confirm-gated action tools (in
+  `_ACTION_TOOL_NAMES`, allowlistable per trigger, in `list_action_tools`) that
+  take a path **relative** to a `location` root — `workspace` (the session
+  sandbox, default) or `documents` (where `create_document` writes) — resolved
+  through the same `workspaces.jail` as the read tools (`_resolve_jailed_path`), so
+  neither can escape those two console-owned roots. **Security split:** `open_file`
+  is restricted to a passive-viewer extension allowlist (`_OPENABLE_EXTS`:
+  pdf/txt/md/csv/log/json + common images) so "open" can't become code execution;
+  anything else goes through `reveal_in_folder` (any type — it only reveals, never
+  executes) and the human decides. Rationale: the agent acts on untrusted external
+  input, and "open by default app" is extension-driven shell execution, so the
+  allowlist + jail are the boundary, not the confirm gate.
+- **Workspace self-awareness.** New autonomous `workspace_info` tool reports the
+  session id + the **absolute** workspace root and documents dir, and
+  `workspace_ls` now includes the absolute `root` in its response — so the agent
+  can tell the operator where a file is and can address `open_file` /
+  `reveal_in_folder` without being handed the path (previously it had to `ls` and
+  be told the directory). Docs: `docs/design/console-session-workspace.md`.
+
+
+## [0.183.0] — 2026-07-21
+
+### Added
+- **`open_url` built-in agent action tool** — opens an http(s) URL in the
+  operator's default browser on the console machine (e.g. the Teams join link
+  from `outlook_create_event`, a PR, a doc). On Windows a Teams `meetup-join`
+  link hands off to the Teams desktop app via its protocol handler. It is a
+  confirm-gated action tool (in `_ACTION_TOOL_NAMES`, so part of the trigger
+  `action_allow` vocabulary and listed by `list_action_tools`), and is
+  **restricted to http(s)** (`_is_web_url`) so the agent can't be steered into
+  opening a local file or a custom-scheme URI. Backed by `webbrowser.open`;
+  handler `_action_open_url`. Docs: `docs/design/console-triggers.md`,
+  `docs/design/trigger-actions-ux.md`.
+
+
+## [0.182.0] — 2026-07-21
+
+### Added
+- **`outlook_create_event` now returns the Teams join URL** when `online_meeting`
+  mints one, so the link can be reused in other channels (e.g. where the Graph
+  `OnlineMeetings` scope isn't granted). Best-effort: Outlook's Teams add-in
+  injects the link into the saved appointment asynchronously, so `create_event`
+  re-reads the item a few times (`_read_join_url`, bounded to ~1.5s) and parses
+  the URL from the body (`_extract_join_url`, matching both `.../l/meetup-join/...`
+  and short `.../meet/...` forms). The result carries `join_url` (`""` when no
+  link appears — add-in absent or an Outlook restart pending), and the tool output
+  shows the link or says it isn't available yet rather than dropping a bare
+  success line. New pure/unit-tested helpers `_extract_join_url` / `_read_join_url`
+  (injectable sleep) plus a first-chance read of `join_url` in `_build_event`.
+  Docs: `docs/design/outlook-agent-tools.md`.
+
+
 ## [0.181.0] — 2026-07-21
 
 ### Added

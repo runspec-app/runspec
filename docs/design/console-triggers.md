@@ -416,6 +416,7 @@ plus the file-transfer / memory / Outlook tools; it now also gets four built-in
 | `run_runbook` | Render a saved runbook's steps **inline** and return them for the agent to follow with its other (gated) tools — *not* a spawned sub-agent. |
 | `create_schedule` | Add a cron/interval schedule (validated via `parse_schedule_entry`, then `create_schedule`). |
 | `emit_event` | Feed a matchable `Event` into the engine now (fan-out to `source="schedule"` triggers). Bounded: it does not wait on or branch over their results. |
+| `open_url` | Open an http(s) URL in the operator's default browser on the console machine (e.g. a Teams meeting join link). Refuses non-web schemes. |
 
 **`action_allow`** (agent mode) scopes which built-in action / Outlook tools the
 trigger may use — a parallel to the `runnables` allowlist, applied in

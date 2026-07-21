@@ -89,12 +89,21 @@ _REPO_WRITE_TOOLS = frozenset({"repo_sync", "repo_write"})
 _REPO_TOOL_NAMES = _REPO_READ_TOOLS | _REPO_WRITE_TOOLS
 
 # Built-in "action" tools beyond running a runnable — write a markdown document,
-# follow a saved runbook, create a schedule, or emit an event into the trigger
-# engine. All four are side-effecting, so the autonomy gate prompts before each
-# (treated as "confirm" in _effective_tool_autonomy). Names are "__"-free so they
-# never collide with the host__runnable scheme.
+# follow a saved runbook, create a schedule, emit an event into the trigger
+# engine, or open a URL in the operator's browser. All are side-effecting, so the
+# autonomy gate prompts before each (treated as "confirm" in
+# _effective_tool_autonomy). Names are "__"-free so they never collide with the
+# host__runnable scheme.
 _ACTION_TOOL_NAMES = frozenset(
-    {"create_document", "run_runbook", "create_schedule", "emit_event"}
+    {
+        "create_document",
+        "run_runbook",
+        "create_schedule",
+        "emit_event",
+        "open_url",
+        "open_file",
+        "reveal_in_folder",
+    }
 )
 
 # Per-session workspace file tools. When a runnable's stdout exceeds
@@ -106,6 +115,7 @@ _ACTION_TOOL_NAMES = frozenset(
 # lets them run without a prompt (like the memory + repo-read tools).
 _WORKSPACE_TOOL_NAMES = frozenset(
     {
+        "workspace_info",
         "workspace_ls",
         "workspace_read",
         "workspace_grep",

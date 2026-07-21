@@ -23,8 +23,10 @@ from runspec_console.sources.outlook import (
     _connection_alive,
     _descend,
     _event_row,
+    _extract_join_url,
     _folder_segments,
     _office_version_root,
+    _read_join_url,
     _mail_payload,
     _mail_summary,
     _reminder_payload,
@@ -649,6 +651,67 @@ def test_office_version_root_parses_and_defaults():
 def test_calendar_options_key_path():
     key = _calendar_options_key("16.0")
     assert key == r"Software\Microsoft\Office\16.0\Outlook\Options\Calendar"
+
+
+def test_extract_join_url_meetup_join():
+    body = (
+        "Hi team,\n\n"
+        "________________________________________________________________________\n"
+        "Microsoft Teams meeting\n"
+        "Join on your computer or mobile app\n"
+        "Click here to join the meeting<https://teams.microsoft.com/l/meetup-join/"
+        "19%3ameeting_abc123%40thread.v2/0?context=%7b%22Tid%22%3a%22x%22%7d>\n"
+        "Meeting ID: 123 456 789\n"
+    )
+    url = _extract_join_url(body)
+    assert url.startswith("https://teams.microsoft.com/l/meetup-join/")
+    # stops at the closing angle bracket, doesn't swallow trailing markup
+    assert ">" not in url and url.endswith("%7d")
+
+
+def test_extract_join_url_short_meet_form():
+    body = "Join the meeting now https://teams.microsoft.com/meet/9988776655?p=AbCdEf"
+    assert _extract_join_url(body) == (
+        "https://teams.microsoft.com/meet/9988776655?p=AbCdEf"
+    )
+
+
+def test_extract_join_url_none_present():
+    assert _extract_join_url("A plain personal block, no meeting.") == ""
+    assert _extract_join_url("") == ""
+
+
+def test_read_join_url_found_first_try_no_sleep():
+    slept = []
+    ns = SimpleNamespace(
+        GetItemFromID=lambda eid: SimpleNamespace(
+            Body="Join https://teams.microsoft.com/l/meetup-join/xyz here"
+        )
+    )
+    url = _read_join_url(ns, "E1", attempts=4, delay=0.5, sleep=slept.append)
+    assert url == "https://teams.microsoft.com/l/meetup-join/xyz"
+    assert slept == []  # found immediately → never waited
+
+
+def test_read_join_url_appears_on_retry():
+    bodies = iter(["no link yet", "no link yet", "https://teams.microsoft.com/meet/42"])
+    slept = []
+    ns = SimpleNamespace(GetItemFromID=lambda eid: SimpleNamespace(Body=next(bodies)))
+    url = _read_join_url(ns, "E1", attempts=4, delay=0.1, sleep=slept.append)
+    assert url == "https://teams.microsoft.com/meet/42"
+    assert slept == [0.1, 0.1]  # waited twice before the third read succeeded
+
+
+def test_read_join_url_gives_up_empty():
+    ns = SimpleNamespace(GetItemFromID=lambda eid: SimpleNamespace(Body="never"))
+    assert _read_join_url(ns, "E1", attempts=3, delay=0, sleep=lambda _d: None) == ""
+
+
+def test_read_join_url_blank_entry_id_short_circuits():
+    called = []
+    ns = SimpleNamespace(GetItemFromID=lambda eid: called.append(eid))
+    assert _read_join_url(ns, "", sleep=lambda _d: None) == ""
+    assert called == []  # never touched COM
 
 
 def test_search_dasl_escapes_quotes_and_covers_subject_and_body():

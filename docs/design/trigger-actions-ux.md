@@ -22,8 +22,8 @@ The UI generalisation below landed, plus a larger "richer actions" change:
   runnables `sequential` or `parallel` (one grouped confirm for parallel), with an
   optional **LLM pre-turn** (`pre_turn`) filling the action args via `{{ _llm.* }}`.
 - **Built-in action tools** in agent mode: `create_document`, `run_runbook`,
-  `create_schedule`, `emit_event`, and the Outlook COM tools — scoped per trigger
-  by a new **action allowlist** (`action_allow`).
+  `create_schedule`, `emit_event`, `open_url`, and the Outlook COM tools — scoped
+  per trigger by a new **action allowlist** (`action_allow`).
 - **Editable confirmations (global):** the operator can edit a gated call's args
   before approving.
 

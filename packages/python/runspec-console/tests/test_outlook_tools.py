@@ -278,7 +278,12 @@ def test_create_event_plumbs_online_meeting(monkeypatch):
             "online_meeting": bool(kw.get("online_meeting")),
         }
 
-    monkeypatch.setattr(ol, "create_event", fake)
+    def with_link(subject, start, end, **kw):
+        d = fake(subject, start, end, **kw)
+        d["join_url"] = "https://teams.microsoft.com/l/meetup-join/xyz"
+        return d
+
+    monkeypatch.setattr(ol, "create_event", with_link)
     out = _StubBridge()._run_outlook_tool(
         "outlook_create_event",
         {
@@ -290,6 +295,34 @@ def test_create_event_plumbs_online_meeting(monkeypatch):
     )
     assert seen["online_meeting"] is True
     assert "Teams online meeting enabled" in out
+    assert "Teams join link: https://teams.microsoft.com/l/meetup-join/xyz" in out
+
+
+def test_create_event_online_meeting_link_pending(monkeypatch):
+    # online_meeting requested but no link yet (add-in/restart pending) → the tool
+    # says so plainly rather than dropping a bare success line.
+    monkeypatch.setattr(
+        ol,
+        "create_event",
+        lambda *a, **k: {
+            "subject": "Design review",
+            "start": "x",
+            "end": "y",
+            "entry_id": "A4",
+            "sent": True,
+            "online_meeting": True,
+            "join_url": "",
+        },
+    )
+    out = _StubBridge()._run_outlook_tool(
+        "outlook_create_event",
+        {
+            "subject": "Design review",
+            "start": "2026-06-27T15:00",
+            "online_meeting": True,
+        },
+    )
+    assert "not available yet" in out and "restart" in out
 
 
 def test_create_event_personal_block_when_no_attendees(monkeypatch):
@@ -581,6 +614,27 @@ def test_build_event_reports_online_meeting_flag():
     # _build_event only reflects the request; the registry side effect lives in
     # create_event (the Windows-only wrapper), not the pure core.
     assert res["online_meeting"] is True
+    # no Teams body on the fake appt → first-chance join_url read is empty
+    assert res["join_url"] == ""
+
+
+def test_build_event_first_chance_join_url_from_body():
+    from datetime import datetime
+
+    appt = _FakeAppt()
+    appt.Body = "Join https://teams.microsoft.com/l/meetup-join/xyz now"
+    res = ol._build_event(
+        _FakeApp(appt),
+        subject="Sync",
+        start=datetime(2026, 6, 27, 14, 0),
+        end=datetime(2026, 6, 27, 14, 30),
+        attendees="a@b.com",
+        location="",
+        body="",
+        reminder_minutes=10,
+        online_meeting=True,
+    )
+    assert res["join_url"] == "https://teams.microsoft.com/l/meetup-join/xyz"
 
 
 def test_build_event_saves_personal_block_without_attendees():

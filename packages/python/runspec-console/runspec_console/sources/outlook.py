@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import re
 import sys
 import tempfile
 import threading
@@ -1367,6 +1368,58 @@ def set_online_meeting_default(
         pythoncom.CoUninitialize()
 
 
+# A Teams join link as it appears in a meeting body — either the classic
+# ``.../l/meetup-join/...`` form or the newer short ``.../meet/...`` form. The
+# character class stops at whitespace/quote/bracket so we don't swallow trailing
+# markup. Case-insensitive because the host casing varies.
+_TEAMS_JOIN_RE = re.compile(
+    r"https://teams\.microsoft\.com/(?:l/meetup-join/|meet/)[^\s\"'<>)\]]+",
+    re.IGNORECASE,
+)
+
+# How hard to try reading the join link back. Outlook's Teams add-in injects the
+# link into the saved item asynchronously, so the first read right after
+# Save()/Send() can miss it — retry a few times with a short delay. Bounded so a
+# meeting that never gets a link (add-in absent / restart pending) adds only ~1.5s.
+_JOIN_URL_ATTEMPTS = 4
+_JOIN_URL_DELAY = 0.5  # s between re-reads
+
+
+def _extract_join_url(body: str) -> str:
+    """Pull the Teams join URL out of an appointment body, or ``""`` if none is
+    present. Returns the first match. Pure/testable."""
+    match = _TEAMS_JOIN_RE.search(_str(body))
+    return match.group(0) if match else ""
+
+
+def _read_join_url(
+    namespace: Any,
+    entry_id: str,
+    *,
+    attempts: int = _JOIN_URL_ATTEMPTS,
+    delay: float = _JOIN_URL_DELAY,
+    sleep: Any = time.sleep,
+) -> str:
+    """Best-effort: re-open the appointment ``entry_id`` and read a Teams join URL
+    from its body, retrying a few times because the add-in injects the link
+    asynchronously after Save()/Send(). Returns ``""`` if none appears within the
+    attempts (add-in absent, or Outlook needs a restart to enable the setting).
+    Duck-typed ``namespace``/``sleep`` so it's testable without COM or real waits."""
+    if not entry_id:
+        return ""
+    for i in range(max(1, attempts)):
+        try:
+            item = namespace.GetItemFromID(entry_id)
+            url = _extract_join_url(_str(_attr(item, "Body")))
+            if url:
+                return url
+        except Exception:
+            logger.debug("outlook: join-url re-read failed", exc_info=True)
+        if i + 1 < attempts:
+            sleep(delay)
+    return ""
+
+
 def _build_event(
     app: Any,
     *,
@@ -1386,7 +1439,10 @@ def _build_event(
     ``online_meeting`` is reported back in the summary but has no effect on the
     ``appt`` itself — the Teams join link comes from Outlook's machine-wide
     "add online meeting to all meetings" setting, which :func:`create_event`
-    enables (there is no per-appointment COM property to set)."""
+    enables (there is no per-appointment COM property to set). The summary's
+    ``join_url`` is a first-chance read off the just-built ``appt`` body; it is
+    often empty here (the add-in injects the link asynchronously) — :func:`create_event`
+    then retries via a fresh re-read to fill it in."""
     appt = app.CreateItem(1)  # olAppointmentItem
     appt.Subject = subject
     appt.Start = start
@@ -1418,6 +1474,7 @@ def _build_event(
         "attendees": recips,
         "sent": bool(recips),
         "online_meeting": bool(online_meeting),
+        "join_url": _extract_join_url(_str(_attr(appt, "Body"))),
     }
 
 
@@ -1443,7 +1500,13 @@ def create_event(
     — so it requires the desktop Teams Meeting add-in installed + Teams signed in,
     affects subsequent new meetings too, and a running Outlook may need a restart
     to pick it up. Enabling is best-effort: a registry failure is logged and the
-    event is still created. Confirm-gated at the tool layer. Windows-only."""
+    event is still created.
+
+    When ``online_meeting`` is set, the returned summary carries a best-effort
+    ``join_url`` — the Teams join link, re-read from the saved appointment (the
+    add-in injects it asynchronously, so this retries briefly). It is ``""`` when
+    no link appears (add-in absent, or Outlook needs a restart); the event is
+    still created either way. Confirm-gated at the tool layer. Windows-only."""
     if sys.platform != "win32":
         raise RuntimeError("create_event requires Windows (Outlook COM)")
     if not subject:
@@ -1466,7 +1529,7 @@ def create_event(
                     "event will be created without a Teams link",
                     exc_info=True,
                 )
-        return _build_event(
+        res = _build_event(
             app,
             subject=subject,
             start=start,
@@ -1477,6 +1540,18 @@ def create_event(
             reminder_minutes=reminder_minutes,
             online_meeting=online_meeting,
         )
+        # Best-effort: if the first-chance read off the built appt didn't already
+        # capture the link, re-read the saved item (the add-in injects it a moment
+        # after Save()/Send()).
+        if online_meeting and not res.get("join_url"):
+            try:
+                res["join_url"] = _read_join_url(
+                    app.GetNamespace("MAPI"), res.get("entry_id", "")
+                )
+            except Exception:
+                logger.debug("outlook: join-url re-read failed", exc_info=True)
+                res.setdefault("join_url", "")
+        return res
     finally:
         pythoncom.CoUninitialize()
 

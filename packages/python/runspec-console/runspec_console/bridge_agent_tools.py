@@ -50,6 +50,88 @@ def _parse_dt(value: Any) -> datetime | None:
     return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
+def _is_web_url(value: Any) -> bool:
+    """True only for a well-formed ``http(s)://`` URL with a host. Pure/testable.
+
+    The ``open_url`` action tool hands the string to the OS default handler, so it
+    is deliberately restricted to web URLs — ``file:``/``javascript:`` and arbitrary
+    protocol handlers are refused so the agent can't be steered into opening a local
+    file or a custom-scheme URI. Teams join links are ``https``, so this is enough."""
+    from urllib.parse import urlparse
+
+    try:
+        parts = urlparse(str(value or "").strip())
+    except Exception:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.netloc)
+
+
+# Extensions the ``open_file`` action tool will hand to the OS default app. Kept to
+# **passive viewers** — documents, text, and images that render without executing —
+# so a jailed file can't turn "open" into code execution. Everything else (any
+# executable/script, Office macro-capable formats, .html/.svg which can run script
+# in a browser, .lnk/.reg, …) is refused; use reveal_in_folder to let the operator
+# decide. See docs/design/console-session-workspace.md.
+_OPENABLE_EXTS = frozenset(
+    {
+        ".pdf",
+        ".txt",
+        ".md",
+        ".csv",
+        ".log",
+        ".json",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".tif",
+        ".tiff",
+    }
+)
+
+
+def _openable_ext(name: str) -> bool:
+    """True when ``name``'s extension is in the passive-viewer allowlist. Pure."""
+    return Path(str(name)).suffix.lower() in _OPENABLE_EXTS
+
+
+def _launch_open(path: str) -> None:
+    """Open ``path`` with the OS default app (Windows/macOS/Linux). Raises on
+    failure. Callers pass only a jailed, extension-allowlisted path."""
+    if sys.platform == "win32":
+        os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606 — jailed+allowlisted
+    else:
+        import subprocess
+
+        launcher = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.Popen([launcher, path], close_fds=True)
+
+
+def _launch_reveal(path: str) -> None:
+    """Reveal ``path`` in the OS file manager, highlighting the item where the
+    platform supports it (Explorer /select, Finder -R). Raises on failure. Safe for
+    any file type — it only shows the file, never opens/executes it."""
+    p = Path(path)
+    if sys.platform == "win32":
+        if p.is_dir():
+            os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606 — jailed dir
+        else:
+            import subprocess
+
+            # explorer returns exit code 1 even on success — fire-and-forget.
+            subprocess.Popen(["explorer", f"/select,{path}"], close_fds=True)
+    elif sys.platform == "darwin":
+        import subprocess
+
+        subprocess.Popen(["open", "-R", path], close_fds=True)
+    else:
+        import subprocess
+
+        target = path if p.is_dir() else str(p.parent)
+        subprocess.Popen(["xdg-open", target], close_fds=True)
+
+
 class AgentToolsMixin:
     def _tool_mode(self) -> str:
         """Agent tool-list layout, from ``[llm] tool_mode``.
@@ -878,7 +960,9 @@ class AgentToolsMixin:
                     "online meeting to all meetings' setting for your user "
                     "(requires the desktop Teams Meeting add-in + Teams signed in; "
                     "affects all new meetings, and Outlook may need a restart to "
-                    "pick it up)."
+                    "pick it up). When a link is minted it is returned as the Teams "
+                    "join URL (best-effort — may be empty if the add-in hasn't "
+                    "attached it yet)."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -1148,10 +1232,20 @@ class AgentToolsMixin:
                     if res.get("online_meeting")
                     else ""
                 )
-                return (
+                lines = [
                     f"✓ {verb}{teams}: {res.get('subject')} "
                     f"({res.get('start')} → {res.get('end')}; entry_id {res.get('entry_id')})"
-                )
+                ]
+                if res.get("online_meeting"):
+                    join = str(res.get("join_url") or "")
+                    if join:
+                        lines.append(f"Teams join link: {join}")
+                    else:
+                        lines.append(
+                            "Teams join link not available yet — Outlook may need "
+                            "a restart to add it (the event was still created)."
+                        )
+                return "\n".join(lines)
             if name == "outlook_respond_invite":
                 eid = str(ti.get("entry_id") or "").strip()
                 if not eid:
@@ -1633,8 +1727,20 @@ class AgentToolsMixin:
         (above ``[workspace] spill_threshold``) the raw bytes are written to
         ``tool-results/{tool}-{inv_id}.{json|txt}`` in this workspace, and the
         model reaches for these tools instead of re-running the runnable. All
-        six are autonomous (read-only or scoped to the workspace)."""
+        are autonomous (read-only or scoped to the workspace)."""
         return [
+            {
+                "name": "workspace_info",
+                "description": (
+                    "Report this session's workspace: its id (name) and the "
+                    "**absolute path** on the console machine, plus the console "
+                    "documents directory. Call this first when you need to tell the "
+                    "operator where a file is, or before open_file / "
+                    "reveal_in_folder — those take a path relative to one of these "
+                    "roots, so you don't need to guess the absolute location."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            },
             {
                 "name": "workspace_ls",
                 "description": (
@@ -1961,14 +2067,31 @@ class AgentToolsMixin:
             )
         root.mkdir(parents=True, exist_ok=True)
         try:
+            if name == "workspace_info":
+                docs = config_mod.app_dir() / "documents"
+                return json.dumps(
+                    {
+                        "session_id": root.name,
+                        "workspace_root": str(root),
+                        "documents_dir": str(docs),
+                        "subdirs": [
+                            d.name
+                            for d in sorted(root.iterdir())
+                            if d.is_dir() and d.name not in workspaces._SKIP_DIRS
+                        ]
+                        if root.exists()
+                        else [],
+                    }
+                )
             if name == "workspace_ls":
                 return json.dumps(
                     {
+                        "root": str(root),
                         "entries": workspaces.list_dir(
                             root,
                             str(ti.get("path") or ""),
                             sort=str(ti.get("sort") or "name"),
-                        )
+                        ),
                     }
                 )
             if name == "workspace_read":
@@ -2286,9 +2409,10 @@ class AgentToolsMixin:
     def _action_tools(self) -> list[dict[str, Any]]:
         """Schemas for the built-in 'action' tools an agent-mode trigger (or chat)
         uses to *act* beyond running runnables: write a markdown document, follow a
-        saved runbook, create a schedule, or emit an event into the trigger engine.
-        All four are side-effecting, so the autonomy gate prompts before each (see
-        ``_ACTION_TOOL_NAMES`` in ``_effective_tool_autonomy``)."""
+        saved runbook, create a schedule, emit an event into the trigger engine, or
+        open a URL in the operator's browser. All are side-effecting, so the autonomy
+        gate prompts before each (see ``_ACTION_TOOL_NAMES`` in
+        ``_effective_tool_autonomy``)."""
         from . import memory
 
         remote = [h["name"] for h in self._hosts if h.get("ssh")]
@@ -2329,7 +2453,92 @@ class AgentToolsMixin:
                     },
                     "required": ["filename", "content"],
                 },
-            }
+            },
+            {
+                "name": "open_url",
+                "description": (
+                    "Open a web URL in the operator's default browser on the "
+                    "console machine — e.g. a Teams meeting join link, a PR, or a "
+                    "doc. Only http(s) URLs are allowed. Opening a Teams "
+                    "meetup-join link hands off to the Teams desktop app."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The http(s) URL to open.",
+                        },
+                    },
+                    "required": ["url"],
+                },
+            },
+            {
+                "name": "open_file",
+                "description": (
+                    "Open a file from the session workspace (or the console "
+                    "documents dir) in its default app on the console machine. "
+                    "Restricted to passive viewer types ("
+                    + ", ".join(sorted(_OPENABLE_EXTS))
+                    + ") — for anything else use reveal_in_folder so the operator "
+                    "opens it themselves. 'path' is relative to the chosen location "
+                    "(see workspace_info)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Path relative to the location root (e.g. "
+                                "'notes/report.pdf' or 'tool-results/out.json')."
+                            ),
+                        },
+                        "location": {
+                            "type": "string",
+                            "enum": ["workspace", "documents"],
+                            "description": (
+                                "Which root the path is under: 'workspace' (this "
+                                "session's sandbox, default) or 'documents' (where "
+                                "create_document writes locally)."
+                            ),
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "reveal_in_folder",
+                "description": (
+                    "Show a file or folder from the session workspace (or the "
+                    "console documents dir) in the operator's file manager, "
+                    "highlighting it — the operator then decides whether to open "
+                    "it. Any file type is allowed (it is only revealed, never "
+                    "opened/executed), so use this for anything open_file refuses. "
+                    "'path' is relative to the chosen location (see workspace_info)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Path relative to the location root (a file or a "
+                                "directory)."
+                            ),
+                        },
+                        "location": {
+                            "type": "string",
+                            "enum": ["workspace", "documents"],
+                            "description": (
+                                "Which root the path is under: 'workspace' "
+                                "(default) or 'documents'."
+                            ),
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
         ]
 
         runbooks = memory.list_runbooks()
@@ -2559,7 +2768,108 @@ class AgentToolsMixin:
             return self._action_create_schedule(ti)
         if name == "emit_event":
             return self._action_emit_event(ti)
+        if name == "open_url":
+            return self._action_open_url(ti)
+        if name == "open_file":
+            return self._action_open_file(ti, chat_id)
+        if name == "reveal_in_folder":
+            return self._action_reveal_in_folder(ti, chat_id)
         return f"Error: unknown tool '{name}'"
+
+    def _resolve_jailed_path(self, location: str, rel: str, chat_id: str = "") -> Path:
+        """Resolve ``rel`` under the chosen console-owned root — the session
+        ``workspace`` (default) or the ``documents`` dir create_document writes to —
+        and path-jail it (reusing ``workspaces.jail``: no ``..``/absolute/symlink
+        escape). Raises ``ValueError`` on an unknown location, a missing workspace,
+        or an escaping path — so open_file / reveal_in_folder can only ever touch
+        files inside these two roots."""
+        from . import workspaces
+
+        loc = (location or "workspace").strip() or "workspace"
+        if loc == "documents":
+            root = config_mod.app_dir() / "documents"
+        elif loc == "workspace":
+            root = self._current_workspace_root(chat_id)
+            if root is None:
+                raise ValueError(
+                    "no active session workspace — open_file/reveal_in_folder run "
+                    "inside a chat or trigger/schedule turn"
+                )
+        else:
+            raise ValueError(
+                f"unknown location {loc!r} (use 'workspace' or 'documents')"
+            )
+        root.mkdir(parents=True, exist_ok=True)
+        return workspaces.jail(root, rel)
+
+    def _action_open_file(self, ti: dict[str, Any], chat_id: str = "") -> str:
+        """Open a jailed, passive-viewer file in its default app (gate approved).
+        Refuses anything outside the two console-owned roots, a directory, or a
+        non-allowlisted extension — the last so "open" can't become code execution
+        (the operator uses reveal_in_folder for those)."""
+        rel = str(ti.get("path") or "").strip()
+        if not rel:
+            return "Error: 'path' is required."
+        location = str(ti.get("location") or "workspace").strip() or "workspace"
+        try:
+            target = self._resolve_jailed_path(location, rel, chat_id)
+        except ValueError as exc:
+            return f"Error: {exc}"
+        if not target.exists():
+            return f"Error: {rel} does not exist in the {location}."
+        if target.is_dir():
+            return "Error: that is a directory — use reveal_in_folder for a folder."
+        if not _openable_ext(target.name):
+            return (
+                f"Error: opening '{target.suffix or target.name}' is not allowed. "
+                f"Openable types: {', '.join(sorted(_OPENABLE_EXTS))}. "
+                "Use reveal_in_folder to show it in the file manager instead."
+            )
+        try:
+            _launch_open(str(target))
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not open the file: {exc}"
+        return f"✓ Opened {rel} ({location}) in its default app."
+
+    def _action_reveal_in_folder(self, ti: dict[str, Any], chat_id: str = "") -> str:
+        """Reveal a jailed file/folder in the OS file manager (gate approved). No
+        extension restriction — revealing never opens/executes, so it is the safe
+        path for the file types open_file refuses; the operator decides."""
+        rel = str(ti.get("path") or "").strip()
+        if not rel:
+            return "Error: 'path' is required."
+        location = str(ti.get("location") or "workspace").strip() or "workspace"
+        try:
+            target = self._resolve_jailed_path(location, rel, chat_id)
+        except ValueError as exc:
+            return f"Error: {exc}"
+        if not target.exists():
+            return f"Error: {rel} does not exist in the {location}."
+        try:
+            _launch_reveal(str(target))
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not reveal the item: {exc}"
+        return f"✓ Revealed {rel} ({location}) in the file manager."
+
+    def _action_open_url(self, ti: dict[str, Any]) -> str:
+        """Open a web URL in the operator's default browser (the gate has already
+        approved it). Restricted to http(s) so it can't be steered into a local file
+        or a custom protocol handler. Windows hands a Teams meetup-join link off to
+        the Teams desktop app via its protocol handler."""
+        import webbrowser
+
+        url = str(ti.get("url") or "").strip()
+        if not url:
+            return "Error: 'url' is required."
+        if not _is_web_url(url):
+            return "Error: only http(s) URLs can be opened."
+        try:
+            opened = webbrowser.open(url, new=2)
+        except Exception as exc:  # noqa: BLE001
+            return f"✗ Could not open the URL: {exc}"
+        if not opened:
+            return f"✗ No browser was available to open {url}."
+        return f"✓ Opened {url} in the default browser."
 
     def _action_create_document(self, ti: dict[str, Any]) -> str:
         content = str(ti.get("content") or "")

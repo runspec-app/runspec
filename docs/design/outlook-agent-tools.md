@@ -61,11 +61,19 @@ description and docstrings state plainly: it needs the Teams Meeting add-in
 installed + Teams signed in, it is a **machine-wide toggle for the signed-in user**
 (it also affects subsequent new meetings, not just this one), and a running Outlook
 may need a restart to pick it up. Enabling is best-effort — a registry failure is
-logged and the event is still created. The Graph `OnlineMeetings` scope remains the
-only clean *per-meeting* alternative, but it reintroduces the device-code auth wall
-this COM layer exists to avoid. The pure `_office_version_root` /
-`_calendar_options_key` helpers are unit-tested; the winreg read/write are
-Windows-only.
+logged and the event is still created. When a link *is* minted, the result carries
+the **Teams join URL** (`join_url`), so the agent can reuse it in other channels —
+useful where the Graph `OnlineMeetings` scope isn't granted. This too is
+best-effort: the add-in injects the link into the saved item asynchronously, so
+`create_event` re-reads the appointment a few times (`_read_join_url`, bounded to
+~1.5s) and parses the join URL out of the body (`_extract_join_url` — matches both
+`.../l/meetup-join/...` and short `.../meet/...` forms); `join_url` is `""` when no
+link appears (add-in absent, or a restart is pending), and the tool output says so
+rather than dropping a bare success line. The Graph `OnlineMeetings` scope remains
+the only clean *per-meeting* alternative, but it reintroduces the device-code auth
+wall this COM layer exists to avoid. The pure `_office_version_root` /
+`_calendar_options_key` / `_extract_join_url` helpers (and `_read_join_url` with an
+injectable sleep) are unit-tested; the winreg read/write are Windows-only.
 
 `outlook_mark_read` / `outlook_categorize` / `outlook_move` are the "after
 handling" half of the helpdesk loop — flag a message read, tag it, or file it once
