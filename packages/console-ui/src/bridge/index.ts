@@ -1017,6 +1017,10 @@ export interface BridgeApi {
   // Pre-flight: does `path` exist as a directory on each host? (fan-out dest check)
   check_dir_exists: (hosts: string[], path: string) => Promise<Record<string, { exists: boolean; error?: string | null }>>
   cancel_transfer: (id: string) => Promise<void>
+  // Absolute path of the current chat session's agent workspace, or '' if none.
+  // The Transfer dialog defaults a local destination to it so downloads land
+  // where the agent works. Creates the directory if missing.
+  current_workspace_path: () => Promise<string>
   send_chat: (message: string, invocationId?: string) => Promise<string>
   cancel_chat: (chatId: string) => Promise<void>
   clear_chat: () => Promise<void>

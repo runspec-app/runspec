@@ -51,6 +51,7 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   const [filterArg, setFilterArg] = useState('')
   const [browseSourceOpen, setBrowseSourceOpen] = useState(false)
   const [destDir, setDestDir] = useState('')
+  const [workspacePath, setWorkspacePath] = useState('')
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<TransferProgress | null>(null)
   const [hostProgress, setHostProgress] = useState<Record<string, HostProg>>({})
@@ -82,6 +83,9 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
       : (remoteHosts.find(r => r.connected)?.name ?? remoteHosts[0]?.name ?? '')
     setSrcHost(prev => prev || first)
     bridge.list_credentials().then(setCreds).catch(() => { /* feature optional */ })
+    // Where the agent works — default a local destination here so a download
+    // lands in the workspace the agent can then act on ('' when no active chat).
+    bridge.current_workspace_path().then(setWorkspacePath).catch(() => { /* optional */ })
   }, [open, hosts])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Changing which machine the source is clears the picked (host-specific) paths.
@@ -90,6 +94,11 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
   // Changing the destination clears the (host-specific) destination folder.
   useEffect(() => { setDestDir(''); setProgress(null); setHostProgress({}); setResult(null) },
     [dstKind, dstAdhoc.jump, dstAdhoc.target, dstHosts.join(',')])  // eslint-disable-line react-hooks/exhaustive-deps
+  // A local destination defaults to the agent's workspace (once known / on switch
+  // back to local), only while empty — never clobbers a folder the operator typed.
+  useEffect(() => {
+    if (open && dstKind === 'local' && workspacePath) setDestDir(prev => prev || workspacePath)
+  }, [open, dstKind, workspacePath])
 
   // Fan-out pre-flight: does the destination folder exist on every target host?
   useEffect(() => {
@@ -325,7 +334,14 @@ export function TransferModal({ open, onClose, hosts, defaultRemoteHost }: {
               />
             )}
             {dstKind === 'local' && (
-              <PathInput host={LOCAL} value={destDir} onChange={setDestDir} dirsOnly placeholder="destination folder" />
+              <>
+                <PathInput host={LOCAL} value={destDir} onChange={setDestDir} dirsOnly placeholder="destination folder" />
+                {workspacePath && destDir === workspacePath && (
+                  <Text type="secondary" style={{ fontSize: 10 }}>
+                    Defaulted to this chat's agent workspace — files here are ready for the agent to work on.
+                  </Text>
+                )}
+              </>
             )}
             {isFanout && (
               <Text type="secondary" style={{ fontSize: 10 }}>

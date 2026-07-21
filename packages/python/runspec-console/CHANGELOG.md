@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.185.0] — 2026-07-21
+
+### Added
+- **Transfer dialog defaults a local destination to the agent's workspace.** When
+  the destination is *This computer*, the folder now pre-fills with the current
+  chat session's agent workspace (`config.workspace_dir` for the active
+  conversation) — so a downloaded or relayed file lands where the agent can then
+  act on it (grep it, run a `run_python` snippet over it, etc.), tightening the
+  human→agent hand-off. It only pre-fills while the field is empty (never
+  clobbers a folder the operator typed), falls back to blank when there's no
+  active chat, and stays fully editable. New best-effort bridge method
+  `current_workspace_path()` (creates the workspace dir so it's immediately a
+  valid destination; returns `""` on no-session/error) —
+  `bridge_transfer.current_workspace_path`, wired in `TransferModal`.
+
+
 ## [0.184.0] — 2026-07-21
 
 ### Added

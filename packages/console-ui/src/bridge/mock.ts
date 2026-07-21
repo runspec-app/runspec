@@ -945,6 +945,7 @@ export const mockApi: BridgeApi = {
   cancel_transfer: async (id) => {
     console.log('[mock] cancel_transfer', id)
   },
+  current_workspace_path: async () => '/home/demo/.runspec-console/workspaces/chat-demo',
 
   minimize_window: async () => { console.log('[mock] minimize_window') },
   toggle_maximize_window: async () => { console.log('[mock] toggle_maximize_window') },

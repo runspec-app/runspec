@@ -37,6 +37,7 @@ EXPECTED = {
     "create_schedule",
     "credentials_backend",
     "credentials_for_runnable",
+    "current_workspace_path",
     "delete_conversation",
     "delete_credential",
     "delete_repo",

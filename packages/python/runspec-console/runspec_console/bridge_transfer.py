@@ -31,6 +31,24 @@ if TYPE_CHECKING:
 
 
 class TransferMixin:
+    def current_workspace_path(self) -> str:
+        """Absolute path of the **current chat session's** workspace — where the
+        agent reads/writes files — or ``""`` when no conversation is active yet.
+
+        The Transfer dialog uses this to default a **local** destination to the
+        agent's workspace, so a downloaded/relayed file lands where the agent can
+        then act on it. The directory is created if missing so it's immediately a
+        valid destination. Best-effort: any failure returns ``""`` (the dialog
+        just leaves the folder blank)."""
+        try:
+            root = self._current_workspace_root()
+            if root is None:
+                return ""
+            root.mkdir(parents=True, exist_ok=True)
+            return str(root)
+        except Exception:
+            return ""
+
     def _open_sftp(
         self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any] | None
     ) -> tuple[Any, Callable[[], None]]:
