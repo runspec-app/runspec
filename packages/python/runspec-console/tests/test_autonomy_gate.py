@@ -364,3 +364,122 @@ def test_edit_ignored_on_deny():
     out, seen = _drive_edit(b, {"a": "1"}, False, edited_input={"a": "2"})
     assert "declined" in out
     assert seen == {}  # never executed, edit discarded
+
+
+# ── run_saved_run interception (gate reflects the underlying runnable) ────────
+
+
+class _SavedRunStub(_StubBridge):
+    """Extends the gate stub with the saved-run expansion + grouped-confirm
+    machinery, so run_saved_run gates on the preset's underlying runnable."""
+
+    _saved_run_gate_calls = Bridge._saved_run_gate_calls
+    _saved_run_entry = Bridge._saved_run_entry
+    _saved_run_calls = Bridge._saved_run_calls
+    _grouped_confirm_run_sync = Bridge._grouped_confirm_run_sync
+    _group_calls_level = Bridge._group_calls_level
+    _apply_group_edit = staticmethod(Bridge._apply_group_edit)
+    _run_calls_parallel = Bridge._run_calls_parallel
+    _format_group_output = staticmethod(Bridge._format_group_output)
+    _pick_connected_host = Bridge._pick_connected_host
+
+    def __init__(self, runnables, run_result="RAN", groups=None):
+        super().__init__(runnables, run_result)
+        self._groups = groups or {}
+        self._connected_cache = {}
+
+    def _group_members(self, g):
+        return list(self._groups.get(g, []))
+
+    def _host_has_runnable(self, h, r):
+        return any(
+            x.get("host") == h and x.get("name") == r for x in self._runnables_cache
+        )
+
+    def _host_entry(self, h):
+        return {"name": h, "ssh": "user@" + h}
+
+
+def _seed_saved_runs(tmp_path, monkeypatch, rows):
+    from runspec_console import savedruns
+
+    monkeypatch.setattr(
+        "runspec_console.config.saved_runs_path",
+        lambda: tmp_path / "runspec_saved_runs.toml",
+    )
+    savedruns.save_saved_runs(rows)
+
+
+def test_saved_run_autonomous_runs_without_prompt(tmp_path, monkeypatch):
+    _seed_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [{"id": "flush", "runnable": "flush-dns", "host": "local"}],
+    )
+    b = _SavedRunStub(_runnable("autonomous"), run_result="RAN")
+    out = b._gated_run_tool("run_saved_run", {"id": "flush"}, "chat1")
+    assert "RAN" in out
+    assert "local" in out  # per-host block header
+    assert b._dispatched == []  # no confirmation event
+
+
+def test_saved_run_manual_runnable_blocks_whole_preset(tmp_path, monkeypatch):
+    _seed_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [{"id": "flush", "runnable": "flush-dns", "host": "local"}],
+    )
+    b = _SavedRunStub(_runnable("manual"), run_result="RAN")
+    out = b._gated_run_tool("run_saved_run", {"id": "flush"}, "chat1")
+    assert "manual-only" in out
+    assert "RAN" not in out
+    assert b._dispatched == []
+
+
+def test_saved_run_confirm_prompts_and_runs_on_approve(tmp_path, monkeypatch):
+    _seed_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [{"id": "flush", "runnable": "flush-dns", "host": "local"}],
+    )
+    b = _SavedRunStub(_runnable("confirm"), run_result="RAN")
+    holder = {}
+
+    def work():
+        holder["out"] = b._gated_run_tool("run_saved_run", {"id": "flush"}, "chat1")
+
+    t = threading.Thread(target=work)
+    t.start()
+    deadline = time.time() + 3
+    while not b._pending_confirms and time.time() < deadline:
+        time.sleep(0.01)
+    (request_id,) = list(b._pending_confirms)
+    b.resolve_tool_confirmation(request_id, True)
+    t.join(timeout=5)
+    assert "RAN" in holder["out"]
+    # The gate registered a run_group confirm (the grouped-confirm card).
+    assert any(ev == "runspec:tool_confirm" for ev, _ in b._dispatched) or b._dispatched
+
+
+def test_saved_run_group_fans_out_and_runs(tmp_path, monkeypatch):
+    _seed_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [{"id": "flush", "runnable": "flush-dns", "group": "Prod"}],
+    )
+    runnables = [
+        {"host": "w1", "name": "flush-dns", "autonomy": "autonomous", "args": []},
+        {"host": "w2", "name": "flush-dns", "autonomy": "autonomous", "args": []},
+    ]
+    b = _SavedRunStub(runnables, run_result="RAN", groups={"Prod": ["w1", "w2"]})
+    out = b._gated_run_tool("run_saved_run", {"id": "flush"}, "chat1")
+    assert "w1" in out and "w2" in out
+    assert b._dispatched == []  # autonomous on every member — no prompt
+
+
+def test_saved_run_unknown_id_errors_before_any_gate(tmp_path, monkeypatch):
+    _seed_saved_runs(tmp_path, monkeypatch, [])
+    b = _SavedRunStub(_runnable("confirm"))
+    out = b._gated_run_tool("run_saved_run", {"id": "nope"}, "chat1")
+    assert "no saved run" in out
+    assert b._dispatched == []

@@ -722,3 +722,66 @@ def test_scheduled_event_fans_out_by_event_type_and_match():
     fired.clear()
     engine.feed(Event.new("schedule", "nightly", {"scope": "dev"}))
     assert fired == ["B"]  # A's match excludes it
+
+
+# ── saved_run action ──────────────────────────────────────────────────────────
+
+
+def test_parse_entry_saved_run():
+    job = parse_schedule_entry(
+        {
+            "id": "nightly-restart",
+            "action": "saved_run",
+            "saved_run": "restart-web",
+            "values": {"reason": "nightly"},
+            "when": {"cron": "0 2 * * *"},
+        }
+    )
+    assert job.action == "saved_run"
+    assert job.saved_run == "restart-web"
+    assert job.values == {"reason": "nightly"}
+
+
+def test_parse_entry_saved_run_requires_id():
+    with pytest.raises(ValueError):
+        parse_schedule_entry(
+            {"id": "x", "action": "saved_run", "when": {"every": "5m"}}
+        )
+
+
+def test_fire_saved_run_calls_run_saved():
+    fired: list[str] = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "s1",
+                "action": "saved_run",
+                "saved_run": "restart-web",
+                "values": {"reason": "nightly"},
+                "when": {"every": "5m"},
+            }
+        ],
+        run_saved=lambda job: fired.append(job.saved_run),
+    )
+    src._fire("s1")
+    assert fired == ["restart-web"]
+
+
+def test_record_saved_run_summary():
+    records: list[dict] = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "s1",
+                "action": "saved_run",
+                "saved_run": "restart-web",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_saved=lambda job: None,
+        on_event=records.append,
+    )
+    src._fire("s1")
+    assert records[0]["type"] == "saved_run"
+    assert records[0]["summary"] == "saved run: restart-web"
+    assert records[0]["matched"] == ["s1"]

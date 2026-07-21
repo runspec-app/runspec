@@ -3,10 +3,11 @@
 Four chat-only, confirm-gated built-in tools let the agent manage config that
 was previously Settings-UI-only:
 
-  manage_hosts     — the fleet (runspec_hosts.toml)
-  manage_groups    — the group-name registry (runspec_groups.toml)
-  manage_triggers  — event triggers (runspec_triggers.toml)
-  manage_rota      — the working-hours rota
+  manage_hosts      — the fleet (runspec_hosts.toml)
+  manage_groups     — the group-name registry (runspec_groups.toml)
+  manage_triggers   — event triggers (runspec_triggers.toml)
+  manage_rota       — the working-hours rota
+  manage_saved_runs — the saved-run registry (runspec_saved_runs.toml)
 
 Read actions (``list``/``get``) run autonomously; every mutation confirm-gates
 (see ``_effective_tool_autonomy``). Handlers are thin: they validate agent
@@ -249,7 +250,59 @@ class ConfigToolsMixin:
                 "required": ["action"],
             },
         }
-        return [manage_hosts, manage_groups, manage_triggers, manage_rota]
+        saved_run_ids: list[str] = []
+        try:
+            from . import savedruns as savedruns_mod
+
+            saved_run_ids = [
+                str(r.get("id")) for r in savedruns_mod.load_saved_runs() if r.get("id")
+            ]
+        except Exception:
+            logger.debug("config tools: saved-run enum unavailable", exc_info=True)
+        manage_saved_runs = {
+            "name": "manage_saved_runs",
+            "description": (
+                "List or edit saved runs (runspec_saved_runs.toml) — deterministic "
+                "presets (runnable + target hosts + fixed args + open params) that "
+                "the operator, you (run_saved_run), and schedules "
+                "(action='saved_run') can fire. 'save' upserts one saved run by "
+                "id — provide the full entry; it is validated before writing "
+                "(exactly one of host/group/hosts/selected_hosts; 'params' is a "
+                "runspec args table for the open parameters)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "get", "save", "delete"],
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "Saved-run id (required except for list).",
+                        **({"enum": saved_run_ids} if saved_run_ids else {}),
+                    },
+                    "saved_run": {
+                        "type": "object",
+                        "description": (
+                            "For save: the full saved-run entry. Keys: id, title, "
+                            "description, runnable, command (subcommand path list), "
+                            "one of host / group / hosts / selected_hosts, args "
+                            "(fixed values), params (runspec args table, e.g. "
+                            "{reason: {required: true}}), credential_ids."
+                        ),
+                    },
+                },
+                "required": ["action"],
+            },
+        }
+        return [
+            manage_hosts,
+            manage_groups,
+            manage_triggers,
+            manage_rota,
+            manage_saved_runs,
+        ]
 
     # ── dispatch + origin guard ───────────────────────────────────────────────
 
@@ -264,7 +317,8 @@ class ConfigToolsMixin:
         if origin.get("trigger"):
             return (
                 "✗ Config tools are chat-only: a trigger- or schedule-originated "
-                "turn may not edit hosts, groups, triggers, or the rota."
+                "turn may not edit hosts, groups, triggers, saved runs, or the "
+                "rota."
             )
         action = str(tool_input.get("action") or "").strip().lower()
         try:
@@ -276,6 +330,8 @@ class ConfigToolsMixin:
                 return self._config_manage_triggers(action, tool_input)
             if tool_name == "manage_rota":
                 return self._config_manage_rota(action, tool_input)
+            if tool_name == "manage_saved_runs":
+                return self._config_manage_saved_runs(action, tool_input)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("config tool %s failed", tool_name)
             return f"✗ {tool_name} failed: {exc}"
@@ -423,3 +479,45 @@ class ConfigToolsMixin:
         self._dispatch("runspec:triggers_updated", {"rota": True})
         state = "enabled" if merged.get("enabled") else "disabled"
         return f"✓ Rota saved ({state}). Triggers and chat presence restarted."
+
+    def _config_manage_saved_runs(self, action: str, ti: dict[str, Any]) -> str:
+        from . import savedruns as savedruns_mod
+
+        rows = savedruns_mod.load_saved_runs()
+        if action == "list":
+            return json.dumps({"saved_runs": rows}, ensure_ascii=False)
+        sid = str(ti.get("id") or "").strip()
+        if action == "save":
+            entry = ti.get("saved_run")
+            if not isinstance(entry, dict):
+                return "✗ 'saved_run' (object) is required for save."
+            if sid:
+                entry = {**entry, "id": sid}
+            try:
+                parsed = savedruns_mod.parse_saved_run(entry)
+            except ValueError as exc:
+                return f"✗ Not saved — invalid saved run: {exc}"
+            updated = [r for r in rows if str(r.get("id")) != parsed.id]
+            updated.append(entry)
+            result = self.save_saved_runs(updated)
+            if not result.get("ok"):
+                return f"✗ Not saved: {result.get('error') or 'unknown error'}"
+            return (
+                f"✓ Saved saved run '{parsed.id}' "
+                f"(/{parsed.runnable} on {parsed.target_summary()})."
+            )
+        if not sid:
+            return "✗ 'id' is required."
+        match = next((r for r in rows if str(r.get("id")) == sid), None)
+        if action == "get":
+            if match is None:
+                return f"✗ No saved run with id '{sid}'."
+            return json.dumps(match, ensure_ascii=False)
+        if action == "delete":
+            if match is None:
+                return f"✗ No saved run with id '{sid}'."
+            result = self.save_saved_runs([r for r in rows if str(r.get("id")) != sid])
+            if not result.get("ok"):
+                return f"✗ Not deleted: {result.get('error') or 'unknown error'}"
+            return f"✓ Deleted saved run '{sid}'."
+        return f"✗ Unknown action '{action}'."

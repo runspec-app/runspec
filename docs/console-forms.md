@@ -8,6 +8,9 @@ tools. The dialog gives you:
 
 - typed fields with validation (choices as dropdowns, ranges enforced,
   required fields marked);
+- a **Saved runs** lane — [deterministic presets](console-saved-runs.md)
+  (runnable + target + fixed args) that open a params-only dialog, or run
+  immediately when they have no open params;
 - optional and defaulted arguments folded into a collapsed **"Default
   arguments"** section, so the common case is a short form;
 - date and date-time pickers for arguments that declare `ui = "date"` /

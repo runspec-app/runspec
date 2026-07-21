@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type RunCard, type TriggerEvent } from '../bridge'
+import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
@@ -26,7 +26,7 @@ const CRON_PRESETS = [
   { label: 'Custom…',          value: '__custom__' },
 ]
 
-type Action = 'runnable' | 'event' | 'prompt' | 'runbook'
+type Action = 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run'
 type WhenKind = 'cron' | 'every'
 type Target = 'host' | 'group' | 'anyhost' | 'selected'
 
@@ -75,6 +75,9 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [argErrors, setArgErrors] = useState<Record<string, string>>({})
   const [runbookValues, setRunbookValues] = useState<Record<string, unknown>>({})
   const [runbookErrors, setRunbookErrors] = useState<Record<string, string>>({})
+  const [savedRuns, setSavedRuns] = useState<SavedRun[]>([])
+  const [savedRunValues, setSavedRunValues] = useState<Record<string, unknown>>({})
+  const [savedRunErrors, setSavedRunErrors] = useState<Record<string, string>>({})
   // Console credentials to apply to a runnable-action run (secret injected from the
   // keychain at fire time). Same explicit-selection model as the Forms tab; only
   // the ids are persisted on the schedule, never a secret.
@@ -86,6 +89,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   useEffect(() => {
     if (!open) return
     bridge.get_runbooks().then(setRunbooks).catch(console.error)
+    // Saved runs, for the "Fire a saved run" action's picker.
+    bridge.get_saved_runs().then(setSavedRuns).catch(() => setSavedRuns([]))
   }, [open])
 
   // All saved credentials, for the runnable-action credential picker. Loaded once
@@ -105,6 +110,9 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   // inputs, so it survives the async runbooks load with no extra state.
   const runbookId: string = Form.useWatch('runbook', form) ?? ''
   const selectedRunbook = runbooks.find(s => s.id === runbookId) ?? null
+  // Same derivation for the chosen saved run — its open params drive the value inputs.
+  const savedRunId: string = Form.useWatch('saved_run', form) ?? ''
+  const selectedSavedRun = savedRuns.find(s => s.id === savedRunId) ?? null
   // The runnable picker offers what the chosen target can run: a single host's
   // runnables, or (group / any-of-hosts mode) every runnable present on any of the
   // targeted hosts.
@@ -132,6 +140,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setArgErrors({})
     setRunbookValues({})
     setRunbookErrors({})
+    setSavedRunValues({})
+    setSavedRunErrors({})
     setCredentialIds([])
   }
 
@@ -180,9 +190,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setArgValues(initialFormValues(r?.args ?? [], editing.args))
     setArgErrors({})
     setCredentialIds(editing.credential_ids ?? [])
-    // Runbook value seeding is deferred to a second effect once the runbook list
-    // has loaded — its args come from the selected runbook, not the runnable.
+    // Runbook / saved-run value seeding is deferred to a second effect once the
+    // respective list has loaded — their args come from the selected entry.
     setRunbookErrors({})
+    setSavedRunErrors({})
     const fv: Record<string, unknown> = {
       host: editing.host ?? defaultHost,
       group: editing.group ?? '',
@@ -195,6 +206,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       event: editing.event ?? '',
       prompt: editing.prompt ?? '',
       runbook: editing.runbook ?? undefined,
+      saved_run: editing.saved_run ?? undefined,
       fields: Object.entries(editing.fields ?? {}).map(([key, value]) => ({ key, value })),
     }
     form.setFieldsValue(fv)
@@ -213,6 +225,16 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
     setRunbookErrors({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selectedRunbook?.id])
+
+  // Same seeding for the chosen saved run's open params.
+  useEffect(() => {
+    if (!open) return
+    if (!selectedSavedRun) { setSavedRunValues({}); return }
+    const prefill = editing?.saved_run === selectedSavedRun.id ? editing.values : undefined
+    setSavedRunValues(initialFormValues(selectedSavedRun.params ?? [], prefill))
+    setSavedRunErrors({})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedSavedRun?.id])
 
   const handleRunnableChange = (name: string) => {
     const r = hostRunnables.find(x => x.name === name) ?? null
@@ -247,6 +269,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const changeRunbookValue = (name: string, v: unknown) => {
     setRunbookValues(prev => ({ ...prev, [name]: v }))
     setRunbookErrors(prev => { const next = { ...prev }; delete next[name]; return next })
+  }
+
+  const changeSavedRunValue = (name: string, v: unknown) => {
+    setSavedRunValues(prev => ({ ...prev, [name]: v }))
+    setSavedRunErrors(prev => { const next = { ...prev }; delete next[name]; return next })
   }
 
   const handleSubmit = async () => {
@@ -295,6 +322,19 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       base.runbook = runbook
       base.values = vals
       if (!base.id) base.id = `rs-${runbook}-${Date.now()}`
+    } else if (action === 'saved_run') {
+      const savedRun = String(values.saved_run ?? '').trim()
+      if (!savedRun) { form.setFields([{ name: 'saved_run', errors: ['Required'] }]); return }
+      const errs = validateArgs(selectedSavedRun?.params ?? [], savedRunValues)
+      if (Object.keys(errs).length > 0) { setSavedRunErrors(errs); return }
+      const vals: Record<string, unknown> = {}
+      for (const a of selectedSavedRun?.params ?? []) {
+        const v = savedRunValues[a.name]
+        if (v !== undefined && v !== '') vals[a.name] = v
+      }
+      base.saved_run = savedRun
+      base.values = vals
+      if (!base.id) base.id = `rs-${savedRun}-${Date.now()}`
     } else {
       // A schedule is persisted to disk, so a typed secret would be written in
       // plaintext — never do that. Password-typed args aren't required at save and
@@ -365,6 +405,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
             onChange={v => setAction(v as Action)}
             options={[
               { label: 'Run a runnable', value: 'runnable' },
+              { label: 'Saved run', value: 'saved_run', disabled: savedRuns.length === 0 },
               { label: 'Run a prompt', value: 'prompt' },
               { label: 'Run a runbook', value: 'runbook' },
               { label: 'Emit an event', value: 'event' },
@@ -373,6 +414,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
           <div style={{ ...labelStyle, marginTop: 6 }}>
             {action === 'runnable'
               ? 'Runs the chosen runnable directly (no agent, no confirm gate).'
+              : action === 'saved_run'
+              ? 'Fires a saved run — a deterministic preset with its own stored targeting — directly (no agent, no confirm gate). Fill its open params below.'
               : action === 'prompt'
               ? 'Runs an agent turn on a fixed instruction — schedule the assistant to check or do something later. It still confirms before anything destructive.'
               : action === 'runbook'
@@ -494,6 +537,44 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                         value={runbookValues[a.name]}
                         error={runbookErrors[a.name]}
                         onChange={v => changeRunbookValue(a.name, v)}
+                      />
+                    </ArgFieldRow>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── Saved-run action ── */}
+        {action === 'saved_run' && (
+          <>
+            <Form.Item name="saved_run" label="Saved run" rules={[{ required: true, message: 'Required' }]}
+              help={savedRuns.length === 0 ? 'No saved runs yet — create one in Settings → Saved runs.' : undefined}>
+              <Select placeholder="Select a saved run" showSearch
+                filterOption={(input, opt) => (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())}>
+                {savedRuns.map(s => (
+                  <Select.Option key={s.id} value={s.id}>
+                    <code>{s.id}</code>
+                    <span style={{ ...labelStyle, marginLeft: 8 }}>
+                      /{s.runnable} on {s.target || s.host}
+                    </span>
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+            {selectedSavedRun && (selectedSavedRun.params ?? []).length > 0 && (
+              <>
+                <div style={{ ...labelStyle, marginBottom: 8, marginTop: 4 }}>Parameters</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {selectedSavedRun.params.map(a => (
+                    <ArgFieldRow key={a.name} arg={a} error={savedRunErrors[a.name]}>
+                      <RunbookField
+                        arg={a}
+                        hostNames={hosts.map(h => h.name)}
+                        value={savedRunValues[a.name]}
+                        error={savedRunErrors[a.name]}
+                        onChange={v => changeSavedRunValue(a.name, v)}
                       />
                     </ArgFieldRow>
                   ))}
@@ -879,6 +960,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
       if (res.action === 'event') message.success(`Emitted event “${res.event}”`)
       else if (res.action === 'prompt') message.success('Running the scheduled prompt…')
       else if (res.action === 'runbook') message.success(`Running runbook ${res.runnable}…`)
+      else if (res.action === 'saved_run') message.success(`Running saved run ${res.runnable}…`)
       else message.success(`Running /${res.runnable} on ${res.host}…`)
     } catch (e) {
       message.error(String(e))
@@ -894,7 +976,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
 
   const detailFor = (s: Schedule): Record<string, unknown> =>
     s.action === 'event' ? (s.fields ?? {})
-      : s.action === 'runbook' ? (s.values ?? {})
+      : s.action === 'runbook' || s.action === 'saved_run' ? (s.values ?? {})
       : s.action === 'prompt' ? {}
       : (s.args ?? {})
 
@@ -941,6 +1023,8 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           ? <Space size={6}><Tag color="cyan">prompt</Tag><span style={{ color: dimCol, fontSize: 12 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
           : s.action === 'runbook'
           ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
+          : s.action === 'saved_run'
+          ? <Space size={6}><Tag color="blue">saved run</Tag><code>{s.saved_run}</code></Space>
           : <Space size={6}><Tag>run</Tag><code>/{s.runnable}</code></Space>,
     },
     {
@@ -955,6 +1039,8 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
                   : (s.host ? <Tag>{s.host}</Tag> : <span style={{ color: dimCol }}>—</span>)))
           : (s.action === 'prompt' || s.action === 'runbook')
           ? <Tag color="cyan">agent</Tag>
+          : s.action === 'saved_run'
+          ? <Tag color="blue">preset target</Tag>
           : <span style={{ color: dimCol }}>—</span>,
     },
     {

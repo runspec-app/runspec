@@ -247,3 +247,47 @@ def test_lists_prompt_and_runbook_schedules(monkeypatch):
     assert "weekly-report: agent runbook build-report · every 1d" in out
     # The agent is told it can schedule prompts and runbooks.
     assert "create_schedule" in out and "action='prompt'" in out
+
+
+# ── saved-runs awareness block ────────────────────────────────────────────────
+
+
+def _seed_ctx_saved_runs(tmp_path, monkeypatch, rows):
+    from runspec_console import savedruns
+
+    monkeypatch.setattr(
+        cfg, "saved_runs_path", lambda: tmp_path / "runspec_saved_runs.toml"
+    )
+    savedruns.save_saved_runs(rows)
+
+
+def test_saved_runs_block_listed(tmp_path, monkeypatch):
+    _seed_ctx_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "id": "flush",
+                "title": "Flush DNS",
+                "runnable": "flush-dns",
+                "group": "Prod",
+                "params": {"reason": {"required": True}},
+            }
+        ],
+    )
+    ns = _stub(monkeypatch, rota={}, triggers=[], schedules=[])
+    out = ns._console_context()
+    assert "Saved runs (1)" in out
+    assert "flush — Flush DNS: /flush-dns on group Prod (params: reason)" in out
+    assert "run_saved_run" in out  # pointer to the tool
+
+
+def test_saved_runs_alone_produce_a_block(tmp_path, monkeypatch):
+    """A console whose only automation state is a saved run still gets context."""
+    _seed_ctx_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [{"id": "a", "runnable": "r", "host": "h"}],
+    )
+    ns = _stub(monkeypatch, rota={}, triggers=[], schedules=[])
+    assert ns._console_context() != ""

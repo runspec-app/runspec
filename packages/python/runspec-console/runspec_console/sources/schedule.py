@@ -27,6 +27,12 @@ not as a trigger. When it fires it does one of four things, chosen by ``action``
     and handed to the agent as its instructions. Schedule a reusable runbook to run
     on a cadence without re-typing it.
 
+  - ``action = "saved_run"`` → fire a saved run (by id) — a deterministic preset
+    (runnable + target + fixed args + open params) from ``runspec_saved_runs.toml``.
+    Runs **directly and autonomously** like a runnable action (no agent, no
+    confirm gate), with the schedule's ``values`` filling the preset's open
+    params. The bridge supplies the run via the ``run_saved`` callback.
+
 The ``prompt`` and ``runbook`` actions both run an agent turn via the bridge's
 ``run_agent`` callback. The source reads the schedule list, builds one APScheduler
 job per *enabled* schedule, and on each fire calls the right path. It is
@@ -78,6 +84,11 @@ RunFn = Callable[
 # render the agent's first message) and runs it on its own thread.
 AgentFn = Callable[["ScheduleJob"], None]
 
+# What a saved_run-action schedule calls to fire the saved run. The bridge gets
+# the whole parsed job (it needs the saved-run id + values) and resolves the
+# preset's own targeting deterministically — same no-agent path as a runnable.
+SavedFn = Callable[["ScheduleJob"], None]
+
 # Working-hours gate (no args → True/False): whether the rota currently permits a
 # fire. None means "no gate" (always fire).
 ClockFn = Callable[[], bool]
@@ -105,8 +116,9 @@ class ScheduleJob:
 
     ``action`` is ``"event"`` (emit a matchable event), ``"runnable"`` (run a
     specific runnable directly), ``"prompt"`` (run an agent turn on a fixed
-    prompt), or ``"runbook"`` (run a saved runbook as an agent turn). The
-    other-action fields are simply empty.
+    prompt), ``"runbook"`` (run a saved runbook as an agent turn), or
+    ``"saved_run"`` (fire a saved run — a deterministic preset — directly).
+    The other-action fields are simply empty.
     """
 
     id: str
@@ -139,8 +151,12 @@ class ScheduleJob:
     # action == "prompt" — the fixed instruction handed to the agent turn.
     prompt: str = ""
     # action == "runbook" — the saved runbook id, plus values for its {{placeholders}}.
+    # ``values`` is shared with action == "saved_run" (there it fills the saved
+    # run's open params).
     runbook: str = ""
     values: dict[str, Any] = field(default_factory=dict)
+    # action == "saved_run" — the saved-run (preset) id from runspec_saved_runs.toml.
+    saved_run: str = ""
 
 
 def _parse_every(every: str) -> dict[str, int]:
@@ -206,10 +222,10 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     # action="skill" schedule and treat it as a runbook.
     if action == "skill":
         action = "runbook"
-    if action not in ("event", "runnable", "prompt", "runbook"):
+    if action not in ("event", "runnable", "prompt", "runbook", "saved_run"):
         raise ValueError(
             f"schedule '{sid}' has unknown action '{action}' "
-            "(expected 'event', 'runnable', 'prompt' or 'runbook')"
+            "(expected 'event', 'runnable', 'prompt', 'runbook' or 'saved_run')"
         )
 
     when = parse_when(data.get("when") or {})
@@ -226,6 +242,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     prompt = ""
     runbook = ""
     values: dict[str, Any] = {}
+    saved_run = ""
     if action == "event":
         event = str(data.get("event") or "").strip()
         if not event:
@@ -266,6 +283,13 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
             raise ValueError(
                 f"schedule '{sid}' uses action='prompt' but has no 'prompt' text"
             )
+    elif action == "saved_run":
+        saved_run = str(data.get("saved_run") or "").strip()
+        if not saved_run:
+            raise ValueError(
+                f"schedule '{sid}' uses action='saved_run' but has no 'saved_run' id"
+            )
+        values = dict(data.get("values") or {})
     else:  # runbook
         # Read the new `runbook` key, falling back to the legacy `skill` key.
         runbook = str(data.get("runbook") or data.get("skill") or "").strip()
@@ -293,6 +317,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         prompt=prompt,
         runbook=runbook,
         values=values,
+        saved_run=saved_run,
     )
 
 
@@ -376,6 +401,7 @@ class ScheduleSource:
         *,
         run_runnable: RunFn | None = None,
         run_agent: AgentFn | None = None,
+        run_saved: SavedFn | None = None,
         clock_ok: ClockFn | None = None,
         on_event: ScheduleEventFn | None = None,
     ) -> None:
@@ -394,6 +420,8 @@ class ScheduleSource:
         self._run_runnable = run_runnable
         # Prompt/runbook schedules run a headless agent turn through this callback.
         self._run_agent = run_agent
+        # Saved-run schedules fire the preset deterministically through this one.
+        self._run_saved = run_saved
         # Working-hours gate + per-fire audit hook (both bridge-owned). When
         # clock_ok is set and returns False, a fire is skipped (unless the job sets
         # ignore_rota) — so schedules honour the same rota as triggers.
@@ -481,6 +509,9 @@ class ScheduleSource:
             elif job.action in ("prompt", "runbook"):
                 if self._run_agent is not None:
                     self._run_agent(job)
+            elif job.action == "saved_run":
+                if self._run_saved is not None:
+                    self._run_saved(job)
             elif self._run_runnable is not None:
                 self._run_runnable(
                     job.id,
@@ -511,6 +542,9 @@ class ScheduleSource:
         elif job.action == "runbook":
             etype = "runbook"
             summary = f"runbook: {job.runbook}"
+        elif job.action == "saved_run":
+            etype = "saved_run"
+            summary = f"saved run: {job.saved_run}"
         else:
             etype = job.runnable or "runnable"
             if job.group:

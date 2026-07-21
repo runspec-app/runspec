@@ -47,6 +47,28 @@ export interface Runbook {
   argsError?: string       // set when a malformed args table failed to parse
 }
 
+// A saved run — a deterministic preset (runnable + target + fixed args + open
+// params) stored in synced runspec_saved_runs.toml. The Forms tab lists them,
+// the run modal renders only the open params, and schedules can fire them.
+export interface SavedRun {
+  id: string
+  title: string
+  description: string
+  runnable: string
+  command: string[]        // optional subcommand path
+  // Exactly one of host / group / hosts / selected_hosts is set.
+  host: string
+  group: string
+  hosts: string[]          // failover candidates — first connected wins
+  selected_hosts: string[] // explicit fan-out list
+  args: Record<string, unknown>       // fixed args, baked in
+  credential_ids: string[]
+  target?: string          // human summary of the targeting, computed bridge-side
+  params: ArgDef[]         // parsed open-param defs — the run modal renders these
+  paramsRaw?: Record<string, unknown> // stored params table (faithful editor round-trip)
+  argsError?: string       // set when the entry failed to validate/parse
+}
+
 export interface DirEntry {
   name: string
   type: 'directory' | 'file'
@@ -409,7 +431,7 @@ export interface ScheduleWhen {
 export interface Schedule {
   id: string
   enabled?: boolean
-  action: 'runnable' | 'event' | 'prompt' | 'runbook'
+  action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run'
   when: ScheduleWhen
   // action === 'runnable' — exactly one of host / group / hosts / selected_hosts.
   // group fans the run out across every member of the host group; hosts is a
@@ -432,7 +454,10 @@ export interface Schedule {
   prompt?: string
   // action === 'runbook' — the saved runbook id + values for its {{placeholders}}.
   runbook?: string
+  // Shared with action === 'saved_run' (there it fills the preset's open params).
   values?: Record<string, unknown>
+  // action === 'saved_run' — the saved-run (preset) id; targeting lives on the preset.
+  saved_run?: string
   nextRun?: string
 }
 
@@ -909,7 +934,7 @@ export interface BridgeApi {
   delete_schedule: (id: string) => Promise<void>
   // Fire a schedule immediately — runs the runnable (returns inv_id) or emits the
   // event (returns event), regardless of the schedule's enabled flag.
-  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event' | 'prompt' | 'runbook'; inv_id?: string; event?: string; host?: string; runnable?: string }>
+  run_schedule_now: (id: string) => Promise<{ action: 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run'; inv_id?: string; event?: string; host?: string; runnable?: string }>
   get_jump_hosts: () => Promise<JumpHost[]>
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
@@ -1055,6 +1080,21 @@ export interface BridgeApi {
     values?: Record<string, unknown>,
     extraInstructions?: string,
   ) => Promise<{ chat_id?: string; message?: string; error?: string }>
+  // ── saved runs (deterministic presets) ─────────────────────────────────────
+  // All saved runs with their params parsed to ArgDef[] — feeds the Forms lane,
+  // the run modal, the Schedules picker, and the Settings editor.
+  get_saved_runs: () => Promise<SavedRun[]>
+  // Persist the whole collection from the Settings editor (each entry validated;
+  // rejected with {ok:false,error} if one is invalid).
+  save_saved_runs: (savedRuns: SavedRun[]) => Promise<{ ok: boolean; count?: number; error?: string }>
+  // Fire a saved run now: validates `values` against its open params, merges
+  // them over the fixed args, resolves the stored targeting bridge-side, and
+  // invokes — one {host, inv_id} per host actually run (the UI renders one
+  // Console run block each, streaming via runspec:output / runspec:run_end).
+  run_saved_run: (
+    id: string,
+    values?: Record<string, unknown>,
+  ) => Promise<{ id?: string; runnable?: string; runs?: { host: string; inv_id: string }[]; error?: string }>
   // Resolve a parked autonomy-gate confirm. `editedInput` (optional) replaces the
   // agent's proposed tool_input when approving — the operator can tweak the args
   // before the call runs (editable confirmations). Ignored on a deny.

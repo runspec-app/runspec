@@ -160,6 +160,15 @@ class SchedulesMixin:
                 "runnable": job.runbook if job.action == "runbook" else "(prompt)",
                 "host": "agent",
             }
+        if job.action == "saved_run":
+            inv_id = self._invoke_scheduled_saved(job)
+            self._record_schedule_fire(job)
+            return {
+                "action": "saved_run",
+                "inv_id": inv_id,
+                "runnable": job.saved_run,
+                "host": "saved run",
+            }
         inv_id = self._invoke_scheduled(
             job.host,
             job.runnable,
@@ -196,6 +205,8 @@ class SchedulesMixin:
             etype, summary = "prompt", f"prompt: {job.prompt[:60]}"
         elif job.action == "runbook":
             etype, summary = "runbook", f"runbook: {job.runbook}"
+        elif job.action == "saved_run":
+            etype, summary = "saved_run", f"saved run: {job.saved_run}"
         else:
             etype = job.runnable or "runnable"
             if job.group:
@@ -271,6 +282,51 @@ class SchedulesMixin:
         ``run_agent`` callback). The manual *Run now* path uses
         :meth:`_invoke_scheduled_agent` directly so it can surface the card id."""
         self._invoke_scheduled_agent(job)
+
+    def _run_scheduled_saved(self, job: Any) -> None:
+        """Run a saved_run-action schedule on the timer (ScheduleSource's
+        ``run_saved`` callback). The manual *Run now* path uses
+        :meth:`_invoke_scheduled_saved` directly so it can surface the id."""
+        self._invoke_scheduled_saved(job)
+
+    def _invoke_scheduled_saved(self, job: Any) -> str:
+        """Fire a saved run from a schedule: load + parse the preset, fill its
+        open params from the schedule's ``values``, then run deterministically
+        via the shared :meth:`_invoke_fanout` engine — the preset's *own* stored
+        targeting decides where it lands (the schedule carries no host). Returns
+        the first ``inv_id`` (``""`` on failure). A missing preset or invalid
+        values is logged and skipped, mirroring a runbook schedule whose
+        runbook can't be rendered."""
+        from . import savedruns as savedruns_mod
+
+        entry = self._saved_run_entry(str(job.saved_run or ""))
+        if isinstance(entry, str):
+            logger.warning("schedule '%s': %s", job.id, entry)
+            return ""
+        try:
+            merged = savedruns_mod.merged_args(entry, dict(job.values or {}))
+        except ValueError as exc:
+            logger.warning(
+                "schedule '%s': saved run %r values invalid — %s",
+                job.id,
+                job.saved_run,
+                exc,
+            )
+            return ""
+        runs = self._invoke_fanout(
+            entry.host,
+            entry.runnable,
+            merged,
+            operator="Scheduled Task",
+            trigger="schedule",
+            label=job.id,
+            command_path=entry.command or None,
+            group=entry.group,
+            hosts=entry.hosts or None,
+            selected_hosts=entry.selected_hosts or None,
+            credential_ids=entry.credential_ids or None,
+        )
+        return runs[0][1] if runs else ""
 
     def _scheduled_agent_message(self, job: Any) -> str:
         """The agent's first user turn for a prompt/runbook schedule, or ``""`` if a
@@ -399,55 +455,109 @@ class SchedulesMixin:
         hosts: list[str] | None = None,
         selected_hosts: list[str] | None = None,
         credential_ids: list[str] | None = None,
+        command_path: list[str] | None = None,
     ) -> str:
         """Invoke a runnable as the scheduler would and return its in-flight
         ``inv_id`` (``""`` on failure). Labelled as the 'Scheduled Task' operator
         and tagged ``trigger="schedule"`` so it reads identically in
-        History/Analytics whether the timer or *Run now* started it. Reuses the
-        normal invoke path (SSH/local exec + the runnable's own run_summary), and
-        builds a run card for the Schedules-tab inbox from the invoke lifecycle —
-        a ``running`` card up front, finalised to ``done``/``failed`` on exit.
+        History/Analytics whether the timer or *Run now* started it. Thin wrapper
+        over :meth:`_invoke_fanout` (the shared deterministic targeting +
+        invoke path), returning the first fan-out member's ``inv_id``."""
+        runs = self._invoke_fanout(
+            host,
+            runnable,
+            args,
+            operator="Scheduled Task",
+            trigger="schedule",
+            label=schedule_id,
+            command_path=command_path,
+            group=group,
+            hosts=hosts,
+            selected_hosts=selected_hosts,
+            credential_ids=credential_ids,
+        )
+        return runs[0][1] if runs else ""
 
-        When ``group`` is set the run fans out across every member of the host
-        group that carries the runnable — each member gets its own run card (same
-        autonomous, pre-authorised path); the first member's ``inv_id`` is
-        returned. When ``hosts`` is a candidate list the run goes to a single host —
-        the first connected one (failover). When ``selected_hosts`` is an explicit
-        list the run fans out to every host in it (same per-host filter and per-
-        member recursion as ``group``, but the operator picked the set directly)."""
+    def _invoke_fanout(
+        self,
+        host: str,
+        runnable: str,
+        args: dict[str, Any],
+        *,
+        operator: str | None,
+        trigger: str,
+        label: str = "",
+        command_path: list[str] | None = None,
+        group: str = "",
+        hosts: list[str] | None = None,
+        selected_hosts: list[str] | None = None,
+        credential_ids: list[str] | None = None,
+        schedule_card: bool = True,
+    ) -> list[tuple[str, str]]:
+        """Resolve a deterministic run's targeting and invoke it, returning
+        ``[(host, inv_id)]`` — one pair per host actually run (``[]`` on failure).
+        The shared engine behind runnable-action schedules and saved runs: no
+        agent, no confirm gate (persisting the schedule / saved run is the
+        authorization). Reuses the normal invoke path (SSH/local exec + the
+        runnable's own run_summary).
+
+        Targeting: ``group`` fans out across every member of the host group that
+        carries the runnable; ``hosts`` is a candidate list and the run goes to
+        the first connected one (failover); ``selected_hosts`` fans out to every
+        host in it; otherwise ``host`` is the single target. ``credential_ids``
+        are console credentials applied to the run (secrets injected from the
+        keychain at fire time).
+
+        ``operator``/``trigger`` label the run in History/Analytics; ``label``
+        names the source entry (schedule id / saved-run id) on the run card.
+        With ``schedule_card`` (default) each per-host run gets a Schedules-tab
+        inbox card — a ``running`` card up front, finalised to ``done``/
+        ``failed`` from the exit code; a caller whose runs surface elsewhere
+        (the Forms saved-run path renders Console run blocks) passes ``False``."""
         if selected_hosts:
             members = [
                 h for h in selected_hosts if self._host_has_runnable(h, runnable)
             ]
             if not members:
                 logger.warning(
-                    "schedule: selected_hosts %r has no host carrying %r — nothing run",
+                    "%s: selected_hosts %r has no host carrying %r — nothing run",
+                    trigger,
                     selected_hosts,
                     runnable,
                 )
-                return ""
-            inv_ids = [
-                self._invoke_scheduled(
+                return []
+            return [
+                run
+                for m in members
+                for run in self._invoke_fanout(
                     m,
                     runnable,
                     dict(args or {}),
-                    schedule_id=schedule_id,
+                    operator=operator,
+                    trigger=trigger,
+                    label=label,
+                    command_path=command_path,
                     credential_ids=credential_ids,
+                    schedule_card=schedule_card,
                 )
-                for m in members
             ]
-            return inv_ids[0] if inv_ids else ""
         if hosts:
             chosen = self._pick_connected_host(list(hosts))
             if not chosen:
-                logger.warning("schedule: no candidate host in %r — nothing run", hosts)
-                return ""
-            return self._invoke_scheduled(
+                logger.warning(
+                    "%s: no candidate host in %r — nothing run", trigger, hosts
+                )
+                return []
+            return self._invoke_fanout(
                 chosen,
                 runnable,
                 dict(args or {}),
-                schedule_id=schedule_id,
+                operator=operator,
+                trigger=trigger,
+                label=label,
+                command_path=command_path,
                 credential_ids=credential_ids,
+                schedule_card=schedule_card,
             )
         if group:
             members = [
@@ -457,88 +567,97 @@ class SchedulesMixin:
             ]
             if not members:
                 logger.warning(
-                    "schedule: group %r has no host carrying %r — nothing run",
+                    "%s: group %r has no host carrying %r — nothing run",
+                    trigger,
                     group,
                     runnable,
                 )
-                return ""
-            inv_ids = [
-                self._invoke_scheduled(
+                return []
+            return [
+                run
+                for m in members
+                for run in self._invoke_fanout(
                     m,
                     runnable,
                     dict(args or {}),
-                    schedule_id=schedule_id,
+                    operator=operator,
+                    trigger=trigger,
+                    label=label,
+                    command_path=command_path,
                     credential_ids=credential_ids,
+                    schedule_card=schedule_card,
                 )
-                for m in members
             ]
-            return inv_ids[0] if inv_ids else ""
         inv_id = uuid.uuid4().hex[:12]
-        created = time.time()
-        # card_id == inv_id so runspec:output / runspec:run_end route to this card.
-        card: dict[str, Any] = {
-            "card_id": inv_id,
-            "trigger": schedule_id or runnable,
-            "source": "schedule",
-            "event_type": "runnable",
-            "summary": f"/{runnable} on {host}",
-            "column": "running",
-            "detail": {
-                "host": host,
-                "runnable": runnable,
-                "args": dict(args or {}),
-                "schedule_id": schedule_id,
-            },
-            "created_at": created,
-            "timeline": [{"ts": created, "text": "running"}],
-        }
-        self._on_schedule_card(card)
-
-        # Accumulate a bounded output tail for the card's detail.result, then
-        # finalise the card's column from the exit code when the run ends.
-        output: list[str] = []
-
-        def on_progress(kind: str, data: dict[str, Any]) -> None:
-            if kind == "line":
-                output.append(data.get("line", ""))
-                if len(output) > 500:
-                    del output[: len(output) - 500]
-                return
-            # kind == "done"
-            ec = int(data.get("exit_code", -1))
-            now = time.time()
-            tail = "\n".join(output[-200:])
-            card["column"] = "done" if ec == 0 else "failed"
-            card["detail"] = {**card["detail"], "exit_code": ec, "result": tail}
-            if ec != 0:
-                card["detail"]["error"] = tail or f"exited with code {ec}"
-            card["timeline"] = [
-                *card["timeline"],
-                {"ts": now, "text": f"{card['column']} (exit {ec})"},
-            ]
+        on_progress = None
+        if schedule_card:
+            created = time.time()
+            # card_id == inv_id so runspec:output / runspec:run_end route to this
+            # card.
+            card: dict[str, Any] = {
+                "card_id": inv_id,
+                "trigger": label or runnable,
+                "source": "schedule",
+                "event_type": "runnable",
+                "summary": f"/{runnable} on {host}",
+                "column": "running",
+                "detail": {
+                    "host": host,
+                    "runnable": runnable,
+                    "args": dict(args or {}),
+                    "schedule_id": label,
+                },
+                "created_at": created,
+                "timeline": [{"ts": created, "text": "running"}],
+            }
             self._on_schedule_card(card)
 
+            # Accumulate a bounded output tail for the card's detail.result, then
+            # finalise the card's column from the exit code when the run ends.
+            output: list[str] = []
+
+            def on_progress(kind: str, data: dict[str, Any]) -> None:
+                if kind == "line":
+                    output.append(data.get("line", ""))
+                    if len(output) > 500:
+                        del output[: len(output) - 500]
+                    return
+                # kind == "done"
+                ec = int(data.get("exit_code", -1))
+                now = time.time()
+                tail = "\n".join(output[-200:])
+                card["column"] = "done" if ec == 0 else "failed"
+                card["detail"] = {**card["detail"], "exit_code": ec, "result": tail}
+                if ec != 0:
+                    card["detail"]["error"] = tail or f"exited with code {ec}"
+                card["timeline"] = [
+                    *card["timeline"],
+                    {"ts": now, "text": f"{card['column']} (exit {ec})"},
+                ]
+                self._on_schedule_card(card)
+
         try:
-            return self.invoke_runnable(
+            got = self.invoke_runnable(
                 host,
                 runnable,
                 dict(args or {}),
+                command_path=list(command_path) if command_path else None,
                 credential_ids=list(credential_ids) if credential_ids else None,
-                operator="Scheduled Task",
-                trigger="schedule",
+                operator=operator,
+                trigger=trigger,
                 inv_id=inv_id,
                 on_progress=on_progress,
             )
+            return [(host, got)] if got else []
         except Exception:
-            logger.exception(
-                "schedule: scheduled run of %s on %s failed", runnable, host
-            )
-            now = time.time()
-            card["column"] = "failed"
-            card["detail"] = {**card["detail"], "error": "failed to start the run"}
-            card["timeline"] = [*card["timeline"], {"ts": now, "text": "failed"}]
-            self._on_schedule_card(card)
-            return ""
+            logger.exception("%s: run of %s on %s failed", trigger, runnable, host)
+            if schedule_card:
+                now = time.time()
+                card["column"] = "failed"
+                card["detail"] = {**card["detail"], "error": "failed to start the run"}
+                card["timeline"] = [*card["timeline"], {"ts": now, "text": "failed"}]
+                self._on_schedule_card(card)
+            return []
 
     # ── today digest ──────────────────────────────────────────────────────────
 

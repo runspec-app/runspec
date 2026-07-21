@@ -157,6 +157,9 @@ run inbox, event log, and lifecycle as triggers. A schedule's action can be:
 - a **runnable** — targeting one host, a whole **group** (fans out), or a
   candidate **host list** (runs on the first connected one — failover);
 - a **runbook** by id, with its arguments filled;
+- a **saved run** by id — a [deterministic preset](console-saved-runs.md)
+  whose own stored targeting decides the hosts, with the schedule's values
+  filling its open params;
 - a **prompt** — a headless agent turn on a fixed instruction ("check the
   backup log and flag anything unusual").
 

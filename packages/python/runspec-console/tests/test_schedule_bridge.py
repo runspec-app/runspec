@@ -38,6 +38,7 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
         "delete_schedule",
         "run_schedule_now",
         "_invoke_scheduled",
+        "_invoke_fanout",
         "_invoke_scheduled_agent",
         "_pick_connected_host",
         "_run_scheduled",
@@ -505,3 +506,90 @@ def test_schedule_agent_turn_uses_schedule_workspace_prefix():
     # A reactive turn keeps the default trigger- prefix.
     ns._trigger_run_agent_turn("card-10", "SYS", "go", draft=False)
     assert ns.captured["card-10"] == "trigger-card-10"
+
+
+# ── run_schedule_now: saved_run action ───────────────────────────────────────
+
+
+def test_run_now_saved_run_fires_preset(tmp_path, monkeypatch):
+    from runspec_console import savedruns
+
+    monkeypatch.setattr(
+        "runspec_console.config.saved_runs_path",
+        lambda: tmp_path / "runspec_saved_runs.toml",
+    )
+    savedruns.save_saved_runs(
+        [
+            {
+                "id": "restart-web",
+                "runnable": "svc-restart",
+                "host": "prod-1",
+                "args": {"service": "nginx"},
+                "params": {"reason": {"required": True}},
+            }
+        ]
+    )
+    ns = _stub(tmp_path, monkeypatch)
+    for name in ("_run_scheduled_saved", "_invoke_scheduled_saved", "_saved_run_entry"):
+        setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
+    ns._host_entry = lambda h: {"name": h, "ssh": "user@" + h}
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "s1",
+                "action": "saved_run",
+                "saved_run": "restart-web",
+                "values": {"reason": "nightly"},
+                "when": {"cron": "0 2 * * *"},
+                "enabled": False,  # ignored — running now is the authorization
+            }
+        ],
+    )
+    res = ns.run_schedule_now("s1")
+    assert res["action"] == "saved_run"
+    assert res["inv_id"] == "inv-xyz"
+    host, runnable, args, kw = ns.runs[0]
+    assert (host, runnable) == ("prod-1", "svc-restart")
+    assert args == {"service": "nginx", "reason": "nightly"}
+    assert kw["operator"] == "Scheduled Task"
+    assert kw["trigger"] == "schedule"
+    # …and the fire is recorded in the Schedules event log.
+    assert any("restart-web" in e.get("summary", "") for e in ns._schedule_events)
+
+
+def test_run_now_saved_run_invalid_values_skips(tmp_path, monkeypatch):
+    from runspec_console import savedruns
+
+    monkeypatch.setattr(
+        "runspec_console.config.saved_runs_path",
+        lambda: tmp_path / "runspec_saved_runs.toml",
+    )
+    savedruns.save_saved_runs(
+        [
+            {
+                "id": "restart-web",
+                "runnable": "svc-restart",
+                "host": "prod-1",
+                "params": {"reason": {"required": True}},
+            }
+        ]
+    )
+    ns = _stub(tmp_path, monkeypatch)
+    for name in ("_run_scheduled_saved", "_invoke_scheduled_saved", "_saved_run_entry"):
+        setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "s1",
+                "action": "saved_run",
+                "saved_run": "restart-web",
+                "when": {"cron": "0 2 * * *"},
+                # required param 'reason' missing from values
+            }
+        ],
+    )
+    res = ns.run_schedule_now("s1")
+    assert res["inv_id"] == ""  # logged + skipped, nothing invoked
+    assert ns.runs == []

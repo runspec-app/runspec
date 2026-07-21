@@ -98,6 +98,7 @@ _ACTION_TOOL_NAMES = frozenset(
     {
         "create_document",
         "run_runbook",
+        "run_saved_run",
         "create_schedule",
         "emit_event",
         "open_url",
@@ -147,7 +148,13 @@ _EXEC_TOOL_NAMES = frozenset({"run_python", "run_sql"})
 # latter covers a hand-written rule trigger naming one of these as its ``run``.
 # Deliberately NOT part of the ``action_allow`` vocabulary (list_action_tools).
 _CONFIG_TOOL_NAMES = frozenset(
-    {"manage_hosts", "manage_groups", "manage_triggers", "manage_rota"}
+    {
+        "manage_hosts",
+        "manage_groups",
+        "manage_triggers",
+        "manage_rota",
+        "manage_saved_runs",
+    }
 )
 
 # Every built-in (non-runnable-backed) agent tool. ``_gated_run_tool_async``

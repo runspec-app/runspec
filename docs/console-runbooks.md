@@ -6,6 +6,10 @@ one-off conversation becomes standing operational knowledge: parameterised,
 versioned with your team config, and runnable by name from the chat `$` menu,
 from a schedule, or from a trigger.
 
+If the procedure is really just *one runnable* with fixed targeting and args
+(no judgement needed), use a [saved run](console-saved-runs.md) instead — the
+deterministic sibling that runs without the agent.
+
 ---
 
 ## Author one from a conversation

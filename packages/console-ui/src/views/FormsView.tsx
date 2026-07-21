@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, ColorPicker, Collapse, DatePicker, Input, InputNumber, Modal, Select, Slider, Switch, Tag, TimePicker, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import type { ArgDef, Host, Runnable, Runbook } from '../bridge'
+import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { PathInput } from './PathInput'
@@ -959,6 +959,80 @@ function RunbookCard({ runbook, onClick }: { runbook: Runbook; onClick: () => vo
   )
 }
 
+// A saved run — a deterministic preset — rendered as a launchable card. Clicking
+// opens the params-only run dialog (App owns the SavedRunRunModal); a preset with
+// no open params runs immediately (the App-level handler decides).
+function SavedRunCard({ savedRun, onClick }: { savedRun: SavedRun; onClick: () => void }) {
+  const isDark = useIsDark()
+  const [hovered, setHovered] = useState(false)
+
+  const paramCount = (savedRun.params ?? []).length
+  const requiredCount = (savedRun.params ?? []).filter(a => a.required).length
+
+  const accent = isDark ? '#8be9fd' : '#0958d9'
+  const border = hovered ? accent : (isDark ? '#2a2a2a' : '#e0e0e0')
+  const bg = hovered
+    ? (isDark ? 'rgba(139,233,253,0.05)' : 'rgba(9,88,217,0.03)')
+    : (isDark ? '#141414' : '#fafafa')
+
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        border: `1px solid ${border}`, borderRadius: 8, padding: '14px 16px',
+        cursor: 'pointer', background: bg, transition: 'border-color 0.15s, background 0.15s',
+        display: 'flex', flexDirection: 'column', gap: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Text style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: accent }}>
+          {savedRun.title || savedRun.id}
+        </Text>
+        <div style={{ marginLeft: 'auto' }}>
+          <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>saved run</Tag>
+        </div>
+      </div>
+      <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.4 }}>
+        /{savedRun.runnable} on {savedRun.target || savedRun.host}
+      </Text>
+      {savedRun.description && (
+        <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.4 }}>
+          {savedRun.description}
+        </Text>
+      )}
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
+        {paramCount > 0 ? (
+          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 10, margin: 0 }}>
+            {paramCount} param{paramCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
+          </Tag>
+        ) : (
+          <Tag style={{ fontSize: 10, margin: 0 }}>runs immediately</Tag>
+        )}
+        {savedRun.argsError && (
+          <Tag color="red" style={{ fontSize: 10, margin: 0 }}>misconfigured</Tag>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Text-search filter for the saved-runs lane. Saved runs are target-baked, so
+// (like runbooks) they ignore the host/scope filters — only text search narrows
+// them. Exported for unit tests.
+export function filterSavedRuns(savedRuns: SavedRun[], search: string): SavedRun[] {
+  if (!search) return savedRuns
+  const low = search.toLowerCase()
+  return savedRuns.filter(s =>
+    s.id.toLowerCase().includes(low) ||
+    (s.title ?? '').toLowerCase().includes(low) ||
+    (s.description ?? '').toLowerCase().includes(low) ||
+    (s.runnable ?? '').toLowerCase().includes(low) ||
+    (s.target ?? '').toLowerCase().includes(low)
+  )
+}
+
 // ─── Main view ───────────────────────────────────────────────────────────────
 
 export interface PendingForm {
@@ -979,12 +1053,15 @@ interface FormsViewProps {
   onPendingFormClear?: () => void
   runbooks?: Runbook[]
   onOpenRunbook?: (runbook: Runbook) => void
+  savedRuns?: SavedRun[]
+  onOpenSavedRun?: (savedRun: SavedRun) => void
 }
 
 export function FormsView({
   runnables, hosts, selectedHost, activeScope,
   onRunRunnable, pendingForm, onPendingFormClear,
   runbooks = [], onOpenRunbook,
+  savedRuns = [], onOpenSavedRun,
 }: FormsViewProps) {
   const isDark = useIsDark()
   const [search, setSearch] = useState('')
@@ -1070,6 +1147,10 @@ export function FormsView({
         : runbooks)
     : []
 
+  const filteredSavedRuns = (onOpenSavedRun && savedRuns.length > 0)
+    ? filterSavedRuns(savedRuns, search)
+    : []
+
   // Group into swimlanes preserving existing group order
   const groupMap = new Map<string, Runnable[]>()
   for (const r of filtered) {
@@ -1092,7 +1173,7 @@ export function FormsView({
         />
       </div>
 
-      {filtered.length === 0 && filteredRunbooks.length === 0 ? (
+      {filtered.length === 0 && filteredRunbooks.length === 0 && filteredSavedRuns.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>
           <div style={{ textAlign: 'center' }}>
             <AppstoreOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
@@ -1101,6 +1182,27 @@ export function FormsView({
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
+          {filteredSavedRuns.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{
+                fontSize: 10, color: isDark ? '#aaa' : '#999',
+                textTransform: 'uppercase', letterSpacing: '0.08em',
+                marginBottom: 12, paddingBottom: 6,
+                borderBottom: `1px solid ${borderCol}`,
+              }}>
+                Saved runs
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+                gap: 10,
+              }}>
+                {filteredSavedRuns.map(s => (
+                  <SavedRunCard key={s.id} savedRun={s} onClick={() => onOpenSavedRun?.(s)} />
+                ))}
+              </div>
+            </div>
+          )}
           {filteredRunbooks.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{

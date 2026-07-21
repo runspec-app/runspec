@@ -382,3 +382,96 @@ def test_schema_enums_from_live_config(monkeypatch, tmp_path):
         "t1"
         in tools["manage_triggers"]["input_schema"]["properties"]["name"]["description"]
     )
+
+
+# ── manage_saved_runs ─────────────────────────────────────────────────────────
+
+
+class _SavedRunConfigBridge(_ConfigBridge):
+    _config_manage_saved_runs = Bridge._config_manage_saved_runs
+    get_saved_runs = Bridge.get_saved_runs
+    save_saved_runs = Bridge.save_saved_runs
+
+    def _dispatch(self, ev, payload):
+        self.dispatched.append((ev, payload))
+
+
+def _saved_run_bridge(tmp_path, monkeypatch, rows=None):
+    from runspec_console import savedruns
+
+    monkeypatch.setattr(
+        "runspec_console.config.saved_runs_path",
+        lambda: tmp_path / "runspec_saved_runs.toml",
+    )
+    if rows:
+        savedruns.save_saved_runs(rows)
+    return _SavedRunConfigBridge()
+
+
+def test_manage_saved_runs_in_registry_and_schema(tmp_path, monkeypatch):
+    b = _saved_run_bridge(
+        tmp_path, monkeypatch, [{"id": "flush", "runnable": "r", "host": "h"}]
+    )
+    assert "manage_saved_runs" in _CONFIG_TOOL_NAMES
+    tool = next(t for t in b._config_tools() if t["name"] == "manage_saved_runs")
+    assert tool["input_schema"]["properties"]["id"]["enum"] == ["flush"]
+    # Reads autonomous, mutations confirm.
+    assert (
+        b._effective_tool_autonomy("manage_saved_runs", {"action": "list"})
+        == "autonomous"
+    )
+    assert (
+        b._effective_tool_autonomy("manage_saved_runs", {"action": "save"}) == "confirm"
+    )
+
+
+def test_manage_saved_runs_list_get_save_delete(tmp_path, monkeypatch):
+    from runspec_console import savedruns
+
+    b = _saved_run_bridge(tmp_path, monkeypatch)
+    # save
+    out = b._run_config_tool(
+        "manage_saved_runs",
+        {
+            "action": "save",
+            "saved_run": {
+                "id": "flush",
+                "runnable": "flush-dns",
+                "group": "Prod",
+                "params": {"reason": {"required": True}},
+            },
+        },
+        "chat1",
+    )
+    assert out.startswith("✓")
+    assert savedruns.load_saved_run("flush") is not None
+    # list
+    out = b._run_config_tool("manage_saved_runs", {"action": "list"}, "chat1")
+    assert "flush" in out
+    # get
+    out = b._run_config_tool("manage_saved_runs", {"action": "get", "id": "flush"}, "c")
+    assert json.loads(out)["runnable"] == "flush-dns"
+    # delete
+    out = b._run_config_tool(
+        "manage_saved_runs", {"action": "delete", "id": "flush"}, "c"
+    )
+    assert out.startswith("✓")
+    assert savedruns.load_saved_runs() == []
+
+
+def test_manage_saved_runs_rejects_invalid_entry(tmp_path, monkeypatch):
+    b = _saved_run_bridge(tmp_path, monkeypatch)
+    out = b._run_config_tool(
+        "manage_saved_runs",
+        {"action": "save", "saved_run": {"id": "x", "runnable": "r"}},  # no target
+        "chat1",
+    )
+    assert out.startswith("✗")
+    assert "exactly one of" in out
+
+
+def test_manage_saved_runs_is_chat_only(tmp_path, monkeypatch):
+    b = _saved_run_bridge(tmp_path, monkeypatch)
+    b._run_origin["chat1"] = {"trigger": "outlook"}
+    out = b._run_config_tool("manage_saved_runs", {"action": "list"}, "chat1")
+    assert "chat-only" in out

@@ -77,6 +77,7 @@ NON_RUNSPEC_SECTIONS = {
     "triggers",
     "schedule",
     "runbook",
+    "saved_run",
     "rota",
     "mailboxes",
     "config_sync",

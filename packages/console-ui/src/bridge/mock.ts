@@ -1121,6 +1121,9 @@ export const mockApi: BridgeApi = {
   get_runbooks: async () => [],
   save_runbooks: async () => ({ ok: true, count: 0 }),
   run_runbook: async (runbookId, _values, _extra) => ({ chat_id: `mock-runbook-${runbookId}`, message: `$${runbookId}` }),
+  get_saved_runs: async () => [],
+  save_saved_runs: async () => ({ ok: true, count: 0 }),
+  run_saved_run: async (id, _values) => ({ id, runnable: 'mock', runs: [{ host: 'local', inv_id: `mock-saved-${id}` }] }),
   cancel_chat: async (chatId: string) => {
     if (_activeChat && (!chatId || _activeChat.id === chatId)) {
       _activeChat.cancelled = true

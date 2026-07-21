@@ -37,6 +37,7 @@ import { FormsView, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
 import { CopyKeyModal } from './views/CopyKeyModal'
 import { RunbookRunModal } from './views/RunbookRunModal'
+import { SavedRunRunModal } from './views/SavedRunRunModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
 // so it stays out of the initial bundle.
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
@@ -44,7 +45,7 @@ import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
-import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type RoomInfo, type BrandTheme } from './bridge'
+import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
 import { ThemeContext } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
@@ -184,6 +185,8 @@ export default function App() {
   const [pendingForm, setPendingForm] = useState<PendingForm | null>(null)
   const [runbooks, setRunbooks] = useState<Runbook[]>([])
   const [pendingRunbook, setPendingRunbook] = useState<Runbook | null>(null)
+  const [savedRuns, setSavedRuns] = useState<SavedRun[]>([])
+  const [pendingSavedRun, setPendingSavedRun] = useState<SavedRun | null>(null)
   const [historySearch, setHistorySearch] = useState('')
   const [activeScope, setActiveScope] = useState<string[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
@@ -327,6 +330,10 @@ export default function App() {
     // Config Sync pull lands new ones (gitsync dispatches runspec:runbooks_changed).
     const loadRunbooks = () => bridge.get_runbooks().then(setRunbooks).catch(() => {})
     loadRunbooks()
+    // Saved runs feed the Forms lane + run modal + Schedules picker; refresh after
+    // the editor saves or a Config Sync pull lands new ones.
+    const loadSavedRuns = () => bridge.get_saved_runs().then(setSavedRuns).catch(() => {})
+    loadSavedRuns()
     // Discovery readiness: read on mount (events may predate this listener), then
     // track live as each host completes.
     bridge.discovery_state?.().then(setDiscovery).catch(() => {})
@@ -352,6 +359,7 @@ export default function App() {
     window.addEventListener('runspec:hosts_updated', loadProfiles)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
     window.addEventListener('runspec:runbooks_changed', loadRunbooks)
+    window.addEventListener('runspec:saved_runs_changed', loadSavedRuns)
     window.addEventListener('runspec:discovery_state', onDiscoveryState)
     window.addEventListener('runspec:room_connection', loadRooms)
     return () => {
@@ -359,6 +367,7 @@ export default function App() {
       window.removeEventListener('runspec:hosts_updated', loadProfiles)
       window.removeEventListener('runspec:runnables_updated', onRunnablesUpdated)
       window.removeEventListener('runspec:runbooks_changed', loadRunbooks)
+      window.removeEventListener('runspec:saved_runs_changed', loadSavedRuns)
       window.removeEventListener('runspec:discovery_state', onDiscoveryState)
       window.removeEventListener('runspec:room_connection', loadRooms)
       window.removeEventListener('runspec:context_estimate', onContextEstimate)
@@ -441,6 +450,24 @@ export default function App() {
   }
 
   const handleOpenRunbook = (runbook: Runbook) => setPendingRunbook(runbook)
+
+  // A saved run with open params opens the params-only dialog; one with none
+  // runs immediately (the "runs immediately" card affordance).
+  const handleOpenSavedRun = (savedRun: SavedRun) => {
+    if ((savedRun.params ?? []).length === 0 && !savedRun.argsError) {
+      handleRunSavedRun(savedRun.id, {})
+      return
+    }
+    setPendingSavedRun(savedRun)
+  }
+
+  // The run modal collected values; hand off to ConsoleView (it owns the
+  // bridge.run_saved_run call + one run block per target host).
+  const handleRunSavedRun = (id: string, values: Record<string, unknown>) => {
+    setInputHistory(h => [...h, `»${id}`])
+    setView('console')
+    window.dispatchEvent(new CustomEvent('runspec:run_saved_run', { detail: { id, values } }))
+  }
 
   // The run modal collected values; hand off to ConsoleView (it owns the
   // bridge.run_runbook call + the transcript block, mirroring runspec:send_chat).
@@ -1087,7 +1114,7 @@ export default function App() {
                 {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && (
                   <div style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
-                    {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} />}
+                    {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
                     {view === 'rota'      && <RotaView />}
                     {view === 'dev'       && <DevView />}
@@ -1174,6 +1201,13 @@ export default function App() {
           hostNames={hosts.map(h => h.name)}
           onClose={() => setPendingRunbook(null)}
           onRun={handleRunRunbook}
+        />
+
+        <SavedRunRunModal
+          savedRun={pendingSavedRun}
+          hostNames={hosts.map(h => h.name)}
+          onClose={() => setPendingSavedRun(null)}
+          onRun={handleRunSavedRun}
         />
 
         <CopyKeyModal

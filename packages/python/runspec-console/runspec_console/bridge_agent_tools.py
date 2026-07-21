@@ -2577,6 +2577,56 @@ class AgentToolsMixin:
                 }
             )
 
+        from . import savedruns as savedruns_mod
+
+        saved_runs = [r for r in savedruns_mod.load_saved_runs() if r.get("id")]
+        if saved_runs:
+
+            def _sr_line(r: dict[str, Any]) -> str:
+                label = f"'{r['id']}'"
+                if r.get("title"):
+                    label += f" — {r['title']}"
+                try:
+                    target = savedruns_mod.parse_saved_run(r).target_summary()
+                except Exception:
+                    target = "?"
+                params = sorted((r.get("params") or {}).keys())
+                extra = f" (params: {', '.join(params)})" if params else ""
+                return f"{label} → /{r.get('runnable')} on {target}{extra}"
+
+            sr_menu = "; ".join(_sr_line(r) for r in saved_runs)
+            tools.append(
+                {
+                    "name": "run_saved_run",
+                    "description": (
+                        "Run a saved run by id — a deterministic preset (runnable + "
+                        "target hosts + fixed args) with optional open params you "
+                        "fill via 'values'. No agent steps: the preset runs exactly "
+                        "as stored, gated by the underlying runnable's autonomy "
+                        f"(one grouped confirm for a multi-host preset). Available: "
+                        f"{sr_menu}."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "enum": [r["id"] for r in saved_runs],
+                                "description": "Which saved run to fire.",
+                            },
+                            "values": {
+                                "type": "object",
+                                "description": (
+                                    "Values for the saved run's open params "
+                                    "(required ones must be supplied)."
+                                ),
+                            },
+                        },
+                        "required": ["id"],
+                    },
+                }
+            )
+
         # Selectors for the schedule's targets, so the agent picks valid values
         # (the runnable "tool", the host, and the host group) rather than guessing
         # a string. Distinct runnable names across the fleet; current host names;
@@ -2602,9 +2652,12 @@ class AgentToolsMixin:
                     "the trigger engine (action='event'); run a runnable directly "
                     "(action='runnable'); run an agent turn on a fixed prompt so you "
                     "(the assistant) check or do something later (action='prompt'); "
-                    "or run a saved runbook as an agent turn (action='runbook'). Use "
-                    "'prompt' to schedule a reminder-to-act in natural language, and "
-                    "'runbook' to re-run an existing runbook on a cadence. For a "
+                    "run a saved runbook as an agent turn (action='runbook'); or "
+                    "fire a saved run — a deterministic preset with its own stored "
+                    "targeting — (action='saved_run'). Use "
+                    "'prompt' to schedule a reminder-to-act in natural language, "
+                    "'runbook' to re-run an existing runbook on a cadence, and "
+                    "'saved_run' to put an existing preset on a cadence. For a "
                     "runnable, target exactly one of: a single 'host', a 'group' "
                     "(runs on every member), 'hosts' (a candidate list — runs on the "
                     "first connected one), or 'selected_hosts' (an explicit list — "
@@ -2619,11 +2672,20 @@ class AgentToolsMixin:
                         },
                         "action": {
                             "type": "string",
-                            "enum": ["event", "runnable", "prompt", "runbook"],
+                            "enum": [
+                                "event",
+                                "runnable",
+                                "prompt",
+                                "runbook",
+                                "saved_run",
+                            ],
                             "description": (
                                 "event = emit an event; runnable = run a runnable; "
                                 "prompt = run an agent turn on 'prompt'; runbook = run "
-                                "the saved runbook named by 'runbook' as an agent turn."
+                                "the saved runbook named by 'runbook' as an agent turn; "
+                                "saved_run = fire the saved run named by 'saved_run' "
+                                "deterministically (its stored targeting decides the "
+                                "hosts)."
                             ),
                         },
                         "when": {
@@ -2716,11 +2778,23 @@ class AgentToolsMixin:
                             ),
                             "description": "Saved runbook id to run (action='runbook').",
                         },
+                        "saved_run": {
+                            "type": "string",
+                            **(
+                                {"enum": [r["id"] for r in saved_runs]}
+                                if saved_runs
+                                else {}
+                            ),
+                            "description": (
+                                "Saved-run id to fire (action='saved_run')."
+                            ),
+                        },
                         "values": {
                             "type": "object",
                             "description": (
                                 "Values for the runbook's {{name}} parameters "
-                                "(action='runbook')."
+                                "(action='runbook') or the saved run's open params "
+                                "(action='saved_run')."
                             ),
                         },
                     },
@@ -2764,6 +2838,8 @@ class AgentToolsMixin:
             return self._action_create_document(ti)
         if name == "run_runbook":
             return self._action_run_runbook(ti)
+        if name == "run_saved_run":
+            return self._action_run_saved_run(ti, chat_id)
         if name == "create_schedule":
             return self._action_create_schedule(ti)
         if name == "emit_event":
@@ -2938,6 +3014,31 @@ class AgentToolsMixin:
         title = runbook.get("title") or runbook.get("id")
         return f"Runbook '{title}' — follow these steps now using your tools:\n\n{text}"
 
+    def _action_run_saved_run(self, ti: dict[str, Any], chat_id: str = "") -> str:
+        """Fire a saved run (the gate has already approved this call — the live
+        agentic/sync gates intercept ``run_saved_run`` *before* the generic
+        action-tool confirm and route it through the grouped-confirm machinery,
+        so reaching here means the calls are authorised; a rule-trigger path
+        lands here directly with the trigger's own authorization). Expands the
+        preset to per-host calls and runs them in parallel."""
+        entry = self._saved_run_entry(str(ti.get("id") or ""))
+        if isinstance(entry, str):
+            return entry
+        calls, err = self._saved_run_calls(entry, dict(ti.get("values") or {}))
+        if err:
+            return err
+        outs = self._run_calls_parallel(calls, chat_id)
+        n = len(calls)
+        header = (
+            f"Ran saved run '{entry.id}' (/{entry.runnable}) on "
+            f"{n} host{'' if n == 1 else 's'}:"
+        )
+        blocks = [
+            f"── {tool_name.split('__', 1)[0]} ──\n{out}"
+            for (tool_name, _), out in zip(calls, outs)
+        ]
+        return header + "\n\n" + "\n\n".join(blocks)
+
     def _action_create_schedule(self, ti: dict[str, Any]) -> str:
         from .sources.schedule import parse_schedule_entry
 
@@ -2960,6 +3061,7 @@ class AgentToolsMixin:
             "args",
             "prompt",
             "runbook",
+            "saved_run",
             "values",
         ):
             if ti.get(key) is not None:

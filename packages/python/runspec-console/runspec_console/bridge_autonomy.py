@@ -486,6 +486,19 @@ class AutonomyMixin:
                     chat_id, calls, noun=f"group '{group}' run", stage=stage
                 )
                 return self._format_group_output(group, name, calls, outs)
+        if tool_name == "run_saved_run":
+            # A saved run expands to concrete host__runnable calls and rides the
+            # same grouped-confirm machinery as a group fan-out — the gate then
+            # reflects the *underlying* runnable's autonomy (most-restrictive
+            # across a multi-host preset), not a blanket action-tool confirm.
+            expanded = self._saved_run_gate_calls(tool_input)
+            if isinstance(expanded, str):
+                return expanded
+            sid, name, calls = expanded
+            outs = await self._grouped_confirm_run_async(
+                chat_id, calls, noun=f"saved run '{sid}'", stage=stage
+            )
+            return self._format_group_output(f"saved run '{sid}'", name, calls, outs)
         decision = self._confirm_decision(tool_name, tool_input)
         display = self._confirm_card_view(tool_name, tool_input)[0].split("__", 1)[-1]
         logger.info("autonomy gate: tool=%s decision=%s", tool_name, decision)
@@ -754,6 +767,17 @@ class AutonomyMixin:
                     chat_id, calls, noun=f"group '{group}' run"
                 )
                 return self._format_group_output(group, name, calls, outs)
+        if tool_name == "run_saved_run":
+            # Same interception as the async gate: gate on the underlying
+            # runnable(s), one grouped confirm, no blanket action-tool prompt.
+            expanded = self._saved_run_gate_calls(tool_input)
+            if isinstance(expanded, str):
+                return expanded
+            sid, name, calls = expanded
+            outs = self._grouped_confirm_run_sync(
+                chat_id, calls, noun=f"saved run '{sid}'"
+            )
+            return self._format_group_output(f"saved run '{sid}'", name, calls, outs)
         decision = self._confirm_decision(tool_name, tool_input)
         display = self._confirm_card_view(tool_name, tool_input)[0].split("__", 1)[-1]
         if decision == "manual":
@@ -913,6 +937,7 @@ class AutonomyMixin:
             call_args = dict(ti.get("args") or {})
             chosen_command = ti.get("command")
             credential_id = str(ti.get("credential_id") or "")
+            credential_id_list: list[str] = []
             command_path = (
                 [chosen_command]
                 if isinstance(chosen_command, str) and chosen_command
@@ -936,12 +961,23 @@ class AutonomyMixin:
             chosen_command = call_args.pop("command", None)
             # An explicit credential the agent chose to apply (in-scope ones apply
             # automatically regardless). Pulled out so it isn't treated as an arg.
+            # A saved-run call may carry several (its stored credential id list) —
+            # popped the same way so they never reach the runnable as args.
             credential_id = str(call_args.pop("credential_id", "") or "")
-            command_path = (
-                [chosen_command]
-                if isinstance(chosen_command, str) and chosen_command
-                else []
-            )
+            credential_id_list = [
+                str(c).strip()
+                for c in (call_args.pop("credential_ids", None) or [])
+                if str(c).strip()
+            ]
+            if isinstance(chosen_command, list):
+                # A saved run stores its subcommand as a path (possibly nested).
+                command_path = [str(c) for c in chosen_command if str(c)]
+            else:
+                command_path = (
+                    [chosen_command]
+                    if isinstance(chosen_command, str) and chosen_command
+                    else []
+                )
         entry = self._host_entry(host)
         if entry is None:
             return f"Error: host '{host}' not found"
@@ -984,13 +1020,26 @@ class AutonomyMixin:
             valid_args=self._declared_arg_names(cached_r, command_path),
             secret_args=secret_names,
         )
+        for cid in credential_id_list:
+            self._apply_credentials(
+                host,
+                runnable,
+                exec_args,
+                secrets,
+                explicit_id=cid,
+                valid_args=self._declared_arg_names(cached_r, command_path),
+                secret_args=secret_names,
+            )
         # …and ALSO inject the name-derived plain env vars (e.g. JIRA_USERNAME) so
         # env-only runnables (jsm/snow style) work for the agent. In-scope
-        # credentials apply automatically; an explicit credential_id is merged in
-        # (it may be out of scope).
+        # credentials apply automatically; an explicit credential_id (or a saved
+        # run's stored id list) is merged in (it may be out of scope).
         cred_env, _ = self._credential_env(host, runnable, ids=None)
         if credential_id:
             explicit_env, _ = self._credential_env(host, runnable, [credential_id])
+            cred_env.update(explicit_env)
+        if credential_id_list:
+            explicit_env, _ = self._credential_env(host, runnable, credential_id_list)
             cred_env.update(explicit_env)
         # Run provenance for this turn (set by the trigger handler; absent → a
         # direct chat agent run). `agent` distinguishes an LLM turn (chat / agent

@@ -136,6 +136,8 @@ class TriggersMixin:
                 # Prompt/runbook schedules run a headless agent turn (isolated, same
                 # autonomy gate as a reactive agent-mode trigger).
                 run_agent=self._run_scheduled_agent,
+                # Saved-run schedules fire the preset deterministically (no agent).
+                run_saved=self._run_scheduled_saved,
                 # Same working-hours gate the engine uses, so schedules and
                 # triggers honour one shared rota; plus the Schedules event-log hook.
                 clock_ok=self._build_clock_ok(),
@@ -1625,6 +1627,7 @@ class TriggersMixin:
         items = [
             {"name": "create_document", "label": "Create document"},
             {"name": "run_runbook", "label": "Run runbook (runbook)"},
+            {"name": "run_saved_run", "label": "Run saved run (preset)"},
             {"name": "create_schedule", "label": "Create schedule"},
             {"name": "emit_event", "label": "Emit event"},
             {"name": "open_url", "label": "Open URL in browser"},

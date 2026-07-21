@@ -8,6 +8,50 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.186.0] — 2026-07-21
+
+### Added
+- **Saved runs — deterministic presets.** A saved run is a runnable + target
+  host(s) + fixed args, with optional **typed open params** filled at run time —
+  the "Run now" idea freed from the Schedules tab and made a first-class, saved,
+  shareable item. No model involved: it fires exactly as stored. Stored in
+  **`runspec_saved_runs.toml`** (`[[saved_run]]`, **rides Config Sync**, merged
+  by `id`); targeting mirrors a runnable-action schedule exactly (one of
+  `host` / `group` fan-out / `hosts` first-connected failover /
+  `selected_hosts` fan-out); `params` is a runspec args table (same grammar as
+  `[runbook.args]`, parsed/validated via `runbookargs`), a param may not shadow
+  a fixed arg, and secrets ride `credential_ids` (keychain) — never fixed args.
+  Surfaces:
+  - **Forms tab** — a "Saved runs" lane; clicking opens a params-only run
+    dialog (`SavedRunRunModal`) with a read-only summary of the baked-in
+    target/args/credentials; zero-param presets run immediately; multi-host
+    presets render one Console run block per host.
+  - **Agent** — a `run_saved_run` action tool whose autonomy gate resolves the
+    **underlying runnable** (grouped editable confirm across a fan-out,
+    most-restrictive wins, `manual` blocks — the same machinery as a group
+    `run_runnable`), a chat-only `manage_saved_runs` config tool
+    (list/get autonomous, save/delete confirm), and a "Saved runs"
+    console-context block so the agent knows what exists.
+  - **Schedules** — new `action = "saved_run"` (+ `values` for the open
+    params) in the Schedules modal, `create_schedule` agent tool, and
+    `run_schedule_now`; the preset's own targeting decides the hosts.
+  - **Settings → Saved runs** — the collection editor (validated on save).
+  New module `savedruns.py`, bridge mixin `bridge_saved_runs.py`
+  (`get_saved_runs`/`save_saved_runs`/`run_saved_run`), docs at
+  `docs/console-saved-runs.md`.
+
+### Changed
+- **`_invoke_scheduled` generalised to `_invoke_fanout`** (bridge_schedules) —
+  the shared deterministic targeting+invoke engine behind runnable-action
+  schedules and saved runs. In passing this adds **subcommand (`command_path`)
+  threading** to scheduled/deterministic runs, which the schedule path
+  previously dropped entirely.
+- The agent exec path (`_run_tool_sync`) now accepts a `credential_ids` list
+  and a list-valued `command` riding a call's args (popped before dispatch, as
+  the singular forms already were) so a saved run's stored credentials and
+  subcommand path reach a gated agent-side run.
+
+
 ## [0.185.0] — 2026-07-21
 
 ### Added

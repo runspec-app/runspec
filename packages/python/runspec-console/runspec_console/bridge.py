@@ -29,6 +29,7 @@ from .bridge_hosts import HostsMixin
 from .bridge_transfer import TransferMixin
 from .bridge_reporting import ReportingMixin
 from .bridge_schedules import SchedulesMixin
+from .bridge_saved_runs import SavedRunsMixin
 from .bridge_config_ssh import ConfigSshMixin
 from .bridge_fleet import FleetMixin
 from .bridge_invoke import InvokeMixin
@@ -46,6 +47,7 @@ class Bridge(
     TransferMixin,
     ReportingMixin,
     SchedulesMixin,
+    SavedRunsMixin,
     ConfigSshMixin,
     FleetMixin,
     InvokeMixin,

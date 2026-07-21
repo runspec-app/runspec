@@ -48,6 +48,7 @@ nav:
     - Hosts & fleet: console-hosts.md
     - Automation — triggers, schedules, rota: console-automation.md
     - Runbooks: console-runbooks.md
+    - Saved runs: console-saved-runs.md
     - Forms & credentials: console-forms.md
     - Team config — sync & rooms: console-team.md
     - Settings & config reference: console-reference.md

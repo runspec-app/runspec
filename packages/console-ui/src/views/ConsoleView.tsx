@@ -233,6 +233,36 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     return () => window.removeEventListener('runspec:run_runbook', onRunRunbook)
   }, [])
 
+  // A saved run fired from the Forms lane / run modal: the bridge validates the
+  // param values, resolves the preset's stored targeting (group fan-out, hosts
+  // failover, selected hosts), and invokes — returning one {host, inv_id} per
+  // run. We render one run block per host; output streams to each via the
+  // normal runspec:output / runspec:run_end routing (the bridge pre-allocated
+  // the ids).
+  useEffect(() => {
+    const onRunSavedRun = async (e: Event) => {
+      const { id, values } = (e as CustomEvent).detail as {
+        id: string; values: Record<string, unknown>
+      }
+      const res = await bridge.run_saved_run(id, values)
+      if (res.error || !res.runs?.length) {
+        message.error(res.error || 'Could not start saved run')
+        return
+      }
+      for (const run of res.runs) {
+        addBlockRef.current({
+          id: run.inv_id, type: 'run',
+          label: `/${res.runnable} on ${run.host}`,
+          startedAt: new Date().toISOString(),
+          lines: [], segments: [], currentText: '', done: false,
+        })
+      }
+      window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
+    }
+    window.addEventListener('runspec:run_saved_run', onRunSavedRun)
+    return () => window.removeEventListener('runspec:run_saved_run', onRunSavedRun)
+  }, [])
+
   // post_to_chat triggers mirror their run into the Console transcript as a
   // finished block matching the trigger mode, so a triggered run looks just
   // like the same command run by hand — only the source differs:

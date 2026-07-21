@@ -137,6 +137,13 @@ def runbooks_path() -> Path:
     return path
 
 
+def saved_runs_path() -> Path:
+    """The saved-run registry (`runspec_saved_runs.toml`) — a `[[saved_run]]`
+    collection of deterministic presets (runnable + target + fixed args + open
+    params). Rides Config Sync (KNOWN_FILES), merged by `id` like runbooks."""
+    return app_dir() / "runspec_saved_runs.toml"
+
+
 def credentials_path() -> Path:
     return app_dir() / "runspec_credentials.toml"
 

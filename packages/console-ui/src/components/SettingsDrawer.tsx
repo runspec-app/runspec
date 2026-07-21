@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -3296,6 +3296,289 @@ function RunbooksTab() {
   )
 }
 
+// ── Saved runs (deterministic presets) ──────────────────────────────────────
+
+// A saved run's open params reuse the runbook parameter-row editor; `password`
+// is additionally allowed here (a param is typed at run time and rides the
+// secret env channel — unlike a runbook, nothing is substituted into a prompt).
+const SAVED_RUN_PARAM_TYPES = [...RUNBOOK_ARG_TYPES, 'password']
+
+interface SavedRunFormValues {
+  id: string
+  title?: string
+  description?: string
+  runnable: string
+  command?: string
+  target: 'host' | 'anyhost' | 'selected' | 'group'
+  host?: string
+  group?: string
+  hosts?: string[]
+  selected_hosts?: string[]
+  args?: { key?: string; value?: string }[]
+  params?: RunbookArgRow[]
+  credential_ids?: string[]
+}
+
+function SavedRunsTab() {
+  const [savedRuns, setSavedRuns] = useState<SavedRun[]>([])
+  const [hosts, setHosts] = useState<Host[]>([])
+  const [creds, setCreds] = useState<Credential[]>([])
+  const [editingKey, setEditingKey] = useState<string | null>(null)  // '' = new
+  const [form] = Form.useForm<SavedRunFormValues>()
+  const target = Form.useWatch('target', form) ?? 'host'
+
+  const load = useCallback(() => bridge.get_saved_runs().then(setSavedRuns).catch(() => {}), [])
+  // Load on mount + refresh whenever saved runs change elsewhere (agent save,
+  // Config Sync pull) — mirrors RunbooksTab.
+  useEffect(() => {
+    load()
+    bridge.get_hosts().then(setHosts).catch(() => {})
+    bridge.list_credentials().then(setCreds).catch(() => {})
+    const onChanged = () => { load() }
+    window.addEventListener('runspec:saved_runs_changed', onChanged)
+    return () => window.removeEventListener('runspec:saved_runs_changed', onChanged)
+  }, [load])
+
+  const groupNames = [...new Set(hosts.map(h => h.group).filter((g): g is string => !!g))].sort()
+  const hostOptions = hosts.map(h => ({ label: h.name, value: h.name }))
+
+  const startAdd = () => {
+    form.resetFields()
+    form.setFieldsValue({ target: 'host', args: [], params: [] })
+    setEditingKey('')
+  }
+  const startEdit = (s: SavedRun) => {
+    form.setFieldsValue({
+      id: s.id, title: s.title, description: s.description,
+      runnable: s.runnable, command: (s.command ?? []).join(' '),
+      target: s.group ? 'group' : s.selected_hosts?.length ? 'selected' : s.hosts?.length ? 'anyhost' : 'host',
+      host: s.host || undefined, group: s.group || undefined,
+      hosts: s.hosts ?? [], selected_hosts: s.selected_hosts ?? [],
+      args: Object.entries(s.args ?? {}).map(([key, value]) => ({ key, value: String(value) })),
+      params: argsRawToRows(s.paramsRaw),
+      credential_ids: s.credential_ids ?? [],
+    })
+    setEditingKey(s.id)
+  }
+  const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  const toRow = (s: SavedRun): Record<string, unknown> => ({
+    id: s.id, title: s.title, description: s.description,
+    runnable: s.runnable, command: s.command ?? [],
+    host: s.host, group: s.group, hosts: s.hosts, selected_hosts: s.selected_hosts,
+    args: s.args ?? {}, paramsRaw: s.paramsRaw ?? {}, credential_ids: s.credential_ids ?? [],
+  })
+
+  const persist = async (rows: Array<Record<string, unknown>>) => {
+    const res = await bridge.save_saved_runs(rows as unknown as SavedRun[])
+    if (!res.ok) { message.error(res.error || 'Could not save saved run'); return false }
+    await load()
+    window.dispatchEvent(new CustomEvent('runspec:saved_runs_changed'))
+    return true
+  }
+
+  const save = async () => {
+    const values = await form.validateFields()
+    const id = (values.id ?? '').trim()
+    const args: Record<string, unknown> = {}
+    for (const f of values.args ?? []) {
+      if (f?.key?.trim()) args[f.key.trim()] = String(f.value ?? '').trim()
+    }
+    const edited: Record<string, unknown> = {
+      id,
+      title: (values.title ?? '').trim(),
+      description: (values.description ?? '').trim(),
+      runnable: (values.runnable ?? '').trim(),
+      command: (values.command ?? '').trim() ? (values.command ?? '').trim().split(/\s+/) : [],
+      host: values.target === 'host' ? values.host : '',
+      group: values.target === 'group' ? values.group : '',
+      hosts: values.target === 'anyhost' ? (values.hosts ?? []) : [],
+      selected_hosts: values.target === 'selected' ? (values.selected_hosts ?? []) : [],
+      args,
+      paramsRaw: rowsToArgsRaw(values.params),
+      credential_ids: values.credential_ids ?? [],
+    }
+    const others = savedRuns.filter(s => s.id !== (editingKey || id)).map(toRow)
+    if (await persist([...others, edited])) { setEditingKey(null); form.resetFields() }
+  }
+
+  const remove = async (id: string) => {
+    await persist(savedRuns.filter(s => s.id !== id).map(toRow))
+  }
+
+  return (
+    <div>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        Saved runs are <strong>deterministic presets</strong>: a runnable + target host(s) +
+        fixed args, with optional <strong>open parameters</strong> filled at run time. No
+        agent involved — a saved run fires exactly as stored. They appear in the Forms tab,
+        the assistant can list and run them (gated by the runnable's own autonomy), and the
+        Schedules tab can fire one on a cadence. Saved runs sync with the rest of your
+        config (Config Sync), so a team shares one set — fixed args must never contain
+        secrets; attach a Credential instead.
+      </Typography.Paragraph>
+
+      <Button type="dashed" icon={<PlusOutlined />} onClick={startAdd} style={{ marginBottom: 12 }}>
+        New saved run
+      </Button>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {savedRuns.length === 0 && <Empty description="No saved runs yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+        {savedRuns.map(s => (
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
+            <span style={{ minWidth: 200 }}>
+              <Typography.Text code style={{ fontSize: 12 }}>{s.id}</Typography.Text>
+            </span>
+            <span style={{ flex: 1, fontSize: 12, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              /{s.runnable} on {s.target || s.host}{s.title ? ` — ${s.title}` : ''}
+            </span>
+            {(s.params ?? []).length > 0 && (
+              <Tag style={{ fontSize: 10, margin: 0 }}>{(s.params ?? []).length} param{(s.params ?? []).length !== 1 ? 's' : ''}</Tag>
+            )}
+            {s.argsError && <Tag color="red" style={{ fontSize: 10, margin: 0 }}>invalid</Tag>}
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
+            <Popconfirm title={`Remove ${s.id}?`} onConfirm={() => remove(s.id)}>
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
+            </Popconfirm>
+          </div>
+        ))}
+      </div>
+
+      <Modal
+        open={editingKey !== null}
+        title={editingKey === '' ? 'New saved run' : `Edit — ${editingKey}`}
+        width={680}
+        onCancel={cancel}
+        onOk={save}
+        okText="Save"
+        maskClosable={false}
+      >
+        <Form form={form} layout="vertical" size="small">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+            <Form.Item name="id" label="Id" rules={[{ required: true, message: 'Required' }]}>
+              <Input placeholder="restart-web" style={{ fontFamily: 'monospace' }} disabled={editingKey !== ''} />
+            </Form.Item>
+            <Form.Item name="title" label="Title">
+              <Input placeholder="Restart the web tier" />
+            </Form.Item>
+          </div>
+          <Form.Item name="description" label="Description">
+            <Input placeholder="Rolling restart of nginx across production" />
+          </Form.Item>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+            <Form.Item name="runnable" label="Runnable" rules={[{ required: true, message: 'Required' }]}>
+              <Input placeholder="service-restart" style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+            <Form.Item name="command" label="Subcommand (optional)" help="Space-separated path, e.g. db restore">
+              <Input placeholder="" style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+          </div>
+
+          <Form.Item name="target" label="Target" initialValue="host">
+            <Segmented
+              options={[
+                { label: 'One host', value: 'host' },
+                { label: 'Any of hosts', value: 'anyhost' },
+                { label: 'Selected hosts', value: 'selected' },
+                { label: 'Host group', value: 'group', disabled: groupNames.length === 0 },
+              ]}
+            />
+          </Form.Item>
+          {target === 'host' && (
+            <Form.Item name="host" label="Host" rules={[{ required: true, message: 'Required' }]}>
+              <Select showSearch options={hostOptions} placeholder="Select host…" />
+            </Form.Item>
+          )}
+          {target === 'anyhost' && (
+            <Form.Item name="hosts" label="Candidate hosts (first connected runs)" rules={[{ required: true, message: 'Pick at least one host' }]}>
+              <Select mode="multiple" options={hostOptions} placeholder="Select hosts…" />
+            </Form.Item>
+          )}
+          {target === 'selected' && (
+            <Form.Item name="selected_hosts" label="Hosts (runs on every one)" rules={[{ required: true, message: 'Pick at least one host' }]}>
+              <Select mode="multiple" options={hostOptions} placeholder="Select hosts…" />
+            </Form.Item>
+          )}
+          {target === 'group' && (
+            <Form.Item name="group" label="Host group" rules={[{ required: true, message: 'Required' }]}>
+              <Select options={groupNames.map(g => ({ label: g, value: g }))} placeholder="Select group…" />
+            </Form.Item>
+          )}
+
+          <Divider style={{ margin: '8px 0' }} orientation="left" plain>Fixed args (baked in)</Divider>
+          <Form.List name="args">
+            {(fields, { add, remove: removeRow }) => (
+              <>
+                {fields.map(({ key, name, ...rest }) => (
+                  <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+                    <Form.Item {...rest} name={[name, 'key']} noStyle>
+                      <Input size="small" placeholder="service" style={{ fontFamily: 'monospace', width: 160 }} />
+                    </Form.Item>
+                    <span style={{ color: '#888' }}>=</span>
+                    <Form.Item {...rest} name={[name, 'value']} noStyle>
+                      <Input size="small" placeholder="nginx" style={{ fontFamily: 'monospace', flex: 1 }} />
+                    </Form.Item>
+                    <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                  </div>
+                ))}
+                <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />}>
+                  Add fixed arg
+                </Button>
+              </>
+            )}
+          </Form.List>
+
+          <Divider style={{ margin: '8px 0' }} orientation="left" plain>Open parameters (filled at run time)</Divider>
+          <Form.List name="params">
+            {(fields, { add, remove: removeRow }) => (
+              <>
+                {fields.map(({ key, name, ...rest }) => (
+                  <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginBottom: 6 }}>
+                    <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0, width: 130 }}
+                      rules={[{ required: true, message: 'name' }]}>
+                      <Input placeholder="name" style={{ fontFamily: 'monospace' }} />
+                    </Form.Item>
+                    <Form.Item {...rest} name={[name, 'type']} style={{ marginBottom: 0, width: 96 }} initialValue="str">
+                      <Select options={SAVED_RUN_PARAM_TYPES.map(t => ({ label: t, value: t }))} />
+                    </Form.Item>
+                    <Form.Item noStyle shouldUpdate={(p, c) => p.params?.[name]?.type !== c.params?.[name]?.type}>
+                      {() => form.getFieldValue(['params', name, 'type']) === 'choice' ? (
+                        <Form.Item {...rest} name={[name, 'options']} style={{ marginBottom: 0, width: 150 }}>
+                          <Select mode="tags" placeholder="options" tokenSeparators={[',']} />
+                        </Form.Item>
+                      ) : (
+                        <Form.Item {...rest} name={[name, 'default']} style={{ marginBottom: 0, width: 150 }}>
+                          <Input placeholder="default" />
+                        </Form.Item>
+                      )}
+                    </Form.Item>
+                    <Form.Item {...rest} name={[name, 'required']} valuePropName="checked" style={{ marginBottom: 0 }}>
+                      <Tooltip title="Required"><Switch size="small" /></Tooltip>
+                    </Form.Item>
+                    <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                  </div>
+                ))}
+                <Button type="dashed" size="small" onClick={() => add({ type: 'str' })} icon={<PlusOutlined />}>
+                  Add parameter
+                </Button>
+              </>
+            )}
+          </Form.List>
+
+          <Divider style={{ margin: '8px 0' }} orientation="left" plain>Credentials</Divider>
+          <Form.Item name="credential_ids" help="Applied from the keychain at run time — how a saved run supplies secrets.">
+            <Select
+              mode="multiple"
+              placeholder="None"
+              options={creds.map(c => ({ label: c.label, value: c.id }))}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  )
+}
+
 // ── Denylist (fleet kill switch) ────────────────────────────────────────────
 
 export function DenylistTab() {
@@ -3598,6 +3881,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
+          { key: 'savedRuns',   label: 'Saved runs',   children: <SavedRunsTab /> },
           { key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> },
           { key: 'filters',   label: 'Filters',    children: <FiltersTab /> },
           { key: 'repos',     label: 'Repos',      children: <ReposTab /> },

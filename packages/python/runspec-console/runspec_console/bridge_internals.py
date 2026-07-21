@@ -885,6 +885,12 @@ class InternalsMixin:
         schedules = self._read_schedules()
         mailbox = read_mailbox() if ol.outlook_available() else None
         host_groups = self._groups_map()
+        try:
+            from . import savedruns as savedruns_mod
+
+            saved_runs = [r for r in savedruns_mod.load_saved_runs() if r.get("id")]
+        except Exception:
+            saved_runs = []
         rota_on = bool(rota.get("enabled"))
         if (
             not rota_on
@@ -892,6 +898,7 @@ class InternalsMixin:
             and not schedules
             and not mailbox
             and not host_groups
+            and not saved_runs
         ):
             return ""  # nothing to say — keep the cached system prefix
 
@@ -973,6 +980,8 @@ class InternalsMixin:
                     target = f"agent prompt: {str(s.get('prompt') or '')[:50]}"
                 elif action == "runbook":
                     target = f"agent runbook {s.get('runbook')}"
+                elif action == "saved_run":
+                    target = f"saved run {s.get('saved_run')}"
                 else:
                     where = (
                         f"group:{s.get('group')}" if s.get("group") else s.get("host")
@@ -985,8 +994,33 @@ class InternalsMixin:
             lines.append(
                 "You can add schedules with the create_schedule tool — including "
                 "action='prompt' (run an agent turn on a fixed instruction, to "
-                "check or do something later) and action='runbook' (run a saved "
-                "runbook on a cadence)."
+                "check or do something later), action='runbook' (run a saved "
+                "runbook on a cadence), and action='saved_run' (fire a saved run "
+                "— a deterministic preset — on a cadence)."
+            )
+
+        if saved_runs:
+            lines.append("")
+            lines.append(f"Saved runs ({len(saved_runs)}) — deterministic presets:")
+            for r in saved_runs[:20]:
+                try:
+                    parsed = savedruns_mod.parse_saved_run(r)
+                    target = parsed.target_summary()
+                except Exception:
+                    target = "?"
+                params = sorted((r.get("params") or {}).keys())
+                extra = f" (params: {', '.join(params)})" if params else ""
+                title = f" — {r.get('title')}" if r.get("title") else ""
+                lines.append(
+                    f"- {r.get('id')}{title}: /{r.get('runnable')} on {target}{extra}"
+                )
+            if len(saved_runs) > 20:
+                lines.append(f"- … and {len(saved_runs) - 20} more")
+            lines.append(
+                "Fire one with the run_saved_run tool (fill open params via "
+                "'values'); it runs exactly as stored — the gate reflects the "
+                "underlying runnable's autonomy. Manage them with "
+                "manage_saved_runs."
             )
 
         if host_groups:

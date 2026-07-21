@@ -374,7 +374,7 @@ def test_create_schedule_action_enum_includes_prompt_and_runbook(monkeypatch):
     b = _ActionBridge()
     cs = next(t for t in b._action_tools() if t["name"] == "create_schedule")
     enum = cs["input_schema"]["properties"]["action"]["enum"]
-    assert {"event", "runnable", "prompt", "runbook"} == set(enum)
+    assert {"event", "runnable", "prompt", "runbook", "saved_run"} == set(enum)
     # The runbook field offers the saved runbook ids as an enum.
     assert cs["input_schema"]["properties"]["runbook"]["enum"] == ["build-report"]
 
@@ -443,3 +443,135 @@ def test_emit_event_without_engine():
     b = _ActionBridge()  # _trigger_engine is None
     out = b._run_action_tool("emit_event", {"event": "go"})
     assert out.startswith("✗")
+
+
+# ── run_saved_run action tool ─────────────────────────────────────────────────
+
+
+class _SavedRunActionBridge(_ActionBridge):
+    _action_run_saved_run = Bridge._action_run_saved_run
+    _saved_run_entry = Bridge._saved_run_entry
+    _saved_run_calls = Bridge._saved_run_calls
+    _pick_connected_host = Bridge._pick_connected_host
+    _format_group_output = staticmethod(Bridge._format_group_output)
+
+    def __init__(self, hosts=None, runnables=None):
+        super().__init__(hosts, runnables)
+        self._connected_cache = {}
+        self.parallel_calls: list = []
+
+    def _host_entry(self, h):
+        return {"name": h, "ssh": "user@" + h}
+
+    def _group_members(self, g):
+        return []
+
+    def _host_has_runnable(self, h, r):
+        return True
+
+    def _run_calls_parallel(self, calls, chat_id):
+        self.parallel_calls.append((calls, chat_id))
+        return ["OK" for _ in calls]
+
+
+def _seed_action_saved_runs(tmp_path, monkeypatch, rows):
+    from runspec_console import savedruns
+
+    monkeypatch.setattr(
+        "runspec_console.config.saved_runs_path",
+        lambda: tmp_path / "runspec_saved_runs.toml",
+    )
+    savedruns.save_saved_runs(rows)
+
+
+def test_run_saved_run_tool_only_when_saved_runs_exist(tmp_path, monkeypatch):
+    _seed_action_saved_runs(tmp_path, monkeypatch, [])
+    b = _SavedRunActionBridge()
+    assert "run_saved_run" not in {t["name"] for t in b._action_tools()}
+    _seed_action_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "id": "flush",
+                "title": "Flush DNS",
+                "runnable": "flush-dns",
+                "host": "web01",
+                "params": {"reason": {"required": True}},
+            }
+        ],
+    )
+    tool = next(t for t in b._action_tools() if t["name"] == "run_saved_run")
+    assert tool["input_schema"]["properties"]["id"]["enum"] == ["flush"]
+    # The menu names the runnable, target, and params.
+    assert "flush-dns" in tool["description"]
+    assert "web01" in tool["description"]
+    assert "reason" in tool["description"]
+    # …and in _ACTION_TOOL_NAMES so the gate treats it as an action tool.
+    assert "run_saved_run" in _ACTION_TOOL_NAMES
+
+
+def test_action_run_saved_run_executes_expanded_calls(tmp_path, monkeypatch):
+    _seed_action_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "id": "flush",
+                "runnable": "flush-dns",
+                "selected_hosts": ["w1", "w2"],
+                "args": {"x": "1"},
+            }
+        ],
+    )
+    b = _SavedRunActionBridge()
+    out = b._run_action_tool("run_saved_run", {"id": "flush"}, "chat1")
+    assert "Ran saved run 'flush'" in out
+    (calls, chat_id) = b.parallel_calls[0]
+    assert [c[0] for c in calls] == ["w1__flush-dns", "w2__flush-dns"]
+    assert chat_id == "chat1"
+
+
+def test_action_run_saved_run_invalid_values(tmp_path, monkeypatch):
+    _seed_action_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "id": "flush",
+                "runnable": "flush-dns",
+                "host": "w1",
+                "params": {"reason": {"required": True}},
+            }
+        ],
+    )
+    b = _SavedRunActionBridge()
+    out = b._run_action_tool("run_saved_run", {"id": "flush"}, "chat1")
+    assert out.startswith("Error")
+    assert b.parallel_calls == []
+
+
+def test_create_schedule_passes_saved_run_through(tmp_path, monkeypatch):
+    _seed_action_saved_runs(
+        tmp_path,
+        monkeypatch,
+        [{"id": "flush", "runnable": "flush-dns", "host": "w1"}],
+    )
+    b = _SavedRunActionBridge()
+    out = b._run_action_tool(
+        "create_schedule",
+        {
+            "id": "nightly-flush",
+            "action": "saved_run",
+            "saved_run": "flush",
+            "values": {"reason": "nightly"},
+            "when": {"cron": "0 2 * * *"},
+        },
+    )
+    assert out.startswith("✓")
+    saved = b.created_schedules[0]
+    assert saved["action"] == "saved_run" and saved["saved_run"] == "flush"
+    assert saved["values"] == {"reason": "nightly"}
+    # …and the schema offers saved-run ids as an enum.
+    cs = next(t for t in b._action_tools() if t["name"] == "create_schedule")
+    assert cs["input_schema"]["properties"]["saved_run"]["enum"] == ["flush"]
