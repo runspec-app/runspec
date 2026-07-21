@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.180.0] — 2026-07-20
+
+### Changed
+- **A config seed can declare its own `[config_sync].preserve`, honoured from the
+  first re-assert.** `seed_apply` now folds the preserve list the seed's own
+  `config.toml` declares into the active preserve set (alongside
+  `DEFAULT_PRESERVE`, the `[config_sync].last_*` pins, and the local config's
+  list). Previously preserve was read only from the *local* config, so a
+  seed-shipped preserve was one upgrade behind: the upgrade that introduced it
+  ran against the old local config, cleared the operator's value (e.g. a
+  credential `username`), then wrote the preserve — indistinguishable from
+  preserve being ignored. A white-label author can now declare
+  `preserve = ["runspec_credentials.toml:*.username", …]` once in the seed and it
+  protects each operator's local value from the very re-assert that ships it — no
+  per-machine setup. Read from the fetched seed bytes before apply
+  (`bridge_fleet._seed_declared_preserve`); best-effort (a malformed seed yields
+  no extra preserve and is caught again by the validate-before-write gate). Note
+  a preserve still only keeps a value already present in the local file — it
+  can't resurrect one an earlier upgrade already cleared. Docs:
+  `docs/white-label.md` §3, `docs/console-team.md` (Config Sync).
+
+
 ## [0.179.0] — 2026-07-20
 
 ### Added

@@ -1176,10 +1176,16 @@ class FleetMixin:
 
         # KNOWN_FILES order for a stable per-file apply sequence.
         requested = [n for n in gitsync.KNOWN_FILES if n in fetched_layers]
+        # A seed may itself declare what operators own via [config_sync].preserve.
+        # Honour it alongside the local list so a seed-declared preserve protects
+        # from the *first* re-assert — otherwise it's a machine the operator has
+        # to pre-configure locally, and the very upgrade that ships the preserve
+        # runs before it takes effect (reads local config first).
         preserve = configmerge.parse_preserve(
             [
                 *configmerge.DEFAULT_PRESERVE,
                 *_SEED_PRESERVE,
+                *self._seed_declared_preserve(fetched_layers),
                 *(self.get_config().get("config_sync", {}).get("preserve") or []),
             ]
         )
@@ -1280,6 +1286,31 @@ class FleetMixin:
             return rows
         except Exception:  # noqa: BLE001 - status must never be fatal
             logger.debug("seed override computation failed", exc_info=True)
+            return []
+
+    def _seed_declared_preserve(
+        self, fetched_layers: dict[str, list[bytes]]
+    ) -> list[str]:
+        """The ``[config_sync].preserve`` list the seed's own ``config.toml``
+        declares (``[]`` when absent/unparseable).
+
+        Read from the fetched bytes — not the on-disk file — so it's available
+        before the seed is applied and protects the operator's local values from
+        the very re-assert that ships it. Best-effort: a malformed seed yields
+        ``[]`` here and is caught again by the validate-before-write gate."""
+        from . import configmerge
+
+        layers = fetched_layers.get("config.toml")
+        if not layers:
+            return []
+        try:
+            folded = configmerge.fold_layers(
+                "config.toml",
+                [tomllib.loads(d.decode("utf-8")) for d in layers],
+            )
+            entries = folded.get("config_sync", {}).get("preserve") or []
+            return [str(e) for e in entries]
+        except Exception:  # noqa: BLE001
             return []
 
     def _local_native_table(self, name: str) -> dict[str, Any]:

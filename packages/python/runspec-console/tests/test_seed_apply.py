@@ -19,6 +19,7 @@ import tomllib
 import runspec_console.config as cfg
 import runspec_console.configseed as configseed
 from runspec_console.bridge import Bridge
+from runspec_console.credentials import load_credentials, save_credentials
 from runspec_console.hosts import load_hosts, save_hosts
 
 
@@ -28,6 +29,7 @@ class _SeedBridge:
     seed_apply = Bridge.seed_apply
     seed_status = Bridge.seed_status
     _seed_overrides = Bridge._seed_overrides
+    _seed_declared_preserve = Bridge._seed_declared_preserve
     _local_native_table = Bridge._local_native_table
     _apply_config_layers = Bridge._apply_config_layers
     _atomic_write_bytes = Bridge._atomic_write_bytes
@@ -197,6 +199,45 @@ def test_preserve_keeps_local_edit_over_reassert(monkeypatch, tmp_path):
     assert res["applied"] is True
     hosts = {h["name"]: h for h in load_hosts(tmp_path / "runspec_hosts.toml")}
     assert hosts["web1"]["role"] == "local"  # preserved
+
+
+def test_seed_declared_preserve_protects_on_first_apply(monkeypatch, tmp_path):
+    # The seed itself declares [config_sync].preserve; the operator has NOT added
+    # it to local config. A seed-shipped credential omits the username, which the
+    # operator set locally. Because the seed declares the preserve, the local
+    # username survives the very re-assert that ships it — no per-machine setup.
+    seed_config = b'[config_sync]\npreserve = ["runspec_credentials.toml:*.username"]\n'
+    seed_creds = b'[[credential]]\nid = "jira"\nlabel = "Jira"\nkind = "userpass"\n'
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {"config.toml": [seed_config], "runspec_credentials.toml": [seed_creds]},
+        {"mycorp-console": "1.0.0"},
+    )
+    save_credentials(
+        tmp_path / "runspec_credentials.toml",
+        [{"id": "jira", "label": "Jira", "kind": "userpass", "username": "real-user"}],
+    )
+
+    res = _SeedBridge().seed_apply(force=True)
+    assert res["applied"] is True
+    creds = {
+        c["id"]: c.get("username")
+        for c in load_credentials(tmp_path / "runspec_credentials.toml")
+    }
+    assert creds["jira"] == "real-user"  # preserved by the seed's own declaration
+
+
+def test_seed_declared_preserve_empty_without_config(monkeypatch, tmp_path):
+    _wire(
+        monkeypatch, tmp_path, {"runspec_hosts.toml": [b'[[host]]\nname = "a"\n']}, {}
+    )
+    assert (
+        _SeedBridge()._seed_declared_preserve(
+            {"runspec_hosts.toml": [b'[[host]]\nname = "a"\n']}
+        )
+        == []
+    )
 
 
 def test_seed_config_sync_keeps_local_last_state(monkeypatch, tmp_path):

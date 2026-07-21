@@ -246,6 +246,20 @@ label / kind / arg-bindings so the entry exists, but `preserve`
 `runspec_credentials.toml:*.username` so each operator's own account name (and
 the keychain secret, which is never seeded regardless) survives every upgrade.
 
+**Declare `preserve` in the seed's own `config.toml`** (as shown above) — the
+seed apply reads the preserve list from *both* the seed it's applying and the
+local config, so a seed-declared preserve protects the operator's local value
+from the **very first** re-assert that ships it. (Preserve read only from local
+config would be one upgrade behind: the upgrade that introduces the preserve
+runs against the *old* local config, clears the value, then writes the preserve
+— which looks exactly like preserve being ignored.) Two caveats still hold: a
+preserve can only keep a value that is **already in the local file** at upgrade
+time (it restores the operator's current value, it can't bring back one an
+earlier upgrade already cleared — so if usernames were blanked before you added
+the preserve, operators re-enter them once and they stick thereafter); and the
+**secret** behind a credential is never seeded regardless, so an operator always
+sets that once in **Settings → Credentials**.
+
 ---
 
 ## 4. Theme reference {#theme}

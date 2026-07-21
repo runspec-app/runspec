@@ -38,9 +38,29 @@ How it merges — **non-destructively**:
   identity (`name`/`id`): repo entries are added or updated; the operator's
   own local entries are kept.
 - `config.toml` deep-overlays — local-only keys survive.
-- A **`preserve`** list (`"<file>:<dotted.path>"`, `*` for any entry) pins
-  machine-local values — e.g. each operator's own mailbox folder — so a pull
-  never overwrites them.
+- A **`preserve`** list pins machine-local / operator-owned values so a pull
+  (or a config-seed re-assert) never overwrites them. Each entry is a path,
+  `"<file>:<entry>.<field>"`, where `<entry>` is a specific `name`/`id` or `*`
+  for **every entry in that file**; for `config.toml` (not a list of entries)
+  it's just the dotted key. The whole list lives under `[config_sync]` — it is
+  **not** a field on the entries it protects (you never edit a `[[credential]]`
+  or `[[host]]` table):
+
+  ```toml
+  [config_sync]
+  repo = "https://git.corp.example/ops/console-config.git"
+  tag  = "v42"
+  preserve = [
+    "runspec_credentials.toml:*.username",   # every credential's username stays local
+    "runspec_hosts.toml:*.room_user",        # every host's room_user (also a built-in default)
+    "config.toml:llm.api_key_command",       # a single machine-local config.toml key
+  ]
+  ```
+
+  A preserve only keeps a value that is **already in the local file** — it
+  restores the operator's current value, it can't resurrect one an earlier pull
+  already cleared. So set the preserve *before* the pull that would overwrite
+  the value (and make sure the value is present locally first).
 - Every fetched file is validated before writing, each local file is backed
   up first, and the result hot-reloads with no restart.
 
