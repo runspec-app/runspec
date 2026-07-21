@@ -54,6 +54,7 @@ _OUTLOOK_READ_TOOLS = frozenset(
         "outlook_calendar",
         "outlook_reminders",
         "outlook_resolve_recipient",
+        "outlook_event_join_url",
     }
 )
 

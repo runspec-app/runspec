@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.187.0] — 2026-07-21
+
+### Added
+- **`outlook_create_event` gained `open_in_outlook`, the reliable path to a Teams
+  meeting on Outlook Classic.** Real-world testing confirmed the Teams Meeting
+  add-in only hooks the Outlook window and does **not** run for COM-created
+  meetings, so the `online_meeting` registry toggle never attaches a link to them.
+  With `open_in_outlook=true`, `create_event` Saves the event unsent and
+  `Display()`s it — it pops open in Outlook where the add-in is live, so the
+  operator clicks the "Teams Meeting" button (one click) and Sends (`sent` is
+  `False`; the event still gets an `entry_id`).
+- **`outlook_event_join_url` tool** (autonomous read; `read_event_join_url`) reads
+  the Teams join URL back off an event by `entry_id` once the operator has added
+  the meeting — closing the loop so the link can be reused elsewhere (e.g.
+  `open_url`, another channel) without the Graph `OnlineMeetings` scope. Returns
+  `""` until the meeting is added.
+- `online_meeting` is downgraded to a documented best-effort bonus (it toggles the
+  machine-wide setting but doesn't apply to COM-created meetings); the tool now
+  points the agent at `open_in_outlook`. Docs: `docs/design/outlook-agent-tools.md`.
+
+
 ## [0.186.0] — 2026-07-21
 
 ### Added

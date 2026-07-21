@@ -17,7 +17,7 @@ that proven COM layer — no new auth, no new package, works where Graph can't.
 
 ## What
 
-Fourteen built-in agent tools (in `bridge.py`, schemas from `_outlook_tools()`,
+Fifteen built-in agent tools (in `bridge.py`, schemas from `_outlook_tools()`,
 executed by `_run_outlook_tool()`), offered only when `sources.outlook.outlook_available()`
 is true (Windows + pywin32):
 
@@ -32,7 +32,8 @@ is true (Windows + pywin32):
 | `outlook_draft` | confirm | `save_reply_draft` (incl. `reply_all`) / `save_new_draft` |
 | `outlook_send` | confirm | `send_draft` / `send_new_mail` |
 | `outlook_save_attachment` | confirm | `save_attachment` (writes a file to disk) |
-| `outlook_create_event` | confirm | `create_event` (invite with attendees, else personal block; `online_meeting` adds a Teams link) |
+| `outlook_create_event` | confirm | `create_event` (invite with attendees, else personal block; `open_in_outlook` opens it unsent for a Teams meeting) |
+| `outlook_event_join_url` | autonomous (read) | `read_event_join_url` (read a Teams join link back off an event by entry_id) |
 | `outlook_respond_invite` | confirm | `respond_invite` (accept / tentative / decline) |
 | `outlook_mark_read` | confirm | `mark_message` (read/unread) |
 | `outlook_categorize` | confirm | `categorize_message` (add or replace categories) |
@@ -49,31 +50,35 @@ carry only a 280-char preview plus an `entry_id`, and this fetches the rest (ful
 body up to `_FULL_BODY_CAP`, cc, and the attachment list). `outlook_save_attachment`
 then pulls a named/indexed attachment to disk (basename-sanitised so a crafted
 filename can't escape the destination dir) — e.g. to feed a log file into the
-`runspec-logops` runnables. `outlook_create_event` can add a **Teams join link**
-via its `online_meeting` flag — but not directly: the desktop Teams Meeting add-in
-is not scriptable over COM, and only the Teams service can mint the link, so there
-is no per-appointment COM property to set. Instead `online_meeting=true` enables
-Outlook's per-user **"add online meeting to all meetings"** setting
-(`AddOnlineMeetingToAllMeeting` under the Office version's Calendar options key in
-HKCU — `set_online_meeting_default` / `_write_online_meeting_default`) before
-creating the event, so Outlook itself attaches the link. Consequences the tool
-description and docstrings state plainly: it needs the Teams Meeting add-in
-installed + Teams signed in, it is a **machine-wide toggle for the signed-in user**
-(it also affects subsequent new meetings, not just this one), and a running Outlook
-may need a restart to pick it up. Enabling is best-effort — a registry failure is
-logged and the event is still created. When a link *is* minted, the result carries
-the **Teams join URL** (`join_url`), so the agent can reuse it in other channels —
-useful where the Graph `OnlineMeetings` scope isn't granted. This too is
-best-effort: the add-in injects the link into the saved item asynchronously, so
-`create_event` re-reads the appointment a few times (`_read_join_url`, bounded to
-~1.5s) and parses the join URL out of the body (`_extract_join_url` — matches both
-`.../l/meetup-join/...` and short `.../meet/...` forms); `join_url` is `""` when no
-link appears (add-in absent, or a restart is pending), and the tool output says so
-rather than dropping a bare success line. The Graph `OnlineMeetings` scope remains
-the only clean *per-meeting* alternative, but it reintroduces the device-code auth
-wall this COM layer exists to avoid. The pure `_office_version_root` /
-`_calendar_options_key` / `_extract_join_url` helpers (and `_read_join_url` with an
-injectable sleep) are unit-tested; the winreg read/write are Windows-only.
+`runspec-logops` runnables.
+
+### Teams meetings
+
+Attaching a **Teams** link to a COM-created meeting is awkward because the desktop
+Teams Meeting add-in only hooks the Outlook **Inspector window** — it does *not*
+run for meetings created and saved over COM, and only the Teams service can mint
+the link. There is no per-appointment COM property to set. In practice this ruled
+out the "just enable the setting" approach: `online_meeting=true` toggles Outlook's
+per-user **"add online meeting to all meetings"** setting
+(`AddOnlineMeetingToAllMeeting`, `set_online_meeting_default`), but that setting
+governs meetings created in the Outlook UI and **does not fire for COM-created
+ones** — so it's kept only as a best-effort bonus, not the mechanism.
+
+The reliable path is **`open_in_outlook=true`**: `create_event` Saves the event
+unsent (so it persists and gets an `entry_id`) and then `Display(False)`s it —
+popping it open in an Outlook window where the add-in *is* live. The operator
+clicks the **"Teams Meeting"** button (one click) and Sends. In this mode `sent` is
+`False` (the operator sends) and no link is read synchronously.
+
+To reuse the link elsewhere afterwards, **`outlook_event_join_url`** reads it back
+off the event by `entry_id` (`read_event_join_url` → `_extract_join_url`, matching
+both `.../l/meetup-join/...` and short `.../meet/...` forms), returning `""` until
+the operator has added the meeting. That closes the loop: create+open → operator
+one-click+send → read the join URL → reuse it (e.g. `open_url`, another channel) —
+without needing the Graph `OnlineMeetings` scope. The pure `_extract_join_url` /
+`_office_version_root` / `_calendar_options_key` helpers (and `_read_join_url` with
+an injectable sleep) are unit-tested; the winreg read/write and `Display` are
+Windows-only.
 
 `outlook_mark_read` / `outlook_categorize` / `outlook_move` are the "after
 handling" half of the helpdesk loop — flag a message read, tag it, or file it once

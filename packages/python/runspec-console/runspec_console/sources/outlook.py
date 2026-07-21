@@ -1431,18 +1431,24 @@ def _build_event(
     body: str,
     reminder_minutes: int,
     online_meeting: bool = False,
+    open_in_outlook: bool = False,
 ) -> dict[str, Any]:
-    """Create a calendar appointment (``CreateItem(1)``); send it as a meeting
-    invite when ``attendees`` are given, else save it as a personal block. Pure
-    core (duck-typed ``app``) so it's testable with a fake. Returns a small summary.
+    """Create a calendar appointment (``CreateItem(1)``). Pure core (duck-typed
+    ``app``) so it's testable with a fake. Returns a small summary.
 
-    ``online_meeting`` is reported back in the summary but has no effect on the
-    ``appt`` itself — the Teams join link comes from Outlook's machine-wide
-    "add online meeting to all meetings" setting, which :func:`create_event`
-    enables (there is no per-appointment COM property to set). The summary's
-    ``join_url`` is a first-chance read off the just-built ``appt`` body; it is
-    often empty here (the add-in injects the link asynchronously) — :func:`create_event`
-    then retries via a fresh re-read to fill it in."""
+    Three finishing modes:
+
+    * ``open_in_outlook`` — **Save then Display** the item (unsent) so it pops open
+      in an Outlook Inspector window for the operator to finish by hand. This is the
+      reliable way to get a **Teams** link on Outlook Classic: the Teams Meeting
+      add-in only hooks that window, so the operator clicks its "Teams Meeting"
+      button (one click) and then Send. ``sent`` is ``False`` (the operator sends).
+    * attendees given → **Send** the meeting invite outright.
+    * otherwise → **Save** a personal block.
+
+    ``online_meeting`` is reported back in the summary. The ``join_url`` is a
+    first-chance read off the just-built ``appt`` body (usually empty until the
+    operator has added the Teams meeting)."""
     appt = app.CreateItem(1)  # olAppointmentItem
     appt.Subject = subject
     appt.Start = start
@@ -1463,6 +1469,13 @@ def _build_event(
             appt.Recipients.ResolveAll()
         except Exception:
             logger.debug("outlook: ResolveAll on event failed", exc_info=True)
+    if open_in_outlook:
+        # Save so it persists + gets an EntryID (so the join link can be re-read
+        # later), then open it modeless for the operator to click "Teams Meeting"
+        # and Send. Deliberately NOT sent here.
+        appt.Save()
+        appt.Display(False)
+    elif recips:
         appt.Send()
     else:
         appt.Save()  # → default calendar
@@ -1472,7 +1485,8 @@ def _build_event(
         "end": _str(_attr(appt, "End")),
         "entry_id": _str(_attr(appt, "EntryID")),
         "attendees": recips,
-        "sent": bool(recips),
+        "sent": bool(recips) and not open_in_outlook,
+        "opened": bool(open_in_outlook),
         "online_meeting": bool(online_meeting),
         "join_url": _extract_join_url(_str(_attr(appt, "Body"))),
     }
@@ -1488,25 +1502,26 @@ def create_event(
     body: str = "",
     reminder_minutes: int = 15,
     online_meeting: bool = False,
+    open_in_outlook: bool = False,
 ) -> dict[str, Any]:
     """Create an Outlook calendar event — a meeting invite when ``attendees`` are
     given, else a personal calendar block. ``start``/``end`` are local-time
     datetimes (the tool layer parses ISO strings).
 
-    ``online_meeting=True`` first enables Outlook's "add online meeting to all
-    meetings" setting (see :func:`set_online_meeting_default`) so the new meeting
-    gets a Teams join link. This is a **machine-wide toggle for the signed-in
-    user**, not per-meeting — Outlook has no per-appointment COM API to add a link
-    — so it requires the desktop Teams Meeting add-in installed + Teams signed in,
-    affects subsequent new meetings too, and a running Outlook may need a restart
-    to pick it up. Enabling is best-effort: a registry failure is logged and the
-    event is still created.
+    ``open_in_outlook=True`` is the **recommended path for a Teams meeting** on
+    Outlook Classic: it Saves the event (unsent) and **opens it in an Outlook
+    window** so the operator clicks the add-in's "Teams Meeting" button (one click)
+    and Sends. This is necessary because the Teams Meeting add-in only hooks the
+    Outlook window — it does **not** run for COM-created meetings, so a link is
+    never attached programmatically. In this mode ``sent`` is ``False`` (the
+    operator sends) and ``join_url`` is read back afterwards via
+    :func:`read_event_join_url` with the returned ``entry_id``.
 
-    When ``online_meeting`` is set, the returned summary carries a best-effort
-    ``join_url`` — the Teams join link, re-read from the saved appointment (the
-    add-in injects it asynchronously, so this retries briefly). It is ``""`` when
-    no link appears (add-in absent, or Outlook needs a restart); the event is
-    still created either way. Confirm-gated at the tool layer. Windows-only."""
+    ``online_meeting=True`` enables Outlook's machine-wide "add online meeting to
+    all meetings" setting (:func:`set_online_meeting_default`) as a best-effort
+    bonus — but note it does **not** apply to COM-created meetings, so on Outlook
+    Classic prefer ``open_in_outlook``. Confirm-gated at the tool layer.
+    Windows-only."""
     if sys.platform != "win32":
         raise RuntimeError("create_event requires Windows (Outlook COM)")
     if not subject:
@@ -1539,11 +1554,13 @@ def create_event(
             body=body,
             reminder_minutes=reminder_minutes,
             online_meeting=online_meeting,
+            open_in_outlook=open_in_outlook,
         )
-        # Best-effort: if the first-chance read off the built appt didn't already
-        # capture the link, re-read the saved item (the add-in injects it a moment
-        # after Save()/Send()).
-        if online_meeting and not res.get("join_url"):
+        # Best-effort re-read of the link for the *sent* online_meeting path (the
+        # add-in injects it a moment after Send()). Skipped when opened for manual
+        # completion — the operator hasn't added the Teams meeting yet, so
+        # read_event_join_url is used later with the returned entry_id.
+        if online_meeting and not open_in_outlook and not res.get("join_url"):
             try:
                 res["join_url"] = _read_join_url(
                     app.GetNamespace("MAPI"), res.get("entry_id", "")
@@ -1552,6 +1569,33 @@ def create_event(
                 logger.debug("outlook: join-url re-read failed", exc_info=True)
                 res.setdefault("join_url", "")
         return res
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def read_event_join_url(entry_id: str) -> dict[str, Any]:
+    """Read the Teams join URL from a calendar item by ``entry_id`` — used after
+    :func:`create_event` with ``open_in_outlook`` once the operator has clicked
+    "Teams Meeting" and saved/sent the meeting. Returns
+    ``{entry_id, subject, join_url}``; ``join_url`` is ``""`` when no link is
+    present yet. Read-only. Windows-only; win32 imports stay inside."""
+    if sys.platform != "win32":
+        raise RuntimeError("read_event_join_url requires Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("read_event_join_url needs an entry_id")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        item = app.GetNamespace("MAPI").GetItemFromID(entry_id)
+        return {
+            "entry_id": entry_id,
+            "subject": _str(_attr(item, "Subject")),
+            "join_url": _extract_join_url(_str(_attr(item, "Body"))),
+        }
     finally:
         pythoncom.CoUninitialize()
 

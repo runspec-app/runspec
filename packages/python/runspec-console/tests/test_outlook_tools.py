@@ -61,6 +61,7 @@ def test_tools_offered_when_available(monkeypatch):
         "outlook_send",
         "outlook_save_attachment",
         "outlook_create_event",
+        "outlook_event_join_url",
         "outlook_respond_invite",
         "outlook_mark_read",
         "outlook_categorize",
@@ -298,9 +299,9 @@ def test_create_event_plumbs_online_meeting(monkeypatch):
     assert "Teams join link: https://teams.microsoft.com/l/meetup-join/xyz" in out
 
 
-def test_create_event_online_meeting_link_pending(monkeypatch):
-    # online_meeting requested but no link yet (add-in/restart pending) → the tool
-    # says so plainly rather than dropping a bare success line.
+def test_create_event_online_meeting_link_not_attached(monkeypatch):
+    # online_meeting requested but the add-in doesn't run for COM-created meetings →
+    # the tool says so and points at open_in_outlook rather than a bare success line.
     monkeypatch.setattr(
         ol,
         "create_event",
@@ -322,7 +323,67 @@ def test_create_event_online_meeting_link_pending(monkeypatch):
             "online_meeting": True,
         },
     )
-    assert "not available yet" in out and "restart" in out
+    assert "not attached" in out and "open_in_outlook" in out
+
+
+def test_create_event_open_in_outlook_message(monkeypatch):
+    seen = {}
+
+    def fake(subject, start, end, **kw):
+        seen.update(kw)
+        return {
+            "subject": subject,
+            "start": str(start),
+            "end": str(end),
+            "entry_id": "A5",
+            "sent": False,
+            "opened": True,
+            "online_meeting": False,
+            "join_url": "",
+        }
+
+    monkeypatch.setattr(ol, "create_event", fake)
+    out = _StubBridge()._run_outlook_tool(
+        "outlook_create_event",
+        {
+            "subject": "Design review",
+            "start": "2026-06-27T15:00",
+            "attendees": "a@b.com",
+            "open_in_outlook": True,
+        },
+    )
+    assert seen["open_in_outlook"] is True
+    assert "Opened in Outlook" in out and "Teams Meeting" in out
+    assert "outlook_event_join_url" in out and "A5" in out
+
+
+def test_event_join_url_requires_entry_id():
+    out = _StubBridge()._run_outlook_tool("outlook_event_join_url", {})
+    assert out.startswith("Error:") and "entry_id" in out
+
+
+def test_event_join_url_returns_link(monkeypatch):
+    monkeypatch.setattr(
+        ol,
+        "read_event_join_url",
+        lambda eid: {
+            "entry_id": eid,
+            "subject": "Design review",
+            "join_url": "https://teams.microsoft.com/l/meetup-join/xyz",
+        },
+    )
+    out = _StubBridge()._run_outlook_tool("outlook_event_join_url", {"entry_id": "A5"})
+    assert "https://teams.microsoft.com/l/meetup-join/xyz" in out
+
+
+def test_event_join_url_no_link_yet(monkeypatch):
+    monkeypatch.setattr(
+        ol,
+        "read_event_join_url",
+        lambda eid: {"entry_id": eid, "subject": "Design review", "join_url": ""},
+    )
+    out = _StubBridge()._run_outlook_tool("outlook_event_join_url", {"entry_id": "A5"})
+    assert "No Teams join link" in out
 
 
 def test_create_event_personal_block_when_no_attendees(monkeypatch):
@@ -544,7 +605,7 @@ class _FakeAppt:
     def __init__(self):
         self.recipients_added = []
         self.MeetingStatus = 0
-        self.sent = self.saved = False
+        self.sent = self.saved = self.displayed = False
         self.EntryID = "A1"
         self.Subject = self.Start = self.End = None
 
@@ -565,6 +626,10 @@ class _FakeAppt:
 
     def Save(self):
         self.saved = True
+
+    def Display(self, modal):
+        self.displayed = True
+        self.display_modal = modal
 
 
 class _FakeApp:
@@ -653,6 +718,29 @@ def test_build_event_saves_personal_block_without_attendees():
     )
     assert appt.saved and not appt.sent and appt.MeetingStatus == 0
     assert res["sent"] is False
+
+
+def test_build_event_open_in_outlook_saves_and_displays_unsent():
+    from datetime import datetime
+
+    appt = _FakeAppt()
+    res = ol._build_event(
+        _FakeApp(appt),
+        subject="Design review",
+        start=datetime(2026, 6, 27, 14, 0),
+        end=datetime(2026, 6, 27, 14, 30),
+        attendees="a@b.com",
+        location="",
+        body="",
+        reminder_minutes=10,
+        open_in_outlook=True,
+    )
+    # Saved (persists + gets EntryID) and opened modeless, but NOT sent — the
+    # operator adds the Teams meeting and Sends from the window.
+    assert appt.saved and appt.displayed and appt.display_modal is False
+    assert not appt.sent
+    assert appt.MeetingStatus == 1  # still a meeting (attendees added)
+    assert res["opened"] is True and res["sent"] is False
 
 
 def test_parse_dt():

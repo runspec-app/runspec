@@ -954,15 +954,16 @@ class AgentToolsMixin:
                 "description": (
                     "Create an Outlook calendar event. With attendees it sends a "
                     "meeting invite; without, it saves a personal calendar block. "
-                    "Times are interpreted in your local timezone. Set "
-                    "online_meeting=true to add a Teams join link: Outlook has no "
-                    "per-meeting API for this, so it enables the machine-wide 'add "
-                    "online meeting to all meetings' setting for your user "
-                    "(requires the desktop Teams Meeting add-in + Teams signed in; "
-                    "affects all new meetings, and Outlook may need a restart to "
-                    "pick it up). When a link is minted it is returned as the Teams "
-                    "join URL (best-effort — may be empty if the add-in hasn't "
-                    "attached it yet)."
+                    "Times are interpreted in your local timezone. **For a Teams "
+                    "meeting, set open_in_outlook=true**: it saves the event (unsent) "
+                    "and opens it in an Outlook window so the operator clicks the "
+                    "'Teams Meeting' button (one click) and Sends — the only reliable "
+                    "way to attach a Teams link on Outlook Classic, since the add-in "
+                    "doesn't run for COM-created meetings. Afterwards, read the link "
+                    "back with outlook_event_join_url and the returned entry_id. "
+                    "(online_meeting=true only toggles a machine-wide Outlook setting "
+                    "that does NOT apply to these COM-created meetings — prefer "
+                    "open_in_outlook.)"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -995,17 +996,45 @@ class AgentToolsMixin:
                             "type": "integer",
                             "description": "Reminder lead time in minutes (default 15; negative for no reminder).",
                         },
+                        "open_in_outlook": {
+                            "type": "boolean",
+                            "description": (
+                                "Save the event unsent and open it in Outlook so the "
+                                "operator adds a Teams meeting (one click) and Sends. "
+                                "The reliable path for a Teams link on Outlook Classic."
+                            ),
+                        },
                         "online_meeting": {
                             "type": "boolean",
                             "description": (
-                                "Add a Teams online-meeting link by enabling "
-                                "Outlook's 'add online meeting to all meetings' "
-                                "setting (machine-wide for your user; needs the "
-                                "Teams Meeting add-in)."
+                                "Best-effort: enable Outlook's machine-wide 'add "
+                                "online meeting to all meetings' setting. Does NOT "
+                                "apply to COM-created meetings — use open_in_outlook "
+                                "instead."
                             ),
                         },
                     },
                     "required": ["subject", "start"],
+                },
+            },
+            {
+                "name": "outlook_event_join_url",
+                "description": (
+                    "Read the Teams join URL from a calendar event by its entry_id — "
+                    "use after outlook_create_event with open_in_outlook=true, once "
+                    "the operator has added the Teams meeting and saved/sent it. "
+                    "Returns the join URL (empty if none is attached yet). You can "
+                    "then reuse the link elsewhere (e.g. open_url, a message)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entry_id": {
+                            "type": "string",
+                            "description": "entry_id of the event (from outlook_create_event).",
+                        },
+                    },
+                    "required": ["entry_id"],
                 },
             },
             {
@@ -1214,6 +1243,7 @@ class AgentToolsMixin:
                     )
                 end = _parse_dt(ti.get("end")) or (start + timedelta(minutes=30))
                 rmin = ti.get("reminder_minutes")
+                open_in_outlook = bool(ti.get("open_in_outlook"))
                 res = ol.create_event(
                     subject,
                     start,
@@ -1223,7 +1253,17 @@ class AgentToolsMixin:
                     body=str(ti.get("body") or ""),
                     reminder_minutes=int(rmin) if rmin is not None else 15,
                     online_meeting=bool(ti.get("online_meeting")),
+                    open_in_outlook=open_in_outlook,
                 )
+                eid = res.get("entry_id")
+                if res.get("opened"):
+                    return (
+                        f"✓ Opened in Outlook (unsent): {res.get('subject')} "
+                        f"({res.get('start')} → {res.get('end')}; entry_id {eid}). "
+                        "Click the 'Teams Meeting' button to add the join link, then "
+                        "Send. Afterwards I can read the link back with "
+                        "outlook_event_join_url."
+                    )
                 verb = (
                     "Invite sent" if res.get("sent") else "Event saved to your calendar"
                 )
@@ -1234,7 +1274,7 @@ class AgentToolsMixin:
                 )
                 lines = [
                     f"✓ {verb}{teams}: {res.get('subject')} "
-                    f"({res.get('start')} → {res.get('end')}; entry_id {res.get('entry_id')})"
+                    f"({res.get('start')} → {res.get('end')}; entry_id {eid})"
                 ]
                 if res.get("online_meeting"):
                     join = str(res.get("join_url") or "")
@@ -1242,10 +1282,24 @@ class AgentToolsMixin:
                         lines.append(f"Teams join link: {join}")
                     else:
                         lines.append(
-                            "Teams join link not available yet — Outlook may need "
-                            "a restart to add it (the event was still created)."
+                            "Teams join link not attached — the add-in doesn't run "
+                            "for COM-created meetings; use open_in_outlook=true to add "
+                            "one by hand."
                         )
                 return "\n".join(lines)
+            if name == "outlook_event_join_url":
+                eid = str(ti.get("entry_id") or "").strip()
+                if not eid:
+                    return "Error: 'entry_id' is required for outlook_event_join_url."
+                res = ol.read_event_join_url(eid)
+                join = str(res.get("join_url") or "")
+                if join:
+                    return f"Teams join link for '{res.get('subject')}': {join}"
+                return (
+                    f"No Teams join link on '{res.get('subject')}' yet — add the Teams "
+                    "meeting in Outlook (the 'Teams Meeting' button) and save/send it "
+                    "first."
+                )
             if name == "outlook_respond_invite":
                 eid = str(ti.get("entry_id") or "").strip()
                 if not eid:
