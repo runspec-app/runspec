@@ -6,15 +6,16 @@ your security team.
 
 **Document status:** A source-grounded security architecture assessment,
 maintained by the project and updated as security-relevant features land.
-Honest and transparent by design — every claim below is traceable to a source
-file a reviewer can open and read (see the
-[Verification appendix](#15-verification-appendix)).
+Honest and transparent by design — every claim below is annotated with the
+source file that implements it (see the
+[Verification appendix](#15-verification-appendix)), so it can be verified
+against the product rather than taken on trust.
 
 | Field | Value |
 |---|---|
 | Subject | `runspec-console` (desktop application) and its trust dependencies |
-| Documented versions | console **0.184.0**, core `runspec` **0.50.0**, `runspec-room` **0.35.1** |
-| Baseline in-depth review | console 0.148.0 (2026-06-29); sections below have been extended for security-relevant features added since (workspace code execution, agent configuration tools) |
+| Documented versions | console **0.187.0**, core `runspec` **0.50.0**, `runspec-room` **0.35.1** |
+| Baseline in-depth review | console 0.148.0 (2026-06-29); sections below have been extended for security-relevant features added since (workspace code execution, agent configuration tools, saved-run presets) |
 | Method | Source-code architecture review (read-only). **Not** a penetration test, not a third-party certification. |
 | Platform in scope | Windows desktop (primary), with cross-platform notes |
 
@@ -443,14 +444,15 @@ Key properties, all verified in `bridge_autonomy.py`:
 | Local memory / runbooks | `remember`, `search_memory`, `save_runbook`, `load_runbook` | **autonomous** (local TOML, reversible) |
 | Session-workspace files | `workspace_ls`, `workspace_read`, `workspace_grep`, `workspace_write`, … | **autonomous** (read-only or path-jailed to the current session's workspace) |
 | Denylist **read** | `manage_denylist action=list` | **autonomous** |
-| Console-config **read** | `manage_hosts`/`manage_groups`/`manage_triggers` `action=list`, `manage_rota action=get` | **autonomous** (read-only; see §7.4) |
+| Console-config **read** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_saved_runs` `action=list`, `manage_rota action=get` | **autonomous** (read-only; see §7.4) |
 | Read-only workspace SQL | `run_sql` (SELECT/EXPLAIN, read-only connection) | **autonomous** |
 | **Write** to M365 | `outlook_draft`, `outlook_send`, `outlook_move`, `outlook_categorize`, … | **confirm** |
 | **Write** to repo / files | `repo_write`, `repo_sync`, `download_file`, `relay_file` | **confirm** |
 | Denylist **mutate**, schedules, documents, events, desktop actions | `manage_denylist add/all/clear/mode`, `create_schedule`, `create_document`, `emit_event`, `run_runbook`, `open_url`, `open_file`, `reveal_in_folder` | **confirm** |
-| Console-config **mutate** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_rota` mutations | **confirm** — and chat-only (§7.4) |
+| Console-config **mutate** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_rota`/`manage_saved_runs` mutations | **confirm** — and chat-only (§7.4) |
 | Arbitrary code execution | `run_python` (any snippet, console interpreter); `run_sql` writes/DDL | **always confirm** — the gate, not a sandbox, is the security control; both tools are removed entirely by the `[workspace] code_exec = false` kill switch |
 | Run a runnable | `run_runnable` | **inherited from the target runnable's spec** |
+| Run a saved preset | `run_saved_run` | **inherited from the underlying runnable(s)** — the gate expands the preset and resolves each target's autonomy (one grouped, editable confirm across a fan-out; most-restrictive wins; `manual` blocks), never a blanket action-tool prompt |
 
 *(Classification: `bridge_const.py`, `bridge_autonomy.py`.)* The pattern is
 consistent: **reads are free; writes and executions are gated.**
@@ -458,8 +460,8 @@ consistent: **reads are free; writes and executions are gated.**
 ### 7.4 Automation cannot rewrite itself
 
 The agent's console-configuration tools (`manage_hosts`, `manage_groups`,
-`manage_triggers`, `manage_rota`) are **chat-only**, enforced in two
-independent layers (`bridge_const.py`, `bridge_triggers.py`,
+`manage_triggers`, `manage_rota`, `manage_saved_runs`) are **chat-only**,
+enforced in two independent layers (`bridge_const.py`, `bridge_triggers.py`,
 `bridge_config_tools.py`):
 
 1. The toolset of every trigger- or schedule-originated agent turn strips the
@@ -472,10 +474,11 @@ independent layers (`bridge_const.py`, `bridge_triggers.py`,
 
 The consequence a security reviewer cares about: **an automated turn can
 never widen its own permissions** — it cannot create triggers, edit its
-allowlists, change the fleet, or alter working hours. Only an interactive
-chat turn can propose those changes, and every mutation still requires the
-operator's explicit confirmation. Credentials and the AI-provider
-configuration have no agent tools at all (Settings UI only).
+allowlists, change the fleet, alter working hours, or edit saved-run
+presets. Only an interactive chat turn can propose those changes, and every
+mutation still requires the operator's explicit confirmation. Credentials
+and the AI-provider configuration have no agent tools at all (Settings UI
+only).
 
 ### 7.5 What the model sees (and does not)
 
@@ -775,11 +778,14 @@ are organised by who owns them.
 
 ## 15. Verification appendix
 
-Every material claim in this document maps to source you can open and read.
-The published packages on PyPI include the full source (sdists and pure-Python
-wheels), so a reviewer can verify against exactly the artifact they would
-deploy without repository access; repository access for a deeper review can be
-arranged with the maintainer. The fastest paths for an independent reviewer:
+The source repository is private; this published documentation is the
+product's public surface. The file paths below are therefore a
+**traceability map**, not links: each material claim in this document names
+the file that implements it. They remain directly useful to your review —
+the console and core library install as ordinary Python packages, so a
+security team can verify each claim against the files inside their **own
+installed copy** of the exact version they would deploy, without any
+repository access. The fastest paths for a reviewer:
 
 | Topic | Where to verify |
 |---|---|
@@ -798,6 +804,7 @@ arranged with the maintainer. The fastest paths for an independent reviewer:
 | Audit record & redaction | core `runspec/logging_setup.py`; `docs/logging.md` |
 | Session workspace & code-exec gating | `runspec_console/workspaces.py`; `codeexec.py`; `bridge_agent_tools.py` |
 | Chat-only config tools (two-layer exclusion) | `runspec_console/bridge_config_tools.py`; `bridge_triggers.py` (`_filter_headless_tools`); `tests/test_config_tools.py` |
+| Saved-run presets & underlying-runnable gating | `runspec_console/savedruns.py`; `bridge_saved_runs.py`; `bridge_autonomy.py` (`run_saved_run` interception) |
 | No telemetry / data egress map | `runspec_console/adapters/*`; `bridge_invoke.py`; absence of analytics SDKs |
 | Supply chain / release | `*/pyproject.toml`; `.github/workflows/*release.yml`, `codeql.yml`; `hatch_build.py`; `docs/releasing.md` |
 | Room server (if deployed) | `packages/console-room/` (`server.py`, `web/`, `signup.py`, `ndjson_server.py`) |
