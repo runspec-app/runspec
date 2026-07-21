@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.181.0] — 2026-07-21
+
+### Added
+- **`outlook_create_event` can now attach a Teams online-meeting link** via a new
+  `online_meeting` flag (mirrored on `sources.outlook.create_event` /
+  `_build_event`). Outlook exposes **no** per-appointment COM API to mint a Teams
+  join link — the desktop Teams Meeting add-in isn't scriptable and only the Teams
+  service can create the meeting — so `online_meeting=true` instead enables
+  Outlook's per-user **"add online meeting to all meetings"** setting
+  (`AddOnlineMeetingToAllMeeting` under the Office version's Calendar options key
+  in HKCU) before creating the event, and Outlook itself adds the link. New
+  helpers `set_online_meeting_default` (public) plus the pure, unit-tested
+  `_office_version_root` / `_calendar_options_key` and the Windows-only
+  `_read_online_meeting_default` / `_write_online_meeting_default`. Caveats stated
+  in the tool description and docstrings: it needs the Teams Meeting add-in
+  installed + Teams signed in, it is a **machine-wide toggle for the signed-in
+  user** (affects subsequent new meetings too, not just this one), a running
+  Outlook may need a restart to pick it up, and enabling is best-effort (a
+  registry failure is logged and the event is still created). Docs:
+  `docs/design/outlook-agent-tools.md`.
+
+
 ## [0.180.0] — 2026-07-20
 
 ### Changed

@@ -18,11 +18,13 @@ import pytest
 from runspec_console.sources.outlook import (
     OutlookSource,
     _build_reminder_item,
+    _calendar_options_key,
     _compose_reply_draft,
     _connection_alive,
     _descend,
     _event_row,
     _folder_segments,
+    _office_version_root,
     _mail_payload,
     _mail_summary,
     _reminder_payload,
@@ -635,6 +637,18 @@ def test_calendar_clock_ok_none_off_windows():
 def test_outlook_available_off_windows():
     if sys.platform != "win32":
         assert outlook_available() is False
+
+
+def test_office_version_root_parses_and_defaults():
+    assert _office_version_root("16.0.12345.20000") == "16.0"
+    assert _office_version_root("15.0.5000.1000") == "15.0"
+    assert _office_version_root("") == "16.0"  # unknown → current Outlook family
+    assert _office_version_root("not-a-version") == "16.0"
+
+
+def test_calendar_options_key_path():
+    key = _calendar_options_key("16.0")
+    assert key == r"Software\Microsoft\Office\16.0\Outlook\Options\Calendar"
 
 
 def test_search_dasl_escapes_quotes_and_covers_subject_and_body():

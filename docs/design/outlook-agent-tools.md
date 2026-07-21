@@ -32,7 +32,7 @@ is true (Windows + pywin32):
 | `outlook_draft` | confirm | `save_reply_draft` (incl. `reply_all`) / `save_new_draft` |
 | `outlook_send` | confirm | `send_draft` / `send_new_mail` |
 | `outlook_save_attachment` | confirm | `save_attachment` (writes a file to disk) |
-| `outlook_create_event` | confirm | `create_event` (invite with attendees, else personal block) |
+| `outlook_create_event` | confirm | `create_event` (invite with attendees, else personal block; `online_meeting` adds a Teams link) |
 | `outlook_respond_invite` | confirm | `respond_invite` (accept / tentative / decline) |
 | `outlook_mark_read` | confirm | `mark_message` (read/unread) |
 | `outlook_categorize` | confirm | `categorize_message` (add or replace categories) |
@@ -49,10 +49,23 @@ carry only a 280-char preview plus an `entry_id`, and this fetches the rest (ful
 body up to `_FULL_BODY_CAP`, cc, and the attachment list). `outlook_save_attachment`
 then pulls a named/indexed attachment to disk (basename-sanitised so a crafted
 filename can't escape the destination dir) — e.g. to feed a log file into the
-`runspec-logops` runnables. `outlook_create_event` does **not** itself add a Teams
-join link (the desktop Teams Meeting add-in is not scriptable over COM, and the
-join link can only be minted by the Teams service); a link appears only if the org
-enables online-meeting-by-default, or via a separate Graph `OnlineMeetings` scope.
+`runspec-logops` runnables. `outlook_create_event` can add a **Teams join link**
+via its `online_meeting` flag — but not directly: the desktop Teams Meeting add-in
+is not scriptable over COM, and only the Teams service can mint the link, so there
+is no per-appointment COM property to set. Instead `online_meeting=true` enables
+Outlook's per-user **"add online meeting to all meetings"** setting
+(`AddOnlineMeetingToAllMeeting` under the Office version's Calendar options key in
+HKCU — `set_online_meeting_default` / `_write_online_meeting_default`) before
+creating the event, so Outlook itself attaches the link. Consequences the tool
+description and docstrings state plainly: it needs the Teams Meeting add-in
+installed + Teams signed in, it is a **machine-wide toggle for the signed-in user**
+(it also affects subsequent new meetings, not just this one), and a running Outlook
+may need a restart to pick it up. Enabling is best-effort — a registry failure is
+logged and the event is still created. The Graph `OnlineMeetings` scope remains the
+only clean *per-meeting* alternative, but it reintroduces the device-code auth wall
+this COM layer exists to avoid. The pure `_office_version_root` /
+`_calendar_options_key` helpers are unit-tested; the winreg read/write are
+Windows-only.
 
 `outlook_mark_read` / `outlook_categorize` / `outlook_move` are the "after
 handling" half of the helpdesk loop — flag a message read, tag it, or file it once

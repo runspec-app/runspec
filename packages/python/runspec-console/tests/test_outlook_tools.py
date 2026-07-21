@@ -264,6 +264,34 @@ def test_create_event_defaults_end_and_reports_invite(monkeypatch):
     assert out.startswith("✓ Invite sent")
 
 
+def test_create_event_plumbs_online_meeting(monkeypatch):
+    seen = {}
+
+    def fake(subject, start, end, **kw):
+        seen.update(kw)
+        return {
+            "subject": subject,
+            "start": str(start),
+            "end": str(end),
+            "entry_id": "A3",
+            "sent": bool(kw.get("attendees")),
+            "online_meeting": bool(kw.get("online_meeting")),
+        }
+
+    monkeypatch.setattr(ol, "create_event", fake)
+    out = _StubBridge()._run_outlook_tool(
+        "outlook_create_event",
+        {
+            "subject": "Design review",
+            "start": "2026-06-27T15:00",
+            "attendees": "a@b.com",
+            "online_meeting": True,
+        },
+    )
+    assert seen["online_meeting"] is True
+    assert "Teams online meeting enabled" in out
+
+
 def test_create_event_personal_block_when_no_attendees(monkeypatch):
     monkeypatch.setattr(
         ol,
@@ -532,6 +560,27 @@ def test_build_event_sends_invite_with_attendees():
     assert appt.recipients_added == ["a@b.com", "c@d.com"]
     assert appt.MeetingStatus == 1 and appt.sent and not appt.saved
     assert res["sent"] is True and res["attendees"] == ["a@b.com", "c@d.com"]
+    assert res["online_meeting"] is False  # not requested → reported off
+
+
+def test_build_event_reports_online_meeting_flag():
+    from datetime import datetime
+
+    appt = _FakeAppt()
+    res = ol._build_event(
+        _FakeApp(appt),
+        subject="Sync",
+        start=datetime(2026, 6, 27, 14, 0),
+        end=datetime(2026, 6, 27, 14, 30),
+        attendees="a@b.com",
+        location="",
+        body="",
+        reminder_minutes=10,
+        online_meeting=True,
+    )
+    # _build_event only reflects the request; the registry side effect lives in
+    # create_event (the Windows-only wrapper), not the pure core.
+    assert res["online_meeting"] is True
 
 
 def test_build_event_saves_personal_block_without_attendees():

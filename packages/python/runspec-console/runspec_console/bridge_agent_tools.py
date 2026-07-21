@@ -872,9 +872,13 @@ class AgentToolsMixin:
                 "description": (
                     "Create an Outlook calendar event. With attendees it sends a "
                     "meeting invite; without, it saves a personal calendar block. "
-                    "Times are interpreted in your local timezone. Note: this does "
-                    "not add a Teams link by itself — a Teams join link only appears "
-                    "if your org enables online-meeting-by-default."
+                    "Times are interpreted in your local timezone. Set "
+                    "online_meeting=true to add a Teams join link: Outlook has no "
+                    "per-meeting API for this, so it enables the machine-wide 'add "
+                    "online meeting to all meetings' setting for your user "
+                    "(requires the desktop Teams Meeting add-in + Teams signed in; "
+                    "affects all new meetings, and Outlook may need a restart to "
+                    "pick it up)."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -906,6 +910,15 @@ class AgentToolsMixin:
                         "reminder_minutes": {
                             "type": "integer",
                             "description": "Reminder lead time in minutes (default 15; negative for no reminder).",
+                        },
+                        "online_meeting": {
+                            "type": "boolean",
+                            "description": (
+                                "Add a Teams online-meeting link by enabling "
+                                "Outlook's 'add online meeting to all meetings' "
+                                "setting (machine-wide for your user; needs the "
+                                "Teams Meeting add-in)."
+                            ),
                         },
                     },
                     "required": ["subject", "start"],
@@ -1125,12 +1138,18 @@ class AgentToolsMixin:
                     location=str(ti.get("location") or ""),
                     body=str(ti.get("body") or ""),
                     reminder_minutes=int(rmin) if rmin is not None else 15,
+                    online_meeting=bool(ti.get("online_meeting")),
                 )
                 verb = (
                     "Invite sent" if res.get("sent") else "Event saved to your calendar"
                 )
+                teams = (
+                    " (Teams online meeting enabled)"
+                    if res.get("online_meeting")
+                    else ""
+                )
                 return (
-                    f"✓ {verb}: {res.get('subject')} "
+                    f"✓ {verb}{teams}: {res.get('subject')} "
                     f"({res.get('start')} → {res.get('end')}; entry_id {res.get('entry_id')})"
                 )
             if name == "outlook_respond_invite":

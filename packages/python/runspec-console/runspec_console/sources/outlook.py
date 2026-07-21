@@ -1262,6 +1262,111 @@ def _split_recipients(value: str) -> list[str]:
     return [c.strip() for c in _str(value).replace(",", ";").split(";") if c.strip()]
 
 
+# ── online meeting (Teams link) by default ────────────────────────────────────
+#
+# Outlook exposes **no** per-appointment COM API to mint a Teams (or other
+# provider) join link — the desktop Teams Meeting add-in isn't scriptable, and
+# only the Teams service can actually create the online meeting. The one supported
+# lever is the per-user "Add online meeting to all meetings" setting (Outlook
+# Options → Calendar), stored in the registry under the Office version's Calendar
+# options key. With it on — and the Teams Meeting add-in installed + Teams signed
+# in — Outlook attaches a join link to every new meeting it creates, which is how
+# ``create_event(online_meeting=True)`` gets a Teams link. It is a **machine-wide
+# toggle for the signed-in user**, not a per-meeting switch, and a running Outlook
+# may need a restart before the change takes effect. The key-path/version helpers
+# are pure (unit-tested); the winreg read/write are Windows-only.
+
+_ONLINE_MEETING_VALUE = "AddOnlineMeetingToAllMeeting"
+
+
+def _office_version_root(version: str) -> str:
+    """Normalise an Outlook ``Application.Version`` ("16.0.12345.20000") to its
+    ``"<major>.0"`` Office registry segment ("16.0"). Falls back to ``"16.0"``
+    (Outlook 2016/2019/2021/365) when it can't be parsed. Pure/testable."""
+    parts = _str(version).split(".")
+    if parts and parts[0].isdigit():
+        return f"{parts[0]}.0"
+    return "16.0"
+
+
+def _calendar_options_key(version_root: str) -> str:
+    r"""HKCU subkey path for the Outlook Calendar options of an Office version root
+    (``"16.0"`` → ``Software\Microsoft\Office\16.0\Outlook\Options\Calendar``).
+    Pure/testable."""
+    return rf"Software\Microsoft\Office\{version_root}\Outlook\Options\Calendar"
+
+
+def _read_online_meeting_default(version_root: str) -> bool:
+    """Read the current ``AddOnlineMeetingToAllMeeting`` value (``False`` when the
+    key/value is absent). Windows-only; winreg import stays inside."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _calendar_options_key(version_root)
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, _ONLINE_MEETING_VALUE)
+            return bool(value)
+    except OSError:  # key or value missing → treated as off
+        return False
+
+
+def _write_online_meeting_default(version_root: str, enabled: bool) -> None:
+    """Set ``AddOnlineMeetingToAllMeeting`` (DWORD) under HKCU, creating the key if
+    needed. Windows-only."""
+    import winreg
+
+    with winreg.CreateKey(
+        winreg.HKEY_CURRENT_USER, _calendar_options_key(version_root)
+    ) as key:
+        winreg.SetValueEx(
+            key, _ONLINE_MEETING_VALUE, 0, winreg.REG_DWORD, 1 if enabled else 0
+        )
+
+
+def set_online_meeting_default(
+    enabled: bool = True, *, version: str = ""
+) -> dict[str, Any]:
+    """Turn Outlook's "Add online meeting to all meetings" setting on/off for the
+    current user (HKCU registry).
+
+    When on — with the desktop Teams Meeting add-in installed and Teams signed in —
+    Outlook attaches an online-meeting (Teams) join link to **every** new meeting
+    it creates; this is how :func:`create_event` with ``online_meeting=True`` gets
+    a Teams link, since Outlook has no per-appointment COM API to add one. It is a
+    **machine-wide toggle for the signed-in user**, not per-meeting, and a running
+    Outlook may need a restart before it takes effect. ``version`` overrides the
+    Office version root (else it's read from the running Outlook, defaulting to
+    ``16.0``). Returns ``{enabled, previous, version, key}``. Windows-only;
+    imports stay inside."""
+    if sys.platform != "win32":
+        raise RuntimeError("set_online_meeting_default requires Windows (Outlook)")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        ver = version
+        if not ver:
+            try:
+                app = win32com.client.Dispatch("Outlook.Application")
+                ver = _str(_attr(app, "Version"))
+            except Exception:
+                ver = ""
+        version_root = _office_version_root(ver)
+        previous = _read_online_meeting_default(version_root)
+        _write_online_meeting_default(version_root, enabled)
+        return {
+            "enabled": bool(enabled),
+            "previous": previous,
+            "version": version_root,
+            "key": _calendar_options_key(version_root),
+        }
+    finally:
+        pythoncom.CoUninitialize()
+
+
 def _build_event(
     app: Any,
     *,
@@ -1272,10 +1377,16 @@ def _build_event(
     location: str,
     body: str,
     reminder_minutes: int,
+    online_meeting: bool = False,
 ) -> dict[str, Any]:
     """Create a calendar appointment (``CreateItem(1)``); send it as a meeting
     invite when ``attendees`` are given, else save it as a personal block. Pure
-    core (duck-typed ``app``) so it's testable with a fake. Returns a small summary."""
+    core (duck-typed ``app``) so it's testable with a fake. Returns a small summary.
+
+    ``online_meeting`` is reported back in the summary but has no effect on the
+    ``appt`` itself — the Teams join link comes from Outlook's machine-wide
+    "add online meeting to all meetings" setting, which :func:`create_event`
+    enables (there is no per-appointment COM property to set)."""
     appt = app.CreateItem(1)  # olAppointmentItem
     appt.Subject = subject
     appt.Start = start
@@ -1306,6 +1417,7 @@ def _build_event(
         "entry_id": _str(_attr(appt, "EntryID")),
         "attendees": recips,
         "sent": bool(recips),
+        "online_meeting": bool(online_meeting),
     }
 
 
@@ -1318,12 +1430,20 @@ def create_event(
     location: str = "",
     body: str = "",
     reminder_minutes: int = 15,
+    online_meeting: bool = False,
 ) -> dict[str, Any]:
     """Create an Outlook calendar event — a meeting invite when ``attendees`` are
     given, else a personal calendar block. ``start``/``end`` are local-time
-    datetimes (the tool layer parses ISO strings). Does **not** itself add a Teams
-    link — that only appears if the org enables online-meeting-by-default.
-    Confirm-gated at the tool layer. Windows-only."""
+    datetimes (the tool layer parses ISO strings).
+
+    ``online_meeting=True`` first enables Outlook's "add online meeting to all
+    meetings" setting (see :func:`set_online_meeting_default`) so the new meeting
+    gets a Teams join link. This is a **machine-wide toggle for the signed-in
+    user**, not per-meeting — Outlook has no per-appointment COM API to add a link
+    — so it requires the desktop Teams Meeting add-in installed + Teams signed in,
+    affects subsequent new meetings too, and a running Outlook may need a restart
+    to pick it up. Enabling is best-effort: a registry failure is logged and the
+    event is still created. Confirm-gated at the tool layer. Windows-only."""
     if sys.platform != "win32":
         raise RuntimeError("create_event requires Windows (Outlook COM)")
     if not subject:
@@ -1335,6 +1455,17 @@ def create_event(
     pythoncom.CoInitialize()
     try:
         app = win32com.client.Dispatch("Outlook.Application")
+        if online_meeting:
+            try:
+                _write_online_meeting_default(
+                    _office_version_root(_str(_attr(app, "Version"))), True
+                )
+            except Exception:
+                logger.warning(
+                    "outlook: could not enable online-meeting-by-default; the "
+                    "event will be created without a Teams link",
+                    exc_info=True,
+                )
         return _build_event(
             app,
             subject=subject,
@@ -1344,6 +1475,7 @@ def create_event(
             location=location,
             body=body,
             reminder_minutes=reminder_minutes,
+            online_meeting=online_meeting,
         )
     finally:
         pythoncom.CoUninitialize()
