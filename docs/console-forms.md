@@ -64,6 +64,55 @@ credential to match what the runnable reads from its environment; select one
 or more in the run dialog's credential section (the form remembers your picks
 per runnable — ids only, never secrets).
 
+### One credential across many runnables — a naming convention
+
+The derivation above becomes much more powerful when your runnables agree on
+a convention. Instead of per-tool credentials, standardise on
+**platform-level** names — say `Windows` and `Linux` — and have every
+runnable declare its identity arguments with an `env` fallback to the
+matching derived variables:
+
+```toml
+[win-service-restart]
+description = "Restart a Windows service on a target machine"
+
+[win-service-restart.args]
+target   = { type = "str", description = "Machine to act on" }
+service  = { type = "str", description = "Service name" }
+username = { type = "str", env = "WINDOWS_USERNAME", description = "Windows account" }
+password = { type = "password", env = "WINDOWS_PASSWORD", description = "Windows password" }
+```
+
+A credential **labelled** `Windows` (kind `userpass`) derives exactly
+`WINDOWS_USERNAME` / `WINDOWS_PASSWORD` (plus the `WINDOWS_USER` alias) — the
+label drives the names, so keep labels to the platform word. Now selecting
+that one credential in *any* conforming runnable's run form fills its
+identity: one `Windows` credential and one `Linux` credential cover the whole
+catalogue. Argument resolution order still applies — a value typed directly
+into the form wins over the env fallback, so one-off overrides stay easy.
+
+The convention also travels well: ship the credential **metadata** in your
+team's [Config Sync](console-team.md) repo or a
+[white-label config seed](white-label.md#3-the-config-seed) —
+
+```toml
+[[credential]]
+id    = "windows"
+label = "Windows"     # the label drives WINDOWS_* derivation
+kind  = "userpass"
+
+[[credential]]
+id    = "linux"
+label = "Linux"
+kind  = "userpass"
+```
+
+— and every operator's console arrives knowing the two credentials exist;
+each operator enters the secret values once in **Settings → Credentials**
+(secrets live only in their OS keychain, never in the synced or seeded
+files). The [agent path](#credentials-and-the-agent) gets the same derived
+variables, so conforming runnables work identically from chat.
+
 ### Argument bindings
 
 For runnables whose interface is *arguments* (`--user` / `--password`) rather

@@ -218,6 +218,13 @@ You can also seed `runspec_triggers.toml`, `runspec_repos.toml`,
 `runspec_credentials.toml` (**metadata only** — secret values always come
 from each operator's own keychain), and `runspec_self_service.toml`.
 
+Seeded credentials pair especially well with the
+[platform-credential naming convention](console-forms.md#one-credential-across-many-runnables-a-naming-convention):
+seed entries labelled `Windows` and `Linux`, have every runnable read
+`WINDOWS_USERNAME`/`WINDOWS_PASSWORD` and `LINUX_USERNAME`/`LINUX_PASSWORD`
+via `env` fallbacks, and each operator supplies two secrets once to cover the
+whole catalogue.
+
 ### How the seed is applied
 
 On every startup the console compares the installed seed packages' versions

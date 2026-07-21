@@ -17,7 +17,13 @@ markdown_extensions:
   - attr_list
   - md_in_html
   - pymdownx.details
-  - pymdownx.superfences
+  # custom_fences renders ```mermaid blocks as Mermaid diagrams (Material's
+  # built-in integration) — used by the security page's architecture diagrams.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   # Lets docs/changelog.md include the repository-root CHANGELOG.md so the two
@@ -64,6 +70,7 @@ nav:
   - Distribution:
     - White-label walkthrough: white-label.md
     - Custom model adapters: console-adapters.md
+  - Security: security.md
 
 # Files kept in the repo but NOT built into the published (public) site.
 # The published surface is usage docs only — internal design notes, the
