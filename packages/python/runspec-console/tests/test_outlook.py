@@ -830,7 +830,8 @@ def test_build_reminder_item_prefers_appointment():
     res = _build_reminder_item(app, "Break over", when)
     appt = app.created[1]
     assert appt.saved is True and appt.ReminderSet is True
-    assert appt.ReminderMinutesBeforeStart == 0 and appt.Start == when
+    # Wall-clock string (not a datetime) so pywin32 can't UTC-shift the fire time.
+    assert appt.ReminderMinutesBeforeStart == 0 and appt.Start == "2026-06-21 15:00:00"
     assert res == {"subject": "Break over", "entry_id": "APPT1", "kind": "appointment"}
     assert 3 not in app.created and 0 not in app.created  # no fallback needed
 
@@ -842,7 +843,12 @@ def test_build_reminder_item_falls_back_to_task():
     when = datetime(2026, 6, 21, 15, 0)
     res = _build_reminder_item(app, "Break over", when)
     task = app.created[3]
-    assert task.saved is True and task.ReminderSet is True and task.ReminderTime == when
+    assert task.saved is True and task.ReminderSet is True
+    assert task.ReminderTime == "2026-06-21 15:00:00"  # wall-clock string, no shift
+    assert (
+        task.StartDate == "2026-06-21 15:00:00"
+        and task.DueDate == "2026-06-21 15:00:00"
+    )
     assert res["kind"] == "task" and res["entry_id"] == "TASK1"
 
 
@@ -854,7 +860,8 @@ def test_build_reminder_item_falls_back_to_flagged_mail():
     when = datetime(2026, 6, 21, 15, 0)
     res = _build_reminder_item(app, "Break over", when)
     mail = app.created[0]
-    assert mail.saved is True and mail.ReminderSet is True and mail.ReminderTime == when
+    assert mail.saved is True and mail.ReminderSet is True
+    assert mail.ReminderTime == "2026-06-21 15:00:00"  # wall-clock string, no shift
     assert mail.marked_as_task == 1  # flagged as a to-do
     assert res["kind"] == "flagged_mail" and res["entry_id"] == "MAIL1"
 

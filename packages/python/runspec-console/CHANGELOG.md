@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.188.2] — 2026-07-22
+
+### Fixed
+- **Outlook reminders (`create_reminder`) fired off by the machine's UTC offset —
+  the same bug as `outlook_create_event` (0.188.1), in the reminder path.** All
+  three reminder builders assigned a Python `datetime` to a COM date property
+  (`_build_appointment_reminder` → `appt.Start`; `_build_task_reminder` →
+  `task.StartDate`/`DueDate`/`ReminderTime`; `_build_flagged_mail_reminder` →
+  `mail.TaskStartDate`/`TaskDueDate`/`ReminderTime`), which pywin32 UTC-shifts, so
+  a reminder popped an hour early on a UTC+1 box (most visibly the Rota "Take a
+  break" auto-resume "break over" nudge). Each now assigns the wall-clock as an
+  unambiguous year-first ISO **string** via `_com_local_time`, so Outlook keeps
+  the intended local time. Unit-tested against the fake COM items; the offset
+  itself is a Windows/Outlook COM effect to confirm on the operator's machine.
+
+
 ## [0.188.1] — 2026-07-22
 
 ### Fixed

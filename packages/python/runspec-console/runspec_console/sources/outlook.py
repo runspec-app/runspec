@@ -892,7 +892,9 @@ def _build_appointment_reminder(
     nicest reminder (shows on the calendar), for Exchange/M365 profiles."""
     appt = app.CreateItem(1)  # olAppointmentItem
     appt.Subject = subject
-    appt.Start = when
+    # Wall-clock string, not the datetime — pywin32 would UTC-shift the datetime so
+    # the reminder fires off by the machine's UTC offset. See _com_local_time.
+    appt.Start = _com_local_time(when)
     appt.Duration = 0  # a point-in-time nudge, not a busy block
     appt.ReminderSet = True
     appt.ReminderMinutesBeforeStart = 0  # fire at Start
@@ -909,10 +911,13 @@ def _build_task_reminder(app: Any, subject: str, when: datetime) -> dict[str, st
     store has no usable calendar (e.g. some non-Exchange profiles)."""
     task = app.CreateItem(3)  # olTaskItem
     task.Subject = subject
-    task.StartDate = when
-    task.DueDate = when
+    # Wall-clock strings, not datetimes — avoid pywin32's UTC shift (see
+    # _com_local_time); the reminder must fire at the intended local time.
+    stamp = _com_local_time(when)
+    task.StartDate = stamp
+    task.DueDate = stamp
     task.ReminderSet = True
-    task.ReminderTime = when
+    task.ReminderTime = stamp
     task.Save()
     return {
         "subject": _str(_attr(task, "Subject")),
@@ -931,10 +936,13 @@ def _build_flagged_mail_reminder(
     mail = app.CreateItem(0)  # olMailItem
     mail.Subject = subject
     mail.MarkAsTask(1)  # olMarkToday — flag it as a to-do so a reminder can attach
-    mail.TaskStartDate = when
-    mail.TaskDueDate = when
+    # Wall-clock strings, not datetimes — avoid pywin32's UTC shift (see
+    # _com_local_time); the reminder must fire at the intended local time.
+    stamp = _com_local_time(when)
+    mail.TaskStartDate = stamp
+    mail.TaskDueDate = stamp
     mail.ReminderSet = True
-    mail.ReminderTime = when
+    mail.ReminderTime = stamp
     mail.Save()  # → Drafts
     return {
         "subject": _str(_attr(mail, "Subject")),
