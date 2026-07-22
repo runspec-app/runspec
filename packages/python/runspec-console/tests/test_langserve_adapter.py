@@ -129,6 +129,64 @@ def test_build_payload_max_tokens_config_merges_with_tools():
     assert conf["max_tokens"] == 1000  # both live under configurable, no clobber
 
 
+def test_build_payload_effort_off_by_default():
+    payload = build_payload([{"role": "user", "content": "hi"}], [], "")
+    assert payload["kwargs"] == {}  # nothing sent unless effort is set
+
+
+def test_build_payload_effort_default_openai_field_and_slot():
+    payload = build_payload([{"role": "user", "content": "hi"}], [], "", effort="high")
+    # OpenAI-style field name in the kwargs bucket by default (pass-through string).
+    assert payload["kwargs"]["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in payload["input"]
+
+
+def test_build_payload_effort_custom_key_and_slot():
+    payload = build_payload(
+        [{"role": "user", "content": "hi"}],
+        [],
+        "",
+        effort="max",
+        effort_key="thinking_level",
+        effort_in="config",
+    )
+    assert payload["config"]["configurable"]["thinking_level"] == "max"
+
+
+def test_build_payload_effort_and_max_tokens_coexist():
+    payload = build_payload(
+        [{"role": "user", "content": "hi"}],
+        [],
+        "",
+        max_tokens=2048,
+        effort="medium",
+    )
+    assert payload["kwargs"]["max_tokens"] == 2048
+    assert payload["kwargs"]["reasoning_effort"] == "medium"
+
+
+def test_adapter_normalises_off_effort_to_nothing():
+    from runspec_console.adapters.langserve import LangServeAdapter
+
+    for off in ("", "off", "OFF", "none"):
+        a = LangServeAdapter(
+            base_url="https://gw.corp/chain", effort=off, client=object()
+        )
+        assert a.effort == ""
+        assert a._build_payload([{"role": "user", "content": "hi"}], [])["kwargs"] == {}
+
+
+def test_adapter_threads_effort_into_payload():
+    from runspec_console.adapters.langserve import LangServeAdapter
+
+    a = LangServeAdapter(
+        base_url="https://gw.corp/chain", effort="High", client=object()
+    )
+    assert a.effort == "high"  # normalised
+    payload = a._build_payload([{"role": "user", "content": "hi"}], [])
+    assert payload["kwargs"]["reasoning_effort"] == "high"
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [

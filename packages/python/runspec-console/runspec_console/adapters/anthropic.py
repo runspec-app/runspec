@@ -12,6 +12,8 @@ from .base import (
     ModelAdapter,
     ToolCall,
     apply_prompt_caching,
+    apply_thinking,
+    effort_level,
     run_api_key_command,
 )
 
@@ -38,6 +40,7 @@ class AnthropicAdapter(ModelAdapter):
         api_key_command: str | None = None,
         api_key_ttl_ms: int = 0,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        effort: str = "",
     ) -> None:
         """
         Args:
@@ -53,10 +56,17 @@ class AnthropicAdapter(ModelAdapter):
             api_key_ttl_ms: How long to cache the command's result before re-running
                 it. 0 re-runs the command on every request.
             max_tokens: Output-token ceiling per request (``[llm] max_tokens``).
+            effort: Reasoning effort (``[llm] effort``) — "" / "off" (default, no
+                extended thinking), or "low" / "medium" / "high" / "xhigh" / "max".
+                Enables Anthropic *adaptive* extended thinking (``thinking={"type":
+                "adaptive"}`` + ``output_config={"effort": <level>}``); the model
+                self-manages its thinking depth and it counts toward ``max_tokens``.
+                See ``base.apply_thinking``.
         """
         self.model = model
         self.system = system
         self.max_tokens = int(max_tokens) or DEFAULT_MAX_TOKENS
+        self._effort = effort_level(effort)
         self._base_url = base_url
         self._api_key_command = api_key_command
         self._api_key_ttl_s = api_key_ttl_ms / 1000.0
@@ -107,6 +117,7 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_thinking(kwargs, self._effort)
         apply_prompt_caching(kwargs)
         response = await self.client.messages.create(**kwargs)
         text = next(
@@ -136,6 +147,7 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_thinking(kwargs, self._effort)
         apply_prompt_caching(kwargs)
         async with self.client.messages.stream(**kwargs) as stream:
             async for token in stream.text_stream:
@@ -155,6 +167,7 @@ class AnthropicAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_thinking(kwargs, self._effort)
         apply_prompt_caching(kwargs)
         # Collect tool input JSON chunks indexed by content-block position
         tool_map: dict[int, dict[str, Any]] = {}

@@ -124,6 +124,123 @@ def test_max_tokens_not_threaded_to_openai():
     assert "max_tokens" not in kwargs
 
 
+@pytest.mark.parametrize("provider", ["anthropic", "bedrock", "langserve"])
+def test_effort_threaded_for_supported_providers(provider):
+    # anthropic/bedrock map effort to Anthropic adaptive thinking; langserve passes
+    # it through as a wire field. All three declare an `effort` constructor param.
+    cfg = {"llm": {"provider": provider, "base_url": "https://x", "effort": "high"}}
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert kwargs["effort"] == "high"
+
+
+def test_effort_not_threaded_to_openai():
+    # The OpenAI adapter's constructor has no effort param; the guard must skip it
+    # so the constructor never sees an unknown kwarg.
+    cfg = {"llm": {"provider": "openai", "base_url": "https://x", "effort": "high"}}
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert "effort" not in kwargs
+
+
+def test_langserve_effort_placement_knobs_threaded():
+    # effort_key / effort_in describe where the pass-through effort string lands in
+    # the /invoke body — forwarded only to the langserve adapter.
+    cfg = {
+        "llm": {
+            "provider": "langserve",
+            "base_url": "https://gateway.corp/chain",
+            "effort": "high",
+            "effort_key": "thinking_level",
+            "effort_in": "config",
+        }
+    }
+    bridge = _StubBridge(cfg)
+    with patch(LOAD, return_value="ADAPTER") as load:
+        bridge._get_adapter()
+    _, kwargs = load.call_args
+    assert kwargs["effort"] == "high"
+    assert kwargs["effort_key"] == "thinking_level"
+    assert kwargs["effort_in"] == "config"
+
+
+def test_effort_off_or_unset_not_threaded():
+    # An empty or explicit "off" effort is not forwarded, so the adapter keeps its
+    # no-thinking default (rather than being handed a redundant off kwarg).
+    for effort in ("", "off"):
+        cfg = {
+            "llm": {"provider": "anthropic", "base_url": "https://x", "effort": effort}
+        }
+        bridge = _StubBridge(cfg)
+        with patch(LOAD, return_value="ADAPTER") as load:
+            bridge._get_adapter()
+        _, kwargs = load.call_args
+        assert "effort" not in kwargs
+
+
+def test_effort_level_mapping():
+    from runspec_console.adapters.base import effort_level
+
+    assert effort_level("low") == "low"
+    assert effort_level("medium") == "medium"
+    assert effort_level("HIGH") == "high"  # case-insensitive, normalised
+    assert effort_level(" xhigh ") == "xhigh"  # trimmed
+    assert effort_level("max") == "max"
+    assert effort_level("off") == ""
+    assert effort_level("") == ""
+    assert effort_level("bogus") == ""  # unknown fails safe to off
+
+
+def test_apply_thinking_enables_adaptive_with_effort():
+    from runspec_console.adapters.base import apply_thinking
+
+    # Adaptive thinking: thinking={"type": "adaptive"} + output_config.effort;
+    # max_tokens is left untouched (adaptive thinking counts toward it).
+    kwargs = {"max_tokens": 8192}
+    apply_thinking(kwargs, "high")
+    assert kwargs["thinking"] == {"type": "adaptive"}
+    assert kwargs["output_config"] == {"effort": "high"}
+    assert kwargs["max_tokens"] == 8192  # unchanged — no budget to reserve
+
+    # xhigh/max are passed straight through as the effort level.
+    kwargs = {"max_tokens": 16000}
+    apply_thinking(kwargs, "max")
+    assert kwargs["thinking"] == {"type": "adaptive"}
+    assert kwargs["output_config"]["effort"] == "max"
+    assert kwargs["max_tokens"] == 16000
+
+
+def test_apply_thinking_preserves_existing_output_config():
+    from runspec_console.adapters.base import apply_thinking
+
+    # An existing output_config (e.g. a future format hint) is merged, not clobbered.
+    kwargs = {"max_tokens": 8192, "output_config": {"format": {"type": "text"}}}
+    apply_thinking(kwargs, "medium")
+    assert kwargs["output_config"] == {
+        "format": {"type": "text"},
+        "effort": "medium",
+    }
+
+
+def test_apply_thinking_off_is_noop():
+    from runspec_console.adapters.base import apply_thinking
+
+    kwargs = {"max_tokens": 8192}
+    apply_thinking(kwargs, "off")  # effort off
+    assert "thinking" not in kwargs
+    assert "output_config" not in kwargs
+    assert kwargs["max_tokens"] == 8192
+
+    kwargs = {"max_tokens": 8192}
+    apply_thinking(kwargs, "")  # unset
+    assert "thinking" not in kwargs
+    assert "output_config" not in kwargs
+
+
 def test_plugin_import_error_surfaces_cause_not_fake_extra():
     # A plugin provider whose dependency (e.g. httpx) is missing must not be told
     # to `pip install runspec-console[<provider>]` — there is no such extra.

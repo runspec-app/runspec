@@ -974,11 +974,19 @@ class AgentToolsMixin:
                         },
                         "start": {
                             "type": "string",
-                            "description": "Start time, ISO 8601 (e.g. 2026-06-27T14:00).",
+                            "description": (
+                                "Start time in the operator's LOCAL time, ISO 8601 "
+                                "(e.g. 2026-06-27T14:00 for 2pm local). Do NOT convert "
+                                "to UTC or add a timezone offset. Check console_status "
+                                "for the current local time when the request is relative."
+                            ),
                         },
                         "end": {
                             "type": "string",
-                            "description": "End time, ISO 8601. Defaults to 30 minutes after start.",
+                            "description": (
+                                "End time in the operator's LOCAL time, ISO 8601. "
+                                "Defaults to 30 minutes after start."
+                            ),
                         },
                         "attendees": {
                             "type": "string",

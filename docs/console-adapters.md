@@ -193,6 +193,84 @@ short-lived corporate tokens), `base_url`, `model`, `system`, and `max_tokens`
 (for `anthropic` / `bedrock` / `langserve` and any adapter that declares it).
 `[llm] max_continuations` is read by the loop, not the adapter.
 
+### `effort` — reasoning effort (adaptive extended thinking)
+
+`[llm] effort` sets how hard the model thinks before it answers — Anthropic
+**extended thinking**. Named levels, `off` by default:
+
+```toml
+[llm]
+effort = "medium"   # off (default) | low | medium | high | xhigh | max
+```
+
+The console uses Anthropic's **adaptive** thinking shape (Claude 4.6+): it sends
+`thinking = {"type": "adaptive"}` plus `output_config = {"effort": <level>}`, and
+the model self-manages its own thinking depth per request. `effort` is just the
+dial. Adaptive thinking **counts toward `max_tokens`** (the output ceiling), so
+there's no separate budget to reserve — `max_tokens` is left exactly as you set
+it. If you turn effort up, consider raising `max_tokens` too so a deep reply has
+room after thinking.
+
+Levels: `low` / `medium` / `high` / `xhigh` / `max`. `xhigh` needs Opus 4.7+;
+Sonnet 4.6 supports `low`/`medium`/`high`/`max` (no `xhigh`). A level the chosen
+model doesn't support surfaces as an API error rather than being silently
+downgraded.
+
+!!! note "This replaced the deprecated `budget_tokens` shape"
+    Earlier the console mapped `effort` to a manual `thinking = {"type":
+    "enabled", "budget_tokens": N}` budget. That shape is deprecated on Opus/
+    Sonnet 4.6 and **rejected with a 400** on Opus 4.8/4.7, Sonnet 5, and Fable 5.
+    The adaptive shape above is the current API; `budget_tokens` never appeared in
+    your `config.toml` and nothing there needs to change.
+
+It's forwarded to the `anthropic` and `bedrock` built-ins (both talk the
+Anthropic SDK, so the request shape is identical), to the `langserve` built-in
+(as a pass-through wire field — see below), and to any plugin adapter that
+declares an `effort` parameter. Thinking blocks are preserved across tool-call
+turns automatically (`make_tool_turn` reuses the raw response content), so effort
+composes with tool use. Higher effort trades latency and tokens for deeper
+reasoning — leave it `off` for routine, low-latency work.
+
+#### `effort` on the LangServe adapter (and gateway proxies)
+
+The `langserve` adapter can't know your gateway's request shape, so it does **not**
+send the Anthropic `thinking`/`output_config` shape. Instead it sends the effort
+level as a plain **pass-through string** under an OpenAI-style `reasoning_effort`
+field (the adapter already speaks the OpenAI wire format for tools):
+
+```toml
+[llm]
+provider = "langserve"
+effort = "high"                 # sent as-is (the string "high")
+effort_key = "reasoning_effort" # rename the field your chain expects
+effort_in = "kwargs"            # kwargs (default) | config | input
+```
+
+`effort_key` / `effort_in` mirror `max_tokens_key` / `max_tokens_in` — the field
+name and which `/invoke` slot it lands in (`kwargs` = the extra-args bucket,
+`config` = `config.configurable.<key>`, `input` = alongside the messages). `off`
+/ empty sends nothing.
+
+If your gateway instead wants the **native Anthropic adaptive shape** (e.g. it
+forwards the body straight to Bedrock's Anthropic API), don't use `effort_key` —
+subclass `LangServeAdapter`, override `_build_payload`, and inject it with the
+shared helper:
+
+```python
+from runspec_console.adapters.base import apply_thinking
+
+class MyGatewayAdapter(LangServeAdapter):
+    def _build_payload(self, messages, tools):
+        payload = super()._build_payload(messages, tools)
+        apply_thinking(payload["kwargs"], self.effort)  # or wherever your chain reads it
+        return payload
+```
+
+`apply_thinking` is a no-op when effort is off, so the override is always safe.
+A **plugin** adapter (dotted path / entry point) gets `[llm] effort` forwarded
+automatically the moment its `__init__` declares an `effort` parameter — no
+allowlist entry needed. That's the hook a corporate proxy adapter uses.
+
 ---
 
 ## Registration

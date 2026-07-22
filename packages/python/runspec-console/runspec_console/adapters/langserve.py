@@ -38,6 +38,14 @@ field. The gateway's reported stop reason (``stop_reason`` / ``stopReason`` /
 ``finish_reason`` in the message metadata) is surfaced so the agentic loop can
 auto-continue a reply the gateway truncated at that ceiling.
 
+``effort`` (``[llm] effort``, reasoning effort) is sent only when set. Since this
+adapter speaks the OpenAI wire shape, the default is a plain
+``reasoning_effort: "<level>"`` string; ``effort_key`` / ``effort_in`` rename the
+field / pick the slot (same three choices as ``max_tokens_in``). It's a
+pass-through string — the level and field are whatever your chain accepts, *not*
+the Anthropic ``thinking``/``output_config`` shape. A gateway that wants that
+native shape overrides ``_build_payload`` (see the comment on that method).
+
 Auth
 ----
 Bearer token in the ``Authorization`` header, taken from a static ``api_key`` or
@@ -90,6 +98,24 @@ def _to_openai_tool(t: dict[str, Any]) -> dict[str, Any]:
     return {"type": "function", "function": func}
 
 
+def _place_in_slot(payload: dict[str, Any], slot: str, key: str, value: Any) -> None:
+    """Put ``{key: value}`` into one of the three ``/invoke`` body slots.
+
+    ``slot`` is ``"config"`` (``config.configurable.<key>`` — only for a chain
+    that *declares* that configurable field, else LangChain rejects it),
+    ``"input"`` (alongside the messages), or ``"kwargs"`` (the protocol's
+    dedicated extra-args bucket — the safe default for a value the chain forwards
+    to the model). Shared by ``max_tokens`` and ``effort`` so they land
+    identically.
+    """
+    if slot == "config":
+        payload["config"].setdefault("configurable", {})[key] = value
+    elif slot == "input":
+        payload["input"][key] = value
+    else:  # "kwargs"
+        payload["kwargs"][key] = value
+
+
 def build_payload(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
@@ -101,6 +127,9 @@ def build_payload(
     max_tokens: int = 0,
     max_tokens_key: str = "max_tokens",
     max_tokens_in: str = "kwargs",
+    effort: str = "",
+    effort_key: str = "reasoning_effort",
+    effort_in: str = "kwargs",
 ) -> dict[str, Any]:
     """Assemble the ``/invoke`` request body.
 
@@ -114,6 +143,18 @@ def build_payload(
     bucket, default), ``"config"`` (``config.configurable.<key>`` — only for a
     chain that *declares* that configurable field, else LangChain rejects it), or
     ``"input"``. ``max_tokens_key`` renames the field.
+
+    ``effort`` (reasoning effort) is sent only when non-empty. Because this
+    adapter speaks the OpenAI wire shape (tools are OpenAI-function dicts), the
+    default is to send the plain level string under an OpenAI-style
+    ``reasoning_effort`` field — ``effort_key`` renames it, ``effort_in`` picks
+    the slot (same three choices as ``max_tokens_in``). This is deliberately a
+    *pass-through string* (``"low"``/``"high"``/…), not the Anthropic
+    ``thinking``/``output_config`` shape: the value and field are whatever your
+    gateway's chain accepts. If your gateway instead wants the native Anthropic
+    *adaptive* thinking shape, don't use ``effort_key``/``effort_in`` — override
+    ``LangServeAdapter._build_payload`` and inject it directly (see that method's
+    comment, which shows the ``apply_thinking`` one-liner).
     """
     wire_messages: list[dict[str, Any]] = []
     if system.strip():
@@ -133,14 +174,9 @@ def build_payload(
         else:
             payload["input"][tools_key] = oai_tools
     if max_tokens and int(max_tokens) > 0 and max_tokens_key:
-        if max_tokens_in == "config":
-            payload["config"].setdefault("configurable", {})[max_tokens_key] = int(
-                max_tokens
-            )
-        elif max_tokens_in == "input":
-            payload["input"][max_tokens_key] = int(max_tokens)
-        else:  # "kwargs" — the protocol's dedicated extra-args bucket
-            payload["kwargs"][max_tokens_key] = int(max_tokens)
+        _place_in_slot(payload, max_tokens_in, max_tokens_key, int(max_tokens))
+    if effort and effort_key:
+        _place_in_slot(payload, effort_in, effort_key, effort)
     return payload
 
 
@@ -287,6 +323,9 @@ class LangServeAdapter(ModelAdapter):
         max_tokens: int = 0,
         max_tokens_key: str = "max_tokens",
         max_tokens_in: str = "kwargs",
+        effort: str = "",
+        effort_key: str = "reasoning_effort",
+        effort_in: str = "kwargs",
         timeout: float = 120.0,
         client: Any = None,
     ) -> None:
@@ -310,6 +349,16 @@ class LangServeAdapter(ModelAdapter):
         self.max_tokens = int(max_tokens or 0)
         self._max_tokens_key = max_tokens_key
         self._max_tokens_in = max_tokens_in
+        # Reasoning effort (`[llm] effort`). Normalised to a bare lowercased level
+        # string; "" / "off" / "none" mean "send nothing" (the default). We don't
+        # restrict it to the Anthropic enum here — the langserve wire shape is
+        # gateway-defined, so whatever level string your chain accepts
+        # ("low"/"medium"/"high"/… or a proxy-specific value) passes straight
+        # through. Placement is set by effort_key / effort_in (see _build_payload).
+        _eff = str(effort or "").strip().lower()
+        self.effort = "" if _eff in ("", "off", "none") else _eff
+        self._effort_key = effort_key
+        self._effort_in = effort_in
 
         self._api_key_command = api_key_command
         self._api_key_ttl_s = api_key_ttl_ms / 1000.0
@@ -360,6 +409,24 @@ class LangServeAdapter(ModelAdapter):
     # Subclass hooks — a plugin for a non-vanilla gateway typically overrides
     # just these two to match its proprietary request/response shape, inheriting
     # the auth, rotation, and agent-loop plumbing unchanged.
+    #
+    # Reasoning effort, two ways:
+    #   1. Your gateway takes a plain effort *string* (e.g. OpenAI-style
+    #      `reasoning_effort: "high"`). That's the default — set `[llm] effort`
+    #      and, if the field/slot differ, `[llm] effort_key` / `effort_in`. No
+    #      code needed; build_payload places it for you.
+    #   2. Your gateway wants the native Anthropic *adaptive* thinking shape
+    #      (`thinking={"type":"adaptive"}` + `output_config={"effort": <level>}`,
+    #      e.g. it passes the body through to Bedrock's Anthropic API). Then leave
+    #      effort_key unused and inject it here in an override, e.g.:
+    #
+    #          from .base import apply_thinking
+    #          def _build_payload(self, messages, tools):
+    #              payload = super()._build_payload(messages, tools)
+    #              apply_thinking(payload["kwargs"], self.effort)  # or wherever
+    #              return payload                                   # your chain reads it
+    #
+    #      `apply_thinking` is a no-op when effort is off, so this is always safe.
     def _build_payload(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> dict[str, Any]:
@@ -373,6 +440,9 @@ class LangServeAdapter(ModelAdapter):
             max_tokens=self.max_tokens,
             max_tokens_key=self._max_tokens_key,
             max_tokens_in=self._max_tokens_in,
+            effort=self.effort,
+            effort_key=self._effort_key,
+            effort_in=self._effort_in,
         )
 
     def _parse_output(

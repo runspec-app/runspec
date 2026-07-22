@@ -775,9 +775,22 @@ class InternalsMixin:
             "langserve",
         }:
             kwargs["max_tokens"] = int(llm_cfg["max_tokens"])
+        # Reasoning effort. The anthropic/bedrock built-ins map it to Anthropic
+        # adaptive thinking; the langserve built-in passes it through as a wire
+        # field (its placement set by effort_key/effort_in below). Guard so a
+        # provider that doesn't declare `effort` never sees the kwarg. A plugin
+        # adapter declaring `effort` is auto-forwarded via adapter_config_keys
+        # below, so it needs no entry here.
+        effort = str(llm_cfg.get("effort") or "").strip().lower()
+        if effort not in ("", "off", "none") and provider in {
+            "anthropic",
+            "bedrock",
+            "langserve",
+        }:
+            kwargs["effort"] = effort
         # LangServe-only knobs — describe the gateway's input/output shape and
-        # where max_tokens lands. Only forwarded when set (and only meaningful to
-        # the langserve adapter), so other providers never see them.
+        # where max_tokens / effort land. Only forwarded when set (and only
+        # meaningful to the langserve adapter), so other providers never see them.
         for key in (
             "auth_header",
             "auth_scheme",
@@ -785,6 +798,8 @@ class InternalsMixin:
             "input_tools_key",
             "max_tokens_key",
             "max_tokens_in",
+            "effort_key",
+            "effort_in",
         ):
             if llm_cfg.get(key):
                 kwargs[key] = llm_cfg[key]
@@ -838,34 +853,54 @@ class InternalsMixin:
 
     def _now_context(self) -> str:
         """A per-turn system-prompt block giving the agent the operator's current
-        local date, so it resolves relative dates ("last Friday", "yesterday")
-        against the real machine clock instead of guessing from its training
-        cutoff. Folded into every agent turn (chat, trigger, schedule).
+        local date **and timezone**, so it resolves relative dates ("last Friday")
+        against the real machine clock and produces clock times in local time
+        instead of guessing from its training cutoff or defaulting to UTC. Folded
+        into every agent turn (chat, trigger, schedule).
 
-        Date-only (weekday + ISO date, no clock time) on purpose: it changes once
-        a day, so the composed system prompt stays byte-identical across a day's
-        turns and the model-side prompt cache keeps hitting (a per-minute
-        timestamp would miss the cache every turn). Local time — ``datetime.now()``
-        — because "last Friday" is the operator's local calendar."""
-        today = datetime.now()
+        Date + timezone, but **no clock time** on purpose: date and timezone both
+        change at most once a day (the tz only at a DST boundary), so the composed
+        system prompt stays byte-identical across a day's turns and the model-side
+        prompt cache keeps hitting — a per-minute timestamp would miss the cache
+        every turn. The exact current *time* is deliberately left to the on-demand
+        ``console_status`` tool. Local — ``datetime.now().astimezone()`` — because
+        "last Friday" and "2pm" are the operator's local calendar/clock."""
+        now = datetime.now().astimezone()
+        tzname = now.strftime("%Z")
+        raw = now.strftime("%z")  # e.g. -0500 / +0530 / "" if unknown
+        offset = f"UTC{raw[:3]}:{raw[3:]}" if len(raw) == 5 else "UTC offset unknown"
+        tz = f"{tzname} ({offset})" if tzname else offset
         return (
-            "## Current date\n"
-            f"The operator's machine date is **{today.strftime('%A, %Y-%m-%d')}** "
-            '(local time). Resolve relative dates like "last Friday", "yesterday", '
-            'or "next week" against this — do not assume any other date from training.'
+            "## Current date & timezone\n"
+            f"The operator's machine date is **{now.strftime('%A, %Y-%m-%d')}** and "
+            f"their timezone is **{tz}** (local time). Resolve relative dates like "
+            '"last Friday" or "next week" against this date. Produce and interpret '
+            "clock times in the operator's **local** time — never UTC (e.g. a 2pm "
+            "meeting is 14:00 local). For the exact current time — needed for "
+            'relative times like "in 30 minutes" or "this afternoon" — call the '
+            "``console_status`` tool first."
         )
 
     def _base_system(self) -> str:
-        """Base system prompt for trigger agent turns: the configured assistant
-        instructions if set, else a sensible default. compose_system() layers
-        the per-trigger rules on top of this."""
+        """Base system prompt for the chat + trigger agent turns: the configured
+        assistant instructions (``[llm] system``) if set, else a sensible default.
+        compose_system() layers the per-trigger rules on top of this.
+
+        Note the default's clarify-don't-guess guideline applies **only** when
+        ``[llm] system`` is unset — a configured system prompt replaces it wholesale,
+        so an operator who wants that behaviour with a custom prompt must include it."""
         configured = str(self.get_config().get("llm", {}).get("system", "")).strip()
         if configured:
             return configured
         return (
             "You are an assistant embedded in runspec-console. You can run "
             "runspec runnables on local and remote hosts via tools. Use tools "
-            "when they help, and confirm before anything destructive."
+            "when they help, and confirm before anything destructive.\n\n"
+            "When a required argument is missing or ambiguous — and getting it "
+            "wrong would matter (scheduling, sending mail, targeting a host, or "
+            "anything destructive) — ask the operator one brief clarifying question "
+            "instead of guessing. Prefer a quick question over a wrong assumption. "
+            "For low-stakes or clearly-implied values, go ahead; don't over-ask."
         )
 
     def _console_context(self) -> str:

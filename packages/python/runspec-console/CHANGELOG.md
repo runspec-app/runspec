@@ -8,6 +8,56 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.188.0] — 2026-07-22
+
+### Added
+- **`[llm] effort` — reasoning effort (adaptive extended thinking).** A
+  named-level dial (`off` default / `low` / `medium` / `high` / `xhigh` / `max`)
+  that sets how hard the model thinks before it answers. Uses Anthropic's
+  **adaptive** thinking shape (Claude 4.6+): the console sends
+  `thinking = {"type": "adaptive"}` plus `output_config = {"effort": <level>}`, so
+  the model self-manages its own thinking depth and it counts toward `max_tokens`
+  (no separate budget to reserve — `max_tokens` is left as the operator set it).
+  Wired into the `anthropic` and `bedrock` built-ins — both talk the Anthropic
+  SDK, so the request shape is identical — and forwarded to any plugin adapter
+  declaring an `effort` parameter. Thinking blocks survive tool-call turns
+  automatically (`make_tool_turn` reuses the raw response content), so effort
+  composes with tool use. Shared pure helpers `adapters.base.effort_level` /
+  `apply_thinking` (unit-tested). This deliberately avoids the deprecated
+  `thinking = {"type": "enabled", "budget_tokens": N}` shape, which is rejected
+  with a 400 on Opus 4.8/4.7, Sonnet 5, and Fable 5.
+- **`effort` on the `langserve` adapter / gateway proxies.** The LangServe
+  built-in now also honours `[llm] effort` — since it can't assume your gateway's
+  request shape, it sends the level as a plain pass-through string under an
+  OpenAI-style `reasoning_effort` field, with `[llm] effort_key` / `effort_in`
+  renaming the field / picking the `/invoke` slot (mirroring `max_tokens_key` /
+  `max_tokens_in`). A gateway wanting the native Anthropic adaptive shape
+  overrides `_build_payload` and calls `apply_thinking` (documented, with a
+  worked snippet). A plugin adapter gets `effort` auto-forwarded the moment its
+  `__init__` declares the parameter. Docs: `docs/console-adapters.md`.
+
+### Fixed
+- **The agent scheduled meetings in UTC.** Every agent turn's date block
+  (`_now_context()`) carried the operator's local *date* but no *timezone*, so the
+  model had no local anchor and defaulted to UTC for clock times (e.g. a "2pm"
+  meeting landed at 2pm UTC). The block now also states the operator's **timezone**
+  (name + UTC offset, e.g. `CDT (UTC-05:00)`) and instructs the agent to produce
+  and interpret clock times in **local** time, never UTC. Still date + timezone
+  only (both stable across a day) so the model-side prompt cache keeps hitting —
+  the exact current *time* stays on the on-demand `console_status` tool.
+  `outlook_create_event`'s `start`/`end` descriptions now say "local time, don't
+  convert to UTC" and point at `console_status` for relative times.
+
+### Changed
+- **The default agent prompt now prefers a clarifying question over guessing.**
+  `_base_system`'s default (used when `[llm] system` is unset) tells the agent to
+  ask one brief clarifying question — rather than guess — when a required argument
+  is missing or ambiguous and getting it wrong would matter (scheduling, sending
+  mail, host targeting, anything destructive), while still proceeding on low-stakes
+  or clearly-implied values. A configured `[llm] system` replaces the default
+  wholesale, so operators using a custom prompt should add this themselves.
+
+
 ## [0.187.0] — 2026-07-21
 
 ### Added

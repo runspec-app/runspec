@@ -14,7 +14,14 @@ from typing import Any
 
 import anthropic
 
-from .base import ChatResponse, ModelAdapter, ToolCall, apply_prompt_caching
+from .base import (
+    ChatResponse,
+    ModelAdapter,
+    ToolCall,
+    apply_prompt_caching,
+    apply_thinking,
+    effort_level,
+)
 
 DEFAULT_MODEL = "anthropic.claude-sonnet-4-6"
 # Output-token ceiling per request (see anthropic.py). A ceiling, not a target;
@@ -40,10 +47,12 @@ class BedrockAdapter(ModelAdapter):
         base_url: str | None = None,
         api_key: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        effort: str = "",
     ) -> None:
         self.model = model
         self.system = system
         self.max_tokens = int(max_tokens) or DEFAULT_MAX_TOKENS
+        self._effort = effort_level(effort)
         if base_url:
             # Corporate proxy — treat as a regular Anthropic-compatible endpoint
             self.client: anthropic.AsyncAnthropic | anthropic.AsyncAnthropicBedrock = (
@@ -72,6 +81,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_thinking(kwargs, self._effort)
         apply_prompt_caching(kwargs)
         response = await self.client.messages.create(**kwargs)
         text = next(
@@ -100,6 +110,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_thinking(kwargs, self._effort)
         apply_prompt_caching(kwargs)
         async with self.client.messages.stream(**kwargs) as stream:
             async for token in stream.text_stream:
@@ -118,6 +129,7 @@ class BedrockAdapter(ModelAdapter):
         )
         if tools:
             kwargs["tools"] = tools
+        apply_thinking(kwargs, self._effort)
         apply_prompt_caching(kwargs)
         tool_map: dict[int, dict[str, Any]] = {}
         stop_reason = "end_turn"

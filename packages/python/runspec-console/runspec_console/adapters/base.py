@@ -185,6 +185,54 @@ def apply_prompt_caching(kwargs: dict[str, Any]) -> dict[str, Any]:
     return kwargs
 
 
+# ── reasoning effort → adaptive extended thinking ─────────────────────────────
+#
+# `[llm] effort` sets how hard the model thinks before it answers — Anthropic
+# "extended thinking". The modern (Claude 4.6+) request shape is *adaptive*: the
+# model self-manages its own thinking depth per request, and `output_config.effort`
+# is the dial. We send `thinking={"type": "adaptive"}` plus
+# `output_config={"effort": <level>}`; `off` (default) / empty sends no thinking
+# param at all.
+#
+# This replaces the deprecated `thinking={"type": "enabled", "budget_tokens": N}`
+# shape, which is *rejected with a 400* on Opus 4.8/4.7, Sonnet 5, and Fable 5 (and
+# deprecated on Opus/Sonnet 4.6). Adaptive thinking counts toward `max_tokens` (the
+# output ceiling), so there's no separate budget to reserve — `max_tokens` is left
+# exactly as the operator set it. Applies to the anthropic + bedrock adapters (both
+# talk the Anthropic SDK, so the request shape is identical).
+
+# Levels output_config.effort accepts, mapped straight from the named `[llm] effort`
+# dial. "xhigh" needs Opus 4.7+; "max" is the deepest. A level the chosen model
+# doesn't support (e.g. xhigh on Sonnet 4.6) surfaces as an API error rather than
+# being silently downgraded here.
+_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
+
+def effort_level(effort: str) -> str:
+    """Normalise an ``[llm] effort`` value to the ``output_config.effort`` enum
+    ("low"/"medium"/"high"/"xhigh"/"max"). Returns ``""`` (thinking off) for
+    ``"off"``/empty/unknown, so a typo fails safe to the no-thinking path.
+    Pure/testable."""
+    level = str(effort or "").strip().lower()
+    return level if level in _EFFORT_LEVELS else ""
+
+
+def apply_thinking(kwargs: dict[str, Any], effort: str) -> dict[str, Any]:
+    """Enable Anthropic *adaptive* extended thinking at the given ``effort`` level
+    on a messages.create()/stream() kwargs dict — ``thinking={"type": "adaptive"}``
+    plus ``output_config={"effort": <level>}``. No-op when ``effort`` normalises to
+    empty (so ``effort = off`` changes nothing). ``max_tokens`` is left untouched:
+    adaptive thinking counts toward it, so the operator's ceiling already covers it.
+    Pure and SDK-free — mutates and returns the kwargs dict."""
+    level = effort_level(effort)
+    if level:
+        kwargs["thinking"] = {"type": "adaptive"}
+        output_config = dict(kwargs.get("output_config") or {})
+        output_config["effort"] = level
+        kwargs["output_config"] = output_config
+    return kwargs
+
+
 # ── adapter registry + plugin discovery ───────────────────────────────────────
 #
 # Providers are resolved from three sources, in order:
