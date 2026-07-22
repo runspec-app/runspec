@@ -8,6 +8,64 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.190.0] — 2026-07-22
+
+### Added
+- **Deferred built-ins in search mode (`[llm] tool_mode = "search"`).** The
+  chat turn's built-in tools now split the same way the runnables did when
+  search mode was introduced: a **hot kernel** stays inline (`console_status`,
+  `search_history`, the memory/runbook tools, and the `workspace_*` tools —
+  the ones a turn reaches for constantly, or that spilled tool results
+  reference), and the **long tail** (Outlook, repo, transfer/denylist, action,
+  exec, and config tools — ~40 schemas) leaves the per-turn tool list. The
+  agent discovers them from a one-line-per-tool menu folded into the
+  conversation next to the runnable catalog index (same `[llm] tool_index`
+  knob), fetches full schemas on demand with the read-only **`describe_tool`**,
+  and runs one via **`use_tool`** — a thin wrapper the autonomy gate **unwraps
+  to the inner tool before any decision**, so the inner tool's own confirm
+  rules, Console card, tracking, and audit record apply unchanged (the same
+  inner-name gating `run_runnable` has always used). `_run_tool_sync` fails
+  closed on a still-wrapped `use_tool` (refuses rather than executes), and an
+  un-unwrapped wrapper classifies as `confirm`. **Headless (trigger/schedule)
+  turns are unaffected**: they keep every built-in inline
+  (`_runnables_to_tools(inline_builtins=True)`) because `action_allow` can
+  only narrow tools it can see, and `_filter_headless_tools` strips the
+  deferral meta-tools unconditionally — automation never gets a run-by-name
+  side door. Zero-code escape hatch: `[llm] defer_builtins = false` keeps
+  built-ins inline in search mode. Dedup/per_host modes are byte-identical to
+  before. New `_BUILTIN_META_NAMES`/`_HOT_BUILTIN_NAMES` in `bridge_const`;
+  `_deferred_builtin_tools`/`_builtin_meta_tools`/`_run_describe_builtin_tool`/
+  `_unwrap_use_tool`/`_build_builtin_index`/`_chat_index_text` in
+  `bridge_search`.
+
+
+## [0.189.0] — 2026-07-22
+
+### Added
+- **`search_history` built-in agent tool.** The chat agent (and trigger/schedule
+  turns — it is read-only) can now query the run history the History tab shows:
+  newest-first audit records with timestamp, host, operator (OS user), run-as
+  target, exit code, duration, args, and provenance (`initiatedBy` user/llm plus
+  the trigger/schedule or runbook that caused the run). Answers "when was X last
+  run, by whom, and did it succeed" without opening the UI. Filters: `runnable`
+  (exact match first, substring fallback), `host` (enum of local + fleet; a
+  host-scoped query passes the runnable through so only its log files are read,
+  falling back to an unfiltered read for the substring case), `failed_only`, and
+  `limit` (default 10, max 50; truncation is visible via a `note`). Heavy fields
+  (per-run log lines, traceback frames) are stripped by default — exceptions
+  slim to type + message — and each record carries its `runId`: pass it back as
+  `run_id` to fetch that one run *with* its logged output, or set `include_log`
+  to attach log lines to search results (tail-capped at 200 lines per record,
+  with tighter record limits, default 3 / max 10). A host-scoped query reads
+  that host over its own SSH exec even without a standing connection; only the
+  no-host sweep is limited to local + currently connected hosts. Autonomous (no confirm gate): it reads the same records the
+  operator already sees. Reuses the reporting mixin's `get_history` /
+  `get_history_all`, so only local + currently connected hosts are searched.
+  New `_HISTORY_TOOL_NAMES` in `bridge_const`; schema/handler in
+  `bridge_agent_tools` (`_history_tools`/`_run_history_tool`/
+  `_slim_history_record`).
+
+
 ## [0.188.2] — 2026-07-22
 
 ### Fixed

@@ -23,6 +23,7 @@ from .bridge_const import (
     _AUTONOMY_RANK,
     _OUTLOOK_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
+    _BUILTIN_META_NAMES,
     _CONFIG_TOOL_NAMES,
 )
 from .bridge_helpers import (
@@ -2213,8 +2214,18 @@ class TriggersMixin:
 
         A non-empty ``action_allow`` then narrows the governed built-in action /
         Outlook tools to that set, exactly as before; non-governed tools pass.
+
+        The chat-only deferral meta-tools (describe_tool/use_tool) are stripped
+        unconditionally too — headless turns get inline built-ins (see
+        ``_runnables_to_tools`` ``inline_builtins``), and a wrapper that runs
+        tools by name would reach around this filter's narrowing.
         """
-        tools = [t for t in tools if t["name"] not in _CONFIG_TOOL_NAMES]
+        tools = [
+            t
+            for t in tools
+            if t["name"] not in _CONFIG_TOOL_NAMES
+            and t["name"] not in _BUILTIN_META_NAMES
+        ]
         if action_allow:
             governed = _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES
             allow = set(action_allow)
@@ -2253,7 +2264,11 @@ class TriggersMixin:
         from .trigger_runner import draft_reply_schema, propose_reply_schema
 
         start = time.monotonic()
-        tools = self._runnables_to_tools(allow=allowed_runnables)
+        # inline_builtins: a headless turn keeps every built-in inline even in
+        # search mode — action_allow can only narrow tools it can see in the
+        # list, and the deferral meta-tools (describe_tool/use_tool) would let
+        # a turn reach around that narrowing.
+        tools = self._runnables_to_tools(allow=allowed_runnables, inline_builtins=True)
         # Search mode hides runnables behind search_runnables; fold the same
         # always-on menu the chat turn gets so an unrestricted trigger/schedule
         # agent turn discovers what exists identically. Only when search mode is

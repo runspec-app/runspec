@@ -34,6 +34,7 @@ from .bridge_const import (
     _READONLY_META,
     _MEMORY_TOOL_NAMES,
     _STATUS_TOOL_NAMES,
+    _HISTORY_TOOL_NAMES,
     _OUTLOOK_READ_TOOLS,
     _OUTLOOK_WRITE_TOOLS,
     _OUTLOOK_TOOL_NAMES,
@@ -83,10 +84,18 @@ class AutonomyMixin:
             return "confirm"  # side-effecting file move — always prompt
         if tool_name in _READONLY_META:
             return "autonomous"  # search/describe are read-only discovery
+        if tool_name == "describe_tool":
+            return "autonomous"  # read-only schema lookup for deferred built-ins
+        if tool_name == "use_tool":
+            # Normally unwrapped to the inner tool by the gate before this runs;
+            # an un-unwrapped wrapper is gated by default (fail closed).
+            return "confirm"
         if tool_name in _MEMORY_TOOL_NAMES:
             return "autonomous"  # local memory/runbook store — no model-spend gate
         if tool_name in _STATUS_TOOL_NAMES:
             return "autonomous"  # read-only status report — no side effects
+        if tool_name in _HISTORY_TOOL_NAMES:
+            return "autonomous"  # read-only history search — no side effects
         if tool_name in _WORKSPACE_TOOL_NAMES:
             # read/write inside the current session's workspace only — no prompt
             return "autonomous"
@@ -476,6 +485,14 @@ class AutonomyMixin:
 
         ``stage`` (trigger turns only) reports the card stage: "awaiting_human"
         while a confirm is pending, then "running" once it actually executes."""
+        if tool_name == "use_tool":
+            # Deferred built-in (search mode): unwrap to the inner tool BEFORE
+            # any decision, so the gate, confirm card, Console tracking, and
+            # audit all see the real tool — never the wrapper.
+            unwrapped = self._unwrap_use_tool(tool_input)
+            if isinstance(unwrapped, str):
+                return unwrapped
+            tool_name, tool_input = unwrapped
         if tool_name == "run_runnable":
             fan = self._group_fanout_calls(tool_input)
             if fan is not None:
@@ -714,6 +731,8 @@ class AutonomyMixin:
             key = first("source", "type")
         elif tool_name in ("remember", "search_memory"):
             key = first("query", "text", "app")
+        elif tool_name == "search_history":
+            key = first("runnable", "host")
         elif tool_name in ("save_runbook", "load_runbook"):
             key = first("id", "name")
         else:
@@ -757,6 +776,12 @@ class AutonomyMixin:
 
         autonomous → run; confirm/supervised → ask the user (Approve/Deny);
         manual → refuse (human-only; the user must use the Run button)."""
+        if tool_name == "use_tool":
+            # Same unwrap as the async gate — decisions apply to the inner tool.
+            unwrapped = self._unwrap_use_tool(tool_input)
+            if isinstance(unwrapped, str):
+                return unwrapped
+            tool_name, tool_input = unwrapped
         if tool_name == "run_runnable":
             fan = self._group_fanout_calls(tool_input)
             if fan is not None:
@@ -897,6 +922,8 @@ class AutonomyMixin:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
         if tool_name in _STATUS_TOOL_NAMES:
             return self._run_status_tool(dict(tool_input or {}))
+        if tool_name in _HISTORY_TOOL_NAMES:
+            return self._run_history_tool(dict(tool_input or {}))
         if tool_name in _WORKSPACE_TOOL_NAMES:
             return self._run_workspace_tool(
                 tool_name,
@@ -922,6 +949,16 @@ class AutonomyMixin:
             return self._run_search_tool(dict(tool_input or {}))
         if tool_name == "describe_runnable":
             return self._run_describe_tool(dict(tool_input or {}))
+        if tool_name == "describe_tool":
+            return self._run_describe_builtin_tool(dict(tool_input or {}))
+        if tool_name == "use_tool":
+            # Fail closed: use_tool must be unwrapped by the autonomy gate (which
+            # then gates/tracks the INNER tool). Reaching dispatch still wrapped
+            # means a call site skipped the gate — refuse rather than execute.
+            return (
+                "Error: use_tool was not resolved by the autonomy gate — "
+                "call the inner tool through the normal gated path."
+            )
         if tool_name == "run_runnable":
             # The generic executor (search mode): resolve {id, host} → runnable, then
             # validate the free-form args against the cached spec before dispatch.

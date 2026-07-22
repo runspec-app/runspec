@@ -26,6 +26,7 @@ from .bridge_const import (
     ToolCancelled,
     _AGENT_TOOL_OUTPUT_CAP,
     _EXEC_MAX_ROWS,
+    _HOT_BUILTIN_NAMES,
     _SPILL_ENVELOPE_HEAD_BYTES,
 )
 
@@ -33,6 +34,18 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
+
+
+# Bounds for the search_history tool result — newest-first, so the default
+# answers "when did X last run" in one small payload. Module-level (not class
+# attributes) so the schema builder works when bound onto the suite's stubs.
+# With include_log the limits tighten (log lines are the heavy part) and each
+# record's log is tail-capped — the 1 MB tool-output cap is only the backstop.
+_HISTORY_TOOL_DEFAULT_LIMIT = 10
+_HISTORY_TOOL_MAX_LIMIT = 50
+_HISTORY_TOOL_LOG_DEFAULT_LIMIT = 3
+_HISTORY_TOOL_LOG_MAX_LIMIT = 10
+_HISTORY_TOOL_LOG_LINES = 200
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -147,6 +160,16 @@ class AgentToolsMixin:
         of how many distinct runnables the fleet installs."""
         mode = str(self.get_config().get("llm", {}).get("tool_mode", "dedup")).strip()
         return mode if mode in ("dedup", "per_host", "search") else "dedup"
+
+    def _defer_builtins_enabled(self) -> bool:
+        """``[llm] defer_builtins`` — on by default; only consulted in search
+        mode on the chat path. When on, the long tail of built-in tools leaves
+        the chat turn's tool list (reached via describe_tool/use_tool); off is
+        the zero-code escape hatch back to inline built-ins."""
+        val = self.get_config().get("llm", {}).get("defer_builtins", True)
+        if isinstance(val, str):
+            return val.strip().lower() not in ("false", "0", "no", "off")
+        return bool(val)
 
     def _tool_output_cap(self) -> int:
         """Max chars of a single runnable's output handed to the model as a tool
@@ -382,7 +405,9 @@ class AgentToolsMixin:
         return schema
 
     def _runnables_to_tools(
-        self, allow: Collection[str] | None = None
+        self,
+        allow: Collection[str] | None = None,
+        inline_builtins: bool = False,
     ) -> list[dict[str, Any]]:
         """Convert cached runnables to Anthropic-format tool schemas.
 
@@ -399,16 +424,30 @@ class AgentToolsMixin:
         trigger that passes an ``allow`` set is already curated to a handful of
         runnables, so it falls back to the dedup layout (scoped) — the search
         interface would add nothing there.
+
+        In search mode built-ins split too: the hot kernel (_HOT_BUILTIN_NAMES)
+        stays inline, the long tail is deferred behind describe_tool/use_tool.
+        ``inline_builtins`` (headless trigger/schedule turns) keeps every
+        built-in inline instead — those turns are filtered by ``action_allow``,
+        which can only narrow tools it can see in the list.
         """
         allowset = {str(a).strip() for a in allow} if allow else None
         self._reload_credentials()  # so per-runnable credential_id enums are current
         mode = self._tool_mode()
         if mode == "search" and allowset is None:
             tools = self._search_mode_tools()
+            full: list[dict[str, Any]] = []
             try:
-                tools.extend(self._custom_agent_tools())
+                full = self._custom_agent_tools()
             except Exception:
                 logger.debug("custom agent tools unavailable", exc_info=True)
+            if inline_builtins or not self._defer_builtins_enabled():
+                tools.extend(full)
+                return tools
+            tools.extend(t for t in full if t["name"] in _HOT_BUILTIN_NAMES)
+            deferred = [t for t in full if t["name"] not in _HOT_BUILTIN_NAMES]
+            if deferred:
+                tools.extend(self._builtin_meta_tools(deferred))
             return tools
         with self._lock:
             runnables = list(self._runnables_cache)
@@ -513,6 +552,7 @@ class AgentToolsMixin:
                 *self._outlook_tools(),
                 *self._repo_tools(),
                 *self._status_tools(),
+                *self._history_tools(),
                 *self._memory_tools(),
                 *self._action_tools(),
                 *self._workspace_tools(),
@@ -689,6 +729,7 @@ class AgentToolsMixin:
             *self._outlook_tools(),
             *self._repo_tools(),
             *self._status_tools(),
+            *self._history_tools(),
             *self._memory_tools(),
             *self._action_tools(),
             *self._workspace_tools(),
@@ -1781,6 +1822,215 @@ class AgentToolsMixin:
                 "currently disabled, on which hosts."
             )
         return snapshot
+
+    def _history_tools(self) -> list[dict[str, Any]]:
+        """Schema for the read-only ``search_history`` tool — query the run
+        history (the same audit records the History tab shows) so the agent can
+        answer "when did X last run, started by whom, and how did it go"
+        without the operator opening the UI. Host names surface as an enum."""
+        host_names = ["local"] + [
+            str(h.get("name")) for h in self._hosts if h.get("name")
+        ]
+        return [
+            {
+                "name": "search_history",
+                "description": (
+                    "Search the fleet's run history — the audit records behind "
+                    "the History tab. Returns newest-first run records: "
+                    "timestamp, host, operator (OS user), run-as target, exit "
+                    "code, duration, args, and provenance (initiatedBy 'user' "
+                    "or 'llm', plus the trigger/schedule or runbook that caused "
+                    "the run, if any). Use it to answer when a runnable was "
+                    "last run, by whom, with what args, and whether it "
+                    "succeeded. Each record carries a runId — pass it back as "
+                    "run_id to drill into that one run's logged output. "
+                    "Read-only. Without a host it searches local plus every "
+                    "currently connected host; pass host to read one host "
+                    "(connected or not)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "runnable": {
+                            "type": "string",
+                            "description": (
+                                "Runnable name to filter to (bare name, no host "
+                                "prefix). Exact match first, substring fallback. "
+                                "Omit for all runnables."
+                            ),
+                        },
+                        "host": {
+                            "type": "string",
+                            "enum": host_names,
+                            "description": (
+                                "Only this host's history. Omit to search local "
+                                "plus every connected host."
+                            ),
+                        },
+                        "failed_only": {
+                            "type": "boolean",
+                            "description": "Only runs with a non-zero exit code.",
+                        },
+                        "run_id": {
+                            "type": "string",
+                            "description": (
+                                "Exact runId from a previous result — fetch "
+                                "that one run with its log lines (implies "
+                                "include_log)."
+                            ),
+                        },
+                        "include_log": {
+                            "type": "boolean",
+                            "description": (
+                                "Attach each run's recorded log lines (what "
+                                "the runnable logged — its console output when "
+                                "it uses [config.logging]). Tail-capped at "
+                                f"{_HISTORY_TOOL_LOG_LINES} lines per record; "
+                                "limits tighten to default "
+                                f"{_HISTORY_TOOL_LOG_DEFAULT_LIMIT}/max "
+                                f"{_HISTORY_TOOL_LOG_MAX_LIMIT} records. For "
+                                "one run's detail prefer run_id."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": (
+                                "Max records to return, newest first (default "
+                                f"{_HISTORY_TOOL_DEFAULT_LIMIT}, max "
+                                f"{_HISTORY_TOOL_MAX_LIMIT}; with include_log "
+                                f"default {_HISTORY_TOOL_LOG_DEFAULT_LIMIT}, "
+                                f"max {_HISTORY_TOOL_LOG_MAX_LIMIT})."
+                            ),
+                        },
+                    },
+                },
+            }
+        ]
+
+    def _run_history_tool(self, ti: dict[str, Any]) -> str:
+        """Execute ``search_history`` — read the run-history records (the
+        History tab's data source) and return a bounded, newest-first JSON
+        digest. By default the heavy fields (per-run log lines, traceback
+        frames) are stripped — the tool answers "when / by whom / outcome".
+        ``include_log`` (implied by ``run_id``) attaches each run's recorded
+        log lines, tail-capped, under tighter record limits — the drill path
+        for "what did it output"."""
+        runnable = str(ti.get("runnable") or "").strip()
+        host = str(ti.get("host") or "").strip()
+        failed_only = bool(ti.get("failed_only"))
+        run_id = str(ti.get("run_id") or "").strip()
+        include_log = bool(ti.get("include_log")) or bool(run_id)
+        default_limit, max_limit = (
+            (_HISTORY_TOOL_LOG_DEFAULT_LIMIT, _HISTORY_TOOL_LOG_MAX_LIMIT)
+            if include_log
+            else (_HISTORY_TOOL_DEFAULT_LIMIT, _HISTORY_TOOL_MAX_LIMIT)
+        )
+        try:
+            limit = int(ti.get("limit") or default_limit)
+        except (TypeError, ValueError):
+            limit = default_limit
+        limit = max(1, min(limit, max_limit))
+
+        if host:
+            known = {"local"} | {
+                str(h.get("name")) for h in self._hosts if h.get("name")
+            }
+            if host not in known:
+                return f"unknown host '{host}' — hosts: " + ", ".join(sorted(known))
+            # Pass the runnable through so only its log files are read (cheap
+            # on a remote host); the record-level filter below still applies.
+            records = self.get_history(host, runnable or None)
+            if runnable and not records:
+                # Substring fallback needs the unfiltered records (the log
+                # files are named after the exact runnable).
+                records = self.get_history(host)
+        else:
+            records = self.get_history_all()
+
+        if runnable:
+            want = runnable.lower()
+            exact = [r for r in records if str(r.get("runnable", "")).lower() == want]
+            records = exact or [
+                r for r in records if want in str(r.get("runnable", "")).lower()
+            ]
+        if failed_only:
+            records = [r for r in records if r.get("exitCode", 0) != 0]
+        if run_id:
+            records = [r for r in records if run_id in (r.get("runId"), r.get("id"))]
+
+        total = len(records)
+        shown = records[:limit]
+        payload: dict[str, Any] = {
+            "matches": total,
+            "returned": len(shown),
+            "records": [
+                self._slim_history_record(r, include_log=include_log) for r in shown
+            ],
+        }
+        if total == 0:
+            payload["note"] = (
+                "no matching runs in the newest history window — older runs "
+                "may exist only in archived logs, and the no-host sweep skips "
+                "disconnected hosts"
+            )
+        elif total > limit:
+            payload["note"] = (
+                f"newest {limit} of {total} matching records; raise limit for more"
+            )
+        if include_log and shown and not any(r.get("logLines") for r in shown):
+            payload["log_note"] = (
+                "no log lines recorded for these runs — a runnable's output is "
+                "captured only when it logs via [config.logging]"
+            )
+        return json.dumps(payload, default=str)
+
+    @staticmethod
+    def _slim_history_record(
+        r: dict[str, Any], include_log: bool = False
+    ) -> dict[str, Any]:
+        """One history record with the heavy fields dropped (logLines, traceback
+        frames) and empty provenance fields omitted — small enough that a
+        default-limit result stays a few hundred tokens. ``include_log``
+        re-attaches the run's recorded log lines as compact "ts LEVEL message"
+        strings, tail-capped (the tail is where a failure's evidence lives)."""
+        out: dict[str, Any] = {
+            "runnable": r.get("runnable", ""),
+            "host": r.get("host", ""),
+            "ts": r.get("ts", ""),
+            "exitCode": r.get("exitCode", 0),
+            "durationMs": r.get("durationMs", 0),
+            "initiatedBy": r.get("initiatedBy", "user"),
+        }
+        if r.get("runId"):
+            out["runId"] = r["runId"]
+        for key in ("group", "operator", "runAs", "trigger", "runbook"):
+            if r.get(key):
+                out[key] = r[key]
+        if r.get("args"):
+            out["args"] = r["args"]
+        if r.get("commandPath"):
+            out["commandPath"] = r["commandPath"]
+        exc = r.get("exception")
+        if isinstance(exc, dict) and (exc.get("type") or exc.get("message")):
+            out["error"] = {"type": exc.get("type"), "message": exc.get("message")}
+        if include_log:
+            lines = r.get("logLines") or []
+            tail = lines[-_HISTORY_TOOL_LOG_LINES:]
+            out["log"] = [
+                " ".join(
+                    p
+                    for p in (
+                        str(ln.get("ts", "")),
+                        str(ln.get("level", "INFO")),
+                        str(ln.get("message", "")),
+                    )
+                    if p
+                )
+                for ln in tail
+            ]
+            if len(lines) > len(tail):
+                out["logTruncated"] = f"last {len(tail)} of {len(lines)} lines"
+        return out
 
     def _workspace_tools(self) -> list[dict[str, Any]]:
         """Schemas for the per-session workspace file tools. The workspace is a

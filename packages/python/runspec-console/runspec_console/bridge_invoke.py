@@ -942,11 +942,11 @@ class InvokeMixin:
     ) -> None:
         start = time.monotonic()
         tools = self._runnables_to_tools()
-        # Search mode hides runnables behind search_runnables; fold an always-on
-        # menu (id + one-liner) into what the model sees so it knows what exists.
-        index_text = (
-            self._build_catalog_index() if self._tool_mode() == "search" else ""
-        )
+        # Search mode hides runnables behind search_runnables (and defers the
+        # long tail of built-ins behind describe_tool/use_tool); fold an
+        # always-on menu (id/name + one-liner) into what the model sees so it
+        # knows what exists. Empty outside search mode.
+        index_text = self._chat_index_text()
         usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
         # For the context indicator: the *last* iteration's prompt size (not the
         # cross-iteration sum usage_total accumulates) is the current window fill,

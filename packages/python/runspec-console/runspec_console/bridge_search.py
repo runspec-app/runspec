@@ -10,6 +10,7 @@ import json
 import re
 from typing import Any
 
+from .bridge_const import _HOT_BUILTIN_NAMES
 
 from typing import TYPE_CHECKING
 
@@ -111,6 +112,144 @@ class SearchMixin:
                 },
             },
         ]
+
+    # ── deferred built-ins (search mode) ──────────────────────────────────────
+    #
+    # In search mode the chat turn's built-in tools split like the runnables
+    # did: a small hot kernel stays inline, and the long tail (Outlook, repo,
+    # transfer, action, exec, config tools) leaves the tool list — reached via
+    # describe_tool (schema lookup) + use_tool (a wrapper the autonomy gate
+    # unwraps to the inner tool BEFORE any decision, so the inner tool's own
+    # confirm rules, Console card, and audit record apply unchanged).
+
+    def _deferred_builtin_tools(self) -> list[dict[str, Any]]:
+        """The currently *available* built-in tools that are deferred in search
+        mode — availability-aware (e.g. no Outlook tools off-Windows, no
+        transfer tools without a remote), so use_tool can't name a tool that
+        wouldn't have been offered inline."""
+        try:
+            full = self._custom_agent_tools()
+        except Exception:
+            return []
+        return [t for t in full if t["name"] not in _HOT_BUILTIN_NAMES]
+
+    def _builtin_meta_tools(
+        self, deferred: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """The two deferral meta-tools, their name enums built from the deferred
+        set actually available right now."""
+        names = [t["name"] for t in deferred]
+        return [
+            {
+                "name": "describe_tool",
+                "description": (
+                    "Get the full input schema for one or more built-in console "
+                    "tools that are not in the tool list (see the deferred-tools "
+                    "menu in the conversation context). Read-only. Call this "
+                    "first, then use_tool to run one."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "names": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": names},
+                            "description": "Deferred built-in tool name(s).",
+                        }
+                    },
+                    "required": ["names"],
+                },
+            },
+            {
+                "name": "use_tool",
+                "description": (
+                    "Run a deferred built-in console tool by name, with its "
+                    "input as described by describe_tool. The inner tool's own "
+                    "rules apply exactly as if it were called directly — "
+                    "confirm-gated tools still prompt the operator, read-only "
+                    "tools run free."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "enum": names,
+                            "description": "The deferred built-in tool to run.",
+                        },
+                        "input": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "description": (
+                                "The tool's input, per its describe_tool schema."
+                            ),
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+        ]
+
+    def _run_describe_builtin_tool(self, ti: dict[str, Any]) -> str:
+        """Execute ``describe_tool`` → full schemas for the requested deferred
+        built-ins (JSON). Unknown names come back as per-name errors so a batch
+        with one typo still returns the rest."""
+        raw = ti.get("names")
+        names = (
+            [str(n).strip() for n in raw if str(n).strip()]
+            if isinstance(raw, list)
+            else []
+        )
+        if not names:
+            return (
+                "Error: 'names' is required — one or more deferred built-in tool names."
+            )
+        by_name = {t["name"]: t for t in self._deferred_builtin_tools()}
+        out: list[dict[str, Any]] = []
+        for n in names:
+            t = by_name.get(n)
+            if t is None:
+                out.append(
+                    {
+                        "name": n,
+                        "error": (
+                            "unknown or not deferred — available: "
+                            + ", ".join(sorted(by_name))
+                        ),
+                    }
+                )
+            else:
+                out.append(
+                    {
+                        "name": n,
+                        "description": str(t.get("description") or ""),
+                        "input_schema": t.get("input_schema") or {},
+                    }
+                )
+        return json.dumps({"tools": out}, default=str)
+
+    def _unwrap_use_tool(
+        self, tool_input: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]] | str:
+        """Resolve a ``use_tool`` call to its inner ``(name, input)``, or an
+        error string the agent can read and retry from. Only currently-available
+        deferred built-ins resolve — never a hot-kernel tool (it's already
+        inline), a runnable (run_runnable's job), or use_tool itself."""
+        ti = dict(tool_input or {})
+        name = str(ti.get("name") or "").strip()
+        inner = ti.get("input")
+        inner_input = dict(inner) if isinstance(inner, dict) else {}
+        if not name:
+            return "Error: 'name' is required — a deferred built-in tool name (see describe_tool)."
+        deferred = {t["name"] for t in self._deferred_builtin_tools()}
+        if name not in deferred:
+            return (
+                f"Error: '{name}' is not a deferred built-in tool. "
+                + "Available: "
+                + ", ".join(sorted(deferred))
+                + ". (Runnables run via run_runnable; inline tools are called directly.)"
+            )
+        return name, inner_input
 
     def _runnables_for_id(self, rid: str) -> list[dict[str, Any]]:
         """Every cached runnable whose dedup id is ``rid`` (one per host that has
@@ -521,6 +660,42 @@ class SearchMixin:
         if not lines:
             return ""
         return "\n".join(lines)
+
+    def _build_builtin_index(self) -> str:
+        """Compact menu of the deferred built-ins for search mode: ``name —
+        sentence``, one line each, so the agent knows they exist without their
+        schemas in the tool list. Empty when built-ins are inline (deferral or
+        the index disabled) — the schemas are already visible then."""
+        if not self._defer_builtins_enabled() or not self._catalog_index_enabled():
+            return ""
+        return "\n".join(
+            f"- {t['name']}"
+            + (
+                f" — {self._first_sentence(str(t.get('description') or ''))}"
+                if t.get("description")
+                else ""
+            )
+            for t in self._deferred_builtin_tools()
+        )
+
+    def _chat_index_text(self) -> str:
+        """The full folded menu for a chat turn: the runnable catalog index
+        plus, when built-ins are deferred, a labelled deferred-tools section.
+        Empty outside search mode. Rides ``_fold_catalog_index`` unchanged —
+        the section is part of the index text, not a new fold."""
+        if self._tool_mode() != "search":
+            return ""
+        index = self._build_catalog_index()
+        builtin_lines = self._build_builtin_index()
+        if builtin_lines:
+            block = (
+                "Built-in console tools deferred from the tool list (name — "
+                "description). Call describe_tool for a tool's input schema, "
+                "then use_tool to run it — each tool's own confirm rules still "
+                "apply:\n" + builtin_lines
+            )
+            index = f"{index}\n\n{block}" if index else block
+        return index
 
     def _fold_catalog_index(
         self, history: list[dict[str, Any]], index_text: str

@@ -61,6 +61,9 @@ class _Bridge:
     _allowed_hosts = Bridge._allowed_hosts
     _build_input_schema = Bridge._build_input_schema
     _runnables_to_tools = Bridge._runnables_to_tools
+    _defer_builtins_enabled = Bridge._defer_builtins_enabled
+    _deferred_builtin_tools = Bridge._deferred_builtin_tools
+    _builtin_meta_tools = Bridge._builtin_meta_tools
     _resolve_tool_target = Bridge._resolve_tool_target
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _confirm_decision = Bridge._confirm_decision

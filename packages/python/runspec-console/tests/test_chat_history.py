@@ -63,6 +63,9 @@ class _StubBridge:
     _tool_mode = Bridge._tool_mode
     _fold_catalog_index = Bridge._fold_catalog_index
 
+    def _chat_index_text(self):
+        return ""  # dedup-mode stub: no folded menu
+
     _debug = False  # tracing off → _trace is a no-op in these unit tests
     _usage_from_response = staticmethod(Bridge._usage_from_response)
     _messages_chars = staticmethod(Bridge._messages_chars)

@@ -1,0 +1,231 @@
+# Design: deferred built-ins in search mode (the built-in search tier)
+
+**Status:** Built in `runspec-console` 0.190.0 (chat turns only; headless
+turns deliberately unchanged). Companion features on the same branch:
+`search_history` (0.189.0) — the read-only run-history agent tool that
+prompted the "how many built-ins is too many" question this design answers.
+
+Companion doc: `agent-tool-search.md` — the original search mode
+(`[llm] tool_mode = "search"`) that hid the per-runnable tools behind
+discovery meta-tools. This tier applies the same medicine to the console's
+own built-in tools.
+
+## 1. Context & motivation
+
+The chat agent's built-in (non-runnable-backed) tools grew one genuinely
+useful tool at a time — Outlook (15), action tools (8), workspace (7), repo
+(7), config (5), memory/runbooks (4), transfer/denylist (3), exec (2), status
+(1), history (1) — to **~53 schemas, an estimated 12–18k tokens of tool
+definitions on every chat turn**. That is the same growth curve the
+per-runnable tools were on before search mode, with the same three costs:
+
+- **Context occupancy.** The tool block crowds out conversation history.
+- **Cache churn.** Several families are conditional (Outlook only when COM is
+  reachable, repo tools only with registered repos, transfer tools only with
+  remotes) and several schemas embed live enums (hosts, filters, credential
+  ids). The cached tools+system prefix therefore differs across machines and
+  invalidates when fleet config changes.
+- **Marginal-tool anxiety.** Every new built-in — `search_history` being the
+  trigger for this design — permanently taxes every future turn, which is the
+  wrong incentive for adding small, useful tools.
+
+Search mode already solved this for runnables: constant ~3-tool footprint,
+schemas on demand, an always-on folded index for discovery, and — the part
+that matters most here — **gating on the inner thing that actually runs**
+(`run_runnable` resolves the runnable first, then the autonomy gate judges
+*it*). This tier reuses all four ideas.
+
+## 2. Goals / non-goals
+
+Goals:
+
+- In search mode, the chat turn's tool list stops scaling with the number of
+  built-ins: a small **hot kernel** inline, everything else deferred.
+- A deferred tool behaves **identically** to an inline one once invoked —
+  same confirm prompt, same Console card, same audit record, same handler.
+- Discovery stays cheap: the agent must know a deferred tool *exists* without
+  a round-trip, and get its schema in one call when needed.
+- Zero behavior change for: dedup/per_host modes, headless (trigger/schedule)
+  turns, and search-mode deployments that opt out.
+
+Non-goals:
+
+- No keyword search over built-ins. ~40 names fit in an enum and a folded
+  menu; `search_runnables`-style ranking would be machinery without a payoff.
+- No deferral for headless turns (see §6 — it would be a security regression,
+  not an optimisation).
+- No change to the `action_allow` vocabulary, `list_action_tools`, or the
+  Settings UI.
+
+## 3. The split: hot kernel vs long tail
+
+`_HOT_BUILTIN_NAMES` (in `bridge_const.py`) stays **inline** even in search
+mode:
+
+| Family | Why it can't defer |
+|---|---|
+| `console_status` | One tiny schema; the "what time is it / is the rota on" reflex. |
+| `search_history` | Small, read-only, used mid-conversation ("did it run? what did it output?"). |
+| memory/runbooks (`remember`, `search_memory`, `save_runbook`, `load_runbook`) | The system prompt references pinned memory; recall must be zero-hop. |
+| `workspace_*` (7) | **Load-bearing:** the spill envelope tells the model "the full output is in `tool-results/…`, read it with `workspace_read`/`workspace_grep`". A discovery hop between "output spilled" and "read it back" would break the console's large-output story. |
+
+Everything else in `_BUILTIN_TOOL_NAMES` is the **deferred long tail**:
+Outlook, repo, transfer + `manage_denylist`, action tools, `run_python`/
+`run_sql`, config tools. The split is computed from the *live* tool list
+(`_deferred_builtin_tools()` filters `_custom_agent_tools()`), so it is
+availability-aware — a tool that wouldn't have been offered inline (Outlook
+off-Windows, transfer with no remotes) is not offered through the tier
+either, and the meta-tool enums never name a tool that can't run.
+
+## 4. The two meta-tools
+
+Both are built per-turn by `_builtin_meta_tools(deferred)` with their name
+enums drawn from the deferred set actually available right now.
+
+### 4.1 `describe_tool` (read-only, autonomous)
+
+`{names: [enum of deferred names]}` → full `{name, description,
+input_schema}` for each requested tool, JSON. Batch-friendly; an unknown name
+comes back as a per-name error row so one typo doesn't sink the batch.
+Classified `autonomous` in `_effective_tool_autonomy` — it is a schema
+lookup, the exact analogue of `describe_runnable`.
+
+### 4.2 `use_tool` (a wrapper that never survives to a decision)
+
+`{name: enum of deferred names, input: object}`. This is *not* an executor —
+it is an envelope, and the envelope is opened before anything judges it:
+
+```
+_gated_run_tool / _gated_run_tool_async
+  if tool_name == "use_tool":
+      unwrapped = _unwrap_use_tool(tool_input)     # validate against the live deferred set
+      if isinstance(unwrapped, str): return it      # readable error, nothing ran
+      tool_name, tool_input = unwrapped             # ← from here on, the INNER tool
+  ...decision, confirm card, tracking, dispatch — all on the inner name
+```
+
+Because the unwrap happens at the **top of both autonomy gates**, every
+downstream consumer sees the real tool: `_confirm_decision` judges the inner
+tool's autonomy (a confirm-gated `outlook_send` still prompts; `manage_denylist
+action=list` still runs free), `_confirm_card_view` shows the inner name and
+args to the operator, `_run_builtin_tool_tracked` files the Console card and
+audit record under the inner name, and the existing per-tool handlers run
+unmodified. This is the same inner-name gating contract `run_runnable` has
+always had (`bridge_const.py` §`_READONLY_META` comment), extended to
+built-ins.
+
+`_unwrap_use_tool` only resolves names in the live deferred set — never a
+hot-kernel tool (already inline), never a runnable (that's `run_runnable`'s
+job), never `use_tool` itself (no nesting).
+
+## 5. The invariant: fail closed everywhere else
+
+Unwrapping in the gates is the designed path. Two backstops make skipping it
+safe rather than exploitable:
+
+- `_effective_tool_autonomy("use_tool", …)` → `"confirm"`. A wrapper that
+  somehow reaches a classifier un-unwrapped is gated by default, never
+  silently autonomous.
+- `_run_tool_sync("use_tool", …)` → **refuses** with an error string instead
+  of executing. Reaching dispatch still wrapped means a call site skipped the
+  gate; executing there would run the inner tool ungated. The error is the
+  tripwire that surfaces the missing unwrap in the same turn.
+
+Anyone adding a new entry point that runs tools by name inherits these
+backstops for free — the worst outcome of forgetting the unwrap is a refusal,
+not a bypass.
+
+## 6. Headless turns: deliberately excluded
+
+Trigger/schedule agent turns keep **every built-in inline**
+(`_runnables_to_tools(allow=…, inline_builtins=True)`), even in search mode.
+This is a security decision, not a missed optimisation:
+
+- `action_allow` (the per-trigger allowlist of governed action/Outlook tools)
+  works by **filtering the tool list** (`_filter_headless_tools`). It can only
+  narrow what it can see. A run-tools-by-name wrapper in a headless toolset
+  would let a turn reach any governed tool regardless of its allowlist — a
+  side door around operator-configured scoping.
+- The chat-only config tools are stripped from headless toolsets
+  unconditionally; `use_tool` would need its own dispatch-time re-check to
+  preserve that. Keeping the wrapper out of headless turns entirely means the
+  existing two-layer enforcement (toolset strip + `_run_config_tool` origin
+  guard) stays sufficient.
+
+`_filter_headless_tools` also strips `_BUILTIN_META_NAMES` unconditionally as
+defense in depth — even if a future code path hands a headless turn the
+search-mode chat layout, the meta-tools don't survive the filter. (A model
+can only call tools present in its request, so the strip is the second layer,
+not the first.)
+
+Headless context cost is also structurally lower: those are bounded,
+single-purpose turns, usually further narrowed by `runnables` allowlists that
+fall back to the scoped dedup layout anyway (`agent-tool-search.md` §8).
+
+## 7. Discovery: the folded menu
+
+Search mode's lesson (`agent-tool-search.md`, "always-on catalog index"): an
+agent can only search for what it thinks to search for — it needs to see the
+menu. Deferred built-ins ride the exact same mechanism:
+
+- `_build_builtin_index()` — one `- name — first sentence` line per deferred
+  tool, derived from each tool's real schema description (no hand-maintained
+  list to drift).
+- `_chat_index_text()` composes the runnable catalog index and, when
+  built-ins are deferred, a labelled deferred-tools section explaining the
+  `describe_tool` → `use_tool` flow, then rides the existing
+  `_fold_catalog_index` unchanged — prepended to the first user message of a
+  per-call copy, so the cached tools+system prefix and the stored history are
+  both untouched.
+- Same knobs as the runnable index: only in search mode, off with
+  `[llm] tool_index = false`, and empty when built-ins are inline (their
+  schemas are already visible).
+
+Net shape of a search-mode chat turn: 3 runnable meta-tools + ~13 hot-kernel
+tools + 2 builtin meta-tools ≈ **18 schemas**, constant as built-ins grow —
+a new built-in costs one folded-menu line, closing the marginal-tool problem
+from §1. The prefix is also *stable*: the conditional families and live enums
+that churned the cache now live behind `describe_tool` results instead of in
+the cached prefix.
+
+## 8. Config & rollout
+
+- Applies only when `[llm] tool_mode = "search"` — the same opt-in that
+  already accepted the discover-then-act trade-off for runnables. Dedup (the
+  default) and per_host are byte-identical to before.
+- `[llm] defer_builtins = false` — zero-code escape hatch: search mode with
+  every built-in inline (the pre-0.190.0 layout), mirroring the
+  `tool_mode = "per_host"` escape-hatch precedent.
+- No new UI. No storage. No migration.
+
+## 9. Files & tests
+
+| File | Change |
+|---|---|
+| `bridge_const.py` | `_BUILTIN_META_NAMES`, `_HOT_BUILTIN_NAMES` |
+| `bridge_agent_tools.py` | `_defer_builtins_enabled()`; `_runnables_to_tools(allow, inline_builtins=False)` splits hot/deferred in the search branch |
+| `bridge_search.py` | `_deferred_builtin_tools`, `_builtin_meta_tools`, `_run_describe_builtin_tool`, `_unwrap_use_tool`, `_build_builtin_index`, `_chat_index_text` |
+| `bridge_autonomy.py` | unwrap at the top of both gates; `describe_tool` autonomous / `use_tool` confirm; dispatch branch for `describe_tool`; fail-closed refusal for `use_tool` |
+| `bridge_invoke.py` | chat turn folds `_chat_index_text()` |
+| `bridge_triggers.py` | headless turns pass `inline_builtins=True`; `_filter_headless_tools` strips `_BUILTIN_META_NAMES` |
+
+`tests/test_builtin_search_tier.py` covers the layout split (hot inline /
+tail deferred / enums exact), the escape hatches (`inline_builtins`,
+`defer_builtins=false`, dedup untouched), `describe_tool` (schemas, per-name
+errors), `_unwrap_use_tool` (valid / hot / unknown / nested / missing),
+gate integration (decision + dispatch on the *inner* name; unwrap errors run
+nothing), the fail-closed dispatch backstop, the headless meta-tool strip,
+and the folded menu (content, gating knobs, stored-history purity).
+
+## 10. Future directions
+
+- **Hot-kernel tuning.** The kernel is a code constant, chosen from usage
+  reasoning rather than telemetry. If real transcripts show a deferred tool
+  called on most turns (or a kernel tool never called), move it — one
+  frozenset edit, no schema or gating changes.
+- **Deferring per-runnable *credential enums*.** Dedup mode still embeds live
+  credential-id enums per runnable; the same describe-on-demand idea could
+  stabilise that part of the prefix too.
+- **A `[llm] hot_tools` override** (names to force inline/deferred per
+  deployment) if the one-size kernel proves wrong somewhere — deliberately
+  not built now; knobs are easier to add than remove.

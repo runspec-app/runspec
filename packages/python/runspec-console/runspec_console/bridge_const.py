@@ -28,6 +28,16 @@ _CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file", "manage_denylist"
 # runnable it resolves to.
 _READONLY_META = frozenset({"search_runnables", "describe_runnable"})
 
+# Built-in deferral meta-tools (search mode, chat turns only): the long tail of
+# built-in tools leaves the per-turn tool list and is reached via describe_tool
+# (read-only schema lookup — autonomous) + use_tool (a thin wrapper the autonomy
+# gate unwraps to the INNER tool before deciding anything, so the inner tool's
+# own confirm rules, Console card, and audit record apply unchanged). Headless
+# (trigger/schedule) turns never see these — they keep inline built-ins so
+# ``action_allow`` narrowing keeps working — and ``_filter_headless_tools``
+# strips them defensively.
+_BUILTIN_META_NAMES = frozenset({"describe_tool", "use_tool"})
+
 # Persistent-memory / runbook tools. Backed by local TOML collections (see
 # memory.py) — local and reversible, so the autonomy gate lets them run without a
 # prompt (like the read-only meta-tools), keeping the model spend on actual work.
@@ -40,6 +50,12 @@ _MEMORY_TOOL_NAMES = frozenset(
 # but queryable mid-session after the clock may have crossed a rota boundary). No
 # side effects, so the autonomy gate runs it without a prompt.
 _STATUS_TOOL_NAMES = frozenset({"console_status"})
+
+# Read-only run-history search: query the same audit records the History tab
+# shows (when a runnable last ran, on which host, started by whom, exit code,
+# duration, args). No side effects, so the autonomy gate runs it without a
+# prompt — like the status tool, it only reads what the operator already sees.
+_HISTORY_TOOL_NAMES = frozenset({"search_history"})
 
 # Outlook Classic (desktop COM) agent tools. Reads are autonomous (no side
 # effects — local COM reads on the operator's box); draft/send are write actions
@@ -173,10 +189,25 @@ _BUILTIN_TOOL_NAMES = (
     | _REPO_TOOL_NAMES
     | _MEMORY_TOOL_NAMES
     | _STATUS_TOOL_NAMES
+    | _HISTORY_TOOL_NAMES
     | _ACTION_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
     | _EXEC_TOOL_NAMES
     | _CONFIG_TOOL_NAMES
+)
+
+# The hot kernel: built-ins that stay INLINE even when search mode defers the
+# rest behind describe_tool/use_tool. These are the tools a turn reaches for
+# constantly or that other machinery references directly — status + history
+# (small, read-only), memory/runbooks (the system prompt references pinned
+# memory), and the workspace tools (spilled tool results tell the model to read
+# them back via workspace_*; a discovery hop there would break that flow).
+# Everything else in _BUILTIN_TOOL_NAMES is the deferred long tail.
+_HOT_BUILTIN_NAMES = (
+    _STATUS_TOOL_NAMES
+    | _HISTORY_TOOL_NAMES
+    | _MEMORY_TOOL_NAMES
+    | _WORKSPACE_TOOL_NAMES
 )
 
 
