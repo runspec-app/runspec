@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.188.1] — 2026-07-22
+
+### Fixed
+- **`outlook_create_event` scheduled meetings off by the machine's UTC offset.**
+  The tool told the agent to pass local time (correct), and the tool layer handed
+  Outlook a naive local `datetime` — but pywin32 marshals a Python `datetime` to
+  the COM `VT_DATE` through a UTC conversion, while Outlook's `Start`/`End` are
+  *local wall-clock*, so the appointment landed shifted by the local UTC offset (a
+  17:00 local meeting saved as 16:00 on a UTC+1 box). `_build_event` now assigns
+  the wall-clock as an unambiguous year-first ISO **string** (`_com_local_time`),
+  which Outlook coerces to a local `DATE` with no shift — the clock time is
+  preserved exactly. Pure/unit-tested (the string form is asserted against the
+  fake COM appointment); the offset behaviour itself is a Windows/Outlook COM
+  effect that must be confirmed on the operator's machine.
+
+
 ## [0.188.0] — 2026-07-22
 
 ### Added

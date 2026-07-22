@@ -1420,6 +1420,24 @@ def _read_join_url(
     return ""
 
 
+def _com_local_time(dt: datetime) -> str:
+    """Format a local-time ``datetime`` for assignment to an Outlook COM
+    ``Start`` / ``End`` property, as an unambiguous wall-clock **string**.
+
+    Why a string and not the ``datetime`` itself: pywin32 marshals a Python
+    ``datetime`` to the COM ``VT_DATE`` through a UTC conversion, but Outlook's
+    ``Start`` / ``End`` are *local wall-clock* times — so assigning the datetime
+    lands the appointment shifted by the machine's UTC offset (a 17:00 local
+    meeting saved as 16:00 on a UTC+1 box). Assigning a year-first ISO string
+    instead sidesteps that conversion: Outlook coerces the ``BSTR`` to a local
+    ``DATE`` via the OLE-automation string parser, so the clock time is preserved
+    exactly. Year-first (``YYYY-MM-DD``) is unambiguous across user locales.
+
+    ``dt`` is expected naive local (the tool layer strips any tz); a stray tzinfo
+    is ignored — ``strftime`` formats the wall-clock fields regardless."""
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _build_event(
     app: Any,
     *,
@@ -1451,8 +1469,11 @@ def _build_event(
     operator has added the Teams meeting)."""
     appt = app.CreateItem(1)  # olAppointmentItem
     appt.Subject = subject
-    appt.Start = start
-    appt.End = end
+    # Assign wall-clock local time as a string, not the datetime — pywin32 would
+    # otherwise UTC-shift the datetime and the meeting lands off by the machine's
+    # UTC offset. See _com_local_time.
+    appt.Start = _com_local_time(start)
+    appt.End = _com_local_time(end)
     if location:
         appt.Location = location
     if body:

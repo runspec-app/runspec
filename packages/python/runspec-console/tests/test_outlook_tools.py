@@ -720,6 +720,38 @@ def test_build_event_saves_personal_block_without_attendees():
     assert res["sent"] is False
 
 
+def test_build_event_assigns_wallclock_string_not_datetime():
+    # Regression: pywin32 UTC-shifts a datetime assigned to Start/End, so the
+    # meeting landed off by the machine's UTC offset. We assign the wall-clock as
+    # an unambiguous year-first string instead, which Outlook coerces to a *local*
+    # DATE with no shift. Assert the exact clock time is preserved as a string.
+    from datetime import datetime
+
+    appt = _FakeAppt()
+    ol._build_event(
+        _FakeApp(appt),
+        subject="Sync",
+        start=datetime(2026, 6, 27, 17, 0),
+        end=datetime(2026, 6, 27, 17, 30),
+        attendees="",
+        location="",
+        body="",
+        reminder_minutes=-1,
+    )
+    assert appt.Start == "2026-06-27 17:00:00"
+    assert appt.End == "2026-06-27 17:30:00"
+    assert isinstance(appt.Start, str) and isinstance(appt.End, str)
+
+
+def test_com_local_time_formats_wallclock_and_ignores_tzinfo():
+    from datetime import datetime, timedelta, timezone
+
+    assert ol._com_local_time(datetime(2026, 6, 27, 17, 0)) == "2026-06-27 17:00:00"
+    # A stray tz offset is ignored — the wall-clock fields format as-is (no shift).
+    aware = datetime(2026, 6, 27, 17, 0, tzinfo=timezone(timedelta(hours=1)))
+    assert ol._com_local_time(aware) == "2026-06-27 17:00:00"
+
+
 def test_build_event_open_in_outlook_saves_and_displays_unsent():
     from datetime import datetime
 
