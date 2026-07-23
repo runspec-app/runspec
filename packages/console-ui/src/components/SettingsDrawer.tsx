@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
-import { credEnvNames } from '../views/FormsView'
+import { credEnvNames, initialFormValues } from '../views/FormsView'
+import {
+  CredentialsSection, RunnableArgsBlock, RunnableSelectOptions, TargetFormItems,
+  runnablesForTarget, splitFixedAndOpen, type Target,
+} from '../views/RunnableAction'
 
 const { Text, Link } = Typography
 
@@ -3298,10 +3302,13 @@ function RunbooksTab() {
 
 // ── Saved runs (deterministic presets) ──────────────────────────────────────
 
-// A saved run's open params reuse the runbook parameter-row editor; `password`
-// is additionally allowed here (a param is typed at run time and rides the
-// secret env channel — unlike a runbook, nothing is substituted into a prompt).
+// A saved run's manual open params reuse the runbook parameter-row editor;
+// `password` is additionally allowed here (a param is typed at run time and
+// rides the secret env channel — unlike a runbook, nothing is substituted into
+// a prompt body).
 const SAVED_RUN_PARAM_TYPES = [...RUNBOOK_ARG_TYPES, 'password']
+
+const SAVED_RUN_LABEL_STYLE: CSSProperties = { color: '#888', fontSize: 12 }
 
 interface SavedRunFormValues {
   id: string
@@ -3309,58 +3316,140 @@ interface SavedRunFormValues {
   description?: string
   runnable: string
   command?: string
-  target: 'host' | 'anyhost' | 'selected' | 'group'
   host?: string
   group?: string
   hosts?: string[]
   selected_hosts?: string[]
   args?: { key?: string; value?: string }[]
   params?: RunbookArgRow[]
-  credential_ids?: string[]
 }
+
+const _srNorm = (s: string) => s.replace(/-/g, '_')
 
 function SavedRunsTab() {
   const [savedRuns, setSavedRuns] = useState<SavedRun[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
+  const [runnables, setRunnables] = useState<Runnable[]>([])
   const [creds, setCreds] = useState<Credential[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)  // '' = new
   const [form] = Form.useForm<SavedRunFormValues>()
-  const target = Form.useWatch('target', form) ?? 'host'
+  // Targeting + rich arg state live outside the antd Form so the editor can
+  // reuse the shared TargetFormItems / RunnableArgsBlock (which the Schedules
+  // modal also uses — one source, identical behavior). `openArgs` are declared
+  // args flipped to "asked at run time" (they become params on save).
+  const [target, setTarget] = useState<Target>('host')
+  const [argValues, setArgValues] = useState<Record<string, unknown>>({})
+  const [argErrors, setArgErrors] = useState<Record<string, string>>({})
+  const [openArgs, setOpenArgs] = useState<Set<string>>(new Set())
+  const [credentialIds, setCredentialIds] = useState<string[]>([])
 
   const load = useCallback(() => bridge.get_saved_runs().then(setSavedRuns).catch(() => {}), [])
   // Load on mount + refresh whenever saved runs change elsewhere (agent save,
-  // Config Sync pull) — mirrors RunbooksTab.
+  // Config Sync pull) — mirrors RunbooksTab. The fleet's discovered runnables
+  // feed the target-aware runnable picker and the rich args form.
   useEffect(() => {
     load()
     bridge.get_hosts().then(setHosts).catch(() => {})
     bridge.list_credentials().then(setCreds).catch(() => {})
+    const loadRunnables = () => bridge.get_runnables('all').then(setRunnables).catch(() => {})
+    loadRunnables()
     const onChanged = () => { load() }
     window.addEventListener('runspec:saved_runs_changed', onChanged)
-    return () => window.removeEventListener('runspec:saved_runs_changed', onChanged)
+    window.addEventListener('runspec:runnables_updated', loadRunnables)
+    return () => {
+      window.removeEventListener('runspec:saved_runs_changed', onChanged)
+      window.removeEventListener('runspec:runnables_updated', loadRunnables)
+    }
   }, [load])
 
   const groupNames = [...new Set(hosts.map(h => h.group).filter((g): g is string => !!g))].sort()
-  const hostOptions = hosts.map(h => ({ label: h.name, value: h.name }))
+  const hostName: string = Form.useWatch('host', form) ?? ''
+  const groupName: string = Form.useWatch('group', form) ?? ''
+  const hostsList: string[] = Form.useWatch('hosts', form) ?? []
+  const selectedList: string[] = Form.useWatch('selected_hosts', form) ?? []
+  const runnableName: string = Form.useWatch('runnable', form) ?? ''
+  // What the chosen target can run — same derivation as the Schedules modal.
+  const targetRunnables = runnablesForTarget(runnables, hosts, target, {
+    host: hostName, group: groupName, hostsList, selectedList,
+  })
+  const editingEntry = editingKey ? savedRuns.find(s => s.id === editingKey) ?? null : null
+  // The discovered runnable behind the picked name; null when the fleet doesn't
+  // currently expose it (offline host) → the editor degrades to raw key=value
+  // fixed args + manual params so editing still works.
+  const selectedRunnable = targetRunnables.find(r => r.name === runnableName) ?? null
 
   const startAdd = () => {
     form.resetFields()
-    form.setFieldsValue({ target: 'host', args: [], params: [] })
+    form.setFieldsValue({ args: [], params: [] })
+    setTarget('host')
+    setArgValues({}); setArgErrors({}); setOpenArgs(new Set())
+    setCredentialIds([])
     setEditingKey('')
   }
   const startEdit = (s: SavedRun) => {
     form.setFieldsValue({
       id: s.id, title: s.title, description: s.description,
       runnable: s.runnable, command: (s.command ?? []).join(' '),
-      target: s.group ? 'group' : s.selected_hosts?.length ? 'selected' : s.hosts?.length ? 'anyhost' : 'host',
       host: s.host || undefined, group: s.group || undefined,
       hosts: s.hosts ?? [], selected_hosts: s.selected_hosts ?? [],
+      // Fallback editors — used only while the runnable isn't discovered; the
+      // rich seeding effect below takes over as soon as it resolves.
       args: Object.entries(s.args ?? {}).map(([key, value]) => ({ key, value: String(value) })),
       params: argsRawToRows(s.paramsRaw),
-      credential_ids: s.credential_ids ?? [],
     })
+    setTarget(s.group ? 'group' : s.selected_hosts?.length ? 'selected' : s.hosts?.length ? 'anyhost' : 'host')
+    setArgValues({}); setArgErrors({}); setOpenArgs(new Set())
+    setCredentialIds(s.credential_ids ?? [])
     setEditingKey(s.id)
   }
   const cancel = () => { setEditingKey(null); form.resetFields() }
+
+  // Seed the rich arg state whenever the picked runnable resolves — on edit
+  // (once discovery delivers it), and on every picker change. Stored fixed args
+  // overlay the spec defaults (`initialFormValues`, shared with Forms); stored
+  // params that match a declared arg become Open toggles, the rest stay in the
+  // manual rows.
+  useEffect(() => {
+    if (editingKey === null) return
+    if (!selectedRunnable) return  // fallback editors keep their startEdit seed
+    const stored = editingEntry && editingEntry.runnable === selectedRunnable.name ? editingEntry : null
+    setArgValues(initialFormValues(selectedRunnable.args ?? [], stored?.args))
+    const declared = new Map((selectedRunnable.args ?? []).map(a => [_srNorm(a.name), a.name]))
+    const open = new Set<string>()
+    const manual: RunbookArgRow[] = []
+    for (const [pname, pdef] of Object.entries(stored?.paramsRaw ?? {})) {
+      const match = declared.get(_srNorm(pname))
+      if (match) open.add(match)
+      else manual.push(...argsRawToRows({ [pname]: pdef as Record<string, unknown> }))
+    }
+    setOpenArgs(open)
+    setArgErrors({})
+    form.setFieldValue('params', manual)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingKey, selectedRunnable?.name])
+
+  const handleTargetChange = (t: Target) => {
+    setTarget(t)
+    // Switching targets invalidates the chosen runnable (the available set differs).
+    form.setFieldsValue({ runnable: undefined })
+    setArgValues({}); setArgErrors({}); setOpenArgs(new Set())
+  }
+  const handleHostChange = () => {
+    form.setFieldValue('runnable', undefined)
+    setArgValues({}); setArgErrors({}); setOpenArgs(new Set())
+  }
+  const changeArg = (name: string, v: unknown) => {
+    setArgValues(prev => ({ ...prev, [name]: v }))
+    setArgErrors(prev => { const next = { ...prev }; delete next[name]; return next })
+  }
+  const toggleOpen = (name: string, open: boolean) => {
+    setOpenArgs(prev => {
+      const next = new Set(prev)
+      if (open) next.add(name); else next.delete(name)
+      return next
+    })
+    setArgErrors(prev => { const next = { ...prev }; delete next[name]; return next })
+  }
 
   const toRow = (s: SavedRun): Record<string, unknown> => ({
     id: s.id, title: s.title, description: s.description,
@@ -3380,9 +3469,23 @@ function SavedRunsTab() {
   const save = async () => {
     const values = await form.validateFields()
     const id = (values.id ?? '').trim()
-    const args: Record<string, unknown> = {}
-    for (const f of values.args ?? []) {
-      if (f?.key?.trim()) args[f.key.trim()] = String(f.value ?? '').trim()
+    let args: Record<string, unknown>
+    let paramsRaw: Record<string, unknown>
+    if (selectedRunnable) {
+      // Rich path: typed values → fixed args; Open (and password) args →
+      // generated params; manual rows may add extras (e.g. subcommand-level
+      // args) — a generated entry wins on a name collision.
+      const split = splitFixedAndOpen(selectedRunnable.args ?? [], argValues, openArgs)
+      if (Object.keys(split.errors).length > 0) { setArgErrors(split.errors); return }
+      args = split.args
+      paramsRaw = { ...rowsToArgsRaw(values.params), ...split.params }
+    } else {
+      // Fallback path (runnable not discovered): raw key=value + manual params.
+      args = {}
+      for (const f of values.args ?? []) {
+        if (f?.key?.trim()) args[f.key.trim()] = String(f.value ?? '').trim()
+      }
+      paramsRaw = rowsToArgsRaw(values.params)
     }
     const edited: Record<string, unknown> = {
       id,
@@ -3390,13 +3493,13 @@ function SavedRunsTab() {
       description: (values.description ?? '').trim(),
       runnable: (values.runnable ?? '').trim(),
       command: (values.command ?? '').trim() ? (values.command ?? '').trim().split(/\s+/) : [],
-      host: values.target === 'host' ? values.host : '',
-      group: values.target === 'group' ? values.group : '',
-      hosts: values.target === 'anyhost' ? (values.hosts ?? []) : [],
-      selected_hosts: values.target === 'selected' ? (values.selected_hosts ?? []) : [],
+      host: target === 'host' ? values.host : '',
+      group: target === 'group' ? values.group : '',
+      hosts: target === 'anyhost' ? (values.hosts ?? []) : [],
+      selected_hosts: target === 'selected' ? (values.selected_hosts ?? []) : [],
       args,
-      paramsRaw: rowsToArgsRaw(values.params),
-      credential_ids: values.credential_ids ?? [],
+      paramsRaw,
+      credential_ids: credentialIds,
     }
     const others = savedRuns.filter(s => s.id !== (editingKey || id)).map(toRow)
     if (await persist([...others, edited])) { setEditingKey(null); form.resetFields() }
@@ -3465,70 +3568,89 @@ function SavedRunsTab() {
           <Form.Item name="description" label="Description">
             <Input placeholder="Rolling restart of nginx across production" />
           </Form.Item>
+
+          <TargetFormItems
+            hosts={hosts}
+            groupNames={groupNames}
+            target={target}
+            onTargetChange={handleTargetChange}
+            onHostChange={handleHostChange}
+            labelStyle={SAVED_RUN_LABEL_STYLE}
+          />
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
             <Form.Item name="runnable" label="Runnable" rules={[{ required: true, message: 'Required' }]}>
-              <Input placeholder="service-restart" style={{ fontFamily: 'monospace' }} />
+              <Select
+                placeholder="Select a runnable"
+                showSearch
+                filterOption={(input, opt) =>
+                  (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              >
+                <RunnableSelectOptions
+                  runnables={targetRunnables}
+                  fallbackName={editingEntry?.runnable}
+                  labelStyle={SAVED_RUN_LABEL_STYLE}
+                />
+              </Select>
             </Form.Item>
             <Form.Item name="command" label="Subcommand (optional)" help="Space-separated path, e.g. db restore">
               <Input placeholder="" style={{ fontFamily: 'monospace' }} />
             </Form.Item>
           </div>
 
-          <Form.Item name="target" label="Target" initialValue="host">
-            <Segmented
-              options={[
-                { label: 'One host', value: 'host' },
-                { label: 'Any of hosts', value: 'anyhost' },
-                { label: 'Selected hosts', value: 'selected' },
-                { label: 'Host group', value: 'group', disabled: groupNames.length === 0 },
-              ]}
+          {selectedRunnable && (selectedRunnable.args ?? []).length > 0 && (
+            <RunnableArgsBlock
+              runnable={selectedRunnable}
+              values={argValues}
+              errors={argErrors}
+              onChange={changeArg}
+              labelStyle={SAVED_RUN_LABEL_STYLE}
+              openArgs={openArgs}
+              onToggleOpen={toggleOpen}
             />
-          </Form.Item>
-          {target === 'host' && (
-            <Form.Item name="host" label="Host" rules={[{ required: true, message: 'Required' }]}>
-              <Select showSearch options={hostOptions} placeholder="Select host…" />
-            </Form.Item>
-          )}
-          {target === 'anyhost' && (
-            <Form.Item name="hosts" label="Candidate hosts (first connected runs)" rules={[{ required: true, message: 'Pick at least one host' }]}>
-              <Select mode="multiple" options={hostOptions} placeholder="Select hosts…" />
-            </Form.Item>
-          )}
-          {target === 'selected' && (
-            <Form.Item name="selected_hosts" label="Hosts (runs on every one)" rules={[{ required: true, message: 'Pick at least one host' }]}>
-              <Select mode="multiple" options={hostOptions} placeholder="Select hosts…" />
-            </Form.Item>
-          )}
-          {target === 'group' && (
-            <Form.Item name="group" label="Host group" rules={[{ required: true, message: 'Required' }]}>
-              <Select options={groupNames.map(g => ({ label: g, value: g }))} placeholder="Select group…" />
-            </Form.Item>
           )}
 
-          <Divider style={{ margin: '8px 0' }} orientation="left" plain>Fixed args (baked in)</Divider>
-          <Form.List name="args">
-            {(fields, { add, remove: removeRow }) => (
-              <>
-                {fields.map(({ key, name, ...rest }) => (
-                  <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-                    <Form.Item {...rest} name={[name, 'key']} noStyle>
-                      <Input size="small" placeholder="service" style={{ fontFamily: 'monospace', width: 160 }} />
-                    </Form.Item>
-                    <span style={{ color: '#888' }}>=</span>
-                    <Form.Item {...rest} name={[name, 'value']} noStyle>
-                      <Input size="small" placeholder="nginx" style={{ fontFamily: 'monospace', flex: 1 }} />
-                    </Form.Item>
-                    <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: '#666', cursor: 'pointer' }} />
-                  </div>
-                ))}
-                <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />}>
-                  Add fixed arg
-                </Button>
-              </>
-            )}
-          </Form.List>
+          {runnableName !== '' && !selectedRunnable && (
+            <>
+              <Divider style={{ margin: '8px 0' }} orientation="left" plain>Fixed args (baked in)</Divider>
+              <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+                This runnable isn't currently discovered on the targeted host(s), so args
+                are edited as raw key=value pairs. Reconnect the fleet for typed fields.
+              </Typography.Text>
+              <Form.List name="args">
+                {(fields, { add, remove: removeRow }) => (
+                  <>
+                    {fields.map(({ key, name, ...rest }) => (
+                      <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+                        <Form.Item {...rest} name={[name, 'key']} noStyle>
+                          <Input size="small" placeholder="service" style={{ fontFamily: 'monospace', width: 160 }} />
+                        </Form.Item>
+                        <span style={{ color: '#888' }}>=</span>
+                        <Form.Item {...rest} name={[name, 'value']} noStyle>
+                          <Input size="small" placeholder="nginx" style={{ fontFamily: 'monospace', flex: 1 }} />
+                        </Form.Item>
+                        <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                      </div>
+                    ))}
+                    <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />}>
+                      Add fixed arg
+                    </Button>
+                  </>
+                )}
+              </Form.List>
+            </>
+          )}
 
-          <Divider style={{ margin: '8px 0' }} orientation="left" plain>Open parameters (filled at run time)</Divider>
+          <Divider style={{ margin: '8px 0' }} orientation="left" plain>
+            {selectedRunnable ? 'Additional open parameters' : 'Open parameters (filled at run time)'}
+          </Divider>
+          {selectedRunnable && (
+            <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+              Declared args flip Open with the toggle above. Add rows here only for extras
+              the runnable doesn't declare at the top level (e.g. subcommand args).
+            </Typography.Text>
+          )}
           <Form.List name="params">
             {(fields, { add, remove: removeRow }) => (
               <>
@@ -3565,14 +3687,13 @@ function SavedRunsTab() {
             )}
           </Form.List>
 
-          <Divider style={{ margin: '8px 0' }} orientation="left" plain>Credentials</Divider>
-          <Form.Item name="credential_ids" help="Applied from the keychain at run time — how a saved run supplies secrets.">
-            <Select
-              mode="multiple"
-              placeholder="None"
-              options={creds.map(c => ({ label: c.label, value: c.id }))}
-            />
-          </Form.Item>
+          <CredentialsSection
+            creds={creds}
+            selected={credentialIds}
+            onChange={setCredentialIds}
+            declaredArgNames={new Set((selectedRunnable?.args ?? []).map(a => a.name))}
+            labelStyle={SAVED_RUN_LABEL_STYLE}
+          />
         </Form>
       </Modal>
     </div>

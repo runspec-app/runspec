@@ -8,6 +8,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.191.0] — 2026-07-23
+
+### Changed
+- **Saved-runs editor at parity with the Schedules modal.** The Settings →
+  Saved runs dialog now uses the same components as the Schedules tab's
+  run-a-runnable dialog — extracted into a shared **`RunnableAction.tsx`**
+  module (`TargetFormItems`, `RunnableArgsBlock`, `CredentialsSection`,
+  `RunnableSelectOptions`, `runnablesForTarget`) so the two stay in sync by
+  construction. The runnable is a target-aware searchable select (was free
+  text); its declared args render as rich typed Forms fields with a per-arg
+  **Fixed/Open toggle** — an Open arg is auto-copied into the params table
+  (`argDefToParamDef`/`splitFixedAndOpen`), a `password`-typed arg is always
+  Open (the synced file never stores a secret), and a required arg must be
+  either fixed or Open; the credential picker gains the env-var/arg-binding
+  preview. Manual param rows remain for extras the runnable doesn't declare;
+  the raw key=value editor reappears when the runnable isn't currently
+  discovered, and editing a saved run whose runnable is undiscovered keeps it
+  selectable ("not currently discovered") instead of losing it.
+
+### Fixed
+- **Add-schedule modal width.** The "When it fires, it will…" segmented control
+  (five options since the Saved run action) no longer overflows — the modal is
+  620px wide (was 560).
+
+
 ## [0.190.2] — 2026-07-23
 
 ### Fixed

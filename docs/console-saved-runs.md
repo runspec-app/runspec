@@ -73,10 +73,29 @@ the secret env channel.
 
 ## Editing
 
-**Settings → Saved runs** is the editor (id, targeting, fixed args, open
-params, credentials). Entries are validated on save — exactly one targeting
-mode, params parsed with the core arg machinery — so a bad entry never lands in
-the synced file.
+**Settings → Saved runs** is the editor, and it works exactly like the
+Schedules tab's run-a-runnable dialog (they share the same components): pick a
+target (hosts show a live connectivity dot; groups show connected/member
+counts), then pick the runnable from a searchable select of what the targeted
+host(s) actually expose. Its declared args render as rich typed fields — the
+same dropdowns, switches, pickers, and validation as the Forms tab — and each
+arg carries a **Fixed/Open toggle**:
+
+- **Fixed** (type a value) — baked into the saved run.
+- **Open** — asked at run time; the arg's definition (type, choices, required,
+  description, default) is copied into the params table automatically. A
+  **`password`-typed arg is always Open** — the synced file never stores a
+  secret value.
+- Blank + not Open — omitted (a *required* arg must be either fixed or Open).
+
+Credentials use the same picker as the Forms/Schedules dialogs, with a preview
+of the env vars each one sets and the args it binds. The manual parameter rows
+remain as an escape hatch for extras the runnable doesn't declare at the top
+level (e.g. subcommand args), and the raw key=value editor reappears if the
+runnable isn't currently discovered (offline host), so editing always works.
+
+Entries are validated on save — exactly one targeting mode, params parsed with
+the core arg machinery — so a bad entry never lands in the synced file.
 
 ## Saved run vs runbook vs schedule
 

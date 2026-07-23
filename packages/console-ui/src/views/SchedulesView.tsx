@@ -1,12 +1,16 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent } from '../bridge'
 import { useIsDark } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
-import { ArgInput, bindingsForArgs, credEnvNames, initialFormValues, partitionArgs } from './FormsView'
+import { initialFormValues } from './FormsView'
 import { RunbookField } from './RunbookRunModal'
+import {
+  ArgFieldRow, CredentialsSection, RunnableArgsBlock, RunnableSelectOptions,
+  TargetFormItems, runnablesForTarget, type Target,
+} from './RunnableAction'
 
 const { Text } = Typography
 
@@ -28,7 +32,6 @@ const CRON_PRESETS = [
 
 type Action = 'runnable' | 'event' | 'prompt' | 'runbook' | 'saved_run'
 type WhenKind = 'cron' | 'every'
-type Target = 'host' | 'group' | 'anyhost' | 'selected'
 
 // Front-line validation of a runnable/runbook arg map — required + numeric range,
 // mirroring the Forms tab's RunModal/RunbookRunModal. Exported for unit tests.
@@ -115,17 +118,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const selectedSavedRun = savedRuns.find(s => s.id === savedRunId) ?? null
   // The runnable picker offers what the chosen target can run: a single host's
   // runnables, or (group / any-of-hosts mode) every runnable present on any of the
-  // targeted hosts.
-  const groupMemberNames = new Set(hosts.filter(h => h.group === groupName).map(h => h.name))
-  const targetedHosts = target === 'group' ? groupMemberNames
-    : target === 'anyhost' ? new Set(hostsList)
-    : target === 'selected' ? new Set(selectedList)
-    : null
-  const hostRunnables = targetedHosts
-    ? [...new Map(
-        runnables.filter(r => targetedHosts.has(r.host)).map(r => [r.name, r]),
-      ).values()]
-    : runnables.filter(r => r.host === hostName)
+  // targeted hosts. Shared derivation with the saved-run editor.
+  const hostRunnables = runnablesForTarget(runnables, hosts, target, {
+    host: hostName, group: groupName, hostsList, selectedList,
+  })
   const isEdit = !!editing
 
   const resetAll = () => {
@@ -395,7 +391,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       onOk={handleSubmit}
       okText={isEdit ? 'Save' : 'Create'}
       confirmLoading={submitting}
-      width={560}
+      width={620}
       destroyOnClose
     >
       <Form form={form} layout="vertical" initialValues={{ host: defaultHost, fields: [] }}>
@@ -587,91 +583,14 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         {/* ── Runnable action ── */}
         {action === 'runnable' && (
           <>
-            <Form.Item label="Target">
-              <Segmented
-                value={target}
-                onChange={v => handleTargetChange(v as Target)}
-                options={[
-                  { label: 'One host', value: 'host' },
-                  { label: 'Any of hosts', value: 'anyhost' },
-                  { label: 'Selected hosts', value: 'selected' },
-                  { label: 'Host group', value: 'group', disabled: groupNames.length === 0 },
-                ]}
-              />
-              <div style={{ ...labelStyle, marginTop: 4 }}>
-                {target === 'group'
-                  ? 'Runs the runnable on every host in the group (one run card per host).'
-                  : target === 'anyhost'
-                  ? 'Runs on the first connected host from the list (failover) — one run.'
-                  : target === 'selected'
-                  ? 'Runs the runnable on every host you tick (one run card per host).'
-                  : 'Runs the runnable on a single host.'}
-              </div>
-            </Form.Item>
-
-            {target === 'host' ? (
-              <Form.Item name="host" label="Host" rules={[{ required: true }]}>
-                <Select onChange={handleHostChange}>
-                  {hosts.map(h => (
-                    <Select.Option key={h.name} value={h.name}>
-                      <Space size={6}>
-                        <span style={{ fontSize: 9, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
-                        {h.name}
-                      </Space>
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            ) : target === 'anyhost' ? (
-              <Form.Item name="hosts" label="Hosts (any one — first connected)"
-                rules={[{ required: true, message: 'Pick at least one host' }]}
-                help="At fire time it runs on the first connected host in this list.">
-                <Select mode="multiple" onChange={handleHostChange} placeholder="Pick candidate hosts"
-                  optionFilterProp="value">
-                  {hosts.map(h => (
-                    <Select.Option key={h.name} value={h.name}>
-                      <Space size={6}>
-                        <span style={{ fontSize: 9, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
-                        {h.name}
-                      </Space>
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            ) : target === 'selected' ? (
-              <Form.Item name="selected_hosts" label="Hosts (runs on every one)"
-                rules={[{ required: true, message: 'Pick at least one host' }]}
-                help="At fire time it runs on every host you tick — one run card per host.">
-                <Select mode="multiple" onChange={handleHostChange} placeholder="Pick hosts to run on"
-                  optionFilterProp="value">
-                  {hosts.map(h => (
-                    <Select.Option key={h.name} value={h.name}>
-                      <Space size={6}>
-                        <span style={{ fontSize: 9, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
-                        {h.name}
-                      </Space>
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            ) : (
-              <Form.Item name="group" label="Group" rules={[{ required: true }]}>
-                <Select onChange={handleHostChange} placeholder="Select a host group">
-                  {groupNames.map(g => {
-                    const members = hosts.filter(h => h.group === g)
-                    const up = members.filter(h => h.connected).length
-                    return (
-                      <Select.Option key={g} value={g}>
-                        <Space size={6}>
-                          {g}
-                          <span style={{ ...labelStyle }}>{up}/{members.length} connected</span>
-                        </Space>
-                      </Select.Option>
-                    )
-                  })}
-                </Select>
-              </Form.Item>
-            )}
+            <TargetFormItems
+              hosts={hosts}
+              groupNames={groupNames}
+              target={target}
+              onTargetChange={handleTargetChange}
+              onHostChange={handleHostChange}
+              labelStyle={labelStyle}
+            />
 
             <Form.Item name="runnable" label="Runnable" rules={[{ required: true }]}>
               <Select
@@ -682,12 +601,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                   (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())
                 }
               >
-                {hostRunnables.map(r => (
-                  <Select.Option key={r.name} value={r.name}>
-                    <code>/{r.name}</code>
-                    {r.description && <span style={{ ...labelStyle, marginLeft: 8 }}>{r.description}</span>}
-                  </Select.Option>
-                ))}
+                <RunnableSelectOptions runnables={hostRunnables} labelStyle={labelStyle} />
               </Select>
             </Form.Item>
 
@@ -714,154 +628,6 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         )}
       </Form>
     </Modal>
-  )
-}
-
-// The credential picker for a runnable-action schedule. Mirrors the Forms run
-// dialog: a multi-select of saved credentials, and a per-pick preview of the
-// env vars it sets (name-derived, e.g. JIRA_USERNAME/JIRA_PASSWORD) plus any
-// declared args it binds. Only ids are stored on the schedule; the secret stays
-// in the keychain and is injected at fire time.
-function CredentialsSection({
-  creds, selected, onChange, declaredArgNames, labelStyle,
-}: {
-  creds: Credential[]
-  selected: string[]
-  onChange: (ids: string[]) => void
-  declaredArgNames: Set<string>
-  labelStyle: CSSProperties
-}) {
-  const selectedCreds = selected
-    .map(id => creds.find(c => c.id === id))
-    .filter((c): c is Credential => !!c)
-  const bindings = bindingsForArgs(
-    selectedCreds.map(c => ({
-      id: c.id, label: c.label, kind: c.kind, has_secret: !!c.has_secret,
-      username: c.username ?? '', username_arg: c.username_arg ?? '', secret_arg: c.secret_arg ?? '',
-    })),
-    declaredArgNames,
-  )
-  return (
-    <div style={{ marginTop: 14, borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 12 }}>
-      <Text style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>Credentials</Text>
-      <Text type="secondary" style={{ ...labelStyle, display: 'block', marginBottom: 6 }}>
-        Applied when the schedule fires — as env vars named after the credential
-        (a credential <Text code style={{ fontSize: 10 }}>Jira</Text> sets{' '}
-        <Text code style={{ fontSize: 10 }}>JIRA_USERNAME</Text>/<Text code style={{ fontSize: 10 }}>JIRA_PASSWORD</Text>),
-        and into any argument it binds. The secret stays in the keychain; only the
-        credential id is saved on the schedule.
-      </Text>
-      <Select
-        size="small"
-        mode="multiple"
-        value={selected}
-        onChange={vs => onChange(vs as string[])}
-        placeholder="Select credentials to apply…"
-        style={{ width: '100%' }}
-        options={creds.map(c => ({ label: c.label, value: c.id }))}
-      />
-      {selected.length > 0 && (
-        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {selectedCreds.map(c => {
-            const names = credEnvNames(c.label, c.kind)
-            const bound = Object.entries(bindings)
-              .filter(([, b]) => b.label === c.label)
-              .map(([argName]) => `--${argName}`)
-            return (
-              <Text key={c.id} type="secondary" style={{ fontSize: 11 }}>
-                <Text style={{ fontSize: 11 }}>{c.label}</Text>
-                {' → '}
-                {names.length
-                  ? names.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)
-                  : <Text type="warning" style={{ fontSize: 11 }}>no env vars (rename or pick a userpass/password/token credential)</Text>}
-                {bound.length > 0 && (
-                  <span> · binds {bound.map((n, i) => <span key={n}>{i > 0 && ', '}<Text code style={{ fontSize: 10 }}>{n}</Text></span>)}</span>
-                )}
-                {c.kind !== 'ssh-key' && !c.has_secret && <Text type="warning" style={{ fontSize: 11 }}> · no secret stored</Text>}
-              </Text>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// One rich arg row — mirrors the Forms tab's ArgRow: monospace label + tags
-// (type / required / optional / description), the rich `children` input, and an
-// inline error message. Kept local so the Schedules modal owns its own
-// container/label styling (the FormsView ArgRow is not exported).
-function ArgFieldRow({ arg, error, children }: { arg: ArgDef; error?: string; children: ReactNode }) {
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-        <Text code style={{ fontSize: 12 }}>--{arg.name}</Text>
-        <Tag style={{ fontSize: 10, margin: 0 }}>
-          {(arg.ui === 'date' || arg.ui === 'datetime' || arg.ui === 'time' || arg.ui === 'month' || arg.ui === 'color' || arg.ui === 'host') ? arg.ui : arg.type}
-        </Tag>
-        {arg.required
-          ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
-          : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
-        }
-        {arg.description && (
-          <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
-        )}
-      </div>
-      {children}
-      {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
-    </div>
-  )
-}
-
-// The runnable-args section of the Schedules modal. Uses the Forms tab's
-// `ArgInput` verbatim (flag→Switch, choice→Select, int/float→InputNumber,
-// path→PathInput, date/datetime/time/month/color→pickers, password→masked),
-// and matches the Forms layout — defaulted args fold into a collapsed
-// "Default arguments" section near the top; the rest lead the form.
-function RunnableArgsBlock({
-  runnable, values, errors, onChange, labelStyle,
-}: {
-  runnable: Runnable
-  values: Record<string, unknown>
-  errors: Record<string, string>
-  onChange: (name: string, v: unknown) => void
-  labelStyle: CSSProperties
-}) {
-  const args = runnable.args ?? []
-  const { visible, defaulted } = partitionArgs(args)
-  const row = (a: ArgDef) => (
-    <ArgFieldRow key={a.name} arg={a} error={errors[a.name]}>
-      <ArgInput
-        arg={a}
-        host={runnable.host}
-        runnable={runnable.name}
-        runAs={runnable.runAs}
-        group={runnable.group}
-        value={values[a.name]}
-        error={errors[a.name]}
-        onChange={v => onChange(a.name, v)}
-      />
-    </ArgFieldRow>
-  )
-  return (
-    <>
-      <div style={{ ...labelStyle, marginBottom: 8, marginTop: 4 }}>Arguments</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {defaulted.length > 0 && (
-          <Collapse
-            size="small"
-            ghost
-            style={{ marginLeft: -8, marginRight: -8 }}
-            items={[{
-              key: 'defaults',
-              label: <Text type="secondary" style={{ fontSize: 11 }}>Default arguments ({defaulted.length})</Text>,
-              children: <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>{defaulted.map(row)}</div>,
-            }]}
-          />
-        )}
-        {visible.map(row)}
-      </div>
-    </>
   )
 }
 
