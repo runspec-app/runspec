@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { argDefToParamDef, runnablesForTarget, splitFixedAndOpen } from './RunnableAction'
+import {
+  argDefToParamDef, runnableSelectOptions, runnablesForTarget, splitFixedAndOpen,
+} from './RunnableAction'
 import type { ArgDef, Host, Runnable } from '../bridge'
 
 const host = (name: string, group = '', connected = true): Host =>
@@ -41,6 +43,28 @@ describe('runnablesForTarget', () => {
   it('empty selection yields nothing', () => {
     expect(runnablesForTarget(RUNNABLES, HOSTS, 'host', {})).toEqual([])
     expect(runnablesForTarget(RUNNABLES, HOSTS, 'group', { group: 'Nope' })).toEqual([])
+  })
+})
+
+describe('runnableSelectOptions', () => {
+  // Regression guard for the 0.191.0 empty-dropdown bug: the runnable picker's
+  // options MUST be plain `{value, label}` data for the Select `options` prop —
+  // antd never renders a custom component child to discover <Select.Option>s.
+  it('returns plain options data with the runnable name as the value', () => {
+    const out = runnableSelectOptions([runnable('restart', 'w1')], {})
+    expect(out).toHaveLength(1)
+    expect(out[0].value).toBe('restart')
+    expect(out[0].label).toBeTruthy()
+  })
+
+  it('prepends an undiscovered stored runnable so editing never loses it', () => {
+    const out = runnableSelectOptions([runnable('restart', 'w1')], {}, 'gone-away')
+    expect(out.map(o => o.value)).toEqual(['gone-away', 'restart'])
+  })
+
+  it('does not duplicate a fallback that is discovered', () => {
+    const out = runnableSelectOptions([runnable('restart', 'w1')], {}, 'restart')
+    expect(out.map(o => o.value)).toEqual(['restart'])
   })
 })
 

@@ -8,7 +8,7 @@ import { EventLog } from '../components/EventLog'
 import { initialFormValues } from './FormsView'
 import { RunbookField } from './RunbookRunModal'
 import {
-  ArgFieldRow, CredentialsSection, RunnableArgsBlock, RunnableSelectOptions,
+  ArgFieldRow, CredentialsSection, RunnableArgsBlock, runnableSelectOptions,
   TargetFormItems, runnablesForTarget, type Target,
 } from './RunnableAction'
 
@@ -600,9 +600,8 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 filterOption={(input, opt) =>
                   (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())
                 }
-              >
-                <RunnableSelectOptions runnables={hostRunnables} labelStyle={labelStyle} />
-              </Select>
+                options={runnableSelectOptions(hostRunnables, labelStyle)}
+              />
             </Form.Item>
 
             {selectedRunnable && selectedRunnable.args.length > 0 && (

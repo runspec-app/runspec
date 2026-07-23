@@ -8,6 +8,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.191.1] — 2026-07-23
+
+### Fixed
+- **Empty runnable dropdown in the Schedules modal and the Saved runs editor**
+  (0.191.0 regression). The shared runnable picker rendered its
+  `<Select.Option>`s from a custom component child (`RunnableSelectOptions`),
+  but antd's Select discovers options by inspecting its direct children and
+  never renders a custom component to find them — so the dropdown came up
+  empty in both dialogs. The picker is now plain data through the Select's
+  `options` prop (`runnableSelectOptions(...)`), with a unit test guarding the
+  data shape (incl. the "not currently discovered" fallback entry).
+
+
 ## [0.191.0] — 2026-07-23
 
 ### Changed

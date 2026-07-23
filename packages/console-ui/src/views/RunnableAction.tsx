@@ -380,30 +380,42 @@ export function TargetFormItems({
   )
 }
 
-// The runnable picker shared by both dialogs: a searchable Select over the
-// target-aware runnable list. `fallbackName` (the saved-run editor) keeps a
-// stored runnable selectable even when it isn't currently discovered (fleet
-// offline / host removed), so editing never loses it.
-export function RunnableSelectOptions({ runnables, fallbackName, labelStyle }: {
-  runnables: Runnable[]
-  fallbackName?: string
-  labelStyle: CSSProperties
-}) {
-  const missing = fallbackName && !runnables.some(r => r.name === fallbackName)
-  return (
-    <>
-      {missing && (
-        <Select.Option key={fallbackName} value={fallbackName}>
+// The runnable picker's option list, shared by both dialogs — data for the
+// Select's `options` prop. It MUST be data, not a component rendering
+// `<Select.Option>` children: antd's Select discovers options by inspecting
+// its direct children elements and never renders a custom component to find
+// them, so a component-in-children produced an EMPTY dropdown (the 0.191.0
+// regression). `fallbackName` (the saved-run editor) keeps a stored runnable
+// selectable even when it isn't currently discovered (fleet offline / host
+// removed), so editing never loses it. Filter on `value` (the callers pass a
+// value-matching filterOption; the label is JSX).
+export function runnableSelectOptions(
+  runnables: Runnable[],
+  labelStyle: CSSProperties,
+  fallbackName?: string,
+): { value: string; label: ReactNode }[] {
+  const out: { value: string; label: ReactNode }[] = []
+  if (fallbackName && !runnables.some(r => r.name === fallbackName)) {
+    out.push({
+      value: fallbackName,
+      label: (
+        <>
           <code>/{fallbackName}</code>
           <span style={{ ...labelStyle, marginLeft: 8 }}>not currently discovered</span>
-        </Select.Option>
-      )}
-      {runnables.map(r => (
-        <Select.Option key={r.name} value={r.name}>
+        </>
+      ),
+    })
+  }
+  for (const r of runnables) {
+    out.push({
+      value: r.name,
+      label: (
+        <>
           <code>/{r.name}</code>
           {r.description && <span style={{ ...labelStyle, marginLeft: 8 }}>{r.description}</span>}
-        </Select.Option>
-      ))}
-    </>
-  )
+        </>
+      ),
+    })
+  }
+  return out
 }

@@ -7,7 +7,7 @@ import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames, initialFormValues } from '../views/FormsView'
 import {
-  CredentialsSection, RunnableArgsBlock, RunnableSelectOptions, TargetFormItems,
+  CredentialsSection, RunnableArgsBlock, runnableSelectOptions, TargetFormItems,
   runnablesForTarget, splitFixedAndOpen, type Target,
 } from '../views/RunnableAction'
 
@@ -3586,13 +3586,10 @@ function SavedRunsTab() {
                 filterOption={(input, opt) =>
                   (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())
                 }
-              >
-                <RunnableSelectOptions
-                  runnables={targetRunnables}
-                  fallbackName={editingEntry?.runnable}
-                  labelStyle={SAVED_RUN_LABEL_STYLE}
-                />
-              </Select>
+                options={runnableSelectOptions(
+                  targetRunnables, SAVED_RUN_LABEL_STYLE, editingEntry?.runnable,
+                )}
+              />
             </Form.Item>
             <Form.Item name="command" label="Subcommand (optional)" help="Space-separated path, e.g. db restore">
               <Input placeholder="" style={{ fontFamily: 'monospace' }} />
