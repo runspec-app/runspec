@@ -8,6 +8,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.190.1] — 2026-07-23
+
+### Fixed
+- **"Copy SSH key to all hosts" no longer wipes the password field mid-typing.**
+  The bulk dialog reset its state (including the password) on every change to
+  its `hosts` prop, and the Settings drawer recomputes that array on every
+  render — so a background connection-status refresh, or a host flipping
+  connected after a failed first attempt, cleared the field while the operator
+  was still typing (most visible when retyping after a first-attempt typo). The
+  reset now runs only on the closed→open transition, so parent re-renders leave
+  the in-progress password untouched (`CopyKeyAllModal.tsx`).
+
+
 ## [0.190.0] — 2026-07-22
 
 ### Added

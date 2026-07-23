@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, Button, Typography, Input, Checkbox, message } from 'antd'
 import { KeyOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
@@ -40,13 +40,20 @@ export function CopyKeyAllModal({
   const [selected, setSelected] = useState<string[]>([])
   const [results, setResults] = useState<PerHostResult[] | null>(null)
 
-  // Each time the dialog opens, pre-select the disconnected hosts and reset.
+  // Reset only on the closed→open transition — pre-select the disconnected
+  // hosts and clear any prior password/results. This must NOT re-run on every
+  // `hosts` identity change: the parent recomputes the `hosts` array on each of
+  // its renders (connection-status polling, or a host flipping connected after
+  // a failed first attempt), and resetting on that would wipe the password the
+  // operator is mid-way through typing.
+  const wasOpen = useRef(false)
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       setSelected(hosts.filter(h => !h.connected).map(h => h.name))
       setPassword('')
       setResults(null)
     }
+    wasOpen.current = open
   }, [open, hosts])
 
   const options = useMemo(
