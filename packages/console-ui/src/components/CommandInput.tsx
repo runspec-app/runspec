@@ -261,6 +261,10 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
         return
       }
       if (e.key === 'ArrowDown') {
+        // Only walk history downward when we're already browsing it (entered via
+        // ArrowUp). A bare ArrowDown on a freshly typed prompt must leave the
+        // text alone — moving the caret — rather than clearing the input.
+        if (historyIndex < 0) return
         e.preventDefault()
         const next = Math.max(historyIndex - 1, -1)
         setHistoryIndex(next)
