@@ -7,8 +7,9 @@ import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames, initialFormValues } from '../views/FormsView'
 import {
-  CredentialsSection, RunnableArgsBlock, runnableSelectOptions, TargetFormItems,
-  runnablesForTarget, splitFixedAndOpen, type Target,
+  commandPathOptions, CredentialsSection, effectiveArgsForPath, RunnableArgsBlock,
+  runnableSelectOptions, TargetFormItems, runnablesForTarget, splitFixedAndOpen,
+  type Target,
 } from '../views/RunnableAction'
 
 const { Text, Link } = Typography
@@ -3377,6 +3378,18 @@ function SavedRunsTab() {
   // currently expose it (offline host) → the editor degrades to raw key=value
   // fixed args + manual params so editing still works.
   const selectedRunnable = targetRunnables.find(r => r.name === runnableName) ?? null
+  // Subcommand handling: the field only exists for runnables that declare
+  // subcommands (a dropdown of their paths); the picked path shifts which args
+  // the rich block edits — the effective set at that path (inherited globals +
+  // the command's own, child wins), same as the Forms dialog / `runspec serve`.
+  const commandValue: string = Form.useWatch('command', form) ?? ''
+  const commandPath = commandValue.trim() ? commandValue.trim().split(/\s+/) : []
+  const commandOptions = selectedRunnable
+    ? commandPathOptions(selectedRunnable, SAVED_RUN_LABEL_STYLE)
+    : []
+  const effectiveRunnable = selectedRunnable
+    ? { ...selectedRunnable, args: effectiveArgsForPath(selectedRunnable, commandPath) }
+    : null
 
   const startAdd = () => {
     form.resetFields()
@@ -3404,17 +3417,23 @@ function SavedRunsTab() {
   }
   const cancel = () => { setEditingKey(null); form.resetFields() }
 
-  // Seed the rich arg state whenever the picked runnable resolves — on edit
-  // (once discovery delivers it), and on every picker change. Stored fixed args
-  // overlay the spec defaults (`initialFormValues`, shared with Forms); stored
-  // params that match a declared arg become Open toggles, the rest stay in the
-  // manual rows.
+  // Seed the rich arg state whenever the picked runnable (or its subcommand)
+  // resolves — on edit (once discovery delivers it), and on every picker change.
+  // Stored fixed args overlay the spec defaults (`initialFormValues`, shared
+  // with Forms); stored params that match a declared arg become Open toggles,
+  // the rest stay in the manual rows. A command carried over from a different
+  // runnable is cleared (its paths don't apply).
   useEffect(() => {
     if (editingKey === null) return
     if (!selectedRunnable) return  // fallback editors keep their startEdit seed
     const stored = editingEntry && editingEntry.runnable === selectedRunnable.name ? editingEntry : null
-    setArgValues(initialFormValues(selectedRunnable.args ?? [], stored?.args))
-    const declared = new Map((selectedRunnable.args ?? []).map(a => [_srNorm(a.name), a.name]))
+    if (commandValue && !commandOptions.some(o => o.value === commandValue)) {
+      form.setFieldValue('command', undefined)
+      return  // re-runs with the cleared command
+    }
+    const effective = effectiveArgsForPath(selectedRunnable, commandPath)
+    setArgValues(initialFormValues(effective, stored?.args))
+    const declared = new Map(effective.map(a => [_srNorm(a.name), a.name]))
     const open = new Set<string>()
     const manual: RunbookArgRow[] = []
     for (const [pname, pdef] of Object.entries(stored?.paramsRaw ?? {})) {
@@ -3426,7 +3445,7 @@ function SavedRunsTab() {
     setArgErrors({})
     form.setFieldValue('params', manual)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingKey, selectedRunnable?.name])
+  }, [editingKey, selectedRunnable?.name, commandValue])
 
   const handleTargetChange = (t: Target) => {
     setTarget(t)
@@ -3475,7 +3494,9 @@ function SavedRunsTab() {
       // Rich path: typed values → fixed args; Open (and password) args →
       // generated params; manual rows may add extras (e.g. subcommand-level
       // args) — a generated entry wins on a name collision.
-      const split = splitFixedAndOpen(selectedRunnable.args ?? [], argValues, openArgs)
+      const split = splitFixedAndOpen(
+        effectiveRunnable?.args ?? [], argValues, openArgs,
+      )
       if (Object.keys(split.errors).length > 0) { setArgErrors(split.errors); return }
       args = split.args
       paramsRaw = { ...rowsToArgsRaw(values.params), ...split.params }
@@ -3578,27 +3599,52 @@ function SavedRunsTab() {
             labelStyle={SAVED_RUN_LABEL_STYLE}
           />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
-            <Form.Item name="runnable" label="Runnable" rules={[{ required: true, message: 'Required' }]}>
+          {/* Full-width, and the closed control shows just the runnable name
+              (optionLabelProp) — the rich /name + description label is dropdown-
+              only, so a long description can't overflow the modal. */}
+          <Form.Item name="runnable" label="Runnable" rules={[{ required: true, message: 'Required' }]}>
+            <Select
+              placeholder="Select a runnable"
+              showSearch
+              optionLabelProp="value"
+              filterOption={(input, opt) =>
+                (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              options={runnableSelectOptions(
+                targetRunnables, SAVED_RUN_LABEL_STYLE, editingEntry?.runnable,
+              )}
+            />
+          </Form.Item>
+
+          {/* Only runnables that declare subcommands get the field — a dropdown
+              of their paths (the saved run stores the space-joined path). The
+              free-text input survives solely in the undiscovered fallback. */}
+          {selectedRunnable && commandOptions.length > 0 && (
+            <Form.Item
+              name="command"
+              label="Subcommand"
+              rules={selectedRunnable.requireCommand
+                ? [{ required: true, message: 'This runnable requires a subcommand' }]
+                : undefined}
+              help={selectedRunnable.requireCommand ? undefined : 'Optional — leave blank to run the root command.'}
+            >
               <Select
-                placeholder="Select a runnable"
-                showSearch
-                filterOption={(input, opt) =>
-                  (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())
-                }
-                options={runnableSelectOptions(
-                  targetRunnables, SAVED_RUN_LABEL_STYLE, editingEntry?.runnable,
-                )}
+                placeholder="Select a subcommand…"
+                allowClear
+                optionLabelProp="value"
+                options={commandOptions}
               />
             </Form.Item>
+          )}
+          {runnableName !== '' && !selectedRunnable && (
             <Form.Item name="command" label="Subcommand (optional)" help="Space-separated path, e.g. db restore">
               <Input placeholder="" style={{ fontFamily: 'monospace' }} />
             </Form.Item>
-          </div>
+          )}
 
-          {selectedRunnable && (selectedRunnable.args ?? []).length > 0 && (
+          {effectiveRunnable && (effectiveRunnable.args ?? []).length > 0 && (
             <RunnableArgsBlock
-              runnable={selectedRunnable}
+              runnable={effectiveRunnable}
               values={argValues}
               errors={argErrors}
               onChange={changeArg}
@@ -3645,7 +3691,7 @@ function SavedRunsTab() {
           {selectedRunnable && (
             <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
               Declared args flip Open with the toggle above. Add rows here only for extras
-              the runnable doesn't declare at the top level (e.g. subcommand args).
+              the runnable doesn't declare at the chosen subcommand.
             </Typography.Text>
           )}
           <Form.List name="params">
@@ -3688,7 +3734,7 @@ function SavedRunsTab() {
             creds={creds}
             selected={credentialIds}
             onChange={setCredentialIds}
-            declaredArgNames={new Set((selectedRunnable?.args ?? []).map(a => a.name))}
+            declaredArgNames={new Set((effectiveRunnable?.args ?? []).map(a => a.name))}
             labelStyle={SAVED_RUN_LABEL_STYLE}
           />
         </Form>

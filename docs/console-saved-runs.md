@@ -77,7 +77,11 @@ the secret env channel.
 Schedules tab's run-a-runnable dialog (they share the same components): pick a
 target (hosts show a live connectivity dot; groups show connected/member
 counts), then pick the runnable from a searchable select of what the targeted
-host(s) actually expose. Its declared args render as rich typed fields — the
+host(s) actually expose. A runnable with subcommands gets a dropdown of its
+command paths (required when the runnable enforces `require-command`; hidden
+otherwise), and the args form always shows the **effective** set at the chosen
+path — inherited globals plus the command's own. Declared args render as rich
+typed fields — the
 same dropdowns, switches, pickers, and validation as the Forms tab — and each
 arg carries a **Fixed/Open toggle**:
 

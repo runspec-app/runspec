@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.192.0] — 2026-07-23
+
+### Changed
+- **Saved-run editor: subcommand field only when it applies, and no more
+  overflowing runnable select.** The runnable select is full-width and its
+  *closed* control now shows just the runnable name (`optionLabelProp` — the
+  rich `/name` + description label is dropdown-only), so a long description
+  can't push the field off the modal; the Schedules modal's runnable select
+  gets the same treatment. The free-text "Subcommand (optional)" input is
+  gone: a runnable that declares subcommands gets a **dropdown of its command
+  paths** (nested paths space-joined, required when the runnable enforces
+  `require-command`), and one that doesn't gets no field at all. Picking a
+  subcommand switches the rich args block to the **effective arg set at that
+  path** (inherited globals + the command's own, child wins — the same set
+  `runspec serve` advertises per leaf), so command-level args now get typed
+  fields and Fixed/Open toggles instead of needing manual param rows. New
+  shared pure helpers `commandPathOptions` / `effectiveArgsForPath` in
+  `RunnableAction.tsx` (unit-tested); the free-text input survives only in the
+  undiscovered-runnable fallback.
+
+
 ## [0.191.2] — 2026-07-23
 
 ### Fixed

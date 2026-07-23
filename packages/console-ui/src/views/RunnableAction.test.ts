@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  argDefToParamDef, runnableSelectOptions, runnablesForTarget, splitFixedAndOpen,
+  argDefToParamDef, commandPathOptions, effectiveArgsForPath,
+  runnableSelectOptions, runnablesForTarget, splitFixedAndOpen,
 } from './RunnableAction'
 import type { ArgDef, Host, Runnable } from '../bridge'
 
@@ -90,6 +91,46 @@ describe('argDefToParamDef', () => {
     expect(argDefToParamDef(arg({ type: 'password', required: true }))).toEqual({
       type: 'password', required: true,
     })
+  })
+})
+
+describe('commandPathOptions / effectiveArgsForPath', () => {
+  const nested = {
+    name: 'claude-run', host: 'w1', group: 'tools',
+    args: [arg({ name: 'model' }), arg({ name: 'dir' })],
+    commands: {
+      ask: { name: 'ask', host: 'w1', group: 'tools', description: 'Fresh turn',
+        args: [arg({ name: 'prompt', required: true })] },
+      db: { name: 'db', host: 'w1', group: 'tools', args: [],
+        commands: {
+          restore: { name: 'restore', host: 'w1', group: 'tools',
+            args: [arg({ name: 'model', type: 'choice', options: ['a', 'b'] })] },
+        } },
+    },
+  } as unknown as Runnable
+
+  it('lists every command path, space-joined, nested included', () => {
+    const out = commandPathOptions(nested, {})
+    expect(out.map(o => o.value)).toEqual(['ask', 'db', 'db restore'])
+  })
+
+  it('is empty for a runnable without subcommands (field hidden)', () => {
+    expect(commandPathOptions(runnable('df', 'w1'), {})).toEqual([])
+  })
+
+  it('effective args merge inherited globals with the path, child wins', () => {
+    expect(effectiveArgsForPath(nested, []).map(a => a.name).sort())
+      .toEqual(['dir', 'model'])
+    expect(effectiveArgsForPath(nested, ['ask']).map(a => a.name).sort())
+      .toEqual(['dir', 'model', 'prompt'])
+    const deep = effectiveArgsForPath(nested, ['db', 'restore'])
+    const model = deep.find(a => a.name === 'model')
+    expect(model?.type).toBe('choice')  // leaf redeclaration wins over the global
+  })
+
+  it('an unknown path segment stops the walk gracefully', () => {
+    expect(effectiveArgsForPath(nested, ['nope']).map(a => a.name).sort())
+      .toEqual(['dir', 'model'])
   })
 })
 

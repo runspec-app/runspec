@@ -597,6 +597,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 placeholder="Select a runnable"
                 onChange={handleRunnableChange}
                 showSearch
+                optionLabelProp="value"
                 filterOption={(input, opt) =>
                   (opt?.value as string ?? '').toLowerCase().includes(input.toLowerCase())
                 }

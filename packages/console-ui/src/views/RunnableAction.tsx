@@ -52,6 +52,59 @@ export function argDefToParamDef(arg: ArgDef): Record<string, unknown> {
   return def
 }
 
+// The selected runnable's subcommand paths as Select options — one entry per
+// command node, space-joined ("db", "db restore"; commands nest max two levels).
+// Empty when the runnable declares no subcommands, so the saved-run editor can
+// hide the field entirely for plain runnables. `value` is the space-joined path
+// (what the saved run stores, split on whitespace at save); the dropdown label
+// adds the command's description. Pure — exported for unit tests.
+export function commandPathOptions(
+  runnable: Runnable,
+  labelStyle: CSSProperties,
+): { value: string; label: ReactNode }[] {
+  const out: { value: string; label: ReactNode }[] = []
+  const walk = (node: Runnable, prefix: string[]) => {
+    for (const [name, child] of Object.entries(node.commands ?? {})) {
+      const path = [...prefix, name]
+      out.push({
+        value: path.join(' '),
+        label: (
+          <>
+            <code>{path.join(' ')}</code>
+            {child.description && (
+              <span style={{ ...labelStyle, marginLeft: 8 }}>{child.description}</span>
+            )}
+          </>
+        ),
+      })
+      walk(child, path)
+    }
+  }
+  walk(runnable, [])
+  return out
+}
+
+// The effective args at a subcommand path: the args declared along the way
+// (inherited globals) merged with each level's own, child winning on a name
+// collision — the same effective set `runspec serve` advertises per leaf tool.
+// An empty/unknown path yields the args accumulated up to where it resolved
+// (root args for []). Pure — exported for unit tests.
+export function effectiveArgsForPath(runnable: Runnable, path: string[]): ArgDef[] {
+  const merged = new Map<string, ArgDef>()
+  const absorb = (args: ArgDef[] | undefined) => {
+    for (const a of args ?? []) merged.set(a.name, a)
+  }
+  absorb(runnable.args)
+  let node: Runnable = runnable
+  for (const seg of path) {
+    const child = node.commands?.[seg]
+    if (!child) break
+    absorb(child.args)
+    node = child
+  }
+  return [...merged.values()]
+}
+
 // Split a saved-run editor's declared-arg state into what gets persisted:
 // fixed `args` (typed values, baked in), generated `params` entries (Open args,
 // incl. password args which are ALWAYS open — the synced file never stores a
