@@ -8,6 +8,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.191.2] — 2026-07-23
+
+### Fixed
+- **Command composer cleared its draft when stepping back down out of
+  history.** Browsing prior prompts with ArrowUp and then pressing ArrowDown
+  back to the bottom blanked whatever was half-typed. The live draft is now
+  stashed on the first step up into history and restored when returning to the
+  bottom, instead of clearing. (Follow-up to the ArrowDown history-navigation
+  fix.)
+
+
 ## [0.191.1] — 2026-07-23
 
 ### Fixed

@@ -87,6 +87,9 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
   const [runbooksFilter, setRunbooksFilter] = useState('')
   const [runbooksIndex, setRunbooksIndex] = useState(0)
   const [historyIndex, setHistoryIndex] = useState(-1)
+  // Stashes the in-progress draft when you step up into history, so stepping
+  // back down to the bottom restores what you were typing instead of blanking.
+  const draftRef = useRef('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // Auto-grow the textarea to fit its content, growing *upward* over the
@@ -255,6 +258,9 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
     if (!slashOpen && !runbooksOpen) {
       if (e.key === 'ArrowUp') {
         e.preventDefault()
+        // Stash the live draft on the first step into history so we can restore
+        // it on the way back down.
+        if (historyIndex < 0) draftRef.current = value
         const next = Math.min(historyIndex + 1, history.length - 1)
         setHistoryIndex(next)
         setValue(history[history.length - 1 - next] ?? '')
@@ -268,7 +274,8 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
         e.preventDefault()
         const next = Math.max(historyIndex - 1, -1)
         setHistoryIndex(next)
-        setValue(next === -1 ? '' : history[history.length - 1 - next] ?? '')
+        // Returning to the bottom restores the stashed draft rather than blanking.
+        setValue(next === -1 ? draftRef.current : history[history.length - 1 - next] ?? '')
         return
       }
     }
