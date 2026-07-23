@@ -87,9 +87,14 @@ class AutonomyMixin:
         if tool_name == "describe_tool":
             return "autonomous"  # read-only schema lookup for deferred built-ins
         if tool_name == "use_tool":
-            # Normally unwrapped to the inner tool by the gate before this runs;
-            # an un-unwrapped wrapper is gated by default (fail closed).
-            return "confirm"
+            # Resolve the deferral wrapper so the gate reflects the INNER tool's
+            # level — exactly like run_runnable below. Unresolvable (unknown /
+            # hot / nested name) → gated by default (fail closed).
+            unwrapped = self._unwrap_use_tool(tool_input)
+            if isinstance(unwrapped, str):
+                return "confirm"
+            inner_name, inner_ti = unwrapped
+            return self._effective_tool_autonomy(inner_name, inner_ti)
         if tool_name in _MEMORY_TOOL_NAMES:
             return "autonomous"  # local memory/runbook store — no model-spend gate
         if tool_name in _STATUS_TOOL_NAMES:
@@ -224,8 +229,16 @@ class AutonomyMixin:
         self, tool_name: str, tool_input: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
         """The (tool_name, tool_input) to *display* on the confirm card. Identity
-        for normal calls; for ``run_runnable`` it unwraps to the resolved runnable
-        name + its real args (so the operator approves what actually runs)."""
+        for normal calls; for the ``run_runnable`` / ``use_tool`` wrappers it
+        unwraps to the resolved runnable / inner built-in name + its real args
+        (so the operator approves what actually runs). A differing display name
+        also makes the frontend render the confirm read-only — edits against a
+        wrapper's display view would re-wrap lossily."""
+        if tool_name == "use_tool":
+            unwrapped = self._unwrap_use_tool(tool_input)
+            if isinstance(unwrapped, str):
+                return tool_name, tool_input  # unresolved — show the raw call
+            return unwrapped
         if tool_name != "run_runnable":
             return tool_name, tool_input
         ti = dict(tool_input or {})
@@ -485,14 +498,21 @@ class AutonomyMixin:
 
         ``stage`` (trigger turns only) reports the card stage: "awaiting_human"
         while a confirm is pending, then "running" once it actually executes."""
+        inner_call: tuple[str, dict[str, Any]] | None = None
         if tool_name == "use_tool":
-            # Deferred built-in (search mode): unwrap to the inner tool BEFORE
-            # any decision, so the gate, confirm card, Console tracking, and
-            # audit all see the real tool — never the wrapper.
+            # Deferred built-in (search mode). Resolve the inner tool now, but
+            # keep gating under the RAW wrapper name: the frontend matches the
+            # confirm prompt to the running tool segment by exact name (see
+            # _register_confirm), so renaming here leaves the Approve/Deny
+            # buttons unrendered and the call times out as a deny. The decision
+            # and the confirm card still reflect the inner tool
+            # (_effective_tool_autonomy / _confirm_card_view unwrap), and the
+            # inner call is applied just before execution below — after which
+            # Console tracking and audit see the real tool.
             unwrapped = self._unwrap_use_tool(tool_input)
             if isinstance(unwrapped, str):
                 return unwrapped
-            tool_name, tool_input = unwrapped
+            inner_call = unwrapped
         if tool_name == "run_runnable":
             fan = self._group_fanout_calls(tool_input)
             if fan is not None:
@@ -543,10 +563,20 @@ class AutonomyMixin:
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
             # The operator may have edited the args before approving — run those.
+            # For a wrapped call the card displayed the INNER input, so an edit
+            # (defensive: the frontend renders wrapper confirms read-only) is in
+            # that same shape and replaces the inner input, not the envelope.
             if edited is not None:
-                tool_input = edited
+                if inner_call is not None:
+                    inner_call = (inner_call[0], edited)
+                else:
+                    tool_input = edited
         if stage is not None:
             stage("running")
+        # The gate has decided — from here on, run the real tool the operator
+        # approved (Console card + audit under the inner name).
+        if inner_call is not None:
+            tool_name, tool_input = inner_call
         # Built-in tools (repo_*, outlook_*, manage_denylist, memory, status,
         # action tools) run on a worker thread with no native run card — wrap
         # them so they show as a live Console in-flight card, stream progress,
@@ -776,12 +806,14 @@ class AutonomyMixin:
 
         autonomous → run; confirm/supervised → ask the user (Approve/Deny);
         manual → refuse (human-only; the user must use the Run button)."""
+        inner_call: tuple[str, dict[str, Any]] | None = None
         if tool_name == "use_tool":
-            # Same unwrap as the async gate — decisions apply to the inner tool.
+            # Same contract as the async gate: resolve now, gate under the raw
+            # wrapper name (frontend segment-matching), execute the inner tool.
             unwrapped = self._unwrap_use_tool(tool_input)
             if isinstance(unwrapped, str):
                 return unwrapped
-            tool_name, tool_input = unwrapped
+            inner_call = unwrapped
         if tool_name == "run_runnable":
             fan = self._group_fanout_calls(tool_input)
             if fan is not None:
@@ -815,8 +847,16 @@ class AutonomyMixin:
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
+            # Edits are made against the card's display view — for a wrapped
+            # call that's the inner input (defensive: wrapper confirms render
+            # read-only), so they replace the inner input, not the envelope.
             if edited is not None:
-                tool_input = edited
+                if inner_call is not None:
+                    inner_call = (inner_call[0], edited)
+                else:
+                    tool_input = edited
+        if inner_call is not None:
+            tool_name, tool_input = inner_call
         return self._run_tool_sync(tool_name, tool_input, chat_id)
 
     def _set_run_origin(

@@ -8,6 +8,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.190.2] — 2026-07-23
+
+### Fixed
+- **`use_tool` confirm card stuck on a spinner (search mode).** A confirm-gated
+  deferred built-in called through `use_tool` (e.g. `outlook_create_event`)
+  never showed its Approve/Deny buttons — the chat card sat on "use_tool" with
+  a spinner until the 300 s gate timeout denied it. Cause: 0.190.0 unwrapped
+  the wrapper at the top of the autonomy gates, so the confirm prompt was
+  registered under the inner tool's name while the frontend matches the prompt
+  to the running tool segment by exact raw name (`use_tool`) — the documented
+  `run_runnable` contract in `_register_confirm`, re-broken for the new
+  wrapper. The gates now follow the `run_runnable` pattern precisely: the
+  inner tool is resolved up front (invalid names still fail fast), the
+  **decision** reflects the inner tool (`_effective_tool_autonomy` recurses,
+  so an autonomous inner tool still runs promptless), the **prompt** keeps the
+  raw `use_tool` name/input so the buttons render, the **card** displays the
+  inner tool + args via `_confirm_card_view` (which also makes the frontend
+  render the confirm read-only, as for `run_runnable`; a defensive branch
+  applies any edit to the inner input), and **execution** applies the inner
+  call after approval so Console tracking and audit record the real tool.
+  Regression-tested in `test_builtin_search_tier.py`, including the
+  `runspec:tool_confirm` payload contract (raw `tool_name`, inner
+  `display_name`/`display_input`).
+
+
 ## [0.190.1] — 2026-07-23
 
 ### Fixed

@@ -170,43 +170,134 @@ def test_unwrap_refuses_hot_unknown_nested_and_missing():
     assert "Error" in stub._unwrap_use_tool({})
 
 
-# ── gate integration: decisions apply to the INNER tool ───────────────────────
+# ── gate integration ──────────────────────────────────────────────────────────
+#
+# The contract (the run_runnable precedent, re-broken and re-fixed in 0.190.1):
+# the gate DECIDES on the inner tool, the confirm prompt keeps the RAW wrapper
+# name (the frontend matches the prompt to the running tool segment by exact
+# name — a renamed prompt never renders Approve/Deny and times out as a deny),
+# the card DISPLAYS the inner tool, and EXECUTION runs the inner tool.
 
 
 class _GateStub(_Stub):
     _gated_run_tool = Bridge._gated_run_tool
+    _confirm_decision = Bridge._confirm_decision
+    _confirm_card_view = Bridge._confirm_card_view
 
-    def __init__(self):
+    def __init__(self, approve=True, edited=None):
         super().__init__()
-        self.decisions: list = []
+        self.await_calls: list = []
+        self._approve = approve
+        self._edited = edited
 
-    def _confirm_decision(self, tool_name, tool_input):
-        self.decisions.append(tool_name)
-        return "run"
-
-    def _confirm_card_view(self, tool_name, tool_input):
-        return tool_name, {}
+    def _await_confirmation(self, tool_name, tool_input, level, chat_id):
+        self.await_calls.append((tool_name, tool_input, level))
+        return self._approve, self._edited
 
     def _run_tool_sync(self, tool_name, tool_input, chat_id=""):
         self.sync_calls.append((tool_name, tool_input))
         return "OK"
 
 
-def test_gate_unwraps_before_deciding_and_dispatching():
+def test_autonomy_resolves_through_the_wrapper():
+    stub = _Stub()
+    wrap = {"name": "manage_denylist", "input": {"action": "list"}}
+    assert stub._effective_tool_autonomy("use_tool", wrap) == "autonomous"
+    wrap = {"name": "manage_denylist", "input": {"action": "all"}}
+    assert stub._effective_tool_autonomy("use_tool", wrap) == "confirm"
+
+
+def test_confirm_card_displays_the_inner_tool():
+    stub = _GateStub()
+    view = stub._confirm_card_view(
+        "use_tool", {"name": "create_document", "input": {"path": "x.md"}}
+    )
+    assert view == ("create_document", {"path": "x.md"})
+    # Unresolved wrapper: show the raw call rather than nothing.
+    raw = {"name": "nope"}
+    assert stub._confirm_card_view("use_tool", raw) == ("use_tool", raw)
+
+
+def test_gate_autonomous_inner_runs_without_prompt():
     stub = _GateStub()
     out = stub._gated_run_tool(
-        "use_tool", {"name": "repo_grep", "input": {"pattern": "x"}}, "chat1"
+        "use_tool", {"name": "manage_denylist", "input": {"action": "list"}}, "chat1"
     )
     assert out == "OK"
-    assert stub.decisions == ["repo_grep"]  # the gate judged the inner tool
-    assert stub.sync_calls == [("repo_grep", {"pattern": "x"})]
+    assert stub.await_calls == []  # autonomous inner → no prompt
+    assert stub.sync_calls == [("manage_denylist", {"action": "list"})]
+
+
+def test_gate_confirms_under_raw_name_and_runs_inner():
+    stub = _GateStub()
+    wrap = {"name": "create_document", "input": {"path": "x.md"}}
+    out = stub._gated_run_tool("use_tool", wrap, "chat1")
+    assert out == "OK"
+    # The prompt registered the RAW wrapper call — the frontend matches the
+    # running `use_tool` segment by this name to render Approve/Deny.
+    assert stub.await_calls == [("use_tool", wrap, "confirm")]
+    # ...but what ran is the inner tool the card displayed.
+    assert stub.sync_calls == [("create_document", {"path": "x.md"})]
+
+
+def test_gate_denied_wrapper_runs_nothing():
+    stub = _GateStub(approve=False)
+    out = stub._gated_run_tool(
+        "use_tool", {"name": "create_document", "input": {}}, "chat1"
+    )
+    # The refusal names the inner tool the operator saw on the card.
+    assert "declined" in out and "create_document" in out
+    assert stub.sync_calls == []
+
+
+def test_gate_edited_input_replaces_inner_input():
+    stub = _GateStub(edited={"path": "edited.md"})
+    out = stub._gated_run_tool(
+        "use_tool", {"name": "create_document", "input": {"path": "x.md"}}, "chat1"
+    )
+    assert out == "OK"
+    assert stub.sync_calls == [("create_document", {"path": "edited.md"})]
 
 
 def test_gate_returns_unwrap_error_without_running():
     stub = _GateStub()
     out = stub._gated_run_tool("use_tool", {"name": "nope"}, "chat1")
     assert "Error" in out
-    assert stub.decisions == [] and stub.sync_calls == []
+    assert stub.await_calls == [] and stub.sync_calls == []
+
+
+class _RegisterStub(_GateStub):
+    _register_confirm = Bridge._register_confirm
+
+    def __init__(self):
+        super().__init__()
+        self.events: list = []
+        self._pending_confirms: dict = {}
+        self._pending_confirm_meta: dict = {}
+
+    def _dispatch(self, event, detail):
+        self.events.append((event, detail))
+
+    def _notify_confirm(self, tool_name, tool_input, level):
+        pass
+
+
+def test_register_confirm_keeps_raw_name_displays_inner():
+    """The regression test for the stuck confirm card: the prompt event must
+    carry the raw wrapper as tool_name (segment matching) and the inner tool as
+    display_name/display_input (what the operator approves)."""
+    stub = _RegisterStub()
+    stub._register_confirm(
+        "chat1",
+        "use_tool",
+        {"name": "create_document", "input": {"path": "x.md"}},
+        "confirm",
+    )
+    (event, detail) = stub.events[0]
+    assert event == "runspec:tool_confirm"
+    assert detail["tool_name"] == "use_tool"
+    assert detail["display_name"] == "create_document"
+    assert detail["display_input"] == {"path": "x.md"}
 
 
 # ── fail-closed dispatch + autonomy registration ──────────────────────────────

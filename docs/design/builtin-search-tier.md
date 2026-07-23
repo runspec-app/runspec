@@ -90,29 +90,43 @@ comes back as a per-name error row so one typo doesn't sink the batch.
 Classified `autonomous` in `_effective_tool_autonomy` — it is a schema
 lookup, the exact analogue of `describe_runnable`.
 
-### 4.2 `use_tool` (a wrapper that never survives to a decision)
+### 4.2 `use_tool` (an envelope with three name roles)
 
 `{name: enum of deferred names, input: object}`. This is *not* an executor —
-it is an envelope, and the envelope is opened before anything judges it:
+it is an envelope, and — following the `run_runnable` precedent exactly — the
+raw call and the inner call each have jobs the other cannot do:
 
 ```
 _gated_run_tool / _gated_run_tool_async
   if tool_name == "use_tool":
-      unwrapped = _unwrap_use_tool(tool_input)     # validate against the live deferred set
-      if isinstance(unwrapped, str): return it      # readable error, nothing ran
-      tool_name, tool_input = unwrapped             # ← from here on, the INNER tool
-  ...decision, confirm card, tracking, dispatch — all on the inner name
+      unwrapped = _unwrap_use_tool(tool_input)   # validate against the live deferred set
+      if isinstance(unwrapped, str): return it    # readable error, nothing ran
+      inner_call = unwrapped                      # resolved, NOT applied yet
+  decision  ← _effective_tool_autonomy("use_tool", …) → recurses into the INNER tool
+  prompt    ← _register_confirm(RAW name/input)   # frontend segment-matching contract
+  card      ← _confirm_card_view → INNER name/input (display_name/display_input)
+  execution ← tool_name, tool_input = inner_call  # applied after approval
+  ...Console tracking, audit, dispatch — all on the inner name
 ```
 
-Because the unwrap happens at the **top of both autonomy gates**, every
-downstream consumer sees the real tool: `_confirm_decision` judges the inner
-tool's autonomy (a confirm-gated `outlook_send` still prompts; `manage_denylist
-action=list` still runs free), `_confirm_card_view` shows the inner name and
-args to the operator, `_run_builtin_tool_tracked` files the Console card and
-audit record under the inner name, and the existing per-tool handlers run
-unmodified. This is the same inner-name gating contract `run_runnable` has
-always had (`bridge_const.py` §`_READONLY_META` comment), extended to
-built-ins.
+- **Decision — inner.** `_effective_tool_autonomy("use_tool", …)` resolves the
+  wrapper and recurses, so a confirm-gated `outlook_send` still prompts and
+  `manage_denylist action=list` still runs free.
+- **Prompt — raw.** `_register_confirm` must carry the raw `use_tool`
+  name/input verbatim: the frontend attaches the Approve/Deny buttons to the
+  running tool segment by exact name match (`segment.entry.name == tc.name`,
+  set by `runspec:tool_start`). Renaming here is the documented `run_runnable`
+  bug (the `_register_confirm` comment) — the prompt never renders and the
+  call times out as a deny after `_CONFIRM_TIMEOUT_S`. (0.190.0 shipped with
+  exactly that regression — a gate-top rename; 0.190.1 restored the contract.)
+- **Card — inner.** `_confirm_card_view` unwraps, so the operator reads and
+  approves the real tool + args. A display name differing from the raw name
+  also makes the frontend render the confirm **read-only** — the same
+  mechanism that keeps `run_runnable` edits off; a defensive backend branch
+  applies any edit to the inner input (the shape the card displayed) anyway.
+- **Execution — inner.** The resolved call is applied after the gate passes,
+  so `_run_builtin_tool_tracked` files the Console card and audit record under
+  the inner name and the per-tool handlers run unmodified.
 
 `_unwrap_use_tool` only resolves names in the live deferred set — never a
 hot-kernel tool (already inline), never a runnable (that's `run_runnable`'s
@@ -120,12 +134,12 @@ job), never `use_tool` itself (no nesting).
 
 ## 5. The invariant: fail closed everywhere else
 
-Unwrapping in the gates is the designed path. Two backstops make skipping it
+Resolving in the gates is the designed path. Two backstops make skipping it
 safe rather than exploitable:
 
-- `_effective_tool_autonomy("use_tool", …)` → `"confirm"`. A wrapper that
-  somehow reaches a classifier un-unwrapped is gated by default, never
-  silently autonomous.
+- `_effective_tool_autonomy("use_tool", …)` resolves the inner tool's level;
+  an **unresolvable** wrapper (unknown/hot/nested name) classifies `"confirm"`
+  — gated by default, never silently autonomous.
 - `_run_tool_sync("use_tool", …)` → **refuses** with an error string instead
   of executing. Reaching dispatch still wrapped means a call site skipped the
   gate; executing there would run the inner tool ungated. The error is the
@@ -205,7 +219,7 @@ the cached prefix.
 | `bridge_const.py` | `_BUILTIN_META_NAMES`, `_HOT_BUILTIN_NAMES` |
 | `bridge_agent_tools.py` | `_defer_builtins_enabled()`; `_runnables_to_tools(allow, inline_builtins=False)` splits hot/deferred in the search branch |
 | `bridge_search.py` | `_deferred_builtin_tools`, `_builtin_meta_tools`, `_run_describe_builtin_tool`, `_unwrap_use_tool`, `_build_builtin_index`, `_chat_index_text` |
-| `bridge_autonomy.py` | unwrap at the top of both gates; `describe_tool` autonomous / `use_tool` confirm; dispatch branch for `describe_tool`; fail-closed refusal for `use_tool` |
+| `bridge_autonomy.py` | both gates resolve `use_tool` early, prompt under the raw name, execute the inner call post-approval; `_effective_tool_autonomy` recurses into the inner tool; `_confirm_card_view` unwraps for display; dispatch branch for `describe_tool`; fail-closed refusal for a still-wrapped `use_tool` |
 | `bridge_invoke.py` | chat turn folds `_chat_index_text()` |
 | `bridge_triggers.py` | headless turns pass `inline_builtins=True`; `_filter_headless_tools` strips `_BUILTIN_META_NAMES` |
 
