@@ -57,6 +57,7 @@ class _Stub:
     _builtin_meta_tools = Bridge._builtin_meta_tools
     _run_describe_builtin_tool = Bridge._run_describe_builtin_tool
     _unwrap_use_tool = Bridge._unwrap_use_tool
+    _preflight_builtin_input = staticmethod(Bridge._preflight_builtin_input)
     _build_builtin_index = Bridge._build_builtin_index
     _chat_index_text = Bridge._chat_index_text
     _build_catalog_index = Bridge._build_catalog_index
@@ -168,6 +169,69 @@ def test_unwrap_refuses_hot_unknown_nested_and_missing():
     assert "Error" in stub._unwrap_use_tool({"name": "nope"})
     assert "Error" in stub._unwrap_use_tool({"name": "use_tool"})
     assert "Error" in stub._unwrap_use_tool({})
+
+
+# ── use_tool inner-input preflight ────────────────────────────────────────────
+#
+# Search mode surfaces no per-tool JSON schema up front, so a model that skips
+# describe_tool used to get opaque handler errors (or silently ignored fields).
+# The unwrap now validates the inner input against the deferred tool's real
+# schema — the run_runnable _preflight_validate parallel.
+
+_RICH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string"},
+        "dest_dir": {"type": "string"},
+        "mode": {"type": "string", "enum": ["fast", "safe"]},
+        "names": {"type": "array", "items": {"type": "string", "enum": ["a", "b"]}},
+    },
+    "required": ["path", "dest_dir"],
+}
+
+
+class _RichStub(_Stub):
+    def _custom_agent_tools(self):
+        tools = super()._custom_agent_tools()
+        for t in tools:
+            if t["name"] == "outlook_inbox":
+                t["input_schema"] = dict(_RICH_SCHEMA)
+        return tools
+
+
+def test_preflight_unknown_and_missing_and_enum():
+    pf = Bridge._preflight_builtin_input
+    ok = {"path": "/a", "dest_dir": "/b"}
+    assert pf("t", _RICH_SCHEMA, ok) is None
+    err = pf("t", _RICH_SCHEMA, {**ok, "bogus": 1})
+    assert "unknown argument" in err and "bogus" in err and "path" in err
+    err = pf("t", _RICH_SCHEMA, {"path": "/a"})
+    assert "missing required" in err and "dest_dir" in err
+    err = pf("t", _RICH_SCHEMA, {**ok, "mode": "wrong"})
+    assert "must be one of" in err and "fast" in err
+    err = pf("t", _RICH_SCHEMA, {**ok, "names": ["a", "zz"]})
+    assert "invalid value" in err and "zz" in err
+
+
+def test_preflight_respects_open_and_empty_schemas():
+    pf = Bridge._preflight_builtin_input
+    open_schema = {**_RICH_SCHEMA, "additionalProperties": True}
+    assert pf("t", open_schema, {"path": "/a", "dest_dir": "/b", "extra": 1}) is None
+    assert pf("t", {}, {"anything": 1}) is None  # schemaless — nothing to check
+
+
+def test_unwrap_preflights_inner_input():
+    stub = _RichStub()
+    got = stub._unwrap_use_tool(
+        {"name": "outlook_inbox", "input": {"path": "/a", "dest_dir": "/b"}}
+    )
+    assert got == ("outlook_inbox", {"path": "/a", "dest_dir": "/b"})
+    err = stub._unwrap_use_tool({"name": "outlook_inbox", "input": {"path": "/a"}})
+    assert "missing required" in err and "describe_tool" in err
+    err = stub._unwrap_use_tool(
+        {"name": "outlook_inbox", "input": {"path": "/a", "dest_dir": "/b", "x": 1}}
+    )
+    assert "unknown argument" in err
 
 
 # ── gate integration ──────────────────────────────────────────────────────────

@@ -103,6 +103,7 @@ def test_history_tool_offered_by_custom_agent_tools():
         "_repo_tools",
         "_status_tools",
         "_memory_tools",
+        "_files_tools",
         "_action_tools",
         "_workspace_tools",
         "_exec_tools",

@@ -67,6 +67,7 @@ mode:
 | `console_status` | One tiny schema; the "what time is it / is the rota on" reflex. |
 | `search_history` | Small, read-only, used mid-conversation ("did it run? what did it output?"). |
 | memory/runbooks (`remember`, `search_memory`, `save_runbook`, `load_runbook`) | The system prompt references pinned memory; recall must be zero-hop. |
+| `list_files` (0.196.0) | Read-only browsing — the entry point of most file tasks; zero-hop so the agent finds exact paths before reaching for the deferred transfer tools. |
 | `workspace_*` (7) | **Load-bearing:** the spill envelope tells the model "the full output is in `tool-results/…`, read it with `workspace_read`/`workspace_grep`". A discovery hop between "output spilled" and "read it back" would break the console's large-output story. |
 
 Everything else in `_BUILTIN_TOOL_NAMES` is the **deferred long tail**:
@@ -124,6 +125,13 @@ _gated_run_tool / _gated_run_tool_async
   also makes the frontend render the confirm **read-only** — the same
   mechanism that keeps `run_runnable` edits off; a defensive backend branch
   applies any edit to the inner input (the shape the card displayed) anyway.
+- **Input — preflighted (0.196.0).** `_unwrap_use_tool` validates the inner
+  input against the deferred tool's real schema (unknown / missing-required /
+  enum, top level plus string-array enums) and bounces a readable error with
+  the valid shape before any confirm — the `run_runnable`
+  `_preflight_validate` parallel. Search mode surfaces no per-tool schema up
+  front, so without this a model that skipped `describe_tool` got opaque
+  handler errors or silently ignored fields.
 - **Execution — inner.** The resolved call is applied after the gate passes,
   so `_run_builtin_tool_tracked` files the Console card and audit record under
   the inner name and the per-tool handlers run unmodified.

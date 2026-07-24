@@ -164,10 +164,12 @@ class SearchMixin:
                 "name": "use_tool",
                 "description": (
                     "Run a deferred built-in console tool by name, with its "
-                    "input as described by describe_tool. The inner tool's own "
-                    "rules apply exactly as if it were called directly — "
-                    "confirm-gated tools still prompt the operator, read-only "
-                    "tools run free."
+                    "input as described by describe_tool — call describe_tool "
+                    "first; the input is validated against the tool's schema "
+                    "and an invalid call is rejected with the valid shape. The "
+                    "inner tool's own rules apply exactly as if it were called "
+                    "directly — confirm-gated tools still prompt the operator, "
+                    "read-only tools run free."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -241,15 +243,80 @@ class SearchMixin:
         inner_input = dict(inner) if isinstance(inner, dict) else {}
         if not name:
             return "Error: 'name' is required — a deferred built-in tool name (see describe_tool)."
-        deferred = {t["name"] for t in self._deferred_builtin_tools()}
-        if name not in deferred:
+        deferred = {t["name"]: t for t in self._deferred_builtin_tools()}
+        tool = deferred.get(name)
+        if tool is None:
             return (
                 f"Error: '{name}' is not a deferred built-in tool. "
                 + "Available: "
                 + ", ".join(sorted(deferred))
                 + ". (Runnables run via run_runnable; inline tools are called directly.)"
             )
+        # Pre-flight the inner input against the tool's real schema — search
+        # mode surfaces no per-tool JSON schema up front, so without this a
+        # guessed call fails opaquely in the handler (or a wrong field is
+        # silently ignored). Mirrors run_runnable's _preflight_validate: the
+        # mistake bounces in-turn with the valid shape, before any confirm.
+        err = self._preflight_builtin_input(
+            name, tool.get("input_schema") or {}, inner_input
+        )
+        if err:
+            return err
         return name, inner_input
+
+    @staticmethod
+    def _preflight_builtin_input(
+        name: str, schema: dict[str, Any], args: dict[str, Any]
+    ) -> str | None:
+        """Structural validation of a ``use_tool`` inner input against the
+        deferred tool's schema. Returns an error string the agent can read and
+        retry from, or ``None`` when the call looks valid.
+
+        Lightweight on purpose (unknown / missing-required / enum, top level
+        only — plus enums inside plain string arrays) — the handlers still
+        validate semantics. The unknown-key check is skipped when the schema
+        opts into open input via ``additionalProperties``."""
+        props = schema.get("properties") or {}
+        if not isinstance(props, dict) or not props:
+            return None  # schemaless tool — nothing to check against
+        if not schema.get("additionalProperties"):
+            unknown = [k for k in args if k not in props]
+            if unknown:
+                return (
+                    f"Error: unknown argument(s) for {name}: {', '.join(unknown)}. "
+                    f"Valid arguments: {', '.join(props)}. "
+                    "Call describe_tool for the full schema."
+                )
+        missing = [k for k in (schema.get("required") or []) if k not in args]
+        if missing:
+            return (
+                f"Error: missing required argument(s) for {name}: "
+                f"{', '.join(missing)}. Call describe_tool for the full schema."
+            )
+        for key, value in args.items():
+            spec = props.get(key)
+            if not isinstance(spec, dict):
+                continue
+            enum = spec.get("enum")
+            if enum and value not in enum:
+                return (
+                    f"Error: {name} '{key}' must be one of "
+                    f"{', '.join(map(str, enum))} (got {value!r})."
+                )
+            items = spec.get("items")
+            if (
+                isinstance(value, list)
+                and isinstance(items, dict)
+                and items.get("enum")
+            ):
+                bad = [v for v in value if v not in items["enum"]]
+                if bad:
+                    return (
+                        f"Error: {name} '{key}' contains invalid value(s): "
+                        f"{', '.join(map(str, bad))}. Valid: "
+                        f"{', '.join(map(str, items['enum']))}."
+                    )
+        return None
 
     def _runnables_for_id(self, rid: str) -> list[dict[str, Any]]:
         """Every cached runnable whose dedup id is ``rid`` (one per host that has

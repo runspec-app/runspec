@@ -8,6 +8,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.196.0] — 2026-07-23
+
+### Added
+- **`list_files` built-in agent tool.** Read-only, autonomous directory
+  listing on the local machine, a fleet host, or an **ad-hoc SSH host**
+  (reached directly by default — `source_via` only when the console can't
+  reach it; optional `source_credential`), so the agent can find exact paths
+  *before* reaching for `download_file`/`relay_file` instead of guessing.
+  Thin wrapper over the Forms path-picker's `list_dir` and the Transfer
+  dialog's cached ad-hoc browser `list_dir_adhoc`; entries carry
+  name/type/size/mtime, capped at 300 with a visible note. Kept in the
+  search-mode **hot kernel** (inline) — browsing is the entry point of most
+  file tasks. New `_FILES_TOOL_NAMES`; `_files_tools`/`_run_files_tool` in
+  `bridge_agent_tools`.
+- **`use_tool` inner-input preflight (search mode).** The deferral wrapper
+  now validates the inner input against the deferred tool's real schema —
+  unknown arguments, missing required arguments, and enum violations (top
+  level, plus enums inside plain string arrays) bounce in-turn with the valid
+  shape *before* any confirm, mirroring `run_runnable`'s
+  `_preflight_validate`. Previously a model that skipped `describe_tool` got
+  opaque handler errors or silently ignored fields. Schemas that opt into
+  open input via `additionalProperties` skip the unknown-key check.
+  `_preflight_builtin_input` in `bridge_search`.
+
+### Fixed
+- **Transfer tools claimed an ad-hoc host needs a jump.** The `download_file`
+  and `relay_file` top-level descriptions still said an ad-hoc source is
+  "reached through a configured jump" — stale since the jumpless ad-hoc
+  connect (#440) made direct the default; only the buried `source_via`
+  property said otherwise, so the agent kept inventing jump hosts for
+  directly reachable machines. Both descriptions now lead with "reached
+  directly — jump only if unreachable", the fact sits in the first sentence
+  (which is what the search-mode deferred-tools menu shows), and
+  `download_file` points at `list_files` for path discovery.
+
+
 ## [0.195.0] — 2026-07-24
 
 ### Added

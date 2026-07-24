@@ -57,6 +57,12 @@ _STATUS_TOOL_NAMES = frozenset({"console_status"})
 # prompt — like the status tool, it only reads what the operator already sees.
 _HISTORY_TOOL_NAMES = frozenset({"search_history"})
 
+# Read-only directory listing: local, a fleet host, or an ad-hoc SSH host —
+# the browse-before-transfer companion to download_file/relay_file, over the
+# same machinery the Forms path-picker and the Transfer dialog's ad-hoc
+# browser use. No side effects, so the autonomy gate runs it without a prompt.
+_FILES_TOOL_NAMES = frozenset({"list_files"})
+
 # Outlook Classic (desktop COM) agent tools. Reads are autonomous (no side
 # effects — local COM reads on the operator's box); draft/send are write actions
 # and prompt before running. Only offered when Outlook COM is available (Windows
@@ -190,6 +196,7 @@ _BUILTIN_TOOL_NAMES = (
     | _MEMORY_TOOL_NAMES
     | _STATUS_TOOL_NAMES
     | _HISTORY_TOOL_NAMES
+    | _FILES_TOOL_NAMES
     | _ACTION_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
     | _EXEC_TOOL_NAMES
@@ -201,11 +208,15 @@ _BUILTIN_TOOL_NAMES = (
 # constantly or that other machinery references directly — status + history
 # (small, read-only), memory/runbooks (the system prompt references pinned
 # memory), and the workspace tools (spilled tool results tell the model to read
-# them back via workspace_*; a discovery hop there would break that flow).
-# Everything else in _BUILTIN_TOOL_NAMES is the deferred long tail.
+# them back via workspace_*; a discovery hop there would break that flow), and
+# list_files (read-only browsing — the entry point of most file tasks, kept
+# zero-hop so the agent finds exact paths before reaching for the deferred
+# transfer tools). Everything else in _BUILTIN_TOOL_NAMES is the deferred
+# long tail.
 _HOT_BUILTIN_NAMES = (
     _STATUS_TOOL_NAMES
     | _HISTORY_TOOL_NAMES
+    | _FILES_TOOL_NAMES
     | _MEMORY_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
 )

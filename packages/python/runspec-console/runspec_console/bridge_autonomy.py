@@ -35,6 +35,7 @@ from .bridge_const import (
     _MEMORY_TOOL_NAMES,
     _STATUS_TOOL_NAMES,
     _HISTORY_TOOL_NAMES,
+    _FILES_TOOL_NAMES,
     _OUTLOOK_READ_TOOLS,
     _OUTLOOK_WRITE_TOOLS,
     _OUTLOOK_TOOL_NAMES,
@@ -101,6 +102,8 @@ class AutonomyMixin:
             return "autonomous"  # read-only status report — no side effects
         if tool_name in _HISTORY_TOOL_NAMES:
             return "autonomous"  # read-only history search — no side effects
+        if tool_name in _FILES_TOOL_NAMES:
+            return "autonomous"  # read-only directory listing — no side effects
         if tool_name in _WORKSPACE_TOOL_NAMES:
             # read/write inside the current session's workspace only — no prompt
             return "autonomous"
@@ -763,6 +766,8 @@ class AutonomyMixin:
             key = first("query", "text", "app")
         elif tool_name == "search_history":
             key = first("runnable", "host")
+        elif tool_name == "list_files":
+            key = first("path", "source_target", "host")
         elif tool_name in ("save_runbook", "load_runbook"):
             key = first("id", "name")
         else:
@@ -964,6 +969,8 @@ class AutonomyMixin:
             return self._run_status_tool(dict(tool_input or {}))
         if tool_name in _HISTORY_TOOL_NAMES:
             return self._run_history_tool(dict(tool_input or {}))
+        if tool_name in _FILES_TOOL_NAMES:
+            return self._run_files_tool(dict(tool_input or {}))
         if tool_name in _WORKSPACE_TOOL_NAMES:
             return self._run_workspace_tool(
                 tool_name,

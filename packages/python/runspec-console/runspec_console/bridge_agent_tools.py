@@ -47,6 +47,10 @@ _HISTORY_TOOL_LOG_DEFAULT_LIMIT = 3
 _HISTORY_TOOL_LOG_MAX_LIMIT = 10
 _HISTORY_TOOL_LOG_LINES = 200
 
+# Cap on entries returned by the list_files tool — a directory listing is a
+# navigation aid, not a dump; the truncation note tells the agent to narrow.
+_FILES_TOOL_MAX_ENTRIES = 300
+
 
 def _parse_dt(value: Any) -> datetime | None:
     """Parse an ISO-8601 datetime string from a tool arg into a naive local-time
@@ -553,6 +557,7 @@ class AgentToolsMixin:
                 *self._repo_tools(),
                 *self._status_tools(),
                 *self._history_tools(),
+                *self._files_tools(),
                 *self._memory_tools(),
                 *self._action_tools(),
                 *self._workspace_tools(),
@@ -633,12 +638,15 @@ class AgentToolsMixin:
         download = {
             "name": "download_file",
             "description": (
-                "Download a file from a remote host to the local machine. The source "
-                "is either a configured fleet host (host) or an ad-hoc host not in "
-                "the fleet, reached through a configured jump (source_via + "
-                "source_target). Optionally filter it on the remote host first — only "
-                "the matching output is transferred, so pulling a few relevant lines "
-                "out of a multi-gigabyte log is cheap."
+                "Download a file to local from a fleet host or an ad-hoc SSH "
+                "host (reached directly — jump only if unreachable). "
+                "The source is a configured fleet host "
+                "(host), or source_target for an ad-hoc host not in the fleet "
+                "(add source_via only when the console cannot reach it "
+                "directly). Use list_files first to find the exact path. "
+                "Optionally filter it on the remote host first — only the "
+                "matching output is transferred, so pulling a few relevant "
+                "lines out of a multi-gigabyte log is cheap."
             ),
             "input_schema": {
                 "type": "object",
@@ -687,11 +695,13 @@ class AgentToolsMixin:
         relay = {
             "name": "relay_file",
             "description": (
-                "Relay a file from one host to another through the console, "
-                "optionally filtering it on the source host first. The source is "
-                "either a configured fleet host (source_host) or an ad-hoc host "
-                "reached via a jump (source_via + source_target, with an optional "
-                "source_credential for password auth)."
+                "Relay a file between hosts — source may be a fleet or ad-hoc "
+                "SSH host (reached directly; jump only if unreachable). "
+                "The source is a configured fleet host (source_host), or "
+                "source_target for an "
+                "ad-hoc host (source_via only when the console cannot reach it "
+                "directly; optional source_credential for password auth). "
+                "Optionally filter it on the source host first."
             ),
             "input_schema": {
                 "type": "object",
@@ -730,6 +740,7 @@ class AgentToolsMixin:
             *self._repo_tools(),
             *self._status_tools(),
             *self._history_tools(),
+            *self._files_tools(),
             *self._memory_tools(),
             *self._action_tools(),
             *self._workspace_tools(),
@@ -2031,6 +2042,116 @@ class AgentToolsMixin:
             if len(lines) > len(tail):
                 out["logTruncated"] = f"last {len(tail)} of {len(lines)} lines"
         return out
+
+    def _files_tools(self) -> list[dict[str, Any]]:
+        """Schema for the read-only ``list_files`` tool — browse a directory on
+        the local machine, a fleet host, or an ad-hoc SSH host, so the agent
+        can find exact paths before reaching for download_file/relay_file.
+        Reuses the Forms path-picker machinery (``list_dir``) and the Transfer
+        dialog's cached ad-hoc browser (``list_dir_adhoc``)."""
+        remote = [h["name"] for h in self._hosts if h.get("ssh")]
+        cred_ids = [str(c.get("id")) for c in self._credentials if c.get("id")]
+        props: dict[str, Any] = {
+            "path": {
+                "type": "string",
+                "description": (
+                    "Absolute directory to list. Omit for the connecting "
+                    "user's home directory."
+                ),
+            },
+            "host": {
+                "type": "string",
+                "enum": ["local", *remote],
+                "description": (
+                    "Fleet host to list on (or 'local', the default). Omit "
+                    "when listing an ad-hoc host via source_target."
+                ),
+            },
+            "source_target": {
+                "type": "string",
+                "description": (
+                    "Hostname of an ad-hoc host NOT in the fleet. The console "
+                    "connects to it directly unless source_via is also set."
+                ),
+            },
+            "dirs_only": {
+                "type": "boolean",
+                "description": "Only list directories.",
+            },
+        }
+        if remote:
+            props["source_via"] = {
+                "type": "string",
+                "enum": remote,
+                "description": (
+                    "Optional configured jump host to tunnel to source_target "
+                    "through — set only when the console can't reach it "
+                    "directly. Omit for a directly reachable host."
+                ),
+            }
+        if cred_ids:
+            props["source_credential"] = {
+                "type": "string",
+                "enum": cred_ids,
+                "description": (
+                    "Saved credential id providing the SSH password for the "
+                    "ad-hoc host. Its secret is read from secure storage at "
+                    "connect time — you never see the value."
+                ),
+            }
+        return [
+            {
+                "name": "list_files",
+                "description": (
+                    "List a directory on local, a fleet host, or an ad-hoc SSH "
+                    "host (reached directly — jump only if unreachable). "
+                    "Read-only; returns name/type/size/mtime per entry. Use it "
+                    "to find exact paths before download_file or relay_file."
+                ),
+                "input_schema": {"type": "object", "properties": props},
+            }
+        ]
+
+    def _run_files_tool(self, ti: dict[str, Any]) -> str:
+        """Execute ``list_files`` — route to the right lister (local/fleet via
+        ``list_dir``, ad-hoc via ``list_dir_adhoc``) and return a bounded JSON
+        listing. Read-only; the ad-hoc connection is cached by the same
+        browse-session cache the Transfer dialog uses."""
+        path = str(ti.get("path") or "")
+        host = str(ti.get("host") or "").strip()
+        target = str(ti.get("source_target") or "").strip()
+        via = str(ti.get("source_via") or "").strip()
+        dirs_only = bool(ti.get("dirs_only"))
+        if host and target:
+            return "Error: pass host (fleet) OR source_target (ad-hoc), not both."
+        if via and not target:
+            return "Error: source_via needs source_target (an ad-hoc host)."
+        if target:
+            res = self.list_dir_adhoc(
+                via,
+                target,
+                path,
+                credential_id=str(ti.get("source_credential") or "") or None,
+                dirs_only=dirs_only,
+            )
+        else:
+            res = self.list_dir(host or "local", path, dirs_only=dirs_only)
+        if res.get("error"):
+            return f"Error: {res['error']}"
+        entries = res.get("entries") or []
+        shown = entries[:_FILES_TOOL_MAX_ENTRIES]
+        payload: dict[str, Any] = {
+            "cwd": res.get("cwd", ""),
+            "count": len(entries),
+            "entries": shown,
+        }
+        if res.get("truncated") or len(entries) > len(shown):
+            payload["truncated"] = True
+            payload["note"] = (
+                f"showing {len(shown)} of {len(entries)}+ entries — list a "
+                "deeper path or set dirs_only to narrow"
+            )
+        return json.dumps(payload, default=str)
 
     def _workspace_tools(self) -> list[dict[str, Any]]:
         """Schemas for the per-session workspace file tools. The workspace is a
