@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
+import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider } from 'antd'
+import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
@@ -67,24 +67,43 @@ const SOUND_CATEGORIES: { key: string; label: string; def: string }[] = [
   { key: 'completion_stopped', label: 'Run stopped', def: 'synth:stopped' },
   { key: 'reply', label: 'Agent reply ready (unfocused)', def: 'synth:reply' },
   { key: 'message', label: 'Chat / helpdesk message', def: 'synth:message' },
+  { key: 'host_up', label: 'SSH host connected', def: 'synth:host_up' },
+  { key: 'host_down', label: 'SSH host dropped', def: 'synth:host_down' },
+  { key: 'room_up', label: 'Room reconnected', def: 'synth:room_up' },
+  { key: 'room_down', label: 'Room connection dropped', def: 'synth:room_down' },
 ]
 // Valid winsound SND_ALIAS names offered as alternatives to the synth set.
 const SYSTEM_SOUND_ALIASES = ['SystemAsterisk', 'SystemExclamation', 'SystemHand', 'SystemQuestion', 'SystemDefault']
-const soundOptions = (def: string) => [
+// Sentinel option value that opens the native file picker instead of being a token.
+const PICK_FILE = '__pick_file__'
+const fileBasename = (token: string) => token.slice('file:'.length).split(/[\\/]/).pop() || token
+const soundOptions = (def: string, current: string) => [
   { value: def, label: 'Default (synthesized)' },
   ...SYSTEM_SOUND_ALIASES.map(a => ({ value: `system:${a}`, label: `Windows: ${a}` })),
+  ...(current.startsWith('file:') ? [{ value: current, label: `File: ${fileBasename(current)}` }] : []),
+  { value: PICK_FILE, label: 'Custom file… (.wav / .mp3)' },
   { value: 'off', label: 'Off' },
 ]
 
 export function SoundsTab() {
   const [enabled, setEnabled] = useState(true)
   const [choices, setChoices] = useState<Record<string, string>>({})
+  const [volume, setVolume] = useState(100)
+  const [pack, setPack] = useState('')
+  const [packInfo, setPackInfo] = useState<{ exists: boolean; covered: Record<string, string> } | null>(null)
   const [confirmNotif, setConfirmNotif] = useState(true)
   const [roomNotif, setRoomNotif] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
   const [test, setTest] = useState<{ toast_available: boolean; toast_reason: string; sound_available: boolean; window_found: boolean } | null>(null)
+
+  const loadPackInfo = (dir: string) => {
+    if (!dir) { setPackInfo(null); return }
+    bridge.sound_pack_info(dir)
+      .then(info => setPackInfo({ exists: info.exists, covered: info.covered }))
+      .catch(() => setPackInfo(null))
+  }
 
   useEffect(() => {
     bridge.get_config().then(cfg => {
@@ -97,17 +116,41 @@ export function SoundsTab() {
         ch[c.key] = typeof v === 'string' && v ? v : c.def
       }
       setChoices(ch)
+      setVolume(typeof sounds.volume === 'number' ? Math.max(0, Math.min(100, sounds.volume)) : 100)
+      const p = typeof sounds.pack === 'string' ? sounds.pack : ''
+      setPack(p)
+      loadPackInfo(p)
       setConfirmNotif(con.confirm_notifications !== false)
       setRoomNotif(con.room_notifications !== false)
     })
   }, [])
+
+  // A row's Select change: the "Custom file…" sentinel opens the native picker
+  // (cancel keeps the previous choice); anything else is the token itself.
+  const handleChoice = (key: string, v: string) => {
+    if (v !== PICK_FILE) {
+      setChoices(prev => ({ ...prev, [key]: v }))
+      return
+    }
+    bridge.browse_sound_file().then(path => {
+      if (path) setChoices(prev => ({ ...prev, [key]: `file:${path}` }))
+    }).catch(() => {})
+  }
+
+  const handlePickPack = () => {
+    bridge.browse_folder().then(dir => {
+      if (!dir) return
+      setPack(dir)
+      loadPackInfo(dir)
+    }).catch(() => {})
+  }
 
   const handleSave = async () => {
     setSaving(true)
     try {
       const cfg = await bridge.get_config()
       const con: Record<string, unknown> = { ...((cfg.console as Record<string, unknown>) ?? {}) }
-      con.sounds = { enabled, ...choices }
+      con.sounds = { enabled, volume, ...(pack ? { pack } : {}), ...choices }
       con.confirm_notifications = confirmNotif
       con.room_notifications = roomNotif
       await bridge.save_config({ ...cfg, console: con })
@@ -137,21 +180,61 @@ export function SoundsTab() {
         Audio cues + desktop alerts so you stay aware while the console is minimized or in the background.
         Sounds play from the app, so they work even when minimized. The desktop <em>toast</em> needs the
         optional notifications extra (<Typography.Text code>pip install runspec-console[notifications]</Typography.Text>),
-        but the <em>taskbar flash</em> and <em>sounds</em> do not.
+        but the <em>taskbar flash</em> and <em>sounds</em> do not. Each category can use its own
+        <Typography.Text code>.wav</Typography.Text>/<Typography.Text code>.mp3</Typography.Text> file, or point a
+        <em>sound pack</em> folder of category-named files at the whole set. Volume applies to synthesized and
+        file cues; Windows system aliases follow the system mixer. Connection cues (host/room up &amp; down) are
+        debounced — a flapping host won't chime more than once per half minute.
       </Typography.Paragraph>
 
       {row('Enable sounds', <Switch checked={enabled} onChange={setEnabled} />)}
+      {row('Volume (synthesized + file cues)', (
+        <Slider
+          min={0} max={100} disabled={!enabled}
+          value={volume} onChange={setVolume}
+          style={{ width: 230, margin: '4px 6px' }}
+        />
+      ))}
+      {/* Sound pack: a folder of category-named files (confirm.wav, host_down.mp3, …)
+          applied to any category left on its default — one pick per personality. */}
+      {row('Sound pack folder', (
+        <Space size={4}>
+          {pack && (
+            <Typography.Text style={{ fontSize: 11, maxWidth: 150, fontFamily: 'monospace' }} ellipsis={{ tooltip: pack }}>
+              {pack}
+            </Typography.Text>
+          )}
+          <Button size="small" disabled={!enabled} onClick={handlePickPack}>Browse…</Button>
+          {pack && <Button size="small" type="text" onClick={() => { setPack(''); setPackInfo(null) }}>Clear</Button>}
+        </Space>
+      ))}
+      {pack && packInfo && (
+        <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: -6 }}>
+          {packInfo.exists
+            ? `Covers ${Object.keys(packInfo.covered).length} of ${SOUND_CATEGORIES.length} categories (files named ${'confirm.wav'}, ${'host_down.mp3'}, …). Explicit picks below still win.`
+            : 'Folder not found on this machine.'}
+        </Typography.Paragraph>
+      )}
       <Divider style={{ margin: '8px 0' }} />
       {SOUND_CATEGORIES.map(c => row(
         c.label,
-        <Select
-          size="small"
-          disabled={!enabled}
-          value={choices[c.key] ?? c.def}
-          onChange={v => setChoices(prev => ({ ...prev, [c.key]: v }))}
-          options={soundOptions(c.def)}
-          style={{ width: 230 }}
-        />,
+        <Space size={4}>
+          <Select
+            size="small"
+            disabled={!enabled}
+            value={choices[c.key] ?? c.def}
+            onChange={v => handleChoice(c.key, v)}
+            options={soundOptions(c.def, choices[c.key] ?? c.def)}
+            popupMatchSelectWidth={false}
+            style={{ width: 230 }}
+          />
+          <Tooltip title="Preview this cue (plays the current selection, saved or not)">
+            <Button
+              size="small" type="text" icon={<SoundOutlined />}
+              onClick={() => bridge.test_sound(c.key, choices[c.key] ?? c.def).catch(() => {})}
+            />
+          </Tooltip>
+        </Space>,
       ))}
 
       <Divider style={{ margin: '12px 0 8px' }} />

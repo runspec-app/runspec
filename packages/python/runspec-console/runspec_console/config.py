@@ -850,9 +850,10 @@ def room_notifications_enabled() -> bool:
 
 
 # Built-in default sound mapping (category -> token). A token is one of
-# "synth:<name>" (bundled wav), "system:<Alias>" (Windows system sound), or
-# "off". The Settings UI lets the operator override per category; an unset or
-# garbage value falls back to these. Kept here so sounds.py stays config-free.
+# "synth:<name>" (bundled wav), "system:<Alias>" (Windows system sound),
+# "file:<path>" (an operator's own .wav/.mp3), or "off". The Settings UI lets
+# the operator override per category; an unset or garbage value falls back to
+# these. Kept here so sounds.py stays config-free.
 DEFAULT_SOUND_MAP = {
     "confirm": "synth:confirm",
     "trigger": "synth:trigger",
@@ -861,6 +862,10 @@ DEFAULT_SOUND_MAP = {
     "completion_stopped": "synth:stopped",
     "reply": "synth:reply",
     "message": "synth:message",
+    "host_up": "synth:host_up",
+    "host_down": "synth:host_down",
+    "room_up": "synth:room_up",
+    "room_down": "synth:room_down",
 }
 
 
@@ -965,12 +970,41 @@ def sound_enabled() -> bool:
 
 def sound_choice(category: str) -> str:
     """The configured sound token for a category (`"synth:<name>"` /
-    `"system:<Alias>"` / `"off"`), falling back to the built-in default. Never
-    raises; an unknown/garbage value yields the default for that category."""
+    `"system:<Alias>"` / `"file:<path>"` / `"off"`), falling back to the
+    built-in default. Never raises; an unknown/garbage value yields the default
+    for that category."""
+    val = sound_choice_set(category)
+    return val if val is not None else DEFAULT_SOUND_MAP.get(category, "off")
+
+
+def sound_choice_set(category: str) -> str | None:
+    """The *explicitly configured* token for a category, or ``None`` when the
+    operator hasn't set one. The distinction matters for sound packs: an
+    explicit token (including ``"off"``) wins over the pack; an unset category
+    falls through to the pack file, then the built-in default."""
     val = sounds_config().get(category)
     if isinstance(val, str) and val.strip():
         return val.strip()
-    return DEFAULT_SOUND_MAP.get(category, "off")
+    return None
+
+
+def sound_volume() -> int:
+    """`[console.sounds] volume` — 0–100, clamped, default 100. Applies to the
+    synthesized + file/pack cues (played via MCI); Windows `system:` aliases
+    have no per-sound volume."""
+    val = sounds_config().get("volume")
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return 100
+    return max(0, min(100, int(val)))
+
+
+def sound_pack() -> str:
+    """`[console.sounds] pack` — a folder of category-named audio files
+    (`confirm.wav`, `host_down.mp3`, …) applied for any category without an
+    explicit token. Machine-local (a filesystem path — never synced). `""`
+    when unset."""
+    val = sounds_config().get("pack")
+    return val.strip() if isinstance(val, str) else ""
 
 
 def _toml_str(v: str) -> str:

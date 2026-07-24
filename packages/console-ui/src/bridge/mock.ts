@@ -671,6 +671,8 @@ export const mockApi: BridgeApi = {
   save_config: async (data) => { console.log('[mock] save_config', data) },
 
   test_notification: async () => ({ toast_available: false, toast_reason: 'mock', sound_available: false, window_found: false }),
+  test_sound: async () => false,
+  sound_pack_info: async (path?: string) => ({ dir: path ?? '', exists: false, covered: {}, categories: [] }),
 
   get_mailbox: async () => ({ address: 'helpdesk@corp.com', folder: 'Tickets/Open', label: 'Helpdesk', once_per_thread: true }),
 
@@ -1091,6 +1093,7 @@ export const mockApi: BridgeApi = {
   browse_ssh_binary: async () => '',
   browse_key_file: async () => '',
   browse_folder: async () => '',
+  browse_sound_file: async () => '',
 
   // Mirrors the Python bridge's gate round-trip: send_chat parks a resolver
   // keyed by request_id; resolve_tool_confirmation (called by the UI's

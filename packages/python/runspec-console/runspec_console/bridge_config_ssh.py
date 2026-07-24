@@ -1016,6 +1016,31 @@ class ConfigSshMixin:
             chosen = str(result)
         return _normalize_path(chosen)
 
+    def browse_sound_file(self) -> str:
+        """Open a native file picker filtered to audio cues (.wav/.mp3); returns
+        the path or ''. Used by Settings → Notifications to point a sound
+        category at the operator's own clip. Path normalised to forward slashes
+        for a consistent UI / config representation."""
+        import webview
+
+        windows = getattr(webview, "windows", None) or []
+        if not windows:
+            return ""
+        try:
+            result = windows[0].create_file_dialog(
+                webview.FileDialog.OPEN,
+                file_types=("Audio files (*.wav;*.mp3)",),
+            )
+        except Exception:
+            return ""
+        if not result:
+            return ""
+        if isinstance(result, (list, tuple)):
+            chosen = str(result[0]) if result else ""
+        else:
+            chosen = str(result)
+        return _normalize_path(chosen)
+
     def browse_folder(self) -> str:
         """Open a native folder picker; returns the chosen directory or ''.
 

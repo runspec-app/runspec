@@ -159,6 +159,12 @@ class Bridge(
         # can await a transfer's outcome. Bounded; oldest entries are evicted.
         self._recent_transfer_results: dict[str, dict[str, Any]] = {}
         self._connected_cache: dict[str, bool] = {}  # host name → last known state
+        # Debounce gate for the host_up/host_down + room_up/room_down audio cues:
+        # first observation silent, flips cue, per-key cooldown so a flapping
+        # host can't become a metronome. See sounds.ConnectionCueGate.
+        from . import sounds as _sounds
+
+        self._conn_cue_gate = _sounds.ConnectionCueGate()
         # Real remote log dirs per venv runspec path (asked of the remote, cached
         # for the session — they don't move). Avoids guessing the dir from the
         # binary path, which is wrong for pipx / ~/.local / system installs.

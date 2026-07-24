@@ -8,6 +8,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.200.0] — 2026-07-24
+
+### Added
+- **Custom sound files + sound packs.** A sound category can now point at the
+  operator's own audio clip: a new `file:<path>` token (`.wav` **or** `.mp3`)
+  joins `synth:`/`system:`/`off`, picked via a native file dialog in
+  Settings → Notifications (new bridge `browse_sound_file`). A **sound pack**
+  (`[console.sounds] pack = "<dir>"`) maps a whole folder of category-named
+  files (`confirm.wav`, `host_down.mp3`, …) in one pick — resolution order is
+  explicit token (an explicit `off` still silences) → pack file → built-in
+  default (`sounds.pack_lookup`/`pack_coverage`, `config.sound_choice_set`).
+  Settings shows the pack's coverage (`sound_pack_info`) and every category row
+  gains a ▶ preview button that plays the row's *unsaved* selection
+  (`test_sound`). `file:` paths and the pack folder are machine-local — a
+  config seed should stick to `synth:`/`system:`/`off` tokens.
+- **Connection-awareness cues.** Four new sound categories:
+  `host_up`/`host_down` (an SSH host's refresh-loop probe flips its connected
+  state) and `room_up`/`room_down` (the active chat/helpdesk room drops or
+  comes back). All are debounced through the new
+  `sounds.ConnectionCueGate` — first observation silent (no startup chorus),
+  cues only on a genuine flip, ≥30 s per-key cooldown so a flapping host can't
+  become a metronome. Hooks: `_probe_one` (unattended flips only — interactive
+  test/copy-key flows already have visual feedback) and the room supervisor's
+  connect/drop dispatches.
+
+### Changed
+- **MP3 + per-sound volume via MCI.** File-based cues (bundled synth,
+  `file:`, packs) now play through the Windows MCI API (`winmm` via stdlib
+  `ctypes`, still zero dependencies): async, mp3-capable, and honouring a new
+  `[console.sounds] volume` (0–100, Settings slider) — something `winsound`
+  could not do. `system:` aliases stay on `winsound` (no per-sound volume);
+  `winsound` remains the fallback for wav if an MCI open fails.
+- **Richer default cues.** The bundled synthesized set is regenerated
+  (`sounds/_generate.py`) from single short plinks into layered motifs —
+  sweeps, chords, harmonic tails (~0.3–0.7 s) — so the cues read as one
+  console voice instead of isolated beeps, plus four new cues for the
+  connection categories. Still fully synthesized in-repo; no licensing
+  exposure.
+
 ## [0.199.0] — 2026-07-24
 
 ### Changed

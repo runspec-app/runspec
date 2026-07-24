@@ -657,6 +657,10 @@ def _supervisor_stub():
     s._publish_catalog = lambda spec, source, *, force=False: s.published.append(
         spec["room"]
     )
+    s.cues: list[tuple[str, str, bool]] = []
+    s._connection_cue = lambda kind, name, connected: s.cues.append(
+        (kind, name, connected)
+    )
     return s
 
 

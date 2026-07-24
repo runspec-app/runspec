@@ -74,7 +74,7 @@ work.
 | `[config_sync]` | `url`, `ref`, `credential_id`, `subpath`/`layers`, `preserve` | the credential secret (keyring) | **Bootstraps live updates:** the package ships *where to pull from*, so a reachable install can immediately top up over git. See §7 for the `last_*` interaction. |
 | `[ssh]` | `proxy`, `identityFile`, connection tuning | private key material (on disk / keyring) | Fleet-wide SSH defaults. |
 | `[console]` notifications | `confirm_notifications`, `room_notifications` | — | Existing booleans. |
-| `[console.sounds]` | `enabled`, per-category tokens | — | Existing table (`DEFAULT_SOUND_MAP`). |
+| `[console.sounds]` | `enabled`, `volume`, per-category tokens | `pack` + `file:` tokens (machine-local filesystem paths) | Existing table (`DEFAULT_SOUND_MAP`). A seed should stick to `synth:`/`system:`/`off` tokens — `file:` paths and the `pack` folder are machine-local. |
 | collection files | `runspec_hosts.toml`, `runspec_groups.toml`, `runspec_credentials.toml` (metadata), `runspec_runbooks.toml`, … | credential secrets (keyring) | Seeded by identity-merge, same as a git pull; an operator's own entries survive. |
 
 **`[config_sync]` as bootstrap is the elegant bit.** The seed carries the git

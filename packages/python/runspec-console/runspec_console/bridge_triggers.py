@@ -559,6 +559,10 @@ class TriggersMixin:
                 "runspec:room_connection",
                 {"room": room, "host": host, "connected": True, "queue": queue},
             )
+            # Only the active room holds a connection, so any flip here is the
+            # one the operator cares about. First connect of the session is
+            # silent (gate); a REconnect after a drop cues room_up.
+            self._connection_cue("room", room, True)
             # Wait until the connection drops or we're told to stop (poll so stop
             # stays responsive).
             while not self._chat_stop.is_set() and not closed.wait(0.5):
@@ -576,6 +580,7 @@ class TriggersMixin:
                 "runspec:room_connection",
                 {"room": room, "host": host, "connected": False, "queue": queue},
             )
+            self._connection_cue("room", room, False)
             uptime = time.monotonic() - connected_at
             if self._chat_stop.is_set():
                 logger.debug("chat: %r closed on stop() after %.0fs up", room, uptime)

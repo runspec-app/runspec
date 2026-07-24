@@ -514,6 +514,10 @@ class InternalsMixin:
         result = self._check_connected(h)
         with self._lock:
             self._connected_cache[h["name"]] = result
+        # Unattended connection flips are exactly what audio awareness is for —
+        # the interactive flows (test host, copy key) already have visual
+        # feedback, so only the refresh-loop probe cues.
+        self._connection_cue("host", h["name"], result)
 
     def _discover_one(self, h: dict[str, Any]) -> list[dict[str, Any]]:
         """One host's runnable discovery (a refresh-cycle worker task). Returns the

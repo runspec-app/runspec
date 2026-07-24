@@ -932,6 +932,11 @@ export interface BridgeApi {
   // available (Settings → Sounds & Notifications). window_found surfaces the
   // flash/focus title-match prerequisite.
   test_notification: () => Promise<{ toast_available: boolean; toast_reason: string; sound_available: boolean; window_found: boolean }>
+  // Preview one sound category (Settings row ▶). token plays the row's unsaved
+  // selection ("synth:…" / "system:…" / "file:…"); omitted → the saved cue.
+  test_sound: (category: string, token?: string | null) => Promise<boolean>
+  // Coverage report for a sound-pack folder: which categories it has files for.
+  sound_pack_info: (path?: string) => Promise<{ dir: string; exists: boolean; covered: Record<string, string>; categories: string[] }>
   create_schedule: (data: Record<string, unknown>) => Promise<void>
   // Replace a schedule in place (edit dialog, inline enable/disable). Keeps the id.
   update_schedule: (id: string, data: Record<string, unknown>) => Promise<void>
@@ -1187,6 +1192,7 @@ export interface BridgeApi {
   browse_ssh_binary: () => Promise<string>
   browse_key_file: () => Promise<string>
   browse_folder: () => Promise<string>
+  browse_sound_file: () => Promise<string>
   minimize_window: () => Promise<void>
   toggle_maximize_window: () => Promise<void>
   close_window: () => Promise<void>

@@ -290,6 +290,56 @@ class AutonomyMixin:
             logger.debug("play sound failed (category=%s)", category, exc_info=True)
             return False
 
+    def _connection_cue(self, kind: str, name: str, connected: bool) -> None:
+        """Audio cue for a host/room connection flip, debounced through the
+        ConnectionCueGate (first observation silent, per-key cooldown). ``kind``
+        is ``"host"`` or ``"room"`` → categories ``host_up``/``host_down`` /
+        ``room_up``/``room_down``. Never raises — called from probe workers and
+        room threads."""
+        try:
+            if not self._conn_cue_gate.note(
+                f"{kind}:{name}", connected, time.monotonic()
+            ):
+                return
+            self._play_sound(f"{kind}_{'up' if connected else 'down'}")
+        except Exception:
+            logger.debug("connection cue failed (%s %s)", kind, name, exc_info=True)
+
+    def test_sound(self, category: str, token: str | None = None) -> bool:
+        """Preview a cue from Settings: play ``token`` if given (the row's
+        unsaved selection), else the category's currently-effective cue. Forced
+        past the master toggle so previews work while sounds are disabled."""
+        try:
+            if category not in sounds.CATEGORIES:
+                return False
+            return sounds.play(category, force=True, token=token or None)
+        except Exception:
+            return False
+
+    def sound_pack_info(self, path: str = "") -> dict[str, Any]:
+        """Coverage report for a sound-pack folder (``path``, or the configured
+        pack when blank): which categories it provides files for, so the
+        Settings UI can show "covers N of M" before saving."""
+        try:
+            d = (path or "").strip() or config_mod.sound_pack()
+            from pathlib import Path as _Path
+
+            exists = bool(d) and _Path(d).is_dir()
+            covered = sounds.pack_coverage(d) if exists else {}
+            return {
+                "dir": d,
+                "exists": exists,
+                "covered": covered,
+                "categories": list(sounds.CATEGORIES),
+            }
+        except Exception:
+            return {
+                "dir": path,
+                "exists": False,
+                "covered": {},
+                "categories": list(sounds.CATEGORIES),
+            }
+
     def _notify_confirm(
         self, tool_name: str, tool_input: dict[str, Any], level: str
     ) -> None:
