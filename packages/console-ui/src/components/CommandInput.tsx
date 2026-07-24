@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState }
 import { Button, Tooltip, message } from 'antd'
 import { SendOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
 import type { Runnable, Runbook } from '../bridge'
-import { ThemeContext } from '../ThemeContext'
+import { ThemeContext, useAccent } from '../ThemeContext'
 
 interface SlashItem {
   topRunnable: Runnable   // top-level runnable (host/group context)
@@ -72,6 +72,7 @@ function flattenToSlashItems(runnables: Runnable[]): SlashItem[] {
 
 export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, onOpenRunbook, onSendChat, activeChatId, onStopChat, history, autoSwitch, onToggleAutoSwitch }: CommandInputProps) {
   const isDark = useContext(ThemeContext)
+  const accent = useAccent()
   // Draft persistence: restore a half-typed prompt across tab switches and app
   // restarts (localStorage), so an in-progress message is never lost. Cleared on
   // send (setValue('') writes through below).
@@ -292,7 +293,7 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
   const inputText = isDark ? '#d4d4d4' : '#222'
   const dimText = isDark ? '#777' : '#999'
   const groupText = isDark ? '#666' : '#888'
-  const nameCol = isDark ? '#4fc1ff' : '#0958d9'
+  const nameCol = accent
   const subCol = isDark ? '#89d4f5' : '#1677ff'
 
   return (
@@ -410,7 +411,7 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
           placeholder="Type / for runnables, $ for runbooks, or ask the assistant..."
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
-            color: inputText, fontSize: 14, resize: 'none',
+            color: inputText, fontSize: 14, resize: 'none', fontFamily: 'monospace',
             lineHeight: 1.5, minHeight: '42px', overflowY: 'auto',
           }}
         />
@@ -427,7 +428,7 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
                 style={{
                   padding: '2px 4px', height: 20, width: 24,
                   color: autoSwitch
-                    ? (isDark ? '#4fc1ff' : '#0958d9')
+                    ? accent
                     : (isDark ? '#444' : '#ccc'),
                 }}
               />

@@ -4,7 +4,7 @@ import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } fr
 import dayjs from 'dayjs'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
-import { useIsDark } from '../ThemeContext'
+import { useIsDark, useAccent, withAlpha } from '../ThemeContext'
 import { PathInput } from './PathInput'
 
 const { Text } = Typography
@@ -831,6 +831,7 @@ function RunnableCard({ runnable, hosts, onClick }: {
   onClick: () => void
 }) {
   const isDark = useIsDark()
+  const accent = useAccent()
   const [hovered, setHovered] = useState(false)
 
   const hostObj = hosts.find(h => h.name === runnable.host)
@@ -842,10 +843,10 @@ function RunnableCard({ runnable, hosts, onClick }: {
   const isInstant = argCount === 0 && subCount === 0
 
   const border = hovered
-    ? (isDark ? '#4fc1ff' : '#1677ff')
+    ? accent
     : (isDark ? '#2a2a2a' : '#e0e0e0')
   const bg = hovered
-    ? (isDark ? 'rgba(79,193,255,0.04)' : 'rgba(22,119,255,0.03)')
+    ? withAlpha(accent, isDark ? 0.04 : 0.03)
     : (isDark ? '#141414' : '#fafafa')
 
   return (

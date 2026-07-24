@@ -7,6 +7,69 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* Theme variables — App.tsx stamps data-theme on <html> and keeps --rs-accent
+   in sync with the (possibly white-labelled) accent colour. */
+:root {
+  --rs-accent: #4fc1ff;
+  --rs-hover: rgba(255, 255, 255, 0.05);
+  --rs-scroll-thumb: #3a3a3a;
+  --rs-scroll-thumb-hover: #4a4a4a;
+}
+html[data-theme='light'] {
+  --rs-hover: rgba(0, 0, 0, 0.04);
+  --rs-scroll-thumb: #c9c9c9;
+  --rs-scroll-thumb-hover: #b0b0b0;
+}
+
+/* Thin, theme-aware scrollbars everywhere (standard properties + webkit
+   fallback for older engines — modern Chromium prefers the standard ones). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rs-scroll-thumb) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--rs-scroll-thumb);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--rs-scroll-thumb-hover); }
+
+/* Sidebar host rows + group headers: hover feedback via CSS (no re-renders).
+   The selected row sets an inline background, which wins over this rule. */
+.rs-host-row:hover { background: var(--rs-hover); }
+.rs-group-header:hover { background: var(--rs-hover); }
+
+/* Top nav tabs (raw <button>s — base look lives here so :hover/:focus work). */
+.rs-nav-tab {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+.rs-nav-tab:hover { background: var(--rs-hover); }
+.rs-nav-tab:focus-visible {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Soft entrance when a tab becomes visible. The mounted views toggle
+     display:none → visible, which restarts the animation — no JS needed. */
+  .rs-view { animation: rs-view-fade 140ms ease; }
+
+  /* Gentle attention pulse (e.g. the footer room indicator while connecting). */
+  .rs-pulse { animation: rs-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes rs-view-fade {
+  from { opacity: 0.55; transform: translateY(2px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes rs-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
 /* Schedules tab — dim a disabled (paused) schedule row so it reads as inactive. */
 .rs-schedule-disabled td {
   opacity: 0.55;

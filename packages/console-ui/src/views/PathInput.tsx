@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { AutoComplete, Button, Modal, List, Tag, Typography, Tooltip, Spin, Segmented, Checkbox, Input } from 'antd'
 import { FolderOpenOutlined, FolderFilled, FileOutlined, ArrowUpOutlined, HomeOutlined } from '@ant-design/icons'
 import { bridge, type DirEntry, type DirListing } from '../bridge'
+import { useAccent } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -152,6 +153,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
   onPickMany?: (paths: string[]) => void
   onClose: () => void
 }) {
+  const accent = useAccent()
   const [listing, setListing] = useState<DirListing | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -284,7 +286,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
             <span key={c.path} style={{ display: 'flex', alignItems: 'center' }}>
               {i > 0 && <span style={{ color: '#888', margin: '0 2px' }}>{sep}</span>}
               <Text
-                style={{ fontFamily: 'monospace', fontSize: 12, cursor: 'pointer', color: '#4fc1ff' }}
+                style={{ fontFamily: 'monospace', fontSize: 12, cursor: 'pointer', color: accent }}
                 onClick={() => load(c.path, asSvc)}
               >
                 {c.label}

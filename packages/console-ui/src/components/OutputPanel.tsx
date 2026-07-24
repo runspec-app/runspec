@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Checkbox, Input, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
-import { useIsDark, textColor } from '../ThemeContext'
+import { useIsDark, textColor, useAccent } from '../ThemeContext'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
@@ -50,6 +50,7 @@ interface CardTheme {
 }
 function useCardTheme(): CardTheme {
   const isDark = useIsDark()
+  const accent = useAccent()
   return {
     isDark,
     cardBg: isDark ? '#141414' : '#ffffff',
@@ -67,7 +68,7 @@ function useCardTheme(): CardTheme {
     codeBg: isDark ? '#141414' : '#f5f5f5',
     toolBg: isDark ? '#1a1a1a' : '#f5f6f8',
     toolBorder: isDark ? '#2a2a2a' : '#e3e3e3',
-    link: isDark ? '#4fc1ff' : '#0958d9',
+    link: accent,
     sub: isDark ? '#9ab' : '#5a6b7b',
   }
 }

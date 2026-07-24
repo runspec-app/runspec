@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.198.0] — 2026-07-24
+
+### Changed
+- **Console UI visual polish** (frontend-only; no behavioural or bridge-API
+  changes):
+  - **Accent colour centralised.** New `useAccent()` (AccentContext in
+    `ThemeContext.tsx`) carries the resolved app accent — a white-label
+    `[console.theme] accent_color` now reaches every surface that previously
+    hardcoded the built-in blue pair: PathInput browse breadcrumbs, Schedules
+    arg-key colouring, Forms runnable-card hover, Analytics chart series
+    (`ACCENT`/`BRAND_RANGE`), transcript links (OutputPanel), the command
+    palette runnable names, and the auto-switch toggle. Log-level colours
+    (INFO), DevView call-direction colouring, and the SavedRunCard's distinct
+    cyan are deliberately unchanged. Also fixes the PathInput breadcrumb
+    colour in the light theme (was the dark-theme cyan on white).
+  - **Two-font system.** Chrome (nav, labels, buttons, prose) now uses the
+    system UI font; values, args, host names, logs, and the command bar stay
+    monospace via explicit `fontFamily` (the sidebar wordmark keeps its
+    monospace terminal identity). The command-bar textarea's monospace is now
+    explicit instead of relying on the browser form-control default.
+  - **CSS-level interaction polish** (`index.css`, keyed on a new
+    `data-theme` attribute + `--rs-accent` var stamped on `<html>`): hover
+    feedback on sidebar host rows, group headers and nav tabs (CSS `:hover`,
+    no re-renders); thin theme-aware scrollbars; a 140 ms fade when a tab
+    becomes visible; a `:focus-visible` accent ring on the nav tabs; and a
+    gentle pulse on the footer room indicator while the active room is
+    connecting. Animations honour `prefers-reduced-motion`.
+
 ## [0.197.0] — 2026-07-24
 
 ### Added

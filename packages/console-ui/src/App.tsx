@@ -46,7 +46,7 @@ import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
-import { ThemeContext } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
 
@@ -589,10 +589,18 @@ export default function App() {
   // highlights. A white-label accent_color (when set) drives it too, so the
   // brand colour shows where it's actually visible (not just Ant's colorPrimary
   // controls). Falls back to the built-in blue when no theme is set.
-  const titleCol  = brandTheme.accent_color || (isDark ? '#4fc1ff' : '#0958d9')
+  const titleCol  = brandTheme.accent_color || (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
   const contentBg = isDark ? '#111'    : '#ffffff'
   const iconCol   = isDark ? '#888'    : '#595959'
   const textCol   = isDark ? '#ccc'    : '#333'
+
+  // Stamp the theme + accent onto the document root so index.css (scrollbars,
+  // hover fills, focus rings) stays in sync with the active theme and any
+  // white-label accent — pure CSS, no per-element JS.
+  useEffect(() => {
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
+    document.documentElement.style.setProperty('--rs-accent', titleCol)
+  }, [isDark, titleCol])
 
   const navTabs = [
     {
@@ -627,10 +635,14 @@ export default function App() {
 
   return (
     <ThemeContext.Provider value={isDark}>
+      <AccentContext.Provider value={titleCol}>
       <ConfigProvider theme={{
           algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
           token: {
-            fontFamily: 'monospace',
+            // Two-font system: UI font for chrome (nav, labels, buttons, prose);
+            // values, args, host names, logs and the command bar stay monospace
+            // via explicit fontFamily where it earns its keep.
+            fontFamily: UI_FONT,
             // White-label accent → drives buttons, links, active tabs, switches.
             ...(brandTheme.accent_color ? { colorPrimary: brandTheme.accent_color } : {}),
           },
@@ -638,7 +650,7 @@ export default function App() {
         {/* White-label content watermark — style-aware (tiled / banner / center),
             a passthrough when no watermark text/logo is set. */}
         <BrandWatermark theme={brandTheme} isDark={isDark}>
-        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: contentBg, fontFamily: 'monospace' }}>
+        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: contentBg, fontFamily: UI_FONT }}>
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
           {/* Fixed host sidebar */}
           <div style={{
@@ -650,6 +662,7 @@ export default function App() {
               padding: '13px 16px 12px',
               fontWeight: 700, fontSize: 14, color: titleCol,
               borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
+              fontFamily: 'monospace',  // wordmark keeps the terminal identity
             }}>
               {brandTheme.brand_name || 'runspec'}
             </div>
@@ -708,6 +721,7 @@ export default function App() {
                     }}
                   >
                     <div
+                      className="rs-host-row"
                       onClick={() => handleHostSelect(h.name)}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
@@ -715,14 +729,16 @@ export default function App() {
                         borderLeft: selectedHost === h.name
                           ? `2px solid ${titleCol}`
                           : '2px solid transparent',
+                        // Selected fill is inline (wins over the CSS :hover rule);
+                        // unselected rows leave background to .rs-host-row:hover.
                         background: selectedHost === h.name
                           ? (isDark ? 'rgba(79,193,255,0.08)' : 'rgba(9,88,217,0.06)')
-                          : 'transparent',
+                          : undefined,
                       }}
                     >
                       <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
                       <span style={{
-                        fontSize: 13, color: textCol, flex: 1,
+                        fontSize: 13, color: textCol, flex: 1, fontFamily: 'monospace',
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}>{h.name}</span>
                       {(() => {
@@ -777,6 +793,7 @@ export default function App() {
                       return (
                         <div key={g || '__hosts__'}>
                           <div
+                            className="rs-group-header"
                             onClick={() => toggleGroup(g)}
                             style={{
                               display: 'flex', alignItems: 'center', gap: 6,
@@ -875,7 +892,7 @@ export default function App() {
                     }
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
-                      <CommentOutlined style={{ fontSize: 11, color: dot }} />
+                      <CommentOutlined className={active && !activeUp ? 'rs-pulse' : undefined} style={{ fontSize: 11, color: dot }} />
                       <span style={{ color: titleCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
                         {label}
                       </span>
@@ -1070,14 +1087,14 @@ export default function App() {
               {navTabs.map(tab => (
                 <button
                   key={tab.key}
+                  className="rs-nav-tab"
                   onClick={() => setView(tab.key)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '0 16px', border: 'none', background: 'transparent',
-                    cursor: 'pointer', fontSize: 13,
+                    padding: '0 16px', fontSize: 13,
                     color: view === tab.key ? titleCol : iconCol,
                     borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
-                    transition: 'color 0.15s',
+                    transition: 'color 0.15s, background 0.15s',
                   }}
                 >
                   {tab.icon}
@@ -1108,26 +1125,26 @@ export default function App() {
             {/* View area */}
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
-                <div style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                <div className="rs-view" style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                   <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
                 </div>
                 {/* Triggers stays mounted (display toggle) so a pending approval's
                     Approve/Deny buttons survive tab switches — unmounting it drops
                     the live tool_confirm and the buttons can't return until timeout. */}
-                <div style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                <div className="rs-view" style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                   <TriggersView />
                 </div>
                 {/* History stays mounted (display toggle) so its fetched records
                     survive tab switches — returning shows the last data instantly
                     instead of unmounting and reloading from empty over SSH. Its
                     poll is gated on `active` so it only runs while visible. */}
-                <div style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                   <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={handleAskLlm} activeScope={activeScope} onScopeToggle={handleScopeToggle} selectedHost={selectedHost} active={view === 'history'} />
                 </div>
                 {/* Logs stays mounted (display toggle) so its logs_status SSH
                     inventory survives tab switches; its fetch is gated on `active`
                     so it only runs while visible and on host change. */}
-                <div style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                <div className="rs-view" style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                   <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} />
                 </div>
                 {/* Analytics is lazy-loaded (heavy plots chunk). Mount it on first
@@ -1136,14 +1153,14 @@ export default function App() {
                     every return; its poll is gated on `active` so it only runs
                     while visible. */}
                 {analyticsVisited && (
-                  <div style={{ display: view === 'analytics' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                  <div className="rs-view" style={{ display: view === 'analytics' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
                       <AnalyticsView selectedHost={selectedHost} activeScope={activeScope} active={view === 'analytics'} />
                     </Suspense>
                   </div>
                 )}
                 {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && (
-                  <div style={{ flex: 1, overflow: 'auto' }}>
+                  <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
@@ -1263,6 +1280,7 @@ export default function App() {
           onKeyChanged={loadSshKeyAge}
         />
       </ConfigProvider>
+      </AccentContext.Provider>
     </ThemeContext.Provider>
   )
 }

@@ -4,7 +4,7 @@ import { ReloadOutlined, WarningOutlined } from '@ant-design/icons'
 import { Area, Line, Column, Pie } from '@ant-design/plots'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type AnalyticsData, type AnalyticsBucket, type AnalyticsException } from '../bridge'
-import { ThemeContext } from '../ThemeContext'
+import { ThemeContext, useAccent } from '../ThemeContext'
 import {
   filterBuckets, computeKpis, runsOverTime, successRateOverTime,
   durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown,
@@ -12,12 +12,11 @@ import {
 
 const { Text } = Typography
 
-// Brand palette — mirrors the App.tsx theme tokens.
-const ACCENT = '#4fc1ff'
+// Status palette; the series accent comes from useAccent() so charts follow a
+// white-label accent_color too, not just the shell chrome.
 const SUCCESS = '#52c41a'
 const FAILURE = '#ff4d4f'
 const WARNING = '#faad14'
-const BRAND_RANGE = [ACCENT, '#722ed1', WARNING, '#13c2c2', '#eb2f96', SUCCESS, '#fa8c16', '#2f54eb']
 
 const RANGE_OPTIONS = [
   { label: '7d', value: 7 },
@@ -33,6 +32,11 @@ interface AnalyticsViewProps {
 
 export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsViewProps) {
   const isDark = useContext(ThemeContext)
+  const ACCENT = useAccent()
+  const BRAND_RANGE = useMemo(
+    () => [ACCENT, '#722ed1', WARNING, '#13c2c2', '#eb2f96', SUCCESS, '#fa8c16', '#2f54eb'],
+    [ACCENT],
+  )
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
 

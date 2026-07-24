@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent } from '../bridge'
-import { useIsDark } from '../ThemeContext'
+import { useIsDark, useAccent } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
 import { initialFormValues } from './FormsView'
@@ -705,6 +705,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
   const [selected, setSelected] = useState<string | null>(null)
   const [events, setEvents] = useState<TriggerEvent[]>([])
   const isDark = useIsDark()
+  const accent = useAccent()
 
   const reload = () => bridge.get_schedules().then(setSchedules)
 
@@ -783,7 +784,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
   }
 
   const dimCol = isDark ? '#888' : '#999'
-  const keyCol = isDark ? '#4fc1ff' : '#0958d9'
+  const keyCol = accent
   const whenText = (w: ScheduleWhen) => {
     const base = w.every ? `every ${w.every}` : (w.cron ?? '')
     return w.timezone ? `${base}  (${w.timezone})` : base
