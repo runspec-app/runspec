@@ -75,8 +75,10 @@ _INTERVAL_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 # ``selected_hosts`` is a non-empty explicit list and the bridge fans the run out
 # to every host in it (like ``group`` but without a registered group entry).
 # ``credential_ids`` are console credentials applied to the run at fire time.
+# The trailing ``command`` is the subcommand path to descend into (empty = root).
 RunFn = Callable[
-    [str, str, str, dict[str, Any], str, list[str], list[str], list[str]], None
+    [str, str, str, dict[str, Any], str, list[str], list[str], list[str], list[str]],
+    None,
 ]
 
 # What a prompt/runbook-action schedule calls to run a headless agent turn. The
@@ -142,6 +144,9 @@ class ScheduleJob:
     selected_hosts: list[str] = field(default_factory=list)
     runnable: str = ""
     args: dict[str, Any] = field(default_factory=dict)
+    # action == "runnable" — the subcommand path to descend into (e.g. ["db",
+    # "restore"]; empty = the root command). Mirrors a saved run's ``command``.
+    command: list[str] = field(default_factory=list)
     # action == "runnable" — ids of console credentials to apply to the run. Threaded
     # to invoke_runnable exactly like the Forms tab's explicit selection: the secret
     # stays in the keychain and is injected at fire time (name-derived env vars, e.g.
@@ -238,6 +243,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
     selected_hosts: list[str] = []
     runnable = ""
     args: dict[str, Any] = {}
+    command: list[str] = []
     credential_ids: list[str] = []
     prompt = ""
     runbook = ""
@@ -274,6 +280,13 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
                 "'selected_hosts' (an explicit list to run on all of them)"
             )
         args = dict(data.get("args") or {})
+        # Subcommand path — accept a bare string ("db restore") or a list,
+        # exactly like a saved run's command.
+        command_raw = data.get("command") or []
+        if isinstance(command_raw, str):
+            command = command_raw.split()
+        else:
+            command = [str(c).strip() for c in command_raw if str(c).strip()]
         credential_ids = [
             str(c).strip() for c in (data.get("credential_ids") or []) if str(c).strip()
         ]
@@ -313,6 +326,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         selected_hosts=selected_hosts,
         runnable=runnable,
         args=args,
+        command=command,
         credential_ids=credential_ids,
         prompt=prompt,
         runbook=runbook,
@@ -522,6 +536,7 @@ class ScheduleSource:
                     list(job.hosts),
                     list(job.selected_hosts),
                     list(job.credential_ids),
+                    list(job.command),
                 )
             self._record(job, skipped=False)
         except Exception:

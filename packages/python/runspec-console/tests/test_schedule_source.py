@@ -273,7 +273,9 @@ def test_fire_runnable_selected_hosts_passed_through():
                 "when": {"every": "5m"},
             }
         ],
-        run_runnable=lambda s, h, r, a, g, hs, sel, ci: ran.append((h, g, hs, sel)),
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci, cmd: ran.append(
+            (h, g, hs, sel)
+        ),
     )
     src._fire("s1")
     assert ran == [("", "", [], ["web01", "web02"])]
@@ -291,7 +293,9 @@ def test_fire_runnable_hosts_passed_through():
                 "when": {"every": "5m"},
             }
         ],
-        run_runnable=lambda s, h, r, a, g, hs, sel, ci: ran.append((h, g, hs, sel)),
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci, cmd: ran.append(
+            (h, g, hs, sel)
+        ),
     )
     src._fire("r1")
     assert ran == [("", "", ["web01", "web02"], [])]
@@ -470,7 +474,7 @@ def test_fire_event_emits_matchable_event():
 def test_fire_runnable_calls_run_runnable():
     ran: list[tuple[str, str, str, dict, str, list, list, list]] = []
     src = _source_with_jobs(
-        run_runnable=lambda s, h, r, a, g, hs, sel, ci: ran.append(
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci, cmd: ran.append(
             (s, h, r, a, g, hs, sel, ci)
         )
     )
@@ -519,7 +523,7 @@ def test_fire_runnable_threads_credential_ids():
                 "credential_ids": ["cred-jira"],
             }
         ],
-        run_runnable=lambda s, h, r, a, g, hs, sel, ci: ran.append(ci),
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci, cmd: ran.append(ci),
     )
     src._fire("c1")
     assert ran == [["cred-jira"]]
@@ -785,3 +789,41 @@ def test_record_saved_run_summary():
     assert records[0]["type"] == "saved_run"
     assert records[0]["summary"] == "saved run: restart-web"
     assert records[0]["matched"] == ["s1"]
+
+
+# ── runnable-action subcommand path ───────────────────────────────────────────
+
+
+def test_parse_entry_command_accepts_string_and_list():
+    base = {
+        "id": "x",
+        "action": "runnable",
+        "host": "h",
+        "runnable": "backup",
+        "when": {"every": "5m"},
+    }
+    assert parse_schedule_entry({**base, "command": "db restore"}).command == [
+        "db",
+        "restore",
+    ]
+    assert parse_schedule_entry({**base, "command": ["db"]}).command == ["db"]
+    assert parse_schedule_entry(base).command == []
+
+
+def test_fire_runnable_threads_command():
+    ran: list[list[str]] = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "r1",
+                "action": "runnable",
+                "host": "h",
+                "runnable": "backup",
+                "command": ["db", "restore"],
+                "when": {"cron": "0 2 * * *"},
+            }
+        ],
+        run_runnable=lambda s, h, r, a, g, hs, sel, ci, cmd: ran.append(cmd),
+    )
+    src._fire("r1")
+    assert ran == [["db", "restore"]]

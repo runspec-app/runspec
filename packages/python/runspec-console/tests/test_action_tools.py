@@ -576,3 +576,24 @@ def test_create_schedule_passes_saved_run_through(tmp_path, monkeypatch):
     # …and the schema offers saved-run ids as an enum.
     cs = next(t for t in b._action_tools() if t["name"] == "create_schedule")
     assert cs["input_schema"]["properties"]["saved_run"]["enum"] == ["flush"]
+
+
+def test_create_schedule_passes_command_through():
+    b = _ActionBridge(
+        hosts=[{"name": "prod-1"}], runnables=[{"name": "backup", "host": "prod-1"}]
+    )
+    out = b._run_action_tool(
+        "create_schedule",
+        {
+            "id": "nightly-restore",
+            "action": "runnable",
+            "host": "prod-1",
+            "runnable": "backup",
+            "command": ["db", "restore"],
+            "args": {"target": "main"},
+            "when": {"cron": "0 2 * * *"},
+        },
+    )
+    assert out.startswith("✓")
+    saved = b.created_schedules[0]
+    assert saved["command"] == ["db", "restore"]

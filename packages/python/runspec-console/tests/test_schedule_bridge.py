@@ -593,3 +593,38 @@ def test_run_now_saved_run_invalid_values_skips(tmp_path, monkeypatch):
     res = ns.run_schedule_now("s1")
     assert res["inv_id"] == ""  # logged + skipped, nothing invoked
     assert ns.runs == []
+
+
+# ── run_schedule_now: subcommand path threading ──────────────────────────────
+
+
+def test_run_now_runnable_threads_command_path(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "r1",
+                "action": "runnable",
+                "host": "prod-1",
+                "runnable": "backup",
+                "command": ["db", "restore"],
+                "when": {"cron": "0 2 * * *"},
+            }
+        ],
+    )
+    res = ns.run_schedule_now("r1")
+    assert res["action"] == "runnable"
+    _host, _runnable, _args, kw = ns.runs[0]
+    assert kw["command_path"] == ["db", "restore"]
+
+
+def test_run_scheduled_timer_threads_command(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    # The timer path: ScheduleSource's RunFn callback signature includes the
+    # command list as the trailing arg.
+    ns._run_scheduled(
+        "r1", "prod-1", "backup", {"db": "main"}, "", [], [], [], ["db", "restore"]
+    )
+    _host, _runnable, _args, kw = ns.runs[0]
+    assert kw["command_path"] == ["db", "restore"]

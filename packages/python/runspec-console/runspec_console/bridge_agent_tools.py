@@ -3072,6 +3072,15 @@ class AgentToolsMixin:
                             "type": "object",
                             "description": "Runnable args (action='runnable').",
                         },
+                        "command": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Subcommand path to descend into, e.g. "
+                                "['db', 'restore'] (action='runnable'; omit for "
+                                "the root command)."
+                            ),
+                        },
                         "prompt": {
                             "type": "string",
                             "description": (
@@ -3371,6 +3380,7 @@ class AgentToolsMixin:
             "selected_hosts",
             "runnable",
             "args",
+            "command",
             "prompt",
             "runbook",
             "saved_run",

@@ -8,8 +8,9 @@ import { EventLog } from '../components/EventLog'
 import { initialFormValues } from './FormsView'
 import { RunbookField } from './RunbookRunModal'
 import {
-  ArgFieldRow, CredentialsSection, RunnableArgsBlock, runnableSelectOptions,
-  TargetFormItems, runnablesForTarget, type Target,
+  ArgFieldRow, commandPathOptions, CredentialsSection, effectiveArgsForPath,
+  RunnableArgsBlock, runnableSelectOptions, TargetFormItems, runnablesForTarget,
+  type Target,
 } from './RunnableAction'
 
 const { Text } = Typography
@@ -87,6 +88,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [credentialIds, setCredentialIds] = useState<string[]>([])
   const [creds, setCreds] = useState<Credential[]>([])
   const isDark = useIsDark()
+  const labelStyle = { color: isDark ? '#aaa' : '#666', fontSize: 12 }
 
   // Saved runbooks, for the "Run a runbook" action's picker. Loaded once per open.
   useEffect(() => {
@@ -122,6 +124,19 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const hostRunnables = runnablesForTarget(runnables, hosts, target, {
     host: hostName, group: groupName, hostsList, selectedList,
   })
+  // Subcommand handling, mirroring the saved-run editor: the field only exists
+  // for runnables that declare subcommands (a dropdown of their paths, stored
+  // space-joined in the form / as a path list on the schedule), and the picked
+  // path shifts which args the rich block edits — the effective set at that
+  // path (inherited globals + the command's own, child wins).
+  const commandValue: string = Form.useWatch('command', form) ?? ''
+  const commandPath = commandValue.trim() ? commandValue.trim().split(/\s+/) : []
+  const commandOptions = selectedRunnable
+    ? commandPathOptions(selectedRunnable, labelStyle)
+    : []
+  const effectiveRunnable = selectedRunnable
+    ? { ...selectedRunnable, args: effectiveArgsForPath(selectedRunnable, commandPath) }
+    : null
   const isEdit = !!editing
 
   const resetAll = () => {
@@ -181,9 +196,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       : runnables.find(x => x.host === editing.host && x.name === editing.runnable) ?? null
     setSelectedRunnable(r)
     // Seed rich arg values: spec defaults overlaid with the schedule's stored
-    // args. `initialFormValues` (shared with Forms) preserves native types and
-    // drops stale keys that no longer match a declared arg.
-    setArgValues(initialFormValues(r?.args ?? [], editing.args))
+    // args, against the effective set at the stored subcommand path.
+    // `initialFormValues` (shared with Forms) preserves native types and drops
+    // stale keys that no longer match a declared arg.
+    const editArgs = r ? effectiveArgsForPath(r, editing.command ?? []) : []
+    setArgValues(initialFormValues(editArgs, editing.args))
     setArgErrors({})
     setCredentialIds(editing.credential_ids ?? [])
     // Runbook / saved-run value seeding is deferred to a second effect once the
@@ -196,6 +213,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       hosts: editing.hosts ?? [],
       selected_hosts: editing.selected_hosts ?? [],
       runnable: editing.runnable,
+      command: (editing.command ?? []).join(' ') || undefined,
       timezone: editing.when.timezone ?? '',
       cron: editing.when.cron ?? '',
       every: editing.when.every ?? '',
@@ -235,8 +253,19 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const handleRunnableChange = (name: string) => {
     const r = hostRunnables.find(x => x.name === name) ?? null
     setSelectedRunnable(r)
+    // A subcommand carried over from the previous runnable doesn't apply.
+    form.setFieldValue('command', undefined)
     // Reset the rich arg state to the runnable's spec defaults.
     setArgValues(initialFormValues(r?.args ?? []))
+    setArgErrors({})
+  }
+
+  // Picking (or clearing) a subcommand switches which args the block edits —
+  // reseed from the effective set at the new path.
+  const handleCommandChange = (value?: string) => {
+    if (!selectedRunnable) return
+    const path = (value ?? '').trim() ? (value ?? '').trim().split(/\s+/) : []
+    setArgValues(initialFormValues(effectiveArgsForPath(selectedRunnable, path)))
     setArgErrors({})
   }
 
@@ -336,7 +365,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       // plaintext — never do that. Password-typed args aren't required at save and
       // aren't stored; supply them at fire time via a credential (below) or the
       // runnable's own env resolution. Everything else validates as on the Forms tab.
-      const persistArgs = (selectedRunnable?.args ?? []).filter(a => a.type !== 'password')
+      const persistArgs = (effectiveRunnable?.args ?? []).filter(a => a.type !== 'password')
       const errs = validateArgs(persistArgs, argValues)
       if (Object.keys(errs).length > 0) { setArgErrors(errs); return }
       const args: Record<string, unknown> = {}
@@ -344,6 +373,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
         const v = argValues[a.name]
         if (v !== undefined && v !== '') args[a.name] = v
       }
+      if (commandPath.length > 0) base.command = commandPath
       if (credentialIds.length > 0) base.credential_ids = credentialIds
       if (target === 'group') {
         const group = String(values.group ?? '').trim()
@@ -380,8 +410,6 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   }
 
   const handleCancel = () => { resetAll(); onCancel() }
-
-  const labelStyle = { color: isDark ? '#aaa' : '#666', fontSize: 12 }
 
   return (
     <Modal
@@ -605,9 +633,30 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
               />
             </Form.Item>
 
-            {selectedRunnable && selectedRunnable.args.length > 0 && (
+            {/* Only runnables that declare subcommands get the field — a dropdown
+                of their paths, mirroring the saved-run editor. */}
+            {selectedRunnable && commandOptions.length > 0 && (
+              <Form.Item
+                name="command"
+                label="Subcommand"
+                rules={selectedRunnable.requireCommand
+                  ? [{ required: true, message: 'This runnable requires a subcommand' }]
+                  : undefined}
+                help={selectedRunnable.requireCommand ? undefined : 'Optional — leave blank to run the root command.'}
+              >
+                <Select
+                  placeholder="Select a subcommand…"
+                  allowClear
+                  optionLabelProp="value"
+                  onChange={handleCommandChange}
+                  options={commandOptions}
+                />
+              </Form.Item>
+            )}
+
+            {effectiveRunnable && effectiveRunnable.args.length > 0 && (
               <RunnableArgsBlock
-                runnable={selectedRunnable}
+                runnable={effectiveRunnable}
                 values={argValues}
                 errors={argErrors}
                 onChange={changeArg}
@@ -620,7 +669,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                 creds={creds}
                 selected={credentialIds}
                 onChange={setCredentialIds}
-                declaredArgNames={new Set((selectedRunnable.args ?? []).map(a => a.name))}
+                declaredArgNames={new Set((effectiveRunnable?.args ?? []).map(a => a.name))}
                 labelStyle={labelStyle}
               />
             )}
@@ -791,7 +840,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
           ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
           : s.action === 'saved_run'
           ? <Space size={6}><Tag color="blue">saved run</Tag><code>{s.saved_run}</code></Space>
-          : <Space size={6}><Tag>run</Tag><code>/{s.runnable}</code></Space>,
+          : <Space size={6}><Tag>run</Tag><code>/{s.runnable}{s.command?.length ? ` ${s.command.join(' ')}` : ''}</code></Space>,
     },
     {
       title: 'Where',

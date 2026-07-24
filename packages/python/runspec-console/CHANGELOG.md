@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.193.0] — 2026-07-23
+
+### Added
+- **Subcommand support for runnable-action schedules.** A schedule can now
+  target a runnable's subcommand, exactly like a saved run: the Add-schedule
+  modal shows the same conditional **Subcommand dropdown** (only when the
+  runnable declares subcommands; required when it enforces `require-command`),
+  and picking a path switches the rich args block to the **effective arg set**
+  at that path (inherited globals + the command's own, child wins) — reusing
+  the shared `commandPathOptions`/`effectiveArgsForPath` helpers from the
+  saved-run editor. The schedule entry gains a **`command`** key (path list;
+  a bare string also accepted), threaded through the fire path end-to-end:
+  `ScheduleJob.command` + `parse_schedule_entry`, the `RunFn` timer callback,
+  `_run_scheduled`/`run_schedule_now` → `_invoke_scheduled(command_path=…)`
+  (the plumbing `_invoke_fanout` added in 0.186.0), and the agent's
+  `create_schedule` tool (new optional `command` array). The schedules table
+  shows the full `/runnable sub path` per row. Existing schedules without a
+  `command` are untouched (empty = root command).
+
+
 ## [0.192.0] — 2026-07-23
 
 ### Changed

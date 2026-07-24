@@ -443,6 +443,9 @@ export interface Schedule {
   selected_hosts?: string[]
   runnable?: string
   args?: Record<string, unknown>
+  // action === 'runnable' — the subcommand path to descend into (empty/absent =
+  // the root command). Mirrors a saved run's `command`.
+  command?: string[]
   // action === 'runnable' — ids of console credentials to apply at fire time.
   // Only ids are stored (never secrets); the secret is injected from the keychain
   // when the schedule fires, exactly like the Forms tab's explicit selection.

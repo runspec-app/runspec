@@ -178,6 +178,7 @@ class SchedulesMixin:
             hosts=list(job.hosts),
             selected_hosts=list(job.selected_hosts),
             credential_ids=list(job.credential_ids),
+            command_path=list(job.command),
         )
         self._record_schedule_fire(job)
         if job.group:
@@ -240,6 +241,7 @@ class SchedulesMixin:
         hosts: list[str] | None = None,
         selected_hosts: list[str] | None = None,
         credential_ids: list[str] | None = None,
+        command: list[str] | None = None,
     ) -> None:
         """Run a runnable-action schedule on the timer: fire it directly and
         autonomously — no agent, no confirm gate (scheduling it is the
@@ -247,7 +249,8 @@ class SchedulesMixin:
         member of the host group (one run card per host); a ``hosts`` candidate list
         runs on the first connected one (failover); a ``selected_hosts`` list fans
         the run out to every host in it. ``credential_ids`` are console credentials
-        applied to the run (secrets injected from the keychain at fire time). The
+        applied to the run (secrets injected from the keychain at fire time);
+        ``command`` is the subcommand path to descend into (empty = root). The
         callback ignores the return; the manual *Run now* path uses
         :meth:`_invoke_scheduled` so it can surface the in-flight id."""
         self._invoke_scheduled(
@@ -259,6 +262,7 @@ class SchedulesMixin:
             hosts=hosts,
             selected_hosts=selected_hosts,
             credential_ids=credential_ids,
+            command_path=command,
         )
 
     def _pick_connected_host(self, hosts: list[str]) -> str:
