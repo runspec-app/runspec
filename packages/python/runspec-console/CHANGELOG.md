@@ -8,6 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.197.0] — 2026-07-24
+
+### Added
+- **Per-card "in context" toggle (Console tab).** Each Console card carries a
+  reversible checkbox in its header controlling whether its content is part of
+  the agent's context, making the previously-invisible in/out state explicit:
+  - **Chat cards** default **in context** (checked). Unticking drops that
+    exchange from what the model sees on later turns — useful for pruning a
+    tangent so it stops steering the agent and stops filling the context
+    window. New bridge method `set_turn_included(chat_id, included)`;
+    `_chat_history` messages are tagged by turn (`_history_turn_ids`) and a new
+    `_visible_history()` filters excluded turns out when assembling the model
+    messages, preserving the API's "starts on a user message /
+    tool_use·tool_result pairs stay paired" rules.
+  - **User-run cards** default **out of context** (unchecked), codifying
+    today's behaviour (a manual run never entered chat context). Ticking one
+    **passively stages** its output to ride along with your **next** typed
+    message — the quiet sibling of the existing "Ask the assistant" button
+    (which still fires an immediate turn).
+  - **Reversible & non-destructive:** excluding never deletes — the backend
+    keeps every message and only filters, so re-ticking restores the exchange
+    instantly.
+
+### Changed
+- **"Compact now" is the commit point for the in/out state.** Compaction now
+  physically drops excluded turns **without** summarising them (so removed
+  content can't leak back via the note), slices the aligned turn tags in
+  lockstep, and reports the dropped `chat_id`s (`runspec:chat_compacted`
+  `dropped_turns`) so their cards' checkboxes are retired (the messages are
+  gone and can no longer be re-included).
+- **Context-window gauge refreshes after a compaction.** Previously the gauge
+  only updated on the next turn (it listens to `runspec:context_estimate`,
+  which `compact_chat` didn't emit); it now estimates the drop from the
+  compacted-message count immediately, with the next turn replacing it with the
+  exact figure.
+
+
 ## [0.196.0] — 2026-07-23
 
 ### Added

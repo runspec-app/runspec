@@ -642,6 +642,8 @@ class InvokeMixin:
         fresh conversation file rather than appending to the one just left."""
         with self._chat_lock:
             self._chat_history = []
+            self._history_turn_ids = []
+            self._excluded_turns = set()
             self._conversation_id = ""
         # Reset the context-window gauge — the new conversation starts empty.
         self._dispatch("runspec:chat_cleared", {})
@@ -661,11 +663,22 @@ class InvokeMixin:
         cfg = config_mod.read_chat_history()
         keep_recent = max(0, int(cfg.get("resume_keep_recent", 20) or 0))
         dropped_n = 0
+        dropped_turns: set[str] = set()
         with self._chat_lock:
+            # Compaction is the commit point for the current in/out state: turns
+            # the operator excluded were already out of context, so physically
+            # drop them here rather than fold them into the summary note (which
+            # would re-inject removed content). Their cards get retired below.
+            if self._excluded_turns:
+                excluded = set(self._excluded_turns)
+                if self._drop_turns(excluded):
+                    dropped_turns |= excluded
+                self._excluded_turns = set()
             hist = self._chat_history
+            tags = self._history_turn_ids
             # Need a meaningful prefix to drop beyond the kept tail.
             if len(hist) <= keep_recent + 2:
-                return {"ok": True, "compacted": 0}
+                return self._finish_compact(dropped_turns)
             cut = len(hist) - keep_recent
             while cut < len(hist) and not (
                 hist[cut].get("role") == "user"
@@ -673,13 +686,31 @@ class InvokeMixin:
             ):
                 cut += 1
             if cut <= 0 or cut >= len(hist):
-                return {"ok": True, "compacted": 0}  # no clean boundary — leave it
+                # no clean boundary — leave it (excluded drops above still count)
+                return self._finish_compact(dropped_turns)
             dropped, kept = hist[:cut], hist[cut:]
             note = self._compact_note(dropped, cfg)
             kept[0]["content"] = note + "\n\n" + kept[0]["content"]
             self._chat_history = kept
+            self._history_turn_ids = tags[cut:]
+            dropped_turns |= {t for t in tags[:cut] if t}
             dropped_n = len(dropped)
-        self._dispatch("runspec:chat_compacted", {"dropped": dropped_n})
+        return self._finish_compact(dropped_turns, dropped_n)
+
+    def _finish_compact(
+        self, dropped_turns: set[str], dropped_n: int = 0
+    ) -> dict[str, Any]:
+        """Announce a compaction (or excluded-turn drop) and return its result.
+        ``dropped_turns`` are chat_ids whose messages are now gone — the frontend
+        retires those cards' "in context" checkboxes (re-include is impossible
+        once the messages are compacted away) and refreshes the context gauge.
+        Stays silent on a pure no-op (nothing dropped, nothing excluded) so an
+        idle 'Compact now' doesn't emit a spurious event."""
+        if dropped_n or dropped_turns:
+            self._dispatch(
+                "runspec:chat_compacted",
+                {"dropped": dropped_n, "dropped_turns": sorted(dropped_turns)},
+            )
         return {"ok": True, "compacted": dropped_n}
 
     def _compact_note(self, dropped: list[dict[str, Any]], cfg: dict[str, Any]) -> str:
@@ -897,6 +928,12 @@ class InvokeMixin:
 
         with self._chat_lock:
             self._chat_history = rebuilt
+            # Rebuilt from a saved transcript — no live turn boundaries survive.
+            # Tag every resumed message with the neutral "" sentinel (never a real
+            # chat_id, so never in _excluded_turns → always visible); new turns get
+            # their own chat_id via _sync_history_tags. Clear prior exclusions.
+            self._history_turn_ids = [""] * len(rebuilt)
+            self._excluded_turns = set()
             self._conversation_id = str(conversation_id)
             self._trim_chat_history()
         return {
@@ -927,15 +964,106 @@ class InvokeMixin:
         context without limit. Trims oldest messages, then drops any leading
         assistant / tool-result turn so the kept history still starts on a plain
         user message — the API requires that, and it keeps tool_use/tool_result
-        pairs intact. Caller must hold self._chat_lock."""
+        pairs intact. The aligned turn-id tags are trimmed in lockstep so
+        _visible_history() stays correct. Caller must hold self._chat_lock."""
         hist = self._chat_history
         if len(hist) <= max_messages:
             return
-        del hist[: len(hist) - max_messages]
+        drop = len(hist) - max_messages
+        del hist[:drop]
         while hist and not (
             hist[0].get("role") == "user" and isinstance(hist[0].get("content"), str)
         ):
             hist.pop(0)
+            drop += 1
+        # Mirror the exact front-trim on the aligned turn-id tags.
+        del self._history_turn_ids[:drop]
+
+    def _sync_history_tags(self, chat_id: str) -> None:
+        """Tag every message appended to _chat_history during the current turn
+        with chat_id — all messages a turn appends belong to it. Pads the aligned
+        _history_turn_ids list up to the history length (earlier messages keep
+        their existing tags); truncates if it somehow ran long (e.g. after a
+        resume rebuilt the history). Caller holds self._chat_lock."""
+        tags = self._history_turn_ids
+        hist = self._chat_history
+        if len(tags) > len(hist):
+            del tags[len(hist) :]
+        while len(tags) < len(hist):
+            tags.append(chat_id)
+
+    def _visible_history(self) -> list[dict[str, Any]]:
+        """The subset of _chat_history the model actually sees — every message
+        except those belonging to turns the operator toggled OUT of context (the
+        Console card "in context" checkbox). Excluding never mutates the stored
+        history (that keeps the toggle reversible); this filtered copy is rebuilt
+        each iteration.
+
+        A turn's messages are contiguous, so dropping a whole turn by tag keeps
+        tool_use/tool_result pairs intact; we then trim any leading non-user /
+        tool-result message so the result still opens on a plain user string (the
+        API rejects a leading assistant or tool turn). Falls back to the full
+        history if filtering would leave nothing. Caller holds self._chat_lock."""
+        if not self._excluded_turns:
+            return self._chat_history
+        tags = self._history_turn_ids
+        excluded = self._excluded_turns
+        kept = [
+            msg
+            for i, msg in enumerate(self._chat_history)
+            if (tags[i] if i < len(tags) else "") not in excluded
+        ]
+        while kept and not (
+            kept[0].get("role") == "user" and isinstance(kept[0].get("content"), str)
+        ):
+            kept.pop(0)
+        return kept or self._chat_history
+
+    def _drop_turns(self, turn_ids: set[str]) -> int:
+        """Physically remove every message belonging to the given turns from
+        _chat_history (and its aligned tags), returning the count removed. Unlike
+        _visible_history()'s non-destructive filter, this is permanent — used by
+        compaction to bake in the current exclude decision. Caller holds the
+        lock."""
+        if not turn_ids:
+            return 0
+        tags = self._history_turn_ids
+        keep_hist: list[dict[str, Any]] = []
+        keep_tags: list[str] = []
+        removed = 0
+        for i, msg in enumerate(self._chat_history):
+            tag = tags[i] if i < len(tags) else ""
+            if tag in turn_ids:
+                removed += 1
+                continue
+            keep_hist.append(msg)
+            keep_tags.append(tag)
+        while keep_hist and not (
+            keep_hist[0].get("role") == "user"
+            and isinstance(keep_hist[0].get("content"), str)
+        ):
+            keep_hist.pop(0)
+            keep_tags.pop(0)
+        self._chat_history = keep_hist
+        self._history_turn_ids = keep_tags
+        return removed
+
+    def set_turn_included(self, chat_id: str, included: bool) -> dict[str, Any]:
+        """Toggle whether a completed chat exchange stays in the model's context
+        (the Console card "in context" checkbox). Non-destructive and reversible:
+        the messages remain in _chat_history; only _visible_history()'s filter
+        changes, so re-including restores the exchange on the next turn. Returns
+        ``{ok, included}`` — the resulting in/out state."""
+        cid = str(chat_id or "")
+        if not cid:
+            return {"ok": False, "included": True}
+        with self._chat_lock:
+            if included:
+                self._excluded_turns.discard(cid)
+            else:
+                self._excluded_turns.add(cid)
+            included_now = cid not in self._excluded_turns
+        return {"ok": True, "included": included_now}
 
     async def _agentic_chat_turn(
         self,
@@ -982,14 +1110,22 @@ class InvokeMixin:
                     break
                 response: Any = None
                 assistant_text = ""  # this iteration's streamed assistant text
-                # The message list actually sent this iteration — history plus the
-                # folded-in catalog index (search mode). A per-call copy, so the
-                # stored history is never polluted with the index.
-                model_messages = self._fold_catalog_index(history, index_text)
+                # Tag anything appended since the last iteration (the user message,
+                # a tool turn, a continuation) with this chat_id, then build the
+                # model's view from the history minus any excluded turns (the
+                # Console "in context" toggle). Excluding never mutates the stored
+                # history — _visible_history() just filters — so it's reversible.
+                self._sync_history_tags(chat_id)
+                visible = self._visible_history()
+                # The message list actually sent this iteration — visible history
+                # plus the folded-in catalog index (search mode). A per-call copy,
+                # so the stored history is never polluted with the index.
+                model_messages = self._fold_catalog_index(visible, index_text)
                 # Size of the history sent this iteration (the catalog index is
-                # measured separately as its own bucket, so use the raw history).
-                last_history_chars = self._messages_chars(history)
-                last_history_msgs = len(history)
+                # measured separately as its own bucket, so use the visible history
+                # — the indicator should reflect what the model actually receives).
+                last_history_chars = self._messages_chars(visible)
+                last_history_msgs = len(visible)
                 # Diagnostic: the exact message list handed to the adapter — i.e.
                 # what the console sends to the model / proxy this iteration.
                 self._trace(
@@ -1152,6 +1288,9 @@ class InvokeMixin:
 
                 history.extend(adapter.make_tool_turn(response, tool_results))
 
+            # Tag any final assistant / tool messages appended on the way out of
+            # the loop, so the aligned tags cover the whole turn before trimming.
+            self._sync_history_tags(chat_id)
             self._trim_chat_history()
             # Append this completed exchange to the saved conversation (chat
             # history) — best-effort, gated on [chat_history] enabled. Inside the

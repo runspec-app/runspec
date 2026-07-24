@@ -1057,6 +1057,11 @@ export interface BridgeApi {
   // keep the recent tail) — frees context without losing the thread. Returns the
   // number of messages dropped. See docs/design/console-context-indicator.md.
   compact_chat: () => Promise<{ ok: boolean; compacted: number }>
+  // Toggle whether a completed chat turn stays in the agent's context (the
+  // Console card "in context" checkbox). Reversible and non-destructive — the
+  // backend keeps the messages and only filters, so re-including restores the
+  // exchange. Returns the resulting in/out state.
+  set_turn_included: (chatId: string, included: boolean) => Promise<{ ok: boolean; included: boolean }>
   // ── saved conversations (chat history) ────────────────────────────────────────
   // Metadata for every saved chat, newest first (for the Conversations browser).
   list_conversations: () => Promise<ConversationMeta[]>

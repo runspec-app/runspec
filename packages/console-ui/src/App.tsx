@@ -353,8 +353,38 @@ export default function App() {
       if (d && d.total_tokens > 0) setCtx(d)
     }
     const onChatCleared = () => setCtx(null)
+    // "Compact now" drops messages but there's no fresh model round-trip to
+    // recompute the exact gauge until the next turn — so estimate the drop
+    // immediately by scaling the History bucket (and the total) by the share of
+    // messages removed, instead of leaving a stale number. The next turn's
+    // context_estimate replaces this with the exact figure.
+    const onCompacted = (e: Event) => {
+      const { dropped } = (e as CustomEvent).detail as { dropped?: number }
+      const n = dropped ?? 0
+      if (n <= 0) return
+      setCtx(prev => {
+        if (!prev) return prev
+        const msgs = prev.history_msgs ?? 0
+        if (msgs <= 0) return prev
+        const kept = Math.max(0, msgs - n)
+        const ratio = kept / msgs
+        const hist = prev.buckets.find(b => b.key === 'history')
+        const histTokens = hist?.tokens ?? 0
+        const removed = Math.round(histTokens * (1 - ratio))
+        if (removed <= 0) return { ...prev, history_msgs: kept }
+        return {
+          ...prev,
+          total_tokens: Math.max(0, prev.total_tokens - removed),
+          history_msgs: kept,
+          buckets: prev.buckets.map(b =>
+            b.key === 'history' ? { ...b, tokens: Math.max(0, b.tokens - removed), est: true } : b
+          ),
+        }
+      })
+    }
     window.addEventListener('runspec:context_estimate', onContextEstimate)
     window.addEventListener('runspec:chat_cleared', onChatCleared)
+    window.addEventListener('runspec:chat_compacted', onCompacted)
     window.addEventListener('runspec:hosts_updated', onHostsUpdated)
     window.addEventListener('runspec:hosts_updated', loadProfiles)
     window.addEventListener('runspec:runnables_updated', onRunnablesUpdated)
@@ -372,6 +402,7 @@ export default function App() {
       window.removeEventListener('runspec:room_connection', loadRooms)
       window.removeEventListener('runspec:context_estimate', onContextEstimate)
       window.removeEventListener('runspec:chat_cleared', onChatCleared)
+      window.removeEventListener('runspec:chat_compacted', onCompacted)
     }
   }, [])
 

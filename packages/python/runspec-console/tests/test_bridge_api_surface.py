@@ -149,6 +149,7 @@ EXPECTED = {
     "send_trigger_draft",
     "set_debug",
     "set_trigger_enabled",
+    "set_turn_included",
     "set_window",
     "set_window_title",
     "test_notification",

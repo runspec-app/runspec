@@ -63,6 +63,8 @@ def _chat_stub(max_cont: int = 3):
     s = types.SimpleNamespace()
     s._chat_lock = threading.Lock()
     s._chat_history = []
+    s._history_turn_ids = []
+    s._excluded_turns = set()
     s._chat_cancels = {}
     s._config = {"llm": {"max_continuations": max_cont}}
     s.tokens = []  # every runspec:token string, in order
@@ -104,6 +106,8 @@ def _chat_stub(max_cont: int = 3):
 
     s._gated_run_tool_async = gated_run
 
+    s._sync_history_tags = types.MethodType(Bridge._sync_history_tags, s)
+    s._visible_history = types.MethodType(Bridge._visible_history, s)
     s._max_continuations = types.MethodType(Bridge._max_continuations, s)
     s._agentic_chat_turn = types.MethodType(Bridge._agentic_chat_turn, s)
     return s

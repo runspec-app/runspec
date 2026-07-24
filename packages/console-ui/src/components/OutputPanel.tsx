@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Input, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Checkbox, Input, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
 import { useIsDark, textColor } from '../ThemeContext'
@@ -487,12 +487,25 @@ export interface InvocationBlock {
   rerunData?: RerunData
   model?: string      // model the chat turn ran on (for cost estimate)
   tokenUsage?: { input: number; output: number; cacheRead: number; cacheCreation: number }
+  // Whether this card's content is part of the agent's context. Defaults by type
+  // at creation: chat cards start in-context (true), user-run cards start out
+  // (false — opt in via the checkbox / "Ask the assistant"). Toggling a chat card
+  // off calls bridge.set_turn_included; a ticked run card stages its output into
+  // the next chat send. Reversible — the backend keeps the messages and only
+  // filters, so re-ticking restores the exchange.
+  inContext?: boolean
+  // Set once the card's messages have been compacted away (chat_compacted): the
+  // exchange is gone from history, so the toggle is retired (shown disabled).
+  compacted?: boolean
 }
 
 interface OutputPanelProps {
   blocks: InvocationBlock[]
   onRerun?: (data: RerunData) => void
   onAskLlm?: (text: string) => void
+  // Toggle whether a card's content is in the agent's context (the header
+  // checkbox). id = block id; inContext = the new desired state.
+  onToggleContext?: (id: string, inContext: boolean) => void
 }
 
 interface PendingConfirm {
@@ -508,7 +521,7 @@ interface PendingConfirm {
   autonomy: string
 }
 
-export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
+export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: OutputPanelProps) {
   const c = useCardTheme()
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -604,6 +617,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm }: OutputPanelProps) {
               block={block}
               onRerun={onRerun}
               onAskLlm={onAskLlm}
+              onToggleContext={onToggleContext}
               pendingConfirm={pendingConfirm && pendingConfirm.id === block.id ? pendingConfirm : null}
               onAnswerConfirm={answerConfirm}
             />
@@ -917,12 +931,14 @@ function BlockCard({
   block,
   onRerun,
   onAskLlm,
+  onToggleContext,
   pendingConfirm,
   onAnswerConfirm,
 }: {
   block: InvocationBlock
   onRerun?: (data: RerunData) => void
   onAskLlm?: (text: string) => void
+  onToggleContext?: (id: string, inContext: boolean) => void
   pendingConfirm?: PendingConfirm | null
   onAnswerConfirm?: (approved: boolean) => void
 }) {
@@ -1086,6 +1102,31 @@ function BlockCard({
             ? <RightOutlined style={{ fontSize: 10 }} />
             : <DownOutlined style={{ fontSize: 10 }} />}
         </span>
+
+        {/* "In context" toggle — whether this card's content is part of the
+            agent's context. Only on completed cards (an in-flight turn has no
+            meaningful toggle). Chat cards default in-context; user-run cards
+            default out (opt in to stage the result into the next prompt).
+            Retired once the exchange has been compacted away. */}
+        {block.done && onToggleContext && (
+          <Tooltip
+            title={
+              block.compacted
+                ? 'Compacted — this exchange was condensed into a summary and can no longer be toggled'
+                : block.type === 'chat'
+                  ? 'In the assistant’s context — untick to drop this exchange from what the agent sees'
+                  : 'Out of the assistant’s context — tick to include this result with your next message'
+            }
+          >
+            <Checkbox
+              checked={block.inContext ?? (block.type === 'chat')}
+              disabled={block.compacted}
+              onClick={e => e.stopPropagation()}
+              onChange={e => onToggleContext(block.id, e.target.checked)}
+              style={{ flexShrink: 0 }}
+            />
+          </Tooltip>
+        )}
 
         {statusIcon}
         <Text
@@ -1499,6 +1540,18 @@ export function useInvocationBlocks() {
       ))
     }
 
+    // Compaction (or an excluded-turn drop) removed some chat turns from history.
+    // Their cards can no longer be re-included — mark them compacted so the
+    // header checkbox is retired (disabled) rather than a dead toggle.
+    const onCompacted = (e: Event) => {
+      const { dropped_turns } = (e as CustomEvent).detail as { dropped_turns?: string[] }
+      const gone = new Set(dropped_turns ?? [])
+      if (gone.size === 0) return
+      setBlocks(prev => prev.map(b =>
+        gone.has(b.id) ? { ...b, compacted: true, inContext: false } : b
+      ))
+    }
+
     window.addEventListener('runspec:output', onOutput)
     window.addEventListener('runspec:token', onToken)
     window.addEventListener('runspec:tool_start', onToolStart)
@@ -1506,6 +1559,7 @@ export function useInvocationBlocks() {
     window.addEventListener('runspec:tool_progress', onToolProgress)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:chat_usage', onChatUsage)
+    window.addEventListener('runspec:chat_compacted', onCompacted)
     return () => {
       if (raf !== null) cancelAnimationFrame(raf)
       window.removeEventListener('runspec:output', onOutput)
@@ -1515,6 +1569,7 @@ export function useInvocationBlocks() {
       window.removeEventListener('runspec:tool_progress', onToolProgress)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:chat_usage', onChatUsage)
+      window.removeEventListener('runspec:chat_compacted', onCompacted)
     }
   }, [])
 
@@ -1522,6 +1577,11 @@ export function useInvocationBlocks() {
   const clearBlocks = () => setBlocks([])
   // Replace the whole transcript — used to render a reopened saved conversation.
   const hydrateBlocks = (next: InvocationBlock[]) => setBlocks(next)
+  // Toggle a card's "in context" flag (the header checkbox). Local state only;
+  // the actual context effect is applied by the caller (exclude → bridge call,
+  // include → staged into the next chat send).
+  const setBlockInContext = (id: string, inContext: boolean) =>
+    setBlocks(prev => prev.map(b => (b.id === id ? { ...b, inContext } : b)))
 
-  return { blocks, addBlock, clearBlocks, hydrateBlocks }
+  return { blocks, addBlock, clearBlocks, hydrateBlocks, setBlockInContext }
 }

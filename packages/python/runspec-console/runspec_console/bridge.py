@@ -186,6 +186,16 @@ class Bridge(
         # rolling conversation per app session; reset via clear_chat(). The lock
         # serialises turns so two quick sends can't interleave the history.
         self._chat_history: list[dict[str, Any]] = []
+        # Per-message turn tag, aligned index-for-index with _chat_history: the
+        # chat_id of the turn that appended each message. Lets set_turn_included()
+        # drop a whole exchange from the model context (the Console card "in
+        # context" toggle) without deleting it — _visible_history() filters by tag,
+        # so re-including is instant. Must be sliced/reset in lockstep with
+        # _chat_history everywhere (trim/compact/clear). Guarded by _chat_lock.
+        self._history_turn_ids: list[str] = []
+        # chat_ids the operator has toggled OUT of context. Messages stay in
+        # _chat_history; _visible_history() skips them. Guarded by _chat_lock.
+        self._excluded_turns: set[str] = set()
         self._chat_lock = threading.Lock()
         # The saved-conversation id the current rolling chat persists to (chat
         # history). Minted lazily on the first turn and re-minted by clear_chat();

@@ -119,9 +119,35 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 }
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
-  const { blocks, addBlock, clearBlocks, hydrateBlocks } = useInvocationBlocks()
+  const { blocks, addBlock, clearBlocks, hydrateBlocks, setBlockInContext } = useInvocationBlocks()
   const addBlockRef = useRef(addBlock)
   addBlockRef.current = addBlock
+  // Current blocks, for the send handlers (which live in []-dep effects and would
+  // otherwise close over a stale array) — used to gather ticked run cards.
+  const blocksRef = useRef(blocks)
+  blocksRef.current = blocks
+  // Run-card ids whose output has already been folded into a sent chat message,
+  // so a ticked result rides along exactly once (not re-injected every turn).
+  const stagedRef = useRef<Set<string>>(new Set())
+
+  // Build the context preamble from run cards the operator ticked "in context"
+  // that haven't been staged yet, marking them staged. Returns '' when none —
+  // the passive sibling of the "Ask the assistant" button: instead of firing an
+  // immediate turn, a ticked run result rides along with the next typed message.
+  const buildStagedPreamble = (): string => {
+    const parts: string[] = []
+    for (const b of blocksRef.current) {
+      if (b.type !== 'run' || b.inContext !== true || stagedRef.current.has(b.id)) continue
+      const raw = b.lines.map(l => l.line).join('\n').trim()
+      if (!raw) continue
+      parts.push(`--- Output from ${b.label} ---\n${raw}`)
+      stagedRef.current.add(b.id)
+    }
+    if (!parts.length) return ''
+    return `Context from tools I ran (for reference):\n\n${parts.join('\n\n')}\n\n`
+  }
+  const buildStagedPreambleRef = useRef(buildStagedPreamble)
+  buildStagedPreambleRef.current = buildStagedPreamble
 
   // Saved-conversation browser (chat history) state.
   const [convOpen, setConvOpen] = useState(false)
@@ -205,7 +231,10 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   useEffect(() => {
     const onChat = async (e: Event) => {
       const { message } = (e as CustomEvent).detail as { message: string }
-      const id = await bridge.send_chat(message)
+      // Fold in any ticked run-card output; the card label stays the typed
+      // message so the transcript reads cleanly.
+      const outgoing = buildStagedPreambleRef.current() + message
+      const id = await bridge.send_chat(outgoing)
       addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
       window.dispatchEvent(new CustomEvent('runspec:in_flight_updated'))
     }
@@ -320,7 +349,8 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
 
   // Ask LLM from History: pendingChat prop triggers a chat send
   const sendChat = async (message: string) => {
-    const id = await bridge.send_chat(message)
+    const outgoing = buildStagedPreambleRef.current() + message
+    const id = await bridge.send_chat(outgoing)
     addBlockRef.current({ id, type: 'chat', label: message, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false })
   }
   const sendChatRef = useRef(sendChat)
@@ -338,6 +368,17 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   }
 
   const handleAskLlm = (text: string) => sendChatRef.current(text)
+
+  // The card's "in context" checkbox. Update local state, then apply the effect:
+  // a chat card toggles the backend's context filter (reversible); a run card is
+  // passive — ticking just stages its output into the next chat send.
+  const handleToggleContext = (id: string, inContext: boolean) => {
+    setBlockInContext(id, inContext)
+    const blk = blocksRef.current.find(b => b.id === id)
+    if (blk?.type === 'chat') {
+      bridge.set_turn_included(id, inContext).catch(() => message.error('Could not update context'))
+    }
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
@@ -379,7 +420,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
           </Tooltip>
         )}
       </div>
-      <OutputPanel blocks={blocks} onRerun={handleRerun} onAskLlm={handleAskLlm} />
+      <OutputPanel blocks={blocks} onRerun={handleRerun} onAskLlm={handleAskLlm} onToggleContext={handleToggleContext} />
 
       <Drawer
         title="Conversations"

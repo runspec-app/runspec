@@ -28,6 +28,8 @@ class _StubBridge:
     def __init__(self):
         self._lock = threading.Lock()
         self._chat_history: list[dict] = []
+        self._history_turn_ids: list[str] = []
+        self._excluded_turns: set[str] = set()
         self._chat_lock = threading.Lock()
         self._chat_cancels: dict[str, threading.Event] = {}
         self._pending_confirms: dict = {}
@@ -70,10 +72,15 @@ class _StubBridge:
     _usage_from_response = staticmethod(Bridge._usage_from_response)
     _messages_chars = staticmethod(Bridge._messages_chars)
     _trim_chat_history = Bridge._trim_chat_history
+    _sync_history_tags = Bridge._sync_history_tags
+    _visible_history = Bridge._visible_history
+    _drop_turns = Bridge._drop_turns
+    set_turn_included = Bridge.set_turn_included
     _trace = Bridge._trace
     clear_chat = Bridge.clear_chat
     cancel_chat = Bridge.cancel_chat
     compact_chat = Bridge.compact_chat
+    _finish_compact = Bridge._finish_compact
     _compact_note = Bridge._compact_note
     _agentic_chat_turn = Bridge._agentic_chat_turn
 
@@ -352,3 +359,136 @@ def test_compact_preserves_tool_pairing(monkeypatch):
     hist = b._chat_history
     # Never starts on an orphaned tool_result; first message is a plain user str.
     assert hist[0]["role"] == "user" and isinstance(hist[0]["content"], str)
+
+
+# ── "in context" toggle: exclude / re-include a chat turn ────────────────────
+
+
+def test_excluded_turn_hidden_from_model_but_kept_in_history():
+    """set_turn_included(False) drops a turn from what the model sees
+    (_visible_history) without deleting it — so re-including restores it."""
+    b, ad = _StubBridge(), _TextAdapter("reply")
+    asyncio.run(b._agentic_chat_turn("c1", "first", ad))
+    asyncio.run(b._agentic_chat_turn("c2", "second", ad))
+    # Tags cover every message, one per turn.
+    assert len(b._history_turn_ids) == len(b._chat_history)
+    assert set(b._history_turn_ids) == {"c1", "c2"}
+
+    # Exclude the first turn.
+    res = b.set_turn_included("c1", included=False)
+    assert res == {"ok": True, "included": False}
+    visible = b._visible_history()
+    # The stored history is untouched (nothing deleted)…
+    assert ("user", "first") in [(m["role"], m["content"]) for m in b._chat_history]
+    # …but the model view no longer contains the excluded turn.
+    assert ("user", "first") not in [(m["role"], m["content"]) for m in visible]
+    assert ("user", "second") in [(m["role"], m["content"]) for m in visible]
+    assert visible[0]["role"] == "user"  # still opens on a user message
+
+    # Re-include restores it (reversible — nothing was lost).
+    assert b.set_turn_included("c1", included=True)["included"] is True
+    assert ("user", "first") in [
+        (m["role"], m["content"]) for m in b._visible_history()
+    ]
+
+
+def test_excluded_turn_not_sent_to_the_model():
+    """The excluded turn must actually be absent from the messages handed to the
+    adapter on the next turn (not just from _visible_history in isolation)."""
+    b, ad = _StubBridge(), _TextAdapter("ok")
+    asyncio.run(b._agentic_chat_turn("c1", "secret tangent", ad))
+    b.set_turn_included("c1", included=False)
+    asyncio.run(b._agentic_chat_turn("c2", "next", ad))
+    sent = [(m["role"], m["content"]) for m in ad.seen[-1]]
+    assert ("user", "secret tangent") not in sent
+    assert ("user", "next") in sent
+
+
+def test_exclude_keeps_tool_pairs_intact():
+    """Excluding a plain turn adjacent to a tool-calling turn must not orphan a
+    tool_result in the visible history."""
+    b = _StubBridge()
+    b._chat_history = [
+        {"role": "user", "content": "q0"},
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t"}]},
+        {"role": "assistant", "content": "a1"},
+    ]
+    b._history_turn_ids = ["c0", "c0", "c1", "c1", "c1", "c1"]
+    b._excluded_turns = {"c0"}
+    visible = b._visible_history()
+    # c0 gone; the tool pair (whole c1 turn) survives and opens on a user string.
+    assert visible[0] == {"role": "user", "content": "q1"}
+    assert any(
+        isinstance(m.get("content"), list)
+        and m["content"][0].get("type") == "tool_result"
+        for m in visible
+    )
+
+
+def test_trim_keeps_tags_aligned():
+    """_trim_chat_history must slice the aligned turn-id tags in lockstep, so a
+    later exclude still maps tags to the right messages."""
+    b = _StubBridge()
+    b._chat_history = _long_history(40)  # 80 messages
+    b._history_turn_ids = [f"c{i // 2}" for i in range(80)]
+    b._trim_chat_history(max_messages=10)
+    assert len(b._history_turn_ids) == len(b._chat_history)
+    # Tags line up with the messages that survived (the most recent turns).
+    assert b._history_turn_ids[-1] == "c39"
+
+
+def test_compact_drops_excluded_turns_without_summarizing(monkeypatch):
+    """Compaction bakes in the exclude decision: an excluded turn is physically
+    dropped and must NOT appear in the folded summary note (which would re-inject
+    the removed content), and its chat_id is reported so the card is retired."""
+    import runspec_console.config as cfg
+
+    monkeypatch.setattr(cfg, "read_chat_history", lambda: {"resume_keep_recent": 4})
+    b = _StubBridge()
+    b._chat_history = _long_history(10)  # 20 messages, q0..q9
+    b._history_turn_ids = [f"c{i // 2}" for i in range(20)]
+    b._excluded_turns = {"c0"}  # exclude the earliest turn (q0/a0)
+    b.compact_chat()
+
+    # The excluded turn's content is gone from history AND absent from the note.
+    joined = "".join(
+        m["content"] for m in b._chat_history if isinstance(m["content"], str)
+    )
+    assert "q0" not in joined
+    # Tags stayed aligned through both the exclude-drop and the prefix compaction.
+    assert len(b._history_turn_ids) == len(b._chat_history)
+    # The compaction event reports the retired turn(s) for the frontend.
+    events = [d for e, d in b.dispatched if e == "runspec:chat_compacted"]
+    assert events and "c0" in events[-1]["dropped_turns"]
+
+
+def test_set_turn_included_rejects_empty_id():
+    b = _StubBridge()
+    assert b.set_turn_included("", included=False) == {"ok": False, "included": True}
+    assert b._excluded_turns == set()
+
+
+def test_new_turn_after_resume_is_excludable():
+    """In a resumed session the old (rebuilt) history carries the neutral ""
+    sentinel tag (never excludable), but a NEW turn sent after resume is tagged
+    with its own chat_id and excludes normally — the resumed prefix stays."""
+    b, ad = _StubBridge(), _TextAdapter("reply")
+    # Mimic resume_conversation's rebuilt state: text history, sentinel tags.
+    b._chat_history = [
+        {"role": "user", "content": "old q"},
+        {"role": "assistant", "content": "old a"},
+    ]
+    b._history_turn_ids = ["", ""]
+
+    # A fresh turn after resume — tagged with its real chat_id.
+    asyncio.run(b._agentic_chat_turn("c-new", "new question", ad))
+    assert "c-new" in b._history_turn_ids
+
+    # The new card excludes; the resumed prefix is untouched and stays visible.
+    assert b.set_turn_included("c-new", included=False)["included"] is False
+    visible = [(m["role"], m["content"]) for m in b._visible_history()]
+    assert ("user", "new question") not in visible
+    assert ("user", "old q") in visible  # sentinel-tagged history never drops
