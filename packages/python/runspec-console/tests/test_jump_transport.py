@@ -17,7 +17,10 @@ from unittest.mock import patch
 from runspec_console import executor
 from runspec_console.executor import (
     _system_ssh_argv,
+    has_sshpass,
+    jump_copy_id_command,
     run_remote,
+    ssh_jump_copy_id,
     ssh_jump_run,
 )
 from runspec_console.hosts import load_hosts, save_hosts, validate_editor_hosts
@@ -173,6 +176,114 @@ def test_hosts_toml_round_trips_jump(tmp_path):
         ],
     )
     assert load_hosts(p)[0]["jump"] == "bastion"
+
+
+# ── copy-key over a jump host ─────────────────────────────────────────────────
+
+
+def test_has_sshpass_reflects_path_lookup():
+    with patch.object(executor.shutil, "which", return_value="/usr/bin/sshpass"):
+        assert has_sshpass() is True
+    with patch.object(executor.shutil, "which", return_value=None):
+        assert has_sshpass() is False
+
+
+def test_jump_copy_id_command_builds_ssh_copy_id():
+    cmd = jump_copy_id_command("svc@c6", "bastion", "/keys/id_ed25519")
+    assert cmd.startswith("ssh-copy-id ")
+    assert "ProxyJump=bastion" in cmd
+    assert cmd.endswith("svc@c6")
+    assert "id_ed25519" in cmd
+
+
+def test_jump_copy_id_command_includes_nondefault_port():
+    cmd = jump_copy_id_command("svc@c6:2222", "bastion")
+    assert "-p 2222" in cmd
+
+
+def test_ssh_jump_copy_id_uses_sshpass_password_auth_and_env():
+    with patch.object(executor.subprocess, "run", return_value=_Proc(0, "", "")) as m:
+        code, _out, _err = ssh_jump_copy_id("svc@c6", "bastion", "append-key", "s3cret")
+    assert code == 0
+    argv = m.call_args.args[0]
+    assert argv[:3] == ["sshpass", "-e", "ssh"]
+    assert "PubkeyAuthentication=no" in argv
+    assert argv[argv.index("-J") + 1] == "bastion"
+    assert argv[-2:] == ["svc@c6", "append-key"]
+    # Password rides the SSHPASS env var, never argv.
+    assert m.call_args.kwargs["env"]["SSHPASS"] == "s3cret"
+    assert "s3cret" not in argv
+
+
+def test_ssh_jump_copy_id_missing_sshpass():
+    with patch.object(executor.subprocess, "run", side_effect=FileNotFoundError()):
+        code, _out, err = ssh_jump_copy_id("h", "j", "cmd", "pw")
+    assert code == -1 and "sshpass" in err
+
+
+# ── bridge copy-key routing ───────────────────────────────────────────────────
+
+
+def test_push_key_over_jump_uses_sshpass_when_available():
+    b = _bridge()
+    entry = {"name": "c6", "ssh": "svc@c6", "jump": "bastion"}
+    with (
+        patch.object(
+            b,
+            "_public_key_for",
+            return_value={"ok": True, "public_key": "ssh-ed25519 AAAA test"},
+        ),
+        patch("runspec_console.executor.has_sshpass", return_value=True),
+        patch(
+            "runspec_console.executor.ssh_jump_copy_id", return_value=(0, "", "")
+        ) as m,
+    ):
+        res = b._push_key_over_password(entry, "pw", {})
+    assert res["ok"] is True
+    # ssh_jump_copy_id(ssh_target, jump, remote_cmd, password, …) — jump is 2nd.
+    assert m.call_args.args[1] == "bastion"
+
+
+def test_push_key_over_jump_without_sshpass_returns_manual_command():
+    b = _bridge()
+    entry = {"name": "c6", "ssh": "svc@c6", "jump": "bastion"}
+    with (
+        patch.object(
+            b,
+            "_public_key_for",
+            return_value={"ok": True, "public_key": "ssh-ed25519 AAAA test"},
+        ),
+        patch("runspec_console.executor.has_sshpass", return_value=False),
+    ):
+        res = b._push_key_over_password(entry, "pw", {})
+    assert res["ok"] is False
+    # Actionable fallback, not a paramiko error.
+    assert "ssh-copy-id" in res["error"]
+    assert "ProxyJump=bastion" in res["error"]
+
+
+def test_push_key_non_jump_host_still_uses_paramiko():
+    # A normal host must not be diverted to the jump path — it should reach the
+    # paramiko client builder (which we stub to confirm it's exercised).
+    b = _bridge()
+    entry = {"name": "prod", "ssh": "deploy@prod"}
+    with (
+        patch.object(
+            b,
+            "_public_key_for",
+            return_value={"ok": True, "public_key": "ssh-ed25519 AAAA test"},
+        ),
+        patch(
+            "runspec_console.executor.ssh_jump_copy_id",
+            side_effect=AssertionError("jump path must not run for a non-jump host"),
+        ),
+        patch("runspec_console.executor._make_ssh_client") as make_client,
+    ):
+        make_client.side_effect = RuntimeError("connect stubbed")
+        res = b._push_key_over_password(entry, "pw", {})
+    # Reached the paramiko builder (stubbed to raise) — proves no jump diversion.
+    assert res["ok"] is False
+    assert make_client.called
 
 
 # ── bridge routing (discovery + connectivity) ─────────────────────────────────

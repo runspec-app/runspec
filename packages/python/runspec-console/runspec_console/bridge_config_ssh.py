@@ -462,6 +462,15 @@ class ConfigSshMixin:
             f"printf '%s\\n' '{public_key}' >> ~/.ssh/authorized_keys"
         )
 
+        # A ``jump`` host is unreachable by paramiko (the legacy-crypto case this
+        # whole feature exists for), so the password bootstrap can't go through
+        # ``_make_ssh_client`` — route it over the system-ssh transport instead.
+        jump = str(entry.get("jump") or "").strip()
+        if jump:
+            return self._push_key_over_jump(
+                entry, password, global_ssh, public_key, push_cmd, jump
+            )
+
         import paramiko
 
         from .executor import _make_ssh_client, friendly_ssh_error
@@ -498,6 +507,56 @@ class ConfigSshMixin:
                 ),
             }
         return {"ok": True, "error": ""}
+
+    def _push_key_over_jump(
+        self,
+        entry: dict[str, Any],
+        password: str,
+        global_ssh: dict[str, Any],
+        public_key: str,
+        push_cmd: str,
+        jump: str,
+    ) -> dict[str, Any]:
+        """Copy-key bootstrap for a ``jump`` host (paramiko can't reach it).
+
+        With ``sshpass`` present, feed the password to system ssh over ``-J`` and
+        push the key in-app. Without it — the stock-Windows case — surface the
+        exact ``ssh-copy-id`` command to run once in a terminal (which uses the
+        operator's ``~/.ssh/config``), instead of a confusing paramiko failure.
+        """
+        from . import executor as executor_mod
+
+        if executor_mod.has_sshpass():
+            code, _out, err = executor_mod.ssh_jump_copy_id(
+                entry["ssh"],
+                jump,
+                push_cmd,
+                password,
+                identity_file=entry.get("identityFile"),
+                global_ssh_config=global_ssh,
+            )
+            if code == 0:
+                return {"ok": True, "error": ""}
+            return {
+                "ok": False,
+                "error": (
+                    "Could not authorise over the jump host: "
+                    f"{err.strip() or f'ssh exited {code}'}"
+                ),
+            }
+
+        effective_idf = entry.get("identityFile") or global_ssh.get("identityFile", "")
+        manual = executor_mod.jump_copy_id_command(entry["ssh"], jump, effective_idf)
+        return {
+            "ok": False,
+            "error": (
+                "This is a jump host, reached with the system ssh client because "
+                "paramiko can't negotiate its legacy crypto. Automated password "
+                "copy needs `sshpass`, which isn't installed on this machine. Run "
+                "this once in a terminal to authorise the console, then reconnect:"
+                f"\n\n    {manual}"
+            ),
+        }
 
     def copy_ssh_id(self, host_name: str, password: str) -> dict[str, Any]:
         """Copy this machine's public key to a host's ``authorized_keys`` over a

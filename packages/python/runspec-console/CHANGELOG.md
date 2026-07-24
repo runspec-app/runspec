@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.195.0] — 2026-07-24
+
+### Added
+- **Copy-key bootstrap for `jump` hosts.** "Copy key to host" / "Copy key to all
+  hosts" previously always used paramiko, so it failed for a legacy `jump` host
+  (paramiko can't negotiate CentOS 6's crypto). The bootstrap now diverts a
+  `jump` host off paramiko: with `sshpass` on PATH it feeds the password to the
+  system `ssh -J` client (via the `SSHPASS` env var, never argv;
+  `PubkeyAuthentication=no` so the password is what's tested,
+  `StrictHostKeyChecking=accept-new` matching the console's TOFU default); on
+  stock Windows (no `sshpass`) it surfaces the exact `ssh-copy-id -o ProxyJump=…`
+  command to run once in a terminal, instead of a confusing paramiko error. After
+  that one-time push, the key-auth jump transport connects normally. New
+  `executor.has_sshpass`/`ssh_jump_copy_id`/`jump_copy_id_command` and
+  `bridge_config_ssh._push_key_over_jump`; non-`jump` hosts are unchanged. See
+  `docs/design/console-jump-transport.md`.
+
+---
+
+
 ## [0.194.0] — 2026-07-24
 
 ### Added

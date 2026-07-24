@@ -97,6 +97,26 @@ Host old-centos6-1
 | Connectivity | `bridge_internals._check_connected` | `ssh_jump_run(ssh, "true", jump=…)`; `code == 0` = connected |
 | Execution (Forms) | `bridge_invoke` | no `session_factory` (pool skipped); `run_remote(…, jump=…)` |
 | Execution (agent) | `bridge_autonomy` | `run_remote(…, jump=…)` (already connect-per-call) |
+| Copy key (bootstrap) | `bridge_config_ssh._push_key_over_password` | `_push_key_over_jump` — `sshpass` over `ssh -J` if present, else a manual `ssh-copy-id` command |
+
+### Copy-key bootstrap (added after the first cut)
+
+The "Copy key to host" / "Copy key to all hosts" bootstrap authenticates with a
+**password** to install this machine's public key — but the regular jump
+transport is `BatchMode=yes` (key/agent only), and password auth *before* any key
+exists is a chicken-and-egg it can't do. So `_push_key_over_password` diverts a
+`jump` host to `_push_key_over_jump`:
+
+- **`sshpass` present** → `executor.ssh_jump_copy_id` feeds the password to system
+  `ssh -J` via the `SSHPASS` env var (never argv). It forces
+  `PubkeyAuthentication=no` (so the password is what's actually tested) and
+  `StrictHostKeyChecking=accept-new` (mirrors the console's TOFU default).
+- **`sshpass` absent** (stock Windows) → returns the exact `ssh-copy-id -o
+  ProxyJump=… -i <key> <target>` command (`executor.jump_copy_id_command`) for the
+  operator to run once in a terminal, instead of a confusing paramiko error. After
+  that one-time push, the key-auth jump transport connects normally.
+
+Non-`jump` hosts are untouched — still paramiko password auth.
 
 ### Editor round-trip
 

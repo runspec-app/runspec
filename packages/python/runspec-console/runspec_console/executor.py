@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -850,6 +851,112 @@ def ssh_jump_run(
             "ssh not found — install an OpenSSH client on the console machine",
         )
     return proc.returncode, proc.stdout, proc.stderr
+
+
+def has_sshpass() -> bool:
+    """True if ``sshpass`` is on PATH — required to feed a password to the system
+    ``ssh`` client non-interactively (the ``ssh-copy-id`` bootstrap for a ``jump``
+    host). Absent on stock Windows, so callers fall back to a manual command."""
+    return shutil.which("sshpass") is not None
+
+
+def ssh_jump_copy_id(
+    ssh_target: str,
+    jump: str,
+    remote_cmd: str,
+    password: str,
+    *,
+    identity_file: str | None = None,
+    global_ssh_config: dict[str, Any] | None = None,
+    timeout: int = 30,
+) -> tuple[int, str, str]:
+    """Run ``remote_cmd`` on a ``jump`` host over system ssh with **password**
+    auth (via ``sshpass``) — the copy-key bootstrap for a legacy host.
+
+    The regular jump transport uses ``BatchMode=yes`` (key/agent only), but the
+    key-install bootstrap must authenticate with a password *before* any key
+    exists — a chicken-and-egg BatchMode can't do. ``sshpass -e`` reads the
+    password from the ``SSHPASS`` env var (never argv, so it can't leak into the
+    process list). ``PubkeyAuthentication=no`` forces the password to be what's
+    actually tested (so a stray agent key can't mask a wrong password), and
+    ``StrictHostKeyChecking=accept-new`` mirrors the console's TOFU default so an
+    unknown host key doesn't hang the prompt. Legacy algorithms + any further
+    ProxyJump chain come from ``~/.ssh/config`` (same contract as the run path).
+
+    Caller must check :func:`has_sshpass` first. Returns ``(code, out, err)``.
+    """
+    cfg = global_ssh_config or {}
+    try:
+        connect_timeout = int(
+            float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT))
+        )
+    except (TypeError, ValueError):
+        connect_timeout = int(DEFAULT_CONNECT_TIMEOUT)
+    user, host, port = _parse_ssh_target(ssh_target)
+    if not user and cfg.get("user"):
+        user = str(cfg["user"])
+    target = f"{user}@{host}" if user else host
+    argv = [
+        "sshpass",
+        "-e",
+        "ssh",
+        "-o",
+        "BatchMode=no",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "PubkeyAuthentication=no",
+        "-o",
+        "PreferredAuthentications=password",
+        "-o",
+        f"ConnectTimeout={max(1, connect_timeout)}",
+    ]
+    if port and port != 22:
+        argv += ["-p", str(port)]
+    if jump:
+        argv += ["-J", str(jump)]
+    argv += [target, remote_cmd]
+    env = {**os.environ, "SSHPASS": password}
+    try:
+        proc = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return -1, "", f"ssh to {ssh_target} timed out after {timeout}s"
+    except FileNotFoundError:
+        return -1, "", "sshpass or ssh not found on the console machine"
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def jump_copy_id_command(
+    ssh_target: str, jump: str, identity_file: str | None = None, port: int = 22
+) -> str:
+    """A copy-paste terminal command that authorises this machine on a ``jump``
+    host — shown when ``sshpass`` isn't available (e.g. stock Windows) so the
+    copy-key button has an actionable fallback instead of a paramiko error.
+
+    Uses ``ssh-copy-id -o ProxyJump=…`` so the target's legacy algorithms and any
+    further ProxyJump come from the operator's ``~/.ssh/config`` (the same config
+    the run transport already relies on). ``-i`` names the console's key so the
+    right one is copied.
+    """
+    user, host, parsed_port = _parse_ssh_target(ssh_target)
+    target = f"{user}@{host}" if user else host
+    effective_port = parsed_port if parsed_port and parsed_port != 22 else port
+    parts = ["ssh-copy-id", "-o", f"ProxyJump={jump}"]
+    if effective_port and effective_port != 22:
+        parts += ["-p", str(effective_port)]
+    if identity_file:
+        parts += ["-i", str(Path(identity_file).expanduser())]
+    parts.append(target)
+    return " ".join(shlex.quote(p) for p in parts)
 
 
 def _stream(
