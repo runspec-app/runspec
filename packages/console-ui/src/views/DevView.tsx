@@ -19,7 +19,7 @@ import {
   type DevEntry,
   type DevCategory,
 } from '../devbus'
-import { useIsDark } from '../ThemeContext'
+import { useIsDark, textMuted } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -129,7 +129,7 @@ export function DevView() {
     bridge.open_devtools().catch(() => {})
   }
 
-  const mutedCol = isDark ? '#888' : '#999'
+  const mutedCol = textMuted(isDark)
 
   const columns: ColumnsType<DevEntry> = [
     {
@@ -256,7 +256,7 @@ export function DevView() {
         ))}
         {activeCategories.size > 0 && (
           <Button size="small" type="text" onClick={() => setActiveCategories(new Set())}
-            style={{ fontSize: 11, color: '#888', padding: '0 4px' }}>
+            style={{ fontSize: 11, color: 'var(--rs-text-muted)', padding: '0 4px' }}>
             clear filter
           </Button>
         )}

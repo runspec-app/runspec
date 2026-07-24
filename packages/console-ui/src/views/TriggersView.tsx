@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Tag, Alert, Button, Tooltip, Space, Collapse, Input, message } from 'antd'
 import { CheckOutlined, CloseOutlined, ReloadOutlined, BellOutlined, SendOutlined } from '@ant-design/icons'
 import { bridge, type TriggerCard, type TriggerEvent, type TriggerListResult } from '../bridge'
-import { useIsDark, textColor } from '../ThemeContext'
+import { useIsDark, textColor, textMuted } from '../ThemeContext'
 import { Markdown } from '../components/Markdown'
 import { RunInbox, type CardTranscript } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
@@ -283,7 +283,7 @@ export function TriggersView() {
   const convoCard = convo ? cards[convo] : undefined
   const convoRoom = (convoCard?.detail?.room as string | undefined) || ''
 
-  const dim = isDark ? '#888' : '#999'
+  const dim = textMuted(isDark)
   const colBg = isDark ? '#141414' : '#f0f0f0'
   const border = isDark ? '#303030' : '#e8e8e8'
 

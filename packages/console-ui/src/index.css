@@ -14,11 +14,19 @@ html, body, #root {
   --rs-hover: rgba(255, 255, 255, 0.05);
   --rs-scroll-thumb: #3a3a3a;
   --rs-scroll-thumb-hover: #4a4a4a;
+  /* Muted-text hierarchy — keep in sync with ThemeContext.tsx (App.tsx
+     re-stamps these on theme change; the values here cover first paint). */
+  --rs-text-secondary: #aaa;
+  --rs-text-muted: #888;
+  --rs-text-faint: #555;
 }
 html[data-theme='light'] {
   --rs-hover: rgba(0, 0, 0, 0.04);
   --rs-scroll-thumb: #c9c9c9;
   --rs-scroll-thumb-hover: #b0b0b0;
+  --rs-text-secondary: #666;
+  --rs-text-muted: #999;
+  --rs-text-faint: #bbb;
 }
 
 /* Thin, theme-aware scrollbars everywhere (standard properties + webkit

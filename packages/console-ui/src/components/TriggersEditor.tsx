@@ -230,7 +230,7 @@ function RunPicker({
         value={target || undefined} onChange={onTarget}
         options={targetNames.map(t => ({ value: t, label: kind === 'host' ? <span>{dot(t)}{t}</span> : t }))}
       />
-      <span style={{ color: '#666' }}>/</span>
+      <span style={{ color: 'var(--rs-text-muted)' }}>/</span>
       <Select
         size="small" showSearch style={{ minWidth: 170 }} placeholder="runnable" disabled={!target}
         value={runnable || undefined} onChange={onRunnable}
@@ -282,10 +282,10 @@ function ArgMapEditor({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       {declaredArgs.map(a => (
         <div key={a.name} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 110, textAlign: 'right', color: '#aaa' }}>
+          <span style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 110, textAlign: 'right', color: 'var(--rs-text-secondary)' }}>
             {a.name}{a.required ? <span style={{ color: '#cf5b5b' }}> *</span> : ''}
           </span>
-          <span style={{ color: '#666' }}>→</span>
+          <span style={{ color: 'var(--rs-text-muted)' }}>→</span>
           <Input
             size="small" style={{ fontFamily: 'monospace' }} placeholder={hintFor(a)}
             value={templateOf(a.name)} onChange={e => setDeclared(a.name, e.target.value)}
@@ -298,12 +298,12 @@ function ArgMapEditor({
             size="small" style={{ fontFamily: 'monospace', minWidth: 110, maxWidth: 116 }} placeholder="arg"
             value={r.arg} onChange={e => setCustom(i, 'arg', e.target.value)}
           />
-          <span style={{ color: '#666' }}>→</span>
+          <span style={{ color: 'var(--rs-text-muted)' }}>→</span>
           <Input
             size="small" style={{ fontFamily: 'monospace' }} placeholder="{{ field }}"
             value={r.template} onChange={e => setCustom(i, 'template', e.target.value)}
           />
-          <MinusCircleOutlined onClick={() => removeCustom(i)} style={{ color: '#666', cursor: 'pointer' }} />
+          <MinusCircleOutlined onClick={() => removeCustom(i)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
         </div>
       ))}
       <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={addCustom} style={{ width: 'fit-content' }}>
@@ -367,7 +367,7 @@ function TestTriggerModal({ name, onClose }: { name: string | null; onClose: () 
             placeholder="Paste the message body the trigger should act on…"
           />
         </Form.Item>
-        <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>
+        <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>
           Fields (optional) — extra payload, e.g. <code>subject</code> = <code>VIP outage</code>
         </label>
         <Form.List name="fields">
@@ -376,9 +376,9 @@ function TestTriggerModal({ name, onClose }: { name: string | null; onClose: () 
               {fields.map(f => (
                 <div key={f.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <Form.Item name={[f.name, 'key']} noStyle><Input size="small" placeholder="subject" style={{ fontFamily: 'monospace' }} /></Form.Item>
-                  <span style={{ color: '#666' }}>=</span>
+                  <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
                   <Form.Item name={[f.name, 'value']} noStyle><Input size="small" placeholder="VIP outage" style={{ fontFamily: 'monospace' }} /></Form.Item>
-                  <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: '#666', cursor: 'pointer' }} />
+                  <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                 </div>
               ))}
               <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add()} style={{ width: 'fit-content' }}>Add field</Button>
@@ -484,9 +484,9 @@ export function TriggersEditor({
           {fields.map(f => (
             <div key={f.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <Form.Item name={[f.name, keyName]} noStyle><Input size="small" placeholder={keyPh} style={{ fontFamily: 'monospace' }} /></Form.Item>
-              <span style={{ color: '#666' }}>→</span>
+              <span style={{ color: 'var(--rs-text-muted)' }}>→</span>
               <Form.Item name={[f.name, valName]} noStyle><Input size="small" placeholder={valPh} style={{ fontFamily: 'monospace' }} /></Form.Item>
-              <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: '#666', cursor: 'pointer' }} />
+              <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
             </div>
           ))}
           <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add()} style={{ width: 'fit-content' }}>{addLabel}</Button>
@@ -508,9 +508,9 @@ export function TriggersEditor({
                 <Form.Item name={[f.name, 'run']} noStyle rules={[{ required: true, whitespace: true, message: 'Required' }]}>
                   <RunPicker hosts={hosts} runnables={runnables} />
                 </Form.Item>
-                <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: '#666', cursor: 'pointer' }} />
+                <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
               </div>
-              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>{'Args — literal or {{ field }} / {{ _llm.x }} template'}</label>
+              <label style={{ fontSize: 11, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>{'Args — literal or {{ field }} / {{ _llm.x }} template'}</label>
               <Form.Item name={[f.name, 'map']} noStyle>
                 <ArgMapEditor declaredArgs={argsForRun(actionsVal?.[f.name]?.run, runnables)} />
               </Form.Item>
@@ -563,7 +563,7 @@ export function TriggersEditor({
             <Segmented options={[{ label: 'Agent', value: 'agent' }, { label: 'Rule (fixed run)', value: 'rule' }]} />
           </Form.Item>
 
-          <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>Match — every field's regex must match the event payload (empty = any event of that source/type)</label>
+          <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>Match — every field's regex must match the event payload (empty = any event of that source/type)</label>
           {pairRow('match', 'field', 'pattern', 'subject', '(?i)password', 'Add match')}
 
           {threaded && (
@@ -595,7 +595,7 @@ export function TriggersEditor({
                   <Form.Item name="run" label="Run" rules={[{ required: true, whitespace: true, message: 'Pick a host/group and runnable' }]} help="Runs this runnable when the trigger matches. Group runs it on every host in the group (one grouped confirm).">
                     <RunPicker hosts={hosts} runnables={runnables} />
                   </Form.Item>
-                  <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>{'Args — value can be a literal or a {{ payload field }} / {{ _llm.x }} template'}</label>
+                  <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>{'Args — value can be a literal or a {{ payload field }} / {{ _llm.x }} template'}</label>
                   <Form.Item name="map" noStyle>
                     <ArgMapEditor declaredArgs={argsForRun(runVal, runnables)} />
                   </Form.Item>
@@ -634,7 +634,7 @@ export function TriggersEditor({
           )}
 
           <Form.Item name="enabled" valuePropName="checked" style={{ marginBottom: 8 }}>
-            <Switch size="small" /> <span style={{ fontSize: 12, color: '#888', marginLeft: 6 }}>Enabled</span>
+            <Switch size="small" /> <span style={{ fontSize: 12, color: 'var(--rs-text-muted)', marginLeft: 6 }}>Enabled</span>
           </Form.Item>
 
           {err && <Alert type="error" showIcon style={{ marginBottom: 4 }} message={err} />}
@@ -644,12 +644,12 @@ export function TriggersEditor({
       <TestTriggerModal name={testName} onClose={() => setTestName(null)} />
 
       {triggers.length === 0 && !editing ? (
-        <Empty description={<span style={{ fontSize: 12, color: '#888' }}>No triggers yet. Add one to react to a monitored event.</span>} />
+        <Empty description={<span style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}>No triggers yet. Add one to react to a monitored event.</span>} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {triggers.map((t, i) => (
             <div key={`${String(t.name)} ${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
-              <ThunderboltOutlined style={{ color: '#666', flexShrink: 0 }} />
+              <ThunderboltOutlined style={{ color: 'var(--rs-text-muted)', flexShrink: 0 }} />
               <Text style={{ fontFamily: 'monospace', fontSize: 12, flexShrink: 0 }}>{String(t.name)}</Text>
               <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {String(t.source ?? '')}:{String(t.event ?? '')}
@@ -657,11 +657,11 @@ export function TriggersEditor({
               <Tag color={t.mode === 'rule' ? 'geekblue' : 'purple'} style={{ margin: 0, fontSize: 10 }}>{String(t.mode ?? 'agent')}</Tag>
               <Switch size="small" checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)} />
               <Tooltip title="Trigger now — fire with a test event">
-                <Button type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => setTestName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: '#666' }} />
+                <Button type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => setTestName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
               </Tooltip>
-              <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(t)} disabled={editing} style={{ padding: '0 4px', color: '#666' }} />
+              <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(t)} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
               <Popconfirm title={`Delete trigger ${String(t.name)}?`} onConfirm={() => remove(String(t.name))} okText="Delete" cancelText="Cancel" placement="left">
-                <Button type="text" size="small" icon={<DeleteOutlined />} disabled={editing} style={{ padding: '0 4px', color: '#666' }} danger />
+                <Button type="text" size="small" icon={<DeleteOutlined />} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
               </Popconfirm>
             </div>
           ))}

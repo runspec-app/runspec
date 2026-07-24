@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState }
 import { Button, Tooltip, message } from 'antd'
 import { SendOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
 import type { Runnable, Runbook } from '../bridge'
-import { ThemeContext, useAccent } from '../ThemeContext'
+import { ThemeContext, useAccent, textFaint, textMuted } from '../ThemeContext'
 
 interface SlashItem {
   topRunnable: Runnable   // top-level runnable (host/group context)
@@ -289,10 +289,10 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
   const menuBg = isDark ? '#1e1e1e' : '#ffffff'
   const itemBorder = isDark ? '#222' : '#f0f0f0'
   const itemHover = isDark ? '#2a2a2a' : '#eef1f5'
-  const promptChar = isDark ? '#555' : '#999'
+  const promptChar = textFaint(isDark)
   const inputText = isDark ? '#d4d4d4' : '#222'
-  const dimText = isDark ? '#777' : '#999'
-  const groupText = isDark ? '#666' : '#888'
+  const dimText = textMuted(isDark)
+  const groupText = textMuted(isDark)
   const nameCol = accent
   const subCol = isDark ? '#89d4f5' : '#1677ff'
 
@@ -429,7 +429,7 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
                   padding: '2px 4px', height: 20, width: 24,
                   color: autoSwitch
                     ? accent
-                    : (isDark ? '#444' : '#ccc'),
+                    : (textFaint(isDark)),
                 }}
               />
             </Tooltip>
@@ -448,7 +448,7 @@ export function CommandInput({ runnables, runbooks, onRunRunnable, onOpenForm, o
               type="text"
               icon={<SendOutlined />}
               onClick={submit}
-              style={{ color: value.trim() ? '#1677ff' : (isDark ? '#444' : '#ccc'), padding: 4, transition: 'color 0.15s ease' }}
+              style={{ color: value.trim() ? '#1677ff' : (textFaint(isDark)), padding: 4, transition: 'color 0.15s ease' }}
             />
           )}
         </div>

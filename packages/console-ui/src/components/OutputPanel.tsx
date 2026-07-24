@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Checkbox, Input, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
-import { useIsDark, textColor, useAccent } from '../ThemeContext'
+import { useIsDark, textColor, useAccent, textFaint, textMuted, textSecondary } from '../ThemeContext'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
@@ -57,14 +57,14 @@ function useCardTheme(): CardTheme {
     cardBorder: isDark ? '#2a2a2a' : '#e3e3e3',
     headerBg: isDark ? '#1a1a1a' : '#f5f6f8',
     text: textColor(isDark),
-    dim: isDark ? '#777' : '#8c8c8c',
-    faint: isDark ? '#555' : '#bbbbbb',
-    caret: isDark ? '#444' : '#bbbbbb',
+    dim: textMuted(isDark),
+    faint: textFaint(isDark),
+    caret: textFaint(isDark),
     mono: isDark ? '#d4d4d4' : '#1f1f1f',
     rowAlt: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.025)',
     tableHeadBorder: isDark ? '#2a2a2a' : '#e3e3e3',
     tableRowBorder: isDark ? '#1a1a1a' : '#f0f0f0',
-    tableHead: isDark ? '#888' : '#888',
+    tableHead: textMuted(isDark),
     codeBg: isDark ? '#141414' : '#f5f5f5',
     toolBg: isDark ? '#1a1a1a' : '#f5f6f8',
     toolBorder: isDark ? '#2a2a2a' : '#e3e3e3',
@@ -779,7 +779,7 @@ function ToolCallBlock({
 
       {awaiting && (
         <div style={{ padding: '10px 12px', background: c.isDark ? '#1c1810' : '#fffbe6', borderTop: `1px solid ${c.isDark ? '#5a4a1a' : '#ffe7ba'}` }}>
-          <div style={{ fontSize: 12, color: c.isDark ? '#bbb' : '#595959', marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: textSecondary(c.isDark), marginBottom: 10 }}>
             The assistant wants to run{' '}
             {resolved && <Text code style={{ fontSize: 11 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text>}
             {resolved ? ' ' : 'this '}— autonomy is{' '}

@@ -1,7 +1,7 @@
 import { Collapse } from 'antd'
 import { BellOutlined } from '@ant-design/icons'
 import { type TriggerEvent } from '../bridge'
-import { useIsDark } from '../ThemeContext'
+import { useIsDark, textMuted } from '../ThemeContext'
 import { COLUMN_COLOR, fmtTime } from './runShared'
 
 // The event-audit feed: every event seen + its disposition (fired / skipped by
@@ -18,7 +18,7 @@ export function EventLog({
   hint?: string
 }) {
   const isDark = useIsDark()
-  const dim = isDark ? '#888' : '#999'
+  const dim = textMuted(isDark)
   const border = isDark ? '#303030' : '#e8e8e8'
 
   return (

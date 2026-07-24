@@ -74,7 +74,7 @@ export function RunnablesView({ runnables, selectedHost, activeScope, onScopeTog
       key: 'name',
       render: (_: unknown, r: Runnable) => (
         <span style={{ fontFamily: 'monospace', fontSize: 13 }}>
-          <span style={{ color: '#666', fontSize: 12 }}>{r.group}/</span>{r.name}
+          <span style={{ color: 'var(--rs-text-muted)', fontSize: 12 }}>{r.group}/</span>{r.name}
         </span>
       ),
       sorter: (a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`),
@@ -113,7 +113,7 @@ export function RunnablesView({ runnables, selectedHost, activeScope, onScopeTog
       title: 'Description',
       dataIndex: 'description',
       key: 'description',
-      render: (d: string) => d ?? <span style={{ color: '#555' }}>—</span>,
+      render: (d: string) => d ?? <span style={{ color: 'var(--rs-text-faint)' }}>—</span>,
     },
     {
       title: 'Args',

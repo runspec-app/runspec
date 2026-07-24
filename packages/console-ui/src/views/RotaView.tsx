@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Switch, Button, Collapse, Segmented, Input, InputNumber, message } from 'antd'
 import { ClockCircleOutlined, CoffeeOutlined, LockOutlined, UnlockOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay, type LockState } from '../bridge'
-import { useIsDark, textColor } from '../ThemeContext'
+import { useIsDark, textColor, textMuted } from '../ThemeContext'
 
 // JS Date.getDay() (0=Sun) → rota day key.
 const DOW_KEY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
@@ -40,7 +40,7 @@ function LockIndicator() {
 // screen is locked) + a best-effort Outlook reminder at the return time.
 function BreakControl({ rota, breakUntil, onChanged }: { rota: Rota; breakUntil: string | null; onChanged: () => void }) {
   const isDark = useIsDark()
-  const dim = isDark ? '#888' : '#999'
+  const dim = textMuted(isDark)
   const [minutes, setMinutes] = useState<number>(60)
   const [busy, setBusy] = useState(false)
 
@@ -120,7 +120,7 @@ const DAYS: [string, string][] = [
 // around for confirms. Off by default — when disabled, automation runs anytime.
 function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void }) {
   const isDark = useIsDark()
-  const dim = isDark ? '#888' : '#999'
+  const dim = textMuted(isDark)
 
   const dayOf = (k: string): RotaDay => {
     const d = rota[k]
@@ -255,7 +255,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
 // reads as the single, shared gate it is.
 export function RotaView() {
   const isDark = useIsDark()
-  const dim = isDark ? '#888' : '#999'
+  const dim = textMuted(isDark)
   // null until the first load resolves. The panel is open by default, so the
   // editor would otherwise mount with an empty rota and lock its useState
   // initializers to the defaults before list_triggers() returns — showing

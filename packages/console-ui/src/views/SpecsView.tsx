@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Table, Tag, Input, Typography, Divider } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
-import { useIsDark } from '../ThemeContext'
+import { useIsDark, textFaint, textMuted } from '../ThemeContext'
 import type { Runnable, ArgDef } from '../bridge'
 
 const { Text } = Typography
@@ -57,8 +57,8 @@ function FieldRow({
   isDark: boolean
 }) {
   const labelColor = isDefault
-    ? (isDark ? '#444' : '#ccc')
-    : (isDark ? '#888' : '#999')
+    ? (textFaint(isDark))
+    : (textMuted(isDark))
   const valueOpacity = isDefault ? 0.45 : 1
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 0, minHeight: 22 }}>
@@ -71,7 +71,7 @@ function FieldRow({
       <span style={{ fontSize: 12, opacity: valueOpacity, display: 'flex', alignItems: 'center', gap: 4 }}>
         {value}
         {isDefault && (
-          <span style={{ fontSize: 10, fontFamily: 'monospace', color: isDark ? '#555' : '#bbb', fontStyle: 'italic' }}>
+          <span style={{ fontSize: 10, fontFamily: 'monospace', color: textFaint(isDark), fontStyle: 'italic' }}>
             default
           </span>
         )}
@@ -89,7 +89,7 @@ function autonomyTag(value: unknown) {
 function SectionLabel({ label, isDark }: { label: string; isDark: boolean }) {
   return (
     <div style={{
-      fontSize: 10, fontFamily: 'monospace', color: isDark ? '#444' : '#ccc',
+      fontSize: 10, fontFamily: 'monospace', color: textFaint(isDark),
       textTransform: 'uppercase', letterSpacing: '0.1em',
       marginBottom: 4, marginTop: 2, userSelect: 'none',
     }}>
@@ -140,7 +140,7 @@ function SpecPanel({ runnable }: { runnable: Runnable }) {
   const hasContext = !!(reason || envFile)
   const hasCustom  = customFields.length > 0
 
-  const labelCol = isDark ? '#888' : '#999'
+  const labelCol = textMuted(isDark)
 
   return (
     <div style={{ padding: '10px 48px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -366,7 +366,7 @@ export function SpecsView({ runnables, selectedHost, activeScope, onScopeToggle 
       key: 'name',
       render: (_: unknown, r: Runnable) => (
         <span style={{ fontFamily: 'monospace', fontSize: 13 }}>
-          <span style={{ color: '#666', fontSize: 12 }}>{r.group}/</span>{r.name}
+          <span style={{ color: 'var(--rs-text-muted)', fontSize: 12 }}>{r.group}/</span>{r.name}
         </span>
       ),
       sorter: (a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`),
@@ -405,7 +405,7 @@ export function SpecsView({ runnables, selectedHost, activeScope, onScopeToggle 
       title: 'Description',
       dataIndex: 'description',
       key: 'description',
-      render: (d: string) => d ?? <span style={{ color: '#555' }}>—</span>,
+      render: (d: string) => d ?? <span style={{ color: 'var(--rs-text-faint)' }}>—</span>,
     },
     {
       title: 'Autonomy',

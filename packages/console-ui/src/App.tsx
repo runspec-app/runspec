@@ -46,7 +46,7 @@ import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
-import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, textMuted, textSecondary, textFaint } from './ThemeContext'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
 
@@ -591,7 +591,7 @@ export default function App() {
   // controls). Falls back to the built-in blue when no theme is set.
   const titleCol  = brandTheme.accent_color || (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
   const contentBg = isDark ? '#111'    : '#ffffff'
-  const iconCol   = isDark ? '#888'    : '#595959'
+  const iconCol   = textMuted(isDark)
   const textCol   = isDark ? '#ccc'    : '#333'
 
   // Stamp the theme + accent onto the document root so index.css (scrollbars,
@@ -600,6 +600,11 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
     document.documentElement.style.setProperty('--rs-accent', titleCol)
+    // Mirror the muted-text tokens as CSS vars for call sites without isDark
+    // in scope (inline `var(--rs-text-*)` styles) — same source of truth.
+    document.documentElement.style.setProperty('--rs-text-secondary', textSecondary(isDark))
+    document.documentElement.style.setProperty('--rs-text-muted', textMuted(isDark))
+    document.documentElement.style.setProperty('--rs-text-faint', textFaint(isDark))
   }, [isDark, titleCol])
 
   const navTabs = [
@@ -798,7 +803,7 @@ export default function App() {
                             style={{
                               display: 'flex', alignItems: 'center', gap: 6,
                               padding: '10px 14px 3px',
-                              fontSize: 10, color: isDark ? '#aaa' : '#737373',
+                              fontSize: 10, color: textSecondary(isDark),
                               textTransform: 'uppercase', letterSpacing: '0.08em',
                               userSelect: 'none', cursor: 'pointer',
                             }}
@@ -1194,7 +1199,7 @@ export default function App() {
                   <Button
                     size="small" type="text"
                     onClick={() => setActiveScope([])}
-                    style={{ fontSize: 11, color: '#888', padding: '0 4px', height: 'auto' }}
+                    style={{ fontSize: 11, color: textMuted(isDark), padding: '0 4px', height: 'auto' }}
                   >
                     clear
                   </Button>
@@ -1211,7 +1216,7 @@ export default function App() {
               {!discovery.ready && discovery.total > 0 && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 6,
-                  margin: '0 0 6px', fontSize: 11, color: isDark ? '#8c8c8c' : '#8c8c8c',
+                  margin: '0 0 6px', fontSize: 11, color: textMuted(isDark),
                 }}>
                   <LoadingOutlined spin style={{ fontSize: 11 }} />
                   <span>Discovering fleet… {discovery.done}/{discovery.total} hosts. The assistant sees more runnables as they load.</span>

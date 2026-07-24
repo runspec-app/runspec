@@ -79,7 +79,7 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
               <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
                 {e.type === 'directory'
                   ? <FolderFilled style={{ color: '#e8b339', marginRight: 6 }} />
-                  : <FileOutlined style={{ color: '#888', marginRight: 6 }} />}
+                  : <FileOutlined style={{ color: 'var(--rs-text-muted)', marginRight: 6 }} />}
                 {e.name}
               </span>
             ),
@@ -284,7 +284,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           {crumbs.map((c, i) => (
             <span key={c.path} style={{ display: 'flex', alignItems: 'center' }}>
-              {i > 0 && <span style={{ color: '#888', margin: '0 2px' }}>{sep}</span>}
+              {i > 0 && <span style={{ color: 'var(--rs-text-muted)', margin: '0 2px' }}>{sep}</span>}
               <Text
                 style={{ fontFamily: 'monospace', fontSize: 12, cursor: 'pointer', color: accent }}
                 onClick={() => load(c.path, asSvc)}
@@ -349,7 +349,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
                     )}
                     {e.type === 'directory'
                       ? <FolderFilled style={{ color: '#e8b339', marginRight: 8 }} />
-                      : <FileOutlined style={{ color: '#888', marginRight: 8 }} />}
+                      : <FileOutlined style={{ color: 'var(--rs-text-muted)', marginRight: 8 }} />}
                     {e.name}
                   </span>
                 </List.Item>

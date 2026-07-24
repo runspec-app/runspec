@@ -4,7 +4,7 @@ import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } fr
 import dayjs from 'dayjs'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
-import { useIsDark, useAccent, withAlpha } from '../ThemeContext'
+import { useIsDark, useAccent, withAlpha, textSecondary } from '../ThemeContext'
 import { PathInput } from './PathInput'
 
 const { Text } = Typography
@@ -350,7 +350,7 @@ function SectionLabel({ children }: { children: ReactNode }) {
   const isDark = useIsDark()
   return (
     <div style={{
-      fontSize: 10, color: isDark ? '#aaa' : '#999',
+      fontSize: 10, color: textSecondary(isDark),
       textTransform: 'uppercase', letterSpacing: '0.08em',
       paddingBottom: 5, borderBottom: `1px solid ${isDark ? '#222' : '#e8e8e8'}`,
     }}>
@@ -523,7 +523,7 @@ function SubcommandPicker({ node, onSelect }: {
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{name}</Text>
-            <RightOutlined style={{ fontSize: 10, color: '#555' }} />
+            <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-faint)' }} />
           </div>
           {cmd.description && (
             <Text type="secondary" style={{ fontSize: 12 }}>{cmd.description}</Text>
@@ -701,11 +701,11 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {crumbs.map((seg, i) => (
             <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {i > 0 && <RightOutlined style={{ fontSize: 10, color: '#555' }} />}
+              {i > 0 && <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-faint)' }} />}
               <Text
                 style={{
                   fontFamily: 'monospace', fontSize: 13,
-                  color: i === crumbs.length - 1 ? undefined : '#888',
+                  color: i === crumbs.length - 1 ? undefined : 'var(--rs-text-muted)',
                   cursor: i < crumbs.length - 1 ? 'pointer' : 'default',
                 }}
                 onClick={() => i < crumbs.length - 1 ? navigateTo(i) : undefined}
@@ -1175,7 +1175,7 @@ export function FormsView({
       </div>
 
       {filtered.length === 0 && filteredRunbooks.length === 0 && filteredSavedRuns.length === 0 ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--rs-text-faint)' }}>
           <div style={{ textAlign: 'center' }}>
             <AppstoreOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
             <Text type="secondary">Nothing matches the current filter.</Text>
@@ -1186,7 +1186,7 @@ export function FormsView({
           {filteredSavedRuns.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{
-                fontSize: 10, color: isDark ? '#aaa' : '#999',
+                fontSize: 10, color: textSecondary(isDark),
                 textTransform: 'uppercase', letterSpacing: '0.08em',
                 marginBottom: 12, paddingBottom: 6,
                 borderBottom: `1px solid ${borderCol}`,
@@ -1207,7 +1207,7 @@ export function FormsView({
           {filteredRunbooks.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{
-                fontSize: 10, color: isDark ? '#aaa' : '#999',
+                fontSize: 10, color: textSecondary(isDark),
                 textTransform: 'uppercase', letterSpacing: '0.08em',
                 marginBottom: 12, paddingBottom: 6,
                 borderBottom: `1px solid ${borderCol}`,
@@ -1228,7 +1228,7 @@ export function FormsView({
           {[...groupMap.entries()].map(([group, groupRunnables]) => (
             <div key={group} style={{ marginBottom: 28 }}>
               <div style={{
-                fontSize: 10, color: isDark ? '#aaa' : '#999',
+                fontSize: 10, color: textSecondary(isDark),
                 textTransform: 'uppercase', letterSpacing: '0.08em',
                 marginBottom: 12, paddingBottom: 6,
                 borderBottom: `1px solid ${borderCol}`,

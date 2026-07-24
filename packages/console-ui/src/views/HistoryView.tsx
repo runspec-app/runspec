@@ -320,10 +320,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       key: 'runnable',
       render: (_: unknown, r: HistoryRecord) => (
         <span style={{ fontFamily: 'monospace', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span><span style={{ color: '#666' }}>{r.group}/</span>{r.runnable}</span>
+          <span><span style={{ color: 'var(--rs-text-muted)' }}>{r.group}/</span>{r.runnable}</span>
           {r.trigger === 'schedule' && (
             <Tooltip title="Ran on a schedule">
-              <ClockCircleOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+              <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />
             </Tooltip>
           )}
           {r.initiatedBy === 'llm' && (
@@ -361,7 +361,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       key: 'runbook',
       render: (_: unknown, r: HistoryRecord) => r.runbook
         ? <Tag color="purple" style={{ fontFamily: 'monospace' }}>${r.runbook}</Tag>
-        : <span style={{ color: '#999' }}>—</span>,
+        : <span style={{ color: 'var(--rs-text-faint)' }}>—</span>,
       filters: runbooks.map(s => ({ text: `$${s}`, value: s })),
       onFilter: (value, record) => record.runbook === value,
     } as ColumnType<HistoryRecord>] : []),

@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.199.0] — 2026-07-24
+
+### Changed
+- **Muted-grey consolidation (Console UI).** The ~150 scattered inline greys
+  (`#666`×40, `#888`×39, `#999`, `#555`, `#8c8c8c`, …) that all served the
+  same few "muted text" roles are now three semantic tokens in
+  `ThemeContext.tsx` — `textSecondary` (readable labels/descriptions,
+  `#aaa`/`#666`), `textMuted` (hints, separators, muted icons,
+  `#888`/`#999`), `textFaint` (placeholders, carets, off-state,
+  `#555`/`#bbb`) — so identical-purpose text renders identically across tabs
+  and the whole hierarchy is tunable from one file. Call sites with `isDark`
+  in scope use the functions; the rest use CSS vars
+  (`--rs-text-secondary`/`-muted`/`-faint`) stamped on `<html>` by App.tsx
+  from the same definitions (with first-paint defaults in `index.css`).
+  Deliberately untouched: status colours (connected/disconnected dots, run
+  kanban column greys, the paused icon), the fixed-dark log panels
+  (LogStream, History full-log) and their log-level colour maps, primary
+  text pairs, and border pairs — those are semantic, not muted-text roles.
+  Visually a near-no-op: each converted site moves at most one step in
+  brightness.
+
 ## [0.198.0] — 2026-07-24
 
 ### Changed

@@ -94,7 +94,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
           )}
           {r.trigger === 'schedule' && (
             <Tooltip title="Ran on a schedule">
-              <ClockCircleOutlined style={{ color: '#8c8c8c', fontSize: 11 }} />
+              <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 11 }} />
             </Tooltip>
           )}
           {r.host && <Tag style={{ fontSize: 11, margin: 0 }}>{r.host}</Tag>}
@@ -394,21 +394,21 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
             <Button
               size="small" type="text"
               onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: true } }))}
-              style={{ fontSize: 11, color: '#888' }}
+              style={{ fontSize: 11, color: 'var(--rs-text-muted)' }}
             >
               Collapse all
             </Button>
             <Button
               size="small" type="text"
               onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: false } }))}
-              style={{ fontSize: 11, color: '#888' }}
+              style={{ fontSize: 11, color: 'var(--rs-text-muted)' }}
             >
               Expand all
             </Button>
           </>
         )}
         <Tooltip title="Browse and reopen past conversations">
-          <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openConversations} style={{ fontSize: 11, color: '#888' }}>
+          <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openConversations} style={{ fontSize: 11, color: 'var(--rs-text-muted)' }}>
             History
           </Button>
         </Tooltip>
@@ -467,7 +467,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
                   description={
                     <div>
                       <Text type="secondary" style={{ fontSize: 11 }} ellipsis>{c.preview}</Text>
-                      <div style={{ fontSize: 10, color: '#999', marginTop: 2 }}>
+                      <div style={{ fontSize: 10, color: 'var(--rs-text-muted)', marginTop: 2 }}>
                         {fmtWhen(c.updated)} · {c.turn_count} message{c.turn_count === 1 ? '' : 's'}
                       </div>
                     </div>

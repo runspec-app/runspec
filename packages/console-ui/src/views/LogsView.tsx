@@ -326,7 +326,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
         shown.map(v => (
           <div key={v.group} style={{ marginBottom: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <FolderOutlined style={{ color: '#888' }} />
+              <FolderOutlined style={{ color: 'var(--rs-text-muted)' }} />
               <Text strong style={{ fontFamily: 'monospace' }}>{v.group}</Text>
               {v.ok ? (
                 <Text type="secondary" style={{ fontSize: 12 }}>

@@ -1190,7 +1190,7 @@ function GroupsManager({
               description="Hosts in it become Ungrouped."
               onConfirm={() => removeGroup(g.name)}
             >
-              <MinusCircleOutlined style={{ color: '#666', cursor: 'pointer' }} />
+              <MinusCircleOutlined style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
             </Popconfirm>
           </Space>
         ))}
@@ -1294,7 +1294,7 @@ function ProfilesManager({
               description="Hosts lose this tag; if it was loaded, you drop to All hosts."
               onConfirm={() => removeProfile(p.name)}
             >
-              <MinusCircleOutlined style={{ color: '#666', cursor: 'pointer' }} />
+              <MinusCircleOutlined style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
             </Popconfirm>
           </Space>
         ))}
@@ -1542,7 +1542,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                             placeholder="/home/user/.venv/bin/runspec"
                           />
                         </Form.Item>
-                        <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                        <MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                       </Space>
                     ))}
                     <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />} style={{ marginTop: 2 }}>Add path</Button>
@@ -1687,15 +1687,15 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <Text type="secondary" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
                 {groupName || 'Hosts'}
               </Text>
-              <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupUp(groupIdx)} disabled={isEditing || groupIdx === 0} style={{ padding: '0 4px', color: '#555', height: 18 }} />
-              <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupDown(groupIdx)} disabled={isEditing || groupIdx === groups.length - 1} style={{ padding: '0 4px', color: '#555', height: 18 }} />
+              <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupUp(groupIdx)} disabled={isEditing || groupIdx === 0} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} />
+              <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupDown(groupIdx)} disabled={isEditing || groupIdx === groups.length - 1} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {groupHosts.map((h, hostIdx) => (
                 <div key={h.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingKey === h.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-                    <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostUp(h)} disabled={isEditing || hostIdx === 0} style={{ padding: '0 3px', color: '#555', height: 14, lineHeight: 1 }} />
-                    <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || hostIdx === groupHosts.length - 1} style={{ padding: '0 3px', color: '#555', height: 14, lineHeight: 1 }} />
+                    <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostUp(h)} disabled={isEditing || hostIdx === 0} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
+                    <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || hostIdx === groupHosts.length - 1} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
                   </div>
                   <Text style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 110, flexShrink: 0 }}>{h.name}</Text>
                   <Text type="secondary" title={`${h.user ? h.user + '@' : ''}${h.hostname}${h.port ? ':' + h.port : ''}`} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1716,14 +1716,14 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                     )
                   })()}
                   <Tooltip title="Test connection">
-                    <Button type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: '#666' }} />
+                    <Button type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
                   </Tooltip>
                   <Tooltip title="Copy SSH public key (authorize this machine)">
-                    <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+                    <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
                   </Tooltip>
-                  <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+                  <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
                   <Popconfirm title={`Remove ${h.name}?`} onConfirm={() => remove(h.name)} okText="Remove" cancelText="Cancel" placement="left">
-                    <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
+                    <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
                   </Popconfirm>
                 </div>
               ))}
@@ -1873,9 +1873,9 @@ function FiltersTab() {
             <Text type="secondary" title={f.pipeline} style={{ fontFamily: 'monospace', fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {f.pipeline}
             </Text>
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(f)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(f)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Popconfirm title={`Remove ${f.name}?`} onConfirm={() => remove(f.name)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </Popconfirm>
           </div>
         ))}
@@ -1994,7 +1994,7 @@ function SelfServiceTab() {
         <Switch size="small" checked={on} disabled={saving} onChange={v => toggle(it.name, v)} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div title={it.name} style={{ fontFamily: 'monospace', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
-          {it.description && <div title={it.description} style={{ fontSize: 10, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.description}</div>}
+          {it.description && <div title={it.description} style={{ fontSize: 10, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.description}</div>}
         </div>
         {it.missing && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>missing</Tag>}
       </div>
@@ -2250,11 +2250,11 @@ function ReposTab() {
               {r.url}
             </Text>
             <Tooltip title="Sync now (clone / fetch)">
-              <Button type="text" size="small" icon={syncing === r.name ? <LoadingOutlined /> : <ReloadOutlined />} onClick={() => sync(r.name)} disabled={isEditing || engineMissing || syncing !== null} style={{ padding: '0 4px', color: '#666' }} />
+              <Button type="text" size="small" icon={syncing === r.name ? <LoadingOutlined /> : <ReloadOutlined />} onClick={() => sync(r.name)} disabled={isEditing || engineMissing || syncing !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             </Tooltip>
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Popconfirm title={`Remove ${r.name}?`} description={r.path ? 'Your custom dev-folder checkout is left untouched.' : 'The app-data checkout on disk is also deleted.'} onConfirm={() => remove(r.name)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </Popconfirm>
           </div>
         ))}
@@ -2455,7 +2455,7 @@ function CredentialsTab() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {creds.map(c => (
           <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a', background: editingId === c.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
-            <KeyOutlined style={{ color: '#666', fontSize: 12, flexShrink: 0 }} />
+            <KeyOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12, flexShrink: 0 }} />
             <Text style={{ fontSize: 12, minWidth: 110, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</Text>
             <Tag style={{ margin: 0, fontSize: 10 }}>{c.kind}</Tag>
             {c.has_secret
@@ -2464,9 +2464,9 @@ function CredentialsTab() {
             <Text type="secondary" title={c.username} style={{ fontSize: 11, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {c.username}
             </Text>
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(c)} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} />
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(c)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Popconfirm title={`Remove ${c.label}?`} onConfirm={() => remove(c.id)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: '#666' }} danger />
+              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </Popconfirm>
           </div>
         ))}
@@ -2545,7 +2545,7 @@ function MailboxesTab() {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <Switch size="small" checked={enabled} onChange={setEnabled} />
-        <MailOutlined style={{ color: '#666' }} />
+        <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
         <span style={{ fontSize: 13 }}>Monitor a mailbox</span>
       </div>
 
@@ -2597,7 +2597,7 @@ function MailboxesTab() {
 
       <Divider style={{ margin: '16px 0 12px' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-        <MailOutlined style={{ color: '#666' }} />
+        <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
         <span style={{ fontSize: 13 }}>Also watch (optional)</span>
       </div>
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
@@ -2701,14 +2701,14 @@ function TeamsTab() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {teams.map(t => (
             <div key={t.slug} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: '1px solid #2a2a2a' }}>
-              <TeamOutlined style={{ color: '#666', flexShrink: 0 }} />
+              <TeamOutlined style={{ color: 'var(--rs-text-muted)', flexShrink: 0 }} />
               <Text style={{ fontSize: 13, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</Text>
               <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: 11, flexShrink: 0 }}>{t.slug}</Text>
               {t.slug === 'default' ? (
                 <Tag style={{ margin: 0, fontSize: 10 }}>protected</Tag>
               ) : (
                 <Popconfirm title={`Remove team ${t.name}?`} onConfirm={() => remove(t.slug)} okText="Remove" cancelText="Cancel" placement="left">
-                  <Button type="text" size="small" icon={<DeleteOutlined />} danger style={{ padding: '0 4px', color: '#666' }} />
+                  <Button type="text" size="small" icon={<DeleteOutlined />} danger style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
                 </Popconfirm>
               )}
             </div>
@@ -3225,7 +3225,7 @@ function RunbooksTab() {
             <span style={{ minWidth: 200 }}>
               <Typography.Text code style={{ fontSize: 12 }}>${s.id}</Typography.Text>
             </span>
-            <span style={{ flex: 1, fontSize: 12, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ flex: 1, fontSize: 12, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {s.title}{s.symptom ? ` — ${s.symptom}` : ''}
             </span>
             {(s.args ?? []).length > 0 && (
@@ -3296,7 +3296,7 @@ function RunbooksTab() {
                     <Form.Item {...rest} name={[name, 'required']} valuePropName="checked" style={{ marginBottom: 0 }}>
                       <Tooltip title="Required"><Switch size="small" /></Tooltip>
                     </Form.Item>
-                    <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                    <MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                   </div>
                 ))}
                 <Button type="dashed" size="small" onClick={() => add({ type: 'str' })} icon={<PlusOutlined />}>
@@ -3319,7 +3319,7 @@ function RunbooksTab() {
 // a prompt body).
 const SAVED_RUN_PARAM_TYPES = [...RUNBOOK_ARG_TYPES, 'password']
 
-const SAVED_RUN_LABEL_STYLE: CSSProperties = { color: '#888', fontSize: 12 }
+const SAVED_RUN_LABEL_STYLE: CSSProperties = { color: 'var(--rs-text-muted)', fontSize: 12 }
 
 interface SavedRunFormValues {
   id: string
@@ -3563,7 +3563,7 @@ function SavedRunsTab() {
             <span style={{ minWidth: 200 }}>
               <Typography.Text code style={{ fontSize: 12 }}>{s.id}</Typography.Text>
             </span>
-            <span style={{ flex: 1, fontSize: 12, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ flex: 1, fontSize: 12, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               /{s.runnable} on {s.target || s.host}{s.title ? ` — ${s.title}` : ''}
             </span>
             {(s.params ?? []).length > 0 && (
@@ -3679,11 +3679,11 @@ function SavedRunsTab() {
                         <Form.Item {...rest} name={[name, 'key']} noStyle>
                           <Input size="small" placeholder="service" style={{ fontFamily: 'monospace', width: 160 }} />
                         </Form.Item>
-                        <span style={{ color: '#888' }}>=</span>
+                        <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
                         <Form.Item {...rest} name={[name, 'value']} noStyle>
                           <Input size="small" placeholder="nginx" style={{ fontFamily: 'monospace', flex: 1 }} />
                         </Form.Item>
-                        <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                        <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                       </div>
                     ))}
                     <Button type="dashed" size="small" onClick={() => add()} icon={<PlusOutlined />}>
@@ -3730,7 +3730,7 @@ function SavedRunsTab() {
                     <Form.Item {...rest} name={[name, 'required']} valuePropName="checked" style={{ marginBottom: 0 }}>
                       <Tooltip title="Required"><Switch size="small" /></Tooltip>
                     </Form.Item>
-                    <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: '#666', cursor: 'pointer' }} />
+                    <MinusCircleOutlined onClick={() => removeRow(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                   </div>
                 ))}
                 <Button type="dashed" size="small" onClick={() => add({ type: 'str' })} icon={<PlusOutlined />}>

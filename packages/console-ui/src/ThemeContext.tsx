@@ -8,6 +8,13 @@ export const useIsDark = () => useContext(ThemeContext)
 // themes (a bare <div> otherwise defaults to black, invisible in dark mode).
 export const textColor = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.88)')
 
+// Muted-text hierarchy (dark / light) — one canonical pair per role, so
+// identical-purpose text renders identically across tabs and the whole
+// hierarchy is tunable here instead of at ~150 inline call sites.
+export const textSecondary = (isDark: boolean) => (isDark ? '#aaa' : '#666')  // readable secondary: labels, descriptions
+export const textMuted = (isDark: boolean) => (isDark ? '#888' : '#999')      // dim: hints, separators, muted icons, counts
+export const textFaint = (isDark: boolean) => (isDark ? '#555' : '#bbb')      // faintest: placeholders, carets, off-state icons
+
 // The app's signature accent (sidebar title, active nav tab, links, arg names).
 // A white-label accent_color overrides the built-in blue pair — App.tsx provides
 // the resolved value so every view honours the brand, not just the shell chrome.

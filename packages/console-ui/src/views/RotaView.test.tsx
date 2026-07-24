@@ -29,10 +29,13 @@ vi.mock('../bridge', () => ({
   }),
 }))
 
-// ThemeContext is used by RotaView; stub the two helpers it imports.
+// ThemeContext is used by RotaView; stub the helpers it imports.
 vi.mock('../ThemeContext', () => ({
   useIsDark: () => false,
   textColor: () => '#000',
+  textSecondary: () => '#666',
+  textMuted: () => '#999',
+  textFaint: () => '#bbb',
 }))
 
 const ENABLED_ROTA = { enabled: true, source: 'console', mon: { on: true, start: '09:00', end: '17:00' } }

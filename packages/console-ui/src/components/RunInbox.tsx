@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Button, Drawer, Empty, message } from 'antd'
 import { StopOutlined } from '@ant-design/icons'
 import { type RunCard } from '../bridge'
-import { useIsDark, textColor } from '../ThemeContext'
+import { useIsDark, textColor, textMuted } from '../ThemeContext'
 import { Markdown } from './Markdown'
 import { ChatTranscript, StructuredOutput, parseOutput, type BlockSegment } from './OutputPanel'
 import { StatusBadge, CopyButton, fmtTime, COLUMN_COLOR, RUNNING_STATUSES } from './runShared'
@@ -56,7 +56,7 @@ export function RunInbox({
   renderDrawerExtra,
 }: RunInboxProps) {
   const isDark = useIsDark()
-  const dim = isDark ? '#888' : '#999'
+  const dim = textMuted(isDark)
   const colBg = isDark ? '#141414' : '#f0f0f0'
   const border = isDark ? '#303030' : '#e8e8e8'
 

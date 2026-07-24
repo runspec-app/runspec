@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Modal, Form, Select, Input, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type RunCard, type TriggerEvent } from '../bridge'
-import { useIsDark, useAccent } from '../ThemeContext'
+import { useIsDark, useAccent, textMuted, textSecondary } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
 import { initialFormValues } from './FormsView'
@@ -88,7 +88,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
   const [credentialIds, setCredentialIds] = useState<string[]>([])
   const [creds, setCreds] = useState<Credential[]>([])
   const isDark = useIsDark()
-  const labelStyle = { color: isDark ? '#aaa' : '#666', fontSize: 12 }
+  const labelStyle = { color: textSecondary(isDark), fontSize: 12 }
 
   // Saved runbooks, for the "Run a runbook" action's picker. Loaded once per open.
   useEffect(() => {
@@ -509,11 +509,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
                       <Form.Item name={[f.name, 'key']} noStyle>
                         <Input size="small" placeholder="scope" style={{ fontFamily: 'monospace' }} />
                       </Form.Item>
-                      <span style={{ color: '#888' }}>=</span>
+                      <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
                       <Form.Item name={[f.name, 'value']} noStyle>
                         <Input size="small" placeholder="prod" style={{ fontFamily: 'monospace' }} />
                       </Form.Item>
-                      <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: '#888', cursor: 'pointer' }} />
+                      <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                     </div>
                   ))}
                   <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add()} style={{ width: 'fit-content' }}>
@@ -783,7 +783,7 @@ export function SchedulesView({ hosts, runnables, selectedHost }: SchedulesViewP
     }
   }
 
-  const dimCol = isDark ? '#888' : '#999'
+  const dimCol = textMuted(isDark)
   const keyCol = accent
   const whenText = (w: ScheduleWhen) => {
     const base = w.every ? `every ${w.every}` : (w.cron ?? '')
