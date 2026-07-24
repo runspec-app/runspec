@@ -1017,6 +1017,7 @@ interface HostFormValues {
   port?: number
   identityFile?: string
   group?: string
+  jump?: string
   profiles?: string[]
   room?: string
   room_port?: number
@@ -1039,6 +1040,7 @@ interface HostFormValues {
 // host without the field and removes it.
 export function normalizeHostForm(values: HostFormValues): HostFormValues {
   const v: HostFormValues = { ...values }
+  v.jump = (v.jump ?? '').toString().trim() || undefined
   v.profiles = Array.isArray(v.profiles)
     ? v.profiles.map(s => s.toString().trim()).filter(Boolean)
     : undefined
@@ -1077,6 +1079,7 @@ function toToml(hosts: JumpHost[]): string {
     if (h.port) lines.push(`port = ${h.port}`)
     if (h.identityFile) lines.push(`identity_file = "${h.identityFile}"`)
     if (h.group) lines.push(`group = "${h.group}"`)
+    if (h.jump) lines.push(`jump = "${h.jump}"`)
     if (h.room) lines.push(`room = "${h.room}"`)
     if (h.room_port) lines.push(`room_port = ${h.room_port}`)
     if (h.room_user) lines.push(`room_user = "${h.room_user}"`)
@@ -1546,6 +1549,13 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                   </>
                 )}
               </Form.List>
+            </Form.Item>
+            <Form.Item
+              name="jump"
+              label="Jump host (ProxyJump)"
+              help="Reach this host through a jump host using the system ssh client, so ~/.ssh/config legacy algorithms apply (e.g. HostKeyAlgorithms +ssh-rsa for CentOS 6). An SSH host/alias as `ssh -J` expects. Needs an OpenSSH client on this machine. Leave blank for the normal (paramiko) transport."
+            >
+              <Input placeholder="bastion  (or user@bastion)" style={{ fontFamily: 'monospace' }} />
             </Form.Item>
             <Form.Item
               name="group"

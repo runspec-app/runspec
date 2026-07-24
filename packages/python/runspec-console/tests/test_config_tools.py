@@ -210,6 +210,25 @@ def test_manage_hosts_add_update_remove_roundtrip():
     assert [h["name"] for h in b.saved_hosts[-1]] == ["web-01"]
 
 
+def test_manage_hosts_sets_jump_for_legacy_host():
+    b = _ConfigBridge(hosts=[])
+    out = b._run_config_tool(
+        "manage_hosts",
+        {
+            "action": "add",
+            "name": "old-centos6",
+            "hostname": "old-centos6",
+            "user": "svc",
+            "jump": "bastion",
+            "runspec_paths": ["/opt/venvs/ops/bin/runspec"],
+        },
+        "",
+    )
+    assert out.startswith("✓")
+    saved = next(h for h in b.saved_hosts[-1] if h["name"] == "old-centos6")
+    assert saved["jump"] == "bastion"
+
+
 def test_manage_hosts_rejections_never_save():
     b = _ConfigBridge(hosts=[{"name": "prod"}])
     cases = [

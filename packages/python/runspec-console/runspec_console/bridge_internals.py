@@ -17,6 +17,7 @@ from typing import Any
 
 from . import bridge_utils as utils_mod
 from . import config as config_mod
+from . import executor as executor_mod
 from . import hosts as hosts_mod
 from .config import (
     filters_path,
@@ -524,7 +525,29 @@ class InternalsMixin:
             connected = self._connected_cache.get(name, ssh is None)
         if not connected:
             return []
-        runner = self._ssh_pool.run if self._ssh_pool is not None else None
+        jump = str(h.get("jump") or "").strip()
+        if jump:
+            # System-ssh transport: discover over the jump host's OpenSSH so a
+            # legacy target's ssh-rsa/ssh-dss handshake works (paramiko can't).
+            def runner(
+                target: str,
+                command: str,
+                *,
+                identity_file: str | None = None,
+                global_ssh_config: dict[str, Any] | None = None,
+                timeout: int = 15,
+                _jump: str = jump,
+            ) -> tuple[int, str, str]:
+                return executor_mod.ssh_jump_run(
+                    target,
+                    command,
+                    jump=_jump,
+                    identity_file=identity_file,
+                    global_ssh_config=global_ssh_config,
+                    timeout=timeout,
+                )
+        else:
+            runner = self._ssh_pool.run if self._ssh_pool is not None else None
         idf = h.get("identityFile")
         out: list[dict[str, Any]] = []
         for rp in utils_mod._paths(h):
@@ -686,6 +709,20 @@ class InternalsMixin:
         ssh = host.get("ssh")
         if not ssh:
             return True
+        jump = str(host.get("jump") or "").strip()
+        if jump:
+            # System-ssh transport (not pooled): a successful `ssh … true` over
+            # the jump host IS the connectivity check. Uses OpenSSH so legacy
+            # algorithms in ~/.ssh/config apply — see executor._system_ssh_argv.
+            code, _, _ = executor_mod.ssh_jump_run(
+                ssh,
+                "true",
+                jump=jump,
+                identity_file=host.get("identityFile"),
+                global_ssh_config=self.get_config().get("ssh"),
+                timeout=8,
+            )
+            return code == 0
         pool = self._ssh_pool
         if pool is not None:
             # Probe-free: obtaining a live pooled transport IS the connectivity

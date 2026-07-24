@@ -1150,6 +1150,7 @@ class AutonomyMixin:
                 cred_env=cred_env,
                 trigger=run_trigger,
                 runbook=run_runbook,
+                jump=str(entry.get("jump") or "").strip(),
             )
         else:
             executor_mod.run_local(

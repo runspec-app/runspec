@@ -382,6 +382,7 @@ export interface JumpHost {
   port?: number       // falls back to SSH default (22)
   identityFile?: string
   group?: string      // sidebar display group label (e.g. "Production", "Staging")
+  jump?: string       // reach this host via system-ssh ProxyJump (-J) so ~/.ssh/config legacy algorithms apply (CentOS 6 ssh-rsa/ssh-dss)
   profiles?: string[] // host-profile (working-set) tags — which profiles load this host
   room?: string       // chat room hosted on this host (runspec-room) — opt-in
   room_port?: number  // the room server's localhost port on this host

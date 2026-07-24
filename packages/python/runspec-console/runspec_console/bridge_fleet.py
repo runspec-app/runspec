@@ -155,6 +155,8 @@ class FleetMixin:
                 entry["identityFile"] = h["identityFile"]
             if h.get("group"):
                 entry["group"] = h["group"]
+            if str(h.get("jump") or "").strip():
+                entry["jump"] = str(h["jump"]).strip()
             # Host-profile (working-set) tags — the editor round-trips the full
             # host list on save (save_jump_hosts rebuilds every managed key), so
             # omitting ``profiles`` here made a save wipe every host's tags.
@@ -196,6 +198,7 @@ class FleetMixin:
             "runspec_path",
             "identityFile",
             "group",
+            "jump",
             "profiles",
             "room",
             "room_port",
@@ -237,6 +240,10 @@ class FleetMixin:
                 entry["identityFile"] = _normalize_path(h["identityFile"])
             if h.get("group"):
                 entry["group"] = h["group"]
+            # System-ssh ProxyJump target — reach this host through the jump
+            # host's OpenSSH so legacy ssh-rsa/ssh-dss handshakes work.
+            if str(h.get("jump") or "").strip():
+                entry["jump"] = str(h["jump"]).strip()
             # Host-profile (working-set) tags — which profiles load this host.
             profiles = h.get("profiles")
             if isinstance(profiles, list):

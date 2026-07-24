@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.194.0] — 2026-07-24
+
+### Added
+- **System-ssh jump transport for legacy hosts (CentOS 6).** A host entry can
+  now carry a `jump = "<ssh host>"` key. The console reaches that host through
+  the **system `ssh` binary** with `-J <jump>` (ProxyJump) instead of paramiko,
+  so `~/.ssh/config` legacy-algorithm settings apply — the way to reach hosts
+  offering only `ssh-rsa`/`ssh-dss` (OpenSSH 5.3), which paramiko 4+/5 removed
+  and can no longer negotiate (`>=3.0` resolves to 5.x today). The final SHA-1/
+  DSA handshake is done by OpenSSH, so paramiko never touches the legacy host.
+  `jump` selects the transport (bypasses the pool — a per-call `ssh` subprocess)
+  and sets the hop; the target's legacy `HostKeyAlgorithms`/`KexAlgorithms`,
+  user, port, and any further ProxyJump chain come from `~/.ssh/config`, exactly
+  as `runspec jump` already does. Wired through discovery (`runspec local`),
+  the connectivity probe, and runnable execution for both **Forms** and the
+  **agent** (`run_as`/secrets/cred-env intact, streamed output). New
+  `executor._system_ssh_argv`/`ssh_jump_run` and a `run_remote(…, jump=…)`
+  branch; routed in `bridge_internals._discover_one`/`_check_connected` and the
+  two `run_remote` call sites. The Hosts editor gains a **Jump host (ProxyJump)**
+  field and the agent's `manage_hosts` tool exposes `jump`. Requires an OpenSSH
+  client on the console machine. **Not yet covered:** SFTP file transfer and
+  ad-hoc `direct-tcpip` to a `jump` host (paramiko-channel features). See
+  `docs/design/console-jump-transport.md`.
+
+---
+
+
 ## [0.193.0] — 2026-07-23
 
 ### Added

@@ -557,13 +557,22 @@ def run_remote(
     cred_env: dict[str, str] | None = None,
     trigger: str = "",
     runbook: str = "",
+    jump: str = "",
 ) -> None:
-    """Execute a remote runnable via paramiko SSH, streaming output via callbacks.
+    """Execute a remote runnable via SSH, streaming output via callbacks.
 
     ``session_factory``, when supplied, returns ``(channel, release)`` from a
     pooled transport — the connection is reused, only the channel is opened here,
     and ``release()`` (not a transport close) frees the channel slot afterward.
     Without it, a fresh client is connected and closed per invocation (legacy).
+
+    ``jump`` selects the **system-ssh transport**: when non-empty the invocation
+    runs through the system ``ssh`` binary with ``-J <jump>`` (ProxyJump) instead
+    of paramiko, so ``~/.ssh/config`` legacy-algorithm settings apply and the
+    console can reach hosts it cannot negotiate in paramiko (CentOS 6 offering
+    only ``ssh-rsa``/``ssh-dss``). ``session_factory`` is ignored on this path
+    (no pooled transport — a per-call ``ssh`` subprocess). See
+    :func:`_system_ssh_argv`.
 
     ``cred_env`` are plain environment variables derived from named credentials
     (final var names like ``JIRA_PASSWORD``, distinct from the ``RUNSPEC_*_ARG_*``
@@ -606,6 +615,25 @@ def run_remote(
         cmd_str = shell_join(parts)
         assigns = " ".join(f"{k}={shlex.quote(v)}" for k, v in all_env.items())
         remote_cmd = f"{assigns} {cmd_str}" if assigns else cmd_str
+
+    if jump:
+        # System-ssh transport: the local OpenSSH client performs the CentOS 6
+        # handshake (through -J), so ~/.ssh/config legacy algorithms apply. The
+        # remote command string is passed as a single argv element and executed
+        # by the remote login shell — exactly as paramiko's exec_command does —
+        # so ``remote_cmd`` is already correctly quoted for the *remote* shell.
+        # ``agent=False`` here: RUNSPEC_AGENT (if set) already rides remote_cmd's
+        # env prefix; it must not leak into the *local* ssh process instead.
+        ssh_argv = _system_ssh_argv(ssh_target, jump, identity_file, global_ssh_config)
+        _stream(
+            [*ssh_argv, remote_cmd],
+            on_line,
+            on_done,
+            timeout=timeout,
+            cancel_event=cancel_event,
+            agent=False,
+        )
+        return
 
     start = time.monotonic()
     client = None  # set only on the legacy (non-pooled) path; closed in finally
@@ -733,6 +761,95 @@ def ssh_run(
         return -1, "", str(exc)
     finally:
         client.close()
+
+
+def _system_ssh_argv(
+    ssh_target: str,
+    jump: str,
+    identity_file: str | None = None,
+    global_ssh_config: dict[str, Any] | None = None,
+) -> list[str]:
+    """Build the ``ssh`` argv for the system-ssh (jump) transport.
+
+    The final SSH handshake is performed by the system OpenSSH client, not
+    paramiko, so ``~/.ssh/config`` applies — HostKeyAlgorithms, KexAlgorithms,
+    User, Port, and any further ProxyJump chain. This is what lets the console
+    reach legacy hosts (CentOS 6 offering only ``ssh-rsa``/``ssh-dss``) that
+    paramiko 4+/5 can no longer negotiate: put the legacy algorithms on the
+    target's ``Host`` block in ``~/.ssh/config``.
+
+    ``-J <jump>`` sets the ProxyJump intermediary. Explicit host-entry
+    ``identityFile``/port (and the global ``[ssh] user``/``identityFile``) are
+    passed as flags and override ssh_config. ``BatchMode=yes`` forbids
+    interactive prompts — a password prompt would hang a headless run — so auth
+    is key/agent only, matching ``runspec jump``.
+    """
+    cfg = global_ssh_config or {}
+    try:
+        connect_timeout = int(
+            float(cfg.get("connect_timeout", DEFAULT_CONNECT_TIMEOUT))
+        )
+    except (TypeError, ValueError):
+        connect_timeout = int(DEFAULT_CONNECT_TIMEOUT)
+    argv = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={max(1, connect_timeout)}",
+    ]
+    user, host, port = _parse_ssh_target(ssh_target)
+    if not user and cfg.get("user"):
+        user = str(cfg["user"])
+    key = identity_file or cfg.get("identityFile") or ""
+    if key:
+        argv += ["-i", str(Path(key).expanduser())]
+    if port and port != 22:
+        argv += ["-p", str(port)]
+    if jump:
+        argv += ["-J", str(jump)]
+    argv.append(f"{user}@{host}" if user else host)
+    return argv
+
+
+def ssh_jump_run(
+    ssh_target: str,
+    command: str,
+    *,
+    jump: str,
+    identity_file: str | None = None,
+    global_ssh_config: dict[str, Any] | None = None,
+    timeout: int = 15,
+) -> tuple[int, str, str]:
+    """Run one command on a host via the system-ssh jump transport.
+
+    Mirrors :func:`ssh_run`'s ``(code, out, err)`` contract so it drops straight
+    into the discovery / connectivity runner slot. Uses the system ``ssh`` binary
+    (not paramiko) so ``~/.ssh/config`` legacy-algorithm settings apply — see
+    :func:`_system_ssh_argv`. Used for discovery (``runspec local``) and the
+    ``connectable`` probe of a ``jump`` host.
+    """
+    argv = _system_ssh_argv(ssh_target, jump, identity_file, global_ssh_config)
+    argv.append(command)
+    try:
+        proc = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return -1, "", f"ssh to {ssh_target} timed out after {timeout}s"
+    except FileNotFoundError:
+        return (
+            -1,
+            "",
+            "ssh not found — install an OpenSSH client on the console machine",
+        )
+    return proc.returncode, proc.stdout, proc.stderr
 
 
 def _stream(

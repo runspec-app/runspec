@@ -128,6 +128,15 @@ class ConfigToolsMixin:
                         "description": "Targeting group ('' clears it).",
                         **({"enum": group_names} if group_names else {}),
                     },
+                    "jump": {
+                        "type": "string",
+                        "description": (
+                            "Jump host (ProxyJump) — reach this host via the "
+                            "system ssh client with -J, so ~/.ssh/config legacy "
+                            "algorithms apply (e.g. CentOS 6 ssh-rsa/ssh-dss). "
+                            "An SSH host/alias; '' clears it."
+                        ),
+                    },
                     "profiles": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -354,6 +363,7 @@ class ConfigToolsMixin:
             "runspec_paths",
             "identityFile",
             "group",
+            "jump",
             "profiles",
         )
         if action == "add":

@@ -55,6 +55,22 @@ describe('normalizeHostForm — room removal', () => {
   })
 })
 
+describe('normalizeHostForm — jump host', () => {
+  it('keeps a jump host and trims it', () => {
+    const merged = applyEdit(
+      { name: 'c6', hostname: 'c6' },
+      { name: 'c6', hostname: 'c6', jump: '  bastion  ' },
+    )
+    expect(merged.jump).toBe('bastion')
+  })
+
+  it('clears the jump host when blanked (does not survive the merge)', () => {
+    const h = { name: 'c6', hostname: 'c6', jump: 'bastion' }
+    const merged = applyEdit(h, { name: 'c6', hostname: 'c6', jump: '' })
+    expect(merged.jump).toBeUndefined()
+  })
+})
+
 describe('normalizeHostForm — profile clearing', () => {
   it('clearing all profiles removes them from the merged host', () => {
     const h = { name: 'web01', hostname: 'web01', profiles: ['devops', 'app-support'] }

@@ -11,6 +11,18 @@ A host entry:
   role          = "primary"         # "primary" | "secondary" (optional)
 
   [[host]]
+  name          = "old-centos6-1"
+  ssh           = "svc@old-centos6-1"
+  jump          = "bastion"         # reach this host via system-ssh ProxyJump
+  runspec_paths = ["/opt/venvs/ops/bin/runspec"]
+
+  # `jump` selects the system-ssh transport (OpenSSH, not paramiko), so
+  # ~/.ssh/config legacy algorithms apply — the way to reach CentOS 6 hosts
+  # offering only ssh-rsa/ssh-dss, which paramiko 4+/5 can't negotiate. Put the
+  # legacy `HostKeyAlgorithms +ssh-rsa` etc. on the target's Host block in
+  # ~/.ssh/config. Requires an OpenSSH client on the console machine.
+
+  [[host]]
   name          = "local-ops"
   runspec_paths = ["C:\\venvs\\ops-tools\\Scripts\\runspec.exe"]
 
@@ -87,6 +99,17 @@ def validate_editor_hosts(hosts: list[dict[str, Any]]) -> list[str]:
             or any(not isinstance(p, str) for p in profiles)
         ):
             errors.append(f"{label}: 'profiles' must be a list of strings")
+        jump = h.get("jump")
+        if jump is not None and jump != "":
+            if not isinstance(jump, str) or not jump.strip():
+                errors.append(f"{label}: 'jump' must be a non-empty SSH host string")
+            elif (
+                not str(h.get("ssh") or "").strip()
+                and not str(h.get("hostname") or "").strip()
+            ):
+                errors.append(
+                    f"{label}: 'jump' needs an ssh/hostname target to reach through it"
+                )
     return errors
 
 

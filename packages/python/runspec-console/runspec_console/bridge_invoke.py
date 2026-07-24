@@ -273,13 +273,16 @@ class InvokeMixin:
                 return
 
             ssh = entry.get("ssh")
+            jump = str(entry.get("jump") or "").strip()
             if ssh:
                 # Stream over a pooled transport when pooling is on — the
                 # invocation reuses the host's warm connection (one more channel,
-                # no new handshake) instead of opening a fresh client.
+                # no new handshake) instead of opening a fresh client. A ``jump``
+                # host uses the system-ssh transport instead (not pooled), so
+                # there's no session_factory on that path.
                 pool = self._ssh_pool
                 session_factory = None
-                if pool is not None:
+                if pool is not None and not jump:
                     cfg = self.get_config().get("ssh")
                     idf = entry.get("identityFile")
 
@@ -307,6 +310,7 @@ class InvokeMixin:
                     secrets=secrets,
                     cred_env=cred_env,
                     trigger=trigger,
+                    jump=jump,
                 )
             else:
                 executor_mod.run_local(
