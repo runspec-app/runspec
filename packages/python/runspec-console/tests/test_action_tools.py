@@ -39,6 +39,8 @@ class _ActionBridge:
     _current_workspace_root = Bridge._current_workspace_root
     _run_workspace_tool = Bridge._run_workspace_tool
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
+    _tag_run_origin_runbook = Bridge._tag_run_origin_runbook
+    _set_run_origin = Bridge._set_run_origin
 
     def __init__(self, hosts=None, runnables=None):
         self._hosts = hosts or []
@@ -51,6 +53,7 @@ class _ActionBridge:
         self._workspace_by_chat = {}
         self.transfers: list = []
         self.created_schedules: list = []
+        self._run_origin: dict = {}
 
     def _reload_credentials(self):
         pass
@@ -98,10 +101,31 @@ def test_run_runbook_tool_only_when_runbooks_exist(monkeypatch):
     assert rs["input_schema"]["properties"]["runbook_id"]["enum"] == ["restart"]
 
 
-def test_all_action_tools_are_confirm_gated():
+def test_all_side_effecting_action_tools_are_confirm_gated():
     b = _ActionBridge()
-    for name in _ACTION_TOOL_NAMES:
+    for name in _ACTION_TOOL_NAMES - {"run_runbook"}:
         assert b._effective_tool_autonomy(name, {}) == "confirm"
+
+
+def test_run_runbook_is_autonomous_but_still_action_allow_scopable():
+    """run_runbook returns *text* — a runbook's rendered steps — and every side
+    effect happens later, when the agent calls the runnables those steps name, each
+    at its own autonomy level. Gating the read protected nothing downstream and cost
+    a prompt on a common path.
+
+    It stays in _ACTION_TOOL_NAMES so a trigger's `action_allow` can still scope it:
+    that set does double duty as the allowlist vocabulary, which is why the autonomy
+    exception is a special case rather than dropping the membership."""
+    b = _ActionBridge()
+    assert b._effective_tool_autonomy("run_runbook", {}) == "autonomous"
+    assert "run_runbook" in _ACTION_TOOL_NAMES
+
+    from runspec_console.bridge import Bridge
+
+    scoped = Bridge._filter_headless_tools(
+        [{"name": "run_runbook"}, {"name": "create_document"}], ["create_document"]
+    )
+    assert [t["name"] for t in scoped] == ["create_document"]
 
 
 def test_open_url_schema():
@@ -309,10 +333,33 @@ def test_run_runbook_renders_inline_without_spawning(monkeypatch):
     )
     b = _ActionBridge()
     out = b._run_action_tool(
-        "run_runbook", {"runbook_id": "restart", "values": {"svc": "nginx"}}
+        "run_runbook", {"runbook_id": "restart", "values": {"svc": "nginx"}}, "chat1"
     )
     assert "Restart" in out and "do nginx" in out
     # It returns text for the agent to follow — it does NOT start a chat turn.
+    # It does tag provenance, so the runnables the steps drive are attributed to
+    # this runbook in History/Analytics the way the Forms path's are.
+    assert b._run_origin["chat1"]["runbook"] == "restart"
+
+
+def test_run_runbook_provenance_never_clears_the_trigger_flag(monkeypatch):
+    """_run_config_tool refuses when the run origin names a trigger — that is one of
+    the two layers stopping automation rewriting its own config. Tagging the runbook
+    must add a field, never replace the record, or a rule trigger could reach the
+    config tools by first following a runbook."""
+    monkeypatch.setattr(
+        memory,
+        "load_runbook",
+        lambda sid: {"id": "rb", "title": "T", "steps": "1. go", "args": {}},
+    )
+    b = _ActionBridge()
+    b._set_run_origin("card1", "email-trigger", agent=True)
+    b._run_action_tool("run_runbook", {"runbook_id": "rb"}, "card1")
+    assert b._run_origin["card1"] == {
+        "trigger": "email-trigger",
+        "agent": True,
+        "runbook": "rb",
+    }
 
 
 def test_run_runbook_unknown(monkeypatch):

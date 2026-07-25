@@ -441,14 +441,16 @@ Key properties, all verified in `bridge_autonomy.py`:
 | Read-only discovery / status | `search_runnables`, `describe_runnable`, `console_status` | **autonomous** |
 | Read-only Microsoft 365 | `outlook_inbox`, `outlook_search`, `outlook_calendar`, `outlook_reminders`, … | **autonomous** |
 | Read-only repo access | `repo_status`, `repo_list`, `repo_grep`, `repo_read`, `repo_diff` | **autonomous** |
-| Local memory / runbooks | `remember`, `search_memory`, `save_runbook`, `load_runbook` | **autonomous** (local TOML, reversible) |
+| Local memory recall | `remember`, `search_memory` | **autonomous** (local TOML, reversible) |
+| Read a runbook's steps | `run_runbook` | **autonomous** — it returns *text*; every runnable the steps then drive is gated individually at its own level |
+| **Write** a runbook | `save_runbook` | **confirm** — a runbook is a procedure the agent (and every console it syncs to) will later follow |
 | Session-workspace files | `workspace_ls`, `workspace_read`, `workspace_grep`, `workspace_write`, … | **autonomous** (read-only or path-jailed to the current session's workspace) |
 | Denylist **read** | `manage_denylist action=list` | **autonomous** |
 | Console-config **read** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_saved_runs` `action=list`, `manage_rota action=get` | **autonomous** (read-only; see §7.4) |
 | Read-only workspace SQL | `run_sql` (SELECT/EXPLAIN, read-only connection) | **autonomous** |
 | **Write** to M365 | `outlook_draft`, `outlook_send`, `outlook_move`, `outlook_categorize`, … | **confirm** |
 | **Write** to repo / files | `repo_write`, `repo_sync`, `download_file`, `relay_file` | **confirm** |
-| Denylist **mutate**, schedules, documents, events, desktop actions | `manage_denylist add/all/clear/mode`, `create_schedule`, `create_document`, `emit_event`, `run_runbook`, `open_url`, `open_file`, `reveal_in_folder` | **confirm** |
+| Denylist **mutate**, schedules, documents, events, desktop actions | `manage_denylist add/all/clear/mode`, `create_schedule`, `create_document`, `emit_event`, `open_url`, `open_file`, `reveal_in_folder` | **confirm** |
 | Console-config **mutate** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_rota`/`manage_saved_runs` mutations | **confirm** — and chat-only (§7.4) |
 | Arbitrary code execution | `run_python` (any snippet, console interpreter); `run_sql` writes/DDL | **always confirm** — the gate, not a sandbox, is the security control; both tools are removed entirely by the `[workspace] code_exec = false` kill switch |
 | Run a runnable | `run_runnable` | **inherited from the target runnable's spec** |

@@ -96,7 +96,7 @@ confirm gate — no model spend on bookkeeping):
   `app` tag (free chat has no single active host). Recall is stdlib token-overlap
   scoring — no embedding dependency. Eviction keeps pinned + most-used + newest per
   app. **Never synced** — it's local knowledge.
-- **Runbooks = curated runbooks** (shareable): `save_runbook` / `load_runbook` over
+- **Runbooks = curated runbooks** (shareable): `save_runbook` / `run_runbook` over
   `runspec_runbooks.toml`, a `[[runbook]]` collection (symptom + ordered steps naming the
   runnables to call). It **rides the existing Config Sync** — added to `KNOWN_FILES`
   and merged by `id` like filters/credentials — so a team ships vetted procedures

@@ -7,6 +7,7 @@ instance, so ``self`` carries all shared state.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -16,6 +17,15 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
+
+logger = logging.getLogger("runspec_console")
+
+# How many runbook rows one search returns. Deliberately smaller than the
+# runnable limit (10): runbooks are a curated set an operator wrote by hand, so a
+# handful of well-ranked matches is the useful answer — and the folded index
+# already lists every one of them by id/title/symptom, so search is the
+# narrowing tool, not the only way to see what exists.
+_RUNBOOK_SEARCH_LIMIT = 5
 
 
 class SearchMixin:
@@ -28,10 +38,14 @@ class SearchMixin:
             {
                 "name": "search_runnables",
                 "description": (
-                    "Find runnables across the fleet by keyword. Returns matches with "
-                    "their id, hosts, description, and typed argument list. Call this "
-                    "first, then run_runnable with the id and host. Use an empty query "
-                    "(optionally with group/host) to browse."
+                    "Find runnables across the fleet by keyword. Returns matches under "
+                    "'results' with their id, hosts, description, and typed argument "
+                    "list. Call this first, then run_runnable with the id and host. "
+                    "Use an empty query (optionally with group/host) to browse. "
+                    "Matching saved runbooks — the operator's standing procedures — "
+                    "come back under a separate 'runbooks' key; follow one with "
+                    "run_runbook, not run_runnable. Prefer an existing runbook over "
+                    "improvising a sequence of runnables."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -334,6 +348,29 @@ class SearchMixin:
             ]
         return []
 
+    @staticmethod
+    def _runbook_id_hint(rid: str) -> str:
+        """If ``rid`` names a saved runbook (bare or ``runbook:``-prefixed), the
+        error string pointing at the tool that can actually run it; else ``""``.
+
+        Shared by ``_resolve_id_host`` and ``_run_describe_tool``, which each carry
+        their own copy of the unknown-id error. Since ``search_runnables`` now
+        returns runbooks, a runbook id reaching either is the likeliest mistake, and
+        "unknown runnable id" is a dead end that doesn't hint the right tool."""
+        bare = rid.split(":", 1)[1] if rid.startswith("runbook:") else rid
+        from . import memory
+
+        try:
+            known = {r["id"] for r in memory.list_runbooks()}
+        except Exception:  # noqa: BLE001 — the hint is a nicety, never a blocker
+            return ""
+        if bare not in known:
+            return ""
+        return (
+            f"Error: '{bare}' is a runbook, not a runnable — follow it with "
+            f"run_runbook (runbook_id='{bare}'), which returns its steps."
+        )
+
     def _resolve_id_host(
         self, rid: str, host: str
     ) -> tuple[str, str, dict[str, Any]] | str:
@@ -344,6 +381,13 @@ class SearchMixin:
             return "Error: 'id' is required (use search_runnables to find it)."
         matches = self._runnables_for_id(rid)
         if not matches:
+            # search_runnables returns runbooks alongside runnables, so the most
+            # likely wrong id here is a runbook's. Name the right tool instead of
+            # dead-ending on "unknown runnable". (A `runbook:` prefix can never be
+            # a real runnable id — _dedup_tool_name's sanitiser rewrites ':'.)
+            hint = self._runbook_id_hint(rid)
+            if hint:
+                return hint
             return (
                 f"Error: unknown runnable id '{rid}' (use search_runnables to find it)."
             )
@@ -611,7 +655,132 @@ class SearchMixin:
             result["hint"] = (
                 "More matches exist — refine the query or pass a group/host filter."
             )
+        # Runbooks are the operator's saved procedures, so a query like "502s on
+        # the web tier" should surface the triage runbook alongside the runnables
+        # it would call. One search covering both kinds is deliberate: an agent
+        # only searches for what it thinks to search for, so a separate
+        # search_runbooks tool would need it to decide to look.
+        #
+        # Kept under their OWN key, never mixed into `results`: run_runnable's
+        # description tells the model to pass any id from a result straight to it,
+        # and its `id` is a free string with no enum — a runbook id in `results`
+        # would be passed there and bounce (see _resolve_id_host's hint). The
+        # shared limit would also let the two kinds crowd each other out.
+        #
+        # Skipped when a host/group filter is set: a runbook belongs to no host and
+        # no package, so it cannot honour either filter — returning them anyway
+        # would make the filter a lie, and the menu in run_runbook's description
+        # still lists every one.
+        if not host and not group:
+            runbooks, rb_truncated = self._search_runbooks(tokens)
+            if runbooks:
+                result["runbooks"] = runbooks
+                result["runbooks_hint"] = (
+                    "Saved procedures — follow one with run_runbook (NOT "
+                    "run_runnable). Prefer one of these over improvising a "
+                    "sequence of runnables."
+                )
+                if rb_truncated:
+                    result["runbooks_truncated"] = True
         return result
+
+    @staticmethod
+    def _score_runbook(rb: dict[str, Any], tokens: list[str]) -> int:
+        """Keyword score for one runbook. Mirrors the runnable ``score()`` above —
+        same substring matching, same "no tokens = browse" rule.
+
+        Weights differ from the runnable version on purpose. For a runnable the
+        *name* is what the operator knows and the description is prose nobody
+        searches for. For a runbook it is the other way round: the query usually
+        *is* a restatement of the symptom ("the web nodes are 502ing"), while the
+        id is a slug the operator may never have seen. So id/title score 10 when
+        they do match, but the symptom is weighted 5 rather than a description's 2."""
+        if not tokens:
+            return 1
+        rid = str(rb.get("id") or "").lower()
+        title = str(rb.get("title") or "").lower()
+        symptom = str(rb.get("symptom") or "").lower()
+        tags = " ".join(str(t) for t in (rb.get("tags") or [])).lower()
+        s = 0
+        for t in tokens:
+            if t in rid or t in title:
+                s += 10
+            if t in symptom:
+                s += 5
+            if t in tags:
+                s += 3
+        return s
+
+    def _search_runbooks(
+        self, tokens: list[str], limit: int = _RUNBOOK_SEARCH_LIMIT
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Runbook rows for a ``search_runnables`` call, ranked and capped.
+        Returns ``(rows, truncated)``.
+
+        Reads ``memory.load_runbooks()`` rather than ``list_runbooks()`` — the
+        latter returns only id/title/symptom and drops ``tags``, which we rank on.
+        Args are shaped exactly like the runnable rows above (and like
+        ``catalog.runbook_to_catalog_entry``) so a runbook's inputs describe
+        identically wherever they surface, and the model can fill ``run_runbook``'s
+        ``values`` without a second round-trip.
+
+        Every step is defensive: this runs inside fleet-wide runnable discovery, and
+        a hand-edited or Config-Sync'd ``runspec_runbooks.toml`` is not guaranteed to
+        parse (``validate_runbook_arg_table`` only guards the agent's *save* path).
+        A bad store, or one bad ``[runbook.args]`` table, must never take down
+        ``search_runnables``."""
+        from . import memory
+        from .catalog import arg_to_property
+        from .runbookargs import parse_runbook_args
+
+        try:
+            all_runbooks = memory.load_runbooks()
+        except Exception:  # noqa: BLE001 — a bad store must not sink the search
+            logger.debug("runbook store unavailable for search", exc_info=True)
+            return [], False
+
+        scored: list[tuple[int, str, dict[str, Any]]] = []
+        for rb in all_runbooks:
+            rid = str(rb.get("id") or "")
+            if not rid:
+                continue
+            sc = self._score_runbook(rb, tokens)
+            if sc <= 0:
+                continue
+            scored.append((sc, rid, rb))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        truncated = len(scored) > limit
+
+        rows: list[dict[str, Any]] = []
+        for _sc, rid, rb in scored[:limit]:
+            arg_rows: list[dict[str, Any]] = []
+            try:
+                parsed = parse_runbook_args(rb.get("args"))
+            except Exception:  # noqa: BLE001 — one bad table must not hide the rest
+                logger.debug("runbook %s has an unparseable args table", rid)
+                parsed = []
+            for a in parsed:
+                if str(a.get("type")) == "password":
+                    continue  # secrets never travel inline
+                row = {"name": a.get("name"), "required": bool(a.get("required"))}
+                row.update(arg_to_property(a))
+                arg_rows.append(row)
+            entry: dict[str, Any] = {
+                "id": rid,
+                # Explicit kind: a runbook id is operator-chosen and stored verbatim
+                # (only *derived* ids get slugified), so nothing stops one being
+                # named like a runnable's dedup id. The tag removes any doubt about
+                # which tool takes it, alongside the separate result key.
+                "kind": "runbook",
+                "title": str(rb.get("title") or ""),
+                "symptom": str(rb.get("symptom") or ""),
+                "args": arg_rows,
+            }
+            tags = [str(t) for t in (rb.get("tags") or []) if str(t).strip()]
+            if tags:
+                entry["tags"] = tags
+            rows.append(entry)
+        return rows, truncated
 
     def _run_search_tool(self, ti: dict[str, Any]) -> str:
         """Execute the ``search_runnables`` meta-tool → JSON string for the agent."""
@@ -627,6 +796,12 @@ class SearchMixin:
         rid = str(ti.get("id") or "")
         matches = self._runnables_for_id(rid)
         if not matches:
+            # Same runbook hint as _resolve_id_host: "tell me more about this row"
+            # is the natural next move on a runbook returned by search_runnables,
+            # and this tool has its own copy of the unknown-id error.
+            hint = self._runbook_id_hint(rid)
+            if hint:
+                return hint
             return (
                 f"Error: unknown runnable id '{rid}' (use search_runnables to find it)."
             )
@@ -749,10 +924,19 @@ class SearchMixin:
         """The full folded menu for a chat turn: the runnable catalog index
         plus, when built-ins are deferred, a labelled deferred-tools section.
         Empty outside search mode. Rides ``_fold_catalog_index`` unchanged —
-        the section is part of the index text, not a new fold."""
+        the section is part of the index text, not a new fold.
+
+        Each section labels itself; the fold's preamble is only a generic header
+        (it used to hard-code the runnables wording for the whole blob)."""
         if self._tool_mode() != "search":
             return ""
         index = self._build_catalog_index()
+        if index:
+            index = (
+                "Runnables you can execute via run_runnable (id — description). "
+                "Call search_runnables or describe_runnable for a runnable's "
+                "arguments and hosts before running it:\n" + index
+            )
         builtin_lines = self._build_builtin_index()
         if builtin_lines:
             block = (
@@ -770,15 +954,17 @@ class SearchMixin:
         """Return a copy of ``history`` with the catalog index prepended to the
         first user message — provider-agnostic (every adapter handles user
         messages) and it leaves the cached tools+system prefix untouched. Never
-        mutates the stored history."""
+        mutates the stored history.
+
+        The preamble is a generic header only: each section inside ``index_text``
+        labels itself (see ``_chat_index_text``). It used to hard-code "Runnables
+        you can execute via run_runnable… This is the full menu", which was wrong
+        on two counts — it labelled the deferred-built-ins section as runnables,
+        and it claimed completeness even when ``_build_catalog_index`` had
+        truncated at ``tool_index_limit`` and appended "…and N more"."""
         if not index_text:
             return history
-        preamble = (
-            "Runnables you can execute via run_runnable (id — description). This is "
-            "the full menu; call search_runnables or describe_runnable to get a "
-            "runnable's arguments and hosts before running it.\n"
-            f"{index_text}\n\n"
-        )
+        preamble = f"What you can reach right now, by category:\n\n{index_text}\n\n"
         out = [dict(m) for m in history]
         for m in out:
             if m.get("role") == "user" and isinstance(m.get("content"), str):

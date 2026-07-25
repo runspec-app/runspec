@@ -58,6 +58,33 @@ from the `[runbook.args]` table — which uses the **same argument grammar** as
 a `runspec.toml`, so choices, defaults, and types all work. Every runnable a
 runbook drives still goes through the normal autonomy gate.
 
+## How the agent finds one
+
+You rarely need to name a runbook. The agent sees every runbook's id, title and
+**symptom** (the "when to use this" line), so describing the problem is enough —
+*"the web nodes are 502ing"* reaches `web-502-triage` on its own. Give each
+runbook a good `symptom`; that is the field discovery runs on.
+
+In `[llm] tool_mode = "search"`, `search_runnables` returns matching runbooks
+too, under a separate `runbooks` key alongside the runnables — one search covers
+both, and the agent is told to prefer an existing procedure over improvising a
+sequence of runnables. Past 25 runbooks the inline list is capped (it lives in
+the prompt-cached tool schemas, so it can't grow unbounded) and search covers
+the rest.
+
+**One tool reads a runbook: `run_runbook`.** It returns the runbook's steps with
+`{{placeholders}}` filled, and it runs without asking you first — because
+returning text isn't an action. Every runnable those steps then drive is gated
+normally, at that runnable's own autonomy level, which is where the decisions
+that matter actually happen. Writing a runbook (`save_runbook`) *is* gated.
+
+!!! note "Changed in 0.202.0"
+    There used to be a second tool, `load_runbook`, which returned the same steps
+    without a gate while `run_runbook` asked for approval. In practice the agent
+    took the ungated path, and in trigger turns it also sidestepped the
+    `action_allow` allowlist — which governs `run_runbook` but not `load_runbook`.
+    Folding the two together removed both problems.
+
 ## Running runbooks
 
 - **Chat**: the `$` menu lists runbooks; or just ask — *"run the web-502-triage

@@ -41,9 +41,14 @@ _BUILTIN_META_NAMES = frozenset({"describe_tool", "use_tool"})
 # Persistent-memory / runbook tools. Backed by local TOML collections (see
 # memory.py) — local and reversible, so the autonomy gate lets them run without a
 # prompt (like the read-only meta-tools), keeping the model spend on actual work.
-_MEMORY_TOOL_NAMES = frozenset(
-    {"remember", "search_memory", "save_runbook", "load_runbook"}
-)
+# (save_runbook is the exception, gated in _effective_tool_autonomy: a runbook is a
+# procedure that gets followed later, so the operator approves each write.)
+#
+# Reading a runbook lives in run_runbook, not here — there is no separate
+# load_runbook. The two returned the same steps, one gated and one not, so the
+# ungated one was simply the faster path; and being outside the action_allow
+# vocabulary it also let a trigger follow a runbook its allowlist excluded.
+_MEMORY_TOOL_NAMES = frozenset({"remember", "search_memory", "save_runbook"})
 
 # Read-only status tool: report the live working-hours rota + configured
 # triggers/schedules on demand (the same data folded into each turn's context,
@@ -219,6 +224,11 @@ _HOT_BUILTIN_NAMES = (
     | _FILES_TOOL_NAMES
     | _MEMORY_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
+    # run_runbook: the single path to a runbook's steps (load_runbook was folded
+    # into it). The folded index advertises every runbook by symptom, so deferring
+    # the one tool that acts on that menu meant two discovery hops before the agent
+    # could follow a procedure it had already been told about.
+    | {"run_runbook"}
 )
 
 

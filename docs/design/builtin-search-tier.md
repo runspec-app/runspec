@@ -66,7 +66,7 @@ mode:
 |---|---|
 | `console_status` | One tiny schema; the "what time is it / is the rota on" reflex. |
 | `search_history` | Small, read-only, used mid-conversation ("did it run? what did it output?"). |
-| memory/runbooks (`remember`, `search_memory`, `save_runbook`, `load_runbook`) | The system prompt references pinned memory; recall must be zero-hop. |
+| memory/runbooks (`remember`, `search_memory`, `save_runbook`, `run_runbook`) | The system prompt references pinned memory; recall must be zero-hop. The folded index advertises every runbook by symptom, so the tool that reads one must be too (0.202.0 — `load_runbook` was folded into `run_runbook`). |
 | `list_files` (0.196.0) | Read-only browsing — the entry point of most file tasks; zero-hop so the agent finds exact paths before reaching for the deferred transfer tools. |
 | `workspace_*` (7) | **Load-bearing:** the spill envelope tells the model "the full output is in `tool-results/…`, read it with `workspace_read`/`workspace_grep`". A discovery hop between "output spilled" and "read it back" would break the console's large-output story. |
 

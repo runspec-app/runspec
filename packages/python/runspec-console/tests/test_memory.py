@@ -159,9 +159,9 @@ def test_memory_persists_as_valid_json_shape(mem):
 
 
 def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
-    """The bridge surfaces the four tools, runs the read/note ones without a confirm
-    gate (save_runbook is the exception — see below), and only offers load_runbook
-    once a runbook exists."""
+    """The bridge surfaces the memory tools and runs the note/recall ones without a
+    confirm gate. save_runbook is the exception — see below. Reading a runbook is
+    not a memory tool at all: it is run_runbook (see test_action_tools.py)."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     from runspec_console.bridge import Bridge
 
@@ -179,7 +179,7 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     b = _Stub()
 
     # Autonomy: local + reversible → run without prompting.
-    for name in ("remember", "search_memory", "load_runbook"):
+    for name in ("remember", "search_memory"):
         assert b._effective_tool_autonomy(name, {}) == "autonomous"
     # save_runbook is the exception: a runbook is a procedure the agent (and every
     # console it syncs to) will later follow, so the operator approves each save.
@@ -191,19 +191,23 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     assert "save_runbook" in _MEMORY_TOOL_NAMES
     assert "save_runbook" in _HOT_BUILTIN_NAMES
 
-    # Registration: write tools present; load_runbook omitted until a runbook exists.
-    names = {t["name"] for t in b._memory_tools()}
-    assert {"remember", "search_memory", "save_runbook"} <= names
-    assert "load_runbook" not in names
+    # Registration: exactly the three memory tools — reading a runbook lives in
+    # run_runbook, so no load_runbook here however many runbooks are saved.
+    assert {t["name"] for t in b._memory_tools()} == {
+        "remember",
+        "search_memory",
+        "save_runbook",
+    }
 
-    # Routing: remember → search round-trips; saving a runbook reveals load_runbook.
+    # Routing: remember → search round-trips; saving a runbook dispatches the
+    # UI-refresh event.
     b._run_memory_tool(
         "remember", {"fact": "the log is at /var/log/app.log", "app": "a"}
     )
     b._run_memory_tool(
         "save_runbook", {"title": "Restart flow", "steps": "1. restart-service"}
     )
-    assert "load_runbook" in {t["name"] for t in b._memory_tools()}
+    assert "load_runbook" not in {t["name"] for t in b._memory_tools()}
     # Saving a runbook notifies the UI so the `$` menu / Forms / Runbooks editor
     # refresh live (no restart needed) — mirrors the Settings editor's dispatch.
     assert any(ev == "runspec:runbooks_changed" for ev, _ in b.dispatched)
@@ -327,9 +331,9 @@ def test_agent_runbook_args_validation_errors_are_returned(tmp_path, monkeypatch
     assert memory.load_runbook("bad") is None
 
 
-def test_runbook_menus_carry_the_symptom(tmp_path, monkeypatch):
-    """Both embedded menus name the symptom, not just the title — the symptom is
-    what lets the agent pick a runbook without a load hop per candidate."""
+def test_runbook_menu_carries_the_symptom(tmp_path, monkeypatch):
+    """The embedded menu names the symptom, not just the title — the symptom is what
+    lets the agent pick a runbook without a round-trip per candidate."""
     b = _runbook_tool_stub(tmp_path, monkeypatch)
     from runspec_console import memory
 
@@ -340,11 +344,67 @@ def test_runbook_menus_carry_the_symptom(tmp_path, monkeypatch):
         steps="1. probe",
     )
 
-    load = next(t for t in b._memory_tools() if t["name"] == "load_runbook")
     run = next(t for t in b._action_tools() if t["name"] == "run_runbook")
-    for tool in (load, run):
-        assert "Triage 502s" in tool["description"]
-        assert "web nodes returning 502s" in tool["description"]
+    assert "Triage 502s" in run["description"]
+    assert "web nodes returning 502s" in run["description"]
+
+
+def test_runbook_tool_schemas_are_byte_stable_across_a_steps_only_edit(
+    tmp_path, monkeypatch
+):
+    """Editing a runbook's steps must not change the agent's tool schemas at all.
+
+    This is a prompt-cache invariant, not tidiness. The schemas sit before the cache
+    breakpoint, so any byte change invalidates the whole cached tools+system prefix
+    for the rest of the session — and ``save_runbook`` replaces an entry by
+    delete-then-append, which moved the edited runbook to the end of the file and
+    therefore to the end of every enum and menu. A steps-only edit — the most common
+    kind, and one the agent is now nudged to propose — used to bust the cache while
+    changing nothing the model can see. ``list_runbooks`` sorts by id to prevent it.
+
+    Asserted over the *whole* tool list rather than just the enum, so the next thing
+    that leaks a mutable value into a schema fails here too."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    for rid in ("zebra", "alpha", "middle"):
+        memory.save_runbook(rid, title=f"T {rid}", symptom=f"S {rid}", steps="v1")
+
+    def snapshot():
+        tools = b._memory_tools() + b._action_tools()
+        return json.dumps(tools, sort_keys=True)
+
+    before = snapshot()
+    memory.save_runbook("alpha", title="T alpha", symptom="S alpha", steps="v2 rewrite")
+    assert snapshot() == before
+
+    # Sanity: the ids really are sorted, not merely unchanged.
+    run = next(t for t in b._action_tools() if t["name"] == "run_runbook")
+    assert run["input_schema"]["properties"]["runbook_id"]["enum"] == [
+        "alpha",
+        "middle",
+        "zebra",
+    ]
+    # ...and adding one *does* change the schemas — the cache invalidation we accept.
+    memory.save_runbook("beta", title="T beta", symptom="S beta", steps="v1")
+    assert snapshot() != before
+
+
+def test_runbook_menu_is_capped(tmp_path, monkeypatch):
+    """The menu lives in the cached tools block, so it must not grow without bound
+    as runbooks accumulate. Past the cap the agent is pointed at search_runnables,
+    which ranks on the same symptom text and has no cap pressure."""
+    from runspec_console.bridge_agent_tools import _RUNBOOK_MENU_CAP, _runbook_menu
+
+    rows = [
+        {"id": f"rb-{i:03d}", "title": f"T{i}", "symptom": f"S{i}"}
+        for i in range(_RUNBOOK_MENU_CAP + 7)
+    ]
+    menu = _runbook_menu(rows)
+    assert menu.count("'rb-") == _RUNBOOK_MENU_CAP
+    assert "…and 7 more — use search_runnables to find them" in menu
+    # Under the cap: everything listed, no overflow note.
+    assert "…and" not in _runbook_menu(rows[:3])
 
 
 def test_bridge_get_save_runbooks_roundtrip(tmp_path, monkeypatch):

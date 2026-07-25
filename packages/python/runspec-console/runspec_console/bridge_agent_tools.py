@@ -67,24 +67,37 @@ def _parse_dt(value: Any) -> datetime | None:
     return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
-def _runbook_menu(runbooks: list[dict[str, Any]]) -> str:
-    """The ``'id' — Title — Symptom`` menu embedded in the ``load_runbook`` and
-    ``run_runbook`` descriptions. Pure/testable.
+_RUNBOOK_MENU_CAP = 25
+
+
+def _runbook_menu(runbooks: list[dict[str, Any]], cap: int = _RUNBOOK_MENU_CAP) -> str:
+    """The ``'id' — Title — Symptom`` menu embedded in the ``run_runbook``
+    description. Pure/testable.
 
     The symptom is what tells the agent *when* a runbook applies — without it the
     menu carries names it can't choose between, so it either ignores runbooks or
-    burns a ``load_runbook`` hop per candidate. ``memory.list_runbooks`` has always
-    returned it; both call sites simply dropped it. One helper so the two menus
-    can't drift apart."""
+    burns a round-trip per candidate to find out.
+
+    **Capped**, mirroring the catalog index (``_build_catalog_index``): this text
+    lives in the tool schema, i.e. inside the prompt-cached prefix that is re-sent
+    every turn, so it must not grow without bound as runbooks accumulate. Past the
+    cap the agent is pointed at ``search_runnables``, which ranks runbooks by the
+    same symptom text and has no cap pressure because it runs on demand. The input
+    is expected sorted (``memory.list_runbooks``) so the cut is stable rather than
+    "whichever were saved least recently"."""
     parts = []
-    for row in runbooks:
+    for row in runbooks[:cap]:
         text = f"'{row['id']}'"
         if row.get("title"):
             text += f" — {row['title']}"
         if row.get("symptom"):
             text += f" — {row['symptom']}"
         parts.append(text)
-    return "; ".join(parts)
+    menu = "; ".join(parts)
+    overflow = len(runbooks) - cap
+    if overflow > 0:
+        menu += f"; …and {overflow} more — use search_runnables to find them"
+    return menu
 
 
 def _is_web_url(value: Any) -> bool:
@@ -2735,9 +2748,8 @@ class AgentToolsMixin:
     def _memory_tools(self) -> list[dict[str, Any]]:
         """Schemas for the persistent-memory / runbook tools. Always available (the
         stores are local) — so the agent accrues knowledge even with no remote hosts.
-        `load_runbook`'s id is surfaced as an enum (with titles) so the model picks a
-        real runbook; it's omitted when none are saved."""
-        from . import memory
+        Reading a runbook is not here — that is ``run_runbook`` in ``_action_tools``,
+        the single path to a runbook's body."""
 
         tools: list[dict[str, Any]] = [
             {
@@ -2802,7 +2814,7 @@ class AgentToolsMixin:
                     "addresses and the ordered steps (which runnables to call). "
                     "Shareable across the team via Config Sync. This both creates and "
                     "edits: saving with an existing id updates that runbook, so to "
-                    "edit one, load_runbook it, change the fields, and save_runbook "
+                    "edit one, read it with run_runbook, change the fields, and save_runbook "
                     "with the same id — fields you omit keep their current values. "
                     "The operator approves every save. Propose one when a correction "
                     "you were given would apply again next time."
@@ -2842,30 +2854,10 @@ class AgentToolsMixin:
                 },
             },
         ]
-        runbooks = memory.list_runbooks()
-        if runbooks:
-            ids = [s["id"] for s in runbooks]
-            menu = _runbook_menu(runbooks)
-            tools.append(
-                {
-                    "name": "load_runbook",
-                    "description": (
-                        "Load a saved runbook's full steps by id, to follow an "
-                        f"established procedure for a known symptom. Available: {menu}."
-                    ),
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "id": {
-                                "type": "string",
-                                "enum": ids,
-                                "description": "Which runbook to load.",
-                            }
-                        },
-                        "required": ["id"],
-                    },
-                }
-            )
+        # Reading a runbook is run_runbook's job (see _action_tools) — there is no
+        # separate load_runbook. Two tools returning the same steps, one gated and
+        # one not, made the ungated one the default path and left run_runbook's
+        # action_allow scoping bypassable in trigger turns.
         return tools
 
     def _action_tools(self) -> list[dict[str, Any]]:
@@ -3010,9 +3002,12 @@ class AgentToolsMixin:
                 {
                     "name": "run_runbook",
                     "description": (
-                        "Load a saved runbook by id and follow its steps as part of "
-                        "this turn. Returns the runbook's rendered steps for you to "
-                        f"carry out with your other tools. Available: {menu}."
+                        "Read a saved runbook by id and follow its steps as part of "
+                        "this turn — the one way to get a runbook's body. Returns "
+                        "its rendered steps for you to carry out with your other "
+                        "tools; each runnable you then call is gated as usual. Use "
+                        "it to consult a procedure as well as to run one. "
+                        f"Available: {menu}."
                     ),
                     "input_schema": {
                         "type": "object",
@@ -3305,7 +3300,7 @@ class AgentToolsMixin:
         if name == "create_document":
             return self._action_create_document(ti)
         if name == "run_runbook":
-            return self._action_run_runbook(ti)
+            return self._action_run_runbook(ti, chat_id)
         if name == "run_saved_run":
             return self._action_run_saved_run(ti, chat_id)
         if name == "create_schedule":
@@ -3463,12 +3458,13 @@ class AgentToolsMixin:
             f"{detail.get('error') or 'unknown error'}"
         )
 
-    def _action_run_runbook(self, ti: dict[str, Any]) -> str:
+    def _action_run_runbook(self, ti: dict[str, Any], chat_id: str = "") -> str:
         from . import memory, runbookargs
 
-        runbook = memory.load_runbook(str(ti.get("runbook_id") or ""))
+        rid = str(ti.get("runbook_id") or "")
+        runbook = memory.load_runbook(rid)
         if not runbook:
-            return f"Error: no runbook with id '{ti.get('runbook_id')}'."
+            return f"Error: no runbook with id '{rid}'."
         vals = dict(ti.get("values") or {})
         raw = runbook.get("args") if isinstance(runbook.get("args"), dict) else {}
         errors = runbookargs.validate_runbook_values(raw, vals)
@@ -3479,6 +3475,11 @@ class AgentToolsMixin:
         text = f"{body}\n\n{extra}".strip() if extra else body.strip()
         if not text:
             return "Error: this runbook has an empty body."
+        # Attribute the rest of the turn's runnable runs to this runbook, so an
+        # agent-followed procedure shows up in History/Analytics the same way the
+        # Forms path's does. Adds only the runbook field — see the docstring on
+        # _tag_run_origin_runbook for why this must not be _set_run_origin.
+        self._tag_run_origin_runbook(chat_id, rid)
         title = runbook.get("title") or runbook.get("id")
         return f"Runbook '{title}' — follow these steps now using your tools:\n\n{text}"
 
@@ -3619,11 +3620,6 @@ class AgentToolsMixin:
             # up after a console restart (when get_runbooks re-reads the file).
             self._dispatch("runspec:runbooks_changed", {"id": sid})
             return f"Saved runbook '{sid}'."
-        if name == "load_runbook":
-            runbook = memory.load_runbook(str(ti.get("id") or ""))
-            if not runbook:
-                return f"Error: no runbook with id '{ti.get('id')}'."
-            return json.dumps(runbook)
         return f"Error: unknown tool '{name}'"
 
     def _run_custom_tool(

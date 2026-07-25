@@ -114,6 +114,36 @@ def test_hot_kernel_matches_const():
     assert not (set(DEFERRED) & _HOT_BUILTIN_NAMES)
 
 
+def test_hot_kernel_is_pinned_exactly():
+    """Pin the whole set, not a subset. The fixtures above only name tools they
+    invented, so a real tool moving in or out of the kernel — a per-turn context
+    cost, and for run_runbook the difference between zero hops and a
+    describe_tool + use_tool round-trip — would otherwise change nothing here."""
+    assert _HOT_BUILTIN_NAMES == {
+        "console_status",
+        "search_history",
+        "list_files",
+        "remember",
+        "search_memory",
+        "save_runbook",
+        # The single path to a runbook's body. The folded index advertises every
+        # runbook by symptom, so deferring the one tool that acts on that menu
+        # meant two discovery hops to follow a procedure already described.
+        "run_runbook",
+        "workspace_read",
+        "workspace_write",
+        "workspace_ls",
+        "workspace_grep",
+        "workspace_head",
+        "workspace_tail",
+        "workspace_info",
+    }
+    # ...and there is no load_runbook to be hot or otherwise: reading a runbook is
+    # run_runbook's job, so the ungated shortcut around its action_allow scoping
+    # cannot come back by accident.
+    assert "load_runbook" not in _HOT_BUILTIN_NAMES
+
+
 def test_inline_builtins_keeps_everything_inline():
     names = [t["name"] for t in _Stub()._runnables_to_tools(inline_builtins=True)]
     assert set(HOT) | set(DEFERRED) <= set(names)

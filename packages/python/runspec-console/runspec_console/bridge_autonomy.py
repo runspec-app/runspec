@@ -96,6 +96,15 @@ class AutonomyMixin:
                 return "confirm"
             inner_name, inner_ti = unwrapped
             return self._effective_tool_autonomy(inner_name, inner_ti)
+        if tool_name == "run_runbook":
+            # Reading a procedure is not an action. run_runbook returns *text* —
+            # the runbook's rendered steps — and every side effect happens later,
+            # when the agent calls the runnables those steps name, each at its own
+            # autonomy level. Gating the read protected nothing downstream, cost a
+            # prompt on a common path, and (while load_runbook existed) was routed
+            # around by an ungated tool returning the same body. It stays in
+            # _ACTION_TOOL_NAMES so a trigger's action_allow can still scope it.
+            return "autonomous"
         if tool_name == "save_runbook":
             # The one memory-store write the operator must see. A note the agent
             # remembers is advisory; a runbook is a *procedure* it (and every synced
@@ -828,7 +837,7 @@ class AutonomyMixin:
             key = first("runnable", "host")
         elif tool_name == "list_files":
             key = first("path", "source_target", "host")
-        elif tool_name in ("save_runbook", "load_runbook"):
+        elif tool_name == "save_runbook":
             # `id` is blank when the agent creates a new runbook (it's derived from
             # the title), so fall through to the title rather than showing nothing.
             key = first("id", "name", "title")
@@ -941,6 +950,28 @@ class AutonomyMixin:
                 "agent": agent,
                 "runbook": runbook,
             }
+
+    def _tag_run_origin_runbook(self, chat_id: str, runbook: str) -> None:
+        """Record that the rest of this turn is being driven by ``runbook``, so the
+        runnables it calls are attributed to it in History/Analytics — the same
+        provenance the Forms path sets via ``_spawn_chat_turn``.
+
+        Deliberately *not* ``_set_run_origin``: that replaces the whole record,
+        including ``trigger``, and ``_run_config_tool`` refuses when ``trigger`` is
+        set. Clearing it here would let a rule trigger reach the config tools by
+        first following a runbook. This only ever adds the runbook field."""
+        if not chat_id:
+            return
+        with self._lock:
+            origin = self._run_origin.get(chat_id)
+            if origin is None:
+                self._run_origin[chat_id] = {
+                    "trigger": "",
+                    "agent": True,
+                    "runbook": runbook,
+                }
+            else:
+                origin["runbook"] = runbook
 
     def _clear_run_origin(self, chat_id: str) -> None:
         with self._lock:

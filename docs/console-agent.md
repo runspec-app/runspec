@@ -40,7 +40,7 @@ which is which.
 | Create, edit, enable/disable **[triggers](console-automation.md#triggers-windows)** (`manage_triggers`) | **Profiles** registry (sidebar working sets) |
 | Set the working-hours **[rota](console-automation.md#rota-working-hours-for-automation)** (`manage_rota`) | |
 | Search and describe runnables (`search_runnables`, `describe_runnable`) | |
-| Save, load, and run **[runbooks](console-runbooks.md)** | |
+| Save and follow **[runbooks](console-runbooks.md)** | |
 | Create **[schedules](console-automation.md#schedules)** — cron/interval, running a runnable, a prompt, or a runbook | |
 | Manage the fleet **denylist** (disable/re-enable runnables per host) | |
 | Transfer files between hosts (`download_file`, `relay_file`) | |

@@ -438,11 +438,13 @@ Key properties, all verified in `bridge_autonomy.py`:
 | Read-only discovery / status | `search_runnables`, `describe_runnable`, `console_status` | **autonomous** |
 | Read-only Microsoft 365 | `outlook_inbox`, `outlook_search`, `outlook_calendar`, `outlook_reminders`, … | **autonomous** |
 | Read-only repo access | `repo_status`, `repo_list`, `repo_grep`, `repo_read`, `repo_diff` | **autonomous** |
-| Local memory / runbooks | `remember`, `search_memory`, `save_runbook`, `load_runbook` | **autonomous** (local TOML, reversible) |
+| Local memory recall | `remember`, `search_memory` | **autonomous** (local TOML, reversible) |
+| Read a runbook's steps | `run_runbook` | **autonomous** — it returns *text*; every runnable the steps then drive is gated individually at its own level |
+| **Write** a runbook | `save_runbook` | **confirm** — a runbook is a procedure the agent (and every console it syncs to) will later follow |
 | Denylist **read** | `manage_denylist action=list` | **autonomous** |
 | **Write** to M365 | `outlook_draft`, `outlook_send`, `outlook_move`, `outlook_categorize`, … | **confirm** |
 | **Write** to repo / files | `repo_write`, `repo_sync`, `download_file`, `relay_file` | **confirm** |
-| Denylist **mutate**, schedules, documents, events | `manage_denylist add/all/clear/mode`, `create_schedule`, `create_document`, `emit_event`, `run_runbook` | **confirm** |
+| Denylist **mutate**, schedules, documents, events | `manage_denylist add/all/clear/mode`, `create_schedule`, `create_document`, `emit_event` | **confirm** |
 | Run a runnable | `run_runnable` | **inherited from the target runnable's spec** |
 
 *(Classification: `bridge_const.py`, `bridge_autonomy.py`.)* The pattern is

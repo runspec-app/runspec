@@ -14,7 +14,20 @@ from __future__ import annotations
 import json
 import threading
 
+import pytest
+
 from runspec_console.bridge import Bridge
+
+
+@pytest.fixture(autouse=True)
+def _isolated_runbook_store(tmp_path, monkeypatch):
+    """Point the runbook store at a temp dir for every test in this module.
+
+    ``_search_runnables`` reads ``memory.load_runbooks()`` (runbooks are a second
+    result kind), and the store is resolved from ``APPDATA`` at call time — without
+    this, running the suite would read the developer's real
+    ``runspec_runbooks.toml`` and the results would depend on their machine."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
 
 
 class _Bridge:
@@ -76,6 +89,9 @@ class _Bridge:
     _node_at = staticmethod(Bridge._node_at)
     _preflight_validate = Bridge._preflight_validate
     _search_runnables = Bridge._search_runnables
+    _search_runbooks = Bridge._search_runbooks
+    _score_runbook = staticmethod(Bridge._score_runbook)
+    _runbook_id_hint = staticmethod(Bridge._runbook_id_hint)
     _run_search_tool = Bridge._run_search_tool
     _run_describe_tool = Bridge._run_describe_tool
     _confirm_card_view = Bridge._confirm_card_view
@@ -235,6 +251,150 @@ def test_run_search_tool_returns_json():
         _Bridge([_rn("a", "ping")])._run_search_tool({"query": "ping"})
     )
     assert payload["results"][0]["name"] == "ping"
+
+
+# ── runbooks as a second result kind ──────────────────────────────────────────
+#
+# A runbook is the operator's standing procedure for a recurring task. One search
+# covering both kinds is deliberate: an agent only searches for what it thinks to
+# search for, so a separate search_runbooks tool would need it to decide to look.
+
+
+def _save_runbook(**kw):
+    from runspec_console import memory
+
+    kw.setdefault("steps", "1. do the thing")
+    return memory.save_runbook(kw.pop("id", ""), **kw)
+
+
+def test_search_returns_matching_runbooks_under_their_own_key():
+    _save_runbook(
+        id="web-502",
+        title="Triage 502s",
+        symptom="web nodes returning 502s after a deploy",
+        tags=["web", "incident"],
+        args={"host": {"type": "choice", "options": ["web-01", "web-02"]}},
+    )
+    out = _search(
+        [_rn("a", "http-check", description="probe a web endpoint")], "502s web"
+    )
+
+    # Both kinds come back from the one call, in their own keys.
+    assert [r["name"] for r in out["results"]] == ["http-check"]
+    (rb,) = out["runbooks"]
+    assert rb["id"] == "web-502"
+    assert rb["kind"] == "runbook"
+    assert rb["title"] == "Triage 502s"
+    assert rb["tags"] == ["web", "incident"]
+    # Args come back typed, so the model can fill run_runbook's `values` without
+    # a load_runbook hop — same shape as a runnable row's args.
+    assert rb["args"] == [
+        {
+            "name": "host",
+            "required": True,
+            "type": "string",
+            "enum": ["web-01", "web-02"],
+        }
+    ]
+    # And it is told which tool takes them.
+    assert "run_runbook" in out["runbooks_hint"]
+
+
+def test_runbooks_never_appear_in_results():
+    """`results` feeds run_runnable directly (its description says so, and its `id`
+    has no enum), so a runbook id there would be passed to the wrong tool."""
+    _save_runbook(id="ping", title="Ping everything", symptom="ping")
+    out = _search([_rn("a", "ping")], "ping")
+    assert all(r["name"] == "ping" and "kind" not in r for r in out["results"])
+    assert [r["id"] for r in out["runbooks"]] == ["ping"]
+
+
+def test_runbook_symptom_outranks_a_title_only_match():
+    """The query usually *is* a restatement of the symptom, so symptom (5) must beat
+    a tag (3) — unlike a runnable, whose description is prose nobody searches for."""
+    _save_runbook(id="a-first", title="Alphabetically first", tags=["latency"])
+    _save_runbook(id="z-last", title="Something else", symptom="latency spike")
+    out = _search([], "latency")
+    assert [r["id"] for r in out["runbooks"]] == ["z-last", "a-first"]
+
+
+def test_runbook_search_caps_and_flags_truncation():
+    for i in range(9):
+        _save_runbook(id=f"rb-{i}", title=f"Runbook {i}", symptom="disk pressure")
+    out = _search([], "disk pressure")
+    assert len(out["runbooks"]) == 5
+    assert out["runbooks_truncated"] is True
+
+
+def test_runbook_empty_query_browses_but_stays_capped():
+    for i in range(7):
+        _save_runbook(id=f"rb-{i}", title=f"Runbook {i}")
+    out = _search([_rn("a", "ping")], "")
+    assert len(out["runbooks"]) == 5
+
+
+def test_host_or_group_filter_omits_runbooks():
+    """A runbook belongs to no host and no package, so it cannot honour either
+    filter — returning them anyway would make the filter a lie."""
+    _save_runbook(id="web-502", title="Triage 502s", symptom="502s")
+    assert "runbooks" not in _search([_rn("a", "ping")], "502s", host="a")
+    assert "runbooks" not in _search([_rn("a", "ping")], "502s", group="fleet")
+    assert "runbooks" in _search([_rn("a", "ping")], "502s")
+
+
+def test_runbook_password_args_never_travel_inline():
+    _save_runbook(
+        id="rotate",
+        title="Rotate creds",
+        symptom="credential rotation",
+        args={"user": {"type": "str"}, "secret": {"type": "password"}},
+    )
+    (rb,) = _search([], "rotation")["runbooks"]
+    assert [a["name"] for a in rb["args"]] == ["user"]
+
+
+def test_a_broken_runbook_never_sinks_runnable_search(monkeypatch):
+    """`validate_runbook_arg_table` only guards the agent's *save* path — a
+    hand-edited or Config-Sync'd runbook can carry an unparseable args table, and
+    it must not take down fleet-wide runnable discovery."""
+    from runspec_console import memory
+
+    memory.save_runbooks(
+        [
+            {
+                "id": "broken",
+                "title": "Broken",
+                "symptom": "disk",
+                "steps": "x",
+                "args": "not-a-table",
+            }
+        ]
+    )
+    out = _search([_rn("a", "df-check", description="disk usage")], "disk")
+    assert [r["name"] for r in out["results"]] == ["df-check"]
+    assert out["runbooks"][0]["args"] == []
+
+    def _boom():
+        raise OSError("store unreadable")
+
+    monkeypatch.setattr("runspec_console.memory.load_runbooks", _boom)
+    out = _search([_rn("a", "df-check", description="disk usage")], "disk")
+    assert [r["name"] for r in out["results"]] == ["df-check"]
+    assert "runbooks" not in out
+
+
+def test_a_runbook_id_sent_to_a_runnable_tool_names_the_right_tool():
+    """search_runnables returns both kinds, so a runbook id reaching a runnable
+    tool is the likeliest mistake. Both entry points carry their own unknown-id
+    error, so both need the hint."""
+    _save_runbook(id="web-502", title="Triage 502s", symptom="502s")
+    b = _Bridge([_rn("a", "ping")])
+    for rid in ("web-502", "runbook:web-502"):
+        assert "run_runbook" in b._resolve_id_host(rid, "")
+        assert "run_runbook" in b._run_describe_tool({"id": rid})
+    # A genuinely unknown id still gets the plain error.
+    assert "unknown runnable id" in b._resolve_id_host("nope", "")
+    assert "unknown runnable id" in b._run_describe_tool({"id": "nope"})
 
 
 # ── describe ──────────────────────────────────────────────────────────────────

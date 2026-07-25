@@ -8,6 +8,67 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.202.0] — 2026-07-25
+
+Runbook discovery: the agent can now *find* a runbook the same way it finds a
+runnable, and the runbook list stops taxing every turn as it grows.
+
+### Added
+- **`search_runnables` returns matching runbooks**, under a separate top-level
+  `runbooks` key (id, kind, title, symptom, tags, and typed `args` so the model can
+  fill `run_runbook`'s `values` without a `load_runbook` hop). One search covers
+  both kinds deliberately — an agent only searches for what it thinks to search
+  for, so a separate `search_runbooks` tool would need it to decide to look.
+  Ranking weights differ from the runnable side: id/title 10, **symptom 5**, tags 3
+  — for a runbook the query usually *is* a restatement of the symptom. Suppressed
+  when a `host`/`group` filter is set (a runbook belongs to neither, so honouring
+  the filter is impossible and ignoring it would be a lie), capped at 5 with
+  `runbooks_truncated`, and fails soft: a bad runbook store, or one unparseable
+  `[runbook.args]` table, can never take down fleet-wide runnable discovery.
+- **A runbook id sent to a runnable tool now names the right tool.** Both
+  `run_runnable` and `describe_runnable` carried their own "unknown runnable id"
+  dead end; both now point at `run_runbook` when the id is a known runbook (bare or
+  `runbook:`-prefixed).
+
+- **An agent-followed runbook is now attributed in History/Analytics.** `run_runbook`
+  tags the turn's run origin, so the runnables a runbook drove show up under it —
+  provenance the Forms path has always set and the agent path never did. It uses a
+  narrow `_tag_run_origin_runbook` rather than `_set_run_origin`, which replaces the
+  whole record including `trigger`: clearing that would have let a rule trigger reach
+  the chat-only config tools by first following a runbook.
+
+### Changed
+- **`load_runbook` is gone; `run_runbook` is the single path to a runbook's body,
+  and it no longer asks for approval.** The two tools returned the same steps — one
+  gated, one not — so the ungated one was simply the faster path and the confirm was
+  decorative. It was also a governance hole: `action_allow` scopes `run_runbook` in
+  trigger turns but not `load_runbook`, so a trigger could follow a runbook its
+  allowlist excluded. Reading a procedure returns *text*; every side effect happens
+  later, when the agent calls the runnables those steps name, each gated at its own
+  autonomy level. `run_runbook` stays in `_ACTION_TOOL_NAMES` (that set doubles as
+  the `action_allow` vocabulary) with an autonomy exception, and joins the search-mode
+  hot kernel so following a procedure the folded index already described costs no
+  discovery hops. `save_runbook` remains confirm-gated. The security docs' autonomy
+  tables are corrected to match — they still listed `save_runbook` as autonomous
+  after 0.201.0 gated it.
+- **`memory.list_runbooks()` is sorted by id — a prompt-cache fix, not cosmetics.**
+  It feeds the agent's tool schemas, which sit before the cache breakpoint, and
+  `save_runbook` replaces an entry by delete-then-append. In file order, *any*
+  re-save moved the edited runbook to the end of every enum and menu, changing the
+  tools block byte-for-byte and invalidating the cached prefix for the rest of the
+  session — so a steps-only edit that changed nothing the model can see still cost
+  a full cache rewrite. Storage order is untouched. A new test asserts the whole
+  tool list is byte-identical across a steps-only re-save.
+- **The runbook menu embedded in the `load_runbook` / `run_runbook` descriptions is
+  capped at 25**, mirroring the catalog index, with the overflow pointing at
+  `search_runnables`. That text is re-sent every turn, so it must not grow without
+  bound; search has no cap pressure because it runs on demand.
+- **The folded catalog index's preamble is now a generic header.** It hard-coded
+  "Runnables you can execute via run_runnable… This is the full menu", which was
+  wrong twice over — it labelled the deferred-built-ins section as runnables, and
+  claimed completeness even when the index had truncated at `tool_index_limit`.
+  Each section now labels itself.
+
 ## [0.201.0] — 2026-07-25
 
 Phase 1 of the multi-model agent work: the prompt and runbook hygiene that has to

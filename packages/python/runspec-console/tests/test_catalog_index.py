@@ -162,3 +162,16 @@ def test_fold_only_first_user_message():
     out = _Bridge([])._fold_catalog_index(history, "- x — y")
     assert "x — y" in out[0]["content"]
     assert out[2]["content"] == "second"  # untouched
+
+
+def test_fold_preamble_is_a_generic_header():
+    """The preamble must not describe the blob's contents — the index carries more
+    than one kind of section (runnables, plus the deferred built-ins menu), and each
+    labels itself. It also used to claim "This is the full menu", which is false
+    whenever _build_catalog_index truncated at tool_index_limit."""
+    out = _Bridge([])._fold_catalog_index(
+        [{"role": "user", "content": "hi"}], "- x — y"
+    )
+    preamble = out[0]["content"].split("- x — y")[0]
+    assert "run_runnable" not in preamble
+    assert "full menu" not in preamble

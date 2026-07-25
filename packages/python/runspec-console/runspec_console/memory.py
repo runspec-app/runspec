@@ -225,16 +225,28 @@ def save_runbooks(rows: list[dict[str, Any]]) -> None:
 
 
 def list_runbooks() -> list[dict[str, Any]]:
-    """Runbook metadata for the agent's `load_runbook` enum + display: id/title/symptom."""
-    return [
-        {
-            "id": s.get("id"),
-            "title": s.get("title", ""),
-            "symptom": s.get("symptom", ""),
-        }
-        for s in load_runbooks()
-        if s.get("id")
-    ]
+    """Runbook metadata for the agent's `load_runbook` enum + display: id/title/symptom.
+
+    **Sorted by id**, which is a prompt-cache guarantee, not cosmetics. This feeds
+    the agent tool schemas, and those sit before the cache breakpoint. ``save_runbook``
+    replaces an entry by delete-then-append, so it moves the edited runbook to the end
+    of the file — in file order, *any* re-save (even a steps-only edit that changes
+    nothing the agent can see) reorders the enum, changes the tools block byte-for-byte,
+    and invalidates the cached prefix for the rest of the session. Sorting makes the
+    schemas depend on the *set* of runbooks rather than the order they were last
+    touched. Storage order is untouched; ``load_runbooks`` still returns the file as-is."""
+    return sorted(
+        (
+            {
+                "id": s.get("id"),
+                "title": s.get("title", ""),
+                "symptom": s.get("symptom", ""),
+            }
+            for s in load_runbooks()
+            if s.get("id")
+        ),
+        key=lambda r: str(r["id"]),
+    )
 
 
 def load_runbook(runbook_id: str) -> dict[str, Any] | None:

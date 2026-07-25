@@ -152,6 +152,48 @@ Notes:
 - Honors the trigger allowlist (§8): only allowed `(host, name)` rows, with `hosts`
   narrowed to allowed hosts.
 
+#### 4.1a Runbooks as a second result kind — added in 0.202.0
+
+Saved runbooks are the operator's standing procedures, so a query describing a
+symptom should surface the runbook that handles it next to the runnables it would
+call. They ride the **same** call under a separate top-level `runbooks` key:
+
+```jsonc
+{ "id": "web-502", "kind": "runbook", "title": "Triage 502s",
+  "symptom": "web nodes returning 502s after a deploy",
+  "tags": ["web","incident"],
+  "args": [ { "name": "host", "required": true, "type": "string",
+              "enum": ["web-01","web-02"] } ] }
+```
+
+Design points worth keeping:
+
+- **One search, not a `search_runbooks` tool.** §13a's own lesson — an agent only
+  searches for what it thinks to search for — applies here: a separate tool needs
+  the model to decide to call it.
+- **Never in `results`.** `run_runnable`'s description tells the model to pass any
+  `id` from a result straight to it, and its `id` has no enum, so a runbook id there
+  would go to the wrong tool. A runbook id is also operator-chosen and stored
+  verbatim, so it *can* look like a dedup id — hence the explicit `kind` too, and
+  the `run_runbook` hint both `_resolve_id_host` and `_run_describe_tool` return.
+- **Ranking weights differ from runnables** — id/title 10, **symptom 5**, tags 3.
+  For a runnable the name is what the operator knows and the description is prose
+  nobody searches for; for a runbook the query usually *is* a restatement of the
+  symptom.
+- **Suppressed when `host`/`group` is set.** A runbook belongs to no host and no
+  package; returning them anyway would make the filter a lie.
+- **Capped at 5** with `runbooks_truncated`, separate from the runnable cap so the
+  two kinds can't crowd each other out.
+- **Fails soft.** This runs inside fleet-wide discovery, and a hand-edited or
+  Config-Sync'd `runspec_runbooks.toml` isn't guaranteed to parse
+  (`validate_runbook_arg_table` only guards the agent's *save* path). A bad store,
+  or one bad `[runbook.args]` table, must never take down `search_runnables`.
+
+**Non-goal, deliberately:** `run_runnable` must not learn to accept a runbook id,
+and a runbook row must not gain a `next`/`then` field. Keeping the kinds separate
+is what holds the §1 "no workflow engine" line — a runbook stays prose the agent
+reads, not a step graph the console executes.
+
 ### 4.2 `run_runnable`
 
 ```jsonc
