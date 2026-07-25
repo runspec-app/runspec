@@ -36,6 +36,8 @@ publishes. Publishing is always an explicit step.
 | `runspec-linux-core` | `packages/python/runspec-linux-core/pyproject.toml` | `linux-core-v` | `linux-core-release.yml` | PyPI + GitHub Release |
 | `runspec-windows` | `packages/python/runspec-windows/pyproject.toml` | `windows-v` | `windows-release.yml` | PyPI + GitHub Release |
 | `runspec-webops-core` | `packages/python/runspec-webops-core/pyproject.toml` | `webops-core-v` | `webops-core-release.yml` | PyPI + GitHub Release |
+| `runspec-fs` | `packages/python/runspec-fs/pyproject.toml` | `fs-v` | `fs-release.yml` | PyPI + GitHub Release |
+| `runspec-fs-core` | `packages/python/runspec-fs-core/pyproject.toml` | `fs-core-v` | `fs-core-release.yml` | PyPI + GitHub Release |
 | `runspec-jsm` | `packages/python/runspec-jsm/pyproject.toml` | `jsm-v` | `jsm-release.yml` | PyPI + GitHub Release |
 | `runspec-snow` | `packages/python/runspec-snow/pyproject.toml` | `snow-v` | `snow-release.yml` | PyPI + GitHub Release |
 | `runspec-console` | `packages/python/runspec-console/pyproject.toml` | `console-v` | `console-release.yml` | PyPI + GitHub Release |
@@ -102,6 +104,9 @@ means the tag doesn't exist yet and the run fails.
   cross-platform web/TLS runnables) — same rule: publish `runspec-webops-core`
   **first**, then the two wrapper packages, so their `runspec-webops-core>=…`
   floor resolves on PyPI.
+- **`runspec-fs` depends on `runspec-fs-core`** — same rule: publish
+  `runspec-fs-core` to PyPI **first**, then `runspec-fs`, so its
+  `runspec-fs-core>=…` floor resolves.
 
 ## For automated/agent sessions
 

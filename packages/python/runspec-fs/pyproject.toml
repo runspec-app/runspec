@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-fs"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Filesystem runnable for runspec — read and manipulate local/remote filesystems, ported from the Filesystem MCP server"
+dependencies = [
+    # 0.44.0 surfaces inherited args on each leaf subcommand's MCP tool via
+    # `runspec serve`; fs has no globals, but the floor keeps serve behaviour
+    # consistent with the other subcommand runnables.
+    "runspec>=0.44.0",
+    "runspec-fs-core>=0.1.0",
+]
+
+[project.scripts]
+# Entry point name MUST match the runnable name in runspec.toml (`fs`).
+fs = "runspec_fs.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.15.20",
+    "mypy",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
