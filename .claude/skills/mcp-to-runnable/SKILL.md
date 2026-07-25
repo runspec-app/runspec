@@ -135,6 +135,24 @@ def main() -> None:
 helper. Only touch an arg under the command that declares it (no cross-verb
 access). `output = "json"` on the runnable.
 
+## Optional: per-invocation run-as
+
+If the ported tools act on OS-owned resources and the operator/agent should pick
+*which* OS user runs each call (the `runspec-linux` venv-runnable model), add two
+**inherited global args** — `run-as` (`str`) + `become-method` (`choice` sudo/su)
+— under `[<name>.args]`, so they surface on every leaf MCP tool. Reuse
+`runspec_fs_core.build_become` as the pattern (`sudo -n -u <user>` / `su -c`,
+name-validated). Two shapes:
+
+- The tool is **already a subprocess** (like the linux venv ops): just wrap its
+  argv with `build_become`.
+- The tool runs **in-process** (like `fs`): resolve args into a plain
+  `(verb, kwargs)` dict and ship it over stdin to a tiny worker module
+  re-invoked as the target user under `build_become`; keep the verb→helper
+  dispatch in a runspec-free module the worker imports, so the escalated user
+  needs only the pure core (no `runspec.toml` lookup under sudo, where env is
+  stripped). See `runspec_fs/{cli,_worker,_dispatch}.py`.
+
 ## Steps
 
 0. Get the tool list; grill the mapping; play back a one-paragraph spec.

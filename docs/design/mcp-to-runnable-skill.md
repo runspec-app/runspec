@@ -86,6 +86,28 @@ boundary and a second, weaker software boundary would only add friction.
 effective user + home/cwd) so the 13-tool parity holds and the agent knows who it
 is and where it starts.
 
+### Per-invocation run-as (0.2.0)
+
+Like `runspec-linux`'s venv runnables (`create-venv`, `install-into-venv`, …),
+`fs` takes a **runtime `--run-as <user>`** (+ `--become-method sudo|su`) rather
+than a declarative `run_as`, so the user *or* the agent picks which OS user each
+verb runs as per invocation — the service account that owns the files is chosen
+at call time. They're **inherited global args** (`[fs.args]`), so `runspec serve`
+advertises them on every leaf MCP tool.
+
+The linux venv ops are already subprocesses (pip/venv/chmod), so escalation is
+just prefixing them with `sudo -n -u <user>`. The fs verbs run **in-process**, so
+`cli.py` instead resolves the args into a plain `(verb, kwargs)` dict and ships it
+over stdin to a tiny worker (`runspec_fs._worker`) re-invoked as the target user
+via `runspec_fs_core.build_become`. The worker imports only the pure core (no
+`runspec`), so the escalated user needs nothing but the core importable and no
+`runspec.toml` lookup happens under sudo (where the env is stripped). The
+verb→core dispatch lives in a runspec-free `runspec_fs._dispatch` shared by
+`cli.py` and the worker. Access stays bounded by the selected user's OS
+permissions — consistent with the no-jail stance. This "re-exec a pure worker as
+the target user" shape is the general answer for giving an **in-process** ported
+tool a per-invocation run-as.
+
 ### Array-of-objects without a new type
 
 The MCP `edit_file` tool takes `edits: [{oldText, newText}]`. runspec has no

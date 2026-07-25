@@ -1,5 +1,28 @@
 # runspec-fs Changelog
 
+## [0.2.0] — 2026-07-25
+
+Add a per-invocation **`--run-as`** — two inherited global args on `fs`, so the
+user *or* the agent picks which OS user each verb runs as (mirroring
+`runspec-linux`'s venv runnables, which take a runtime `--run-as` rather than a
+declarative `run_as`):
+
+- `--run-as <user>` — run the verb as another OS user.
+- `--become-method sudo|su` (default `sudo`) — how to escalate.
+
+Because the fs verbs run in-process (unlike the linux venv ops, which are already
+subprocesses), the resolved `(verb, kwargs)` is shipped over stdin to a small
+worker (`runspec_fs._worker`) re-invoked as the target user via
+`runspec_fs_core.build_become` (`sudo -n -u <user>` / `su <user> -c`). The worker
+imports only the pure core, so the escalated user needs no `runspec.toml` lookup.
+Access stays bounded by that user's OS permissions — still no directory jail. The
+args surface on every leaf MCP tool via `runspec serve`, so the console agent can
+set them per call (needs `runspec-fs-core >= 0.2.0`).
+
+Internals: verb→core dispatch moved to a runspec-free `runspec_fs._dispatch`
+(shared by `cli.py` and the worker); `cli.py` now unpacks the spec into a plain
+kwargs dict via `_verb_kwargs`.
+
 ## [0.1.0] — 2026-07-25
 
 Initial release.

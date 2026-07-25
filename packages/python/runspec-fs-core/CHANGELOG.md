@@ -1,5 +1,22 @@
 # runspec-fs-core Changelog
 
+## [0.2.0] — 2026-07-25
+
+Add `become.py` — the pure privilege-escalation command builder behind the
+`fs` runnable's per-invocation `--run-as`, mirroring `runspec-linux`'s venv
+runnables:
+
+- **`build_become(argv, run_as, method="sudo")`** — wrap `argv` so it runs as
+  `run_as` (`sudo -n -u <user> …` or `su <user> -c '…'`); returns `argv`
+  unchanged when `run_as` is empty. `-n` never prompts, so a missing
+  passwordless-sudo rule fails fast instead of hanging on a TTY-less channel.
+- **`validate_user`** (rejects anything but a POSIX-ish user name, so a crafted
+  value can't inject arguments), **`current_user`** (effective user name, to
+  decide whether escalation is even needed), **`escalation_supported`**
+  (`hasattr(os, "geteuid")` — false on Windows), `BECOME_METHODS`, `BecomeError`.
+
+Stdlib-only; the builder is pure (execution stays with the caller).
+
 ## [0.1.0] — 2026-07-25
 
 Initial release.

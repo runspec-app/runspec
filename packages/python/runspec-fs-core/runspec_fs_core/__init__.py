@@ -17,6 +17,14 @@ No directory jail is enforced: filesystem access is bounded by the OS permission
 of the user the process runs as. See ``allowed_directories``.
 """
 
+from runspec_fs_core.become import (
+    BECOME_METHODS,
+    BecomeError,
+    build_become,
+    current_user,
+    escalation_supported,
+    validate_user,
+)
 from runspec_fs_core.dirs import (
     create_directory,
     directory_tree,
@@ -39,6 +47,13 @@ __all__ = [
     # errors
     "FsCoreError",
     "EditNotAppliedError",
+    # run-as / privilege escalation
+    "build_become",
+    "validate_user",
+    "current_user",
+    "escalation_supported",
+    "BECOME_METHODS",
+    "BecomeError",
     # read
     "read_text_file",
     "read_media_file",

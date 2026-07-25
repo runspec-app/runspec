@@ -29,7 +29,16 @@ examples = [
   {cmd = "fs read-text-file --path README.md --head 20", description = "Read the first 20 lines of a file"},
   {cmd = "fs search-files --path . --pattern '*.py'", description = "Find Python files recursively"},
   {cmd = "fs edit-file --path a.txt --old-text foo --new-text bar", description = "Replace 'foo' with 'bar'"},
+  {cmd = "fs --run-as deploy read-text-file --path /home/deploy/app.log", description = "Run a verb as another OS user (chosen per invocation)"},
 ]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+# Per-invocation run-as: the user/agent picks which OS user each verb runs as,
+# like runspec-linux's venv runnables. The operation is re-invoked as that user
+# via sudo/su, so access is bounded by THAT user's OS permissions — no jail.
+[fs.args]
+run-as        = {type = "str",    required = false, description = "Run this operation as another OS user (via sudo -n -u / su, chosen per invocation). Access is then bounded by that user's OS permissions. POSIX only; needs passwordless sudo for the target user."}
+become-method = {type = "choice", options = ["sudo", "su"], default = "sudo", description = "How to escalate to --run-as."}
 
 # ── reads / metadata → autonomous ──────────────────────────────────────────
 
