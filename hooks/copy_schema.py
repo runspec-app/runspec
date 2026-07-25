@@ -13,6 +13,10 @@ so they are served as plain downloads (not rendered Markdown/HTML):
     and drop it in as a Claude Code skill. The rendered companion guide lives at
     ``/authoring/``; this is the verbatim skill file. Published under ``skills/``
     so further skills can be added alongside it.
+  * ``.claude/skills/mcp-to-runnable/SKILL.md`` →
+    ``https://runspec.app/skills/mcp-to-runnable.md`` — the raw mcp-to-runnable
+    skill (turn an MCP server into a runspec module + runnable), fetched the same
+    way; its rendered companion guide lives at ``/mcp-to-runnable/``.
 
 Single source of truth: each file lives once in the repo; this hook only copies
 it into the build output, so the served copy can never drift from the canonical
@@ -28,6 +32,7 @@ from pathlib import Path
 ASSETS = [
     (Path("schema") / "runspec.schema.json", Path("runspec.schema.json")),
     (Path(".claude") / "skills" / "add-runnable" / "SKILL.md", Path("skills") / "add-runnable.md"),
+    (Path(".claude") / "skills" / "mcp-to-runnable" / "SKILL.md", Path("skills") / "mcp-to-runnable.md"),
 ]
 
 

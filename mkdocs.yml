@@ -66,6 +66,7 @@ nav:
     - CLI reference: cli.md
     - Migrating from argparse: migration.md
     - Agent integration (MCP): agents.md
+    - MCP server → runnable: mcp-to-runnable.md
     - Jump hosts: jump-hosts.md
     - Denylist: denylist.md
   - Distribution:

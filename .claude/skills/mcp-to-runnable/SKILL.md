@@ -4,14 +4,18 @@ description: Turn an MCP server into a runspec module + runnable — a dependenc
 
 Port an MCP server into the runspec core-plus-wrapper pattern: **$ARGUMENTS**
 
-> This skill is a *specialisation* of `add-runnable`. It reuses everything there
-> (arg types, autonomy, the boundary-unpack stub, `ParseHarness` testing) and
-> adds only what's specific to porting an MCP server. Read `add-runnable` for the
-> per-runnable mechanics; read this for the server→module+runnable mapping.
+> Published companion guide: <https://runspec.app/mcp-to-runnable/> (mirrors this
+> skill; link the human there). This file is also downloadable raw at
+> <https://runspec.app/skills/mcp-to-runnable.md> (no repo access needed).
+>
+> This skill is a *specialisation* of `add-runnable` (<https://runspec.app/authoring/>).
+> It reuses everything there (arg types, autonomy, the boundary-unpack stub,
+> `ParseHarness` testing) and adds only what's specific to porting an MCP server.
+> Read `add-runnable` for the per-runnable mechanics; read this for the
+> server→module+runnable mapping.
 >
 > Reference implementation shipped in this repo: `runspec-fs-core` +
-> `runspec-fs` (the Filesystem MCP server). Design doc:
-> `docs/design/mcp-to-runnable-skill.md`.
+> `runspec-fs` (the Filesystem MCP server).
 
 ## What this produces
 
