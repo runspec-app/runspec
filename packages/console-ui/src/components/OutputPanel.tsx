@@ -790,17 +790,36 @@ function ToolCallBlock({
             // approving. One field per arg (JSON-encoded so a number/bool/string
             // round-trips); the edited values run instead of the agent's proposal.
             <div style={{ margin: '0 0 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {approveArgs.map(([k]) => (
-                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Text code style={{ fontSize: 11, flexShrink: 0, minWidth: 90 }}>{k}</Text>
-                  <Input
-                    size="small"
-                    value={edits[k] ?? ''}
-                    onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}
-                    style={{ fontFamily: 'monospace', fontSize: 11 }}
-                  />
-                </div>
-              ))}
+              {approveArgs.map(([k]) => {
+                // A long or multi-line value (a runbook's `steps`, a document
+                // body, a SQL statement) is unreadable and uneditable in a
+                // one-line Input — only its first line is reachable. Grow those
+                // into a textarea so the operator can actually review what they
+                // are approving.
+                const val = edits[k] ?? ''
+                const multiline = val.includes('\n') || val.length > 80
+                return (
+                  <div key={k} style={{ display: 'flex', alignItems: multiline ? 'flex-start' : 'center', gap: 8 }}>
+                    <Text code style={{ fontSize: 11, flexShrink: 0, minWidth: 90, marginTop: multiline ? 4 : 0 }}>{k}</Text>
+                    {multiline ? (
+                      <Input.TextArea
+                        size="small"
+                        value={val}
+                        autoSize={{ minRows: 2, maxRows: 12 }}
+                        onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}
+                        style={{ fontFamily: 'monospace', fontSize: 11 }}
+                      />
+                    ) : (
+                      <Input
+                        size="small"
+                        value={val}
+                        onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}
+                        style={{ fontFamily: 'monospace', fontSize: 11 }}
+                      />
+                    )}
+                  </div>
+                )
+              })}
             </div>
           ) : approveArgs.length > 0 ? (
             // The header preview ellipsises; show the full args here, wrapped, so

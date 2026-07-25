@@ -1,6 +1,7 @@
 """Unit tests for the persistent memory + runbook stores (pure, temp-dir backed)."""
 
 import json
+import threading
 
 import pytest
 
@@ -158,8 +159,9 @@ def test_memory_persists_as_valid_json_shape(mem):
 
 
 def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
-    """The bridge surfaces the four tools, runs them without a confirm gate, and
-    only offers load_runbook once a runbook exists."""
+    """The bridge surfaces the four tools, runs the read/note ones without a confirm
+    gate (save_runbook is the exception — see below), and only offers load_runbook
+    once a runbook exists."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     from runspec_console.bridge import Bridge
 
@@ -177,8 +179,17 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     b = _Stub()
 
     # Autonomy: local + reversible → run without prompting.
-    for name in ("remember", "search_memory", "save_runbook", "load_runbook"):
+    for name in ("remember", "search_memory", "load_runbook"):
         assert b._effective_tool_autonomy(name, {}) == "autonomous"
+    # save_runbook is the exception: a runbook is a procedure the agent (and every
+    # console it syncs to) will later follow, so the operator approves each save.
+    # It must stay *in* _MEMORY_TOOL_NAMES though — that frozenset is also the
+    # dispatch key and the search-mode hot-kernel key.
+    assert b._effective_tool_autonomy("save_runbook", {}) == "confirm"
+    from runspec_console.bridge_const import _HOT_BUILTIN_NAMES, _MEMORY_TOOL_NAMES
+
+    assert "save_runbook" in _MEMORY_TOOL_NAMES
+    assert "save_runbook" in _HOT_BUILTIN_NAMES
 
     # Registration: write tools present; load_runbook omitted until a runbook exists.
     names = {t["name"] for t in b._memory_tools()}
@@ -198,6 +209,142 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     assert any(ev == "runspec:runbooks_changed" for ev, _ in b.dispatched)
     out = b._run_memory_tool("search_memory", {"query": "log"})
     assert "/var/log/app.log" in out
+
+
+def _runbook_tool_stub(tmp_path, monkeypatch):
+    """A minimal bridge stub exposing just the runbook agent-tool surface."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    from runspec_console.bridge import Bridge
+
+    class _Stub:
+        _memory_tools = Bridge._memory_tools
+        _run_memory_tool = Bridge._run_memory_tool
+        _action_tools = Bridge._action_tools
+
+        def __init__(self):
+            self.dispatched: list[tuple[str, object]] = []
+            # _action_tools reads the fleet to shape its host/runnable enums.
+            self._hosts: list = []
+            self._runnables_cache: list = []
+            self._filters: list = []
+            self._credentials: list = []
+            self._lock = threading.Lock()
+
+        def _reload_credentials(self):
+            pass
+
+        def _dispatch(self, ev, payload):
+            self.dispatched.append((ev, payload))
+
+    return _Stub()
+
+
+def test_agent_edit_preserves_args_and_discoverable(tmp_path, monkeypatch):
+    """Editing a runbook through the agent must not silently drop its parameters or
+    its publish audience.
+
+    ``memory.save_runbook`` *replaces* the entry, so a field the handler omits is
+    deleted. The agent's schema carries neither ``args`` nor ``discoverable``, so
+    every agent edit used to wipe both — the runbook stayed, its ``[runbook.args]``
+    table and catalog visibility did not."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    memory.save_runbook(
+        "restart-web",
+        title="Restart web",
+        symptom="web tier wedged",
+        steps="1. restart {{host}}",
+        args={"host": {"type": "choice", "options": ["web-01", "web-02"]}},
+        discoverable=["operator"],
+    )
+
+    # The agent rewrites only the steps, as it would after a correction.
+    b._run_memory_tool(
+        "save_runbook",
+        {"id": "restart-web", "title": "Restart web", "steps": "1. drain\n2. restart"},
+    )
+
+    after = memory.load_runbook("restart-web")
+    assert after["steps"].startswith("1. drain")
+    assert after["args"] == {
+        "host": {"type": "choice", "options": ["web-01", "web-02"]}
+    }
+    assert after["discoverable"] == ["operator"]
+
+
+def test_agent_can_author_and_replace_runbook_args(tmp_path, monkeypatch):
+    """`args` is in the agent's schema, validated before write, and an explicitly
+    supplied table replaces the old one (only *omission* preserves)."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    schema = next(t for t in b._memory_tools() if t["name"] == "save_runbook")
+    assert "args" in schema["input_schema"]["properties"]
+    assert "discoverable" not in schema["input_schema"]["properties"]
+
+    b._run_memory_tool(
+        "save_runbook",
+        {
+            "title": "Fetch logs",
+            "steps": "1. download {{path}}",
+            "args": {"path": {"type": "str", "description": "Remote log path"}},
+        },
+    )
+    assert memory.load_runbook("fetch-logs")["args"] == {
+        "path": {"type": "str", "description": "Remote log path"}
+    }
+
+    b._run_memory_tool(
+        "save_runbook",
+        {
+            "id": "fetch-logs",
+            "title": "Fetch logs",
+            "steps": "1. download {{path}}",
+            "args": {"path": {"type": "path"}},
+        },
+    )
+    assert memory.load_runbook("fetch-logs")["args"] == {"path": {"type": "path"}}
+
+
+def test_agent_runbook_args_validation_errors_are_returned(tmp_path, monkeypatch):
+    """A bad args table bounces with a readable reason and writes nothing, so the
+    model can correct itself in-turn rather than persisting a broken runbook."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    out = b._run_memory_tool(
+        "save_runbook",
+        {"title": "Bad", "steps": "1. go", "args": {"n": {"type": "nonesuch"}}},
+    )
+    assert out.startswith("Error: invalid runbook args")
+    assert memory.load_runbook("bad") is None
+
+    out = b._run_memory_tool(
+        "save_runbook", {"title": "Bad", "steps": "1. go", "args": "not-a-table"}
+    )
+    assert out.startswith("Error: 'args' must be a table")
+    assert memory.load_runbook("bad") is None
+
+
+def test_runbook_menus_carry_the_symptom(tmp_path, monkeypatch):
+    """Both embedded menus name the symptom, not just the title — the symptom is
+    what lets the agent pick a runbook without a load hop per candidate."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    memory.save_runbook(
+        "web-502",
+        title="Triage 502s",
+        symptom="web nodes returning 502s",
+        steps="1. probe",
+    )
+
+    load = next(t for t in b._memory_tools() if t["name"] == "load_runbook")
+    run = next(t for t in b._action_tools() if t["name"] == "run_runbook")
+    for tool in (load, run):
+        assert "Triage 502s" in tool["description"]
+        assert "web nodes returning 502s" in tool["description"]
 
 
 def test_bridge_get_save_runbooks_roundtrip(tmp_path, monkeypatch):

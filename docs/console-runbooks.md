@@ -20,8 +20,16 @@ procedure with the agent, then:
 > Save what we just did as a runbook called "web-502-triage". Add a `host` argument that's a choice of web-01 and web-02.
 
 The agent's `save_runbook` tool writes the entry (confirm-gated, and saving
-again under the same id is how you edit). You can also add runbooks under
-**Settings → Runbooks**, or edit the file directly.
+again under the same id is how you edit). Fields it doesn't mention keep their
+current values, so asking it to "fix step 3" won't quietly drop the runbook's
+parameters. You can also add runbooks under **Settings → Runbooks**, or edit the
+file directly.
+
+The agent will also *offer* to capture a correction you just gave it, when that
+correction would apply again next time. It always proposes — every save parks on
+the autonomy gate, where you can edit the steps before approving. Publishing a
+runbook to a room's self-service catalog (`discoverable`) stays operator-only:
+the agent cannot set it.
 
 ## The format
 

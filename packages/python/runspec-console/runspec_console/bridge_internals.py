@@ -924,16 +924,19 @@ class InternalsMixin:
 
     def _base_system(self) -> str:
         """Base system prompt for the chat + trigger agent turns: the configured
-        assistant instructions (``[llm] system``) if set, else a sensible default.
+        assistant instructions (``[llm] system``) if set, else a sensible default,
+        with ``[llm] system_append`` appended to whichever won.
         compose_system() layers the per-trigger rules on top of this.
 
-        Note the default's clarify-don't-guess guideline applies **only** when
-        ``[llm] system`` is unset — a configured system prompt replaces it wholesale,
-        so an operator who wants that behaviour with a custom prompt must include it."""
-        configured = str(self.get_config().get("llm", {}).get("system", "")).strip()
-        if configured:
-            return configured
-        return (
+        ``[llm] system`` still **replaces** the default wholesale — including the
+        clarify-don't-guess guideline — because changing that would silently alter
+        behaviour for every operator who already relies on a custom prompt. That
+        replacement is exactly why ``system_append`` exists: it adds site policy on
+        top of the default instead of trading one for the other, which is the
+        combination most operators actually want."""
+        llm_cfg = self.get_config().get("llm", {})
+        configured = str(llm_cfg.get("system", "")).strip()
+        base = configured or (
             "You are an assistant embedded in runspec-console. You can run "
             "runspec runnables on local and remote hosts via tools. Use tools "
             "when they help, and confirm before anything destructive.\n\n"
@@ -941,8 +944,15 @@ class InternalsMixin:
             "wrong would matter (scheduling, sending mail, targeting a host, or "
             "anything destructive) — ask the operator one brief clarifying question "
             "instead of guessing. Prefer a quick question over a wrong assumption. "
-            "For low-stakes or clearly-implied values, go ahead; don't over-ask."
+            "For low-stakes or clearly-implied values, go ahead; don't over-ask.\n\n"
+            "Saved runbooks are the operator's standing procedures. Prefer following "
+            "an existing one over improvising. When a correction you were just given "
+            "would apply again next time, offer to capture it with save_runbook — "
+            "the operator approves every save, so propose rather than ask permission "
+            "first."
         )
+        append = str(llm_cfg.get("system_append", "")).strip()
+        return f"{base}\n\n{append}" if append else base
 
     def _console_context(self) -> str:
         """A per-turn system-prompt block making the chat agent aware of the

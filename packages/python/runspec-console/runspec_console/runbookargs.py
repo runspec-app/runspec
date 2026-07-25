@@ -6,6 +6,8 @@ runnable form uses, so a runbook's inputs behave identically to a runnable's —
 type system, one set of inference rules, one validator, no parallel schema:
 
 - ``parse_runbook_args(table)``      → ``list[ArgDef]`` (the shape the Forms UI consumes)
+- ``validate_runbook_arg_table(table)`` → ``list[str]`` (is the *declaration* sound —
+  every arg a table, every declared type registered)
 - ``validate_runbook_values(table, values)`` → ``list[str]`` (required + range / choice /
   pattern / length / type, reusing ``validator.validate_args`` + ``types.coerce``)
 
@@ -46,6 +48,45 @@ def parse_runbook_args(table: dict[str, Any] | None) -> list[dict[str, Any]]:
     """A ``[runbook.args]`` table → the same ``ArgDef[]`` a runnable exposes to the UI
     (via the shared ``discovery._build_args``)."""
     return _build_args(_inferred(table))
+
+
+def validate_runbook_arg_table(table: Any) -> list[str]:
+    """Validate the *shape* of a raw ``[runbook.args]`` table (not values against it).
+    Returns human-readable error messages ([] = valid).
+
+    ``parse_runbook_args`` is deliberately lenient — inference fills gaps and only a
+    non-mapping raises — so an unknown ``type`` used to sail through and surface much
+    later as a broken form or a coercion failure at run time. This is the up-front
+    check both writers share (the Settings editor and the agent's ``save_runbook``),
+    so a bad table is refused where the author can still fix it."""
+    from runspec.types import list_types
+
+    if table is None:
+        return []
+    if not isinstance(table, dict):
+        return ["args must be a table of name → {type, description, …}"]
+    known = set(list_types())
+    errors: list[str] = []
+    for name, spec in table.items():
+        if not isinstance(spec, dict):
+            errors.append(f"'{name}': must be a table (e.g. {{ type = \"str\" }})")
+            continue
+        declared = spec.get("type")
+        if declared is not None and str(declared) not in known:
+            errors.append(
+                f"'{name}': unknown type '{declared}' — known types: "
+                + ", ".join(sorted(known))
+            )
+        if "options" in spec and not isinstance(spec["options"], (list, tuple)):
+            errors.append(f"'{name}': options must be a list")
+    if errors:
+        return errors
+    # Structural checks passed — let the core machinery have the last word.
+    try:
+        parse_runbook_args(table)
+    except Exception as exc:  # noqa: BLE001 — surfaced to a human/model, not raised
+        errors.append(str(exc))
+    return errors
 
 
 def validate_runbook_values(

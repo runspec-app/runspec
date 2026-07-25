@@ -96,6 +96,14 @@ class AutonomyMixin:
                 return "confirm"
             inner_name, inner_ti = unwrapped
             return self._effective_tool_autonomy(inner_name, inner_ti)
+        if tool_name == "save_runbook":
+            # The one memory-store write the operator must see. A note the agent
+            # remembers is advisory; a runbook is a *procedure* it (and every synced
+            # console) will later follow, so an unreviewed edit propagates. Special-
+            # cased ahead of _MEMORY_TOOL_NAMES rather than removed from that
+            # frozenset — the set is also the dispatch key (_run_tool_sync) and the
+            # search-mode hot-kernel key, so removing it would strand the tool.
+            return "confirm"
         if tool_name in _MEMORY_TOOL_NAMES:
             return "autonomous"  # local memory/runbook store — no model-spend gate
         if tool_name in _STATUS_TOOL_NAMES:
@@ -805,7 +813,9 @@ class AutonomyMixin:
         elif tool_name.startswith("outlook_"):
             key = first("query", "folder", "subject", "to")
         elif tool_name == "run_runbook":
-            key = first("id", "name")
+            # The tool's parameter is `runbook_id` — reading only id/name left the
+            # card as a bare "run_runbook" with nothing saying which one.
+            key = first("runbook_id", "id", "name")
         elif tool_name == "create_document":
             key = first("path", "name")
         elif tool_name == "create_schedule":
@@ -819,7 +829,9 @@ class AutonomyMixin:
         elif tool_name == "list_files":
             key = first("path", "source_target", "host")
         elif tool_name in ("save_runbook", "load_runbook"):
-            key = first("id", "name")
+            # `id` is blank when the agent creates a new runbook (it's derived from
+            # the title), so fall through to the title rather than showing nothing.
+            key = first("id", "name", "title")
         else:
             key = ""
         key = key[:60]

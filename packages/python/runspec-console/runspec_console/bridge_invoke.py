@@ -495,10 +495,12 @@ class InvokeMixin:
             if not isinstance(raw, dict):
                 raw = r.get("args") if isinstance(r.get("args"), dict) else None
             if raw:
-                try:
-                    runbookargs.parse_runbook_args(raw)
-                except Exception as exc:
-                    return {"ok": False, "error": f"Runbook '{sid}': {exc}"}
+                errors = runbookargs.validate_runbook_arg_table(raw)
+                if errors:
+                    return {
+                        "ok": False,
+                        "error": f"Runbook '{sid}': " + "; ".join(errors),
+                    }
             entry: dict[str, Any] = {
                 "id": sid,
                 "title": str(r.get("title") or "").strip(),

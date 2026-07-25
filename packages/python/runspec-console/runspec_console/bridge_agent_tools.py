@@ -67,6 +67,26 @@ def _parse_dt(value: Any) -> datetime | None:
     return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
+def _runbook_menu(runbooks: list[dict[str, Any]]) -> str:
+    """The ``'id' — Title — Symptom`` menu embedded in the ``load_runbook`` and
+    ``run_runbook`` descriptions. Pure/testable.
+
+    The symptom is what tells the agent *when* a runbook applies — without it the
+    menu carries names it can't choose between, so it either ignores runbooks or
+    burns a ``load_runbook`` hop per candidate. ``memory.list_runbooks`` has always
+    returned it; both call sites simply dropped it. One helper so the two menus
+    can't drift apart."""
+    parts = []
+    for row in runbooks:
+        text = f"'{row['id']}'"
+        if row.get("title"):
+            text += f" — {row['title']}"
+        if row.get("symptom"):
+            text += f" — {row['symptom']}"
+        parts.append(text)
+    return "; ".join(parts)
+
+
 def _is_web_url(value: Any) -> bool:
     """True only for a well-formed ``http(s)://`` URL with a host. Pure/testable.
 
@@ -2781,9 +2801,11 @@ class AgentToolsMixin:
                     "Save a reusable runbook — a named procedure with the symptom it "
                     "addresses and the ordered steps (which runnables to call). "
                     "Shareable across the team via Config Sync. This both creates and "
-                    "edits: saving with an existing id overwrites that runbook, so to "
+                    "edits: saving with an existing id updates that runbook, so to "
                     "edit one, load_runbook it, change the fields, and save_runbook "
-                    "with the same id."
+                    "with the same id — fields you omit keep their current values. "
+                    "The operator approves every save. Propose one when a correction "
+                    "you were given would apply again next time."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -2805,6 +2827,16 @@ class AgentToolsMixin:
                             "description": "Ordered steps, naming which runnables to call.",
                         },
                         "tags": {"type": "array", "items": {"type": "string"}},
+                        "args": {
+                            "type": "object",
+                            "description": (
+                                "Optional parameters the steps reference as {{name}}, "
+                                "as a table of name → {type, description, options, "
+                                'default}. Example: {"host": {"type": "choice", '
+                                '"options": ["web-01", "web-02"]}}. Omit to leave an '
+                                "existing runbook's parameters unchanged."
+                            ),
+                        },
                     },
                     "required": ["title", "steps"],
                 },
@@ -2813,10 +2845,7 @@ class AgentToolsMixin:
         runbooks = memory.list_runbooks()
         if runbooks:
             ids = [s["id"] for s in runbooks]
-            menu = "; ".join(
-                f"'{s['id']}'" + (f" — {s['title']}" if s.get("title") else "")
-                for s in runbooks
-            )
+            menu = _runbook_menu(runbooks)
             tools.append(
                 {
                     "name": "load_runbook",
@@ -2976,10 +3005,7 @@ class AgentToolsMixin:
 
         runbooks = memory.list_runbooks()
         if runbooks:
-            menu = "; ".join(
-                f"'{s['id']}'" + (f" — {s['title']}" if s.get("title") else "")
-                for s in runbooks
-            )
+            menu = _runbook_menu(runbooks)
             tools.append(
                 {
                     "name": "run_runbook",
@@ -3559,12 +3585,32 @@ class AgentToolsMixin:
                 return "No matching memories."
             return json.dumps({"memories": hits})
         if name == "save_runbook":
+            # Read-modify-write. memory.save_runbook *replaces* the entry, so a
+            # field the agent omits would be dropped — which silently deleted an
+            # existing runbook's [runbook.args] table and its publish audience on
+            # every agent edit. Carry both forward from the current version unless
+            # explicitly supplied. (discoverable is never in the agent's schema:
+            # publishing to a room catalog stays an operator decision.)
+            existing = memory.load_runbook(str(ti.get("id") or "")) or {}
+            args = ti.get("args")
+            if args is None:
+                args = existing.get("args")
+            elif not isinstance(args, dict):
+                return "Error: 'args' must be a table of name → {type, description, …}."
+            if args:
+                from . import runbookargs
+
+                errors = runbookargs.validate_runbook_arg_table(args)
+                if errors:
+                    return "Error: invalid runbook args — " + "; ".join(errors)
             sid = memory.save_runbook(
                 str(ti.get("id") or ""),
                 title=str(ti.get("title") or ""),
                 symptom=str(ti.get("symptom") or ""),
                 steps=str(ti.get("steps") or ""),
                 tags=list(ti.get("tags") or []),
+                args=args,
+                discoverable=existing.get("discoverable"),
             )
             if not sid:
                 return "Error: a runbook needs a title (or an id) and steps."

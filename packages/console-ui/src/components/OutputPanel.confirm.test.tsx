@@ -110,6 +110,36 @@ describe('OutputPanel autonomy-gate confirm', () => {
     expect(resolveConfirm).toHaveBeenCalledWith('req-42', true, undefined)
   })
 
+  it('renders a long/multi-line arg as a textarea so it can be reviewed and edited', async () => {
+    const { container } = render(<OutputPanel blocks={[chatBlockWithRunningTool('save_runbook')]} />)
+    // A runbook's `steps` is a multi-line body. In a one-line Input only the first
+    // line is reachable, so approving it is theatre — the operator can neither read
+    // the procedure they're accepting nor correct it.
+    const steps = '1. probe each node\n2. restart the unhealthy ones\n3. re-check'
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-9',
+      tool_name: 'save_runbook',
+      tool_input: { title: 'Triage 502s', steps },
+      display_name: 'save_runbook',
+      display_input: { title: 'Triage 502s', steps },
+      autonomy: 'confirm',
+    })
+    // Short value → plain input; multi-line value → textarea, carrying every line.
+    // (Queried directly: getByDisplayValue normalises whitespace, which is exactly
+    // the newlines this test is about.)
+    expect(screen.getByDisplayValue('Triage 502s').tagName).toBe('INPUT')
+    const body = container.querySelector('textarea')
+    expect(body).not.toBeNull()
+    expect((body as HTMLTextAreaElement).value).toBe(steps)
+
+    await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
+    expect(resolveConfirm).toHaveBeenCalledWith('req-9', true, {
+      title: 'Triage 502s',
+      steps,
+    })
+  })
+
   it('lets the operator edit args before approving a plain tool call', async () => {
     render(<OutputPanel blocks={[chatBlockWithRunningTool('create_document')]} />)
     // A plain tool: display_name === tool_name → editable. Args render as inputs.

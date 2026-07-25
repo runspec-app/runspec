@@ -41,7 +41,8 @@ Set in **Settings → Model / API**.
 | `base_url` | Corporate proxy / gateway endpoint |
 | `model` / `models` | Active model id / the dropdown's list of available ids |
 | `max_tokens` | Per-reply output ceiling (default 8192); replies that hit it auto-continue, up to `max_continuations` (default 3) |
-| `system` | Extra system-prompt text |
+| `system` | System prompt — **replaces** the built-in default wholesale (including its clarify-don't-guess guidance) |
+| `system_append` | Extra system-prompt text **added to** whichever base applies. Prefer this for site policy: you keep the built-in guidance instead of trading it away |
 | `tool_mode` | `dedup` (default — one tool per runnable with a `host` enum), `per_host`, or `search` (meta-tools + catalogue index; `tool_index_limit` caps the index) |
 | `tool_output_cap` | Truncation cap for tool results returned to the model |
 

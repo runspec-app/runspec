@@ -8,6 +8,56 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.201.0] — 2026-07-25
+
+Phase 1 of the multi-model agent work: the prompt and runbook hygiene that has to
+be right before models are routed per task.
+
+### Added
+- **`[llm] system_append`** — extra system-prompt text *added to* whichever base
+  applies, instead of replacing it. `[llm] system` still replaces the built-in
+  default wholesale (unchanged, so no existing custom prompt shifts under anyone),
+  and that is exactly the problem: setting any site policy of your own silently
+  cost you the built-in clarify-don't-guess guidance, which is the behaviour that
+  most directly prevents the agent guessing instead of asking. `system_append`
+  lets you have both.
+- **`save_runbook` can author parameters.** The agent's tool schema gained `args`
+  — the same `[runbook.args]` grammar the Settings editor writes — validated
+  before the write, with the reason returned to the model so it can correct itself
+  in the same turn. Previously the agent could only ever create parameter-less
+  runbooks, even though the docs described asking it for one with arguments.
+- **`runbookargs.validate_runbook_arg_table()`** — an up-front soundness check on
+  a runbook's arg *declaration* (every arg a table, every declared `type` actually
+  registered), shared by both writers. `parse_runbook_args` is lenient by design,
+  so an unknown type used to sail through and only surface later as a broken form.
+
+### Changed
+- **`save_runbook` is now confirm-gated.** A remembered fact is advisory; a
+  runbook is a procedure the agent — and every console it syncs to — will later
+  follow, so an unreviewed edit propagates. `remember`, `search_memory` and
+  `load_runbook` stay autonomous. `save_runbook` remains in `_MEMORY_TOOL_NAMES`
+  (that frozenset is also the dispatch key and the search-mode hot-kernel key);
+  the gate is a special case ahead of it, matching `manage_denylist` / `run_sql`.
+- **The `load_runbook` and `run_runbook` menus name each runbook's `symptom`**,
+  not just its title. `memory.list_runbooks()` always returned it and both call
+  sites dropped it, leaving the agent with names it couldn't choose between.
+- **The default system prompt points the agent at runbooks** — prefer an existing
+  procedure over improvising, and offer to capture a correction that would apply
+  again. It proposes; the gate means you approve.
+- **A long or multi-line argument in a confirm renders as a textarea.** A
+  runbook's `steps` (or a document body, or a SQL statement) in a one-line input
+  showed only its first line, so approving it was theatre.
+
+### Fixed
+- **An agent edit no longer destroys a runbook's parameters.**
+  `memory.save_runbook` replaces the whole entry, and the agent's handler passed
+  neither `args` nor `discoverable` — so every agent edit of an existing runbook
+  silently deleted its `[runbook.args]` table and its publish audience. The
+  handler now carries omitted fields forward.
+- The `run_runbook` Console card showed a bare `run_runbook` with no id: the label
+  read `id`/`name` but the tool's parameter is `runbook_id`. `save_runbook` now
+  falls back to the title, which is what identifies a newly created runbook.
+
 ## [0.200.0] — 2026-07-24
 
 ### Added
