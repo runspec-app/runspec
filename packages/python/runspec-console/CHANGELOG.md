@@ -8,6 +8,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.208.0] — 2026-07-26
+
+### Added
+- **`>` command-bar sigil for saved runs.** The prompt already had `/` (runnables)
+  and `$` (runbooks); typing **`>`** now opens a saved-runs menu — search by
+  id/title/description/target, ↑/↓ + Enter to pick. Each row is an aligned grid
+  (green `>id` | title | target | params-or-status) showing the preset's baked-in
+  targeting and whether it `runs now` (no open params) or lists its open params.
+  Picking one reuses the existing fork: a preset with no open params runs
+  immediately; one with open params opens the params modal — the same path the
+  Forms lane uses (`bridge.run_saved_run`; no backend change). `CommandInput.tsx`
+  gains `savedRuns`/`onOpenSavedRun` props and reuses the exported, unit-tested
+  `filterSavedRuns` from the Forms view.
+
 ## [0.207.0] — 2026-07-26
 
 ### Added

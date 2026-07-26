@@ -1272,9 +1272,11 @@ export default function App() {
                 allRunnables={runnables}
                 selectedHost={selectedHost}
                 runbooks={runbooks}
+                savedRuns={savedRuns}
                 onRunRunnable={handleRunRunnable}
                 onOpenForm={handleOpenForm}
                 onOpenRunbook={handleOpenRunbook}
+                onOpenSavedRun={handleOpenSavedRun}
                 onSendChat={handleSendChat}
                 activeChatId={activeChatId}
                 onStopChat={(id) => { bridge.cancel_chat(id).catch(console.error) }}

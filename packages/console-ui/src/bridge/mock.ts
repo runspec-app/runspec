@@ -1149,7 +1149,22 @@ export const mockApi: BridgeApi = {
   get_runbooks: async () => [],
   save_runbooks: async () => ({ ok: true, count: 0 }),
   run_runbook: async (runbookId, _values, _extra) => ({ chat_id: `mock-runbook-${runbookId}`, message: `$${runbookId}` }),
-  get_saved_runs: async () => [],
+  get_saved_runs: async () => [
+    {
+      id: 'restart-web', title: 'Restart web tier', description: 'Rolling restart of nginx across the web hosts',
+      runnable: 'service-restart', command: [],
+      host: '', group: 'Production', hosts: [], selected_hosts: [],
+      args: { service: 'nginx' }, credential_ids: [], target: 'group Production',
+      params: [{ name: 'reason', type: 'str', required: true, description: 'Change ticket / reason' }],
+    },
+    {
+      id: 'disk-check', title: 'Disk space check', description: 'Report free space on the primary host',
+      runnable: 'df-report', command: [],
+      host: 'prod-1', group: '', hosts: [], selected_hosts: [],
+      args: { threshold: 80 }, credential_ids: [], target: 'prod-1',
+      params: [],
+    },
+  ],
   save_saved_runs: async () => ({ ok: true, count: 0 }),
   run_saved_run: async (id, _values) => ({ id, runnable: 'mock', runs: [{ host: 'local', inv_id: `mock-saved-${id}` }] }),
   cancel_chat: async (chatId: string) => {
