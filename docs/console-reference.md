@@ -75,6 +75,19 @@ documented with the fleet setup in [Hosts & fleet](console-hosts.md#ssh-tuning).
 | `exec_timeout` | 30 | Seconds before an executed snippet is killed |
 | `headless_retention_days` | 7 | How long trigger/schedule-run workspaces are kept |
 
+## `[web]`
+
+Settings for the agent's read-only `fetch_url` web-page tool (see
+[the agent guide](console-agent.md#read-a-web-page)).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Master switch for the `fetch_url` tool (set `false` to remove it) |
+| `timeout` | 20 | Seconds before a single fetch is aborted |
+| `max_bytes` | 2000000 | Cap on bytes downloaded per fetch |
+| `ca_bundle` | — | Path to a private-CA bundle for internal HTTPS hosts |
+| `tls_verify` | `true` | Set `false` to skip TLS verification (TLS-intercepting proxies) |
+
 ## `[chat_history]`
 
 | Key | Default | Meaning |

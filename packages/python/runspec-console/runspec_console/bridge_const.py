@@ -68,6 +68,15 @@ _HISTORY_TOOL_NAMES = frozenset({"search_history"})
 # browser use. No side effects, so the autonomy gate runs it without a prompt.
 _FILES_TOOL_NAMES = frozenset({"list_files"})
 
+# Read-only web-page fetch: GET an http(s) URL on the console machine's network
+# and hand back its readable text (HTML stripped to headings/lists/paragraphs),
+# so the agent can read an online doc — e.g. a GitLab Pages / wiki page — and
+# turn it into a runbook. A GET has no side effects, so the autonomy gate runs
+# it without a prompt (like list_files / repo_read); the capability is offered
+# only when [web] enabled (default true). Offered on any console (no fleet host
+# needed). Dropped entirely by [web] enabled = false.
+_WEB_TOOL_NAMES = frozenset({"fetch_url"})
+
 # Outlook Classic (desktop COM) agent tools. Reads are autonomous (no side
 # effects — local COM reads on the operator's box); draft/send are write actions
 # and prompt before running. Only offered when Outlook COM is available (Windows
@@ -202,6 +211,7 @@ _BUILTIN_TOOL_NAMES = (
     | _STATUS_TOOL_NAMES
     | _HISTORY_TOOL_NAMES
     | _FILES_TOOL_NAMES
+    | _WEB_TOOL_NAMES
     | _ACTION_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
     | _EXEC_TOOL_NAMES
@@ -222,6 +232,10 @@ _HOT_BUILTIN_NAMES = (
     _STATUS_TOOL_NAMES
     | _HISTORY_TOOL_NAMES
     | _FILES_TOOL_NAMES
+    # fetch_url: read-only web read, the entry point of "make a runbook from this
+    # doc" tasks — kept zero-hop so the agent reads the page without a discovery
+    # detour through describe_tool/use_tool.
+    | _WEB_TOOL_NAMES
     | _MEMORY_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
     # run_runbook: the single path to a runbook's steps (load_runbook was folded

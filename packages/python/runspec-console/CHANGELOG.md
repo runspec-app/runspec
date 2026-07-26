@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.209.0] — 2026-07-26
+
+### Added
+- **`fetch_url` agent tool — read a web page.** A read-only, autonomous built-in
+  lets the chat agent GET an http(s) page and read its **content**: HTML is
+  stripped to clean, lightly-marked-up text (headings as `#`, list items as `-`,
+  `<pre>` preserved) so the model reads the doc, not the markup. The motivating
+  case is "make a runbook from this GitLab Pages / wiki doc" — the agent can now
+  read the page directly instead of the operator pasting it in. A GET has no side
+  effects, so it runs without a confirm prompt (like `list_files` / `repo_read`),
+  and it's a **hot built-in** (stays inline even in `[llm] tool_mode = "search"`,
+  no discovery hop). Follows redirects, is size-bounded, and honours the machine's
+  proxy environment; `raw` returns the unstripped HTML and `max_bytes` caps a
+  single fetch. Pages behind SSH on a fleet host still go through
+  `download_file` / `list_files`. New pure, stdlib-only `webfetch` module
+  (`urllib` + `html.parser`, zero new runtime deps) and a `[web]` config section
+  (`enabled` default true — set false to drop the capability, plus `timeout` /
+  `max_bytes` / `ca_bundle` / `tls_verify` mirroring the Config-Sync HTTPS knobs
+  for internal hosts behind a private CA or TLS-intercepting proxy).
+
 ## [0.208.0] — 2026-07-26
 
 ### Added

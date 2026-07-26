@@ -123,6 +123,9 @@ def test_hot_kernel_is_pinned_exactly():
         "console_status",
         "search_history",
         "list_files",
+        # fetch_url: read-only web read, the entry point of "make a runbook from
+        # this doc" tasks — kept zero-hop so the agent reads the page directly.
+        "fetch_url",
         "remember",
         "search_memory",
         "save_runbook",

@@ -591,6 +591,7 @@ class AgentToolsMixin:
                 *self._status_tools(),
                 *self._history_tools(),
                 *self._files_tools(),
+                *self._web_tools(),
                 *self._memory_tools(),
                 *self._action_tools(),
                 *self._workspace_tools(),
@@ -774,6 +775,7 @@ class AgentToolsMixin:
             *self._status_tools(),
             *self._history_tools(),
             *self._files_tools(),
+            *self._web_tools(),
             *self._memory_tools(),
             *self._action_tools(),
             *self._workspace_tools(),
@@ -2185,6 +2187,95 @@ class AgentToolsMixin:
                 "deeper path or set dirs_only to narrow"
             )
         return json.dumps(payload, default=str)
+
+    def _web_tools(self) -> list[dict[str, Any]]:
+        """Schema for the read-only ``fetch_url`` tool — GET an http(s) page and
+        return its readable text. Offered only when ``[web] enabled`` (default
+        true); empty list when disabled so a locked-down console drops it."""
+        if not config_mod.read_web().get("enabled", True):
+            return []
+        return [
+            {
+                "name": "fetch_url",
+                "description": (
+                    "Fetch a web page over http(s) and return its readable text "
+                    "content (HTML is stripped to headings, lists and paragraphs). "
+                    "Read-only GET from the console machine's network — use it to "
+                    "read an online doc (a GitLab Pages / wiki / README page, an "
+                    "API doc) so you can, e.g., turn it into a runbook. Follows "
+                    "redirects and is size-bounded. For a page behind SSH on a "
+                    "fleet host, use download_file / list_files instead."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": (
+                                "Full http(s) URL to fetch, e.g. "
+                                "https://team.gitlab.io/docs/deploy.html."
+                            ),
+                        },
+                        "raw": {
+                            "type": "boolean",
+                            "description": (
+                                "Return the raw HTML instead of stripped text. "
+                                "Default false — leave off to read the content."
+                            ),
+                        },
+                        "max_bytes": {
+                            "type": "integer",
+                            "description": (
+                                "Optional cap on bytes downloaded (defaults to the "
+                                "[web] max_bytes setting). Lower it for a quick peek."
+                            ),
+                        },
+                    },
+                    "required": ["url"],
+                },
+            }
+        ]
+
+    def _run_web_tool(self, ti: dict[str, Any]) -> str:
+        """Execute ``fetch_url`` — GET a URL and return a compact JSON envelope
+        (final_url, status, content_type, title, text, truncated). Read-only; the
+        autonomy gate has already let it run. Errors come back as ``Error: …``
+        strings the model can act on, never an exception."""
+        from . import webfetch
+
+        url = str(ti.get("url") or "").strip()
+        if not url:
+            return "Error: url is required."
+        cfg = config_mod.read_web()
+        if not cfg.get("enabled", True):
+            return "Error: web fetching is disabled ([web] enabled = false)."
+        try:
+            max_bytes = int(ti.get("max_bytes") or cfg["max_bytes"])
+        except (TypeError, ValueError):
+            max_bytes = cfg["max_bytes"]
+        max_bytes = max(1, min(max_bytes, cfg["max_bytes"]))
+        try:
+            res = webfetch.fetch_url(
+                url,
+                timeout=cfg["timeout"],
+                max_bytes=max_bytes,
+                as_text=not bool(ti.get("raw")),
+                ca_bundle=cfg.get("ca_bundle"),
+                tls_verify=cfg.get("tls_verify", True),
+            )
+        except webfetch.WebFetchError as e:
+            return f"Error: {e}"
+        except Exception as e:  # never leak a raw traceback to the model
+            logger.debug("fetch_url failed", exc_info=True)
+            return f"Error: could not fetch {url}: {e}"
+        # Cap the text handed to the model; the byte cap already bounds the
+        # download, but a dense page can still be large once decoded.
+        text = res.get("text") or ""
+        if len(text) > _AGENT_TOOL_OUTPUT_CAP:
+            text = text[:_AGENT_TOOL_OUTPUT_CAP]
+            res["truncated"] = True
+        res["text"] = text
+        return json.dumps(res, default=str)
 
     def _workspace_tools(self) -> list[dict[str, Any]]:
         """Schemas for the per-session workspace file tools. The workspace is a

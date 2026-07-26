@@ -228,6 +228,27 @@ def read_workspace() -> dict[str, Any]:
     }
 
 
+def read_web() -> dict[str, Any]:
+    """The ``[web]`` settings for the ``fetch_url`` agent tool, with defaults.
+
+    ``enabled`` (default true) — whether the agent's read-only web-page fetch tool
+    is offered at all; a locked-down deployment sets it false to drop the
+    capability (no outbound HTTP from the agent). ``timeout`` (seconds, default
+    20) and ``max_bytes`` (default 2_000_000) bound a single fetch. ``ca_bundle``
+    (path) and ``tls_verify`` (default true) mirror the Config-Sync HTTPS knobs
+    for internal hosts behind a private CA / TLS-intercepting proxy."""
+    raw = read_config().get("web")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    ca = str(cfg.get("ca_bundle") or "").strip()
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "timeout": max(1.0, float(cfg.get("timeout", 20) or 20)),
+        "max_bytes": max(1, int(cfg.get("max_bytes", 2_000_000) or 2_000_000)),
+        "ca_bundle": ca or None,
+        "tls_verify": bool(cfg.get("tls_verify", True)),
+    }
+
+
 def config_path() -> Path:
     return app_dir() / "config.toml"
 

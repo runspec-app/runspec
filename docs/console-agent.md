@@ -128,6 +128,22 @@ agent reads a bounded digest — cheap enough to do routinely. Large outputs
 spill into the **session workspace**, where the agent greps and pages them
 instead of re-reading everything.
 
+### Read a web page
+
+> Read https://team.gitlab.io/runbooks/deploy and turn it into a runbook I can run.
+
+`fetch_url` GETs an http(s) page and hands the agent its readable text (HTML is
+stripped to headings, lists and paragraphs), so it can read an online doc — a
+GitLab Pages / wiki / README / API-doc page — and act on the content. It's a
+read-only GET, so it runs without a confirm prompt; it follows redirects, is
+size-bounded, and uses the console machine's network and proxy settings. A page
+behind SSH on a fleet host goes through `download_file` / `list_files` instead.
+
+Configure it under `[web]` in `config.toml` — `enabled` (default `true`; set
+`false` to remove the capability entirely), `timeout`, `max_bytes`, and, for
+internal hosts behind a private CA or a TLS-intercepting proxy, `ca_bundle` /
+`tls_verify` (the same knobs Config Sync uses for git-over-HTTPS).
+
 ### Fleet safety
 
 > Disable the reboot-host runnable on every host until I say otherwise.
