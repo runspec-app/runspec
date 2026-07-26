@@ -81,8 +81,11 @@ on-shift operators of their queue**, with **per-runnable operator-affinity**:
 
 - The hub already knows, per connected console (agent): its **namespace** (queue),
   its **published catalogue** (`set_catalog` / `build_catalog`, curated by the
-  `discoverable` keyword), and its **presence** (on-shift `available` vs off-shift
-  `away`, driven by the rota — the console stays *connected* either way).
+  console's self-service subset — `runspec_self_service.toml` / `self_service_names`,
+  narrowed by the per-queue `room_catalog`; **not** the core-format `discoverable`
+  boolean, which only hides a runnable from discovery entirely), and its
+  **presence** (on-shift `available` vs off-shift `away`, driven by the rota — the
+  console stays *connected* either way).
 - **Live catalogue** = union of runnables from agents who are **on-shift**.
 - **Affinity** = which agents hold each runnable. A runnable only one operator has
   **must** route to them; it **vanishes** from the catalogue when that operator
@@ -90,8 +93,10 @@ on-shift operators of their queue**, with **per-runnable operator-affinity**:
 
 ### 3.3 Request → auto-assign → enact
 1. Visitor **selects a runnable** → a **form** is generated from its `inputSchema`
-   (the visitor-curated args via `discoverable` — this already exists), fills it,
-   submits. The submission is a **request** = `{runnable, args, visitor, queue}`
+   (every arg — arg-level `discoverable` curation was removed from the format in
+   0.47.0; the console can still narrow which runnables appear via its
+   self-service subset), fills it, submits. The submission is a **request** =
+   `{runnable, args, visitor, queue}`
    (the existing `kind="request"` / `data={tool,args}` message shape).
 2. The hub **auto-assigns** the request to an available operator — **runbook-first,
    then round-robin**:

@@ -114,6 +114,13 @@ ported to the `fs` runnable (read/write/edit/list/tree/search/move/stat; reads
 `--run-as`. See [Agent integration (MCP)](agents.md) for how the leaf tools reach
 the console agent.
 
+`fs` is built for **agent / console** use, not for a human at a shell — on a host
+you'd just reach for native `cat`/`ls`/`mv`. Its value is giving an *agent*
+uniform, autonomy-gated, `run_as`-capable filesystem access across the console's
+local and remote (SSH-fleet) hosts, with structured JSON results. That's why it
+declares per-verb autonomy and surfaces over `runspec serve` rather than aiming
+to be a convenient CLI.
+
 ---
 
 **Next:** [Agent integration (MCP)](agents.md) — how `runspec serve` exposes

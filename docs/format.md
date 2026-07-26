@@ -75,6 +75,7 @@ description     = "Deploy to production"       # recommended
 autonomy        = "manual"                     # optional
 autonomy-reason = "Irreversible operation"     # optional
 output          = "text"                       # optional
+serve           = true                         # optional, default true; or ["local"] / ["remote"]
 discoverable    = true                         # optional, default true; false hides from discovery
 hosts           = ["web-01", "web-02"]         # optional, see Remote Execution
 run_as          = "deploy"                     # optional, see Remote Execution
@@ -113,6 +114,26 @@ emitted schema so agents know whether to display or parse the response.
 | `text` | Human-readable output (default) |
 | `json` | Structured JSON — agent can parse and act on it |
 | `html` | HTML output (reserved for future UI use) |
+
+### `serve`
+
+Controls **in which context** `runspec serve` exposes the runnable as an MCP
+tool. The context is `"remote"` when the process was reached over SSH
+(`SSH_CONNECTION` is set), else `"local"` — overridable with
+`RUNSPEC_SERVE_CONTEXT`.
+
+| Value | Meaning |
+|---|---|
+| `true` (default) | Always exposed. |
+| `false` | Never exposed by `runspec serve`. |
+| `["local"]` | Exposed only when served locally (not over SSH). |
+| `["remote"]` | Exposed only when served over SSH. |
+| `["local", "remote"]` | Always exposed — equivalent to `true`. |
+
+Only affects `runspec serve`; it does not change `runspec local` or direct CLI
+invocation. Use it for a runnable that only makes sense on one side — e.g. a
+host-management tool you want reachable by the fleet agent (`["remote"]`) but not
+offered on the local desktop.
 
 ### `discoverable`
 

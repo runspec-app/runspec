@@ -102,8 +102,10 @@ label   = "Alerts"
 ## 5. Catalogue + assignment
 
 - **One shared catalogue** for the helpdesk (the union of on-shift operators'
-  self-service runnables — the existing `discoverable`/LiveCatalog over the single
-  namespace). Not per-team in v1.
+  self-service runnables — the console's self-service subset
+  (`runspec_self_service.toml`) over the LiveCatalog on the single namespace; the
+  core-format `discoverable` boolean only hides a runnable outright, it no longer
+  designates self-service). Not per-team in v1.
 - **Auto-assign = round-robin** across on-shift operators. v1 includes
   **return-to-queue** (an operator releases a ticket back to the pool → re-page) as
   a crude escalation.
