@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.210.0] — 2026-07-26
+
+### Changed
+- **Confirm card verb follows the tool.** The autonomy-gate confirm card in the
+  chat panel now phrases its header and Approve button after *what approving
+  actually does* rather than a hardcoded "run". A `save_runbook` gate reads "the
+  assistant wants to **save** `save_runbook`" with an **Approve & save** button —
+  it no longer implies the runbook will be *executed* on approval. The verb is
+  keyed by the resolved (display) tool name: `save_runbook` → "save",
+  `create_document`/`create_schedule` → "create", `open_url`/`open_file` →
+  "open", `reveal_in_folder` → "reveal"; every runnable and executing tool keeps
+  "run" (the default). Carried on a new `confirm_verb` field of the
+  `runspec:tool_confirm` event (and `get_pending_confirms` rows); an older
+  frontend that ignores it falls back to "run". `_CONFIRM_VERBS` in
+  `bridge_const`, threaded through `bridge_autonomy._register_confirm`.
+
+
 ## [0.209.0] — 2026-07-26
 
 ### Added

@@ -519,6 +519,11 @@ interface PendingConfirm {
   // tool call they equal tool_name/tool_input. Optional for back-compat.
   display_name?: string
   display_input?: Record<string, unknown>
+  // Verb for the Approve button / header ("Approve & <verb>"). "run" for a
+  // runnable or executing tool; "save"/"create"/"open"/… for a tool that
+  // stores or opens rather than executes. Optional for back-compat with an
+  // older backend that didn't send it (falls back to "run").
+  confirm_verb?: string
   autonomy: string
 }
 
@@ -537,12 +542,12 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
 
   useEffect(() => {
     const onToolConfirm = (e: Event) => {
-      const { id, request_id, tool_name, tool_input, display_name, display_input, autonomy } = (e as CustomEvent).detail as {
+      const { id, request_id, tool_name, tool_input, display_name, display_input, confirm_verb, autonomy } = (e as CustomEvent).detail as {
         id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>
-        display_name?: string; display_input?: Record<string, unknown>; autonomy: string
+        display_name?: string; display_input?: Record<string, unknown>; confirm_verb?: string; autonomy: string
       }
       console.log('[runspec] tool_confirm received', { id, request_id, tool_name, autonomy })
-      setPendingConfirm({ request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, autonomy })
+      setPendingConfirm({ request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy })
     }
     window.addEventListener('runspec:tool_confirm', onToolConfirm)
     return () => window.removeEventListener('runspec:tool_confirm', onToolConfirm)
@@ -669,6 +674,7 @@ function ToolCallBlock({
   entry,
   awaiting,
   resolved,
+  verb,
   editable,
   onAnswer,
 }: {
@@ -679,6 +685,10 @@ function ToolCallBlock({
   // for search-mode `run_runnable` this is the unwrapped runnable + its real
   // args, so the approval panel shows that instead of the generic envelope.
   resolved?: { name: string; input: Record<string, unknown> } | null
+  // The action verb for the header + Approve button — "run" for a runnable or
+  // executing tool, "save"/"create"/"open"/… for a tool that stores or opens
+  // rather than executes. Defaults to "run".
+  verb?: string
   // The operator may edit the args before approving (editable confirmations).
   // Only when the displayed call equals the real call (a plain/direct tool, not
   // the search-mode `run_runnable` wrapper whose display args would re-wrap lossily).
@@ -687,6 +697,7 @@ function ToolCallBlock({
 }) {
   const c = useCardTheme()
   const [expanded, setExpanded] = useState(false)
+  const v = verb || 'run'
   const args = Object.entries(entry.input)
   // Args shown in the approval panel: the resolved runnable's when we have it.
   const approveArgs = resolved ? Object.entries(resolved.input) : args
@@ -780,7 +791,7 @@ function ToolCallBlock({
       {awaiting && (
         <div style={{ padding: '10px 12px', background: c.isDark ? '#1c1810' : '#fffbe6', borderTop: `1px solid ${c.isDark ? '#5a4a1a' : '#ffe7ba'}` }}>
           <div style={{ fontSize: 12, color: textSecondary(c.isDark), marginBottom: 10 }}>
-            The assistant wants to run{' '}
+            The assistant wants to {v}{' '}
             {resolved && <Text code style={{ fontSize: 11 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text>}
             {resolved ? ' ' : 'this '}— autonomy is{' '}
             <strong style={{ color: '#e6a23c' }}>{awaiting}</strong>, so it needs your go-ahead.
@@ -837,7 +848,7 @@ function ToolCallBlock({
           ) : null}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={approve}>
-              Approve &amp; run
+              Approve &amp; {v}
             </Button>
             <Button size="small" danger onClick={() => onAnswer?.(false)}>Deny</Button>
           </div>
@@ -896,6 +907,11 @@ export function ChatTranscript({
               pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running && pendingConfirm.display_name
                 ? { name: pendingConfirm.display_name, input: pendingConfirm.display_input ?? {} }
                 : null
+            }
+            verb={
+              pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running
+                ? pendingConfirm.confirm_verb
+                : undefined
             }
             editable={
               !!pendingConfirm && pendingConfirm.tool_name === seg.entry.name && seg.entry.running

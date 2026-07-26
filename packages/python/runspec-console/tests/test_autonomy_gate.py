@@ -299,7 +299,24 @@ def test_get_pending_confirms_lists_parked_gates_oldest_first():
     assert first["tool_name"] == "local__flush-dns"
     assert first["tool_input"] == {"force": True}
     assert first["autonomy"] == "confirm"
+    assert first["confirm_verb"] == "run"  # a runnable executes → "run"
     assert "created_at" in first
+
+
+def test_confirm_verb_follows_the_resolved_tool():
+    """The confirm card's verb reflects what approving actually does — "save" for
+    a runbook store, "run" for a runnable — so the button never claims a
+    save_runbook will *run* the runbook."""
+    b = _StubBridge(_runnable("confirm"))
+    b._register_confirm(
+        "chat1", "save_runbook", {"title": "T", "steps": "1."}, "confirm"
+    )
+    b._register_confirm("chat2", "local__flush-dns", {}, "confirm")
+    verbs = {m["tool_name"]: m["confirm_verb"] for m in b.get_pending_confirms()}
+    assert verbs == {"save_runbook": "save", "local__flush-dns": "run"}
+    # The event payload carries it too (the live path the UI listens on).
+    dispatched = {d["tool_name"]: d.get("confirm_verb") for _e, d in b._dispatched}
+    assert dispatched["save_runbook"] == "save"
 
 
 def test_get_pending_confirms_drops_finished_gate():

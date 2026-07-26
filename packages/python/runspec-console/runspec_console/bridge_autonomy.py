@@ -30,6 +30,8 @@ from .bridge_const import (
     logger,
     _AUTONOMY_RANK,
     _CANCEL_KEY,
+    _CONFIRM_VERBS,
+    _CONFIRM_VERB_DEFAULT,
     _CUSTOM_TOOL_NAMES,
     _READONLY_META,
     _MEMORY_TOOL_NAMES,
@@ -206,6 +208,9 @@ class AutonomyMixin:
         # `run_runnable` != resolved-name, so the segment never matched and the
         # Approve/Deny buttons never rendered for search-mode calls.
         card_tool, card_input = self._confirm_card_view(tool_name, tool_input)
+        # The confirm verb follows the *resolved* tool actually being approved
+        # (card_tool), so a wrapped/deferred save reads "save", not "run".
+        confirm_verb = _CONFIRM_VERBS.get(card_tool, _CONFIRM_VERB_DEFAULT)
         request_id = uuid.uuid4().hex
         event = threading.Event()
         # ``edited_input`` (Phase: editable confirmations) carries an operator-edited
@@ -225,6 +230,7 @@ class AutonomyMixin:
                 "display_name": card_tool,
                 "display_input": card_input,
                 "autonomy": level,
+                "confirm_verb": confirm_verb,
                 "created_at": time.time(),
             }
         logger.info(
@@ -243,6 +249,7 @@ class AutonomyMixin:
                 "display_name": card_tool,
                 "display_input": card_input,
                 "autonomy": level,
+                "confirm_verb": confirm_verb,
             },
         )
         self._notify_confirm(card_tool, card_input, level)

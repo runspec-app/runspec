@@ -194,6 +194,24 @@ _CONFIG_TOOL_NAMES = frozenset(
     }
 )
 
+# The verb shown on the confirm card — the Approve button ("Approve & <verb>")
+# and the header ("the assistant wants to <verb> …"). Keyed by the *resolved*
+# (display) tool name; anything absent falls back to ``_CONFIRM_VERB_DEFAULT``.
+# The default "run" fits a runnable or an executing tool, but a confirm-gated
+# tool that stores/creates/opens rather than executes reads wrong as "run" —
+# most sharply ``save_runbook``, whose card used to say "run save_runbook",
+# implying it would *execute* the runbook instead of storing it for later.
+_CONFIRM_VERB_DEFAULT = "run"
+_CONFIRM_VERBS = {
+    "save_runbook": "save",
+    "create_document": "create",
+    "create_schedule": "create",
+    "open_url": "open",
+    "open_file": "open",
+    "reveal_in_folder": "reveal",
+}
+
+
 # Every built-in (non-runnable-backed) agent tool. ``_gated_run_tool_async``
 # wraps each of these — once past the autonomy gate — with a live Console
 # in-flight card, cooperative cancellation, progress streaming, and a

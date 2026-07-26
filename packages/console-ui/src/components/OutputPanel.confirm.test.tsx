@@ -123,6 +123,9 @@ describe('OutputPanel autonomy-gate confirm', () => {
       tool_input: { title: 'Triage 502s', steps },
       display_name: 'save_runbook',
       display_input: { title: 'Triage 502s', steps },
+      // save_runbook stores a runbook, it does not execute it — the backend sends
+      // "save" so the button reads "Approve & save", not "Approve & run".
+      confirm_verb: 'save',
       autonomy: 'confirm',
     })
     // Short value → plain input; multi-line value → textarea, carrying every line.
@@ -133,7 +136,9 @@ describe('OutputPanel autonomy-gate confirm', () => {
     expect(body).not.toBeNull()
     expect((body as HTMLTextAreaElement).value).toBe(steps)
 
-    await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
+    // The button reflects the verb: "save", not the misleading "run".
+    expect(screen.queryByRole('button', { name: /approve & run/i })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /approve & save/i }))
     expect(resolveConfirm).toHaveBeenCalledWith('req-9', true, {
       title: 'Triage 502s',
       steps,
@@ -150,15 +155,31 @@ describe('OutputPanel autonomy-gate confirm', () => {
       tool_input: { filename: 'note.md', dest: 'local' },
       display_name: 'create_document',
       display_input: { filename: 'note.md', dest: 'local' },
+      confirm_verb: 'create',
       autonomy: 'confirm',
     })
     const filename = screen.getByDisplayValue('note.md')
     await userEvent.clear(filename)
     await userEvent.type(filename, 'edited.md')
-    await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
+    await userEvent.click(screen.getByRole('button', { name: /approve & create/i }))
     expect(resolveConfirm).toHaveBeenCalledWith('req-7', true, {
       filename: 'edited.md',
       dest: 'local',
     })
+  })
+
+  it('falls back to "run" when the backend sends no confirm_verb', () => {
+    // Back-compat: an older backend omits confirm_verb → the button stays
+    // "Approve & run" (a runnable/executing tool, the safe default).
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-5',
+      tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__drain-node' },
+      display_name: 'drain-node',
+      autonomy: 'confirm',
+    })
+    expect(screen.getByRole('button', { name: /approve & run/i })).toBeTruthy()
   })
 })
