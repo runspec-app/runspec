@@ -84,6 +84,8 @@ function fmtTokens(n: number): string {
 }
 
 const SIDEBAR_WIDTH = 180
+const SIDEBAR_MIN = 150
+const SIDEBAR_MAX = 420
 
 // White-label content watermark. `tiled` (default) is Ant's repeated/slanted
 // mark; `banner` / `center` draw a single large faint mark over the content area
@@ -91,7 +93,7 @@ const SIDEBAR_WIDTH = 180
 // a logo image instead of text, are non-interactive (pointer-events: none), and
 // brighten on the dark UI. A passthrough when no text/logo is set.
 function BrandWatermark(
-  { theme: t, isDark, children }: { theme: BrandTheme; isDark: boolean; children: React.ReactNode },
+  { theme: t, isDark, sidebarLeft = SIDEBAR_WIDTH, children }: { theme: BrandTheme; isDark: boolean; sidebarLeft?: number; children: React.ReactNode },
 ) {
   const text = t.watermark_text
   const logo = t.watermark_logo
@@ -114,7 +116,7 @@ function BrandWatermark(
     <div style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
       {children}
       <div aria-hidden style={{
-        position: 'absolute', top: 0, bottom: 0, right: 0, left: SIDEBAR_WIDTH,
+        position: 'absolute', top: 0, bottom: 0, right: 0, left: sidebarLeft,
         display: 'flex', justifyContent: 'center',
         alignItems: centered ? 'center' : 'flex-start',
         paddingTop: centered ? 0 : '13vh',
@@ -152,6 +154,38 @@ export default function App() {
     localStorage.setItem('runspec.sidebar.collapsedGroups', JSON.stringify(next))
     return next
   })
+  // Resizable sidebar width — the whole left column (title, host list, footer
+  // info) shares this container width, so dragging widens all three together.
+  // Persisted so it survives restarts; clamped to keep the layout sane.
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const v = parseInt(localStorage.getItem('runspec.sidebar.width') || '', 10)
+    return Number.isFinite(v) ? Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, v)) : SIDEBAR_WIDTH
+  })
+  // Drag-resize: track the pointer on window listeners so the drag continues
+  // even when the cursor outruns the 6px handle. Width commits to localStorage
+  // on release (not every frame).
+  const sidebarDrag = React.useRef<{ startX: number; startW: number } | null>(null)
+  const startSidebarResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    sidebarDrag.current = { startX: e.clientX, startW: sidebarWidth }
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    const onMove = (ev: MouseEvent) => {
+      const d = sidebarDrag.current
+      if (!d) return
+      setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, d.startW + (ev.clientX - d.startX))))
+    }
+    const onUp = () => {
+      sidebarDrag.current = null
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setSidebarWidth(w => { localStorage.setItem('runspec.sidebar.width', String(w)); return w })
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
@@ -654,15 +688,26 @@ export default function App() {
         }}>
         {/* White-label content watermark — style-aware (tiled / banner / center),
             a passthrough when no watermark text/logo is set. */}
-        <BrandWatermark theme={brandTheme} isDark={isDark}>
+        <BrandWatermark theme={brandTheme} isDark={isDark} sidebarLeft={sidebarWidth}>
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: contentBg, fontFamily: UI_FONT }}>
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
-          {/* Fixed host sidebar */}
+          {/* Host sidebar — drag its right edge to resize (title, host list, and
+              footer info all share this width). */}
           <div style={{
-            width: 180, flexShrink: 0,
+            width: sidebarWidth, flexShrink: 0, position: 'relative',
             background: siderBg, borderRight: `1px solid ${borderCol}`,
             display: 'flex', flexDirection: 'column',
           }}>
+            {/* Resize handle straddling the right border */}
+            <div
+              onMouseDown={startSidebarResize}
+              title="Drag to resize"
+              className="rs-sidebar-resize"
+              style={{
+                position: 'absolute', top: 0, bottom: 0, right: -3, width: 6,
+                cursor: 'col-resize', zIndex: 20,
+              }}
+            />
             <div style={{
               padding: '13px 16px 12px',
               fontWeight: 700, fontSize: 14, color: titleCol,
@@ -1224,6 +1269,8 @@ export default function App() {
               )}
               <CommandInput
                 runnables={scopedRunnables}
+                allRunnables={runnables}
+                selectedHost={selectedHost}
                 runbooks={runbooks}
                 onRunRunnable={handleRunRunnable}
                 onOpenForm={handleOpenForm}

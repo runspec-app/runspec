@@ -107,6 +107,30 @@ const MOCK_RUNNABLES: Runnable[] = [
     },
   },
   {
+    // Same runnable on prod-1 AND prod-2 (identical group + name) — a fleet
+    // search collapses these two into one "2 hosts" row with a host picker.
+    name: 'health-check',
+    group: 'platform-core',
+    host: 'prod-1',
+    description: 'Probe service health endpoints and report status',
+    args: [
+      { name: 'endpoint', type: 'str', required: false, default: '/healthz', description: 'Health path to probe' },
+      { name: 'timeout', type: 'int', required: false, default: 5, description: 'Per-probe timeout (seconds)' },
+    ],
+    rawSpec: { description: 'Probe service health endpoints and report status', autonomy: 'autonomous', output: 'json' },
+  },
+  {
+    name: 'health-check',
+    group: 'platform-core',
+    host: 'prod-2',
+    description: 'Probe service health endpoints and report status',
+    args: [
+      { name: 'endpoint', type: 'str', required: false, default: '/healthz', description: 'Health path to probe' },
+      { name: 'timeout', type: 'int', required: false, default: 5, description: 'Per-probe timeout (seconds)' },
+    ],
+    rawSpec: { description: 'Probe service health endpoints and report status', autonomy: 'autonomous', output: 'json' },
+  },
+  {
     // Secondary-only runnable — only visible when Secondary or All is selected
     name: 'failover-drain',
     group: 'platform-core',

@@ -48,6 +48,18 @@ html[data-theme='light'] {
 .rs-host-row:hover { background: var(--rs-hover); }
 .rs-group-header:hover { background: var(--rs-hover); }
 
+/* Sidebar resize handle: invisible until hovered/dragged, then a faint accent
+   line shows where the draggable edge is. */
+.rs-sidebar-resize::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 2px; width: 2px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.rs-sidebar-resize:hover::after,
+.rs-sidebar-resize:active::after { background: var(--rs-accent); }
+
 /* Top nav tabs (raw <button>s — base look lives here so :hover/:focus work). */
 .rs-nav-tab {
   border: none;

@@ -8,6 +8,63 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.206.0] — 2026-07-26
+
+### Added
+- **Resizable host sidebar.** Drag the sidebar's right edge to widen or narrow
+  the whole left column — the brand title, the host list (so long host names
+  fit), and the footer info area all share the container width and expand
+  together. Width is clamped (150–420px) and persisted across restarts
+  (localStorage); a faint accent line marks the draggable edge on hover. The
+  white-label content watermark's offset tracks the live width. `App.tsx`.
+
+## [0.205.0] — 2026-07-26
+
+### Added
+- **Fleet-wide slash-command search.** The `/` menu is no longer limited to the
+  sidebar-selected host. An empty `/` still lists the selected host's runnables
+  (in discovery order); the moment you type, the search spans **every host in
+  the fleet** — matching name, venv, host, or description — with the selected
+  host's matches ranked first. Runnables that exist on several hosts (same venv
+  + name + subcommand path) **collapse to one row** with an "N hosts" badge, and
+  the detail hint turns its host chips into a **run-on picker** — click a host to
+  run there, or press Enter for the default (your selected host if it has the
+  runnable, else the first). Execution is unchanged: a pick always runs on *that
+  runnable's own host* (the run path already targeted `runnable.host`, not the
+  sidebar's), so the sidebar host keeps scoping History, Logs, Forms, and
+  Analytics while only the command bar goes fleet-wide. `CommandInput.tsx` gains
+  `allRunnables`/`selectedHost` props and identity-grouping (`groupEntries`).
+
+## [0.204.0] — 2026-07-26
+
+### Added
+- **Detail hint for the highlighted slash-command.** A panel above the `/`
+  command list now shows the full, untruncated signature of whichever item is
+  highlighted — description in full, plus every argument with its type,
+  required/optional, default, and choices — with chips for host, autonomy
+  (green when autonomous), and run-as, and a `global` tag on args inherited
+  from a parent command. It follows both keyboard ↑/↓ and hover (hovering a row
+  now also moves the highlight) and grows to fit its content, so the row list
+  stays a tight aligned table while the complete details are always one glance
+  away. All from existing discovery data — no new backend calls. `CommandInput.tsx`.
+
+## [0.203.0] — 2026-07-26
+
+### Fixed
+- **Slash-command menu no longer hides a runnable's arguments.** The dropdown
+  row was a flexbox in which the description (`flexShrink: 0`) claimed its full
+  width while the argument-usage column (`flex: 1`) absorbed all the shrinking —
+  so on a narrow window the args collapsed to zero width and a runnable appeared
+  to show only its description (its args were there all along; discovery merges
+  inherited globals into every leaf). The row is now a four-track CSS grid
+  (name | host | args | description); every cell truncates independently with
+  its own ellipsis, the args column keeps an 88px floor so it can't vanish, and
+  the columns align down the list — the clean-table layout. `CommandInput.tsx`.
+- **Keyboard ↑/↓ now scrolls the highlighted menu row into view.** In both the
+  `/` runnable menu and the `$` runbook menu the selection could walk past the
+  280px viewport while only the mouse wheel scrolled the list; the active row
+  now `scrollIntoView({ block: 'nearest' })`s as the highlight moves.
+
 ## [0.202.0] — 2026-07-25
 
 Runbook discovery: the agent can now *find* a runbook the same way it finds a
