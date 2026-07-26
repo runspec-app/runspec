@@ -161,6 +161,29 @@ def test_merged_args_with_no_params_and_no_values():
     assert merged_args(entry, None) == {"service": "nginx"}
 
 
+def test_merged_args_optional_password_param_stays_optional():
+    """A force-Open optional password param must NOT be treated as required.
+
+    The editor writes ``required = false`` explicitly (argDefToParamDef) precisely
+    so that runspec inference's "no default present ⇒ required" rule doesn't flip
+    an optional password (which never carries a default) to required — otherwise
+    the operator is forced to type a secret a selected credential was meant to
+    supply. Leaving the value blank must be accepted.
+    """
+    entry = _entry(params={"token": {"type": "password", "required": False}})
+    assert merged_args(entry, {}) == {}
+    assert merged_args(entry, {"token": "hunter2"}) == {"token": "hunter2"}
+
+
+def test_merged_args_password_param_without_required_flag_is_required():
+    """Guards the inference rule the fix relies on: a password param with NO
+    ``required`` key (and no default) infers required = true — which is exactly
+    the pre-fix behavior the editor now avoids by pinning required = false."""
+    entry = _entry(params={"token": {"type": "password"}})
+    with pytest.raises(ValueError):
+        merged_args(entry, {})
+
+
 # ── registry I/O ──────────────────────────────────────────────────────────────
 
 

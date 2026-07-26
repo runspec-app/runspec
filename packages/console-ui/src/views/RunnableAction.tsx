@@ -42,7 +42,13 @@ export function runnablesForTarget(
 export function argDefToParamDef(arg: ArgDef): Record<string, unknown> {
   const def: Record<string, unknown> = { type: arg.type ?? 'str' }
   if (arg.type === 'choice' && arg.options?.length) def.options = [...arg.options]
-  if (arg.required) def.required = true
+  // Pin required-ness explicitly — BOTH true AND false. The stored params table
+  // is re-parsed through runspec inference when the saved run is loaded/run,
+  // where "no default present ⇒ required = true" would otherwise silently flip a
+  // genuinely optional arg (e.g. a force-Open password, which carries no
+  // default) to required — making the operator type a secret a selected
+  // credential was meant to supply. Emitting required = false holds it optional.
+  def.required = !!arg.required
   if (arg.description) def.description = arg.description
   const d = arg.default
   // A $VAR reference resolves on the target host — keep it as the stored default.

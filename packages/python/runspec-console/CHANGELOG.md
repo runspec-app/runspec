@@ -8,6 +8,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.210.1] — 2026-07-26
+
+### Fixed
+- **Saved run: an optional password arg is no longer forced required.** In the
+  Settings → Saved runs editor (and the Schedules runnable-action editor), a
+  runnable's `password` arg is always **force-Open** (asked at run time — the
+  synced saved-run file never stores a secret). When that password arg was
+  **optional** in the runnable, the generated `params` entry omitted `required`
+  and (as a password) carried no default, so re-parsing the preset through
+  runspec inference applied *"no default present ⇒ `required = true`"* and
+  silently made the operator type a secret — defeating the point of attaching a
+  saved credential to supply it. `argDefToParamDef` now **pins the arg's real
+  optionality** (emits `required = false` as well as `true`), so an optional
+  password stays optional and can be left blank for a selected credential to
+  fill. Any optional-with-no-default arg marked Open is fixed by the same change.
+
 ## [0.210.0] — 2026-07-26
 
 ### Changed
@@ -23,7 +39,6 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   `runspec:tool_confirm` event (and `get_pending_confirms` rows); an older
   frontend that ignores it falls back to "run". `_CONFIRM_VERBS` in
   `bridge_const`, threaded through `bridge_autonomy._register_confirm`.
-
 
 ## [0.209.0] — 2026-07-26
 

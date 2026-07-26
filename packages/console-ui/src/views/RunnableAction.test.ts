@@ -80,16 +80,28 @@ describe('argDefToParamDef', () => {
       description: 'How fast', default: 'fast',
     })
     expect(argDefToParamDef(arg({ type: 'int', range: [1, 10] }))).toEqual({
-      type: 'int', range: [1, 10],
+      type: 'int', required: false, range: [1, 10],
     })
     expect(argDefToParamDef(arg({ type: 'str', ui: 'date' }))).toEqual({
-      type: 'str', ui: 'date',
+      type: 'str', required: false, ui: 'date',
     })
   })
 
   it('keeps a password arg password-typed (asked at run time, secret env channel)', () => {
     expect(argDefToParamDef(arg({ type: 'password', required: true }))).toEqual({
       type: 'password', required: true,
+    })
+  })
+
+  it('pins required = false for an optional arg so inference cannot flip it', () => {
+    // A force-Open password (optional, no default) must stay optional through
+    // the runspec inference round-trip — otherwise "no default ⇒ required" makes
+    // the operator type a secret a saved credential was meant to supply.
+    expect(argDefToParamDef(arg({ type: 'password', required: false }))).toEqual({
+      type: 'password', required: false,
+    })
+    expect(argDefToParamDef(arg({ name: 'note', type: 'str', required: false }))).toEqual({
+      type: 'str', required: false,
     })
   })
 })
