@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.207.0] — 2026-07-26
+
+### Added
+- **Slash-menu scope indicator.** A sticky caption at the top of the `/` list
+  makes the host↔fleet scope explicit: an empty `/` reads "`<host>` · type to
+  search all hosts" (scoped to the selected host, with a nudge to the fleet
+  search); typing flips it to "Searching all hosts · N matches". `CommandInput.tsx`.
+- **Alt+number host selection.** For a runnable collapsed across several hosts,
+  the detail hint's host chips are now numbered, and **Alt+1…9** runs on the
+  corresponding host without reaching for the mouse (Alt-modified so plain
+  digits still type into the search query). The default host chip stays boxed.
+
 ## [0.206.0] — 2026-07-26
 
 ### Added
