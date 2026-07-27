@@ -475,12 +475,31 @@ export interface ConversationMeta {
 }
 
 export interface ConversationTurn {
+  // Absent ⇒ a chat exchange; 'operator_run' is an operator-initiated manual
+  // runnable run, rendered for the operator but never replayed to the agent.
+  kind?: 'chat' | 'operator_run'
   user: string
   assistant: string
-  tools: { name: string; input: Record<string, unknown>; output: string }[]
+  tools: {
+    name: string
+    input: Record<string, unknown>
+    output: string
+    // Operator's confirm-gate decision (when the call was gated) + the agent's
+    // original args if the operator edited them. Operator-only annotations.
+    operator_decision?: 'approved' | 'edited' | 'denied'
+    proposed_input?: Record<string, unknown>
+  }[]
   usage?: Record<string, number> | null
   model?: string
   ts?: string
+  // operator_run fields
+  runnable?: string
+  host?: string
+  args?: Record<string, unknown>
+  output?: string
+  exit_code?: number
+  duration_ms?: number
+  operator?: string
 }
 
 export interface ChatConversation {

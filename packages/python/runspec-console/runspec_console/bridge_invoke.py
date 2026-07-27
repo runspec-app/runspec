@@ -29,6 +29,7 @@ from .bridge_const import (
     logger,
     _CANCEL_KEY,
     _MAX_AGENT_ITERATIONS,
+    _OPERATOR_RUN_OUTPUT_CAP,
     _UI_OUTPUT_LINE_CAP,
     _UI_OUTPUT_BYTE_CAP,
 )
@@ -219,8 +220,16 @@ class InvokeMixin:
             # sentinel is emitted exactly once. Counters live in a dict so the
             # closure can mutate them without `nonlocal` gymnastics.
             counts = {"lines": 0, "bytes": 0, "capped": False}
+            # Capture output (bounded) so an operator-initiated run can be saved
+            # to chat history for the operator to review on reopen. Independent of
+            # the UI-flood cap above — we keep collecting up to the storage cap
+            # even after the console stops rendering inline.
+            captured: dict[str, Any] = {"parts": [], "chars": 0}
 
             def on_line(line: str, stream: str) -> None:
+                if captured["chars"] < _OPERATOR_RUN_OUTPUT_CAP:
+                    captured["parts"].append(line)
+                    captured["chars"] += len(line) + 1
                 if counts["capped"]:
                     return
                 counts["lines"] += 1
@@ -262,6 +271,20 @@ class InvokeMixin:
                 self._play_sound(
                     "completion_success" if exit_code == 0 else "completion_error"
                 )
+                # Save operator-initiated manual runs (Forms tab / command bar) to
+                # the active chat conversation for the operator's own review. Skip
+                # the scheduled/trigger path (it sets ``trigger``/``on_progress``);
+                # the agent's own runnable tool never routes through here.
+                if not trigger and on_progress is None:
+                    self._persist_operator_run(
+                        runnable=runnable,
+                        host=host,
+                        args=exec_args,
+                        output="\n".join(captured["parts"]),
+                        exit_code=exit_code,
+                        duration_ms=duration_ms,
+                        operator=operator or self._current_user(),
+                    )
                 if on_progress is not None:
                     on_progress(
                         "done", {"exit_code": exit_code, "duration_ms": duration_ms}
@@ -791,6 +814,59 @@ class InvokeMixin:
         except Exception:  # noqa: BLE001 — persistence is best-effort
             logger.warning("could not persist chat conversation turn", exc_info=True)
 
+    def _persist_operator_run(
+        self,
+        *,
+        runnable: str,
+        host: str,
+        args: dict[str, Any],
+        output: str,
+        exit_code: int,
+        duration_ms: int,
+        operator: str,
+    ) -> None:
+        """Append an operator-initiated manual runnable run to the active saved
+        conversation so the operator can review its result on reopen.
+
+        This is an **operator-only** record: it renders in the transcript but is
+        **never replayed to the agent** (``resume_conversation`` rebuilds the model
+        history from :func:`conversations.chat_turns` only). Mints a conversation
+        when none is active (so a run with no prior chat is still captured). This
+        runs off the invoke worker thread — unlike ``_persist_conversation_turn``
+        the caller does *not* hold ``self._chat_lock``, so take it here to serialise
+        against concurrent chat-turn writes (the store is read-modify-write). Gated
+        on ``[chat_history] enabled``; best-effort."""
+        try:
+            cfg = config_mod.read_chat_history()
+            if not cfg.get("enabled", True):
+                return
+            from . import conversations as conv
+
+            directory = config_mod.conversations_dir()
+            record = {
+                "kind": "operator_run",
+                "runnable": runnable,
+                "host": host,
+                "args": args,
+                "output": str(output)[:_OPERATOR_RUN_OUTPUT_CAP],
+                "exit_code": int(exit_code),
+                "duration_ms": int(duration_ms),
+                "operator": operator,
+                "ts": _iso_now(),
+            }
+            with self._chat_lock:
+                if not self._conversation_id:
+                    self._conversation_id = conv.new_id()
+                conv.append_turn(directory, self._conversation_id, record)
+            conv.prune(
+                directory,
+                max_conversations=int(cfg.get("max_conversations", 0) or 0),
+                max_age_days=int(cfg.get("max_age_days", 0) or 0),
+                workspaces_root=config_mod.workspaces_root(),
+            )
+        except Exception:  # noqa: BLE001 — persistence is best-effort
+            logger.warning("could not persist operator run", exc_info=True)
+
     def list_conversations(self) -> list[dict[str, Any]]:
         """Metadata for every saved chat conversation, newest first:
         ``{id, title, created, updated, turn_count, preview}``."""
@@ -814,8 +890,13 @@ class InvokeMixin:
         """Render saved transcript turns into a plain user/assistant message list
         (tool calls folded into the assistant text as short notes). Provider-
         agnostic — every adapter accepts plain text messages."""
+        from . import conversations as conv
+
         out: list[dict[str, Any]] = []
         for turn in turns or []:
+            # Operator-only records (manual runs, etc.) never reach the model.
+            if not conv.is_chat_turn(turn):
+                continue
             user = str(turn.get("user", "")).strip()
             if user:
                 out.append({"role": "user", "content": user})
@@ -824,6 +905,9 @@ class InvokeMixin:
             if assistant:
                 parts.append(assistant)
             for t in turn.get("tools", []) or []:
+                # A denied gated call never ran — don't replay it as if it had.
+                if str(t.get("operator_decision", "")) == "denied":
+                    continue
                 out_text = str(t.get("output", ""))[:500]
                 parts.append(f"[ran {t.get('name', 'tool')} → {out_text}]")
             out.append(
@@ -896,9 +980,13 @@ class InvokeMixin:
         if not rec:
             return {"ok": False, "error": "conversation not found"}
         turns = rec.get("turns", []) or []
+        # The model only ever sees chat exchanges — operator-only records
+        # (manual runs, etc.) are rendered for the operator but must never enter
+        # the replayed history, so filter them out before compaction/flatten.
+        model_turns = conv.chat_turns(turns)
         cfg = config_mod.read_chat_history()
         head, middle, recent = conv.split_for_compaction(
-            turns,
+            model_turns,
             keep_first=int(cfg.get("resume_keep_first", 1) or 0),
             keep_recent=int(cfg.get("resume_keep_recent", 20) or 0),
         )
@@ -925,8 +1013,8 @@ class InvokeMixin:
             rebuilt += recent_msgs
             kept = len(head) + len(recent)
         else:
-            rebuilt = self._flatten_turns(turns)
-            kept = len(turns)
+            rebuilt = self._flatten_turns(model_turns)
+            kept = len(model_turns)
 
         with self._chat_lock:
             self._chat_history = rebuilt
@@ -1248,13 +1336,20 @@ class InvokeMixin:
                             "tool_input": tc.input,
                         },
                     )
+                    # Capture the operator's confirm-gate decision (if the gate
+                    # fires) so it can be recorded on the saved tool entry for the
+                    # operator's review — never replayed to the agent.
+                    gate_decision: dict[str, Any] = {}
                     if cancel.is_set():
                         # Stopped mid-batch — refuse the rest without prompting
                         # or running, but still record a paired tool_result.
                         output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — you stopped the assistant."
                     else:
                         output = await self._gated_run_tool_async(
-                            tc.name, tc.input, chat_id
+                            tc.name,
+                            tc.input,
+                            chat_id,
+                            on_decision=gate_decision.update,
                         )
                     self._dispatch(
                         "runspec:tool_end",
@@ -1283,10 +1378,19 @@ class InvokeMixin:
                     )
                     tool_results.append((tc, output))
                     # Bounded copy for the saved transcript (the full output goes
-                    # to the model; the store keeps a readable excerpt).
-                    turn_tools.append(
-                        {"name": tc.name, "input": tc.input, "output": output[:4000]}
-                    )
+                    # to the model; the store keeps a readable excerpt). Any
+                    # operator confirm-gate decision rides along as an operator-only
+                    # annotation (ignored by the model-history rebuild).
+                    tool_rec: dict[str, Any] = {
+                        "name": tc.name,
+                        "input": tc.input,
+                        "output": output[:4000],
+                    }
+                    if gate_decision.get("decision"):
+                        tool_rec["operator_decision"] = gate_decision["decision"]
+                        if gate_decision.get("proposed_input") is not None:
+                            tool_rec["proposed_input"] = gate_decision["proposed_input"]
+                    turn_tools.append(tool_rec)
 
                 history.extend(adapter.make_tool_turn(response, tool_results))
 

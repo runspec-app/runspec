@@ -100,7 +100,7 @@ def _chat_stub(max_cont: int = 3):
 
     s.tool_runs = []
 
-    async def gated_run(tool_name, tool_input, chat_id):
+    async def gated_run(tool_name, tool_input, chat_id, stage=None, on_decision=None):
         s.tool_runs.append((tool_name, tool_input))
         return "ok: ran"
 

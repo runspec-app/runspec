@@ -568,6 +568,7 @@ class AutonomyMixin:
         tool_input: dict[str, Any],
         chat_id: str,
         stage: Callable[[str], None] | None = None,
+        on_decision: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
         """Async autonomy gate used by the agentic loop.
 
@@ -577,7 +578,13 @@ class AutonomyMixin:
         from a worker thread was unreliable and produced silent timeouts.
 
         ``stage`` (trigger turns only) reports the card stage: "awaiting_human"
-        while a confirm is pending, then "running" once it actually executes."""
+        while a confirm is pending, then "running" once it actually executes.
+
+        ``on_decision`` (chat turns only), when a confirm gate actually fires, is
+        called with ``{"decision": "approved"|"edited"|"denied", "proposed_input":
+        ...}`` so the caller can record the operator's decision on the saved
+        transcript's tool entry — for the operator's later review, never replayed
+        to the agent. Not called for autonomous ("run") or manual-only calls."""
         inner_call: tuple[str, dict[str, Any]] | None = None
         if tool_name == "use_tool":
             # Deferred built-in (search mode). Resolve the inner tool now, but
@@ -639,6 +646,8 @@ class AutonomyMixin:
                 # the card looks stuck; move to 'running' so the work is visible.
                 if stage is not None:
                     stage("running")
+                if on_decision is not None:
+                    on_decision({"decision": "denied"})
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
@@ -646,6 +655,14 @@ class AutonomyMixin:
             # For a wrapped call the card displayed the INNER input, so an edit
             # (defensive: the frontend renders wrapper confirms read-only) is in
             # that same shape and replaces the inner input, not the envelope.
+            if on_decision is not None:
+                proposed = inner_call[1] if inner_call is not None else tool_input
+                on_decision(
+                    {
+                        "decision": "edited" if edited is not None else "approved",
+                        "proposed_input": proposed if edited is not None else None,
+                    }
+                )
             if edited is not None:
                 if inner_call is not None:
                     inner_call = (inner_call[0], edited)

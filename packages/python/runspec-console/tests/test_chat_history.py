@@ -59,7 +59,9 @@ class _StubBridge:
     def get_config(self):
         return {}  # tool_mode defaults to dedup → no catalog index in these tests
 
-    async def _gated_run_tool_async(self, name, tool_input, chat_id):
+    async def _gated_run_tool_async(
+        self, name, tool_input, chat_id, stage=None, on_decision=None
+    ):
         return f"ran:{name}"
 
     _tool_mode = Bridge._tool_mode
@@ -188,6 +190,28 @@ def test_tool_turn_round_trip_persisted():
         and m["content"][0].get("type") == "tool_result"
         for m in ad.seen[1]
     )
+
+
+def test_confirm_decision_annotates_persisted_tool():
+    """When the operator edits-and-approves a gated tool call, the decision +
+    the agent's original (pre-edit) args ride on the saved tool entry — an
+    operator-only annotation for review, ignored by the model-history rebuild."""
+    b, ad = _StubBridge(), _ToolThenText()
+    saved: dict = {}
+    b._persist_conversation_turn = lambda user, assistant, tools, usage, model: (
+        saved.update(tools=tools)
+    )
+
+    async def gated(name, tool_input, chat_id, stage=None, on_decision=None):
+        if on_decision is not None:
+            on_decision({"decision": "edited", "proposed_input": {"a": 1}})
+        return f"ran:{name}"
+
+    b._gated_run_tool_async = gated
+    asyncio.run(b._agentic_chat_turn("c1", "do it", ad))
+    tool = saved["tools"][0]
+    assert tool["operator_decision"] == "edited"
+    assert tool["proposed_input"] == {"a": 1}
 
 
 # ── stop / cancel ───────────────────────────────────────────────────────

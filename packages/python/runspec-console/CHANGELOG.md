@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.211.0] — 2026-07-27
+
+### Added
+- **Operator actions saved in chat history (agent-invisible on resume).** A
+  reopened conversation now shows two operator actions that were previously
+  lost — for the operator's own review, and **never replayed to the agent**:
+  - **Manual runnable runs.** A run you launch yourself (Forms tab / command
+    bar) is saved to the active conversation as a read-only run card, tagged
+    *"operator run · not sent to agent"*. If no chat is open yet, a conversation
+    is minted so the run is still captured. The scheduled/trigger path and the
+    agent's own tool runs are **not** recorded here.
+  - **Confirm-gate decisions.** When the agent proposes a gated tool call, your
+    decision (**approved** / **edited** / **denied**) rides on the saved tool
+    entry as a badge; an edit also stores the agent's original args. A denied
+    call is never replayed as if it had run.
+
+  The guarantee that operator records never reach the model is enforced where
+  the resume history is built: `resume_conversation` rebuilds from
+  `conversations.chat_turns` only, `_flatten_turns` skips operator records (and
+  denied tools), and `turns_to_text` skips them from the resume summary too.
+  Storage: a `kind = "operator_run"` turn record plus `operator_decision` /
+  `proposed_input` annotations on chat tool entries (a turn with `kind` absent
+  stays a chat exchange, so existing conversations are unaffected). Gated on the
+  existing `[chat_history] enabled`; the run's output is bounded
+  (`_OPERATOR_RUN_OUTPUT_CAP`) and the full result stays in the audit log.
+
 ## [0.210.1] — 2026-07-26
 
 ### Fixed

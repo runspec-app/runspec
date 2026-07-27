@@ -320,6 +320,13 @@ _EXEC_MAX_ROWS = 1_000
 _UI_OUTPUT_LINE_CAP = 5_000
 _UI_OUTPUT_BYTE_CAP = 2_000_000
 
+# Max characters of a manual runnable run's output stored in the chat-history
+# conversation record (operator-only, for review on reopen). Generous — this is
+# for the human to read results, not a model-context cap — but bounded so a
+# runaway blob can't bloat the conversation JSON. The full result is always in
+# the runnable's own audit log.
+_OPERATOR_RUN_OUTPUT_CAP = 20_000
+
 # Cadence (seconds) of the "still running" heartbeat emitted while a built-in
 # agent tool executes (see ``_run_builtin_tool_tracked``). It bounds the silent
 # stretch when a tool produces no output of its own — a ``repo_read`` of a big

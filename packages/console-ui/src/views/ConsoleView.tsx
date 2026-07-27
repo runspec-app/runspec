@@ -13,9 +13,32 @@ const { Text } = Typography
 // block is `done`, nothing streams.
 export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] {
   return (conv.turns || []).map((t, i) => {
+    const startedAt = t.ts || conv.updated || new Date().toISOString()
+    // An operator-initiated manual run — render it as a read-only run card
+    // (reusing the runnable-run renderer), tagged so it's clearly the operator's
+    // own action and marked as never part of the agent's context.
+    if (t.kind === 'operator_run') {
+      const lines = String(t.output || '')
+        .split('\n')
+        .map((line, j) => ({ id: `${conv.id}:${i}:${j}`, line, stream: 'stdout' as const }))
+      return {
+        id: `${conv.id}:${i}`,
+        type: 'run' as const,
+        label: `/${t.runnable || 'run'}${t.host ? ` on ${t.host}` : ''}`,
+        startedAt,
+        lines,
+        segments: [],
+        currentText: '',
+        done: true,
+        exitCode: typeof t.exit_code === 'number' ? t.exit_code : undefined,
+        durationMs: typeof t.duration_ms === 'number' ? t.duration_ms : undefined,
+        operatorOnly: true,
+        inContext: false,
+      }
+    }
     const segments: BlockSegment[] = []
     for (const tool of t.tools || []) {
-      segments.push({ kind: 'tool', entry: { name: tool.name, input: tool.input || {}, output: tool.output, running: false } })
+      segments.push({ kind: 'tool', entry: { name: tool.name, input: tool.input || {}, output: tool.output, running: false, operatorDecision: tool.operator_decision } })
     }
     if (t.assistant && t.assistant.trim()) segments.push({ kind: 'text', text: t.assistant })
     const u = (t.usage || undefined) as Record<string, number> | undefined
@@ -23,7 +46,7 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
       id: `${conv.id}:${i}`,
       type: 'chat' as const,
       label: t.user || '(no message)',
-      startedAt: t.ts || conv.updated || new Date().toISOString(),
+      startedAt,
       lines: [],
       segments,
       currentText: '',

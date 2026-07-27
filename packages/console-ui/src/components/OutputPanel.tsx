@@ -467,6 +467,10 @@ export interface ToolCallEntry {
   // Set when the result was cut at the output cap before the model saw it — the
   // model received incomplete (mid-structure) JSON. Carries the original size.
   truncated?: { orig_len: number; cap: number } | null
+  // The operator's confirm-gate decision on this call (when it was gated),
+  // rendered as a badge on a reopened conversation. Operator-only — not sent to
+  // the model. 'denied' means the call never ran.
+  operatorDecision?: 'approved' | 'edited' | 'denied'
 }
 
 export type BlockSegment =
@@ -498,6 +502,10 @@ export interface InvocationBlock {
   // Set once the card's messages have been compacted away (chat_compacted): the
   // exchange is gone from history, so the toggle is retired (shown disabled).
   compacted?: boolean
+  // A reopened operator-initiated manual run: rendered for the operator's review
+  // but never part of the agent's context. Drives a distinguishing tag and
+  // suppresses the in-context checkbox.
+  operatorOnly?: boolean
 }
 
 interface OutputPanelProps {
@@ -747,6 +755,20 @@ function ToolCallBlock({
             ? <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} />
             : <ApiOutlined style={{ color: '#52c41a', fontSize: 12 }} />}
         <Text code style={{ fontSize: 12, flexShrink: 0 }}>{entry.name.replace(/^[^_]+__/, '')}</Text>
+        {entry.operatorDecision && (
+          <Tooltip title={
+            entry.operatorDecision === 'denied' ? 'You denied this call — it did not run'
+            : entry.operatorDecision === 'edited' ? 'You edited the arguments before approving'
+            : 'You approved this call'
+          }>
+            <Text style={{
+              fontSize: 10, flexShrink: 0, fontWeight: 600, textTransform: 'uppercase',
+              color: entry.operatorDecision === 'denied' ? '#ff4d4f' : entry.operatorDecision === 'edited' ? '#faad14' : '#52c41a',
+            }}>
+              {entry.operatorDecision}
+            </Text>
+          </Tooltip>
+        )}
         {args.length > 0 && (
           <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 11 }}>
             {args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
@@ -1144,7 +1166,7 @@ function BlockCard({
             meaningful toggle). Chat cards default in-context; user-run cards
             default out (opt in to stage the result into the next prompt).
             Retired once the exchange has been compacted away. */}
-        {block.done && onToggleContext && (
+        {block.done && onToggleContext && !block.operatorOnly && (
           <Tooltip
             title={
               block.compacted
@@ -1171,6 +1193,11 @@ function BlockCard({
         >
           {block.label}
         </Text>
+        {block.operatorOnly && (
+          <Tooltip title="A run you launched yourself — saved for your review, never part of the assistant’s context">
+            <Tag color="default" style={{ fontSize: 10, marginLeft: 4 }}>operator run · not sent to agent</Tag>
+          </Tooltip>
+        )}
         <Text style={{ color: c.dim, fontSize: 11 }}>
           {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </Text>

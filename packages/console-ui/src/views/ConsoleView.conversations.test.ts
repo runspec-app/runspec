@@ -34,4 +34,33 @@ describe('conversationToBlocks', () => {
     }))
     expect(blocks[0].tokenUsage).toEqual({ input: 10, output: 5, cacheRead: 2, cacheCreation: 1 })
   })
+
+  it('renders an operator_run record as a read-only, operator-only run card', () => {
+    const blocks = conversationToBlocks(conv({
+      turns: [{
+        kind: 'operator_run', user: '', assistant: '', tools: [],
+        runnable: 'restart-svc', host: 'web01', output: 'line1\nline2',
+        exit_code: 0, duration_ms: 812,
+      }],
+    }))
+    const b = blocks[0]
+    expect(b.type).toBe('run')
+    expect(b.label).toBe('/restart-svc on web01')
+    expect(b.operatorOnly).toBe(true)
+    expect(b.inContext).toBe(false)          // never part of the agent's context
+    expect(b.exitCode).toBe(0)
+    expect(b.durationMs).toBe(812)
+    expect(b.lines.map(l => l.line)).toEqual(['line1', 'line2'])
+  })
+
+  it('passes an operator confirm-gate decision through to the tool entry', () => {
+    const blocks = conversationToBlocks(conv({
+      turns: [{
+        user: 'go', assistant: 'ok', tools: [
+          { name: 'deploy', input: {}, output: '(denied by operator)', operator_decision: 'denied' },
+        ],
+      }],
+    }))
+    expect(blocks[0].segments[0]).toMatchObject({ kind: 'tool', entry: { operatorDecision: 'denied' } })
+  })
 })

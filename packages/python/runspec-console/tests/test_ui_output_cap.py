@@ -32,6 +32,7 @@ class _InvokeBridge:
         self._in_flight: dict = {}
         self._config = config or {}
         self.dispatched: list[tuple[str, dict]] = []
+        self.operator_runs: list[dict] = []
         self.done = threading.Event()
 
     # ── dependencies invoke_runnable reaches for (stubbed to no-ops) ──
@@ -61,6 +62,9 @@ class _InvokeBridge:
 
     def _play_sound(self, _name):
         pass
+
+    def _persist_operator_run(self, **kw):
+        self.operator_runs.append(kw)
 
     def _dispatch(self, event, detail):
         self.dispatched.append((event, detail))
@@ -127,3 +131,37 @@ def test_zero_cap_disables_the_limit(monkeypatch):
     lines = _output_lines(b)
     assert len(lines) == _UI_OUTPUT_LINE_CAP + 200
     assert all("truncated" not in ln["line"].lower() for ln in lines)
+
+
+# ── operator-run capture (manual runs → chat history) ─────────────────────────────
+
+
+def _run_with(bridge, monkeypatch, *, n_lines=3, **invoke_kw):
+    from runspec_console import executor as executor_mod
+
+    def fake_run_local(rp, runnable, args, cp, on_line, on_done, **kw):
+        for _ in range(n_lines):
+            on_line("x", "stdout")
+        on_done(0, 1)
+        bridge._finish()
+
+    monkeypatch.setattr(executor_mod, "run_local", fake_run_local)
+    bridge.invoke_runnable("h", "dump", {}, **invoke_kw)
+    assert bridge.done.wait(timeout=5)
+
+
+def test_operator_run_is_captured_on_the_manual_path(monkeypatch):
+    b = _InvokeBridge()
+    _run_with(b, monkeypatch, n_lines=3)
+    assert len(b.operator_runs) == 1
+    rec = b.operator_runs[0]
+    assert rec["runnable"] == "dump" and rec["host"] == "h"
+    assert rec["exit_code"] == 0 and rec["output"] == "x\nx\nx"
+
+
+def test_scheduled_run_is_not_captured_as_operator_run(monkeypatch):
+    # The scheduled/trigger path passes on_progress (and/or trigger); those runs
+    # are not the operator's manual action and must not land in chat history.
+    b = _InvokeBridge()
+    _run_with(b, monkeypatch, on_progress=lambda *_a: None, trigger="nightly")
+    assert b.operator_runs == []

@@ -72,6 +72,46 @@ def test_safe_id_rejects_traversal(tmp_path):
     conv.delete(tmp_path, "../secret")  # no raise
 
 
+# ── operator-only records (manual runs) ──────────────────────────────────────────
+
+
+def _op_run(runnable="deploy", host="web01", exit_code=0):
+    return {
+        "kind": "operator_run",
+        "runnable": runnable,
+        "host": host,
+        "args": {"env": "prod"},
+        "output": "line1\nline2",
+        "exit_code": exit_code,
+        "duration_ms": 42,
+        "operator": "alice",
+        "ts": "t",
+    }
+
+
+def test_is_chat_turn_and_chat_turns_filter():
+    chat = _turn("hi")
+    op = _op_run()
+    assert conv.is_chat_turn(chat) is True
+    assert conv.is_chat_turn({"user": "x"}) is True  # kind absent ⇒ chat
+    assert conv.is_chat_turn(op) is False
+    assert conv.chat_turns([chat, op, chat]) == [chat, chat]
+
+
+def test_operator_run_title_and_preview(tmp_path):
+    cid = conv.new_id()
+    conv.append_turn(tmp_path, cid, _op_run(runnable="deploy", host="web01"))
+    meta = conv.list_meta(tmp_path)[0]
+    assert meta["title"] == "Ran deploy on web01"  # sensible title from a run
+    assert meta["preview"] == "ran deploy → exit 0"
+
+
+def test_turns_to_text_skips_operator_records():
+    text = conv.turns_to_text([_turn("q", "a"), _op_run(runnable="secret-run")])
+    assert "User: q" in text and "Assistant: a" in text
+    assert "secret-run" not in text  # operator run never reaches the summary input
+
+
 # ── bridge methods ──────────────────────────────────────────────────────────────
 
 
@@ -82,6 +122,7 @@ class _ConvBridge:
     delete_conversation = Bridge.delete_conversation
     rename_conversation = Bridge.rename_conversation
     _persist_conversation_turn = Bridge._persist_conversation_turn
+    _persist_operator_run = Bridge._persist_operator_run
     _trim_chat_history = Bridge._trim_chat_history
     _flatten_turns = staticmethod(Bridge._flatten_turns)
     _mechanical_resume_note = staticmethod(Bridge._mechanical_resume_note)
@@ -162,6 +203,63 @@ def test_resume_missing_returns_error(tmp_path, monkeypatch):
     _point_store(monkeypatch, tmp_path)
     b = _ConvBridge()
     assert b.resume_conversation("nope")["ok"] is False
+
+
+def test_persist_operator_run_writes_and_mints_id(tmp_path, monkeypatch):
+    _point_store(monkeypatch, tmp_path)
+    b = _ConvBridge()
+    b._persist_operator_run(
+        runnable="deploy",
+        host="web01",
+        args={"env": "prod"},
+        output="out",
+        exit_code=0,
+        duration_ms=7,
+        operator="alice",
+    )
+    assert b._conversation_id  # minted even with no prior chat
+    rec = b.load_conversation(b._conversation_id)
+    op = rec["turns"][0]
+    assert op["kind"] == "operator_run" and op["runnable"] == "deploy"
+    assert op["output"] == "out" and op["operator"] == "alice"
+
+
+def test_operator_run_never_replayed_to_the_agent(tmp_path, monkeypatch):
+    """The core guarantee: an operator run renders for the operator (it's in the
+    stored turns) but is absent from the model history a resume rebuilds."""
+    _point_store(monkeypatch, tmp_path)
+    cid = conv.new_id()
+    conv.append_turn(tmp_path, cid, _turn("do a thing", "did it"))
+    conv.append_turn(tmp_path, cid, _op_run(runnable="secret-deploy"))
+    b = _ConvBridge()
+    res = b.resume_conversation(cid)
+    # Both records are still on disk for the operator UI to render …
+    assert len(b.load_conversation(cid)["turns"]) == 2
+    # … but only the chat exchange is in the rebuilt model history.
+    assert res["kept"] == 1
+    text = "\n".join(m["content"] for m in b._chat_history)
+    assert "did it" in text
+    assert "secret-deploy" not in text
+
+
+def test_flatten_turns_skips_operator_and_denied(tmp_path):
+    turns = [
+        _turn(
+            "q",
+            "a",
+            tools=[
+                {"name": "ok-tool", "output": "fine"},
+                {"name": "nope", "output": "x", "operator_decision": "denied"},
+            ],
+        ),
+        _op_run(runnable="manual-thing"),
+    ]
+    msgs = Bridge._flatten_turns(turns)
+    assert [m["role"] for m in msgs] == ["user", "assistant"]  # operator run dropped
+    text = msgs[1]["content"]
+    assert "[ran ok-tool" in text
+    assert "nope" not in text  # a denied call is not replayed as if it ran
+    assert "manual-thing" not in text
 
 
 def test_delete_and_rename_via_bridge(tmp_path, monkeypatch):

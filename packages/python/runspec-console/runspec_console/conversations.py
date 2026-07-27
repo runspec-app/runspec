@@ -11,7 +11,10 @@ Storage is **machine-local** and **never synced** (transcripts can be sensitive
 and are instance-specific). The store is bounded by the ``[chat_history]``
 retention settings via :func:`prune`.
 
-A turn::
+A conversation's ``turns`` are heterogeneous records discriminated by an optional
+``kind`` (**absent ⇒ "chat"**, so every pre-existing conversation stays valid).
+
+A chat turn (``kind`` "chat")::
 
     {
       "user": "what failed last night?",      # the operator's message
@@ -21,6 +24,26 @@ A turn::
       "model": "claude-opus-4-8",
       "ts": "2026-06-28T10:00:00+00:00",
     }
+
+A chat tool entry may carry operator-only annotations — ``operator_decision``
+("approved" / "edited" / "denied") and ``proposed_input`` (the agent's original
+args when the operator edited them). These are ignored by the model-history
+rebuild (which reads only ``name``/``output``), so they never reach the agent.
+
+An operator-run record (``kind`` "operator_run") — a runnable the **operator**
+launched manually (Forms tab / command bar), captured for their own review::
+
+    {
+      "kind": "operator_run",
+      "runnable": "restart-service", "host": "web01", "args": {...},
+      "output": "…", "exit_code": 0, "duration_ms": 812,
+      "operator": "alice", "ts": "2026-06-28T10:01:00+00:00",
+    }
+
+Operator-run records are **rendered for the operator** on reopen but **never
+replayed to the agent** — the model-history rebuild filters to :func:`chat_turns`
+first (see ``bridge_invoke.resume_conversation`` / ``_flatten_turns``), and
+:func:`turns_to_text` skips them too.
 
 Pure and dependency-free (stdlib JSON) — unit-testable on any OS.
 """
@@ -57,11 +80,39 @@ def _path(directory: Path, conv_id: str) -> Path:
     return directory / f"{_safe_id(conv_id)}.json"
 
 
+def is_chat_turn(rec: dict[str, Any]) -> bool:
+    """True for a real chat exchange (``kind`` absent or ``"chat"``). Operator
+    records (e.g. ``operator_run``) return False so callers can keep them out of
+    the model's replayed history while still rendering them for the operator."""
+    return str((rec or {}).get("kind", "chat")) == "chat"
+
+
+def chat_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Only the chat exchanges — operator-only records dropped. This is what the
+    model's resume history is rebuilt from."""
+    return [t for t in (turns or []) if is_chat_turn(t)]
+
+
 def _title_from(turn: dict[str, Any]) -> str:
+    if not is_chat_turn(turn):
+        runnable = str(turn.get("runnable", "")).strip()
+        host = str(turn.get("host", "")).strip()
+        if runnable:
+            return f"Ran {runnable}" + (f" on {host}" if host else "")
+        return "New conversation"
     text = str(turn.get("user", "")).strip().replace("\n", " ")
     if not text:
         return "New conversation"
     return text[:_TITLE_LEN] + "…" if len(text) > _TITLE_LEN else text
+
+
+def _preview_from(rec: dict[str, Any]) -> str:
+    """A one-line preview of the last record — chat prose/message, or a compact
+    ``ran <runnable> → exit N`` line for an operator run."""
+    if not is_chat_turn(rec):
+        runnable = str(rec.get("runnable", "")).strip() or "runnable"
+        return f"ran {runnable} → exit {rec.get('exit_code', '?')}"
+    return str(rec.get("assistant") or rec.get("user") or "").strip().replace("\n", " ")
 
 
 def load(directory: Path, conv_id: str) -> dict[str, Any] | None:
@@ -134,8 +185,7 @@ def list_meta(directory: Path) -> list[dict[str, Any]]:
             continue
         turns = conv.get("turns") or []
         last = turns[-1] if turns else {}
-        preview = str(last.get("assistant") or last.get("user") or "").strip()
-        preview = preview.replace("\n", " ")
+        preview = _preview_from(last)
         if len(preview) > _PREVIEW_LEN:
             preview = preview[:_PREVIEW_LEN] + "…"
         out.append(
@@ -209,7 +259,7 @@ def turns_to_text(turns: list[dict[str, Any]]) -> str:
     """A plain-text rendering of turns (``User:`` / ``Assistant:`` lines) — input
     for a resume summary. Tool calls are noted compactly."""
     lines: list[str] = []
-    for t in turns or []:
+    for t in chat_turns(turns):
         user = str(t.get("user", "")).strip()
         if user:
             lines.append(f"User: {user}")
