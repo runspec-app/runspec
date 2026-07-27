@@ -8,6 +8,63 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.214.0] — 2026-07-27
+
+### Fixed
+- **`save_runbook` is now a true partial update — it no longer wipes fields the
+  agent doesn't resend.** Editing a runbook (e.g. "fix step 2") that sent only the
+  changed field silently blanked its `symptom` and `tags` (only `args` was carried
+  forward). Now every omitted field keeps its current value; presence is keyed on
+  the field being in the call, so an explicit `""`/`[]` can still clear one while
+  omission preserves it. Creating still requires a title and steps (distinct, clear
+  errors); updating needs only the id. The tool schema no longer marks
+  `title`/`steps` unconditionally required (that rejected small edits), and the
+  result reports `Updated`/`Saved`. Description rewritten to spell out the
+  create-vs-update contract.
+
+### Added
+- **`load_runbook` agent tool — read a runbook's raw definition to inspect or edit
+  it.** Returns the editable source as data (id / title / symptom / tags, the raw
+  `[[runbook.step]]` rows with `{{placeholders}}` intact, and the parsed args table),
+  distinct from `run_runbook` which renders the steps to *follow*. Restores the
+  read → edit → `save_runbook` workflow that felt missing since `load_runbook` was
+  folded away in 0.202.0.
+- **The reintroduction closes the original governance gap by being chat-only.** The
+  removed `load_runbook` returned the *same followable steps* as `run_runbook` and,
+  sitting outside the `action_allow` vocabulary, let a trigger follow a runbook its
+  allowlist excluded. The new tool is confined to interactive chat with the same
+  two-layer guarantee the config tools carry — stripped from every headless
+  (trigger/schedule) turn by `_filter_headless_tools` (layer 1) and refused by an
+  origin guard in its handler (layer 2) — so that bypass cannot exist. Headless turns
+  still read a runbook only via `run_runbook`, which `action_allow` governs. It is
+  read-only and autonomous (no confirm) in chat. `run_runbook` / `save_runbook`
+  descriptions now point at `load_runbook` for inspecting/editing.
+
+
+## [0.213.0] — 2026-07-27
+
+### Fixed
+- **`run_runbook` can now read a runbook without supplying its parameters.** An arg
+  with no default is inferred `required`, so consulting/editing a runbook via
+  `run_runbook` used to fail with "Missing required argument" for any parameterised
+  runbook. The agent read path is now lenient: it renders with whatever values are
+  given (unfilled `{{placeholders}}` stay visible), lists the runbook's parameters,
+  and flags the unfilled required ones — while a *supplied* bad choice / out-of-range
+  value is still rejected. The Forms / portal / schedule paths stay strict (a human or
+  visitor is expected to complete the form). New `require=` flag on
+  `runbookargs.validate_runbook_values`.
+- **`save_runbook` accepts JSON type spellings for parameters.** `type = "string"`
+  (and `integer` / `number` / `boolean`) are mapped to the runspec type names
+  (`str` / `int` / `float` / `bool`) instead of bouncing as an unknown type
+  (`runbookargs.normalize_arg_types`). The tool schema now also lists the valid types.
+
+### Changed
+- `run_runbook`'s description clarifies it is the single read/consult/edit-source tool
+  for runbooks (there is no separate `load_runbook`), that `values` is optional for a
+  read, and that editing is read-here-then-`save_runbook`. Its result now appends a
+  parameter summary (`runbookargs.describe_runbook_params`).
+
+
 ## [0.212.0] — 2026-07-27
 
 ### Added

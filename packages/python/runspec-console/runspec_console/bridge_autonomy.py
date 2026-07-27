@@ -35,6 +35,7 @@ from .bridge_const import (
     _CUSTOM_TOOL_NAMES,
     _READONLY_META,
     _MEMORY_TOOL_NAMES,
+    _RUNBOOK_READ_TOOL_NAMES,
     _STATUS_TOOL_NAMES,
     _HISTORY_TOOL_NAMES,
     _FILES_TOOL_NAMES,
@@ -118,6 +119,8 @@ class AutonomyMixin:
             return "confirm"
         if tool_name in _MEMORY_TOOL_NAMES:
             return "autonomous"  # local memory/runbook store — no model-spend gate
+        if tool_name in _RUNBOOK_READ_TOOL_NAMES:
+            return "autonomous"  # read-only runbook inspection — no side effects
         if tool_name in _STATUS_TOOL_NAMES:
             return "autonomous"  # read-only status report — no side effects
         if tool_name in _HISTORY_TOOL_NAMES:
@@ -1085,6 +1088,8 @@ class AutonomyMixin:
             )
         if tool_name in _MEMORY_TOOL_NAMES:
             return self._run_memory_tool(tool_name, dict(tool_input or {}))
+        if tool_name in _RUNBOOK_READ_TOOL_NAMES:
+            return self._run_load_runbook(dict(tool_input or {}), chat_id)
         if tool_name in _STATUS_TOOL_NAMES:
             return self._run_status_tool(dict(tool_input or {}))
         if tool_name in _HISTORY_TOOL_NAMES:

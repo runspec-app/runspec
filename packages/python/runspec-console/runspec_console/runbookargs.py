@@ -50,6 +50,55 @@ def parse_runbook_args(table: dict[str, Any] | None) -> list[dict[str, Any]]:
     return _build_args(_inferred(table))
 
 
+# JSON-schema / everyday spellings the model reaches for, mapped to the runspec type
+# names. Keeps ``save_runbook`` forgiving: an agent writing ``type = "string"`` gets a
+# ``str`` arg instead of an "unknown type" bounce (the runspec type names are terse).
+_TYPE_ALIASES = {
+    "string": "str",
+    "integer": "int",
+    "number": "float",
+    "double": "float",
+    "boolean": "bool",
+}
+
+
+def normalize_arg_types(table: Any) -> Any:
+    """Rewrite common type aliases (``string``→``str``, ``integer``→``int``,
+    ``number``→``float``, ``boolean``→``bool``) in a ``[runbook.args]`` table so the
+    model's natural JSON-schema spellings are accepted. Non-dict input / unknown types
+    pass through untouched (real validation still happens in ``validate_runbook_arg_table``)."""
+    if not isinstance(table, dict):
+        return table
+    out: dict[str, Any] = {}
+    for name, spec in table.items():
+        if isinstance(spec, dict) and "type" in spec:
+            declared = str(spec.get("type"))
+            alias = _TYPE_ALIASES.get(declared.lower())
+            if alias:
+                spec = {**spec, "type": alias}
+        out[name] = spec
+    return out
+
+
+def describe_runbook_params(table: dict[str, Any] | None) -> str:
+    """A one-line, human/agent-readable summary of a runbook's parameters — name, type,
+    choices, default, and whether it's required — so the agent knows the interface when
+    it reads a runbook (to run *or* edit it). Empty string when there are no params."""
+    defs = parse_runbook_args(table)
+    if not defs:
+        return ""
+    parts: list[str] = []
+    for d in defs:
+        bits = [str(d.get("type") or "str")]
+        if d.get("options"):
+            bits.append("one of: " + "|".join(str(o) for o in d["options"]))
+        if d.get("default") is not None:
+            bits.append(f"default {d['default']}")
+        bits.append("required" if d.get("required") else "optional")
+        parts.append(f"{d.get('name')} ({', '.join(bits)})")
+    return "; ".join(parts)
+
+
 def validate_runbook_arg_table(table: Any) -> list[str]:
     """Validate the *shape* of a raw ``[runbook.args]`` table (not values against it).
     Returns human-readable error messages ([] = valid).
@@ -133,18 +182,35 @@ def validate_runbook_steps(steps: Any) -> list[str]:
 
 
 def validate_runbook_values(
-    table: dict[str, Any] | None, values: dict[str, Any]
+    table: dict[str, Any] | None,
+    values: dict[str, Any],
+    *,
+    require: bool = True,
 ) -> list[str]:
     """Validate operator-supplied ``values`` against a runbook's args, reusing the core
     required check (``validate_args``) and per-type coercion (range / choice /
-    pattern / length / numeric). Returns human-readable error messages ([] = valid)."""
+    pattern / length / numeric). Returns human-readable error messages ([] = valid).
+
+    ``require=False`` validates only the values that *are* supplied (a bad choice /
+    out-of-range value still bounces) but does **not** demand the required ones — used
+    when the agent *reads / consults* a runbook rather than running it, so inspecting a
+    runbook to follow or edit it never fails just because a value isn't known yet. (An
+    arg with no default is inferred ``required = true``, so without this a runbook with
+    any such arg could not be read at all.)"""
     from runspec.types import coerce
     from runspec.validator import validate_args
 
     specs = _inferred(table)
+    # For a read (require=False) strip required so validate_args still checks the
+    # supplied values' choice/range/pattern but never flags a missing one.
+    check_specs = (
+        specs
+        if require
+        else {name: {**spec, "required": False} for name, spec in specs.items()}
+    )
     # validate_args keys parsed values by the underscore-normalised name.
     pv = {str(k).replace("-", "_"): v for k, v in (values or {}).items()}
-    errors = list(validate_args(pv, specs))
+    errors = list(validate_args(pv, check_specs))
     for name, spec in specs.items():
         value = pv.get(name.replace("-", "_"))
         if value is None or spec.get("type") in _SKIP_COERCE:

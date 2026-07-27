@@ -44,11 +44,21 @@ _BUILTIN_META_NAMES = frozenset({"describe_tool", "use_tool"})
 # (save_runbook is the exception, gated in _effective_tool_autonomy: a runbook is a
 # procedure that gets followed later, so the operator approves each write.)
 #
-# Reading a runbook lives in run_runbook, not here — there is no separate
-# load_runbook. The two returned the same steps, one gated and one not, so the
-# ungated one was simply the faster path; and being outside the action_allow
-# vocabulary it also let a trigger follow a runbook its allowlist excluded.
 _MEMORY_TOOL_NAMES = frozenset({"remember", "search_memory", "save_runbook"})
+
+# load_runbook — read a runbook's *raw definition* (title/symptom/tags/steps
+# array/args table) as data, for inspecting or editing it. Distinct from
+# run_runbook, which renders the steps to "follow now"; this returns the editable
+# source and never executes. It is **chat-only**, the same guarantee the config
+# tools carry: stripped from every headless (trigger/schedule) turn by
+# ``_filter_headless_tools`` (layer 1) and refused by an origin guard in its
+# handler (layer 2). That is what closes the old governance gap — the removed
+# load_runbook (0.202.0) returned the *same followable steps* as run_runbook and,
+# sitting outside the action_allow vocabulary, let a trigger follow a runbook its
+# allowlist excluded. Confined to interactive chat, that bypass cannot exist:
+# reading-to-edit is an operator activity, and headless runs still go through
+# run_runbook under action_allow.
+_RUNBOOK_READ_TOOL_NAMES = frozenset({"load_runbook"})
 
 # Read-only status tool: report the live working-hours rota + configured
 # triggers/schedules on demand (the same data folded into each turn's context,
@@ -255,11 +265,13 @@ _HOT_BUILTIN_NAMES = (
     # detour through describe_tool/use_tool.
     | _WEB_TOOL_NAMES
     | _MEMORY_TOOL_NAMES
+    | _RUNBOOK_READ_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
-    # run_runbook: the single path to a runbook's steps (load_runbook was folded
-    # into it). The folded index advertises every runbook by symptom, so deferring
-    # the one tool that acts on that menu meant two discovery hops before the agent
-    # could follow a procedure it had already been told about.
+    # run_runbook: the single path to a runbook's *rendered* steps. Its symptom
+    # index is folded into every turn, so deferring the tool that acts on that menu
+    # meant two discovery hops before the agent could follow a procedure it had
+    # already been told about. load_runbook (the raw-definition reader) is hot for
+    # the same reason — inspecting/editing a runbook shouldn't need a discovery hop.
     | {"run_runbook"}
 )
 

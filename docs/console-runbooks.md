@@ -94,18 +94,33 @@ sequence of runnables. Past 25 runbooks the inline list is capped (it lives in
 the prompt-cached tool schemas, so it can't grow unbounded) and search covers
 the rest.
 
-**One tool reads a runbook: `run_runbook`.** It returns the runbook's steps with
+**`run_runbook` follows a runbook.** It returns the runbook's steps with
 `{{placeholders}}` filled, and it runs without asking you first — because
 returning text isn't an action. Every runnable those steps then drive is gated
 normally, at that runnable's own autonomy level, which is where the decisions
-that matter actually happen. Writing a runbook (`save_runbook`) *is* gated.
+that matter actually happen. `values` is optional: you can consult a procedure
+without knowing its parameters yet — unfilled ones stay as `{{name}}` in the
+returned steps and are listed for you. Writing a runbook (`save_runbook`) *is*
+gated.
 
-!!! note "Changed in 0.202.0"
-    There used to be a second tool, `load_runbook`, which returned the same steps
-    without a gate while `run_runbook` asked for approval. In practice the agent
-    took the ungated path, and in trigger turns it also sidestepped the
-    `action_allow` allowlist — which governs `run_runbook` but not `load_runbook`.
-    Folding the two together removed both problems.
+**`load_runbook` reads a runbook to inspect or edit it.** It returns the raw
+definition as data — title, symptom, tags, the verbatim step array (placeholders
+intact) and the parameter table — *not* the rendered "follow now" body, and it
+never executes anything. This is the read half of the edit loop: `load_runbook`
+→ change the fields → `save_runbook` with the same id. It's read-only and
+autonomous (no prompt), and **chat-only** — a trigger or schedule can't call it
+(see the governance note below).
+
+!!! note "History: `load_runbook` (removed 0.202.0, reinstated chat-only 0.214.0)"
+    The original `load_runbook` returned the *same followable steps* as
+    `run_runbook` while being ungated and outside the `action_allow` vocabulary,
+    so in a trigger turn it let automation follow a runbook the operator's
+    allowlist excluded. It was folded away in 0.202.0. The reinstated tool avoids
+    that gap two ways: it returns the runbook's *definition* (not executable
+    steps to follow), and it is **chat-only** — stripped from every headless
+    (trigger/schedule) turn and refused by an origin guard — so a headless turn
+    still reads a runbook only through `run_runbook`, which `action_allow`
+    governs.
 
 ## Running runbooks
 

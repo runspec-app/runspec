@@ -25,6 +25,7 @@ from .bridge_const import (
     _ACTION_TOOL_NAMES,
     _BUILTIN_META_NAMES,
     _CONFIG_TOOL_NAMES,
+    _RUNBOOK_READ_TOOL_NAMES,
 )
 from .bridge_helpers import (
     _BridgeTriggerOps,
@@ -2217,6 +2218,12 @@ class TriggersMixin:
         trigger calling one directly is separately refused by the
         ``_run_config_tool`` origin guard.
 
+        ``load_runbook`` (the raw-definition reader) is stripped the same way — it
+        is chat-only, so a headless turn reads a runbook only via ``run_runbook``,
+        which ``action_allow`` governs. Keeping load_runbook out of headless turns
+        is what closes the old bypass (an ungoverned reader that let a trigger
+        follow a runbook its allowlist excluded).
+
         A non-empty ``action_allow`` then narrows the governed built-in action /
         Outlook tools to that set, exactly as before; non-governed tools pass.
 
@@ -2230,6 +2237,7 @@ class TriggersMixin:
             for t in tools
             if t["name"] not in _CONFIG_TOOL_NAMES
             and t["name"] not in _BUILTIN_META_NAMES
+            and t["name"] not in _RUNBOOK_READ_TOOL_NAMES
         ]
         if action_allow:
             governed = _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES

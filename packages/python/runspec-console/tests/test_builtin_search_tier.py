@@ -129,10 +129,14 @@ def test_hot_kernel_is_pinned_exactly():
         "remember",
         "search_memory",
         "save_runbook",
-        # The single path to a runbook's body. The folded index advertises every
-        # runbook by symptom, so deferring the one tool that acts on that menu
-        # meant two discovery hops to follow a procedure already described.
+        # run_runbook renders a runbook's steps to follow; load_runbook reads its
+        # raw definition to inspect/edit. Both are hot: the folded index advertises
+        # every runbook by symptom, so deferring the tools that act on that menu
+        # meant two discovery hops for a procedure already described. load_runbook
+        # is chat-only (stripped from headless turns) — that, not deferral, is what
+        # keeps the old action_allow bypass from returning.
         "run_runbook",
+        "load_runbook",
         "workspace_read",
         "workspace_write",
         "workspace_ls",
@@ -141,10 +145,6 @@ def test_hot_kernel_is_pinned_exactly():
         "workspace_tail",
         "workspace_info",
     }
-    # ...and there is no load_runbook to be hot or otherwise: reading a runbook is
-    # run_runbook's job, so the ungated shortcut around its action_allow scoping
-    # cannot come back by accident.
-    assert "load_runbook" not in _HOT_BUILTIN_NAMES
 
 
 def test_inline_builtins_keeps_everything_inline():

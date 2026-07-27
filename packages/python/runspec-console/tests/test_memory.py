@@ -273,8 +273,8 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     assert "save_runbook" in _MEMORY_TOOL_NAMES
     assert "save_runbook" in _HOT_BUILTIN_NAMES
 
-    # Registration: exactly the three memory tools — reading a runbook lives in
-    # run_runbook, so no load_runbook here however many runbooks are saved.
+    # Registration: the three always-on memory tools — load_runbook only appears
+    # once a runbook exists to read (its runbook_id enum would otherwise be empty).
     assert {t["name"] for t in b._memory_tools()} == {
         "remember",
         "search_memory",
@@ -289,7 +289,8 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     b._run_memory_tool(
         "save_runbook", {"title": "Restart flow", "steps": "1. restart-service"}
     )
-    assert "load_runbook" not in {t["name"] for t in b._memory_tools()}
+    # Now that a runbook exists, load_runbook is offered (the chat-only reader).
+    assert "load_runbook" in {t["name"] for t in b._memory_tools()}
     # Saving a runbook notifies the UI so the `$` menu / Forms / Runbooks editor
     # refresh live (no restart needed) — mirrors the Settings editor's dispatch.
     assert any(ev == "runspec:runbooks_changed" for ev, _ in b.dispatched)
@@ -615,3 +616,236 @@ def test_bridge_save_runbooks_rejects_bad_args(tmp_path, monkeypatch):
         ]
     )
     assert res["ok"] is False and "bad" in res["error"]
+
+
+def _run_runbook_stub(tmp_path, monkeypatch):
+    """A stub exposing the runbook *action* tool (run_runbook) surface."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    from runspec_console.bridge import Bridge
+
+    class _Stub:
+        _action_run_runbook = Bridge._action_run_runbook
+
+        def _tag_run_origin_runbook(self, chat_id, rid):
+            pass
+
+    return _Stub()
+
+
+def test_run_runbook_reads_without_required_values(tmp_path, monkeypatch):
+    """The agent can consult a runbook that has a required-by-inference arg (no
+    default) *without* supplying it — the steps come back with {{placeholders}} intact,
+    the parameters are described, and the unfilled required ones are flagged."""
+    b = _run_runbook_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    memory.save_runbook(
+        "web-triage",
+        title="Web triage",
+        steps=[{"text": "probe {{host}}__http-check"}],
+        args={"host": {"type": "choice", "options": ["web-01", "web-02"]}},
+    )
+    out = b._action_run_runbook({"runbook_id": "web-triage"})
+    assert not out.startswith("Error")  # no "Missing required argument"
+    assert "{{host}}" in out  # unfilled placeholder left visible
+    assert "Parameters: host (choice" in out
+    assert "Unfilled: host" in out
+
+
+def test_run_runbook_fills_and_omits_unfilled_note_when_complete(tmp_path, monkeypatch):
+    b = _run_runbook_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    memory.save_runbook(
+        "web-triage",
+        title="Web triage",
+        steps=[{"text": "probe {{host}}__http-check"}],
+        args={"host": {"type": "choice", "options": ["web-01", "web-02"]}},
+    )
+    out = b._action_run_runbook(
+        {"runbook_id": "web-triage", "values": {"host": "web-01"}}
+    )
+    assert "probe web-01__http-check" in out
+    assert "Unfilled" not in out
+
+
+def test_run_runbook_still_rejects_a_bad_supplied_value(tmp_path, monkeypatch):
+    b = _run_runbook_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    memory.save_runbook(
+        "web-triage",
+        title="Web triage",
+        steps=[{"text": "probe {{host}}"}],
+        args={"host": {"type": "choice", "options": ["web-01", "web-02"]}},
+    )
+    out = b._action_run_runbook(
+        {"runbook_id": "web-triage", "values": {"host": "nope"}}
+    )
+    assert out.startswith("Error")
+
+
+def test_agent_save_runbook_accepts_json_type_spelling(tmp_path, monkeypatch):
+    """`type = "string"` (and other JSON spellings) are accepted and stored as the
+    runspec type name, instead of bouncing as an unknown type."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    out = b._run_memory_tool(
+        "save_runbook",
+        {
+            "title": "Fetch logs",
+            "steps": "1. download {{path}}",
+            "args": {"path": {"type": "string", "description": "Remote path"}},
+        },
+    )
+    assert out.startswith("Saved runbook")
+    assert memory.load_runbook("fetch-logs")["args"]["path"]["type"] == "str"
+
+
+def test_load_runbook_returns_raw_definition(tmp_path, monkeypatch):
+    """load_runbook returns the editable source — raw step array (placeholders
+    intact) + parsed args — not the rendered 'follow now' body run_runbook gives."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    import json as _json
+    import threading as _threading
+    from runspec_console.bridge import Bridge
+    from runspec_console import memory
+
+    memory.save_runbook(
+        "web-triage",
+        title="Web triage",
+        symptom="502s",
+        tags=["web"],
+        steps=[
+            {"text": "probe {{host}}__http-check"},
+            {"title": "Fix", "text": "restart {{host}}"},
+        ],
+        args={"host": {"type": "choice", "options": ["web-01", "web-02"]}},
+    )
+
+    class _Stub:
+        _run_load_runbook = Bridge._run_load_runbook
+
+        def __init__(self):
+            self._run_origin = {}
+            self._lock = _threading.Lock()
+
+    b = _Stub()
+    out = _json.loads(b._run_load_runbook({"runbook_id": "web-triage"}, "chat"))
+    rb = out["runbook"]
+    assert rb["id"] == "web-triage" and rb["symptom"] == "502s"
+    # Raw steps, placeholders intact (not rendered/numbered).
+    assert rb["steps"] == [
+        {"text": "probe {{host}}__http-check"},
+        {"text": "restart {{host}}", "title": "Fix"},
+    ]
+    # Args parsed to the editable shape (type/options/required).
+    assert rb["args"][0]["name"] == "host"
+    assert rb["args"][0]["options"] == ["web-01", "web-02"]
+
+
+def test_load_runbook_is_chat_only_origin_guard(tmp_path, monkeypatch):
+    """Layer 2 of the chat-only guarantee: a trigger-originated turn is refused."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    import threading as _threading
+    from runspec_console.bridge import Bridge
+    from runspec_console import memory
+
+    memory.save_runbook("web-triage", title="Web triage", steps="1. probe")
+
+    class _Stub:
+        _run_load_runbook = Bridge._run_load_runbook
+
+        def __init__(self):
+            self._run_origin = {"t1": {"trigger": "nightly"}}
+            self._lock = _threading.Lock()
+
+    out = _Stub()._run_load_runbook({"runbook_id": "web-triage"}, "t1")
+    assert out.startswith("✗") and "chat-only" in out
+
+
+def test_load_runbook_stripped_from_headless_toolset():
+    """Layer 1: _filter_headless_tools removes load_runbook regardless of action_allow,
+    while run_runbook / save_runbook pass through."""
+    from runspec_console.bridge import Bridge
+
+    tools = [
+        {"name": n} for n in ("load_runbook", "run_runbook", "save_runbook", "remember")
+    ]
+    # Even an action_allow naming load_runbook can't re-admit it.
+    kept = {
+        t["name"]
+        for t in Bridge._filter_headless_tools(tools, ["load_runbook", "run_runbook"])
+    }
+    assert "load_runbook" not in kept
+    assert {"run_runbook", "save_runbook", "remember"} <= kept
+
+
+def test_agent_partial_update_preserves_omitted_fields(tmp_path, monkeypatch):
+    """A partial edit (only the fields being changed) must not wipe the rest — the
+    regression that made a steps-only edit blank a runbook's symptom and tags."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    memory.save_runbook(
+        "web-triage",
+        title="Web triage",
+        symptom="502s after deploy",
+        tags=["web", "incident"],
+        steps="1. probe\n2. restart",
+        args={"host": {"type": "choice", "options": ["web-01", "web-02"]}},
+    )
+    # Change only the steps (id + steps).
+    out = b._run_memory_tool(
+        "save_runbook",
+        {
+            "id": "web-triage",
+            "steps": [{"text": "probe"}, {"text": "drain"}, {"text": "restart"}],
+        },
+    )
+    assert out.startswith("Updated runbook")
+    a = memory.load_runbook("web-triage")
+    assert a["symptom"] == "502s after deploy"  # not wiped
+    assert a["tags"] == ["web", "incident"]  # not wiped
+    assert a["args"] == {"host": {"type": "choice", "options": ["web-01", "web-02"]}}
+    assert a["step"] == [{"text": "probe"}, {"text": "drain"}, {"text": "restart"}]
+
+    # Change only the symptom (id + symptom) → steps/tags/args preserved.
+    b._run_memory_tool(
+        "save_runbook", {"id": "web-triage", "symptom": "502s after a restart"}
+    )
+    a = memory.load_runbook("web-triage")
+    assert a["symptom"] == "502s after a restart"
+    assert a["step"] == [{"text": "probe"}, {"text": "drain"}, {"text": "restart"}]
+    assert a["tags"] == ["web", "incident"]
+
+
+def test_agent_update_can_explicitly_clear_tags(tmp_path, monkeypatch):
+    """Presence-keyed merge: sending tags=[] explicitly clears them, while omitting
+    tags preserves them (distinguishes 'clear' from 'leave alone')."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    memory.save_runbook("rb", title="RB", tags=["a", "b"], steps="1. x")
+    b._run_memory_tool("save_runbook", {"id": "rb", "tags": []})
+    assert memory.load_runbook("rb")["tags"] == []
+
+
+def test_agent_create_requires_title_and_steps(tmp_path, monkeypatch):
+    """Creating a new runbook still needs a title (→ id) and a body, with distinct
+    messages — only omission on an *existing* runbook is a preserve."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    assert b._run_memory_tool("save_runbook", {"steps": "1. x"}).startswith(
+        "Error: a new runbook needs a title"
+    )
+    assert b._run_memory_tool("save_runbook", {"title": "New"}).startswith(
+        "Error: a new runbook needs steps"
+    )
+    assert memory.load_runbook("new") is None
+    # A complete create works and reports "Saved".
+    assert b._run_memory_tool(
+        "save_runbook", {"title": "Fresh", "steps": "1. do it"}
+    ).startswith("Saved runbook")

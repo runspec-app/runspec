@@ -2839,8 +2839,9 @@ class AgentToolsMixin:
     def _memory_tools(self) -> list[dict[str, Any]]:
         """Schemas for the persistent-memory / runbook tools. Always available (the
         stores are local) — so the agent accrues knowledge even with no remote hosts.
-        Reading a runbook is not here — that is ``run_runbook`` in ``_action_tools``,
-        the single path to a runbook's body."""
+        Includes ``load_runbook`` (read a runbook's raw definition to inspect/edit it,
+        chat-only); ``run_runbook`` in ``_action_tools`` renders the steps to follow."""
+        from . import memory
 
         tools: list[dict[str, Any]] = [
             {
@@ -2901,14 +2902,16 @@ class AgentToolsMixin:
             {
                 "name": "save_runbook",
                 "description": (
-                    "Save a reusable runbook — a named procedure with the symptom it "
-                    "addresses and the ordered steps (which runnables to call). "
-                    "Shareable across the team via Config Sync. This both creates and "
-                    "edits: saving with an existing id updates that runbook, so to "
-                    "edit one, read it with run_runbook, change the fields, and save_runbook "
-                    "with the same id — fields you omit keep their current values. "
-                    "The operator approves every save. Propose one when a correction "
-                    "you were given would apply again next time."
+                    "Save a reusable runbook — a named procedure (symptom + ordered "
+                    "steps naming which runnables to call), shareable across the team "
+                    "via Config Sync. Creates or updates by id. TO UPDATE: pass the "
+                    "id and ONLY the fields you want to change — every field you omit "
+                    "keeps its current value (title, symptom, steps, tags, and args "
+                    "are all preserved), so a 'fix step 2' edit sends just id + steps. "
+                    "Read the current definition first with load_runbook if you need "
+                    "it. TO CREATE: pass at least a title and steps (the id is derived "
+                    "from the title if you omit it). The operator approves every save. "
+                    "Propose one when a correction you were given would apply again."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -2920,10 +2923,15 @@ class AgentToolsMixin:
                                 "existing id to edit/overwrite that runbook."
                             ),
                         },
-                        "title": {"type": "string", "description": "Human title."},
+                        "title": {
+                            "type": "string",
+                            "description": "Human title. Required to create; omit to "
+                            "leave an existing runbook's title unchanged.",
+                        },
                         "symptom": {
                             "type": "string",
-                            "description": "When to use this runbook.",
+                            "description": "When to use this runbook. Omit to leave an "
+                            "existing runbook's symptom unchanged.",
                         },
                         "steps": {
                             "description": (
@@ -2932,7 +2940,9 @@ class AgentToolsMixin:
                                 '"title"?: "…"}] — so the runbook stays readable and '
                                 "diffable in the config file; each step is free prose "
                                 "the agent follows (put any 'skip if …' logic in the "
-                                "text, not as a field). A plain string is also accepted."
+                                "text, not as a field). A plain string is also accepted. "
+                                "Required to create; omit to leave an existing "
+                                "runbook's steps unchanged."
                             ),
                             "anyOf": [
                                 {"type": "string"},
@@ -2949,26 +2959,61 @@ class AgentToolsMixin:
                                 },
                             ],
                         },
-                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Omit to leave an existing runbook's tags "
+                            "unchanged.",
+                        },
                         "args": {
                             "type": "object",
                             "description": (
-                                "Optional parameters the steps reference as {{name}}, "
-                                "as a table of name → {type, description, options, "
-                                'default}. Example: {"host": {"type": "choice", '
+                                "Parameters the steps reference as {{name}}, as a table "
+                                "of name → {type, description, options, default}. Valid "
+                                "types: str, int, float, flag, choice, path (the JSON "
+                                "spellings string/integer/number/boolean are accepted "
+                                "and mapped). An arg with no default is treated as "
+                                'required. Example: {"host": {"type": "choice", '
                                 '"options": ["web-01", "web-02"]}}. Omit to leave an '
                                 "existing runbook's parameters unchanged."
                             ),
                         },
                     },
-                    "required": ["title", "steps"],
+                    # Nothing hard-required: a create needs title + steps, an update
+                    # needs only id — enforced in the handler so a partial edit isn't
+                    # rejected by the schema for omitting fields it means to preserve.
+                    "required": [],
                 },
             },
         ]
-        # Reading a runbook is run_runbook's job (see _action_tools) — there is no
-        # separate load_runbook. Two tools returning the same steps, one gated and
-        # one not, made the ungated one the default path and left run_runbook's
-        # action_allow scoping bypassable in trigger turns.
+        runbooks = memory.list_runbooks()
+        if runbooks:
+            tools.append(
+                {
+                    "name": "load_runbook",
+                    "description": (
+                        "Read a saved runbook's raw definition by id — its title, "
+                        "symptom, tags, ordered steps (verbatim, with {{placeholders}} "
+                        "intact), and parameter table (types, options, defaults, "
+                        "required). Use this to inspect a runbook or before editing "
+                        "one: change the fields you want and call save_runbook with "
+                        "the same id. This returns the editable source and never runs "
+                        "anything — use run_runbook to actually follow the steps. "
+                        "Chat-only (not available to triggers/schedules)."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "runbook_id": {
+                                "type": "string",
+                                "enum": [s["id"] for s in runbooks],
+                                "description": "Which runbook to read.",
+                            },
+                        },
+                        "required": ["runbook_id"],
+                    },
+                }
+            )
         return tools
 
     def _action_tools(self) -> list[dict[str, Any]]:
@@ -3113,11 +3158,13 @@ class AgentToolsMixin:
                 {
                     "name": "run_runbook",
                     "description": (
-                        "Read a saved runbook by id and follow its steps as part of "
-                        "this turn — the one way to get a runbook's body. Returns "
-                        "its rendered steps for you to carry out with your other "
-                        "tools; each runnable you then call is gated as usual. Use "
-                        "it to consult a procedure as well as to run one. "
+                        "Follow a saved runbook by id now: returns its steps rendered "
+                        "for you to carry out, and each runnable you then call is gated "
+                        "as usual. `values` fills the {{placeholders}}; it is optional, "
+                        "so you can also consult a procedure without knowing its "
+                        "parameters yet — unfilled ones stay as {{name}} and are "
+                        "listed for you. To inspect or edit a runbook's raw definition "
+                        "(not run it), use load_runbook, then save_runbook. "
                         f"Available: {menu}."
                     ),
                     "input_schema": {
@@ -3578,7 +3625,11 @@ class AgentToolsMixin:
             return f"Error: no runbook with id '{rid}'."
         vals = dict(ti.get("values") or {})
         raw = runbook.get("args") if isinstance(runbook.get("args"), dict) else {}
-        errors = runbookargs.validate_runbook_values(raw, vals)
+        # Read leniently: the agent uses this to *consult / edit* a runbook as well as
+        # run one, and an arg with no default is inferred required — so demanding every
+        # required value would make an unparameterised read impossible. We still bounce
+        # a *supplied* value that's a bad choice / out of range (require=False).
+        errors = runbookargs.validate_runbook_values(raw, vals, require=False)
         if errors:
             return "Error: " + "; ".join(errors)
         body = memory.render_runbook(runbook, vals)
@@ -3592,7 +3643,27 @@ class AgentToolsMixin:
         # _tag_run_origin_runbook for why this must not be _set_run_origin.
         self._tag_run_origin_runbook(chat_id, rid)
         title = runbook.get("title") or runbook.get("id")
-        return f"Runbook '{title}' — follow these steps now using your tools:\n\n{text}"
+        out = f"Runbook '{title}' — follow these steps now using your tools:\n\n{text}"
+        # Surface the parameter interface so the agent knows what to fill (to run) or
+        # change (to edit), and flag any unfilled required {{placeholders}} still in
+        # the body rather than letting it act on a literal "{{host}}".
+        params = runbookargs.describe_runbook_params(raw)
+        if params:
+            out += f"\n\nParameters: {params}."
+            missing = [
+                str(d.get("name"))
+                for d in runbookargs.parse_runbook_args(raw)
+                if d.get("required")
+                and str(d.get("name")) not in vals
+                and str(d.get("name")).replace("-", "_") not in vals
+            ]
+            if missing:
+                out += (
+                    f"\nUnfilled: {', '.join(missing)} — appear literally as "
+                    "{{…}} above. To run this, call run_runbook again with those in "
+                    "`values`; to change the runbook, use save_runbook with this id."
+                )
+        return out
 
     def _action_run_saved_run(self, ti: dict[str, Any], chat_id: str = "") -> str:
         """Fire a saved run (the gate has already approved this call — the live
@@ -3673,6 +3744,40 @@ class AgentToolsMixin:
             return f"✗ Could not emit event: {exc}"
         return f"✓ Emitted event '{event}' into the trigger engine."
 
+    def _run_load_runbook(self, ti: dict[str, Any], chat_id: str = "") -> str:
+        """Read a runbook's raw definition as JSON, for inspecting / editing it.
+
+        Chat-only, layer 2 of the guarantee: refuse any turn whose run origin names a
+        trigger (layer 1 strips ``load_runbook`` from headless toolsets in
+        ``_filter_headless_tools``). Returns the editable source — id/title/symptom/
+        tags, the raw ``[[runbook.step]]`` rows (placeholders intact) and the args
+        table (parsed to name/type/options/default/required) — and never executes;
+        ``run_runbook`` is the path that renders the steps to follow."""
+        with self._lock:
+            origin = dict(self._run_origin.get(chat_id) or {})
+        if origin.get("trigger"):
+            return (
+                "✗ load_runbook is chat-only: a trigger- or schedule-originated turn "
+                "reads a runbook with run_runbook, which its action_allow governs."
+            )
+        from . import memory, runbookargs
+
+        rid = str(ti.get("runbook_id") or "")
+        runbook = memory.load_runbook(rid)
+        if not runbook:
+            return f"Error: no runbook with id '{rid}'."
+        raw_args = runbook.get("args") if isinstance(runbook.get("args"), dict) else {}
+        definition = {
+            "id": runbook.get("id"),
+            "title": runbook.get("title", ""),
+            "symptom": runbook.get("symptom", ""),
+            "tags": list(runbook.get("tags", []) or []),
+            "steps": memory.normalize_runbook_steps(runbook),
+            "args": runbookargs.parse_runbook_args(raw_args),
+            "discoverable": list(runbook.get("discoverable", []) or []),
+        }
+        return json.dumps({"runbook": definition}, ensure_ascii=False)
+
     def _run_memory_tool(self, name: str, ti: dict[str, Any]) -> str:
         """Execute a memory/runbook tool against the local stores (the gate has
         already cleared it as autonomous). Returns a short string the model reads."""
@@ -3697,49 +3802,65 @@ class AgentToolsMixin:
                 return "No matching memories."
             return json.dumps({"memories": hits})
         if name == "save_runbook":
-            # Read-modify-write. memory.save_runbook *replaces* the entry, so a
-            # field the agent omits would be dropped — which silently deleted an
-            # existing runbook's [runbook.args] table and its publish audience on
-            # every agent edit. Carry both forward from the current version unless
-            # explicitly supplied. (discoverable is never in the agent's schema:
-            # publishing to a room catalog stays an operator decision.)
-            existing = memory.load_runbook(str(ti.get("id") or "")) or {}
-            args = ti.get("args")
-            if args is None:
-                args = existing.get("args")
-            elif not isinstance(args, dict):
+            # Create-or-update, and crucially a **partial** update: memory.save_runbook
+            # replaces the whole entry, so every field the agent omits must be merged
+            # back from the current version — otherwise a "fix step 2" edit that sends
+            # only steps silently blanks the symptom, tags, and args. Presence is keyed
+            # on the field being *in the call* (``"x" in ti``), so an explicit ""/[]
+            # can still clear a field while omission preserves it.
+            from . import runbookargs
+
+            eff_id = str(ti.get("id") or "").strip() or memory._slug(
+                str(ti.get("title") or "")
+            )
+            existing = memory.load_runbook(eff_id) or {}
+            is_update = bool(existing)
+
+            args = ti["args"] if "args" in ti else existing.get("args")
+            if args is not None and not isinstance(args, dict):
                 return "Error: 'args' must be a table of name → {type, description, …}."
             if args:
-                from . import runbookargs
-
+                # Accept the model's JSON-schema spellings (string/integer/boolean/…)
+                # by mapping them to the runspec type names before validating.
+                args = runbookargs.normalize_arg_types(args)
                 errors = runbookargs.validate_runbook_arg_table(args)
                 if errors:
                     return "Error: invalid runbook args — " + "; ".join(errors)
-            # Steps: the agent may author an ordered list of {text, title?} rows OR a
-            # plain string. Omitting them carries the current runbook's steps forward
-            # (like args) so a symptom-only edit doesn't blank the body.
-            from . import runbookargs
 
-            steps = ti.get("steps")
-            if steps is None:
+            if "steps" in ti:
+                steps = ti["steps"]
+            else:
                 steps = existing.get("step") or existing.get("steps") or ""
             step_errors = runbookargs.validate_runbook_steps(steps)
             if step_errors:
                 return "Error: invalid runbook steps — " + "; ".join(step_errors)
+
+            title = ti["title"] if "title" in ti else existing.get("title", "")
+            symptom = ti["symptom"] if "symptom" in ti else existing.get("symptom", "")
+            tags = ti["tags"] if "tags" in ti else list(existing.get("tags", []) or [])
+
             has_body = (
                 bool(memory._coerce_steps(steps))
                 if isinstance(steps, (list, tuple))
                 else bool(str(steps or "").strip())
             )
+            if not is_update and not str(title or "").strip():
+                return "Error: a new runbook needs a title."
             if not has_body:
-                return "Error: a runbook needs a title (or an id) and steps."
+                return (
+                    "Error: a new runbook needs steps."
+                    if not is_update
+                    else "Error: a runbook can't have empty steps."
+                )
             sid = memory.save_runbook(
-                str(ti.get("id") or ""),
-                title=str(ti.get("title") or ""),
-                symptom=str(ti.get("symptom") or ""),
+                eff_id,
+                title=str(title or ""),
+                symptom=str(symptom or ""),
                 steps=steps,
-                tags=list(ti.get("tags") or []),
+                tags=list(tags or []),
                 args=args,
+                # discoverable is never in the agent's schema — publishing to a room
+                # catalog stays an operator decision — so it is always carried forward.
                 discoverable=existing.get("discoverable"),
             )
             if not sid:
@@ -3748,7 +3869,7 @@ class AgentToolsMixin:
             # the Settings editor does — otherwise an agent-saved runbook only shows
             # up after a console restart (when get_runbooks re-reads the file).
             self._dispatch("runspec:runbooks_changed", {"id": sid})
-            return f"Saved runbook '{sid}'."
+            return f"{'Updated' if is_update else 'Saved'} runbook '{sid}'."
         return f"Error: unknown tool '{name}'"
 
     def _run_custom_tool(

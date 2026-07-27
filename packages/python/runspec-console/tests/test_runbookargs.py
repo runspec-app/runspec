@@ -122,3 +122,57 @@ def test_validate_steps_rejects_unknown_key_cliff_guard():
 def test_validate_steps_non_list_non_string_rejected():
     errs = runbookargs.validate_runbook_steps({"text": "a"})
     assert errs and "list" in errs[0]
+
+
+# ── read-lenient validation + type aliases (agent read/edit ergonomics) ──────────
+
+
+def test_validate_values_require_false_skips_missing_required():
+    """Reading/consulting a runbook must not demand values for its required args (an
+    arg with no default is inferred required), but a supplied bad value still bounces."""
+    table = {
+        "app": {"type": "str", "required": True},
+        "host": {"type": "str", "required": True, "ui": "host"},
+        "filter": {"options": ["errors-only", "since-midnight"]},
+    }
+    # Nothing supplied → no errors under require=False.
+    assert runbookargs.validate_runbook_values(table, {}, require=False) == []
+    # A supplied out-of-set choice is still rejected.
+    errs = runbookargs.validate_runbook_values(table, {"filter": "nope"}, require=False)
+    assert any("filter" in e for e in errs)
+    # Strict (default) still flags the missing required args.
+    assert runbookargs.validate_runbook_values(table, {}) != []
+
+
+def test_normalize_arg_types_maps_json_spellings():
+    norm = runbookargs.normalize_arg_types(
+        {
+            "a": {"type": "string"},
+            "b": {"type": "integer"},
+            "c": {"type": "number"},
+            "d": {"type": "boolean"},
+            "e": {"type": "choice", "options": ["x"]},  # already valid, untouched
+        }
+    )
+    assert {k: v["type"] for k, v in norm.items()} == {
+        "a": "str",
+        "b": "int",
+        "c": "float",
+        "d": "bool",
+        "e": "choice",
+    }
+    # And the normalised table now passes shape validation.
+    assert runbookargs.validate_runbook_arg_table(norm) == []
+
+
+def test_describe_runbook_params_summarises_interface():
+    out = runbookargs.describe_runbook_params(
+        {
+            "host": {"type": "choice", "options": ["web-01", "web-02"]},
+            "count": {"default": 5},
+        }
+    )
+    assert "host (choice, one of: web-01|web-02, required)" in out
+    assert "count" in out and "optional" in out
+    # No params → empty string (caller omits the section).
+    assert runbookargs.describe_runbook_params({}) == ""
