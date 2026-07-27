@@ -11,8 +11,11 @@ owns when to read/write):
   the rest is fetched on demand via `search_memory` (stdlib token-overlap scoring —
   no embedding dependency). Never synced.
 - **Runbooks** (`runspec_runbooks.toml`, shareable): operator/agent-authored runbooks
-  (`symptom` → ordered `steps` naming which runnables to call). A `[[runbook]]`
-  collection so it rides the existing Config Sync (merged by `id`).
+  (`symptom` → ordered steps naming which runnables to call). A `[[runbook]]`
+  collection so it rides the existing Config Sync (merged by `id`). Steps are stored
+  as an ordered `[[runbook.step]]` array-of-tables (`text` + optional `title`), so the
+  file stays readable/diffable; a legacy single `steps` string is still read. Either
+  form renders to numbered prose via `render_runbook` — execution is prose-only.
 
 Writes are atomic-ish (temp file + replace) under a re-entrant lock, mirroring
 ``config.py``. Both files use ``tomli_w`` so arrays-of-tables / lists / bools / ints
@@ -259,20 +262,30 @@ def save_runbook(
     *,
     title: str,
     symptom: str = "",
-    steps: str = "",
+    steps: str | list[dict[str, Any]] | None = "",
     tags: list[str] | tuple[str, ...] = (),
     args: dict[str, Any] | None = None,
     discoverable: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     """Create or replace a runbook by id (slugified from title when blank). Returns
-    the id. ``steps`` is the body/prompt template (free text naming which runnables
-    to call, with ``{{name}}`` placeholders that map to ``args``). A step may name a
-    **host group** instead of a single host (e.g. "run restart-service on the
-    Production group") — the agent passes the group name as ``run_runnable``'s host
-    to fan the run out across every member behind one grouped confirm. ``args`` is
-    an optional ``[runbook.args]`` table using the exact runspec arg grammar — see
-    ``runbookargs.py`` for how it is parsed/validated/rendered (the same core machinery
-    runnable forms use)."""
+    the id. ``steps`` is the body/prompt the agent follows (free text naming which
+    runnables to call, with ``{{name}}`` placeholders that map to ``args``). It is
+    stored one of two ways:
+
+    - a **list** of ``{"text": ..., "title"?: ...}`` rows → persisted as an ordered
+      ``[[runbook.step]]`` array-of-tables (the readable, diffable form), and the
+      legacy ``steps`` string key is dropped;
+    - a **string** → persisted as the legacy ``steps`` key unchanged (so agent
+      free-text authors and existing seeds are undisturbed — auto-splitting prose
+      would risk lossy re-numbering).
+
+    A step may name a **host group** instead of a single host (e.g. "run
+    restart-service on the Production group") — the agent passes the group name as
+    ``run_runnable``'s host to fan the run out across every member behind one grouped
+    confirm. ``args`` is an optional ``[runbook.args]`` table using the exact runspec
+    arg grammar — see ``runbookargs.py`` for how it is parsed/validated/rendered (the
+    same core machinery runnable forms use). Either way ``render_runbook`` turns the
+    stored steps back into numbered prose at run time."""
     runbook_id = (runbook_id or "").strip() or _slug(title)
     if not runbook_id:
         return ""
@@ -280,10 +293,16 @@ def save_runbook(
         "id": runbook_id,
         "title": (title or "").strip(),
         "symptom": (symptom or "").strip(),
-        "steps": (steps or "").strip(),
         "tags": [str(t).strip() for t in tags if str(t).strip()],
         "updated": _now(),
     }
+    # Structured rows → the ``[[runbook.step]]`` array (no legacy string key); a
+    # string → the legacy ``steps`` key. Because the entry is rebuilt fresh and
+    # replaces the old one by id, whichever key we omit is naturally dropped.
+    if isinstance(steps, (list, tuple)):
+        entry["step"] = _coerce_steps(steps)
+    else:
+        entry["steps"] = (steps or "").strip()
     # Only persist a non-empty args table — keeps param-less runbooks clean and the
     # TOML free of empty `[runbook.args]` tables.
     if args:
@@ -300,6 +319,78 @@ def save_runbook(
         rows.append(entry)
         _save(runbooks_path(), "runbook", rows)
     return runbook_id
+
+
+# ── steps: structured ⇄ legacy string ────────────────────────────────────────────
+
+# Splits a legacy free-text body into rows on lines that begin with a step number
+# ("1. ", "2) ", …). Editor convenience only — never used by rendering.
+_STEP_LINE = re.compile(r"^\s*\d+[.)]\s+(.*)$")
+
+
+def _coerce_steps(steps: Any) -> list[dict[str, str]]:
+    """Clean a list of step rows → ``[{"text": ..., "title"?: ...}]``, dropping rows
+    with no ``text``. Only ``title``/``text`` are carried — no per-step machine field
+    is ever stored (that would cross the "no workflow engine" cliff)."""
+    rows: list[dict[str, str]] = []
+    for item in steps or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        row: dict[str, str] = {"text": text}
+        title = str(item.get("title") or "").strip()
+        if title:
+            row["title"] = title
+        rows.append(row)
+    return rows
+
+
+def normalize_runbook_steps(entry: dict[str, Any]) -> list[dict[str, str]]:
+    """A runbook's steps as canonical rows for the editor UI — ``[{"text", "title"?}]``.
+
+    From the ``[[runbook.step]]`` array when present; otherwise a best-effort split of
+    the legacy ``steps`` string on leading step-number lines (falling back to a single
+    row when it isn't numbered). Display/edit convenience only — rendering uses
+    ``render_runbook`` so legacy prose fidelity is untouched."""
+    step = entry.get("step")
+    if isinstance(step, list) and step:
+        return _coerce_steps(step)
+    body = str(entry.get("steps") or "").strip()
+    if not body:
+        return []
+    rows: list[dict[str, str]] = []
+    for line in body.splitlines():
+        m = _STEP_LINE.match(line)
+        if m:
+            rows.append({"text": m.group(1).strip()})
+        elif rows:
+            # A continuation line of the current step (preserve intra-step newlines).
+            rows[-1]["text"] = (rows[-1]["text"] + "\n" + line.strip()).strip()
+        else:
+            rows.append({"text": line.strip()})
+    # No numbered lines at all → keep the body as one step rather than one row per line.
+    if not any(_STEP_LINE.match(line) for line in body.splitlines()):
+        return [{"text": body}]
+    return [r for r in rows if r["text"]]
+
+
+def _steps_to_prose(step: list[dict[str, Any]]) -> str:
+    """Join a ``[[runbook.step]]`` array into the numbered prose the agent follows:
+    ``"1. text"`` per step, or ``"1. Title: text"`` when a step has a ``title``."""
+    lines: list[str] = []
+    n = 0
+    for item in step:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        n += 1
+        title = str(item.get("title") or "").strip()
+        lines.append(f"{n}. {title}: {text}" if title else f"{n}. {text}")
+    return "\n".join(lines)
 
 
 # ── body rendering ──────────────────────────────────────────────────────────────
@@ -323,6 +414,20 @@ def render_runbook_body(steps: str, values: dict[str, Any]) -> str:
         return "" if v is None else str(v)
 
     return _PLACEHOLDER.sub(_sub, steps or "")
+
+
+def render_runbook(entry: dict[str, Any], values: dict[str, Any]) -> str:
+    """Render a runbook's body to the numbered prose handed to the agent turn.
+
+    Structured ``[[runbook.step]]`` array → joined to ``"1. …\\n2. …"`` then run
+    through ``render_runbook_body`` for ``{{placeholder}}`` substitution. A legacy
+    ``steps`` string → ``render_runbook_body`` directly (byte-identical to before, no
+    renumbering). Execution stays prose-only either way — this is the sole place a
+    step array becomes anything other than text."""
+    step = entry.get("step")
+    if isinstance(step, list) and step:
+        return render_runbook_body(_steps_to_prose(step), values)
+    return render_runbook_body(str(entry.get("steps") or ""), values)
 
 
 def _slug(text: str) -> str:

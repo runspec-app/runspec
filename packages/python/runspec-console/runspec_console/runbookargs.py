@@ -89,6 +89,49 @@ def validate_runbook_arg_table(table: Any) -> list[str]:
     return errors
 
 
+# A runbook step carries only free prose: a required ``text`` and an optional
+# ``title``. This allowlist is the "no workflow engine" cliff guard — a per-step
+# machine-control key (``condition``/``goto``/``when``/``depends_on``/…) would turn
+# the flat step list into branching / step-result piping, which is out of scope by
+# design (see ``docs/design/console-triggers.md`` §1). Reject anything else here.
+_STEP_KEYS = frozenset({"text", "title"})
+
+
+def validate_runbook_steps(steps: Any) -> list[str]:
+    """Validate the *shape* of a runbook's structured steps. Returns human-readable
+    error messages ([] = valid).
+
+    A ``None``/``str`` body is always shape-valid here (the legacy string form; its
+    emptiness is checked by the caller, as before). A list must contain step tables,
+    each with a non-empty ``text`` string and an optional string ``title`` — and **no
+    other keys** (the cliff guard: steps stay free prose, never a mini state machine)."""
+    if steps is None or isinstance(steps, str):
+        return []
+    if not isinstance(steps, (list, tuple)):
+        return ["steps must be an ordered list of { text, title } tables"]
+    errors: list[str] = []
+    for i, row in enumerate(steps, start=1):
+        if not isinstance(row, dict):
+            errors.append(f'step {i}: must be a table (e.g. {{ text = "…" }})')
+            continue
+        text = row.get("text")
+        if not isinstance(text, str) or not text.strip():
+            errors.append(
+                f"step {i}: 'text' is required and must be a non-empty string"
+            )
+        title = row.get("title")
+        if title is not None and not isinstance(title, str):
+            errors.append(f"step {i}: 'title' must be a string")
+        extra = sorted(set(row) - _STEP_KEYS)
+        if extra:
+            errors.append(
+                f"step {i}: unexpected key(s) {', '.join(extra)} — a step carries only "
+                "'text' and 'title' (runbooks describe steps in prose; conditions/"
+                "branching are the agent's judgement, not fields)"
+            )
+    return errors
+
+
 def validate_runbook_values(
     table: dict[str, Any] | None, values: dict[str, Any]
 ) -> list[str]:

@@ -472,7 +472,9 @@ class InvokeMixin:
     def get_runbooks(self) -> list[dict[str, Any]]:
         """All runbooks with their ``[runbook.args]`` table parsed to the same ``ArgDef``
         shape runnable forms use — feeds the `$` runbooks menu, the run modal, and the
-        Settings editor. ``argsRaw`` is the stored table for faithful editor round-trip."""
+        Settings editor. ``steps`` is the ordered list of ``{text, title?}`` rows
+        (normalised from the ``[[runbook.step]]`` array, or best-effort-split from a
+        legacy string). ``argsRaw`` is the stored table for faithful editor round-trip."""
         from . import memory, runbookargs
 
         out: list[dict[str, Any]] = []
@@ -484,7 +486,7 @@ class InvokeMixin:
                 "id": s.get("id"),
                 "title": s.get("title", ""),
                 "symptom": s.get("symptom", ""),
-                "steps": s.get("steps", ""),
+                "steps": memory.normalize_runbook_steps(s),
                 "tags": list(s.get("tags", []) or []),
                 "discoverable": list(s.get("discoverable", []) or []),
                 "updated": s.get("updated", ""),
@@ -524,16 +526,28 @@ class InvokeMixin:
                         "ok": False,
                         "error": f"Runbook '{sid}': " + "; ".join(errors),
                     }
+            steps = r.get("steps")
+            step_errors = runbookargs.validate_runbook_steps(steps)
+            if step_errors:
+                return {
+                    "ok": False,
+                    "error": f"Runbook '{sid}': " + "; ".join(step_errors),
+                }
             entry: dict[str, Any] = {
                 "id": sid,
                 "title": str(r.get("title") or "").strip(),
                 "symptom": str(r.get("symptom") or "").strip(),
-                "steps": str(r.get("steps") or "").strip(),
                 "tags": [
                     str(t).strip() for t in (r.get("tags") or []) if str(t).strip()
                 ],
                 "updated": memory._now(),
             }
+            # The editor sends an ordered list of ``{text, title?}`` rows → store the
+            # readable ``[[runbook.step]]`` array; tolerate a legacy string too.
+            if isinstance(steps, (list, tuple)):
+                entry["step"] = memory._coerce_steps(steps)
+            else:
+                entry["steps"] = str(steps or "").strip()
             if raw:
                 entry["args"] = dict(raw)
             # The publish audience (which queue catalogs offer this runbook); opt-in,
@@ -567,7 +581,7 @@ class InvokeMixin:
         errors = runbookargs.validate_runbook_values(raw, vals)
         if errors:
             return {"error": "\n".join(errors)}
-        body = memory.render_runbook_body(str(runbook.get("steps") or ""), vals)
+        body = memory.render_runbook(runbook, vals)
         extra = str(extra_instructions or "").strip()
         message = f"{body}\n\n{extra}".strip() if extra else body.strip()
         if not message:

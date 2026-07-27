@@ -137,6 +137,35 @@ def test_default_runbook_toml_round_trips():
     assert parsed["runbook"][0]["tags"] == ["docs", "self-service"]
 
 
+def test_default_runbook_toml_emits_step_array():
+    """The paste-able wiki example now teaches the [[runbook.step]] form."""
+    block = docsgen._runbook_to_toml(docsgen.DEFAULT_RUNBOOK)
+    assert "[[runbook.step]]" in block
+    assert "steps = " not in block  # not the legacy string key
+
+
+def test_structured_runbook_page_renders_numbered_prose_and_cross_links():
+    """A [[runbook.step]] runbook renders numbered ## Steps prose and still resolves
+    the runnable/host tokens named inside a step."""
+    runbooks = [
+        {
+            "id": "web-triage",
+            "title": "Web triage",
+            "symptom": "502s",
+            "step": [
+                {"text": "Check web1 status."},
+                {"title": "Bounce", "text": "Run web1__restart-nginx to bounce it."},
+            ],
+            "tags": ["web"],
+        }
+    ]
+    page = docsgen.render_wiki(runbooks, HOSTS)["runbooks/web-triage.md"]
+    assert "1. Check web1 status." in page
+    assert "2. Bounce: Run web1__restart-nginx to bounce it." in page
+    assert "`web1__restart-nginx`" in page  # runnable token from a step
+    assert "[`web1`](../hosts.md)" in page  # host referenced in a step
+
+
 def test_index_groups_by_tag_and_untagged():
     readme = docsgen.render_wiki(SKILLS, HOSTS)["README.md"]
     assert "### outage" in readme

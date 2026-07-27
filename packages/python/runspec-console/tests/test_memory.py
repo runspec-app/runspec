@@ -130,6 +130,88 @@ def test_render_runbook_body(mem):
     assert out == "get web on h1 x5 on=true miss={{nope}}"
 
 
+def test_render_runbook_structured_array(mem):
+    """A [[runbook.step]] array renders to numbered prose with {{placeholders}} filled;
+    a title becomes an inline `N. Title: text` prefix."""
+    entry = {
+        "id": "x",
+        "step": [
+            {"text": "probe {{host}}"},
+            {"title": "Restart", "text": "restart {{host}}"},
+        ],
+    }
+    out = mem.render_runbook(entry, {"host": "web-01"})
+    assert out == "1. probe web-01\n2. Restart: restart web-01"
+
+
+def test_render_runbook_legacy_string_is_byte_identical(mem):
+    """The legacy `steps` string path must render exactly as render_runbook_body did —
+    no renumbering, no reshaping."""
+    entry = {"id": "x", "steps": "1. do a on {{host}}\n2. do b"}
+    vals = {"host": "h1"}
+    assert mem.render_runbook(entry, vals) == mem.render_runbook_body(
+        entry["steps"], vals
+    )
+
+
+def test_render_runbook_prefers_array_over_legacy_string(mem):
+    """When both keys somehow exist, the structured array wins."""
+    entry = {"id": "x", "step": [{"text": "new"}], "steps": "old"}
+    assert mem.render_runbook(entry, {}) == "1. new"
+
+
+def test_normalize_runbook_steps_splits_and_falls_back(mem):
+    # Structured array → cleaned rows verbatim.
+    assert mem.normalize_runbook_steps(
+        {"step": [{"text": "a"}, {"title": "T", "text": "b"}]}
+    ) == [{"text": "a"}, {"text": "b", "title": "T"}]
+    # Legacy numbered string → one row per numbered step.
+    assert mem.normalize_runbook_steps({"steps": "1. a\n2. b"}) == [
+        {"text": "a"},
+        {"text": "b"},
+    ]
+    # Unnumbered string → a single row (never one row per line).
+    assert mem.normalize_runbook_steps({"steps": "blob\nmore"}) == [
+        {"text": "blob\nmore"}
+    ]
+    # Empty → no rows.
+    assert mem.normalize_runbook_steps({}) == []
+
+
+def test_save_runbook_list_writes_step_array(mem):
+    """Saving a list of rows persists a [[runbook.step]] array and drops the legacy
+    `steps` string key."""
+    sid = mem.save_runbook(
+        "web-triage",
+        title="Web triage",
+        steps=[{"text": "probe"}, {"title": "Fix", "text": "restart"}, {"text": "  "}],
+    )
+    full = mem.load_runbook(sid)
+    assert "steps" not in full
+    # The blank row is dropped; title kept only where present.
+    assert full["step"] == [
+        {"text": "probe"},
+        {"text": "restart", "title": "Fix"},
+    ]
+
+
+def test_save_runbook_string_keeps_legacy_key(mem):
+    """A string save stays a legacy `steps` string (no lossy auto-split)."""
+    sid = mem.save_runbook("legacy", title="Legacy", steps="1. a\n2. b")
+    full = mem.load_runbook(sid)
+    assert full["steps"] == "1. a\n2. b"
+    assert "step" not in full
+
+
+def test_structured_steps_survive_config_sync_merge(mem):
+    """A runbook's nested [[runbook.step]] array rides the by-id merge unchanged."""
+    from runspec_console import configmerge
+
+    incoming = [{"id": "team", "title": "Team", "step": [{"text": "do a"}]}]
+    merged = {e["id"]: e for e in configmerge.merge_collection([], incoming, "id", [])}
+    assert merged["team"]["step"] == [{"text": "do a"}]
+
+
 def test_runbook_args_survive_config_sync_merge(mem):
     """Runbooks merge by id through configmerge — the nested args table travels with
     the entry (adding from the repo, keeping the operator's own runbooks)."""
@@ -309,6 +391,80 @@ def test_agent_can_author_and_replace_runbook_args(tmp_path, monkeypatch):
         },
     )
     assert memory.load_runbook("fetch-logs")["args"] == {"path": {"type": "path"}}
+
+
+def test_agent_can_author_structured_step_array(tmp_path, monkeypatch):
+    """The agent's save_runbook accepts the new [[runbook.step]] array form and
+    persists it as an array (not a legacy string) — proving the model can write the
+    readable form its schema tells it to prefer."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    # The schema offers steps as string-or-array of {text, title?}.
+    schema = next(t for t in b._memory_tools() if t["name"] == "save_runbook")
+    steps_schema = schema["input_schema"]["properties"]["steps"]
+    assert "anyOf" in steps_schema
+    array_variant = next(v for v in steps_schema["anyOf"] if v["type"] == "array")
+    assert array_variant["items"]["required"] == ["text"]
+
+    out = b._run_memory_tool(
+        "save_runbook",
+        {
+            "title": "Web triage",
+            "steps": [
+                {"text": "Probe web-01__http-check."},
+                {"title": "Restart", "text": "Run {{host}}__restart-service."},
+            ],
+        },
+    )
+    assert out.startswith("Saved runbook")
+    saved = memory.load_runbook("web-triage")
+    # Persisted as the structured array, no legacy string key.
+    assert "steps" not in saved
+    assert saved["step"] == [
+        {"text": "Probe web-01__http-check."},
+        {"text": "Run {{host}}__restart-service.", "title": "Restart"},
+    ]
+    # And it renders to the numbered prose the agent would follow.
+    assert memory.render_runbook(saved, {"host": "web-01"}) == (
+        "1. Probe web-01__http-check.\n2. Restart: Run web-01__restart-service."
+    )
+
+
+def test_agent_steps_omitted_edit_preserves_step_array(tmp_path, monkeypatch):
+    """Editing another field (steps omitted) keeps the structured step array — the
+    same carry-forward that protects args/discoverable."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    memory.save_runbook(
+        "web-triage",
+        title="Web triage",
+        steps=[{"text": "probe"}, {"title": "Fix", "text": "restart"}],
+    )
+    # Agent edits only the symptom; it omits steps.
+    b._run_memory_tool(
+        "save_runbook",
+        {"id": "web-triage", "title": "Web triage", "symptom": "502s after deploy"},
+    )
+    after = memory.load_runbook("web-triage")
+    assert after["symptom"] == "502s after deploy"
+    assert after["step"] == [{"text": "probe"}, {"text": "restart", "title": "Fix"}]
+    assert "steps" not in after
+
+
+def test_agent_rejects_step_with_machine_control_key(tmp_path, monkeypatch):
+    """The cliff guard reaches the agent path: a step carrying a condition/goto-style
+    key bounces with a readable reason and writes nothing."""
+    b = _runbook_tool_stub(tmp_path, monkeypatch)
+    from runspec_console import memory
+
+    out = b._run_memory_tool(
+        "save_runbook",
+        {"title": "Bad", "steps": [{"text": "go", "condition": "exit != 0"}]},
+    )
+    assert out.startswith("Error: invalid runbook steps")
+    assert memory.load_runbook("bad") is None
 
 
 def test_agent_runbook_args_validation_errors_are_returned(tmp_path, monkeypatch):

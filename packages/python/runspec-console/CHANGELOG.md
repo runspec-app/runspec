@@ -8,6 +8,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.212.0] — 2026-07-27
+
+### Added
+- **Structured runbook steps (`[[runbook.step]]`).** A runbook's steps are now an
+  ordered array-of-tables — each step its own block with the prose the agent
+  follows (`text`) and an optional short `title` — instead of a single long
+  `steps = """…"""` string. This keeps `runspec_runbooks.toml` readable and
+  diffable in a Config-Sync repo or config seed, where the old blob was hard to
+  create, edit, and review. The **Settings → Runbooks** editor gains an ordered
+  "Add step" list with per-step reorder/remove, and the agent's `save_runbook`
+  tool can author the array too.
+- Execution is **unchanged and stays prose-only**: at run time the steps render
+  back to numbered prose (`memory.render_runbook`) and go to the agent exactly as
+  before — the agent still judges ordering and any conditional skipping (write
+  *"skip if healthy"* in a step). A step carries only `text`/`title`; per-step
+  `condition`/`goto`/reference fields are rejected (`validate_runbook_steps`), so
+  the change stays under the "no workflow engine" cliff.
+
+### Compatibility
+- The legacy single `steps` string is **still read** and runs identically; no
+  auto-migration. Opening a legacy runbook in the editor best-effort-splits it
+  into rows, and saving converts it to the `[[runbook.step]]` form. Runbooks
+  merge by `id` in Config Sync, so the nested step array rides along unchanged.
+
+
 ## [0.211.0] — 2026-07-27
 
 ### Added

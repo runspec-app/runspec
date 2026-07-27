@@ -965,7 +965,7 @@ class TriggersMixin:
         if errors:
             self._portal_fail(request_id, source, "; ".join(errors))
             return
-        body = memory.render_runbook_body(str(runbook.get("steps") or ""), values)
+        body = memory.render_runbook(runbook, values)
         if not body.strip():
             self._portal_fail(
                 request_id, source, f"runbook '{label}' has an empty body"

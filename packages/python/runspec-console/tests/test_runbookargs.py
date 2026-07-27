@@ -78,3 +78,47 @@ def test_validate_skips_path_coercion():
         )
         == []
     )
+
+
+# ── structured steps (the [[runbook.step]] array) ────────────────────────────────
+
+
+def test_validate_steps_accepts_rows():
+    assert (
+        runbookargs.validate_runbook_steps([{"text": "a"}, {"text": "b", "title": "T"}])
+        == []
+    )
+
+
+def test_validate_steps_accepts_legacy_string_and_none():
+    # The legacy string form and an absent body are shape-valid here (emptiness is a
+    # caller concern), so an old runbook never trips the new check.
+    assert runbookargs.validate_runbook_steps("1. do a\n2. do b") == []
+    assert runbookargs.validate_runbook_steps(None) == []
+
+
+def test_validate_steps_requires_non_empty_text():
+    errs = runbookargs.validate_runbook_steps([{"text": "  "}])
+    assert any("text" in e for e in errs)
+
+
+def test_validate_steps_row_must_be_a_table():
+    errs = runbookargs.validate_runbook_steps(["just a string"])
+    assert any("table" in e for e in errs)
+
+
+def test_validate_steps_title_must_be_string():
+    errs = runbookargs.validate_runbook_steps([{"text": "a", "title": 3}])
+    assert any("title" in e for e in errs)
+
+
+def test_validate_steps_rejects_unknown_key_cliff_guard():
+    """A per-step machine-control key (condition/goto/…) would be branching /
+    step-result piping — out of scope. It must be rejected, not silently stored."""
+    errs = runbookargs.validate_runbook_steps([{"text": "a", "condition": "x > 1"}])
+    assert any("condition" in e for e in errs)
+
+
+def test_validate_steps_non_list_non_string_rejected():
+    errs = runbookargs.validate_runbook_steps({"text": "a"})
+    assert errs and "list" in errs[0]

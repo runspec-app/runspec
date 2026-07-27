@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -3176,11 +3176,42 @@ interface RunbookFormValues {
   title: string
   symptom?: string
   tags?: string[]
-  steps: string
+  steps: RunbookStep[]
   args?: RunbookArgRow[]
 }
 
 const RUNBOOK_ARG_TYPES = ['str', 'int', 'float', 'flag', 'choice', 'path', 'host']
+
+// Normalise a runbook's steps into editor rows. get_runbooks already returns
+// structured rows, but tolerate a legacy string (best-effort split on "1." / "2)"
+// lines, falling back to a single row) so an old value never breaks the editor.
+function stepsToRows(steps: RunbookStep[] | string | undefined): RunbookStep[] {
+  if (Array.isArray(steps)) return steps.map(s => ({ text: s.text ?? '', title: s.title }))
+  const body = (steps ?? '').trim()
+  if (!body) return []
+  const lines = body.split('\n')
+  if (!lines.some(l => /^\s*\d+[.)]\s+/.test(l))) return [{ text: body }]
+  const rows: RunbookStep[] = []
+  for (const line of lines) {
+    const m = line.match(/^\s*\d+[.)]\s+(.*)$/)
+    if (m) rows.push({ text: m[1].trim() })
+    else if (rows.length) rows[rows.length - 1].text = `${rows[rows.length - 1].text}\n${line.trim()}`.trim()
+    else rows.push({ text: line.trim() })
+  }
+  return rows.filter(r => r.text)
+}
+
+// Editor rows → the payload steps: drop blank rows, drop an empty title.
+function rowsToSteps(rows: RunbookStep[] | undefined): RunbookStep[] {
+  const out: RunbookStep[] = []
+  for (const row of rows ?? []) {
+    const text = (row?.text ?? '').trim()
+    if (!text) continue
+    const title = (row?.title ?? '').trim()
+    out.push(title ? { title, text } : { text })
+  }
+  return out
+}
 
 function argsRawToRows(raw: Record<string, unknown> | undefined): RunbookArgRow[] {
   if (!raw) return []
@@ -3238,11 +3269,11 @@ function RunbooksTab() {
     return () => window.removeEventListener('runspec:runbooks_changed', onChanged)
   }, [load])
 
-  const startAdd = () => { form.resetFields(); form.setFieldsValue({ args: [] }); setEditingKey('') }
+  const startAdd = () => { form.resetFields(); form.setFieldsValue({ args: [], steps: [{ text: '' }] }); setEditingKey('') }
   const startEdit = (s: Runbook) => {
     form.setFieldsValue({
       id: s.id, title: s.title, symptom: s.symptom, tags: s.tags ?? [],
-      steps: s.steps, args: argsRawToRows(s.argsRaw),
+      steps: stepsToRows(s.steps), args: argsRawToRows(s.argsRaw),
     })
     setEditingKey(s.id)
   }
@@ -3262,11 +3293,13 @@ function RunbooksTab() {
   const save = async () => {
     const values = await form.validateFields()
     const id = (values.id ?? '').trim()
+    const steps = rowsToSteps(values.steps)
+    if (steps.length === 0) { message.error('Add at least one step'); return }
     const edited: Record<string, unknown> = {
       id,
       title: (values.title ?? '').trim(),
       symptom: (values.symptom ?? '').trim(),
-      steps: (values.steps ?? '').trim(),
+      steps,
       tags: values.tags ?? [],
       argsRaw: rowsToArgsRaw(values.args),
     }
@@ -3346,11 +3379,38 @@ function RunbooksTab() {
           <Form.Item name="tags" label="Tags">
             <Select mode="tags" placeholder="logs, relay" tokenSeparators={[',']} />
           </Form.Item>
-          <Form.Item name="steps" label="Body / steps" rules={[{ required: true, message: 'Required' }]}
-            help="Free text the assistant follows. Reference parameters as {{name}}.">
-            <Input.TextArea rows={6} style={{ fontFamily: 'monospace', fontSize: 12 }}
-              placeholder={'1. Use list-app-folders on {{host}} for {{app}}.\n2. Relay /srv/prod/{{app}}/logs/{{logfile}} via filter {{filter}} to jump-01:/home/me/logs.\n3. Run process-log --file /home/Jason/logs/{{logfile}}.'} />
-          </Form.Item>
+          <Divider style={{ margin: '8px 0' }} orientation="left" plain>Steps</Divider>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginBottom: 8 }}>
+            One step per box, in order — the assistant follows them as numbered prose and
+            uses its own judgement (e.g. write “if the node is healthy, skip the restart”
+            right in a step). Reference parameters as <Typography.Text code>{'{{name}}'}</Typography.Text>.
+          </Typography.Paragraph>
+          <Form.List name="steps">
+            {(fields, { add, remove, move }) => (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+                {fields.map((field, index) => (
+                  <div key={field.key} style={{ border: '1px solid #2a2a2a', borderRadius: 6, padding: 8 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: 'var(--rs-text-muted)', minWidth: 52 }}>Step {index + 1}</span>
+                      <Form.Item name={[field.name, 'title']} noStyle>
+                        <Input size="small" placeholder="Optional title" />
+                      </Form.Item>
+                      <Tooltip title="Move up"><Button type="text" size="small" icon={<UpOutlined />} disabled={index === 0} onClick={() => move(index, index - 1)} /></Tooltip>
+                      <Tooltip title="Move down"><Button type="text" size="small" icon={<DownOutlined />} disabled={index === fields.length - 1} onClick={() => move(index, index + 1)} /></Tooltip>
+                      <MinusCircleOutlined onClick={() => remove(field.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+                    </div>
+                    <Form.Item name={[field.name, 'text']} noStyle rules={[{ required: true, whitespace: true, message: 'Step text is required' }]}>
+                      <Input.TextArea autoSize={{ minRows: 2 }} style={{ fontFamily: 'monospace', fontSize: 12 }}
+                        placeholder={'Relay /srv/prod/{{app}}/logs/{{logfile}} via filter {{filter}} to jump-01:/home/me/logs.'} />
+                    </Form.Item>
+                  </div>
+                ))}
+                <Button type="dashed" size="small" onClick={() => add({ text: '' })} icon={<PlusOutlined />}>
+                  Add step
+                </Button>
+              </div>
+            )}
+          </Form.List>
 
           <Divider style={{ margin: '8px 0' }} orientation="left" plain>Parameters</Divider>
           <Form.List name="args">

@@ -2926,8 +2926,28 @@ class AgentToolsMixin:
                             "description": "When to use this runbook.",
                         },
                         "steps": {
-                            "type": "string",
-                            "description": "Ordered steps, naming which runnables to call.",
+                            "description": (
+                                "The ordered steps naming which runnables to call. "
+                                'Prefer an array of step objects — [{"text": "…", '
+                                '"title"?: "…"}] — so the runbook stays readable and '
+                                "diffable in the config file; each step is free prose "
+                                "the agent follows (put any 'skip if …' logic in the "
+                                "text, not as a field). A plain string is also accepted."
+                            ),
+                            "anyOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "text": {"type": "string"},
+                                            "title": {"type": "string"},
+                                        },
+                                        "required": ["text"],
+                                    },
+                                },
+                            ],
                         },
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "args": {
@@ -3561,7 +3581,7 @@ class AgentToolsMixin:
         errors = runbookargs.validate_runbook_values(raw, vals)
         if errors:
             return "Error: " + "; ".join(errors)
-        body = memory.render_runbook_body(str(runbook.get("steps") or ""), vals)
+        body = memory.render_runbook(runbook, vals)
         extra = str(ti.get("extra_instructions") or "").strip()
         text = f"{body}\n\n{extra}".strip() if extra else body.strip()
         if not text:
@@ -3695,11 +3715,29 @@ class AgentToolsMixin:
                 errors = runbookargs.validate_runbook_arg_table(args)
                 if errors:
                     return "Error: invalid runbook args — " + "; ".join(errors)
+            # Steps: the agent may author an ordered list of {text, title?} rows OR a
+            # plain string. Omitting them carries the current runbook's steps forward
+            # (like args) so a symptom-only edit doesn't blank the body.
+            from . import runbookargs
+
+            steps = ti.get("steps")
+            if steps is None:
+                steps = existing.get("step") or existing.get("steps") or ""
+            step_errors = runbookargs.validate_runbook_steps(steps)
+            if step_errors:
+                return "Error: invalid runbook steps — " + "; ".join(step_errors)
+            has_body = (
+                bool(memory._coerce_steps(steps))
+                if isinstance(steps, (list, tuple))
+                else bool(str(steps or "").strip())
+            )
+            if not has_body:
+                return "Error: a runbook needs a title (or an id) and steps."
             sid = memory.save_runbook(
                 str(ti.get("id") or ""),
                 title=str(ti.get("title") or ""),
                 symptom=str(ti.get("symptom") or ""),
-                steps=str(ti.get("steps") or ""),
+                steps=steps,
                 tags=list(ti.get("tags") or []),
                 args=args,
                 discoverable=existing.get("discoverable"),

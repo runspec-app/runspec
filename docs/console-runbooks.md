@@ -41,22 +41,44 @@ id = "web-502-triage"
 title = "Triage 502s on the web tier"
 symptom = "Web nodes returning 502s after a deploy"
 tags = ["web", "incident"]
-steps = """
-1. Probe each node: web-01__http-check and web-02__http-check.
-2. For any unhealthy node, run {{host}}__restart-service --name nginx.
-3. Re-run http-check and confirm 200s before resolving.
-"""
+
+[[runbook.step]]
+text = "Probe each node: web-01__http-check and web-02__http-check."
+
+[[runbook.step]]
+title = "Restart unhealthy nodes"
+text = "For any unhealthy node, run {{host}}__restart-service --name nginx."
+
+[[runbook.step]]
+text = "Re-run http-check and confirm 200s before resolving."
 
 [runbook.args]
 host = { type = "choice", options = ["web-01", "web-02"], description = "Node to act on" }
 ```
 
-`steps` is a prompt template the agent follows: `web-01__http-check` is the
-`host__runnable` tool token it calls (a step can also name a
-[host group](console-hosts.md#groups) to fan out), and `{{host}}` is filled
-from the `[runbook.args]` table — which uses the **same argument grammar** as
-a `runspec.toml`, so choices, defaults, and types all work. Every runnable a
-runbook drives still goes through the normal autonomy gate.
+Steps are an ordered `[[runbook.step]]` array — each step its own block with the
+prose the agent follows (`text`) and an optional short `title`. This keeps the
+file readable and diffable in your Config-Sync repo instead of one long quoted
+string. At run time the console renders the steps back to numbered prose
+(`1. …`, `2. Restart unhealthy nodes: …`) and hands it to the agent, so a step
+is just an instruction: `web-01__http-check` is the `host__runnable` tool token
+it calls (a step can also name a [host group](console-hosts.md#groups) to fan
+out), and `{{host}}` is filled from the `[runbook.args]` table — which uses the
+**same argument grammar** as a `runspec.toml`, so choices, defaults, and types
+all work. Every runnable a runbook drives still goes through the normal autonomy
+gate.
+
+Because the agent judges the steps (rather than a workflow engine executing
+them), conditional logic lives in the prose — write *"if the node is healthy,
+skip the restart"* right in a step. A step carries only `text` and `title`; there
+are deliberately no `condition`/`goto`/step-reference fields (that would be a
+[workflow engine](design/console-triggers.md), which is out of scope).
+
+!!! note "Legacy `steps` string"
+    Older runbooks used a single `steps = """…"""` string instead of the
+    `[[runbook.step]]` array. That form is still read and runs identically; open
+    such a runbook in **Settings → Runbooks** and save it to convert it to the
+    ordered-step form.
 
 ## How the agent finds one
 

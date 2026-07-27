@@ -35,11 +35,20 @@ export interface Runnable {
 // A user-invocable, parameterized runbook (the `$` runbooks menu + Runbooks settings
 // tab). Its `args` are a real runspec `[runbook.args]` table — parsed server-side to
 // the same ArgDef shape a runnable form uses, so the run modal reuses ArgInput.
+// One step of a runbook: free prose the agent follows (with {{name}} placeholders).
+// Only text + optional title — a step never carries a machine condition/goto field
+// (that would cross the "no workflow engine" cliff); skip/branch logic lives in the
+// prose and is the agent's judgement.
+export interface RunbookStep {
+  title?: string
+  text: string
+}
+
 export interface Runbook {
   id: string
   title: string
   symptom: string          // "when to use" — shown in the menu + editor
-  steps: string            // body / prompt template, with {{name}} placeholders
+  steps: RunbookStep[]     // ordered steps; rendered to numbered prose at run time
   tags: string[]
   updated?: string
   args: ArgDef[]           // parsed param defs — the run modal renders these

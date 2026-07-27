@@ -359,7 +359,7 @@ class SchedulesMixin:
                 "; ".join(errors),
             )
             return ""
-        body = memory.render_runbook_body(str(runbook.get("steps") or ""), vals)
+        body = memory.render_runbook(runbook, vals)
         if not body.strip():
             return ""
         title = runbook.get("title") or runbook.get("id")
