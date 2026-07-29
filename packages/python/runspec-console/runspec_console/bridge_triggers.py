@@ -2312,6 +2312,8 @@ class TriggersMixin:
         stopped = False
         final_text = ""  # the model's last assistant message (its conclusion)
         actions: list[str] = []  # one line per tool the agent ran
+        tool_rounds = 0  # tool-execution rounds, bounded by _max_tool_rounds()
+        hit_iteration_cap = False
 
         # OpenTelemetry root span for this headless turn — closes the tracing gap
         # the reactive/scheduled paths had (no-op unless [telemetry] is on). Kind
@@ -2330,7 +2332,10 @@ class TriggersMixin:
         )
         _turn_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
 
-        for _ in range(10):  # bound agentic iterations, same as the chat loop
+        while True:  # bound tool rounds by _max_tool_rounds(), like the chat loop
+            if tool_rounds >= self._max_tool_rounds():
+                hit_iteration_cap = True
+                break
             if cancel.is_set():
                 stopped = True
                 break
@@ -2411,7 +2416,17 @@ class TriggersMixin:
                 if record is not None:
                     record(f"{display} → {first_line[:160]}")
                 tool_results.append((tc, output))
+            tool_rounds += 1
             history.extend(adapter.make_tool_turn(response, tool_results))
+
+        # Hit the tool-round backstop mid-work — surface it in the conclusion so
+        # the trigger/schedule run card and event log aren't silent (this headless
+        # path has no reply-continuation; re-running the turn resumes the work).
+        if hit_iteration_cap:
+            final_text = (
+                f"{final_text.rstrip()}\n\n"
+                f"_(paused after {tool_rounds} tool steps — re-run to continue)_"
+            ).strip()
 
         # Close the turn span with the turn-total token usage (no-op when off).
         observability.end_turn(_turn_span, usage=_turn_usage)

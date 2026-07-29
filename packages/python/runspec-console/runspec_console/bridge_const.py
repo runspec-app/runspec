@@ -307,11 +307,15 @@ _TOOL_OUTPUT_SPILL_THRESHOLD = 32_768
 # follow-up file read for trivial cases. Kept small: ~1 K tokens.
 _SPILL_ENVELOPE_HEAD_BYTES = 4_096
 
-# One budget for a single chat turn's model round-trips: tool-calling iterations
-# AND auto-continuations after an output-ceiling cut-off (stop_reason ==
-# "max_tokens") both draw from it, so a cut-off-heavy turn can't starve tool use
-# or loop unbounded. Was a bare ``range(10)``.
-_MAX_AGENT_ITERATIONS = 10
+# Default backstop on the number of tool-execution rounds in a single agent turn
+# — a runaway guard, NOT a per-task dial. Sized generously so normal multi-step
+# work never reaches it; the real safety controls are the confirm-gate (mutating
+# tools pause for the operator) and the Stop button. Overridable via
+# ``[llm] max_tool_rounds`` (see Bridge._max_tool_rounds). Output-ceiling
+# auto-continuations (stop_reason == "max_tokens") are bounded SEPARATELY by
+# ``[llm] max_continuations`` and do NOT draw from this budget, so continuing a
+# long reply can never starve tool use. (Was a shared ``range(10)`` for both.)
+_MAX_AGENT_ITERATIONS = 25
 
 # Default wall-clock ceiling (seconds) for a ``run_python`` subprocess and the
 # default row cap for a ``run_sql`` result. Timeout is operator-overridable via

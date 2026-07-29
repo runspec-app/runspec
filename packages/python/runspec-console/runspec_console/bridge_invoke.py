@@ -29,7 +29,6 @@ from .trace import jsonsafe_messages
 from .bridge_const import (
     logger,
     _CANCEL_KEY,
-    _MAX_AGENT_ITERATIONS,
     _OPERATOR_RUN_OUTPUT_CAP,
     _UI_OUTPUT_LINE_CAP,
     _UI_OUTPUT_BYTE_CAP,
@@ -1202,6 +1201,12 @@ class InvokeMixin:
         # How many times this turn has auto-continued after an output-ceiling
         # cut-off (stop_reason == "max_tokens"). Bounded by _max_continuations().
         continuations = 0
+        # How many tool-execution rounds this turn has run. Bounded independently
+        # by _max_tool_rounds() — continuations (above) do NOT draw from it, so a
+        # long cut-off reply can never starve tool use. Set when the backstop is
+        # hit, so the turn ends with a visible, resumable marker instead of silence.
+        tool_rounds = 0
+        hit_iteration_cap = False
 
         # OpenTelemetry root span for the whole turn (no-op unless [telemetry] is
         # on). Started manually (not a `with`) so the large loop body needn't be
@@ -1224,7 +1229,13 @@ class InvokeMixin:
             history = self._chat_history
             history.append({"role": "user", "content": message})
 
-            for _ in range(_MAX_AGENT_ITERATIONS):  # tool iters + continuations
+            while True:
+                # Tool rounds are the bounded budget; continuations are separate
+                # (below). Hitting this backstop stops the turn with a visible,
+                # resumable marker rather than the old silent fall-through.
+                if tool_rounds >= self._max_tool_rounds():
+                    hit_iteration_cap = True
+                    break
                 if cancel.is_set():
                     stopped = True
                     break
@@ -1354,7 +1365,10 @@ class InvokeMixin:
                     # budget — flag it visibly instead of ending silently
                     # mid-sentence (mirrors the ⏹ / ⚠ inline markers).
                     if truncated:
-                        marker = "\n\n_(response was cut off at the output limit)_"
+                        marker = (
+                            "\n\n_(response was cut off at the output limit — "
+                            'say "continue" to finish it)_'
+                        )
                         self._dispatch(
                             "runspec:token", {"id": chat_id, "token": marker}
                         )
@@ -1436,7 +1450,20 @@ class InvokeMixin:
                             tool_rec["proposed_input"] = gate_decision["proposed_input"]
                     turn_tools.append(tool_rec)
 
+                tool_rounds += 1
                 history.extend(adapter.make_tool_turn(response, tool_results))
+
+            # Hit the tool-round backstop mid-work (the model still wanted to act).
+            # Surface it visibly and invite resumption instead of stopping silently
+            # — the tool results are already in history, so a "continue" message
+            # picks the work back up (mirrors the ⏹ / cut-off inline markers).
+            if hit_iteration_cap:
+                marker = (
+                    f"\n\n_(paused after {tool_rounds} tool steps — "
+                    'say "continue" to keep going)_'
+                )
+                self._dispatch("runspec:token", {"id": chat_id, "token": marker})
+                turn_assistant_parts.append(marker.strip())
 
             # Tag any final assistant / tool messages appended on the way out of
             # the loop, so the aligned tags cover the whole turn before trimming.

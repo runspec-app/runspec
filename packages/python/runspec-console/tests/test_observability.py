@@ -240,6 +240,7 @@ def _chat_stub():
         "_sync_history_tags",
         "_visible_history",
         "_max_continuations",
+        "_max_tool_rounds",
         "_gated_run_tool_async",
     ):
         setattr(s, meth, types.MethodType(getattr(Bridge, meth), s))

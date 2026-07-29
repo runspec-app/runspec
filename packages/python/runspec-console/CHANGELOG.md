@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.216.0] — 2026-07-29
+
+### Fixed
+- **`max_continuations` no longer starves tool use.** A single agent turn used
+  one shared budget of 10 for *both* tool-execution rounds and output-ceiling
+  auto-continuations (`stop_reason == "max_tokens"`), so raising
+  `[llm] max_continuations` stole capacity from actual tool work — e.g. setting
+  it to 7 could leave a multi-step task only ~3 tool rounds before it stopped.
+  Continuations and tool rounds now draw from **independent** budgets: continuing
+  a long reply can never reduce how many tools a turn may call.
+- **No more silent stops.** When a turn reached the loop ceiling it fell through
+  with no marker — the agent appeared to just stop. Hitting the tool-round
+  backstop now ends the turn with a **visible, resumable** marker
+  (`_(paused after N tool steps — say "continue" to keep going)_`); because the
+  tool results are already in the conversation, a "continue" message picks the
+  work back up. The output-cut-off marker is reworded the same way. The headless
+  trigger/schedule loop surfaces the same note in its run card and event log.
+
+### Changed
+- **Generous backstops, not per-task dials.** These caps are runaway guards, not
+  tuning knobs — the real safety is the confirm-gate (mutating tools pause for
+  the operator) and the Stop button. Defaults raised so normal work never hits
+  them: reply-continuations `[llm] max_continuations` **3 → 12** (let a long reply
+  finish), tool-round backstop **10 → 25**. New optional `[llm] max_tool_rounds`
+  overrides the tool-round backstop (default 25); it is a backstop, not something
+  to guess per task.
+
+
 ## [0.215.0] — 2026-07-29
 
 ### Added

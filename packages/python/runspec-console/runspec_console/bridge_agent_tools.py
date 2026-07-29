@@ -27,6 +27,7 @@ from .bridge_const import (
     _AGENT_TOOL_OUTPUT_CAP,
     _EXEC_MAX_ROWS,
     _HOT_BUILTIN_NAMES,
+    _MAX_AGENT_ITERATIONS,
     _SPILL_ENVELOPE_HEAD_BYTES,
 )
 
@@ -229,15 +230,37 @@ class AgentToolsMixin:
     def _max_continuations(self) -> int:
         """How many times a single chat turn may auto-continue after the model
         stops at the output-token ceiling (``stop_reason == "max_tokens"``), from
-        ``[llm] max_continuations`` (default 3, floored at 0). Each continuation
+        ``[llm] max_continuations`` (default 12, floored at 0). Each continuation
         re-prompts the model to pick up where it was cut, so a long reply streams
         out whole instead of being silently truncated; past this budget the turn
-        ends with a visible cut-off marker."""
+        ends with a visible cut-off marker. This budget is **independent** of the
+        tool-round budget (``_max_tool_rounds``) — finishing a cut-off reply never
+        consumes tool-execution capacity. The default is generous so a long answer
+        completes; it only exists so one reply can't generate without end."""
         try:
-            n = int(self.get_config().get("llm", {}).get("max_continuations", 3))
+            n = int(self.get_config().get("llm", {}).get("max_continuations", 12))
         except (TypeError, ValueError):
-            return 3
-        return n if n >= 0 else 3
+            return 12
+        return n if n >= 0 else 12
+
+    def _max_tool_rounds(self) -> int:
+        """Backstop on the number of tool-execution rounds in a single agent turn,
+        from ``[llm] max_tool_rounds`` (default ``_MAX_AGENT_ITERATIONS``, floored
+        at 1). A runaway guard, not a per-task dial: sized so normal multi-step
+        work never reaches it, with the confirm-gate + Stop button as the real
+        safety. Independent of ``_max_continuations`` — reply-continuations don't
+        draw from it. When a turn does hit this backstop it stops with a visible,
+        resumable marker (the tool results are already in history, so a "continue"
+        message picks the work back up)."""
+        try:
+            n = int(
+                self.get_config()
+                .get("llm", {})
+                .get("max_tool_rounds", _MAX_AGENT_ITERATIONS)
+            )
+        except (TypeError, ValueError):
+            return _MAX_AGENT_ITERATIONS
+        return n if n >= 1 else _MAX_AGENT_ITERATIONS
 
     @staticmethod
     def _sanitize_tool_name(raw: str) -> str:

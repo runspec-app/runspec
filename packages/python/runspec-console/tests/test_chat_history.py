@@ -84,6 +84,7 @@ class _StubBridge:
     compact_chat = Bridge.compact_chat
     _finish_compact = Bridge._finish_compact
     _compact_note = Bridge._compact_note
+    _max_tool_rounds = Bridge._max_tool_rounds  # top-of-loop guard calls it
     _agentic_chat_turn = Bridge._agentic_chat_turn
 
 

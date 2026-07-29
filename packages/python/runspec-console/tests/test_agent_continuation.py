@@ -59,14 +59,17 @@ class _ScriptedAdapter:
         ]
 
 
-def _chat_stub(max_cont: int = 3):
+def _chat_stub(max_cont: int = 3, max_tool_rounds: int | None = None):
     s = types.SimpleNamespace()
     s._chat_lock = threading.Lock()
     s._chat_history = []
     s._history_turn_ids = []
     s._excluded_turns = set()
     s._chat_cancels = {}
-    s._config = {"llm": {"max_continuations": max_cont}}
+    llm: dict = {"max_continuations": max_cont}
+    if max_tool_rounds is not None:
+        llm["max_tool_rounds"] = max_tool_rounds
+    s._config = {"llm": llm}
     s.tokens = []  # every runspec:token string, in order
     s.persisted = {}
 
@@ -109,12 +112,14 @@ def _chat_stub(max_cont: int = 3):
     s._sync_history_tags = types.MethodType(Bridge._sync_history_tags, s)
     s._visible_history = types.MethodType(Bridge._visible_history, s)
     s._max_continuations = types.MethodType(Bridge._max_continuations, s)
+    s._max_tool_rounds = types.MethodType(Bridge._max_tool_rounds, s)
     s._agentic_chat_turn = types.MethodType(Bridge._agentic_chat_turn, s)
     return s
 
 
-CUT = "_(response was cut off at the output limit)_"
+CUT = "response was cut off at the output limit"
 CONTINUE = "Continue exactly where you left off"
+STEP_LIMIT = "paused after"  # visible + resumable tool-round backstop marker
 
 
 def test_max_tokens_reply_auto_continues():
@@ -205,3 +210,56 @@ def test_tool_calls_run_regardless_of_stop_reason_spelling():
     # The tool ran even though stop_reason was "tool_calls", not "tool_use".
     assert s.tool_runs == [("host__restart", {"name": "nginx"})]
     assert adapter.calls == 2  # tool turn, then the final reply
+
+
+def test_continuations_do_not_starve_tool_rounds():
+    """Reply-continuations and tool rounds draw from independent budgets: even
+    when several continuations happen first, every scripted tool round still
+    runs. Under the old shared range(10) budget the tools after the 10th slot
+    would have been silently cut — this is the direct regression for the report
+    ('max_continuations=7 → run_runnable used ~7 times then nothing')."""
+    tc = ToolCall(id="1", name="host__do", input={})
+    # 5 output-ceiling continuations, then 8 tool rounds, then a natural end.
+    # Old code: 5 continues + 5 tools = 10 iterations, silent stop → 5 tools.
+    script = (
+        [("filling text", "max_tokens")] * 5
+        + [("acting", "tool_use", [tc])] * 8
+        + [("all done", "end_turn")]
+    )
+    s = _chat_stub(max_cont=12)  # generous — all 5 continuations allowed
+    adapter = _ScriptedAdapter(script)
+
+    asyncio.run(s._agentic_chat_turn("chat1", "long tool run", adapter))
+
+    # All 8 tool rounds ran — continuations didn't consume tool-round budget.
+    assert len(s.tool_runs) == 8
+    # It ended naturally, not at the backstop.
+    assert not any(STEP_LIMIT in t for t in s.tokens)
+
+
+def test_tool_round_backstop_shows_visible_marker():
+    """A turn that never stops calling tools is bounded by _max_tool_rounds() and
+    ends with a VISIBLE, resumable marker — the old loop fell through silently."""
+    tc = ToolCall(id="1", name="host__do", input={})
+    adapter = _ScriptedAdapter([("acting", "tool_use", [tc])])  # always a tool call
+    s = _chat_stub(max_cont=3)
+
+    asyncio.run(s._agentic_chat_turn("chat1", "loop forever", adapter))
+
+    # Exactly the tool-round backstop many rounds ran, then it stopped…
+    assert len(s.tool_runs) == s._max_tool_rounds()
+    # …with a visible marker rather than silence.
+    assert any(STEP_LIMIT in t for t in s.tokens)
+
+
+def test_max_tool_rounds_override_is_honoured():
+    """[llm] max_tool_rounds overrides the default backstop."""
+    tc = ToolCall(id="1", name="host__do", input={})
+    adapter = _ScriptedAdapter([("acting", "tool_use", [tc])])  # always a tool call
+    s = _chat_stub(max_cont=3, max_tool_rounds=2)
+
+    asyncio.run(s._agentic_chat_turn("chat1", "loop forever", adapter))
+
+    assert s._max_tool_rounds() == 2
+    assert len(s.tool_runs) == 2
+    assert any(STEP_LIMIT in t for t in s.tokens)
