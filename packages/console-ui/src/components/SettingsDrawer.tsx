@@ -4115,6 +4115,127 @@ export function DenylistTab() {
 
 // ── Drawer ────────────────────────────────────────────────────────────────────
 
+export function TelemetryTab() {
+  const [enabled, setEnabled] = useState(false)
+  const [endpoint, setEndpoint] = useState('')
+  const [protocol, setProtocol] = useState('http/protobuf')
+  const [serviceName, setServiceName] = useState('runspec-console')
+  const [sampleRatio, setSampleRatio] = useState<number>(1)
+  const [captureContent, setCaptureContent] = useState(false)
+  const [caBundle, setCaBundle] = useState('')
+  const [tlsVerify, setTlsVerify] = useState(true)
+  const [headers, setHeaders] = useState<Array<{ k: string; v: string }>>([])
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    bridge.get_config().then(cfg => {
+      const t = (cfg.telemetry ?? {}) as Record<string, unknown>
+      setEnabled(t.enabled === true)
+      setEndpoint(typeof t.endpoint === 'string' ? t.endpoint : '')
+      setProtocol(typeof t.protocol === 'string' && t.protocol ? t.protocol : 'http/protobuf')
+      setServiceName(typeof t.service_name === 'string' && t.service_name ? t.service_name : 'runspec-console')
+      setSampleRatio(typeof t.sample_ratio === 'number' ? t.sample_ratio : 1)
+      setCaptureContent(t.capture_content === true)
+      setCaBundle(typeof t.ca_bundle === 'string' ? t.ca_bundle : '')
+      setTlsVerify(t.tls_verify !== false)
+      const h = (t.headers ?? {}) as Record<string, unknown>
+      setHeaders(
+        h && typeof h === 'object'
+          ? Object.entries(h).map(([k, v]) => ({ k, v: String(v) }))
+          : [],
+      )
+    })
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const cfg = await bridge.get_config()
+      const headerObj: Record<string, string> = {}
+      for (const { k, v } of headers) if (k.trim()) headerObj[k.trim()] = v
+      await bridge.save_config({
+        ...cfg,
+        telemetry: {
+          enabled,
+          endpoint: endpoint.trim(),
+          protocol: protocol.trim() || 'http/protobuf',
+          service_name: serviceName.trim() || 'runspec-console',
+          sample_ratio: sampleRatio,
+          capture_content: captureContent,
+          ca_bundle: caBundle.trim(),
+          tls_verify: tlsVerify,
+          headers: headerObj,
+        },
+      })
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } finally { setSaving(false) }
+  }
+
+  const row = (label: string, control: ReactNode) => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+      <span style={{ fontSize: 13 }}>{label}</span>
+      {control}
+    </div>
+  )
+
+  return (
+    <div style={{ maxWidth: 620 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
+        OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
+        Spans follow the OpenTelemetry GenAI conventions. Requires the <code>otel</code> extra:
+        <code> pip install runspec-console[otel]</code>. Standard <code>OTEL_*</code> environment
+        variables fill in anything left blank below.
+      </Typography.Paragraph>
+      {row('Enable tracing', <Switch checked={enabled} onChange={setEnabled} />)}
+      {row('OTLP endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/traces  (blank ⇒ OTEL_EXPORTER_OTLP_ENDPOINT)" value={endpoint} onChange={e => setEndpoint(e.target.value)} disabled={!enabled} />)}
+      {row('Protocol', <Select style={{ width: 180 }} value={protocol} onChange={setProtocol} disabled={!enabled} options={[{ value: 'http/protobuf', label: 'http/protobuf' }]} />)}
+      {row('Service name', <Input style={{ width: 260 }} value={serviceName} onChange={e => setServiceName(e.target.value)} disabled={!enabled} />)}
+      {row('Sample ratio', <InputNumber min={0} max={1} step={0.1} value={sampleRatio} onChange={v => setSampleRatio(typeof v === 'number' ? v : 1)} disabled={!enabled} />)}
+
+      <Divider style={{ margin: '14px 0' }} />
+      <Typography.Paragraph style={{ fontSize: 12, marginBottom: 6 }}>
+        <strong>Headers</strong> — extra HTTP headers on every export (e.g. a LangSmith API key
+        and project). Stored in <code>config.toml</code> like the model API key, not the OS keychain.
+      </Typography.Paragraph>
+      {headers.map((h, i) => (
+        <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+          <Input placeholder="header" style={{ width: 220 }} value={h.k} disabled={!enabled}
+            onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
+          <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!enabled}
+            onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
+          <Button icon={<MinusCircleOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => prev.filter((_, j) => j !== i))} />
+        </div>
+      ))}
+      <Button size="small" icon={<PlusOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
+
+      <Divider style={{ margin: '14px 0' }} />
+      <Alert
+        type="warning"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message="Content capture (privacy)"
+        description={
+          <span style={{ fontSize: 12 }}>
+            Off (default): spans carry <strong>structure only</strong> — models, token counts,
+            tool names, decisions, durations. On: prompt / completion / tool-argument <strong>text</strong>
+            is also exported (secret-looking arguments are scrubbed first). Only enable this if your
+            backend is trusted — prompts and arguments can contain sensitive data.
+          </span>
+        }
+      />
+      {row('Capture prompt / completion / argument text', <Switch checked={captureContent} onChange={setCaptureContent} disabled={!enabled} />)}
+
+      <Divider style={{ margin: '14px 0' }} />
+      {row('CA bundle (private CA / TLS proxy)', <Input style={{ width: 360 }} placeholder="path to a .pem" value={caBundle} onChange={e => setCaBundle(e.target.value)} disabled={!enabled} />)}
+      {row('Verify TLS certificate', <Switch checked={tlsVerify} onChange={setTlsVerify} disabled={!enabled} />)}
+
+      <Button type="primary" loading={saving} onClick={handleSave} style={{ marginTop: 6 }}>{saved ? 'Saved' : 'Save'}</Button>
+    </div>
+  )
+}
+
 function ChatHistoryTab() {
   const [enabled, setEnabled] = useState(true)
   const [maxConvs, setMaxConvs] = useState<number>(200)
@@ -4209,6 +4330,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },
           { key: 'sounds',    label: 'Sounds & Notifications', children: <SoundsTab /> },
           { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
+          { key: 'telemetry', label: 'Telemetry', children: <TelemetryTab /> },
         ]}
       />
     </Drawer>

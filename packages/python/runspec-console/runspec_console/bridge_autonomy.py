@@ -21,6 +21,7 @@ from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
 from . import notify
+from . import observability
 from . import sounds
 from .config import (
     confirm_notifications_enabled,
@@ -629,6 +630,9 @@ class AutonomyMixin:
         decision = self._confirm_decision(tool_name, tool_input)
         display = self._confirm_card_view(tool_name, tool_input)[0].split("__", 1)[-1]
         logger.info("autonomy gate: tool=%s decision=%s", tool_name, decision)
+        # The operator's confirm-gate outcome for the tool span (empty when the
+        # gate never fired — an autonomous "run" call).
+        gate_operator_decision = ""
         if decision == "manual":
             return f"✗ '{display}' is manual-only (autonomy = manual) and cannot be run by the assistant. Ask the user to run it themselves from the Run button."
         if decision != "run":
@@ -654,6 +658,7 @@ class AutonomyMixin:
                 return (
                     f"✗ The user declined to run '{display}' (autonomy = {decision})."
                 )
+            gate_operator_decision = "edited" if edited is not None else "approved"
             # The operator may have edited the args before approving — run those.
             # For a wrapped call the card displayed the INNER input, so an edit
             # (defensive: the frontend renders wrapper confirms read-only) is in
@@ -677,16 +682,35 @@ class AutonomyMixin:
         # approved (Console card + audit under the inner name).
         if inner_call is not None:
             tool_name, tool_input = inner_call
-        # Built-in tools (repo_*, outlook_*, manage_denylist, memory, status,
-        # action tools) run on a worker thread with no native run card — wrap
-        # them so they show as a live Console in-flight card, stream progress,
-        # and can be stopped mid-run. Runnable executions (run_runnable / search
-        # meta-tools) keep their own invoke_runnable card and are excluded.
-        if tool_name in _BUILTIN_TOOL_NAMES:
-            return await self._run_builtin_tool_tracked(tool_name, tool_input, chat_id)
-        return await asyncio.to_thread(
-            self._run_tool_sync, tool_name, tool_input, chat_id
-        )
+        # OpenTelemetry tool span (child of the turn span; no-op unless telemetry
+        # is on). Opened *before* the asyncio.to_thread dispatch below so the
+        # copied context carries it into the worker thread — this is what keeps
+        # the runnable execution parented to the turn's trace. Shared by chat and
+        # trigger/schedule turns, so one wrap covers every turn type.
+        with observability.tool_span(
+            tool_name,
+            chat_id,
+            decision=decision,
+            provenance=getattr(self, "_run_origin", {}).get(chat_id),
+        ) as _tool_span:
+            observability.set_tool_decision(_tool_span, gate_operator_decision)
+            observability.add_tool_arguments(_tool_span, tool_input)
+            # Built-in tools (repo_*, outlook_*, manage_denylist, memory, status,
+            # action tools) run on a worker thread with no native run card — wrap
+            # them so they show as a live Console in-flight card, stream progress,
+            # and can be stopped mid-run. Runnable executions (run_runnable /
+            # search meta-tools) keep their own invoke_runnable card and are
+            # excluded.
+            if tool_name in _BUILTIN_TOOL_NAMES:
+                out = await self._run_builtin_tool_tracked(
+                    tool_name, tool_input, chat_id
+                )
+            else:
+                out = await asyncio.to_thread(
+                    self._run_tool_sync, tool_name, tool_input, chat_id
+                )
+            observability.set_tool_exit(_tool_span, out)
+            return out
 
     async def _run_builtin_tool_tracked(
         self, tool_name: str, tool_input: dict[str, Any], chat_id: str

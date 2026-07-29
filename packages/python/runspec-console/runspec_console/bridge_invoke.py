@@ -20,6 +20,7 @@ from . import bridge_utils as utils_mod
 from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
+from . import observability
 from .config import (
     write_docs_dir,
 )
@@ -1202,6 +1203,21 @@ class InvokeMixin:
         # cut-off (stop_reason == "max_tokens"). Bounded by _max_continuations().
         continuations = 0
 
+        # OpenTelemetry root span for the whole turn (no-op unless [telemetry] is
+        # on). Started manually (not a `with`) so the large loop body needn't be
+        # re-indented; it stays the current span for this task, so the per-
+        # iteration LLM span and each tool span parent to it. Closed in `finally`.
+        model_name = getattr(adapter, "model", "") or ""
+        provider_name = str(
+            (config_mod.read_config().get("llm") or {}).get("provider") or ""
+        )
+        turn_span = observability.begin_turn(
+            "chat",
+            chat_id,
+            model=model_name,
+            provenance=getattr(self, "_run_origin", {}).get(chat_id),
+        )
+
         # Hold the conversation lock for the whole turn: it both serialises
         # concurrent sends and is the single owner of self._chat_history.
         with self._chat_lock:
@@ -1236,33 +1252,47 @@ class InvokeMixin:
                     "model_request",
                     {"chat_id": chat_id, "messages": jsonsafe_messages(model_messages)},
                 )
-                try:
-                    async for event in adapter.stream_with_tools(model_messages, tools):
-                        if cancel.is_set():
-                            stopped = True
-                            break  # abort streaming (closes the provider stream)
-                        if event[0] == "text":
-                            assistant_text += event[1]
-                            self._dispatch(
-                                "runspec:token", {"id": chat_id, "token": event[1]}
-                            )
-                        elif event[0] == "done":
-                            response = event[1]
-                except Exception as exc:
-                    self._dispatch(
-                        "runspec:token", {"id": chat_id, "token": f"\n⚠ Error: {exc}"}
-                    )
-                    break
+                # Per-iteration LLM-request span (child of the turn span). No-op
+                # unless telemetry is on; held current across the streaming call so
+                # a custom adapter can enrich it via observability.set_attributes.
+                with observability.llm_span(
+                    provider=provider_name, model=model_name
+                ) as llm_span:
+                    observability.add_prompt(model_messages)
+                    try:
+                        async for event in adapter.stream_with_tools(
+                            model_messages, tools
+                        ):
+                            if cancel.is_set():
+                                stopped = True
+                                break  # abort streaming (closes the provider stream)
+                            if event[0] == "text":
+                                assistant_text += event[1]
+                                self._dispatch(
+                                    "runspec:token", {"id": chat_id, "token": event[1]}
+                                )
+                            elif event[0] == "done":
+                                response = event[1]
+                    except Exception as exc:
+                        observability.record_exception(llm_span, exc)
+                        self._dispatch(
+                            "runspec:token",
+                            {"id": chat_id, "token": f"\n⚠ Error: {exc}"},
+                        )
+                        break
 
-                if response is not None:
-                    u = self._usage_from_response(response)
-                    for key, value in u.items():
-                        usage_total[key] += value
-                    last_usage = {
-                        "input": u["input"],
-                        "cache_read": u["cache_read"],
-                        "cache_creation": u["cache_creation"],
-                    }
+                    if response is not None:
+                        u = self._usage_from_response(response)
+                        for key, value in u.items():
+                            usage_total[key] += value
+                        last_usage = {
+                            "input": u["input"],
+                            "cache_read": u["cache_read"],
+                            "cache_creation": u["cache_creation"],
+                        }
+                        observability.set_llm_response(llm_span, response, u)
+                    if assistant_text.strip():
+                        observability.add_completion(assistant_text)
 
                 # Record this iteration's assistant prose for the saved transcript.
                 if assistant_text.strip():
@@ -1422,6 +1452,9 @@ class InvokeMixin:
                 usage_total,
                 getattr(adapter, "model", "") or "",
             )
+
+        # Close the turn span with the turn-total token usage (no-op when off).
+        observability.end_turn(turn_span, usage=usage_total)
 
         duration_ms = int((time.monotonic() - start) * 1000)
         if stopped:

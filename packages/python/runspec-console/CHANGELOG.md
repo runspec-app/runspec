@@ -8,6 +8,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.215.0] — 2026-07-29
+
+### Added
+- **OpenTelemetry (OTLP) agent tracing (Settings → Telemetry / `[telemetry]`).**
+  Export one trace per agent turn — **`turn → LLM call → tool call`** — over OTLP
+  to any OpenTelemetry backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
+  Spans follow the OpenTelemetry **GenAI semantic conventions** (`gen_ai.*`) so a
+  GenAI-aware backend renders the model and tool calls natively; runspec-specific
+  detail (autonomy/operator decision, provenance, cache-token split) rides under
+  a `runspec.*` namespace. Covers chat **and** the previously-untraced headless
+  **trigger / schedule** turns. Because tool execution dispatches through
+  `asyncio.to_thread`, the tool span is opened before the hand-off so a runnable's
+  execution stays parented to its turn's trace (one connected tree).
+  - **Opt-in and safe by default.** Off unless `[telemetry] enabled = true`; a new
+    `otel` extra (`pip install runspec-console[otel]`) carries the SDK and the
+    feature reports itself unavailable until installed. The new
+    `runspec_console/observability.py` mirrors `trace.py`'s contract — lazy import,
+    best-effort, **never raises into the agent loop**, a complete no-op when
+    disabled or the SDK is absent.
+  - **Privacy.** `capture_content = false` by default: spans carry structure only
+    (models, token counts, tool names, decisions, durations) — never prompt /
+    completion / tool-argument *text*. With it on, tool arguments are scrubbed
+    (secret-looking keys → `«redacted»`) and resolved credentials never reach a
+    span.
+  - **Config + env.** `config.read_telemetry()` (mirrors `read_web()`);
+    `endpoint` / `headers` / `protocol` / `service_name` / `sample_ratio` /
+    `ca_bundle` / `tls_verify`. Standard `OTEL_*` env vars fill any value left
+    unset — config wins, env fills the gaps.
+  - **Adapter enrichment.** A custom adapter can add provider-specific attributes
+    to the live LLM span via `runspec_console.observability.set_attributes(...)` /
+    `add_completion(...)` (no-ops when off — no hard OTel dependency leaks into a
+    plugin). See `docs/console-telemetry.md` + `docs/console-adapters.md`.
+
+
 ## [0.214.0] — 2026-07-27
 
 ### Fixed

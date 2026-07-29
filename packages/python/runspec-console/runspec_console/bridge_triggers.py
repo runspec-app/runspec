@@ -17,6 +17,7 @@ from typing import Any
 from . import active_room as active_room_mod
 from . import config as config_mod
 from . import notify
+from . import observability
 
 from .bridge_const import (
     logger,
@@ -2312,6 +2313,23 @@ class TriggersMixin:
         final_text = ""  # the model's last assistant message (its conclusion)
         actions: list[str] = []  # one line per tool the agent ran
 
+        # OpenTelemetry root span for this headless turn — closes the tracing gap
+        # the reactive/scheduled paths had (no-op unless [telemetry] is on). Kind
+        # is read off the run provenance ("schedule" vs a trigger name). Tool
+        # spans come for free: this loop routes through _gated_run_tool_async.
+        _origin = getattr(self, "_run_origin", {}).get(chat_id) or {}
+        _model_name = getattr(adapter, "model", "") or ""
+        _provider_name = str(
+            (config_mod.read_config().get("llm") or {}).get("provider") or ""
+        )
+        _turn_span = observability.begin_turn(
+            "schedule" if _origin.get("trigger") == "schedule" else "trigger",
+            chat_id,
+            model=_model_name,
+            provenance=_origin,
+        )
+        _turn_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+
         for _ in range(10):  # bound agentic iterations, same as the chat loop
             if cancel.is_set():
                 stopped = True
@@ -2322,18 +2340,30 @@ class TriggersMixin:
                 # A per-call copy with the catalog index folded into the first user
                 # message (search mode only); the stored history stays clean.
                 model_messages = self._fold_catalog_index(history, index_text)
-                async for event in adapter.stream_with_tools(model_messages, tools):
-                    if cancel.is_set():
-                        stopped = True
-                        break
-                    if event[0] == "text":
-                        assistant_text += event[1]
-                        self._dispatch(
-                            "runspec:token", {"id": chat_id, "token": event[1]}
-                        )
-                    elif event[0] == "done":
-                        response = event[1]
+                with observability.llm_span(
+                    provider=_provider_name, model=_model_name
+                ) as _llm_span:
+                    observability.add_prompt(model_messages)
+                    async for event in adapter.stream_with_tools(model_messages, tools):
+                        if cancel.is_set():
+                            stopped = True
+                            break
+                        if event[0] == "text":
+                            assistant_text += event[1]
+                            self._dispatch(
+                                "runspec:token", {"id": chat_id, "token": event[1]}
+                            )
+                        elif event[0] == "done":
+                            response = event[1]
+                    if response is not None:
+                        _u = self._usage_from_response(response)
+                        for _k, _v in _u.items():
+                            _turn_usage[_k] += _v
+                        observability.set_llm_response(_llm_span, response, _u)
+                    if assistant_text.strip():
+                        observability.add_completion(assistant_text)
             except Exception as exc:  # noqa: BLE001
+                observability.record_exception(observability.current_span(), exc)
                 self._dispatch(
                     "runspec:token", {"id": chat_id, "token": f"\n⚠ Error: {exc}"}
                 )
@@ -2382,6 +2412,9 @@ class TriggersMixin:
                     record(f"{display} → {first_line[:160]}")
                 tool_results.append((tc, output))
             history.extend(adapter.make_tool_turn(response, tool_results))
+
+        # Close the turn span with the turn-total token usage (no-op when off).
+        observability.end_turn(_turn_span, usage=_turn_usage)
 
         duration_ms = int((time.monotonic() - start) * 1000)
         if stopped:

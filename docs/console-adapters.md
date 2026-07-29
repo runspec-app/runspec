@@ -359,6 +359,29 @@ if you return tool calls without a `tool_use` stop.
 
 ---
 
+## Enriching telemetry spans (optional)
+
+When [telemetry](console-telemetry.md) is enabled, the console wraps each model
+request in an OpenTelemetry span and sets the standard `gen_ai.*` attributes for
+you (model, finish reason, token usage). Your adapter can add provider-specific
+detail to that span — the LLM span is the current OTel span while your
+`stream_with_tools` runs, so no plumbing is needed:
+
+```python
+from runspec_console import observability
+
+observability.set_attributes(**{
+    "gen_ai.response.id": response_id,
+    "mycorp.gateway.request_id": request_id,
+})
+observability.add_completion(text)   # honours capture_content; no-op when off
+```
+
+Every helper is a **complete no-op** when telemetry is off or the `otel` extra
+isn't installed, so you can call them unconditionally — your plugin never needs
+OpenTelemetry as a dependency. This keeps `ChatResponse` SDK-free: enrichment is
+a side channel, not a new response field.
+
 ## Checklist
 
 - [ ] Subclass `ModelAdapter`; implement `chat`, `stream_chat`,

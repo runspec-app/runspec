@@ -12,8 +12,15 @@ provider name in one of three ways:
 
 ``ModelAdapter`` / ``ChatResponse`` / ``ToolCall`` are dependency-free, so a
 plugin depends on runspec-console only for these classes — no SDKs leak in.
+
+``observability`` is the optional OpenTelemetry tracing side-channel: a custom
+adapter can enrich the active LLM span with provider-specific detail via
+``observability.set_attributes(...)`` / ``add_completion(...)`` (all no-ops when
+telemetry is off or the ``otel`` extra is absent — so no hard OTel dependency
+leaks into a plugin). See ``docs/console-telemetry.md``.
 """
 
+from runspec_console import observability
 from runspec_console.adapters.base import (
     ChatResponse,
     ModelAdapter,
@@ -28,4 +35,5 @@ __all__ = [
     "ToolCall",
     "register_adapter",
     "available_providers",
+    "observability",
 ]

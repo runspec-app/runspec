@@ -38,6 +38,11 @@ DEFAULT_DOCS_URL = "https://runspec.app/"
 # oldest (`[config_sync] backups_keep`). 0 means keep all (never prune).
 DEFAULT_BACKUPS_KEEP = 5
 
+# `[telemetry]` defaults — OpenTelemetry (OTLP) tracing of the agent. Off by
+# default (it exports data to an external backend, so it's strictly opt-in).
+DEFAULT_TELEMETRY_PROTOCOL = "http/protobuf"
+DEFAULT_TELEMETRY_SERVICE_NAME = "runspec-console"
+
 
 def app_dir() -> Path:
     env = os.environ.get("APPDATA")
@@ -246,6 +251,42 @@ def read_web() -> dict[str, Any]:
         "max_bytes": max(1, int(cfg.get("max_bytes", 2_000_000) or 2_000_000)),
         "ca_bundle": ca or None,
         "tls_verify": bool(cfg.get("tls_verify", True)),
+    }
+
+
+def read_telemetry() -> dict[str, Any]:
+    """The ``[telemetry]`` settings for OpenTelemetry (OTLP) agent tracing.
+
+    ``enabled`` defaults **false** — telemetry exports spans to an external
+    backend (LangSmith / Langfuse / Phoenix / Jaeger / Tempo …), so it is
+    strictly opt-in. ``endpoint`` is the OTLP traces URL; ``headers`` is a TOML
+    sub-table of extra HTTP headers (API key / project for LangSmith).
+    ``protocol`` (``http/protobuf``) / ``service_name`` / ``sample_ratio``
+    (clamped 0–1) tune the exporter and sampler. ``ca_bundle`` (path) and
+    ``tls_verify`` mirror the Config-Sync / web HTTPS knobs for a private CA /
+    TLS-intercepting proxy. ``capture_content`` defaults **false**: with it off,
+    spans carry structure only (models, token counts, tool names, decisions,
+    durations) — never prompt / completion / tool-argument *text*, which may hold
+    secrets. Any value the OTel SDK also reads from a standard ``OTEL_*`` env var
+    is passed through only when set here, so config wins and env fills the gaps."""
+    raw = read_config().get("telemetry")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    hdrs = cfg.get("headers")
+    ca = str(cfg.get("ca_bundle") or "").strip()
+    return {
+        "enabled": bool(cfg.get("enabled", False)),
+        "endpoint": str(cfg.get("endpoint") or "").strip() or None,
+        "headers": (
+            {str(k): str(v) for k, v in hdrs.items()} if isinstance(hdrs, dict) else {}
+        ),
+        "protocol": str(cfg.get("protocol") or DEFAULT_TELEMETRY_PROTOCOL).strip(),
+        "service_name": str(
+            cfg.get("service_name") or DEFAULT_TELEMETRY_SERVICE_NAME
+        ).strip(),
+        "sample_ratio": min(1.0, max(0.0, float(cfg.get("sample_ratio", 1.0) or 1.0))),
+        "ca_bundle": ca or None,
+        "tls_verify": bool(cfg.get("tls_verify", True)),
+        "capture_content": bool(cfg.get("capture_content", False)),
     }
 
 

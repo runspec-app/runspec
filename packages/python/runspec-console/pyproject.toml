@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.214.0"
+version = "0.215.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -58,6 +58,14 @@ git-sync = ["dulwich>=0.22"]
 # the cron/interval engine. Cross-platform; the schedule source reports itself
 # unavailable until installed.
 schedule = ["apscheduler>=3.10"]
+# OpenTelemetry (OTLP) agent tracing (Settings → Telemetry / [telemetry]): export
+# turn / LLM-call / tool-call spans to any OTel backend — LangSmith, Langfuse,
+# Phoenix, Jaeger, Grafana Tempo. Opt-in ([telemetry] enabled=false by default);
+# the feature reports itself unavailable until installed.
+otel = [
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
+]
 # PyWinRT projection for two notification surfaces: *reading* system toasts (the
 # listener trigger source — Teams / Slack / any toast, needs the `.Management`
 # namespace + a user consent grant) and *sending* confirm toasts (notify.py —
@@ -78,7 +86,7 @@ notifications = [
 # Recursive self-reference (resolved by pip/poetry); excludes `dev`. Win32-only
 # deps inside `notifications` keep their markers, so `[all]` is safe on any OS.
 all = [
-    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule]",
+    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule,otel]",
 ]
 dev = [
     "ruff==0.15.20",
@@ -87,6 +95,8 @@ dev = [
     "httpx>=0.27",
     "dulwich>=0.22",
     "apscheduler>=3.10",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
 ]
 
 [tool.pytest.ini_options]
@@ -97,5 +107,5 @@ python_version = "3.11"
 mypy_path = "../runspec"
 
 [[tool.mypy.overrides]]
-module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*"]
+module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*", "opentelemetry.*"]
 ignore_missing_imports = true

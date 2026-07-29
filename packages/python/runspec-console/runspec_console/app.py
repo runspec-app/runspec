@@ -323,6 +323,14 @@ def main() -> None:
     bridge = Bridge()
     bridge.set_debug(debug_enabled)
 
+    # Bring up OpenTelemetry (OTLP) agent tracing if [telemetry] enabled — a
+    # best-effort, idempotent no-op when disabled or the `otel` extra is absent.
+    # One in-process init covers chat, trigger, and schedule turns.
+    from . import config as _config
+    from . import observability
+
+    observability.init_tracing(_config.read_telemetry())
+
     if dev:
         url = f"http://localhost:{port}"
     else:
@@ -368,4 +376,9 @@ def main() -> None:
     icon = _build_icon()
     if icon:
         start_kwargs["icon"] = str(icon)
-    webview.start(**start_kwargs)
+    try:
+        webview.start(**start_kwargs)
+    finally:
+        # Flush any batched spans before the process exits (no-op when tracing
+        # off) so a short session doesn't drop its last traces.
+        observability.shutdown()
