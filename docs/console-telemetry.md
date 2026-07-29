@@ -91,6 +91,54 @@ Tool execution dispatches onto a worker thread, but the tool span is opened
 before that hand-off, so a runnable's execution stays **parented to its turn's
 trace** — the whole turn is one connected tree.
 
+## Choosing a backend
+
+Because the console emits **standard OTLP**, switching backends is only an
+`endpoint` change — no code, no lock-in. You can point it at several in turn and
+compare. The main axes are *hosted vs self-hosted* and *LLM-aware vs general
+tracing*:
+
+| Backend | Hosting | LLM-aware | Best for |
+|---|---|---|---|
+| **LangSmith** | SaaS (enterprise self-host) | Yes — conversation view, token/cost, evals | Deep LLM debugging & evaluation |
+| **Langfuse**, **Arize Phoenix** | Self-hosted, OSS | Yes — render prompts/completions, token/cost | A self-hosted, LangSmith-*like* experience |
+| **Grafana Tempo**, **Jaeger** | Self-hosted, OSS | No — general trace UI | Operational / audit tracing; already running Grafana |
+
+All of them ingest OTLP, so any of the above is just a different `endpoint`.
+A general trace UI (Tempo / Jaeger) shows the full `turn → llm → tool` tree with
+attributes, timings, decisions, and provenance — it just won't render a pretty
+conversation or token/cost rollups the way an LLM-native tool does.
+
+### Grafana + Tempo
+
+[Grafana](https://grafana.com/) doesn't store traces itself — it queries a
+tracing backend. Pair it with **[Grafana Tempo](https://grafana.com/oss/tempo/)**
+(or Jaeger), which accepts OTLP directly. Point the console at Tempo's OTLP/HTTP
+receiver:
+
+```toml
+[telemetry]
+enabled = true
+endpoint = "http://tempo:4318/v1/traces"   # Tempo's OTLP/HTTP port (4318)
+service_name = "runspec-console"
+```
+
+Then add Tempo as a data source in Grafana (Connections → Data sources → Tempo)
+and open **Explore** to search traces — filter by `service.name =
+runspec-console`, or by any span attribute the console sets
+(`runspec.turn.kind`, `gen_ai.request.model`, `runspec.tool.autonomy_decision`,
+`runspec.provenance.trigger`, …) via TraceQL. Each trace is one agent turn.
+
+### A note on Prometheus
+
+[Prometheus](https://prometheus.io/) is a **metrics** store — it does not ingest
+traces, and this feature exports traces only, so Prometheus is not a backend for
+it. If you later want aggregate metrics (request rate / error rate / duration per
+tool or model), the standard path is to run an **OpenTelemetry Collector** with
+the `spanmetrics` connector (or Tempo's metrics-generator) to *derive* those
+metrics from the same trace stream and expose them to Prometheus — no change to
+the console. That's an ops add-on, separate from this tracing feature.
+
 ## Privacy
 
 Sending agent data to an external backend is a real consideration — prompts and
