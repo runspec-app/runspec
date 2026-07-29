@@ -392,18 +392,21 @@ class InvokeMixin:
         def run() -> None:
             try:
                 try:
-                    # Fold the current local date, the live console context
-                    # (working-hours rota + configured triggers/schedules) and the
+                    # Fold the current local date, a lean presence caveat and the
                     # pinned-memory header into this turn's system prompt via the
                     # one-off system_override path, so they stay fresh without
                     # invalidating the cached adapter. The date is always present,
                     # so the override path is always taken — but it's date-only, so
                     # the prompt stays byte-identical across a day's turns and the
-                    # model-side prompt cache still hits.
+                    # model-side prompt cache still hits. The presence caveat is
+                    # empty on the common turn (operator present, inside working
+                    # hours) and only appears when interacting outside hours — the
+                    # full rota + automation inventory now lives behind the
+                    # on-demand console_status tool, not on every turn.
                     from . import memory
 
                     now_block = self._now_context()
-                    console_block = self._console_context()
+                    console_block = self._presence_caveat()
                     memory_block = memory.build_header()
                     base_block = self._base_system()
                     extra = "\n\n".join(
@@ -419,8 +422,10 @@ class InvokeMixin:
                     # Char counts of the system-prompt buckets, for the context
                     # indicator's composition breakdown. The date block is tiny
                     # (~250 chars) so it folds into "system" rather than earning
-                    # its own near-zero slice. Computed here where the blocks
-                    # already exist — no recomputation in the turn loop.
+                    # its own near-zero slice. The "console_context" bucket now
+                    # measures the lean presence caveat (usually 0). Computed here
+                    # where the blocks already exist — no recomputation in the
+                    # turn loop.
                     system_parts = {
                         "system": len(base_block) + len(now_block),
                         "console_context": len(console_block),

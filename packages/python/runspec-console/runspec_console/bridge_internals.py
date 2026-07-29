@@ -1187,3 +1187,47 @@ class InternalsMixin:
             )
 
         return "\n".join(lines)
+
+    def _presence_caveat(self) -> str:
+        """The lean per-turn block folded into interactive **chat** turns, in
+        place of the full ``_console_context()`` inventory.
+
+        Returns ``""`` on the common turn — operator present, inside working
+        hours — so the standing system prompt (and the model-side prompt cache)
+        stays clean. It emits a single "## Working hours" caveat **only** when
+        the operator is interacting *outside* their configured working hours,
+        where the advice ("this isn't blocked, but confirm before side effects")
+        actually shapes behaviour. Everything else the old block carried — the
+        lock-suspend / break lines and the triggers/schedules/groups/mailbox/
+        repos inventory — is now pulled on demand from the ``console_status``
+        tool (which still returns the full ``_console_context()`` snapshot), so
+        nothing is lost; it just no longer rides every turn.
+
+        Reactive trigger/schedule turns never took this path at all: a firing
+        while the operator is away is dropped by the engine's rota/lock gate
+        before any LLM turn starts, so presence never needed to be a standing
+        prompt concern. Uses ``within_rota`` (the grid), not a live calendar
+        probe, to stay latency-free — matching how ``_console_context()``
+        computes its INSIDE/OUTSIDE display."""
+        from .config import read_rota
+        from .triggers import within_rota
+
+        rota = read_rota()
+        if not rota.get("enabled"):
+            return ""
+        if within_rota(rota, datetime.now()):
+            return ""  # present and inside working hours — nothing to say
+        note = (
+            " (the live gate also consults your Outlook calendar, so treat this "
+            "as approximate)"
+            if rota.get("source") == "outlook"
+            else ""
+        )
+        return (
+            "## Working hours\n"
+            "It is currently **OUTSIDE** the operator's configured working "
+            f"hours{note}. This interactive request is not blocked, but if it "
+            "asks you to run, schedule, or trigger something with side effects, "
+            "point out that it's outside their working hours and confirm they "
+            "want to proceed before acting."
+        )

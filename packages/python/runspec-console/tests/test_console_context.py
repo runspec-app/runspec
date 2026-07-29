@@ -291,3 +291,51 @@ def test_saved_runs_alone_produce_a_block(tmp_path, monkeypatch):
     )
     ns = _stub(monkeypatch, rota={}, triggers=[], schedules=[])
     assert ns._console_context() != ""
+
+
+# ── _presence_caveat: the lean standing chat block ────────────────────────────
+#
+# Unlike _console_context() (the full snapshot the console_status tool serves),
+# _presence_caveat() is what rides every interactive chat turn. It stays empty
+# on the common turn and only speaks up when the operator is outside their
+# working hours — so tokens and prompt-cache churn drop to zero on the fast path.
+
+
+def _caveat_stub(monkeypatch, *, rota):
+    monkeypatch.setattr(cfg, "read_rota", lambda: rota)
+    ns = types.SimpleNamespace()
+    ns._presence_caveat = types.MethodType(Bridge._presence_caveat, ns)
+    return ns
+
+
+def test_caveat_empty_when_rota_off(monkeypatch):
+    ns = _caveat_stub(monkeypatch, rota={"enabled": False})
+    assert ns._presence_caveat() == ""
+
+
+def test_caveat_empty_inside_working_hours(monkeypatch):
+    ns = _caveat_stub(
+        monkeypatch, rota={"enabled": True, "source": "console", **_ALWAYS_ON}
+    )
+    assert ns._presence_caveat() == ""
+
+
+def test_caveat_warns_outside_working_hours(monkeypatch):
+    ns = _caveat_stub(
+        monkeypatch, rota={"enabled": True, "source": "console", **_ALWAYS_OFF}
+    )
+    out = ns._presence_caveat()
+    assert "**OUTSIDE**" in out
+    assert "confirm they want to proceed" in out
+    # No inventory / lock / break lines — that detail is on console_status now.
+    assert "Configured triggers" not in out
+    assert "Lock auto-suspend" not in out
+
+
+def test_caveat_notes_outlook_source_as_approximate(monkeypatch):
+    ns = _caveat_stub(
+        monkeypatch, rota={"enabled": True, "source": "outlook", **_ALWAYS_OFF}
+    )
+    out = ns._presence_caveat()
+    assert "**OUTSIDE**" in out
+    assert "approximate" in out

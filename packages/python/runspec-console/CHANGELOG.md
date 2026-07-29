@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.217.0] — 2026-07-29
+
+### Changed
+- **The chat agent's standing system prompt no longer carries the rota +
+  automation inventory on every turn.** Interactive chat turns used to fold the
+  full `_console_context()` block — a working-hours rota line (always
+  "INSIDE"/"OUTSIDE" + today's window), a lock-auto-suspend line, an optional
+  break line, plus the complete list of configured triggers, schedules, saved
+  runs, host groups, mailbox, and git repos — into the system prompt of **every**
+  turn. That was pure cost on the common turn (operator present, inside working
+  hours) and, because the INSIDE/OUTSIDE flag and break time change within a day,
+  it churned the model-side prompt cache that the neighbouring date block is kept
+  date-only to preserve.
+  - The standing chat turn now injects a lean **`_presence_caveat()`** instead: it
+    is **empty** on the common turn and emits a single "## Working hours" caveat
+    **only** when the operator is interacting *outside* their configured working
+    hours (where "not blocked, but confirm before side effects" actually shapes
+    behaviour).
+  - Nothing is lost — the full snapshot (rota state, lock/break, and the whole
+    triggers/schedules/groups/mailbox/repos inventory) still lives on the
+    autonomous **`console_status`** tool, pulled on demand.
+  - Reactive trigger/schedule turns were never affected: a firing while the
+    operator is away is dropped by the engine's rota/lock gate before any LLM turn
+    starts, so presence never needed to be a standing prompt concern.
+
+
 ## [0.216.0] — 2026-07-29
 
 ### Fixed
