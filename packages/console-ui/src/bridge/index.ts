@@ -1176,6 +1176,10 @@ export interface BridgeApi {
   // pasted message (lands under the `body` payload key); `fields` are key=value
   // payload overrides. Bypasses match/rota/dedup for the named trigger.
   test_trigger: (name: string, body: string, fields: Record<string, string>) => Promise<{ ok: boolean; error?: string }>
+  // Run a `source = "paste"` trigger now with `text` as its input — a REAL run
+  // through the trigger's match/rota/dedup gates (unlike test_trigger). `fields`
+  // are extra key=value payload. `skipped` explains a gated no-run.
+  submit_paste_input: (name: string, text: string, fields: Record<string, string>) => Promise<{ ok: boolean; skipped?: string; error?: string }>
   // Schedules mirror the trigger run inbox + event log with their own feeds.
   get_schedule_board: () => Promise<RunCard[]>
   get_schedule_events: () => Promise<TriggerEvent[]>

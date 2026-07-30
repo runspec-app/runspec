@@ -6,6 +6,7 @@ import {
 import {
   PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined,
   ThunderboltOutlined, CheckOutlined, CloseOutlined, PlayCircleOutlined,
+  SnippetsOutlined,
 } from '@ant-design/icons'
 import { bridge, type TriggerSourceInfo, type Host, type Runnable, type ArgDef } from '../bridge'
 
@@ -390,6 +391,89 @@ function TestTriggerModal({ name, onClose }: { name: string | null; onClose: () 
   )
 }
 
+// "Run with pasted text" — the operator-driven input path for a `source = "paste"`
+// trigger. Unlike "Trigger now" (a test that bypasses the gates), this is a REAL
+// run: the pasted block goes through the trigger's own match/rota/dedup gates, so
+// a paste that doesn't fit the filter (or lands outside working hours) is reported
+// rather than silently run.
+interface PasteForm {
+  text: string
+  fields: { key: string; value: string }[]
+}
+
+function PasteInputModal({ name, onClose }: { name: string | null; onClose: () => void }) {
+  const [form] = Form.useForm<PasteForm>()
+  const [running, setRunning] = useState(false)
+
+  const run = async () => {
+    const v = await form.validateFields()
+    if (!v.text?.trim()) { message.warning('Paste some text to run the trigger.'); return }
+    const fields: Record<string, string> = {}
+    for (const f of v.fields || []) if (f?.key?.trim()) fields[f.key.trim()] = (f.value ?? '').trim()
+    setRunning(true)
+    try {
+      const res = await bridge.submit_paste_input(name as string, v.text, fields)
+      if (res.ok) {
+        message.success(`Ran ${name} — see the run inbox below`)
+        onClose()
+      } else if (res.error) {
+        message.error(res.error)
+      } else {
+        // Gated (match / rota / once-per-thread) — explain why nothing ran.
+        message.warning(res.skipped || 'The trigger didn’t run.')
+      }
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={name !== null}
+      title={`Run with pasted text — ${name ?? ''}`}
+      width={600}
+      onCancel={onClose}
+      onOk={run}
+      okText="Run"
+      confirmLoading={running}
+      okButtonProps={{ icon: <SnippetsOutlined /> }}
+      destroyOnClose
+    >
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+        Runs this trigger now with the pasted text as its input — a real run through
+        the trigger’s match rules and working-hours rota (not a test). In agent mode
+        the text is the agent’s input; in rule mode template it with <code>{'{{ text }}'}</code>.
+      </Text>
+      <Form form={form} layout="vertical" size="small" initialValues={{ text: '', fields: [] }}>
+        <Form.Item name="text" label="Text">
+          <Input.TextArea
+            autoSize={{ minRows: 6, maxRows: 20 }}
+            placeholder="Paste the block of text the trigger should act on…"
+          />
+        </Form.Item>
+        <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>
+          Fields (optional) — extra payload, e.g. <code>host</code> = <code>web-01</code>
+        </label>
+        <Form.List name="fields">
+          {(fields, { add, remove }) => (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {fields.map(f => (
+                <div key={f.key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <Form.Item name={[f.name, 'key']} noStyle><Input size="small" placeholder="host" style={{ fontFamily: 'monospace' }} /></Form.Item>
+                  <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
+                  <Form.Item name={[f.name, 'value']} noStyle><Input size="small" placeholder="web-01" style={{ fontFamily: 'monospace' }} /></Form.Item>
+                  <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+                </div>
+              ))}
+              <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add()} style={{ width: 'fit-content' }}>Add field</Button>
+            </div>
+          )}
+        </Form.List>
+      </Form>
+    </Modal>
+  )
+}
+
 export function TriggersEditor({
   triggers,
   sources,
@@ -402,6 +486,7 @@ export function TriggersEditor({
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState<string | null>(null) // null = adding new
   const [testName, setTestName] = useState<string | null>(null) // "Trigger now" target
+  const [pasteName, setPasteName] = useState<string | null>(null) // "Run with pasted text" target
   const [form] = Form.useForm<TriggerForm>()
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -642,6 +727,7 @@ export function TriggersEditor({
       </Modal>
 
       <TestTriggerModal name={testName} onClose={() => setTestName(null)} />
+      <PasteInputModal name={pasteName} onClose={() => setPasteName(null)} />
 
       {triggers.length === 0 && !editing ? (
         <Empty description={<span style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}>No triggers yet. Add one to react to a monitored event.</span>} />
@@ -656,6 +742,11 @@ export function TriggersEditor({
               </Text>
               <Tag color={t.mode === 'rule' ? 'geekblue' : 'purple'} style={{ margin: 0, fontSize: 10 }}>{String(t.mode ?? 'agent')}</Tag>
               <Switch size="small" checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)} />
+              {t.source === 'paste' && (
+                <Tooltip title="Run with pasted text — paste a block of text as this trigger’s input">
+                  <Button type="text" size="small" icon={<SnippetsOutlined />} onClick={() => setPasteName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+                </Tooltip>
+              )}
               <Tooltip title="Trigger now — fire with a test event">
                 <Button type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => setTestName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
               </Tooltip>

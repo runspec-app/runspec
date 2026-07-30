@@ -311,6 +311,65 @@ trigger Event-field autocomplete.
 while the console is closed is skipped (the default in-memory jobstore). A SQLite
 jobstore is a clean later drop-in for missed-run catch-up.
 
+### 4.4 Source #4 — Paste (`sources/paste.py`) ✅ *implemented*
+
+The operator as an event source. Every other source turns something *happening*
+into an `Event`; this one has no autonomous stimulus at all — the operator pastes
+a block of text into the Triggers tab and that **is** the event. It's the answer
+for "I have this text (a log excerpt, an email thread, a ticket body) — run my
+triage trigger on it" without waiting for the text to arrive through a monitored
+channel.
+
+| `type` | Origin | Key payload fields |
+|---|---|---|
+| `text` | the operator's paste (per-trigger paste action) | `text` (the pasted block), `body` (mirror of `text`, so agent-mode `render_event` surfaces it under its "Body:" block), plus any operator-supplied `key=value` fields |
+
+Because it never fires on its own, the source itself is **inert** — `available()`
+is always `(True, "")`, `event_types()` is `["text"]`, and `start`/`stop` are
+no-ops. Its driver is the bridge: the per-row paste action calls
+`submit_paste_input(name, text, fields)`, which builds the `paste`/`text` event
+and dispatches the chosen trigger via **`TriggerEngine.fire_paste`**. Like `chat`
+and `schedule`, it's **bridge-owned and marked external**
+(`external_sources={…, "paste"}`); registering it is purely what puts it in the
+source dropdown (with `text` autocompleting the Event field).
+
+**This is a real run, not a test.** `fire_paste` deliberately differs from the
+"Trigger now" test (`fire_test`): it applies the trigger's own gates —
+`match` (so a paste that doesn't fit the filter is *reported* as skipped, not
+silently run), the working-hours rota (honouring `ignore_rota`), and
+`once_per_thread` dedup — scoped to just the one named trigger. It bypasses only
+the **lock gate**: a human actively pasting is present by definition (the same
+reason `_route` pre-authorises `source == "schedule"`). It returns
+`{ok, skipped?}` so the UI can explain a gated no-run.
+
+The id is `paste` rather than `manual` on purpose: `manual` already names the
+most-restrictive **autonomy** level, and a source of that name in the same UI
+would be confusing.
+
+```toml
+# Agent mode: paste anything, let the agent triage it.
+[[triggers]]
+name = "triage-paste"
+source = "paste"
+event  = "text"
+mode   = "agent"
+rules  = """
+The pasted text is a log excerpt or error report. Identify the affected host,
+run diagnostics against it, and summarise the likely cause. Confirm before any
+restart or config change.
+"""
+
+# Rule mode: template the pasted text straight into a runnable's args.
+[[triggers]]
+name = "grep-paste"
+source = "paste"
+event  = "text"
+mode   = "rule"
+run    = "prod-web-01__search-logs"
+[triggers.map]
+query = "{{ text }}"
+```
+
 ---
 
 ## 5. Trigger contract (TOML, symmetric to a runnable's args)

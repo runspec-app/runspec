@@ -1322,6 +1322,10 @@ export const mockApi: BridgeApi = {
     console.log('mock: test_trigger', name, body, fields)
     return { ok: true }
   },
+  submit_paste_input: async (name: string, text: string, fields: Record<string, string>) => {
+    console.log('mock: submit_paste_input', name, text, fields)
+    return { ok: true, skipped: undefined }
+  },
   delete_trigger: async (name: string) => {
     console.log('mock: delete_trigger', name)
     return { ok: true }

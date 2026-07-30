@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.219.0] — 2026-07-30
+
+### Added
+- **Paste a block of text as a trigger's input** — a new operator-driven
+  `paste` event source (`sources/paste.py`). Every other source turns something
+  *happening* into an event; this one has no autonomous stimulus — the operator
+  pastes a block of text into the Triggers tab and that **is** the event. Build a
+  trigger with `source = "paste"` (event `text`) and a per-row **"Run with pasted
+  text"** action (a paste dialog, shown only on paste-source triggers) feeds it:
+  agent mode receives the text as its input; rule mode templates `{{ text }}`
+  into a runnable's args. It's the answer for "I have this log excerpt / email
+  thread / ticket body — run my triage trigger on it" without waiting for the
+  text to arrive through a monitored channel.
+  - **A real run, not a test.** New `TriggerEngine.fire_paste` (bridge
+    `submit_paste_input`) dispatches the *named* trigger through its own gates —
+    `match` (a paste that doesn't fit the filter is *reported* as skipped, not
+    silently run), the working-hours rota (honouring `ignore_rota`), and
+    `once_per_thread` dedup — and returns `{ok, skipped?}` so the UI explains a
+    gated no-run. It bypasses only the lock gate (a human actively pasting is
+    present by definition, mirroring the schedule source's pre-authorisation),
+    unlike the "Trigger now" test (`fire_test`), which bypasses every gate.
+  - The source is **inert/bridge-owned** (`external_sources`), so registering it
+    is purely what surfaces it in the source dropdown (with `text` autocompleting
+    the Event field). The payload mirrors the pasted block into both `text` (for
+    rule templating, matching the `chat`/`notifications` sources) and `body` (so
+    agent-mode `render_event` shows it once under its "Body:" block). Named
+    `paste`, not `manual`, to avoid clashing with the `manual` autonomy level.
+    See `docs/design/console-triggers.md` §4.4.
+
+
 ## [0.218.0] — 2026-07-29
 
 ### Added

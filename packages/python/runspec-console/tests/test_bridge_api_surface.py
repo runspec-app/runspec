@@ -166,6 +166,7 @@ EXPECTED = {
     "stop_chat",
     "stop_triggers",
     "stop_voice_dictation",
+    "submit_paste_input",
     "sync_pull",
     "sync_repo",
     "test_host",

@@ -109,7 +109,9 @@ class TriggersMixin:
             # external stops the engine constructing/starting a second one. The
             # schedule source is likewise bridge-owned (it needs the trigger list
             # to build its APScheduler jobs) and feeds ticks in via engine.feed().
-            external_sources={"chat", "schedule"},
+            # The paste source is inert (operator-driven): it emits nothing on its
+            # own; the UI paste action dispatches via engine.fire_paste().
+            external_sources={"chat", "schedule", "paste"},
             always_start=always_start,  # schedule source built from the Schedules tab below
             # Durable once_per_thread dedup — so a trigger that fired on a thread's
             # opening message doesn't re-fire on replies after a console restart.
@@ -1835,6 +1837,46 @@ class TriggersMixin:
             payload["body"] = body
         engine.fire_test(name, Event.new(source, etype, payload))
         return {"ok": True}
+
+    def submit_paste_input(
+        self, name: str, text: str = "", fields: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Run a ``source = "paste"`` trigger now with an operator-pasted block of
+        text as its input, for the Triggers tab's per-row paste action.
+
+        Builds a ``paste``/``text`` event carrying the pasted ``text`` (under both
+        the ``text`` key — for rule-mode ``{{ text }}`` templating, matching the
+        ``chat``/``notifications`` sources — and ``body``, so agent-mode
+        ``render_event`` surfaces it under its "Body:" block) plus the optional
+        ``key=value`` ``fields``, then dispatches *that one* trigger via
+        ``engine.fire_paste`` — a **real run** through the trigger's own gates
+        (unlike the "Trigger now" test, which bypasses them). Requires the engine
+        running and the trigger's source to be ``paste``. Returns
+        ``{ok, skipped?, error?}``; a run card appears in the Triggers inbox on a
+        successful (ungated) run."""
+        from .config import read_triggers
+        from .events import Event
+
+        engine = self._trigger_engine
+        if engine is None:
+            return {"ok": False, "error": "The trigger engine isn't running."}
+        raw = next((t for t in read_triggers() if t.get("name") == name), None)
+        if raw is None:
+            return {"ok": False, "error": f"No trigger named {name!r}."}
+        if str(raw.get("source") or "") != "paste":
+            return {
+                "ok": False,
+                "error": f"Trigger {name!r} isn't a paste-input trigger "
+                '(its source isn\'t "paste").',
+            }
+        etype = str(raw.get("event") or "text")
+        payload: dict[str, Any] = {
+            str(k): v for k, v in (fields or {}).items() if str(k).strip()
+        }
+        if text:
+            payload.setdefault("text", text)
+            payload.setdefault("body", text)
+        return engine.fire_paste(name, Event.new("paste", etype, payload))
 
     def get_trigger_board(self) -> list[dict[str, Any]]:
         """Snapshot of the run inbox's cards for this session (newest last)."""

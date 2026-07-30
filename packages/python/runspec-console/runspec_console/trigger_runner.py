@@ -138,10 +138,13 @@ def render_event(event: Event) -> str:
         "",
         "Event details:",
     ]
-    body: Any = None
+    body: Any = event.payload.get("body")
     for key, value in event.payload.items():
         if key == "body":
-            body = value
+            continue
+        # The paste source mirrors its text into both `text` and `body`; don't
+        # print it twice (it already renders under the "Body:" block below).
+        if key == "text" and value == body:
             continue
         if isinstance(value, list):
             value = ", ".join(str(x) for x in value)

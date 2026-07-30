@@ -768,6 +768,47 @@ class TriggerEngine:
         self._record_event(event, [name], [], [])
         return self._dispatch(trigger, event)
 
+    def fire_paste(self, name: str, event: Event) -> dict[str, Any]:
+        """Dispatch one named ``source = "paste"`` trigger with an operator-pasted
+        ``event``, for the Triggers tab's per-row paste action.
+
+        Unlike :meth:`fire_test`, this is a **real run**, not a test: it applies
+        the trigger's own gates — ``match`` (so the operator sees why a paste that
+        doesn't fit the filter was ignored), the working-hours rota (honouring
+        ``ignore_rota``), and ``once_per_thread`` dedup — scoped to just this one
+        trigger. It **bypasses the lock gate** only: a human actively pasting is
+        present by definition (the same reason ``_route`` pre-authorises
+        ``source == "schedule"``).
+
+        Returns ``{"ok": bool, "skipped": <reason|None>}`` so the UI can explain a
+        no-run. Records the disposition to the audit feed either way.
+        """
+        trigger = next((t for t in self._triggers if t.name == name), None)
+        if trigger is None:
+            return {"ok": False, "skipped": f"No trigger named {name!r}."}
+        if not trigger.matches(event):
+            self._record_event(event, [], [], [])
+            return {
+                "ok": False,
+                "skipped": "The pasted text didn't match this trigger's filter.",
+            }
+        if not self._clock_ok() and not trigger.ignore_rota:
+            self._record_event(event, [], [name], [])
+            return {"ok": False, "skipped": "Outside working hours (rota)."}
+        once = (
+            trigger.once_per_thread
+            if trigger.once_per_thread is not None
+            else self._default_once_per_thread
+        )
+        if once:
+            key = thread_key(event.payload)
+            if key and self._thread_store.already_fired(trigger.name, key):
+                self._record_event(event, [], [], [name])
+                return {"ok": False, "skipped": "Already handled this thread."}
+        self._record_event(event, [name], [], [])
+        self._dispatch(trigger, event)
+        return {"ok": True, "skipped": None}
+
     def _route(self, event: Event) -> Future[None] | None:
         """Route an event to every matching trigger.
 

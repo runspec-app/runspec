@@ -151,6 +151,24 @@ def test_render_event_joins_list_fields():
     assert "- categories: Red, Blue" in render_event(ev)
 
 
+def test_render_event_dedupes_text_equal_body():
+    # The paste source mirrors its input into both `text` and `body`; agent mode
+    # should render it once (under "Body:"), not also inline as `- text: …`.
+    ev = Event.new("paste", "text", {"text": "paste me", "body": "paste me"})
+    text = render_event(ev)
+    assert "- text:" not in text
+    assert text.rstrip().endswith("paste me")
+    assert text.count("paste me") == 1
+
+
+def test_render_event_keeps_text_when_it_differs_from_body():
+    # Only the exact duplicate is suppressed — a distinct `text` still renders.
+    ev = Event.new("paste", "text", {"text": "a note", "body": "the body"})
+    text = render_event(ev)
+    assert "- text: a note" in text
+    assert text.rstrip().endswith("the body")
+
+
 def test_compose_system_includes_rules():
     t = Trigger.from_config(
         {"name": "t", "source": "outlook", "event": "new_mail", "rules": "Be careful."}
