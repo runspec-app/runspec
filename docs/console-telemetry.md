@@ -240,7 +240,8 @@ file.
 A [custom model adapter](console-adapters.md) can add provider-specific detail
 to the live LLM span without any wiring — the LLM span is the current OTel span
 while your adapter's `stream_with_tools` runs. Call the no-op-safe helpers on
-`runspec_console.observability`:
+`runspec_console.observability`. For a full walkthrough (and an agent-ready
+brief), see [Telemetry for a custom adapter](console-adapter-telemetry.md):
 
 ```python
 from runspec_console import observability

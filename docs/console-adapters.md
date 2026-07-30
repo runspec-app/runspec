@@ -361,6 +361,9 @@ if you return tool calls without a `tool_use` stop.
 
 ## Enriching telemetry spans (optional)
 
+For a task-oriented walkthrough you can hand to a coding agent, see
+[Telemetry for a custom adapter](console-adapter-telemetry.md).
+
 When [telemetry](console-telemetry.md) is enabled, the console wraps each model
 request in an OpenTelemetry span and sets the standard `gen_ai.*` attributes for
 you (model, finish reason, token usage). Your adapter can add provider-specific
