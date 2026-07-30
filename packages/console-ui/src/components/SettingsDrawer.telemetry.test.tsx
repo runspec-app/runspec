@@ -17,6 +17,8 @@ const INITIAL_CONFIG: Record<string, unknown> = {
     endpoint: 'https://langsmith.internal/otel/v1/traces',
     capture_content: false,
     headers: { 'x-api-key': 'ls-secret' },
+    api_key_command: 'keyring get langsmith key',
+    api_key_header: 'x-api-key',
   },
 }
 
@@ -66,5 +68,8 @@ describe('TelemetryTab Save round-trip', () => {
     // Sensible defaults are written even when the section omitted them.
     expect(saved.telemetry.protocol).toBe('http/protobuf')
     expect(saved.telemetry.service_name).toBe('runspec-console')
+    // The "ship the command, not the key" fields round-trip.
+    expect(saved.telemetry.api_key_command).toBe('keyring get langsmith key')
+    expect(saved.telemetry.api_key_header).toBe('x-api-key')
   })
 })

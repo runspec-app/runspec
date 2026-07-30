@@ -139,6 +139,79 @@ the `spanmetrics` connector (or Tempo's metrics-generator) to *derive* those
 metrics from the same trace stream and expose them to Prometheus — no change to
 the console. That's an ops add-on, separate from this tracing feature.
 
+## Providing the API key without shipping it
+
+A shared backend like LangSmith needs an API key, and there's no good answer that
+puts that key in `config.toml` in the clear — a config seed ships in package data
+and a Config-Sync repo is checked out on every machine, so a key placed directly
+in `[telemetry.headers]` would leak. Two patterns solve this; the first removes
+the problem entirely.
+
+### Relay through an internal OTel Collector (recommended)
+
+Point every console at an internal **[OpenTelemetry
+Collector](https://opentelemetry.io/docs/collector/)** and let *it* hold the one
+LangSmith key and add the auth header on export. The desktops carry **no secret
+at all** — only the Collector's internal address:
+
+```toml
+[telemetry]
+enabled = true
+endpoint = "http://otel-collector.internal:4318/v1/traces"
+```
+
+The Collector holds the key once (from its own environment / secret store) and
+forwards to LangSmith — and can fan out to Tempo/Grafana at the same time:
+
+```yaml
+# otel-collector config (on the Collector host, not the desktops)
+receivers:
+  otlp:
+    protocols:
+      http:
+exporters:
+  otlphttp/langsmith:
+    endpoint: https://api.smith.langchain.com/otel
+    headers:
+      x-api-key: ${env:LANGSMITH_API_KEY}   # the key lives here, once
+  otlp/tempo:
+    endpoint: tempo:4317
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp/langsmith, otlp/tempo]
+```
+
+Now the key lives in one trusted place, rotating it is one change (not a fleet
+re-push), and desktop→Collector auth is a cheap *internal* problem (network
+restriction, or an internal-only token/cert you can seed freely because it isn't
+the real key). This is also the standard production OTel topology.
+
+### Resolve the key from a command (`api_key_command`)
+
+If a Collector isn't available, resolve the key **at runtime** from a command
+instead of storing it — mirroring the model `[llm] api_key_command`. The config
+carries only the *command*, never the key:
+
+```toml
+[telemetry]
+enabled = true
+endpoint = "https://api.smith.langchain.com/otel/v1/traces"
+api_key_command = "keyring get langsmith api-key"   # or: vault read -field=key secret/langsmith
+api_key_header = "x-api-key"                         # default; where the key is injected
+```
+
+At startup the console runs the command, takes its stdout as the key, and injects
+it under `api_key_header`. So a config seed / Config-Sync repo can distribute the
+`api_key_command` string safely — each machine resolves the real key locally from
+wherever your org keeps secrets: the OS keychain (`keyring get …`), a secret
+manager (`vault read …`, `az keyvault secret show …`, `aws secretsmanager …`), or
+a small helper shipped as a console-script in the venv. The command runs with the
+venv on `PATH` (and `RUNSPEC_PYTHON` / `RUNSPEC_VENV` set), so a bundled helper
+resolves wherever the venv was created. If the command fails, tracing is disabled
+for the session rather than exporting unauthenticated.
+
 ## Privacy
 
 Sending agent data to an external backend is a real consideration — prompts and
@@ -156,9 +229,11 @@ this safe:
   console (the secret env channel, `sudo`/`su` credentials) live *below* the
   tool-input layer the agent sees and never reach a span at all.
 
-Only enable content capture when your backend is trusted. The
-`[telemetry.headers]` API key is stored in `config.toml` (like the model API
-key), **not** the OS keychain.
+Only enable content capture when your backend is trusted. An API key placed
+directly in `[telemetry.headers]` is stored in `config.toml` (like the model API
+key), **not** the OS keychain — so for a shared key across many machines, prefer
+the Collector relay or `api_key_command` above rather than putting the key in the
+file.
 
 ## Enriching spans from a custom adapter
 

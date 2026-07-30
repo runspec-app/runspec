@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.218.0] — 2026-07-29
+
+### Added
+- **Telemetry: resolve the backend API key without shipping it in the clear.**
+  A shared backend (e.g. LangSmith) needs an API key, but a config seed / Config-
+  Sync repo can't carry one in `[telemetry.headers]` without leaking it. Two
+  options now solve this:
+  - **`[telemetry] api_key_command`** (+ `api_key_header`, default `x-api-key`):
+    the key is resolved **at runtime** from a command's stdout and injected under
+    that header, so the config distributes only the *command* (`keyring get …` /
+    `vault read …` / a bundled venv helper), never the key. Mirrors `[llm]
+    api_key_command` and reuses the same venv-aware runner (`adapters/base.py`);
+    a failing command disables tracing for the session rather than exporting
+    unauthenticated. Settings → Telemetry gains the two fields.
+  - **Internal OTel Collector relay** (docs): point the console at an internal
+    Collector that holds the one key and forwards to the backend — the desktops
+    carry no secret at all. Documented as the recommended topology in
+    `docs/console-telemetry.md` (§ "Providing the API key without shipping it").
+
+
 ## [0.217.0] — 2026-07-29
 
 ### Changed

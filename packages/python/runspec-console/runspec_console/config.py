@@ -268,7 +268,13 @@ def read_telemetry() -> dict[str, Any]:
     spans carry structure only (models, token counts, tool names, decisions,
     durations) — never prompt / completion / tool-argument *text*, which may hold
     secrets. Any value the OTel SDK also reads from a standard ``OTEL_*`` env var
-    is passed through only when set here, so config wins and env fills the gaps."""
+    is passed through only when set here, so config wins and env fills the gaps.
+
+    ``api_key_command`` (with ``api_key_header``, default ``x-api-key``) resolves
+    the backend's API key **at runtime** from the command's stdout and injects it
+    under that header — so a config seed / git-sync ships the *command* (e.g.
+    ``keyring get …`` / ``vault read …`` / a bundled venv helper), never the key
+    in the clear. Mirrors ``[llm] api_key_command`` (see ``adapters/base.py``)."""
     raw = read_config().get("telemetry")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     hdrs = cfg.get("headers")
@@ -287,6 +293,8 @@ def read_telemetry() -> dict[str, Any]:
         "ca_bundle": ca or None,
         "tls_verify": bool(cfg.get("tls_verify", True)),
         "capture_content": bool(cfg.get("capture_content", False)),
+        "api_key_command": str(cfg.get("api_key_command") or "").strip() or None,
+        "api_key_header": str(cfg.get("api_key_header") or "x-api-key").strip(),
     }
 
 

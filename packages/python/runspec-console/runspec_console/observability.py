@@ -84,6 +84,28 @@ def available() -> tuple[bool, str]:
     return (True, "")
 
 
+def _resolve_headers(cfg: dict[str, Any]) -> dict[str, str]:
+    """Static ``headers`` plus, when ``api_key_command`` is set, the API key
+    resolved from that command's stdout injected under ``api_key_header``
+    (default ``x-api-key``).
+
+    This is the "ship the command, not the key" path: a config seed / git-sync
+    distributes the *command* (``keyring get …`` / ``vault read …`` / a bundled
+    venv helper), and each install resolves the real key locally at startup — the
+    secret never lives in the config file or package data. Reuses the same runner
+    the ``[llm]`` adapters use (venv-aware; raises on empty output), so a command
+    failure propagates and cleanly disables tracing rather than exporting
+    unauthenticated."""
+    headers = {str(k): str(v) for k, v in (cfg.get("headers") or {}).items()}
+    cmd = cfg.get("api_key_command")
+    if cmd:
+        from .adapters.base import run_api_key_command
+
+        key = run_api_key_command(cmd)
+        headers[cfg.get("api_key_header") or "x-api-key"] = key
+    return headers
+
+
 def _build_exporter(cfg: dict[str, Any]) -> Any:
     """Construct the OTLP span exporter from ``[telemetry]`` config.
 
@@ -97,8 +119,9 @@ def _build_exporter(cfg: dict[str, Any]) -> Any:
     kwargs: dict[str, Any] = {}
     if cfg.get("endpoint"):
         kwargs["endpoint"] = cfg["endpoint"]
-    if cfg.get("headers"):
-        kwargs["headers"] = dict(cfg["headers"])
+    headers = _resolve_headers(cfg)
+    if headers:
+        kwargs["headers"] = headers
     if cfg.get("ca_bundle"):
         kwargs["certificate_file"] = cfg["ca_bundle"]
     exporter = OTLPSpanExporter(**kwargs)

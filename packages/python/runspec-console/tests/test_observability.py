@@ -94,6 +94,53 @@ def test_read_telemetry_sample_ratio_floor(monkeypatch):
     assert config_mod.read_telemetry()["sample_ratio"] == 0.0
 
 
+def test_read_telemetry_api_key_command(monkeypatch):
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {"telemetry": {"api_key_command": "  keyring get ls  "}},
+    )
+    t = config_mod.read_telemetry()
+    assert t["api_key_command"] == "keyring get ls"
+    assert t["api_key_header"] == "x-api-key"  # default header
+    # Absent ⇒ None command, default header still present.
+    monkeypatch.setattr(config_mod, "read_config", lambda: {})
+    assert config_mod.read_telemetry()["api_key_command"] is None
+
+
+# ── api_key_command → header resolution ("ship the command, not the key") ─────
+
+
+def test_resolve_headers_injects_command_output():
+    """The command's stdout is injected under api_key_header, merged with the
+    static headers — so the config carries the command, never the key."""
+    headers = obs._resolve_headers(
+        {
+            "headers": {"Langsmith-Project": "ops"},
+            "api_key_command": "echo sk-from-cmd",
+            "api_key_header": "x-api-key",
+        }
+    )
+    assert headers == {"Langsmith-Project": "ops", "x-api-key": "sk-from-cmd"}
+
+
+def test_resolve_headers_custom_header_and_no_command():
+    assert obs._resolve_headers(
+        {"api_key_command": "echo tok", "api_key_header": "Authorization"}
+    ) == {"Authorization": "tok"}
+    # No command ⇒ just the static headers, unchanged.
+    assert obs._resolve_headers({"headers": {"a": "b"}}) == {"a": "b"}
+
+
+def test_resolve_headers_failing_command_raises():
+    """A failing command raises (so init_tracing disables tracing rather than
+    exporting unauthenticated) — never silently drops the key."""
+    import pytest as _pytest
+
+    with _pytest.raises(RuntimeError):
+        obs._resolve_headers({"api_key_command": "false"})
+
+
 # ── 2. disabled = complete no-op ──────────────────────────────────────────────
 
 

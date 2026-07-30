@@ -4125,6 +4125,8 @@ export function TelemetryTab() {
   const [caBundle, setCaBundle] = useState('')
   const [tlsVerify, setTlsVerify] = useState(true)
   const [headers, setHeaders] = useState<Array<{ k: string; v: string }>>([])
+  const [apiKeyCommand, setApiKeyCommand] = useState('')
+  const [apiKeyHeader, setApiKeyHeader] = useState('x-api-key')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -4139,6 +4141,8 @@ export function TelemetryTab() {
       setCaptureContent(t.capture_content === true)
       setCaBundle(typeof t.ca_bundle === 'string' ? t.ca_bundle : '')
       setTlsVerify(t.tls_verify !== false)
+      setApiKeyCommand(typeof t.api_key_command === 'string' ? t.api_key_command : '')
+      setApiKeyHeader(typeof t.api_key_header === 'string' && t.api_key_header ? t.api_key_header : 'x-api-key')
       const h = (t.headers ?? {}) as Record<string, unknown>
       setHeaders(
         h && typeof h === 'object'
@@ -4166,6 +4170,8 @@ export function TelemetryTab() {
           ca_bundle: caBundle.trim(),
           tls_verify: tlsVerify,
           headers: headerObj,
+          api_key_command: apiKeyCommand.trim(),
+          api_key_header: apiKeyHeader.trim() || 'x-api-key',
         },
       })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
@@ -4209,6 +4215,17 @@ export function TelemetryTab() {
         </div>
       ))}
       <Button size="small" icon={<PlusOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
+
+      <Divider style={{ margin: '14px 0' }} />
+      <Typography.Paragraph style={{ fontSize: 12, marginBottom: 6 }}>
+        <strong>API key from a command</strong> — instead of storing the key above, resolve it at
+        startup from a command's output and inject it under the header named below. The config only
+        holds the <em>command</em> (e.g. <code>keyring get langsmith key</code>, <code>vault read …</code>,
+        or a bundled helper), so a config seed / sync can distribute it without ever shipping the key
+        in the clear. Mirrors the model <code>api_key_command</code>.
+      </Typography.Paragraph>
+      {row('API key command', <Input style={{ width: 380 }} placeholder="e.g. keyring get langsmith key" value={apiKeyCommand} onChange={e => setApiKeyCommand(e.target.value)} disabled={!enabled} />)}
+      {row('Inject under header', <Input style={{ width: 220 }} placeholder="x-api-key" value={apiKeyHeader} onChange={e => setApiKeyHeader(e.target.value)} disabled={!enabled || !apiKeyCommand.trim()} />)}
 
       <Divider style={{ margin: '14px 0' }} />
       <Alert
