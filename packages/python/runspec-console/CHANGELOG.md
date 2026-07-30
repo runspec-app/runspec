@@ -8,6 +8,50 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.220.0] — 2026-07-30
+
+### Fixed
+- **Trigger/schedule agent turns reach parity with the chat turn on four
+  fronts** — agent-mode automation behaved worse than the Console (chat) tab
+  even though they share most machinery.
+  - **Arguments are looked up, not guessed.** In `[llm] tool_mode = "search"` an
+    unrestricted trigger/schedule turn folded in the *bare* runnable menu
+    (`_build_catalog_index()`), which — unlike the chat turn's
+    `_chat_index_text()` — omitted the "call `search_runnables` /
+    `describe_runnable` for a runnable's arguments and hosts **before running
+    it**" instruction. With no inline arg schema on the search-mode
+    `run_runnable`, the agent guessed args, failed a few times, then switched
+    tool. The trigger turn now folds in `_chat_index_text()` too
+    (`bridge_triggers._run_isolated_agent_turn`); the deferred-built-ins section
+    stays empty because headless turns keep built-ins inline.
+  - **Automation reaches any *configured* host, not just warm ones.** The
+    agent-turn resolvers (`_resolve_id_host`, `_resolve_tool_target`) only
+    accepted hosts present in the warm, in-profile discovery cache and returned
+    *"host 'x' does not have 'y'"* for a configured-but-currently-disconnected
+    host — even though execution (`invoke_runnable`) already lazy-connects to any
+    configured host, and the stated invariant is "automation reaches any
+    configured host on demand". They now fall back to a configured host by
+    reusing a warm host's runnable definition (same interface across the fleet;
+    execution opens the connection). A host that isn't configured at all still
+    errors. New `_configured_host_names()` helper.
+  - **The confirm gate stays visible.** In the run drawer the Approve/Deny block
+    rendered above the streaming transcript and scrolled out of view as the agent
+    worked. It's now a sticky bar pinned to the bottom of the scrolling drawer
+    (`TriggersView` `renderDrawerExtra`), always on screen while a confirm is
+    parked.
+  - **No more wedged "waiting for human".** A confirm that timed out on the
+    backend (5-minute default) silently denied and cleaned up but told the UI
+    nothing, so a late Approve hit a dead `request_id` and the run card stayed at
+    *waiting for human* until a restart. `_finish_confirm` now emits a
+    `runspec:confirm_resolved` event (owning card id + `request_id`) on every
+    finalize, and the Triggers view clears a gate on that event, reconciles a
+    still-pending gate against the card column (mirroring the App badge tracker),
+    and seeds live gates from `get_pending_confirms()` on mount (cold-start /
+    re-open). The confirm timeout is now configurable and defaults much longer
+    for unattended automation: `[console] confirm_timeout` (chat, default 300) and
+    `[console] trigger_confirm_timeout` (trigger/schedule, default 3600; `0` waits
+    indefinitely) via `config.confirm_timeout` + `Bridge._confirm_timeout_s`.
+
 ## [0.219.0] — 2026-07-30
 
 ### Added

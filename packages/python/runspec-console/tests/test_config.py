@@ -339,5 +339,25 @@ class TestTomlStringEscaper(unittest.TestCase):
         self.assertEqual(_toml_str(r"a\"b"), r'"a\\\"b"')
 
 
+def test_confirm_timeout_defaults_and_overrides(monkeypatch):
+    # Defaults: chat 300, headless (trigger/schedule) 3600.
+    monkeypatch.setattr(c, "read_config", lambda: {})
+    assert c.confirm_timeout(headless=False) == 300.0
+    assert c.confirm_timeout(headless=True) == 3600.0
+    # Explicit overrides per surface.
+    monkeypatch.setattr(
+        c,
+        "read_config",
+        lambda: {"console": {"confirm_timeout": 120, "trigger_confirm_timeout": 900}},
+    )
+    assert c.confirm_timeout(headless=False) == 120.0
+    assert c.confirm_timeout(headless=True) == 900.0
+    # 0 means wait indefinitely (surfaced by the bridge as no timeout).
+    monkeypatch.setattr(
+        c, "read_config", lambda: {"console": {"trigger_confirm_timeout": 0}}
+    )
+    assert c.confirm_timeout(headless=True) == 0.0
+
+
 if __name__ == "__main__":
     unittest.main()

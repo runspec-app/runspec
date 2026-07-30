@@ -43,6 +43,15 @@ class _Bridge:
         # local for "h*local", remote otherwise — enough for dispatch routing.
         return {"name": host, "ssh": None if host.endswith("local") else f"u@{host}"}
 
+    # Configured hosts = whatever the cache carries, plus any extras a test opts
+    # in (to exercise the configured-but-cold-host resolver fallback).
+    _extra_hosts: set = set()
+
+    def _configured_host_names(self):
+        return {
+            r.get("host", "local") for r in self._runnables_cache
+        } | self._extra_hosts
+
     def _become_params(self, cached, hostname):
         return "", "sudo", None
 
@@ -178,6 +187,16 @@ def test_resolve_dedup_unknown_host_is_an_error():
     b = _Bridge([_rn("a", "ping"), _rn("b", "ping")])
     out = b._resolve_tool_target("fleet__ping", {"host": "zzz"})
     assert isinstance(out, str) and "does not have" in out
+
+
+def test_resolve_dedup_falls_back_to_configured_cold_host():
+    """A configured-but-cold host resolves by reusing a warm host's runnable
+    definition (execution lazy-connects) instead of erroring."""
+    b = _Bridge([_rn("warm", "ping")])
+    b._extra_hosts = {"cold"}  # configured, no runnable cached for it
+    host, name, cached, key = b._resolve_tool_target("fleet__ping", {"host": "cold"})
+    assert (host, name, key) == ("cold", "ping", "host")
+    assert cached["host"] == "cold"  # synthesized for the cold host
 
 
 def test_resolve_dedup_falls_back_to_explicit_host__name():

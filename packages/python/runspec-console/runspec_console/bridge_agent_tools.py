@@ -4140,6 +4140,12 @@ class AgentToolsMixin:
                     f"argument. Options: {', '.join(hosts)}."
                 )
         if host not in hosts:
+            # Same fallback as _resolve_id_host: a configured-but-cold host is a
+            # valid target (execution lazy-connects), so reuse a warm host's
+            # definition with the host swapped rather than dead-ending. Only a
+            # host not configured at all still errors.
+            if host in self._configured_host_names():
+                return host, name, {**matches[0], "host": host}, host_key
             return (
                 f"Error: host '{host}' does not have '{name}'. "
                 f"Options: {', '.join(hosts)}."

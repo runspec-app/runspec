@@ -61,6 +61,15 @@ class _Bridge:
     def _host_entry(self, host):
         return {"name": host, "ssh": None if host.endswith("local") else f"u@{host}"}
 
+    # Configured hosts = whatever the cache carries, plus any extras a test opts
+    # in (to exercise the configured-but-cold-host resolver fallback).
+    _extra_hosts: set = set()
+
+    def _configured_host_names(self):
+        return {
+            r.get("host", "local") for r in self._runnables_cache
+        } | self._extra_hosts
+
     def _become_params(self, cached, hostname):
         return "", "sudo", None
 
@@ -435,6 +444,20 @@ def test_resolve_id_host_errors():
     assert isinstance(b._resolve_id_host("fleet__ping", ""), str)  # multi, no host
     assert isinstance(b._resolve_id_host("fleet__ping", "zzz"), str)  # bad host
     assert isinstance(b._resolve_id_host("fleet__nope", "a"), str)  # unknown id
+
+
+def test_resolve_id_host_falls_back_to_configured_cold_host():
+    """A runnable known on a warm host resolves for a configured-but-cold host
+    too (automation reaches any configured host; execution lazy-connects)."""
+    b = _Bridge([_rn("warm", "ping")])
+    b._extra_hosts = {"cold"}  # configured, but no runnable in the warm cache
+    resolved = b._resolve_id_host("fleet__ping", "cold")
+    assert not isinstance(resolved, str), resolved
+    host, name, cached_r = resolved
+    assert (host, name) == ("cold", "ping")
+    assert cached_r["host"] == "cold"  # synthesized for the cold host
+    # A host that isn't configured at all still errors.
+    assert isinstance(b._resolve_id_host("fleet__ping", "nowhere"), str)
 
 
 # ── pre-flight validation ─────────────────────────────────────────────────────

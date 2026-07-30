@@ -406,6 +406,16 @@ class SearchMixin:
                     f"Options: {', '.join(hosts)}."
                 )
         if host not in hosts:
+            # The runnable isn't in the warm/in-profile cache for this host, but
+            # automation reaches any *configured* host on demand (execution
+            # lazy-connects — see invoke_runnable). If the chosen host is
+            # configured at all, synthesize its cached entry from a warm host's
+            # definition (a fleet-wide runnable has the same interface across
+            # hosts, so this arg schema is correct for preflight/autonomy) and
+            # let execution open the connection. Only a runnable installed on no
+            # warm host still dead-ends here.
+            if host in self._configured_host_names():
+                return host, name, {**matches[0], "host": host}
             return (
                 f"Error: host '{host}' does not have '{name}'. "
                 f"Options: {', '.join(hosts)}."

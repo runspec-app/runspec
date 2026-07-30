@@ -58,6 +58,8 @@ Bedrock adds the standard AWS credential chain (`aws_region`,
 |---|---|
 | `docs_url` | Overrides the in-app Documentation link |
 | `update_check_timeout` | Seconds for the footer update check (default 20) |
+| `confirm_timeout` | Seconds an agent tool-confirmation gate waits for the operator in **chat** before treating no-answer as a deny (default 300; `0` = wait indefinitely) |
+| `trigger_confirm_timeout` | Same, for unattended **trigger/schedule** agent turns (default 3600, longer because the operator may be away when it fires; `0` = wait indefinitely) |
 | `output_line_cap` / `output_byte_cap` | Streaming caps for direct-run output (defaults 5000 lines / 2 MB; `0` disables) |
 | `theme.*` | White-label branding — see the [walkthrough](white-label.md#theme) |
 

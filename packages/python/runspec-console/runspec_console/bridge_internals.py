@@ -454,6 +454,14 @@ class InternalsMixin:
         local = self._local_host_entry()
         return [local] + [h for h in self._hosts if h.get("name") != "local"]
 
+    def _configured_host_names(self) -> set[str]:
+        """Names of **every** configured host (local + all remotes, ignoring the
+        active profile) — the set automation may target on demand. Reloads from
+        disk via ``_all_host_entries``. Used by the agent-turn resolvers to accept
+        a runnable on a configured-but-currently-cold host (execution then
+        lazy-connects), matching the "automation reaches any host" invariant."""
+        return {str(h.get("name")) for h in self._all_host_entries()}
+
     def _active_profile_name(self) -> str:
         """The machine-local active host profile (``""`` = the built-in *All hosts*
         scope, i.e. no filter). See ``docs/design/host-profiles.md``."""

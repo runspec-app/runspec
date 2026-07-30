@@ -2106,7 +2106,7 @@ class TriggersMixin:
             request_id, event, holder = self._register_confirm(
                 chat_id, "run_group", payload, level
             )
-            timed_out = not event.wait(timeout=self._CONFIRM_TIMEOUT_S)
+            timed_out = not event.wait(timeout=self._confirm_timeout_s(headless=True))
             approved, edited = self._finish_confirm(request_id, holder, timed_out)
             if not approved:
                 return [f"✗ The user declined to run the {noun} (autonomy = {level})."]
@@ -2159,7 +2159,10 @@ class TriggersMixin:
             request_id, event, holder = self._register_confirm(
                 chat_id, "run_group", payload, level
             )
-            timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
+            # stage set → trigger turn → longer headless timeout.
+            timed_out = not await asyncio.to_thread(
+                event.wait, self._confirm_timeout_s(stage is not None)
+            )
             approved, edited = self._finish_confirm(request_id, holder, timed_out)
             if holder.get("cancelled"):
                 return [f"⏹ The {noun} was not run — you stopped the assistant."]
@@ -2326,12 +2329,17 @@ class TriggersMixin:
         # a turn reach around that narrowing.
         tools = self._runnables_to_tools(allow=allowed_runnables, inline_builtins=True)
         # Search mode hides runnables behind search_runnables; fold the same
-        # always-on menu the chat turn gets so an unrestricted trigger/schedule
-        # agent turn discovers what exists identically. Only when search mode is
-        # actually active for this turn (no allowlist — an allow-scoped turn falls
-        # back to dedup, which carries full schemas inline).
+        # always-on menu the chat turn gets — via _chat_index_text(), so the
+        # runnable index carries the "call search_runnables/describe_runnable for
+        # a runnable's arguments and hosts before running it" instruction (the
+        # bare _build_catalog_index() omits it, and a schema-less run_runnable
+        # then leads the agent to guess args). The deferred-built-ins section is
+        # empty here because headless turns keep built-ins inline
+        # (inline_builtins=True → _build_builtin_index() == ""). Only when search
+        # mode is actually active for this turn (no allowlist — an allow-scoped
+        # turn falls back to dedup, which carries full schemas inline).
         index_text = (
-            self._build_catalog_index()
+            self._chat_index_text()
             if (self._tool_mode() == "search" and not allowed_runnables)
             else ""
         )
@@ -2515,7 +2523,9 @@ class TriggersMixin:
         request_id, event, holder = self._register_confirm(
             chat_id, "draft_reply", tool_input, "confirm"
         )
-        timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
+        timed_out = not await asyncio.to_thread(
+            event.wait, self._confirm_timeout_s(headless=True)
+        )
         approved, edited = self._finish_confirm(request_id, holder, timed_out)
         if holder.get("cancelled"):
             return "⏹ draft_reply was not run — you stopped the assistant."
@@ -2571,7 +2581,9 @@ class TriggersMixin:
         request_id, event, holder = self._register_confirm(
             chat_id, "propose_reply", tool_input, "confirm"
         )
-        timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
+        timed_out = not await asyncio.to_thread(
+            event.wait, self._confirm_timeout_s(headless=True)
+        )
         approved, edited = self._finish_confirm(request_id, holder, timed_out)
         if holder.get("cancelled"):
             return "⏹ propose_reply was not run — you stopped the assistant."

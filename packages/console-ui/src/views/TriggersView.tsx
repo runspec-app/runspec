@@ -82,6 +82,25 @@ export function TriggersView() {
       setCards(Object.fromEntries(board.map(c => [c.card_id, c])))
     }).catch(console.error)
     bridge.get_trigger_events().then(evs => setEvents([...evs].reverse())).catch(console.error)
+    // Seed live gates parked before this view mounted (a re-opened / cold-start
+    // console) from the authoritative backend snapshot — the live
+    // runspec:tool_confirm event only fires for gates raised after mount, so
+    // without this a pending confirm would be invisible until it timed out.
+    bridge.get_pending_confirms().then(gates => {
+      setPending(prev => {
+        const next = { ...prev }
+        for (const g of gates) {
+          next[g.id] = {
+            request_id: g.request_id,
+            tool_name: g.tool_name,
+            tool_input: g.tool_input ?? {},
+            display_name: g.display_name,
+            display_input: g.display_input,
+          }
+        }
+        return next
+      })
+    }).catch(console.error)
   }, [])
 
   // Live updates from the bridge.
@@ -90,6 +109,18 @@ export function TriggersView() {
       const card = (e as CustomEvent).detail as TriggerCard
       cardIds.current.add(card.card_id)
       setCards(prev => ({ ...prev, [card.card_id]: card }))
+      // Reconcile the gate against the backend column: once a card leaves
+      // 'awaiting_human' (approved, denied, or a confirm that timed out on the
+      // backend), a still-pending gate for it is stale — drop it so a dead
+      // request_id can't keep an Approve card up (mirrors App.tsx's badge
+      // reconciliation). The runspec:confirm_resolved event handles the
+      // request-id-precise case; this is the column-level backstop.
+      if (card.column !== 'awaiting_human') {
+        setPending(prev => {
+          if (!prev[card.card_id]) return prev
+          const next = { ...prev }; delete next[card.card_id]; return next
+        })
+      }
     }
     const onToken = (e: Event) => {
       const { id, token } = (e as CustomEvent).detail as { id: string; token: string }
@@ -157,6 +188,18 @@ export function TriggersView() {
         return prev
       })
     }
+    const onResolved = (e: Event) => {
+      // A confirm gate finished on the backend — approved, denied, or timed out.
+      // Clear this card's gate iff it's the request_id that just resolved, so a
+      // late/stale confirm can't leave a dead Approve card that wedges the run at
+      // 'waiting for human'. request_id-precise: a newer gate (different id) for
+      // the same card is left untouched.
+      const { id, request_id } = (e as CustomEvent).detail as { id: string; request_id: string }
+      setPending(p => {
+        if (!p[id] || p[id].request_id !== request_id) return p
+        const next = { ...p }; delete next[id]; return next
+      })
+    }
     const onEnd = (e: Event) => {
       const { id } = (e as CustomEvent).detail as { id: string }
       setPending(p => {
@@ -212,6 +255,7 @@ export function TriggersView() {
     window.addEventListener('runspec:tool_start', onToolStart)
     window.addEventListener('runspec:tool_end', onToolEnd)
     window.addEventListener('runspec:tool_confirm', onConfirm)
+    window.addEventListener('runspec:confirm_resolved', onResolved)
     window.addEventListener('runspec:run_end', onEnd)
     window.addEventListener('runspec:trigger_status', onStatus)
     // Agent-driven config edits (manage_triggers / manage_rota) — the view
@@ -227,6 +271,7 @@ export function TriggersView() {
       window.removeEventListener('runspec:tool_start', onToolStart)
       window.removeEventListener('runspec:tool_end', onToolEnd)
       window.removeEventListener('runspec:tool_confirm', onConfirm)
+      window.removeEventListener('runspec:confirm_resolved', onResolved)
       window.removeEventListener('runspec:run_end', onEnd)
       window.removeEventListener('runspec:trigger_status', onStatus)
       window.removeEventListener('runspec:triggers_updated', onStatus)
@@ -401,6 +446,13 @@ export function TriggersView() {
 
               {p && (
                 <div style={{
+                  // Pinned to the bottom of the scrolling drawer so it stays in
+                  // view as the agent transcript streams below — the gate used to
+                  // sit at the top and scroll out of sight, easy to miss. Opaque
+                  // background + shadow so streaming text doesn't bleed through.
+                  position: 'sticky', bottom: 8, zIndex: 3,
+                  background: colBg,
+                  boxShadow: `0 -6px 16px -8px ${isDark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.25)'}`,
                   border: `1px solid ${COLUMN_COLOR.awaiting_human}`, borderRadius: 6,
                   padding: 12, marginBottom: 16,
                 }}>

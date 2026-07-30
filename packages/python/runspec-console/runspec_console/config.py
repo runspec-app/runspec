@@ -608,6 +608,32 @@ def update_check_timeout() -> float:
     return DEFAULT_UPDATE_CHECK_TIMEOUT
 
 
+# How long a tool-confirmation gate waits for the operator before the turn treats
+# no-answer as a deny. Interactive chat keeps the historical 5-minute window;
+# unattended trigger/schedule turns default much longer (the operator may be away
+# when the trigger fires) and can be set to 0 to wait indefinitely.
+DEFAULT_CONFIRM_TIMEOUT = 300.0
+DEFAULT_TRIGGER_CONFIRM_TIMEOUT = 3600.0
+
+
+def confirm_timeout(headless: bool = False) -> float:
+    """Tool-confirmation timeout in seconds.
+
+    ``headless=False`` (chat): ``[console] confirm_timeout`` (default 300).
+    ``headless=True`` (trigger/schedule turns): ``[console] trigger_confirm_timeout``
+    (default 3600). ``0`` (or negative) means wait indefinitely — the gate never
+    auto-denies. A non-numeric/absent value falls back to the default."""
+    key = "trigger_confirm_timeout" if headless else "confirm_timeout"
+    default = DEFAULT_TRIGGER_CONFIRM_TIMEOUT if headless else DEFAULT_CONFIRM_TIMEOUT
+    console = read_config().get("console")
+    if isinstance(console, dict):
+        raw = console.get(key)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            val = float(raw)
+            return 0.0 if val <= 0 else val
+    return default
+
+
 def read_chat() -> dict[str, Any]:
     """The ``[chat]`` room-source table from config.toml ({} when unset).
 

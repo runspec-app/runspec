@@ -34,6 +34,10 @@ class _Bridge:
     _catalog_index_enabled = Bridge._catalog_index_enabled
     _build_catalog_index = Bridge._build_catalog_index
     _fold_catalog_index = Bridge._fold_catalog_index
+    _tool_mode = Bridge._tool_mode
+    _defer_builtins_enabled = Bridge._defer_builtins_enabled
+    _build_builtin_index = Bridge._build_builtin_index
+    _chat_index_text = Bridge._chat_index_text
 
 
 def _rn(host, name, group="fleet", description=""):
@@ -175,3 +179,30 @@ def test_fold_preamble_is_a_generic_header():
     preamble = out[0]["content"].split("- x — y")[0]
     assert "run_runnable" not in preamble
     assert "full menu" not in preamble
+
+
+# ── the argument-lookup instruction (chat + trigger parity) ───────────────────
+
+
+def test_chat_index_text_carries_arg_lookup_instruction():
+    """The search-mode index text (used by BOTH the chat turn and, since the fix,
+    the unrestricted trigger/schedule turn) must tell the agent to look up a
+    runnable's arguments before running it — otherwise a schema-less run_runnable
+    leads it to guess. The bare _build_catalog_index() deliberately omits it."""
+    # defer_builtins off keeps _build_builtin_index() empty — the same state the
+    # headless trigger path is in (built-ins inline), isolating the runnable index.
+    b = _Bridge(
+        [_rn("a", "ping", description="Ping a host.")],
+        config={"llm": {"tool_mode": "search", "defer_builtins": False}},
+    )
+    index = b._chat_index_text()
+    assert "search_runnables or describe_runnable" in index
+    assert "before running it" in index
+    assert "fleet__ping" in index  # the runnable menu is present
+    # The bare menu (what the trigger path used before the fix) lacks it.
+    assert "before running it" not in b._build_catalog_index()
+
+
+def test_chat_index_text_empty_outside_search_mode():
+    b = _Bridge([_rn("a", "ping")], config={"llm": {"tool_mode": "dedup"}})
+    assert b._chat_index_text() == ""

@@ -16,7 +16,8 @@ from runspec_console.bridge import Bridge
 
 
 class _StubBridge:
-    _CONFIRM_TIMEOUT_S = 5  # short so a "no answer" path doesn't hang the suite
+    def _confirm_timeout_s(self, headless=False):
+        return 5  # short so a "no answer" path doesn't hang the suite
 
     def __init__(self, runnables, run_result="RAN"):
         self._lock = threading.Lock()
@@ -325,6 +326,17 @@ def test_get_pending_confirms_drops_finished_gate():
     assert len(b.get_pending_confirms()) == 1
     b._finish_confirm(rid, holder, timed_out=False)
     assert b.get_pending_confirms() == []  # leaves the snapshot when answered
+
+
+def test_finish_confirm_dispatches_resolved_event():
+    """Every finalized gate emits runspec:confirm_resolved with its owning
+    chat/card id + request_id — the signal the UI needs to clear a stale card
+    (esp. a backend timeout the frontend was never told about)."""
+    b = _StubBridge(_runnable("confirm"))
+    rid, _, holder = b._register_confirm("card-7", "local__flush-dns", {}, "confirm")
+    b._finish_confirm(rid, holder, timed_out=True)  # e.g. a timeout
+    resolved = [d for ev, d in b._dispatched if ev == "runspec:confirm_resolved"]
+    assert resolved == [{"id": "card-7", "request_id": rid}]
 
 
 # ── editable confirmations ────────────────────────────────────────────────────

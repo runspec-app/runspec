@@ -181,8 +181,16 @@ class AutonomyMixin:
                     level = arg["autonomy"]
         return level
 
-    # Confirmation timeout — no answer from the UI within this window is a deny.
-    _CONFIRM_TIMEOUT_S = 300
+    def _confirm_timeout_s(self, headless: bool = False) -> float | None:
+        """Seconds a confirm gate waits before treating no-answer as a deny;
+        ``None`` = wait indefinitely (never auto-deny).
+
+        Chat uses ``[console] confirm_timeout`` (default 300); unattended
+        trigger/schedule turns use ``[console] trigger_confirm_timeout`` (default
+        3600, since the operator may be away when the trigger fires). A config
+        value of ``0`` means wait indefinitely."""
+        t = config_mod.confirm_timeout(headless)
+        return None if t <= 0 else t
 
     def _confirm_decision(self, tool_name: str, tool_input: dict[str, Any]) -> str:
         """Resolve the gate decision string: 'run' | 'manual' | <level needing prompt>."""
@@ -295,7 +303,7 @@ class AutonomyMixin:
     # The in-app Approve/Deny card only helps if the window is in focus. When a
     # tool call parks on the autonomy gate we also raise an OS toast + flash the
     # taskbar so the user is pulled back to answer (it otherwise times out as a
-    # deny after _CONFIRM_TIMEOUT_S). Sending a toast is independent of the
+    # deny after the confirm timeout). Sending a toast is independent of the
     # "read notifications" consent the listener source needs — see notify.py.
 
     def set_window_title(self, title: str) -> None:
@@ -547,15 +555,21 @@ class AutonomyMixin:
         """Clean up a resolved confirm and return ``(approved, edited_input)``.
 
         ``edited_input`` is the operator-edited tool_input (Phase: editable
-        confirmations) or ``None`` to run the call as the agent proposed it."""
+        confirmations) or ``None`` to run the call as the agent proposed it.
+
+        Emits ``runspec:confirm_resolved`` (with the owning ``chat_id`` +
+        ``request_id``) so the UI can clear this specific gate — the frontend
+        otherwise never learns a confirm ended by *timeout* (it only sees the
+        ones it answered itself), which used to leave a stale Approve card
+        wedging the run card at 'waiting for human'."""
         with self._lock:
-            self._pending_confirms.pop(request_id, None)
+            entry = self._pending_confirms.pop(request_id, None)
             self._pending_confirm_meta.pop(request_id, None)
+        chat_id = entry[0] if entry else ""
         if timed_out:
             logger.warning(
-                "autonomy gate: request_id=%s timed out after %ds — treating as deny",
+                "autonomy gate: request_id=%s timed out — treating as deny",
                 request_id,
-                self._CONFIRM_TIMEOUT_S,
             )
         else:
             logger.info(
@@ -563,6 +577,13 @@ class AutonomyMixin:
                 request_id,
                 holder["approved"],
             )
+        # Authoritative "this confirm is finished" signal for the UI. Harmless for
+        # a gate the operator just answered (the frontend already cleared it);
+        # essential for a timeout/cancel the frontend was never told about.
+        self._dispatch(
+            "runspec:confirm_resolved",
+            {"id": chat_id, "request_id": request_id},
+        )
         edited = holder.get("edited_input") if holder["approved"] else None
         return holder["approved"], edited
 
@@ -641,7 +662,11 @@ class AutonomyMixin:
             request_id, event, holder = self._register_confirm(
                 chat_id, tool_name, tool_input, decision
             )
-            timed_out = not await asyncio.to_thread(event.wait, self._CONFIRM_TIMEOUT_S)
+            # stage is set only on trigger/schedule turns — those wait on the
+            # longer headless timeout (the operator may be away when it fires).
+            timed_out = not await asyncio.to_thread(
+                event.wait, self._confirm_timeout_s(stage is not None)
+            )
             approved, edited = self._finish_confirm(request_id, holder, timed_out)
             # Stop pressed while the dialog was up: don't run, and let the loop
             # halt at its next checkpoint (cancel flag is already set).
@@ -1032,15 +1057,24 @@ class AutonomyMixin:
             self._run_origin.pop(chat_id, None)
 
     def _await_confirmation(
-        self, tool_name: str, tool_input: dict[str, Any], level: str, chat_id: str
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        level: str,
+        chat_id: str,
+        headless: bool = True,
     ) -> tuple[bool, dict[str, Any] | None]:
-        """Ask the UI to approve an agent tool call; block (in a worker thread)
-        until resolve_tool_confirmation() fires. Times out as a deny. Returns
-        ``(approved, edited_input)``."""
+        """Ask the UI to approve an agent tool call; block until
+        resolve_tool_confirmation() fires. Times out as a deny. Returns
+        ``(approved, edited_input)``.
+
+        Only the synchronous gate (``_gated_run_tool``, the declarative
+        rule-trigger path) uses this, so ``headless`` defaults to True — the
+        longer trigger timeout."""
         request_id, event, holder = self._register_confirm(
             chat_id, tool_name, tool_input, level
         )
-        timed_out = not event.wait(timeout=self._CONFIRM_TIMEOUT_S)
+        timed_out = not event.wait(timeout=self._confirm_timeout_s(headless))
         return self._finish_confirm(request_id, holder, timed_out)
 
     def resolve_tool_confirmation(
