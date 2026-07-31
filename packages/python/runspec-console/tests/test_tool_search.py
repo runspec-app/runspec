@@ -93,6 +93,7 @@ class _Bridge:
     _tool_output_cap = Bridge._tool_output_cap
     # search-mode additions
     _search_mode_tools = Bridge._search_mode_tools
+    _coerce_run_args = staticmethod(Bridge._coerce_run_args)
     _runnables_for_id = Bridge._runnables_for_id
     _resolve_id_host = Bridge._resolve_id_host
     _node_at = staticmethod(Bridge._node_at)
@@ -458,6 +459,35 @@ def test_resolve_id_host_falls_back_to_configured_cold_host():
     assert cached_r["host"] == "cold"  # synthesized for the cold host
     # A host that isn't configured at all still errors.
     assert isinstance(b._resolve_id_host("fleet__ping", "nowhere"), str)
+
+
+# ── args coercion (models sometimes emit `args` as a string) ──────────────────
+
+
+def test_coerce_run_args_handles_string_and_junk():
+    """A model that emits run_runnable `args` as a JSON string, a bare string, or
+    None must not crash the gate — `dict(<string>)` raised the cryptic
+    "dictionary update sequence element #0 has length 1; 2 is required"."""
+    coerce = _Bridge([])._coerce_run_args
+    assert coerce({"host": "web1"}) == {"host": "web1"}  # dict passes through
+    assert coerce('{"host": "web1"}') == {"host": "web1"}  # JSON-string object parsed
+    assert coerce("not json") == {}  # bare string → empty (preflight reports it)
+    assert coerce("[1, 2]") == {}  # JSON but not an object → empty
+    assert coerce(None) == {}
+    assert coerce("") == {}
+
+
+def test_effective_autonomy_survives_string_args():
+    """The autonomy decision path coerces `args` too, so a stringified args field
+    resolves the runnable's base level instead of raising."""
+    b = _Bridge([_rn("a", "ping", autonomy="confirm")])
+    # Would previously raise ValueError from dict("host=a") deep in the gate.
+    assert (
+        b._effective_tool_autonomy(
+            "run_runnable", {"id": "fleet__ping", "args": "host=a"}
+        )
+        == "confirm"
+    )
 
 
 # ── pre-flight validation ─────────────────────────────────────────────────────

@@ -2442,20 +2442,35 @@ class TriggersMixin:
                     "runspec:tool_start",
                     {"id": chat_id, "tool_name": tc.name, "tool_input": tc.input},
                 )
-                if cancel.is_set():
-                    output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — stopped."
-                elif tc.name == "draft_reply":
-                    output = await self._gated_draft_reply(
-                        tc.input, chat_id, reply_to, from_mailbox, stage=stage
-                    )
-                elif tc.name == "propose_reply":
-                    output = await self._gated_propose_reply(
-                        tc.input, chat_id, room, stage=stage
-                    )
-                else:
-                    output = await self._gated_run_tool_async(
-                        tc.name, tc.input, chat_id, stage=stage
-                    )
+                try:
+                    if cancel.is_set():
+                        output = (
+                            f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — stopped."
+                        )
+                    elif tc.name == "draft_reply":
+                        output = await self._gated_draft_reply(
+                            tc.input, chat_id, reply_to, from_mailbox, stage=stage
+                        )
+                    elif tc.name == "propose_reply":
+                        output = await self._gated_propose_reply(
+                            tc.input, chat_id, room, stage=stage
+                        )
+                    else:
+                        output = await self._gated_run_tool_async(
+                            tc.name, tc.input, chat_id, stage=stage
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    # A tool that raises must not escape the loop — that would
+                    # leave the tool_start spinner running forever and fail the
+                    # whole card with a bare exception string. Turn it into a
+                    # readable tool result the agent can react to, and always emit
+                    # tool_end (below). The card stays alive so the turn can
+                    # recover or conclude.
+                    logger.exception("trigger agent turn: tool %s raised", tc.name)
+                    observability.record_exception(observability.current_span(), exc)
+                    output = f"✗ '{tc.name.split('__', 1)[-1]}' failed: {exc}"
+                    if stage is not None:
+                        stage("running")  # un-stick an 'awaiting_human' card
                 self._dispatch(
                     "runspec:tool_end",
                     {"id": chat_id, "tool_name": tc.name, "output": output[:2000]},

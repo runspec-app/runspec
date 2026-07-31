@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.220.1] — 2026-07-31
+
+### Fixed
+- **A search-mode `run_runnable` call whose `args` arrived as a string no longer
+  crashes the turn.** The model occasionally emits the `args` object as a JSON
+  *string* (`'{"host": "web1"}'`) or a bare string; the gate did `dict(<that
+  string>)`, which raised `ValueError: dictionary update sequence element #0 has
+  length 1; 2 is required`. On a trigger turn that surfaced as a cryptic card
+  failure with the tool spinner stuck spinning (the exception escaped the tool
+  loop before a `tool_end` was emitted). New lenient `Bridge._coerce_run_args`
+  (parses a JSON-string object, else falls back to `{}` so the normal preflight
+  reports a readable "missing required argument") is used everywhere the
+  search-mode `args` field is read — the autonomy decision, the confirm-card
+  view, the group fan-out, and execution.
+- **A tool that raises can no longer strand the run.** Both the chat loop
+  (`bridge_invoke`) and the headless trigger/schedule loop (`bridge_triggers`)
+  now wrap each tool call: an exception becomes a readable `✗ '<tool>' failed:
+  …` tool result, always emits `runspec:tool_end` (so the spinner clears), and
+  moves an `awaiting_human` card back to `running` — the turn recovers or
+  concludes cleanly instead of dying with a bare exception and a spinning card.
+
 ## [0.220.0] — 2026-07-30
 
 ### Fixed

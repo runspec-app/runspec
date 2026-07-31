@@ -163,7 +163,7 @@ class AutonomyMixin:
             if isinstance(resolved, str):
                 return "confirm"
             _host, _name, r = resolved
-            inner_args = dict(ti.get("args") or {})
+            inner_args = self._coerce_run_args(ti.get("args"))
         else:
             target = self._resolve_tool_target(tool_name, tool_input)
             if isinstance(target, str):
@@ -291,7 +291,7 @@ class AutonomyMixin:
             return tool_name, tool_input  # unresolved — show the raw call
         host, name, _cached = resolved
         view: dict[str, Any] = {"host": host}
-        view.update(dict(ti.get("args") or {}))
+        view.update(self._coerce_run_args(ti.get("args")))
         if ti.get("command"):
             view["command"] = ti["command"]
         if ti.get("credential_id"):
@@ -1203,7 +1203,7 @@ class AutonomyMixin:
             if isinstance(resolved, str):
                 return resolved
             host, runnable, cached_r = resolved
-            call_args = dict(ti.get("args") or {})
+            call_args = self._coerce_run_args(ti.get("args"))
             chosen_command = ti.get("command")
             credential_id = str(ti.get("credential_id") or "")
             credential_id_list: list[str] = []

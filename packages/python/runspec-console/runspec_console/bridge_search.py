@@ -349,6 +349,29 @@ class SearchMixin:
         return []
 
     @staticmethod
+    def _coerce_run_args(raw: Any) -> dict[str, Any]:
+        """Coerce the search-mode ``run_runnable`` ``args`` field to a dict.
+
+        Its schema is an object, but models sometimes emit it as a JSON *string*
+        (``'{"host": "web1"}'``) or, worse, a bare string. A raw ``dict(raw)`` on
+        that string raises ``ValueError: dictionary update sequence element #0 has
+        length 1; 2 is required`` — which propagated out of the gate, failed the
+        trigger card with that cryptic message, and stranded the tool spinner (no
+        ``tool_end``). Coerce leniently: a dict passes through, a JSON-string
+        object is parsed, anything else becomes ``{}`` so the normal preflight
+        surfaces a readable "missing required argument" the agent can retry from."""
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except (ValueError, TypeError):
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    @staticmethod
     def _runbook_id_hint(rid: str) -> str:
         """If ``rid`` names a saved runbook (bare or ``runbook:``-prefixed), the
         error string pointing at the tool that can actually run it; else ``""``.
@@ -450,7 +473,7 @@ class SearchMixin:
             return None  # let the normal path surface the unknown-id error
         name = matches[0].get("name", "")
         present = {r.get("host", "local") for r in matches}
-        base = dict(ti.get("args") or {})
+        base = self._coerce_run_args(ti.get("args"))
         if ti.get("command"):
             base["command"] = ti["command"]
         if ti.get("credential_id"):

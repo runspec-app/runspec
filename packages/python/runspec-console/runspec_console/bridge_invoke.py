@@ -1403,17 +1403,29 @@ class InvokeMixin:
                     # fires) so it can be recorded on the saved tool entry for the
                     # operator's review — never replayed to the agent.
                     gate_decision: dict[str, Any] = {}
-                    if cancel.is_set():
-                        # Stopped mid-batch — refuse the rest without prompting
-                        # or running, but still record a paired tool_result.
-                        output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — you stopped the assistant."
-                    else:
-                        output = await self._gated_run_tool_async(
-                            tc.name,
-                            tc.input,
-                            chat_id,
-                            on_decision=gate_decision.update,
+                    try:
+                        if cancel.is_set():
+                            # Stopped mid-batch — refuse the rest without prompting
+                            # or running, but still record a paired tool_result.
+                            output = f"⏹ '{tc.name.split('__', 1)[-1]}' was not run — you stopped the assistant."
+                        else:
+                            output = await self._gated_run_tool_async(
+                                tc.name,
+                                tc.input,
+                                chat_id,
+                                on_decision=gate_decision.update,
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        # A tool that raises must not escape the loop: that would
+                        # strand the tool_start spinner and abort the whole turn
+                        # with a bare exception. Surface it as a readable tool
+                        # result and always emit tool_end (below) so the turn can
+                        # recover or conclude cleanly.
+                        logger.exception("chat agent turn: tool %s raised", tc.name)
+                        observability.record_exception(
+                            observability.current_span(), exc
                         )
+                        output = f"✗ '{tc.name.split('__', 1)[-1]}' failed: {exc}"
                     self._dispatch(
                         "runspec:tool_end",
                         {

@@ -94,6 +94,9 @@ def _stub(**attrs):
         "_apply_group_edit",
     ):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
+    # A staticmethod — assign the plain function directly (MethodType would
+    # wrongly bind the namespace as its first positional arg).
+    ns._coerce_run_args = Bridge._coerce_run_args
     ns._lock = threading.Lock()
     for k, v in attrs.items():
         setattr(ns, k, v)
