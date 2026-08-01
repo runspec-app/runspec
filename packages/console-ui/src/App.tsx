@@ -7,7 +7,6 @@ import {
   HistoryOutlined,
   CalendarOutlined,
   BarChartOutlined,
-  NodeIndexOutlined,
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
@@ -42,7 +41,6 @@ import { SavedRunRunModal } from './views/SavedRunRunModal'
 // Lazy-loaded: @ant-design/plots is heavy and only the Analytics tab needs it,
 // so it stays out of the initial bundle.
 const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
-import { PhoenixView } from './views/PhoenixView'
 import { CommandInput } from './components/CommandInput'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { RUNNING_STATUSES } from './components/runShared'
@@ -50,7 +48,7 @@ import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, textMuted, textSecondary, textFaint } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'phoenix' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -140,10 +138,6 @@ export default function App() {
   // Analytics is lazy-loaded; mount it on first visit, then keep it mounted so
   // its scanned data survives tab switches (without eager-loading the chunk).
   const [analyticsVisited, setAnalyticsVisited] = useState(false)
-  // Mount the Phoenix tab on first visit and keep it mounted (display toggle),
-  // so the embedded Phoenix UI's own state (open trace / filters) survives tab
-  // switches instead of reloading its heavy SPA each time.
-  const [phoenixVisited, setPhoenixVisited] = useState(false)
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') !== 'light')
   const [autoSwitch, setAutoSwitch] = useState(() => localStorage.getItem('autoSwitch') !== 'false')
   // Which sidebar host groups are collapsed (group name → true). Persisted so the
@@ -324,7 +318,6 @@ export default function App() {
 
   useEffect(() => { loadSshKeyAge() }, [])
   useEffect(() => { if (view === 'analytics') setAnalyticsVisited(true) }, [view])
-  useEffect(() => { if (view === 'phoenix') setPhoenixVisited(true) }, [view])
 
   useEffect(() => {
     // Version renders instantly; the PyPI update check resolves in the
@@ -659,7 +652,6 @@ export default function App() {
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
     { key: 'logs'      as ViewKey, label: 'Logs',      icon: <FileTextOutlined /> },
     { key: 'analytics' as ViewKey, label: 'Analytics', icon: <BarChartOutlined /> },
-    { key: 'phoenix'   as ViewKey, label: 'Phoenix',   icon: <NodeIndexOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
     {
@@ -1217,15 +1209,7 @@ export default function App() {
                     </Suspense>
                   </div>
                 )}
-                {/* Phoenix embeds an external local web UI (its own server) in an
-                    iframe; kept mounted after first visit (display toggle) so the
-                    embedded session state survives tab switches, mirroring Analytics. */}
-                {phoenixVisited && (
-                  <div className="rs-view" style={{ display: view === 'phoenix' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-                    <PhoenixView active={view === 'phoenix'} />
-                  </div>
-                )}
-                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'phoenix' && view !== 'logs' && (
+                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && (
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}

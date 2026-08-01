@@ -4,6 +4,7 @@ import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckO
 import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
+import { PhoenixLocalControl } from './PhoenixLocalControl'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames, initialFormValues } from '../views/FormsView'
 import {
@@ -4187,6 +4188,10 @@ export function TelemetryTab() {
 
   return (
     <div style={{ maxWidth: 620 }}>
+      <PhoenixLocalControl />
+
+      <Divider style={{ margin: '14px 0' }}>or export to a backend</Divider>
+
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
         OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).

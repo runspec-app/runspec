@@ -35,7 +35,11 @@ vi.mock('../bridge', () => ({
         if (typeof prop === 'symbol') return undefined
         if (prop === 'get_config') return getConfig
         if (prop === 'save_config') return saveConfig
-        return vi.fn()
+        // The embedded PhoenixLocalControl calls phoenix_status() on mount and
+        // chains .then, so the default stub must return a promise.
+        if (prop === 'phoenix_status')
+          return () => Promise.resolve({ available: false, reason: '', running: false, url: '', port: 0 })
+        return vi.fn().mockResolvedValue(undefined)
       },
     },
   ),

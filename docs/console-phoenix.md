@@ -1,11 +1,14 @@
 # Local Phoenix — private, on-machine trace analysis
 
 The console already emits an OpenTelemetry [trace per agent
-turn](console-telemetry.md) (`turn → LLM call → tool call`). The **Phoenix tab**
-lets you view and analyse those traces **entirely locally**: it launches a
-private [Arize Phoenix](https://phoenix.arize.com/) server on your machine — an
-OTLP collector *and* an LLM-aware trace-analysis web UI in one process — routes
-the console's own traces to it, and embeds Phoenix's UI right in the tab.
+turn](console-telemetry.md) (`turn → LLM call → tool call`). The **Local
+Phoenix** control (Settings → Telemetry) lets you view and analyse those traces
+**entirely locally**: it launches a private
+[Arize Phoenix](https://phoenix.arize.com/) server on your machine — an OTLP
+collector *and* an LLM-aware trace-analysis web UI in one process — and routes
+the console's own traces to it. Phoenix's own UI opens in your **browser**; the
+console manages the server but does not embed Phoenix's (large, full-featured)
+app inside its own window.
 
 Nothing leaves the machine: no external backend, no API keys, no config. Install
 the extra, click **Start**, and your agent's activity shows up in a trace
@@ -17,7 +20,7 @@ your choice). You can use either or both.
 
 ## Install
 
-The Phoenix tab needs the optional `phoenix` extra:
+Local Phoenix needs the optional `phoenix` extra:
 
 ```bash
 pip install "runspec-console[phoenix]"
@@ -25,21 +28,25 @@ pip install "runspec-console[phoenix]"
 
 Phoenix is a **heavy dependency** (it pulls in pandas, SQLAlchemy, uvicorn, and
 more), so it is isolated behind this opt-in extra — a base install is
-unaffected. Until it's installed, the Phoenix tab shows an install hint.
+unaffected. Until it's installed, the control shows an install hint.
 
 ## Use it
 
-1. Open the **Phoenix** tab.
+1. Open **Settings → Telemetry**. The **Local Phoenix** control is at the top.
 2. Click **Start**. The console launches a local Phoenix server (default port
    **6006**) and, once it's up, points its own trace exporter at it.
-3. Run an agent turn (chat, a trigger, a schedule). Within a few seconds the
-   span tree appears in the embedded Phoenix UI.
-4. Click **Stop** when you're done. The console shuts the server down and
+3. Run an agent turn (chat, a trigger, a schedule).
+4. Click **Open in browser** to view the traces in Phoenix's UI at
+   `http://localhost:6006` — click into the **Default** project to see the span
+   tree. New turns appear within a few seconds (spans are batched).
+5. Click **Stop** when you're done. The console shuts the server down and
    restores whatever trace route your saved `[telemetry]` config had (if any).
 
-The embedded UI is the real Phoenix app. If your environment blocks embedding a
-local server in a frame, use **Open in browser** — the tab detects the failure
-and offers it automatically.
+> Prefer to run Phoenix yourself? You don't need this control — or the `phoenix`
+> extra — at all: run Phoenix however you like (a separate venv, Docker) and
+> point the console at it like any other OTLP backend, by setting **Enable
+> tracing** + an **OTLP endpoint** of `http://127.0.0.1:6006/v1/traces` in the
+> same Telemetry tab.
 
 ### What gets traced
 

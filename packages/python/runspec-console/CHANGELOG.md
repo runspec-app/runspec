@@ -8,6 +8,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.223.0] — 2026-08-01
+
+### Changed
+- **Local Phoenix moved from a top-level tab to a Settings → Telemetry control;
+  the embedded iframe is gone.** Phoenix turned out to be a full LLM-ops product
+  (prompt playground, AI-provider config, its own agent assistant, an MCP
+  server), and embedding all of it in a console tab made runspec-console feel
+  busy and off-identity. The console now keeps only the **managed local server +
+  auto-wire** (the on-mission part — observing the console's *own* agent), as a
+  compact **Local Phoenix** control (Start / Stop / status / **Open in browser**)
+  at the top of Settings → Telemetry. Phoenix's own UI opens in the browser
+  rather than inside the console window. All backend behaviour is unchanged
+  (`phoenix.py` managed server, `phoenix_status`/`_start`/`_stop`/`_open`, the
+  live non-persisted trace re-route, `[phoenix]` config, `auto_start`); this is a
+  frontend reshape (the `PhoenixView` tab + embed → `PhoenixLocalControl`). If
+  you'd rather run Phoenix entirely separately, you don't need the `phoenix`
+  extra at all — point Settings → Telemetry's endpoint at a self-run Phoenix.
+  See `docs/console-phoenix.md`.
+
+
 ## [0.222.0] — 2026-08-01
 
 ### Added
