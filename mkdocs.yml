@@ -74,6 +74,7 @@ nav:
     - Custom model adapters: console-adapters.md
     - Telemetry — OpenTelemetry tracing: console-telemetry.md
     - Telemetry for a custom adapter: console-adapter-telemetry.md
+    - Local Phoenix trace analysis: console-phoenix.md
   - Security: security.md
 
 # Files kept in the repo but NOT built into the published (public) site.

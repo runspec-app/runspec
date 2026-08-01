@@ -108,6 +108,43 @@ def test_read_telemetry_api_key_command(monkeypatch):
     assert config_mod.read_telemetry()["api_key_command"] is None
 
 
+# ── 1b. config.read_phoenix() — local Phoenix server settings ──────────────────
+
+
+def test_read_phoenix_defaults(monkeypatch, tmp_path):
+    monkeypatch.setattr(config_mod, "read_config", lambda: {})
+    monkeypatch.setattr(config_mod, "app_dir", lambda: tmp_path)
+    p = config_mod.read_phoenix()
+    assert p["port"] == 6006
+    assert p["auto_start"] is False
+    assert p["working_dir"] == str(tmp_path / "phoenix")
+    assert p["assistant"] is False  # off by default — keeps the feature local
+    assert p["env"] == {}
+
+
+def test_read_phoenix_reads_and_clamps(monkeypatch):
+    monkeypatch.setattr(
+        config_mod,
+        "read_config",
+        lambda: {
+            "phoenix": {
+                "port": 99999,
+                "auto_start": True,
+                "working_dir": " /srv/px ",
+                "assistant": True,
+                # Only PHOENIX_* keys survive; others are dropped as out of scope.
+                "env": {"PHOENIX_ENABLE_MCP_SERVER": "false", "PATH": "/evil"},
+            }
+        },
+    )
+    p = config_mod.read_phoenix()
+    assert p["port"] == 65535  # clamped to a legal port
+    assert p["auto_start"] is True
+    assert p["working_dir"] == "/srv/px"
+    assert p["assistant"] is True
+    assert p["env"] == {"PHOENIX_ENABLE_MCP_SERVER": "false"}
+
+
 # ── api_key_command → header resolution ("ship the command, not the key") ─────
 
 
@@ -164,6 +201,39 @@ def test_disabled_is_noop():
     handle = obs.begin_turn("chat", "c1")
     assert handle is None
     obs.end_turn(handle)  # tolerates a None handle
+
+
+@otel_only
+def test_reconfigure_round_trip():
+    """reconfigure() is the runtime re-init seam the local-Phoenix route uses:
+    it must swap the active provider (init_tracing alone can't — it's idempotent)
+    and leave a clean no-op when re-inited disabled."""
+    obs.reset_for_test()
+    assert obs.enabled() is False
+    # Disabled → enabled at a local endpoint.
+    assert (
+        obs.reconfigure(
+            {"enabled": True, "endpoint": "http://127.0.0.1:6006/v1/traces"}
+        )
+        is True
+    )
+    assert obs.enabled() is True
+    first_provider = obs._PROVIDER
+    # Re-point at a different endpoint → a *new* provider, still active (proves the
+    # idempotent init_tracing was actually torn down and re-run).
+    assert (
+        obs.reconfigure(
+            {"enabled": True, "endpoint": "http://127.0.0.1:7007/v1/traces"}
+        )
+        is True
+    )
+    assert obs.enabled() is True
+    assert obs._PROVIDER is not first_provider
+    # Reconfigure disabled → complete no-op again.
+    assert obs.reconfigure({"enabled": False}) is False
+    assert obs.enabled() is False
+    assert obs._PROVIDER is None
+    obs.reset_for_test()
 
 
 # ── scrubbing (pure) ──────────────────────────────────────────────────────────

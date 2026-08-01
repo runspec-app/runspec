@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.220.1"
+version = "0.221.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -66,6 +66,18 @@ otel = [
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
 ]
+# Local Arize Phoenix server (Phoenix tab / [phoenix]): the console launches a
+# private, on-machine OTLP collector + trace-analysis web UI and routes its own
+# agent traces to it — zero-config local observability, nothing leaves the box.
+# Heavy dependency (pulls pandas / sqlalchemy / uvicorn / strawberry); isolated
+# behind this opt-in extra. Includes the OTLP/HTTP exporter so the console's own
+# span-export path works with just `[phoenix]`. Reports itself unavailable until
+# installed.
+phoenix = [
+    "arize-phoenix>=6",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
+]
 # PyWinRT projection for two notification surfaces: *reading* system toasts (the
 # listener trigger source — Teams / Slack / any toast, needs the `.Management`
 # namespace + a user consent grant) and *sending* confirm toasts (notify.py —
@@ -86,7 +98,7 @@ notifications = [
 # Recursive self-reference (resolved by pip/poetry); excludes `dev`. Win32-only
 # deps inside `notifications` keep their markers, so `[all]` is safe on any OS.
 all = [
-    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule,otel]",
+    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule,otel,phoenix]",
 ]
 dev = [
     "ruff==0.15.20",
@@ -107,5 +119,5 @@ python_version = "3.11"
 mypy_path = "../runspec"
 
 [[tool.mypy.overrides]]
-module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*", "opentelemetry.*"]
+module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*", "opentelemetry.*", "phoenix.*"]
 ignore_missing_imports = true

@@ -8,6 +8,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.221.0] — 2026-08-01
+
+### Added
+- **Local Phoenix observability tab (`[phoenix]` extra).** A new **Phoenix** tab
+  launches a private, on-machine [Arize Phoenix](https://phoenix.arize.com/)
+  server — an OTLP collector *and* an LLM-aware trace-analysis web UI in one
+  process — and **routes this console's own agent traces to it automatically**, so
+  every turn (`turn → LLM call → tool call`) shows up in a fully local trace
+  explorer with no external backend, no API keys, and nothing leaving the machine.
+  Phoenix's own UI is embedded in the tab via an iframe, with an **Open in
+  browser** fallback when framing is blocked. Startup is gated on the server
+  actually answering HTTP (not just an open TCP port) and the iframe shows a
+  "Loading Phoenix…" overlay until it renders, so there's no connection-refused
+  flash while Phoenix boots. Opt-in and safe-by-default: install
+  `pip install runspec-console[phoenix]` to enable it (the tab shows an install
+  hint until then); the heavy dependency is isolated behind the extra.
+  - New `phoenix.py` `PhoenixServer` manages the server as a subprocess (start /
+    stop / status, double-start guard, adoption of an already-serving port, crash
+    detection, `atexit` teardown) — modelled on the `sources/schedule.py`
+    `available()/start()/stop()` idiom.
+  - The auto-wire is a **live, non-persisted** trace route: starting Phoenix
+    overlays `enabled` + `endpoint = http://127.0.0.1:<port>/v1/traces` onto the
+    saved `[telemetry]` config and re-inits the exporter via the new
+    `observability.reconfigure()` seam (the existing `init_tracing` is idempotent);
+    stopping restores the saved route — a user's real remote `[telemetry]` backend
+    is never clobbered.
+  - New bridge methods `phoenix_status` / `phoenix_start` / `phoenix_stop` /
+    `phoenix_open` (`ObservabilityMixin`), `config.read_phoenix()` (`[phoenix]`:
+    `port` default 6006, `auto_start` default false, `working_dir` for the
+    persistent SQLite trace store), and an `auto_start` bring-up hook in `app.py`.
+  - **Phoenix's built-in agent assistant is off by default.** Phoenix ships a
+    chat-over-your-traces agent (its `/chat` endpoint) that can call an external
+    LLM + do web/bash; the console launches Phoenix with
+    `PHOENIX_DISABLE_AGENT_ASSISTANT=true` to keep the feature fully local. Opt
+    back in with `[phoenix] assistant = true`, and pin any other Phoenix setting
+    via a `[phoenix.env]` passthrough of `PHOENIX_*` variables — both ride Config
+    Sync / the config seed.
+  - See `docs/console-phoenix.md`.
+
+
 ## [0.220.1] — 2026-07-31
 
 ### Fixed

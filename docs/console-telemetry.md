@@ -14,6 +14,12 @@ Langfuse, Arize Phoenix, Jaeger, Grafana Tempo, an OpenTelemetry Collector, …
 Tracing is **off by default** and strictly opt-in: it exports data to an
 external backend, so nothing leaves the machine until you enable it.
 
+> **Want local analysis with zero setup?** The [Phoenix tab](console-phoenix.md)
+> runs a private [Arize Phoenix](https://phoenix.arize.com/) server *on your
+> machine* and routes the console's traces to it — no external backend, no API
+> keys, nothing leaves the box. Install `runspec-console[phoenix]` and click
+> Start. This page covers the general (remote-backend) export path.
+
 ## Install
 
 Telemetry needs the `otel` extra (the OpenTelemetry SDK + OTLP/HTTP exporter):

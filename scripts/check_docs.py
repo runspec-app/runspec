@@ -63,6 +63,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   repo                       → console `runspec_repos.toml` ([[repo]] registry)
 #   self_service               → console `runspec_self_service.toml`
 #   telemetry                  → console `config.toml` ([telemetry] OTLP tracing)
+#   phoenix                    → console `config.toml` ([phoenix] local trace server)
 #   chat_history/workspace/plugins → console `config.toml` sections
 # Trade-off: a runspec runnable literally named `ssh`/`refresh`/`hosts`/`triggers`
 # would be skipped — none exist in the docs (guarded by check below), and runnable
@@ -97,6 +98,7 @@ NON_RUNSPEC_SECTIONS = {
     "workspace",
     "plugins",
     "telemetry",
+    "phoenix",
 }
 
 

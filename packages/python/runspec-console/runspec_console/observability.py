@@ -191,6 +191,32 @@ def init_tracing(config: dict[str, Any] | None = None) -> bool:
         return False
 
 
+def reconfigure(config: dict[str, Any] | None = None) -> bool:
+    """Tear down any live tracing provider and re-init from ``config``.
+
+    ``init_tracing`` is deliberately idempotent (it returns early once a tracer
+    exists), so it can't switch endpoints on its own. ``reconfigure`` is the seam
+    for doing exactly that at runtime — the console calls it when it launches (or
+    stops) a local Phoenix server to live-route the OTLP exporter to / away from
+    ``http://127.0.0.1:<port>/v1/traces`` **without persisting** to
+    ``config.toml``, so a user's saved remote ``[telemetry]`` backend is never
+    clobbered by a transient local session.
+
+    Best-effort and never raises: flushes + shuts down the current provider,
+    resets to the disabled no-op state, then re-inits. Returns whatever
+    ``init_tracing`` returns (``True`` when tracing is active afterwards)."""
+    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT
+    try:
+        shutdown()
+    except Exception:  # noqa: BLE001 — teardown must never raise into the caller
+        pass
+    _TRACER = None
+    _PROVIDER = None
+    _ENABLED = False
+    _CAPTURE_CONTENT = False
+    return init_tracing(config)
+
+
 def init_tracing_for_test(exporter: Any, *, capture_content: bool = False) -> None:
     """Wire an injected span exporter (e.g. ``InMemorySpanExporter``) with a
     ``SimpleSpanProcessor`` — the network-free test seam. Resets prior state."""
