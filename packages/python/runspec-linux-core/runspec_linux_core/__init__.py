@@ -9,6 +9,14 @@ Each function does the work and returns plain data; failures raise (see
 ``runspec_linux_core.errors``).
 """
 
+from runspec_linux_core.become import (
+    BecomeError,
+    build_become,
+    check_become_error,
+    current_user,
+    escalation_supported,
+    validate_user,
+)
 from runspec_linux_core.commands import which
 from runspec_linux_core.containers import (
     container_logs,
@@ -17,9 +25,23 @@ from runspec_linux_core.containers import (
 )
 from runspec_linux_core.errors import CommandError, LinuxCoreError, ToolNotFoundError
 from runspec_linux_core.files import backup_files, find_large_files
+from runspec_linux_core.investigate import (
+    failed_units,
+    open_ports,
+    owning_package,
+    service_detail,
+)
 from runspec_linux_core.logs import journalctl, search_log, tail_log
 from runspec_linux_core.nc import nc_send
-from runspec_linux_core.network import check_port, ping_host, show_connections
+from runspec_linux_core.network import (
+    check_port,
+    dns_config,
+    ping_host,
+    route_table,
+    show_connections,
+    socket_stats,
+    trace_route,
+)
 from runspec_linux_core.packages import (
     detect_manager,
     install_package,
@@ -28,6 +50,7 @@ from runspec_linux_core.packages import (
     remove_package,
     upgrade_packages,
 )
+from runspec_linux_core.perf import cpu_info, get_sysctl, pressure, set_sysctl
 from runspec_linux_core.power import reboot_host
 from runspec_linux_core.security import last_logins, who
 from runspec_linux_core.services import check_service, list_services, restart_service
@@ -40,6 +63,13 @@ __all__ = [
     "LinuxCoreError",
     "ToolNotFoundError",
     "CommandError",
+    # become (privilege escalation)
+    "BecomeError",
+    "build_become",
+    "check_become_error",
+    "current_user",
+    "escalation_supported",
+    "validate_user",
     # system
     "system_info",
     "disk_usage",
@@ -57,6 +87,20 @@ __all__ = [
     "ping_host",
     "check_port",
     "show_connections",
+    "trace_route",
+    "route_table",
+    "socket_stats",
+    "dns_config",
+    # perf tuning & analysis
+    "get_sysctl",
+    "set_sysctl",
+    "cpu_info",
+    "pressure",
+    # app discovery & investigation
+    "service_detail",
+    "open_ports",
+    "owning_package",
+    "failed_units",
     # files
     "find_large_files",
     "backup_files",

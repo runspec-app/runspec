@@ -1,4 +1,6 @@
-"""Network helpers: ping, TCP port check, socket connection listing."""
+"""Network helpers: ping, TCP port check, socket connection listing, plus deep
+diagnostics (traceroute, route table, socket summary, DNS config) for tracing
+where an app's connectivity breaks."""
 
 import re
 import shutil
@@ -128,3 +130,147 @@ def _parse_netstat(output: str, state_filter: str) -> list[dict]:
             }
         )
     return rows
+
+
+# ── Deep diagnostics ──────────────────────────────────────────────────────────
+
+
+def _parse_traceroute(output: str) -> list[dict]:
+    """Parse ``traceroute`` / ``tracepath`` output into hop rows.
+
+    Each hop line starts with the hop number, then host/ip and RTT samples. A
+    ``*`` sample means no reply. Bounded, best-effort — the raw lines are also
+    returned by ``trace_route`` for anything the parse misses.
+    """
+    hops: list[dict] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        m = re.match(r"^(\d+)\s+(.*)$", stripped)
+        if not m:
+            continue
+        hop_no = int(m.group(1))
+        rest = m.group(2)
+        host = ""
+        ip = ""
+        hm = re.search(r"([\w.-]+)\s+\(([\d.:a-fA-F]+)\)", rest)
+        if hm:
+            host, ip = hm.group(1), hm.group(2)
+        elif rest.strip().startswith("*"):
+            host = "*"
+        times = [float(t) for t in re.findall(r"([\d.]+)\s*ms", rest)]
+        hops.append({"hop": hop_no, "host": host, "ip": ip, "rtt_ms": times})
+    return hops
+
+
+def trace_route(host: str, max_hops: int = 30) -> dict:
+    """Trace the network path to ``host`` (``traceroute`` or ``tracepath``).
+
+    Raises ToolNotFoundError if neither tool is on PATH.
+    """
+    if shutil.which("traceroute"):
+        cmd = ["traceroute", "-m", str(max_hops), host]
+    elif shutil.which("tracepath"):
+        cmd = ["tracepath", "-m", str(max_hops), host]
+    else:
+        raise ToolNotFoundError("neither traceroute nor tracepath found in PATH")
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    output = result.stdout + result.stderr
+    hops = _parse_traceroute(output)
+    return {"host": host, "max_hops": max_hops, "hops": hops, "raw": output.strip().splitlines()}
+
+
+def _parse_ip_route(output: str) -> list[dict]:
+    """Parse ``ip route`` output into route rows (destination + key/value attrs)."""
+    routes: list[dict] = []
+    for line in output.strip().splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        route: dict = {"destination": parts[0]}
+        i = 1
+        while i < len(parts) - 1:
+            route[parts[i]] = parts[i + 1]
+            i += 2
+        routes.append(route)
+    return routes
+
+
+def route_table() -> dict:
+    """Return the kernel IPv4 routing table (``ip route``).
+
+    Raises ToolNotFoundError if ``ip`` is not on PATH.
+    """
+    if not shutil.which("ip"):
+        raise ToolNotFoundError("ip not available (iproute2)")
+    result = subprocess.run(["ip", "route"], capture_output=True, text=True)
+    return {"routes": _parse_ip_route(result.stdout)}
+
+
+def _parse_ss_summary(output: str) -> dict:
+    """Parse ``ss -s`` summary output into ``{total, tcp: {...}, ...}``."""
+    summary: dict = {}
+    for line in output.splitlines():
+        line = line.strip()
+        tm = re.match(r"^Total:\s*(\d+)", line)
+        if tm:
+            summary["total"] = int(tm.group(1))
+            continue
+        pm = re.match(r"^(TCP|UDP|RAW|FRAG|INET):\s+(.*)$", line, re.IGNORECASE)
+        if pm:
+            proto = pm.group(1).lower()
+            nums = re.findall(r"(\w+)\s+(\d+)", pm.group(2))
+            summary[proto] = {k: int(v) for k, v in nums}
+    return summary
+
+
+def socket_stats() -> dict:
+    """Return a summary of socket usage by protocol (``ss -s``).
+
+    Raises ToolNotFoundError if ``ss`` is not on PATH.
+    """
+    if not shutil.which("ss"):
+        raise ToolNotFoundError("ss not available (iproute2)")
+    result = subprocess.run(["ss", "-s"], capture_output=True, text=True)
+    return {"summary": _parse_ss_summary(result.stdout), "raw": result.stdout.strip().splitlines()}
+
+
+def _parse_resolv_conf(text: str) -> dict:
+    """Parse ``/etc/resolv.conf`` into nameservers / search domains / options."""
+    nameservers: list[str] = []
+    search: list[str] = []
+    options: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        parts = line.split()
+        if parts[0] == "nameserver" and len(parts) > 1:
+            nameservers.append(parts[1])
+        elif parts[0] in ("search", "domain"):
+            search.extend(parts[1:])
+        elif parts[0] == "options":
+            options.extend(parts[1:])
+    return {"nameservers": nameservers, "search": search, "options": options}
+
+
+def dns_config() -> dict:
+    """Return the host's DNS configuration: nameservers, search domains, and
+    options from ``/etc/resolv.conf`` (plus ``resolvectl status`` when present).
+
+    Raises OSError only if ``/etc/resolv.conf`` cannot be read.
+    """
+    with open("/etc/resolv.conf", errors="replace") as f:
+        conf = _parse_resolv_conf(f.read())
+
+    resolvectl = ""
+    if shutil.which("resolvectl"):
+        result = subprocess.run(["resolvectl", "status"], capture_output=True, text=True)
+        if result.returncode == 0:
+            resolvectl = result.stdout.strip()
+
+    out = dict(conf)
+    out["resolv_conf"] = "/etc/resolv.conf"
+    if resolvectl:
+        out["resolvectl_status"] = resolvectl.splitlines()
+    return out

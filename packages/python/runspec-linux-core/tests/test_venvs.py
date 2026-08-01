@@ -31,30 +31,9 @@ def _record(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     return calls
 
 
-# ── _become ───────────────────────────────────────────────────────────────────
-
-
-def test_become_no_user_is_noop() -> None:
-    assert venvs._become(["echo", "hi"], None) == ["echo", "hi"]
-    assert venvs._become(["echo", "hi"], "") == ["echo", "hi"]
-
-
-def test_become_sudo_prefix() -> None:
-    assert venvs._become(["echo", "hi"], "svc") == ["sudo", "-n", "-u", "svc", "echo", "hi"]
-
-
-def test_become_su_quotes() -> None:
-    assert venvs._become(["pip", "install", "a b"], "svc", "su") == ["su", "svc", "-c", "pip install 'a b'"]
-
-
-def test_become_rejects_bad_user() -> None:
-    with pytest.raises(ValueError):
-        venvs._become(["echo"], "bad;user")
-
-
-def test_become_rejects_bad_method() -> None:
-    with pytest.raises(ValueError):
-        venvs._become(["echo"], "svc", "doas")
+# The escalation command builder moved to runspec_linux_core.become; its unit
+# tests now live in test_become.py. The venv helpers exercise it end-to-end below
+# (test_create_venv_run_as_escalates_every_step et al.).
 
 
 # ── create_venv ───────────────────────────────────────────────────────────────

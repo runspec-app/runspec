@@ -2,7 +2,15 @@ import json
 import sys
 
 import runspec as rs
-from runspec_linux_core import check_port, ping_host, show_connections
+from runspec_linux_core import (
+    check_port,
+    dns_config,
+    ping_host,
+    route_table,
+    show_connections,
+    socket_stats,
+    trace_route,
+)
 
 
 def main_ping_host() -> None:
@@ -29,6 +37,44 @@ def main_show_connections() -> None:
     state_filter = spec.state.value
     try:
         print(json.dumps(show_connections(state_filter)))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def main_trace_route() -> None:
+    spec = rs.parse("trace-route")
+    host = spec.host.value
+    max_hops = spec.max_hops.value
+    try:
+        print(json.dumps(trace_route(host, max_hops)))
+    except Exception as e:
+        print(json.dumps({"error": str(e), "host": host}))
+        sys.exit(1)
+
+
+def main_route_table() -> None:
+    rs.parse("route-table")
+    try:
+        print(json.dumps(route_table()))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def main_socket_stats() -> None:
+    rs.parse("socket-stats")
+    try:
+        print(json.dumps(socket_stats()))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def main_dns_config() -> None:
+    rs.parse("dns-config")
+    try:
+        print(json.dumps(dns_config()))
     except Exception as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)

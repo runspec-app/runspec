@@ -81,6 +81,27 @@ type        = "str"
 short       = "-s"
 description = "Service name to restart"
 
+# Escalation: restarting a system service needs privilege.
+[restart-service.args.run-as]
+type        = "str"
+description = "Run as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[restart-service.args.sudo]
+type        = "flag"
+description = "Run as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[restart-service.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[restart-service.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
+
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
 [tail-log]
@@ -99,6 +120,27 @@ type        = "int"
 short       = "-n"
 description = "Number of lines to return"
 default     = 50
+
+# Escalation: read a root-owned / service-account-owned log (tail -n under sudo/su).
+[tail-log.args.run-as]
+type        = "str"
+description = "Read as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[tail-log.args.sudo]
+type        = "flag"
+description = "Read as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[tail-log.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[tail-log.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
 
 [search-log]
 serve       = ["local"]
@@ -122,6 +164,27 @@ short       = "-n"
 description = "Maximum number of matching lines to return"
 default     = 100
 
+# Escalation: search a root-owned / service-account-owned log (cat under sudo/su).
+[search-log.args.run-as]
+type        = "str"
+description = "Read as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[search-log.args.sudo]
+type        = "flag"
+description = "Read as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[search-log.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[search-log.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
+
 [journalctl]
 serve       = ["local"]
 description = "Fetch recent journal entries for a systemd unit (systemd-only)"
@@ -143,6 +206,27 @@ default     = 50
 type        = "str"
 description = "Return entries since this time string (e.g. '1 hour ago', '2026-05-27 08:00')"
 required    = false
+
+# Escalation: read a protected unit's journal (outside the systemd-journal group).
+[journalctl.args.run-as]
+type        = "str"
+description = "Read as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[journalctl.args.sudo]
+type        = "flag"
+description = "Read as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[journalctl.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[journalctl.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
 
 # ── Network ───────────────────────────────────────────────────────────────────
 
@@ -896,3 +980,311 @@ type        = "flag"
 short       = "-k"
 description = "Skip TLS certificate verification when fetching the spec"
 default     = false
+
+# ── Performance tuning & analysis ─────────────────────────────────────────────
+
+[get-sysctl]
+serve       = ["local"]
+description = "Read kernel parameters (sysctl), optionally filtered by a substring of the key"
+autonomy    = "autonomous"
+output      = "json"
+
+[get-sysctl.args.pattern]
+type        = "str"
+short       = "-p"
+description = "Only return keys containing this substring (e.g. 'net.core')"
+required    = false
+
+[set-sysctl]
+serve       = ["local"]
+description = "Set a kernel parameter (sysctl -w), optionally persisting it under /etc/sysctl.d"
+autonomy    = "confirm"
+output      = "json"
+
+[set-sysctl.args.key]
+type        = "str"
+short       = "-k"
+description = "Dotted sysctl key (e.g. net.core.somaxconn)"
+
+[set-sysctl.args.value]
+type        = "str"
+description = "New value to set"
+
+[set-sysctl.args.persist]
+type        = "flag"
+description = "Also append the setting to /etc/sysctl.d/99-runspec.conf so it survives a reboot"
+default     = false
+
+# Escalation: writing a kernel parameter is privileged.
+[set-sysctl.args.run-as]
+type        = "str"
+description = "Apply as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[set-sysctl.args.sudo]
+type        = "flag"
+description = "Apply as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[set-sysctl.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[set-sysctl.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
+
+[cpu-info]
+serve       = ["local"]
+description = "Report CPU model, core count, and per-CPU scaling governor and frequency"
+autonomy    = "autonomous"
+output      = "json"
+
+[pressure]
+serve       = ["local"]
+description = "Report kernel PSI pressure-stall stats for CPU, IO, and memory"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Application discovery & investigation ─────────────────────────────────────
+
+[service-detail]
+serve       = ["local"]
+description = "Show where a systemd unit lives: ExecStart binary, working dir, user, env files, unit-file path, and state"
+autonomy    = "autonomous"
+output      = "json"
+
+[service-detail.args.unit]
+type        = "str"
+short       = "-u"
+description = "Systemd unit name (e.g. nginx or nginx.service)"
+
+# Escalation: some properties on protected units need privilege.
+[service-detail.args.run-as]
+type        = "str"
+description = "Read as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[service-detail.args.sudo]
+type        = "flag"
+description = "Read as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[service-detail.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[service-detail.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
+
+[open-ports]
+serve       = ["local"]
+description = "List listening sockets mapped to the owning process (port to pid to process name)"
+autonomy    = "autonomous"
+output      = "json"
+
+[open-ports.args.proto]
+type        = "choice"
+options     = ["tcp", "udp", "both"]
+description = "Which listening sockets to report"
+default     = "tcp"
+
+# Escalation: the full pid/process map needs privilege (ss shows other users' processes only as root).
+[open-ports.args.run-as]
+type        = "str"
+description = "Probe as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[open-ports.args.sudo]
+type        = "flag"
+description = "Probe as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[open-ports.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[open-ports.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
+
+[owning-package]
+serve       = ["local"]
+description = "Report which installed package owns a file path (dpkg / rpm)"
+autonomy    = "autonomous"
+output      = "json"
+
+[owning-package.args.path]
+type        = "path"
+short       = "-p"
+description = "File path to resolve to its owning package"
+
+[failed-units]
+serve       = ["local"]
+description = "List systemd service units currently in the failed state"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Network deep-diagnostics ──────────────────────────────────────────────────
+
+[trace-route]
+serve       = ["local"]
+description = "Trace the network path to a host (traceroute / tracepath)"
+autonomy    = "autonomous"
+output      = "json"
+
+[trace-route.args.host]
+type        = "str"
+short       = "-H"
+description = "Destination host or IP"
+
+[trace-route.args.max-hops]
+type        = "int"
+short       = "-m"
+description = "Maximum number of hops to probe"
+default     = 30
+
+[route-table]
+serve       = ["local"]
+description = "Show the kernel IPv4 routing table (ip route)"
+autonomy    = "autonomous"
+output      = "json"
+
+[socket-stats]
+serve       = ["local"]
+description = "Summarise socket usage by protocol (ss -s)"
+autonomy    = "autonomous"
+output      = "json"
+
+[dns-config]
+serve       = ["local"]
+description = "Show the host's DNS configuration: nameservers, search domains, and options (/etc/resolv.conf + resolvectl)"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Filesystem (folded from runspec-fs; backed by runspec-fs-core) ─────────────
+# The filesystem is part of the OS, so the Linux pack ships the `fs` runnable
+# directly. One verb per Filesystem MCP tool; `runspec serve` re-expands each
+# verb into a leaf MCP tool (fs_read-text-file, fs_write-file, …), giving a
+# runspec-console agent local AND remote filesystem access on every fleet host.
+# No directory jail — access is bounded by the OS permissions of the invoking
+# (or --run-as) user.
+
+[fs]
+serve = ["local"]
+description = "Read and manipulate the filesystem on this host (local, or remote via runspec-console)"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "fs list-directory --path .", description = "List the current directory"},
+  {cmd = "fs read-text-file --path README.md --head 20", description = "Read the first 20 lines of a file"},
+  {cmd = "fs search-files --path . --pattern '*.py'", description = "Find Python files recursively"},
+  {cmd = "fs edit-file --path a.txt --old-text foo --new-text bar", description = "Replace 'foo' with 'bar'"},
+  {cmd = "fs --run-as deploy read-text-file --path /home/deploy/app.log", description = "Run a verb as another OS user (chosen per invocation)"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+# Per-invocation run-as: the user/agent picks which OS user each verb runs as,
+# like runspec-linux's venv runnables. The operation is re-invoked as that user
+# via sudo/su, so access is bounded by THAT user's OS permissions — no jail.
+[fs.args]
+run-as        = {type = "str",    required = false, description = "Run this operation as another OS user (via sudo -n -u / su, chosen per invocation). Access is then bounded by that user's OS permissions. POSIX only; needs passwordless sudo for the target user."}
+become-method = {type = "choice", options = ["sudo", "su"], default = "sudo", description = "How to escalate to --run-as."}
+
+# ── reads / metadata → autonomous ──────────────────────────────────────────
+
+[fs.commands.read-text-file]
+description = "Read a file as UTF-8 text; optionally only the first N (--head) or last N (--tail) lines"
+autonomy = "autonomous"
+[fs.commands.read-text-file.args]
+path = {type = "path", required = true, description = "File to read"}
+head = {type = "int", required = false, description = "Return only the first N lines"}
+tail = {type = "int", required = false, description = "Return only the last N lines"}
+
+[fs.commands.read-media-file]
+description = "Read a binary/media file and return it base64-encoded with its MIME type"
+autonomy = "autonomous"
+[fs.commands.read-media-file.args]
+path = {type = "path", required = true, description = "File to read"}
+
+[fs.commands.read-multiple-files]
+description = "Read several files at once; a failed read is reported per-file without aborting the batch"
+autonomy = "autonomous"
+[fs.commands.read-multiple-files.args]
+paths = {type = "path", multiple = true, required = true, description = "Files to read (repeat --paths per file)"}
+
+[fs.commands.list-directory]
+description = "List a directory's immediate contents, each tagged file or directory"
+autonomy = "autonomous"
+[fs.commands.list-directory.args]
+path = {type = "path", required = true, description = "Directory to list"}
+
+[fs.commands.list-directory-with-sizes]
+description = "List a directory's contents with per-entry sizes and totals"
+autonomy = "autonomous"
+[fs.commands.list-directory-with-sizes.args]
+path = {type = "path", required = true, description = "Directory to list"}
+sort-by = {type = "choice", options = ["name", "size"], default = "name", description = "Sort order (size is descending)"}
+
+[fs.commands.directory-tree]
+description = "Return a recursive JSON tree of a directory"
+autonomy = "autonomous"
+[fs.commands.directory-tree.args]
+path = {type = "path", required = true, description = "Directory to walk"}
+exclude = {type = "str", multiple = true, required = false, description = "Glob patterns to prune (repeat --exclude)"}
+
+[fs.commands.search-files]
+description = "Recursively find files/directories whose name matches a pattern (glob, or case-insensitive substring)"
+autonomy = "autonomous"
+[fs.commands.search-files.args]
+path = {type = "path", required = true, description = "Directory to search under"}
+pattern = {type = "str", required = true, description = "Glob (e.g. '*.py') or a case-insensitive substring"}
+exclude = {type = "str", multiple = true, required = false, description = "Glob patterns to prune (repeat --exclude)"}
+
+[fs.commands.get-file-info]
+description = "Return detailed metadata for a file or directory (size, timestamps, permissions)"
+autonomy = "autonomous"
+[fs.commands.get-file-info.args]
+path = {type = "path", required = true, description = "File or directory to stat"}
+
+[fs.commands.list-allowed-directories]
+description = "Report the effective user and starting directories (informational — no directory jail is enforced)"
+autonomy = "autonomous"
+
+# ── mutations → confirm ────────────────────────────────────────────────────
+
+[fs.commands.write-file]
+description = "Create a new file or overwrite an existing one with UTF-8 text"
+autonomy = "confirm"
+[fs.commands.write-file.args]
+path = {type = "path", required = true, description = "File to write"}
+content = {type = "str", required = true, description = "File contents"}
+
+[fs.commands.edit-file]
+description = "Apply ordered old→new substring replacements to a file; returns a unified diff. Pair each --old-text with a --new-text by position."
+autonomy = "confirm"
+[fs.commands.edit-file.args]
+path = {type = "path", required = true, description = "File to edit"}
+old-text = {type = "str", multiple = true, required = true, description = "Text to find (repeat --old-text; paired by position with --new-text)"}
+new-text = {type = "str", multiple = true, required = true, description = "Replacement text (repeat --new-text; paired by position with --old-text)"}
+dry-run = {type = "flag", default = false, description = "Compute and diff the edits without writing"}
+
+[fs.commands.create-directory]
+description = "Create a directory (and any missing parents); idempotent"
+autonomy = "confirm"
+[fs.commands.create-directory.args]
+path = {type = "path", required = true, description = "Directory to create"}
+
+[fs.commands.move-file]
+description = "Move or rename a file/directory; fails if the destination already exists"
+autonomy = "confirm"
+[fs.commands.move-file.args]
+source = {type = "path", required = true, description = "Path to move"}
+destination = {type = "path", required = true, description = "New path (must not already exist)"}

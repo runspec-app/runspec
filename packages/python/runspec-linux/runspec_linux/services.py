@@ -5,6 +5,8 @@ import runspec as rs
 from runspec_linux_core import check_service, list_services, restart_service
 from runspec_linux_core.errors import CommandError
 
+from runspec_linux._escalation import resolve_escalation
+
 
 def main_check_service() -> None:
     spec = rs.parse("check-service")
@@ -29,8 +31,9 @@ def main_list_services() -> None:
 def main_restart_service() -> None:
     spec = rs.parse("restart-service")
     service = spec.service.value
+    run_as, method = resolve_escalation(spec)
     try:
-        print(json.dumps(restart_service(service)))
+        print(json.dumps(restart_service(service, run_as=run_as, become_method=method)))
     except CommandError as e:
         print(json.dumps({"service": service, "restarted": False, "error": str(e)}))
         sys.exit(1)

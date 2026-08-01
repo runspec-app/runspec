@@ -69,6 +69,7 @@ jobs:
               - 'packages/python/runspec-linux/**'
               - 'packages/python/runspec-linux-core/**'
               - 'packages/python/runspec-webops-core/**'
+              - 'packages/python/runspec-fs-core/**'
               - '.github/workflows/ci.yml'
             linux-core:
               - 'packages/python/runspec-linux-core/**'
@@ -76,6 +77,7 @@ jobs:
             windows:
               - 'packages/python/runspec-windows/**'
               - 'packages/python/runspec-webops-core/**'
+              - 'packages/python/runspec-fs-core/**'
               - '.github/workflows/ci.yml'
             jsm:
               - 'packages/python/runspec-jsm/**'
@@ -281,11 +283,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        # runspec-linux-core and runspec-webops-core aren't published yet — install
-        # them from the sibling sources so the runspec-linux deps resolve locally.
+        # runspec-linux-core, runspec-webops-core and runspec-fs-core aren't
+        # published yet — install them from the sibling sources so the
+        # runspec-linux deps resolve locally.
         run: |
           pip install -e ../runspec-linux-core
           pip install -e ../runspec-webops-core
+          pip install -e ../runspec-fs-core
           pip install -e ".[dev]"
 
       - name: Lint
@@ -312,11 +316,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        # runspec-linux-core and runspec-webops-core aren't published yet — install
-        # them from the sibling sources so the runspec-linux deps resolve locally.
+        # runspec-linux-core, runspec-webops-core and runspec-fs-core aren't
+        # published yet — install them from the sibling sources so the
+        # runspec-linux deps resolve locally.
         run: |
           pip install -e ../runspec-linux-core
           pip install -e ../runspec-webops-core
+          pip install -e ../runspec-fs-core
           pip install -e ".[dev]"
 
       - name: Run tests
@@ -331,10 +337,11 @@ jobs:
         run: |
           python -m venv /tmp/smoke
           # Install the unpublished core dependencies first, then the wheel under test.
-          /tmp/smoke/bin/pip install ../runspec-linux-core ../runspec-webops-core
+          /tmp/smoke/bin/pip install ../runspec-linux-core ../runspec-webops-core ../runspec-fs-core
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/system-info
           /tmp/smoke/bin/cert-check --help
+          /tmp/smoke/bin/fs list-directory --path .
           /tmp/smoke/bin/python -c "
           from importlib.resources import files
           pkg = files('runspec_linux')
@@ -1064,10 +1071,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        # runspec-webops-core isn't published yet — install it from the sibling
-        # source so the runspec-windows dependency resolves locally.
+        # runspec-webops-core and runspec-fs-core aren't published yet — install
+        # them from the sibling sources so the runspec-windows deps resolve locally.
         run: |
           pip install -e ../runspec-webops-core
+          pip install -e ../runspec-fs-core
           pip install -e ".[dev,graph]"
 
       - name: Lint
@@ -1094,10 +1102,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        # runspec-webops-core isn't published yet — install it from the sibling
-        # source so the runspec-windows dependency resolves locally.
+        # runspec-webops-core and runspec-fs-core aren't published yet — install
+        # them from the sibling sources so the runspec-windows deps resolve locally.
         run: |
           pip install -e ../runspec-webops-core
+          pip install -e ../runspec-fs-core
           pip install -e ".[dev,graph]"
 
       # Pure parsers + mocked Graph + the off-Windows platform-guard behaviour.
@@ -1134,8 +1143,8 @@ jobs:
         shell: pwsh
         run: |
           python -m venv $env:TEMP\smoke
-          # Install the unpublished core dependency first, then the wheel under test.
-          & "$env:TEMP\smoke\Scripts\pip" install ..\runspec-webops-core
+          # Install the unpublished core dependencies first, then the wheel under test.
+          & "$env:TEMP\smoke\Scripts\pip" install ..\runspec-webops-core ..\runspec-fs-core
           & "$env:TEMP\smoke\Scripts\pip" install (Get-ChildItem dist\*.whl)[0].FullName
           $bin = "$env:TEMP\smoke\Scripts"
           foreach ($cmd in @("system-info", "list-processes", "disk-usage")) {
@@ -1146,6 +1155,9 @@ jobs:
           # The cross-platform web runnables run on Windows too.
           & "$bin\cert-check" --help | Out-Null
           Write-Host "cert-check -> OK"
+          # The folded `fs` runnable (backed by runspec-fs-core).
+          & "$bin\fs" list-directory --path . | ConvertFrom-Json | Out-Null
+          Write-Host "fs -> OK"
           & "$env:TEMP\smoke\Scripts\python" -c "from importlib.resources import files; assert (files('runspec_windows') / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'; import runspec_windows; assert runspec_windows.graph_get and runspec_windows.get_token; print('Wheel contents OK')"
 
   # ── runspec-console ──────────────────────────────────────────────────────────

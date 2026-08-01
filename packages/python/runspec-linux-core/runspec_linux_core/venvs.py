@@ -20,20 +20,17 @@ import io
 import os
 import pwd
 import re
-import shlex
 import shutil
 import subprocess
 import tempfile
 
-from runspec_linux_core.errors import CommandError
+from runspec_linux_core.become import build_become, check_become_error
 
-# Mirrors sudoers._USER_RE: a POSIX-ish user/group name. Validated before it is
-# interpolated into a become command or a chgrp, so a crafted value can't inject
-# extra tokens (everything still goes to argv, never a shell, but this keeps the
-# error early and clear).
+# A POSIX-ish user/group name. Used here to validate a *group* before it is
+# interpolated into a chgrp (a crafted value can't inject extra tokens — argv
+# only, never a shell — but this keeps the error early and clear). The run-as
+# *user* is validated by the shared ``build_become``. Mirrors ``become._USER_RE``.
 _NAME_RE = re.compile(r"^[a-z_][a-z0-9_.-]*\$?$")
-
-_BECOME_METHODS = ("sudo", "su")
 
 
 def _tail(output: str, limit: int = 40) -> list[str]:
@@ -47,23 +44,6 @@ def _validate_name(value: str, what: str) -> str:
     return value
 
 
-def _become(argv: list[str], run_as: str | None, method: str = "sudo") -> list[str]:
-    """Wrap ``argv`` so it runs as ``run_as`` via ``method`` (no escalation if empty).
-
-    ``sudo`` → ``sudo -n -u <user> <argv...>`` (``-n`` never prompts).
-    ``su``   → ``su <user> -c "<argv joined+quoted>"`` (su has no ``-n``; it only
-    works without a password when the caller is already root).
-    """
-    if not run_as:
-        return argv
-    _validate_name(run_as, "run-as user")
-    if method not in _BECOME_METHODS:
-        raise ValueError(f"invalid become-method: {method!r} (expected sudo or su)")
-    if method == "su":
-        return ["su", run_as, "-c", shlex.join(argv)]
-    return ["sudo", "-n", "-u", run_as, *argv]
-
-
 def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv, capture_output=True, text=True)
 
@@ -72,10 +52,7 @@ def _check(result: subprocess.CompletedProcess[str], what: str, run_as: str | No
     """Raise CommandError on non-zero, with a passwordless-sudo hint when relevant."""
     if result.returncode == 0:
         return
-    err = result.stderr.strip()
-    if run_as and ("password is required" in err.lower() or "a terminal is required" in err.lower()):
-        raise CommandError(f"{what}: passwordless sudo is not configured for run-as {run_as!r} ({err})")
-    raise CommandError(err or f"{what} failed")
+    check_become_error(what, result.stderr, run_as)
 
 
 def create_venv(
@@ -117,16 +94,16 @@ def create_venv(
     if prompt:
         flags += ["--prompt", prompt]
 
-    _check(_run(_become([python, "-m", "venv", *flags, dest], run_as, become_method)), "venv creation", run_as)
+    _check(_run(build_become([python, "-m", "venv", *flags, dest], run_as, become_method)), "venv creation", run_as)
 
-    _check(_run(_become(["chmod", "-R", "u=rwX,go=rX", dest], run_as, become_method)), "chmod venv", run_as)
+    _check(_run(build_become(["chmod", "-R", "u=rwX,go=rX", dest], run_as, become_method)), "chmod venv", run_as)
 
     logs_dir = os.path.join(dest, "logs")
-    _check(_run(_become(["mkdir", "-p", logs_dir], run_as, become_method)), "logs dir", run_as)
+    _check(_run(build_become(["mkdir", "-p", logs_dir], run_as, become_method)), "logs dir", run_as)
     if group:
         _validate_name(group, "group")
-        _check(_run(_become(["chgrp", "-R", group, dest], run_as, become_method)), "chgrp", run_as)
-    _check(_run(_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
+        _check(_run(build_become(["chgrp", "-R", group, dest], run_as, become_method)), "chgrp", run_as)
+    _check(_run(build_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
 
     return {
         "python": python,
@@ -192,14 +169,14 @@ def install_into_venv(
     if project is not None:
         target += ["-e", project] if editable else [project]
 
-    cmd = _become([venv_python, "-m", "pip", "install", *opts, *target], run_as, become_method)
+    cmd = build_become([venv_python, "-m", "pip", "install", *opts, *target], run_as, become_method)
     result = _run(cmd)
     _check(result, "pip install", run_as)
 
-    _check(_run(_become(["chmod", "-R", "u=rwX,go=rX", venv], run_as, become_method)), "chmod venv", run_as)
+    _check(_run(build_become(["chmod", "-R", "u=rwX,go=rX", venv], run_as, become_method)), "chmod venv", run_as)
     logs_dir = os.path.join(venv, "logs")
-    if _run(_become(["test", "-d", logs_dir], run_as, become_method)).returncode == 0:
-        _check(_run(_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
+    if _run(build_become(["test", "-d", logs_dir], run_as, become_method)).returncode == 0:
+        _check(_run(build_become(["chmod", "2775", logs_dir], run_as, become_method)), "chmod logs", run_as)
 
     return {
         "venv": venv,
@@ -289,12 +266,12 @@ def configure_pip(
         if run_as:
             if _path_exists_as(path, run_as, become_method):
                 _check(
-                    _run(_become(["cp", path, f"{path}.bak"], run_as, become_method)),
+                    _run(build_become(["cp", path, f"{path}.bak"], run_as, become_method)),
                     "backup pip.conf",
                     run_as,
                 )
             _check(
-                _run(_become(["install", "-D", "-m", "0644", tmp, path], run_as, become_method)),
+                _run(build_become(["install", "-D", "-m", "0644", tmp, path], run_as, become_method)),
                 "install pip.conf",
                 run_as,
             )
@@ -317,4 +294,4 @@ def configure_pip(
 
 def _path_exists_as(path: str, run_as: str | None, become_method: str) -> bool:
     """True if ``path`` exists from the run-as user's view (``test -e``)."""
-    return _run(_become(["test", "-e", path], run_as, become_method)).returncode == 0
+    return _run(build_become(["test", "-e", path], run_as, become_method)).returncode == 0

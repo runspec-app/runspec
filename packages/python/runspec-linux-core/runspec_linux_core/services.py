@@ -3,7 +3,8 @@
 import shutil
 import subprocess
 
-from runspec_linux_core.errors import CommandError, ToolNotFoundError
+from runspec_linux_core.become import build_become, check_become_error
+from runspec_linux_core.errors import ToolNotFoundError
 
 
 def _systemctl_available() -> bool:
@@ -76,20 +77,23 @@ def list_services(state_filter: str = "all") -> list[dict]:
     return rows
 
 
-def restart_service(service: str) -> dict:
+def restart_service(service: str, *, run_as: str | None = None, become_method: str = "sudo") -> dict:
     """Restart a systemd service. Returns ``{service, restarted: True}`` on success.
 
-    Raises ToolNotFoundError if systemctl is not present, or CommandError if the
-    restart command returns a non-zero exit (message is the captured stderr).
+    Restarting a system service needs privilege, so ``run_as`` (with a
+    ``become_method``) escalates the ``systemctl restart`` via sudo/su — a
+    ``--sudo`` flag on the runnable maps to ``run_as="root"``. Raises
+    ToolNotFoundError if systemctl is not present, or CommandError if the restart
+    returns a non-zero exit (with a passwordless-sudo hint when relevant).
     """
     if not _systemctl_available():
         raise ToolNotFoundError("systemctl not available — not a systemd system")
 
-    result = subprocess.run(
-        ["systemctl", "restart", service],
-        capture_output=True,
-        text=True,
-    )
+    argv = build_become(["systemctl", "restart", service], run_as, become_method)
+    result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode != 0:
-        raise CommandError(result.stderr.strip())
-    return {"service": service, "restarted": True}
+        check_become_error("restart service", result.stderr, run_as)
+    out = {"service": service, "restarted": True}
+    if run_as:
+        out["run_as"] = run_as
+    return out

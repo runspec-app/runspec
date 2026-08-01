@@ -1,5 +1,34 @@
 # runspec-linux-core Changelog
 
+## [0.4.0] — 2026-08-01
+
+New shared privilege-escalation module `runspec_linux_core.become` — the single
+source of truth for runspec-linux's per-invocation `run_as` escalation
+(mechanism B). It exposes `build_become(argv, run_as, method)` (`sudo -n -u` /
+`su -c`), `validate_user`, `check_become_error` (the passwordless-sudo hint),
+`escalation_supported`, `current_user`, and `BecomeError` (a `CommandError`).
+`venvs.py` now delegates to it instead of its own private `_become`/`_check`
+copy — byte-identical command output, no behaviour change beyond invalid
+run-as/method now raising `BecomeError` (a `CommandError`) rather than a bare
+`ValueError`. This module also backs the new `--run-as` / `--sudo` mutually
+exclusive args on the privileged `runspec-linux` runnables.
+
+New system-admin helpers for corporate app-support and performance work:
+
+- `perf.py` — `get_sysctl` / `set_sysctl` (read/tune kernel params, optional
+  `/etc/sysctl.d` persist), `cpu_info` (governor/frequency/topology),
+  `pressure` (PSI `/proc/pressure/*`).
+- `investigate.py` — `service_detail` (a unit's ExecStart/env/paths/state),
+  `open_ports` (listening port → pid → process), `owning_package` (which
+  package owns a path, dpkg/rpm), `failed_units` (`systemctl --failed`).
+- `network.py` additions — `trace_route`, `route_table`, `socket_stats`,
+  `dns_config`.
+
+The privileged helpers (`set_sysctl` persist, `service_detail`, `open_ports`,
+and the log/service helpers) take `run_as` / `become_method` params and wrap
+their subprocesses with `build_become`, so a caller can run them as root or a
+specific service account.
+
 ## [0.3.5] — 2026-07-08
 
 Apply the same umask-neutralising treatment to `install_into_venv` that `0.3.4`

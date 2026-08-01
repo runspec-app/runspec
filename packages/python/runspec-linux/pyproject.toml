@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-linux"
-version = "0.6.2"
+version = "0.7.0"
 requires-python = ">=3.10"
 description = "Linux system admin runnables for runspec"
 dependencies = [
-    "runspec>=0.27.0",
-    "runspec-linux-core>=0.3.5",
+    "runspec>=0.44.0",
+    "runspec-linux-core>=0.4.0",
     "runspec-webops-core>=0.1.0",
+    "runspec-fs-core>=0.2.0",
 ]
 
 [project.scripts]
@@ -27,6 +28,18 @@ journalctl        = "runspec_linux.logs:main_journalctl"
 ping-host         = "runspec_linux.network:main_ping_host"
 check-port        = "runspec_linux.network:main_check_port"
 show-connections  = "runspec_linux.network:main_show_connections"
+trace-route       = "runspec_linux.network:main_trace_route"
+route-table       = "runspec_linux.network:main_route_table"
+socket-stats      = "runspec_linux.network:main_socket_stats"
+dns-config        = "runspec_linux.network:main_dns_config"
+get-sysctl        = "runspec_linux.perf:main_get_sysctl"
+set-sysctl        = "runspec_linux.perf:main_set_sysctl"
+cpu-info          = "runspec_linux.perf:main_cpu_info"
+pressure          = "runspec_linux.perf:main_pressure"
+service-detail    = "runspec_linux.investigate:main_service_detail"
+open-ports        = "runspec_linux.investigate:main_open_ports"
+owning-package    = "runspec_linux.investigate:main_owning_package"
+failed-units      = "runspec_linux.investigate:main_failed_units"
 find-large-files  = "runspec_linux.files:main_find_large_files"
 backup-files      = "runspec_linux.files:main_backup_files"
 last-logins       = "runspec_linux.security:main_last_logins"
@@ -46,6 +59,8 @@ install-into-venv = "runspec_linux.venvs:main_install_into_venv"
 configure-pip     = "runspec_linux.venvs:main_configure_pip"
 nc-command        = "runspec_linux.nc_command:main"
 which             = "runspec_linux.commands:main_which"
+# Filesystem (folded from runspec-fs; backed by runspec-fs-core)
+fs                = "runspec_linux.fs.cli:main"
 # Web / TLS probes (runspec-webops-core; cross-platform)
 cert-check        = "runspec_linux.webops:main_cert_check"
 cert-chain        = "runspec_linux.webops:main_cert_chain"

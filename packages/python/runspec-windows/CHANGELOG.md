@@ -1,5 +1,42 @@
 # runspec-windows Changelog
 
+## [0.4.0] — 2026-08-01
+
+Make the console agent a Windows corporate-desktop expert: filesystem access
+plus proxy / VPN / DNS / route / policy diagnostics, and a one-shot bundle to
+draft a Desktop-Services ticket from.
+
+### Added — filesystem (folded from runspec-fs)
+
+- The **`fs`** runnable is now folded into the Windows pack (backed by the
+  dependency-free `runspec-fs-core`): one verb per Filesystem MCP tool, reads
+  `autonomous` and mutations `confirm`, flattened by `runspec serve` into leaf
+  `fs_<verb>` tools. The inherited `--run-as` / `--become-method` args are
+  POSIX-only and **no-op on Windows** (the verb runs in-process as the
+  logged-in user); they are kept so the `fs` tool surface matches runspec-linux
+  across a mixed fleet.
+
+### Added — corporate networking diagnostics (all read-only)
+
+- **`proxy-settings`** — the effective HTTP proxy across WinHTTP (system),
+  WinINET (per-user), PAC / `AutoConfigURL`, and proxy env vars.
+- **`vpn-status`** — configured VPN connections and their status.
+- **`dns-config`** — configured DNS servers per interface.
+- **`test-connection`** — TCP / ping / route / source-interface probe
+  (`Test-NetConnection`).
+- **`trace-route`** (`tracert`), **`route-table`** (`route print`).
+- **`gpresult`** — applied Group Policy Objects (computer + user), evidence of
+  locked-down policy.
+- **`list-certs`** — machine root-CA store (corporate trust check).
+- **`collect-diagnostics`** — runs all of the above into **one** structured
+  report (each probe isolated so a blocked one doesn't sink the bundle) for the
+  agent to turn into a Windows Desktop-Services ticket email. Content-only — no
+  new Microsoft Graph write scopes; nothing is sent.
+
+### Changed
+
+- Requires `runspec >= 0.44.0`; adds a `runspec-fs-core >= 0.2.0` dependency.
+
 ## [0.3.0] — 2026-06-22
 
 ### Added

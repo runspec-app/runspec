@@ -694,3 +694,221 @@ type        = "flag"
 short       = "-k"
 description = "Skip TLS certificate verification when fetching the spec"
 default     = false
+
+# ── Corporate networking diagnostics (proxy / VPN / DNS / route / GPO) ─────────
+
+[proxy-settings]
+serve       = ["local"]
+description = "Report the effective HTTP proxy: WinHTTP (system), WinINET (per-user), PAC/AutoConfigURL, and proxy env vars"
+autonomy    = "autonomous"
+output      = "json"
+
+[vpn-status]
+serve       = ["local"]
+description = "List configured VPN connections and their connection status"
+autonomy    = "autonomous"
+output      = "json"
+
+[dns-config]
+serve       = ["local"]
+description = "Report configured DNS servers per network interface"
+autonomy    = "autonomous"
+output      = "json"
+
+[test-connection]
+serve       = ["local"]
+description = "Test connectivity to a host (TCP port, ping, route, source interface) via Test-NetConnection"
+autonomy    = "autonomous"
+output      = "json"
+
+[test-connection.args.target]
+type        = "str"
+short       = "-t"
+description = "Host or IP to test (e.g. an internal service or load balancer)"
+
+[test-connection.args.port]
+type        = "int"
+short       = "-p"
+description = "TCP port to test (omit for ping/route only)"
+required    = false
+
+[trace-route]
+serve       = ["local"]
+description = "Trace the network path to a host (tracert)"
+autonomy    = "autonomous"
+output      = "json"
+
+[trace-route.args.host]
+type        = "str"
+short       = "-H"
+description = "Destination host or IP"
+
+[trace-route.args.max-hops]
+type        = "int"
+short       = "-m"
+description = "Maximum number of hops to probe"
+default     = 30
+
+[route-table]
+serve       = ["local"]
+description = "Show the IPv4 routing table (route print)"
+autonomy    = "autonomous"
+output      = "json"
+
+[gpresult]
+serve       = ["local"]
+description = "Report applied Group Policy Objects (computer + user) — evidence of locked-down policy"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-certs]
+serve       = ["local"]
+description = "List certificates in the machine root store (corporate root-CA / trust check)"
+autonomy    = "autonomous"
+output      = "json"
+
+[list-certs.args.filter]
+type        = "str"
+short       = "-f"
+description = "Only return certs whose subject or friendly name contains this substring"
+required    = false
+
+[collect-diagnostics]
+serve       = ["local"]
+description = "Collect one structured connectivity report (proxy, VPN, DNS, route, connectivity, adapters, GPO) to turn into a Desktop-Services ticket"
+autonomy    = "autonomous"
+output      = "json"
+
+[collect-diagnostics.args.target]
+type        = "str"
+short       = "-t"
+description = "Host to test connectivity against (e.g. an internal endpoint that is failing)"
+default     = "www.microsoft.com"
+
+[collect-diagnostics.args.include]
+type        = "choice"
+options     = ["proxy", "vpn", "dns", "route", "connectivity", "adapters", "gpo"]
+multiple    = true
+description = "Which probes to run (repeat --include; default: all)"
+required    = false
+
+# ── Filesystem (folded from runspec-fs; backed by runspec-fs-core) ─────────────
+# The filesystem is part of the OS, so the Windows pack ships the `fs` runnable
+# directly. One verb per Filesystem MCP tool; `runspec serve` re-expands each
+# verb into a leaf MCP tool (fs_read-text-file, fs_write-file, …), giving a
+# runspec-console agent local AND remote filesystem access on every fleet host.
+# No directory jail — access is bounded by the OS permissions of the invoking
+# user. The --run-as / --become-method globals are POSIX-only (sudo/su); on
+# Windows they no-op and the verb runs in-process as the logged-in user.
+
+[fs]
+serve = ["local"]
+description = "Read and manipulate the filesystem on this host (local, or remote via runspec-console)"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "fs list-directory --path .", description = "List the current directory"},
+  {cmd = "fs read-text-file --path README.md --head 20", description = "Read the first 20 lines of a file"},
+  {cmd = "fs search-files --path . --pattern '*.py'", description = "Find Python files recursively"},
+  {cmd = "fs edit-file --path a.txt --old-text foo --new-text bar", description = "Replace 'foo' with 'bar'"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+# Per-invocation run-as (POSIX only). On Windows these no-op: escalation is not
+# supported, so a --run-as request raises a clear error and the verb otherwise
+# runs in-process as the logged-in user. Kept for parity with runspec-linux so
+# `runspec serve` advertises an identical `fs` tool surface across the fleet.
+[fs.args]
+run-as        = {type = "str",    required = false, description = "POSIX only: run this operation as another OS user (sudo -n -u / su). No-op on Windows (runs as the logged-in user)."}
+become-method = {type = "choice", options = ["sudo", "su"], default = "sudo", description = "POSIX only: how to escalate to --run-as. No-op on Windows."}
+
+# ── reads / metadata → autonomous ──────────────────────────────────────────
+
+[fs.commands.read-text-file]
+description = "Read a file as UTF-8 text; optionally only the first N (--head) or last N (--tail) lines"
+autonomy = "autonomous"
+[fs.commands.read-text-file.args]
+path = {type = "path", required = true, description = "File to read"}
+head = {type = "int", required = false, description = "Return only the first N lines"}
+tail = {type = "int", required = false, description = "Return only the last N lines"}
+
+[fs.commands.read-media-file]
+description = "Read a binary/media file and return it base64-encoded with its MIME type"
+autonomy = "autonomous"
+[fs.commands.read-media-file.args]
+path = {type = "path", required = true, description = "File to read"}
+
+[fs.commands.read-multiple-files]
+description = "Read several files at once; a failed read is reported per-file without aborting the batch"
+autonomy = "autonomous"
+[fs.commands.read-multiple-files.args]
+paths = {type = "path", multiple = true, required = true, description = "Files to read (repeat --paths per file)"}
+
+[fs.commands.list-directory]
+description = "List a directory's immediate contents, each tagged file or directory"
+autonomy = "autonomous"
+[fs.commands.list-directory.args]
+path = {type = "path", required = true, description = "Directory to list"}
+
+[fs.commands.list-directory-with-sizes]
+description = "List a directory's contents with per-entry sizes and totals"
+autonomy = "autonomous"
+[fs.commands.list-directory-with-sizes.args]
+path = {type = "path", required = true, description = "Directory to list"}
+sort-by = {type = "choice", options = ["name", "size"], default = "name", description = "Sort order (size is descending)"}
+
+[fs.commands.directory-tree]
+description = "Return a recursive JSON tree of a directory"
+autonomy = "autonomous"
+[fs.commands.directory-tree.args]
+path = {type = "path", required = true, description = "Directory to walk"}
+exclude = {type = "str", multiple = true, required = false, description = "Glob patterns to prune (repeat --exclude)"}
+
+[fs.commands.search-files]
+description = "Recursively find files/directories whose name matches a pattern (glob, or case-insensitive substring)"
+autonomy = "autonomous"
+[fs.commands.search-files.args]
+path = {type = "path", required = true, description = "Directory to search under"}
+pattern = {type = "str", required = true, description = "Glob (e.g. '*.py') or a case-insensitive substring"}
+exclude = {type = "str", multiple = true, required = false, description = "Glob patterns to prune (repeat --exclude)"}
+
+[fs.commands.get-file-info]
+description = "Return detailed metadata for a file or directory (size, timestamps, permissions)"
+autonomy = "autonomous"
+[fs.commands.get-file-info.args]
+path = {type = "path", required = true, description = "File or directory to stat"}
+
+[fs.commands.list-allowed-directories]
+description = "Report the effective user and starting directories (informational — no directory jail is enforced)"
+autonomy = "autonomous"
+
+# ── mutations → confirm ────────────────────────────────────────────────────
+
+[fs.commands.write-file]
+description = "Create a new file or overwrite an existing one with UTF-8 text"
+autonomy = "confirm"
+[fs.commands.write-file.args]
+path = {type = "path", required = true, description = "File to write"}
+content = {type = "str", required = true, description = "File contents"}
+
+[fs.commands.edit-file]
+description = "Apply ordered old→new substring replacements to a file; returns a unified diff. Pair each --old-text with a --new-text by position."
+autonomy = "confirm"
+[fs.commands.edit-file.args]
+path = {type = "path", required = true, description = "File to edit"}
+old-text = {type = "str", multiple = true, required = true, description = "Text to find (repeat --old-text; paired by position with --new-text)"}
+new-text = {type = "str", multiple = true, required = true, description = "Replacement text (repeat --new-text; paired by position with --old-text)"}
+dry-run = {type = "flag", default = false, description = "Compute and diff the edits without writing"}
+
+[fs.commands.create-directory]
+description = "Create a directory (and any missing parents); idempotent"
+autonomy = "confirm"
+[fs.commands.create-directory.args]
+path = {type = "path", required = true, description = "Directory to create"}
+
+[fs.commands.move-file]
+description = "Move or rename a file/directory; fails if the destination already exists"
+autonomy = "confirm"
+[fs.commands.move-file.args]
+source = {type = "path", required = true, description = "Path to move"}
+destination = {type = "path", required = true, description = "New path (must not already exist)"}

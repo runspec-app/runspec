@@ -1,5 +1,46 @@
 # runspec-linux Changelog
 
+## [0.7.0] — 2026-08-01
+
+Enhancements for corporate application support, devops, and performance work.
+
+### Added — filesystem (folded from runspec-fs)
+
+- The **`fs`** runnable is now folded into the Linux pack (backed by the
+  dependency-free `runspec-fs-core`): one verb per Filesystem MCP tool
+  (`read-text-file` … `move-file`), reads `autonomous` and mutations `confirm`.
+  `runspec serve` flattens the verbs into leaf `fs_<verb>` MCP tools, so a
+  runspec-console agent gets local **and** remote filesystem access on every
+  fleet host through the OS pack it already installs — no separate `runspec-fs`
+  needed. Per-invocation `--run-as <user>` / `--become-method` are inherited on
+  every verb (POSIX escalation, no directory jail).
+
+### Added — new runnables
+
+- **Perf tuning & analysis:** `get-sysctl`, `set-sysctl` (a privileged write —
+  `confirm`, optional `--persist` to `/etc/sysctl.d`), `cpu-info` (governor /
+  frequency / topology), `pressure` (kernel PSI stats).
+- **App discovery & investigation:** `service-detail` (a unit's ExecStart binary,
+  working dir, user, env files, unit-file path, state), `open-ports` (listening
+  port → pid → process), `owning-package` (which package owns a path, dpkg/rpm),
+  `failed-units`.
+- **Network deep-diagnostics:** `trace-route`, `route-table`, `socket-stats`,
+  `dns-config`.
+
+### Added — `--run-as` / `--sudo` on the privileged runnables
+
+- `restart-service`, `tail-log`, `search-log`, `journalctl`, `set-sysctl`,
+  `service-detail`, and `open-ports` now take a mutually-exclusive
+  **`--run-as <user>`** / **`--sudo`** pair (plus `--become-method sudo|su`) so
+  they can run against root-owned / service-account-owned resources.
+  Escalation is internal (`sudo -n -u` / `su`), governed by an `exclusive` group
+  so the two flags can't be combined.
+
+### Changed
+
+- Requires `runspec >= 0.44.0` (leaf-tool inherited globals via `runspec serve`)
+  and `runspec-linux-core >= 0.4.0`; adds a `runspec-fs-core >= 0.2.0` dependency.
+
 ## [0.6.2] — 2026-07-08
 
 Pull in `runspec-linux-core >= 0.3.5` so `install-into-venv` now normalises the
