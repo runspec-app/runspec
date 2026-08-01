@@ -986,6 +986,12 @@ class InternalsMixin:
         except Exception:
             saved_runs = []
         rota_on = bool(rota.get("enabled"))
+        _mcp_status = getattr(self, "mcp_status", None)
+        mcp_servers = (
+            [s for s in _mcp_status().get("servers", []) if s.get("connected")]
+            if callable(_mcp_status)
+            else []
+        )
         if (
             not rota_on
             and not triggers
@@ -993,6 +999,7 @@ class InternalsMixin:
             and not mailbox
             and not host_groups
             and not saved_runs
+            and not mcp_servers
         ):
             return ""  # nothing to say — keep the cached system prefix
 
@@ -1169,6 +1176,21 @@ class InternalsMixin:
                     "repo_write (local file edit) are confirm-gated. Edits are LOCAL "
                     "ONLY — no commit/push; review them with repo_diff."
                 )
+
+        if mcp_servers:
+            lines.append("")
+            summary = ", ".join(
+                f"{s['name']} ({s['tool_count']} tool"
+                f"{'' if s['tool_count'] == 1 else 's'})"
+                for s in mcp_servers
+            )
+            lines.append(
+                f"External MCP servers connected: {summary}. Their tools are named "
+                "`mcp_<server>_<tool>` and appear in your toolset alongside the "
+                "runnables — call them like any other tool. They run on an outside "
+                "server, so most are confirm-gated unless the operator marked the "
+                "server trusted."
+            )
 
         # One-liner about the per-session workspace so the agent reaches for the
         # workspace_* tools when a spilled envelope shows up. Deliberately

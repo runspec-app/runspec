@@ -8,6 +8,52 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.222.0] — 2026-08-01
+
+### Added
+- **Connect to external MCP servers (`[mcp]` extra).** The console is normally an
+  MCP *server* (`runspec serve` publishes runnables as leaf tools); it can now
+  also be an MCP *client*. Declare outside MCP servers under `[mcp]` /
+  `[[mcp.servers]]` in `config.toml` and their tools join the chat agent's
+  toolset alongside the runnables and built-ins, named `mcp_<server>_<tool>` and
+  routed through the same autonomy/confirm gate. Three transports: local `stdio`
+  (spawn a subprocess), remote `http` (streamable-HTTP), and `sse`. Sessions are
+  **long-lived** — each server holds an open `ClientSession` on a dedicated
+  background event-loop thread owned by the Bridge, and tool calls are marshalled
+  onto that loop (the per-turn `asyncio.run` loop dies between turns, so a session
+  can't live there). **Safe by default:** an external tool is confirm-gated
+  unless the operator sets `autonomy = "autonomous"` on that server (or `manual`
+  to make it human-only); in a scoped trigger/schedule turn the tools are
+  governed by `action_allow` like the other action tools. Opt-in and
+  best-effort — a missing extra or a down server never blocks startup or a turn
+  (surfaced in `mcp_status()` / the agent's console context). New `mcp_client.py`
+  (`McpManager` + pure helpers), `config.read_mcp()`, bridge `mcp_start` /
+  `mcp_status` / `mcp_reload`, and the `mcp` extra (also in `[all]`). See
+  `docs/console-mcp.md`.
+  - **Named-credential binding.** A server's `credential` (a keychain-backed
+    Credentials id) is resolved at connect time — `Authorization: Bearer`
+    (`Basic` for a `userpass` credential, or the raw secret under a
+    `credential_header` such as `X-API-Key`) for http/sse, and the credential's
+    name-derived env vars for a stdio subprocess. Only the id is stored, so a
+    bound server is seed/sync-safe (metadata rides `runspec_credentials.toml`,
+    the secret stays in the OS keychain). `mcp_credential_options()` returns the
+    id/label/kind list a future Settings-tab dropdown will render.
+  - **Per-server HTTP proxy.** Each server takes a `proxy` (HTTP CONNECT URL,
+    mirroring `[ssh] proxy`) so servers on different corporate networks each get
+    their own egress — applied to http/sse, and exported as `*_PROXY` to a stdio
+    subprocess.
+  - **Seed & sync.** `[mcp]` (in `config.toml`) and bound-credential metadata
+    (in `runspec_credentials.toml`) are already part of the Config Sync / config
+    seed known-set, so MCP servers distribute from one versioned source.
+  - **Settings → MCP tab.** A UI to add/edit/remove servers (transport picker,
+    command/args/env or url/headers, a credential dropdown, credential-header,
+    proxy, autonomy, enable) with a live per-server connection status (connected
+    + tool count / error / disabled), a Reconnect button, a section toggle, and
+    the connect/call timeouts.
+    Backed by `get_mcp_config()` / `save_mcp_config()` (validates, writes
+    `config.toml`, reconnects) alongside `mcp_status` / `mcp_credential_options`.
+
+
 ## [0.221.0] — 2026-08-01
 
 ### Added

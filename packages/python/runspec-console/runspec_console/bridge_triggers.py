@@ -25,6 +25,7 @@ from .bridge_const import (
     _OUTLOOK_TOOL_NAMES,
     _ACTION_TOOL_NAMES,
     _BUILTIN_META_NAMES,
+    _MCP_PREFIX,
     _CONFIG_TOOL_NAMES,
     _RUNBOOK_READ_TOOL_NAMES,
 )
@@ -2288,8 +2289,15 @@ class TriggersMixin:
         if action_allow:
             governed = _ACTION_TOOL_NAMES | _OUTLOOK_TOOL_NAMES
             allow = set(action_allow)
+            # External MCP tools are governed too — a scoped trigger must name
+            # one to keep it. Their names are dynamic, but every MCP display name
+            # carries the collision-free ``mcp_`` prefix, so a prefix test
+            # governs them without instance state (this is a @staticmethod).
             tools = [
-                t for t in tools if t["name"] not in governed or t["name"] in allow
+                t
+                for t in tools
+                if not (t["name"] in governed or t["name"].startswith(_MCP_PREFIX))
+                or t["name"] in allow
             ]
         return tools
 

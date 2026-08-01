@@ -1,0 +1,121 @@
+/**
+ * Tests for the MCP settings tab (external MCP servers). Mocks the bridge so we
+ * assert the tab loads config + status + credential options, renders per-server
+ * connection state, and saves the edited server list back through save_mcp_config.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, act, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+
+import { McpTab } from './SettingsDrawer'
+
+const { getMcpConfig, saveMcpConfig, mcpStatus, mcpReload, mcpCredentialOptions } = vi.hoisted(() => ({
+  getMcpConfig: vi.fn(),
+  saveMcpConfig: vi.fn(),
+  mcpStatus: vi.fn(),
+  mcpReload: vi.fn(),
+  mcpCredentialOptions: vi.fn(),
+}))
+
+vi.mock('../bridge', () => ({
+  bridge: new Proxy(
+    {},
+    {
+      get: (_t, prop) => {
+        if (prop === 'get_mcp_config') return getMcpConfig
+        if (prop === 'save_mcp_config') return saveMcpConfig
+        if (prop === 'mcp_status') return mcpStatus
+        if (prop === 'mcp_reload') return mcpReload
+        if (prop === 'mcp_credential_options') return mcpCredentialOptions
+        return vi.fn()
+      },
+    },
+  ),
+}))
+
+const STATUS = {
+  available: true,
+  started: true,
+  tool_count: 2,
+  servers: [
+    { name: 'files', transport: 'stdio', connected: true, tool_count: 2, error: '', credential: '', proxy: '' },
+    { name: 'search', transport: 'http', connected: false, tool_count: 0, error: 'connection refused', credential: 'svc', proxy: 'http://p:8080' },
+  ],
+}
+
+describe('McpTab', () => {
+  beforeEach(() => {
+    getMcpConfig.mockReset().mockResolvedValue({
+      enabled: true,
+      call_timeout: 60,
+      connect_timeout: 20,
+      servers: [
+        { name: 'files', transport: 'stdio', command: 'uvx', args: ['fs'], enabled: true, autonomy: '' },
+        { name: 'search', transport: 'http', url: 'https://h/mcp', credential: 'svc', proxy: 'http://p:8080', enabled: true, autonomy: 'autonomous' },
+      ],
+    })
+    mcpStatus.mockReset().mockResolvedValue(STATUS)
+    mcpReload.mockReset().mockResolvedValue(STATUS)
+    mcpCredentialOptions.mockReset().mockResolvedValue([{ id: 'svc', label: 'Service', kind: 'token' }])
+    saveMcpConfig.mockReset().mockResolvedValue(STATUS)
+  })
+
+  it('loads config + status and renders per-server connection state', async () => {
+    render(<McpTab />)
+    await waitFor(() => expect(getMcpConfig).toHaveBeenCalled())
+    await screen.findByText('files')
+    await screen.findByText('search')
+    // connected server shows a tool count; the failed one shows an error tag.
+    await screen.findByText(/connected · 2 tools/)
+    await screen.findByText('error')
+  })
+
+  it('reconnect calls mcp_reload', async () => {
+    render(<McpTab />)
+    await screen.findByText('files')
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /Reconnect/ }))
+    })
+    await waitFor(() => expect(mcpReload).toHaveBeenCalled())
+  })
+
+  it('removing a server saves the shortened list', async () => {
+    render(<McpTab />)
+    await screen.findByText('search')
+    const user = userEvent.setup()
+    // Each row has a delete icon; open the confirm on the second row and confirm.
+    const deletes = document.querySelectorAll('.anticon-delete')
+    await act(async () => { await user.click(deletes[1]) })
+    await act(async () => { await user.click(await screen.findByRole('button', { name: 'Remove' })) })
+    await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
+    const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
+    expect(payload.servers.map((s: { name: string }) => s.name)).toEqual(['files'])
+  })
+
+  it('editing a timeout persists it on blur', async () => {
+    render(<McpTab />)
+    await screen.findByText('files')
+    const user = userEvent.setup()
+    const connect = screen.getByRole('spinbutton', { name: /connect timeout/i })
+    await act(async () => {
+      await user.clear(connect)
+      await user.type(connect, '45')
+      await user.tab()  // blur commits
+    })
+    await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
+    const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
+    expect(payload.connect_timeout).toBe(45)
+  })
+
+  it('toggling the section enable persists it', async () => {
+    render(<McpTab />)
+    await screen.findByText('Enable external MCP servers')
+    const user = userEvent.setup()
+    const sectionSwitch = screen.getAllByRole('switch')[0]
+    await act(async () => { await user.click(sectionSwitch) })
+    await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
+    const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
+    expect(payload.enabled).toBe(false)
+  })
+})

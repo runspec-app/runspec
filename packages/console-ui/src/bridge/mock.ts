@@ -770,6 +770,25 @@ export const mockApi: BridgeApi = {
   delete_credential: async (id) => { console.log('[mock] delete_credential', id) },
   credentials_backend: async () => ({ available: true, backend: 'WinVaultKeyring' }),
 
+  get_mcp_config: async () => ({
+    enabled: true,
+    call_timeout: 60,
+    connect_timeout: 20,
+    servers: [
+      { name: 'files', transport: 'stdio', command: 'uvx', args: ['mcp-server-filesystem', '/srv'], enabled: true, autonomy: '' },
+      { name: 'search', transport: 'http', url: 'https://mcp.example.com/mcp', credential: 'svc-prod', proxy: 'http://proxy.corp:8080', enabled: true, autonomy: 'autonomous' },
+    ],
+  }),
+  save_mcp_config: async (payload) => { console.log('[mock] save_mcp_config', payload); return { available: true, started: true, tool_count: 3, servers: (payload.servers ?? []).map(s => ({ name: s.name, transport: s.transport, connected: true, tool_count: 2, error: '', credential: s.credential ?? '', proxy: s.proxy ?? '' })) } },
+  mcp_status: async () => ({ available: true, started: true, tool_count: 3, servers: [
+    { name: 'files', transport: 'stdio', connected: true, tool_count: 2, error: '', credential: '', proxy: '' },
+    { name: 'search', transport: 'http', connected: false, tool_count: 0, error: 'connection refused', credential: 'svc-prod', proxy: 'http://proxy.corp:8080' },
+  ] }),
+  mcp_reload: async () => ({ available: true, started: true, tool_count: 3, servers: [] }),
+  mcp_credential_options: async () => [
+    { id: 'svc-prod', label: 'Service account (prod)', kind: 'userpass' },
+  ],
+
   get_sync_config: async () => ({
     url: '', ref: '', credential_id: '', subpath: '', layers: [], ca_bundle: '', tls_verify: true,
     files: ['config.toml', 'runspec_hosts.toml', 'runspec_triggers.toml', 'runspec_filters.toml', 'runspec_credentials.toml'],

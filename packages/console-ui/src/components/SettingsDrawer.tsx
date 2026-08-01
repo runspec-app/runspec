@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost } from '../bridge'
+import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -4325,6 +4325,286 @@ function ChatHistoryTab() {
   )
 }
 
+// ── MCP tab (external MCP servers the chat agent connects to) ────────────────
+
+const MCP_TRANSPORTS = [
+  { value: 'stdio', label: 'stdio — local subprocess' },
+  { value: 'http', label: 'http — streamable HTTP' },
+  { value: 'sse', label: 'sse — server-sent events' },
+]
+const MCP_AUTONOMY = [
+  { value: '', label: 'Confirm (default) — prompt before each call' },
+  { value: 'autonomous', label: 'Autonomous — trusted, run without prompting' },
+  { value: 'manual', label: 'Manual — human only (agent can’t call it)' },
+]
+
+type McpKV = { k: string; v: string }
+const mcpKvToObj = (rows: McpKV[]): Record<string, string> => {
+  const o: Record<string, string> = {}
+  for (const { k, v } of rows) if (k.trim()) o[k.trim()] = v
+  return o
+}
+const mcpObjToKv = (o?: Record<string, string>): McpKV[] =>
+  Object.entries(o ?? {}).map(([k, v]) => ({ k, v: String(v) }))
+const blankMcpServer = (): McpServer => ({ name: '', transport: 'stdio', enabled: true, autonomy: '' })
+
+// A small key=value row editor (env vars / headers), mirroring the Telemetry
+// tab's headers editor.
+function KvEditor({ rows, onChange, keyPlaceholder, valuePlaceholder }: {
+  rows: McpKV[]; onChange: (rows: McpKV[]) => void; keyPlaceholder: string; valuePlaceholder: string
+}) {
+  const set = (i: number, patch: Partial<McpKV>) => onChange(rows.map((r, idx) => idx === i ? { ...r, ...patch } : r))
+  return (
+    <div>
+      {rows.map((r, i) => (
+        <Space key={i} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
+          <Input size="small" placeholder={keyPlaceholder} value={r.k} style={{ width: 200, fontFamily: 'monospace' }} onChange={e => set(i, { k: e.target.value })} />
+          <Input size="small" placeholder={valuePlaceholder} value={r.v} style={{ width: 260 }} onChange={e => set(i, { v: e.target.value })} />
+          <MinusCircleOutlined onClick={() => onChange(rows.filter((_, idx) => idx !== i))} />
+        </Space>
+      ))}
+      <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => onChange([...rows, { k: '', v: '' }])}>Add</Button>
+    </div>
+  )
+}
+
+function McpServerStatusTag({ st }: { st?: McpServerStatus }) {
+  if (!st) return <Tag>unknown</Tag>
+  if (st.connected) return <Tag color="green">connected · {st.tool_count} tool{st.tool_count === 1 ? '' : 's'}</Tag>
+  if (st.error) return <Tooltip title={st.error}><Tag color="red">error</Tag></Tooltip>
+  return <Tag>not connected</Tag>
+}
+
+export function McpTab() {
+  const [servers, setServers] = useState<McpServer[]>([])
+  const [sectionEnabled, setSectionEnabled] = useState(true)
+  const [status, setStatus] = useState<McpStatus | null>(null)
+  const [credOptions, setCredOptions] = useState<McpCredentialOption[]>([])
+  const [editing, setEditing] = useState<number | null>(null)  // -1 = new, >=0 = edit index
+  const [draft, setDraft] = useState<McpServer>(blankMcpServer())
+  const [argsText, setArgsText] = useState('')
+  const [envRows, setEnvRows] = useState<McpKV[]>([])
+  const [headerRows, setHeaderRows] = useState<McpKV[]>([])
+  const [callTimeout, setCallTimeout] = useState(60)
+  const [connectTimeout, setConnectTimeout] = useState(20)
+  const [busy, setBusy] = useState(false)
+  // Last-persisted timeouts, so a blur only re-saves when a value actually
+  // changed (the number inputs persist on blur, not per keystroke).
+  const savedTimeouts = useRef({ call: 60, connect: 20 })
+
+  const loadCfg = useCallback(() => {
+    bridge.get_mcp_config().then(cfg => {
+      setServers(cfg.servers ?? [])
+      setSectionEnabled(cfg.enabled !== false)
+      const call = cfg.call_timeout ?? 60
+      const connect = cfg.connect_timeout ?? 20
+      setCallTimeout(call); setConnectTimeout(connect)
+      savedTimeouts.current = { call, connect }
+    })
+  }, [])
+  const loadStatus = useCallback(() => { bridge.mcp_status().then(setStatus) }, [])
+  const loadCreds = useCallback(() => { bridge.mcp_credential_options().then(setCredOptions) }, [])
+  useEffect(() => { loadCfg(); loadStatus(); loadCreds() }, [loadCfg, loadStatus, loadCreds])
+  useEffect(() => {
+    // Keep the credential dropdown fresh when the Credentials tab edits one.
+    window.addEventListener('runspec:credentials-changed', loadCreds)
+    return () => window.removeEventListener('runspec:credentials-changed', loadCreds)
+  }, [loadCreds])
+
+  const statusFor = (name: string) => status?.servers.find(s => s.name === name)
+
+  const persist = async (
+    nextServers: McpServer[],
+    enabled = sectionEnabled,
+    call = callTimeout,
+    connect = connectTimeout,
+  ) => {
+    setBusy(true)
+    try {
+      const st = await bridge.save_mcp_config({
+        enabled, call_timeout: call, connect_timeout: connect, servers: nextServers,
+      })
+      setServers(nextServers); setStatus(st)
+      savedTimeouts.current = { call, connect }
+      message.success('MCP servers saved')
+      return true
+    } catch (e) {
+      message.error(String((e as Error)?.message || e))
+      return false
+    } finally { setBusy(false) }
+  }
+
+  // Persist a timeout edit only when it changed (called on blur / Enter).
+  const commitTimeouts = () => {
+    if (callTimeout !== savedTimeouts.current.call || connectTimeout !== savedTimeouts.current.connect) {
+      persist(servers)
+    }
+  }
+
+  const startAdd = () => { setDraft(blankMcpServer()); setArgsText(''); setEnvRows([]); setHeaderRows([]); setEditing(-1) }
+  const startEdit = (i: number) => {
+    const s = servers[i]
+    setDraft({ ...s, autonomy: s.autonomy ?? '' })
+    setArgsText((s.args ?? []).join('\n'))
+    setEnvRows(mcpObjToKv(s.env)); setHeaderRows(mcpObjToKv(s.headers))
+    setEditing(i)
+  }
+
+  const saveDraft = async () => {
+    const s: McpServer = {
+      ...draft,
+      name: draft.name.trim(),
+      args: argsText.split('\n').map(a => a.trim()).filter(Boolean),
+      env: mcpKvToObj(envRows),
+      headers: mcpKvToObj(headerRows),
+      credential: (draft.credential ?? '').trim(),
+      credential_header: (draft.credential_header ?? '').trim(),
+      proxy: (draft.proxy ?? '').trim(),
+      command: (draft.command ?? '').trim(),
+      url: (draft.url ?? '').trim(),
+    }
+    if (!s.name) { message.error('Name is required'); return }
+    const dup = servers.some((o, i) => o.name === s.name && i !== editing)
+    if (dup) { message.error(`Another server is already named "${s.name}"`); return }
+    const next = editing === -1 ? [...servers, s] : servers.map((old, i) => i === editing ? s : old)
+    if (await persist(next)) setEditing(null)
+  }
+
+  const remove = async (i: number) => { await persist(servers.filter((_, idx) => idx !== i)) }
+  const reconnect = async () => { setBusy(true); try { setStatus(await bridge.mcp_reload()) } finally { setBusy(false) } }
+
+  const isRemote = draft.transport === 'http' || draft.transport === 'sse'
+  const editingName = editing !== null && editing >= 0 ? servers[editing]?.name : ''
+
+  const columns = [
+    { title: 'Name', dataIndex: 'name', key: 'name', render: (v: string) => <code>{v}</code> },
+    { title: 'Transport', dataIndex: 'transport', key: 'transport' },
+    { title: 'Endpoint', key: 'endpoint', render: (_: unknown, s: McpServer) => <Text style={{ fontSize: 12 }} type="secondary">{s.transport === 'stdio' ? [s.command, ...(s.args ?? [])].filter(Boolean).join(' ') : s.url}</Text> },
+    { title: 'Auth', key: 'auth', render: (_: unknown, s: McpServer) => s.credential ? <Tag icon={<KeyOutlined />}>{s.credential}</Tag> : <Text type="secondary" style={{ fontSize: 12 }}>—</Text> },
+    { title: 'Status', key: 'status', render: (_: unknown, s: McpServer) => s.enabled === false ? <Tag>disabled</Tag> : <McpServerStatusTag st={statusFor(s.name)} /> },
+    { title: '', key: 'actions', width: 90, render: (_: unknown, _s: McpServer, i: number) => (
+      <Space>
+        <EditOutlined onClick={() => startEdit(i)} />
+        <Popconfirm title="Remove this MCP server?" onConfirm={() => remove(i)} okText="Remove" cancelText="Cancel">
+          <DeleteOutlined />
+        </Popconfirm>
+      </Space>
+    ) },
+  ]
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          External MCP servers the chat agent connects to; their tools appear as <code>mcp_&lt;server&gt;_&lt;tool&gt;</code>, gated by the normal autonomy/confirm system.
+        </Text>
+        <Space>
+          <Button size="small" icon={<ReloadOutlined />} loading={busy} onClick={reconnect}>Reconnect</Button>
+          <Button size="small" type="primary" icon={<PlusOutlined />} onClick={startAdd}>Add</Button>
+        </Space>
+      </div>
+
+      {status && !status.available && (
+        <Alert type="info" showIcon style={{ marginBottom: 12 }} message="MCP support not installed"
+          description={<>Install the extra to connect to external servers: <code>pip install runspec-console[mcp]</code>. {status.reason}</>} />
+      )}
+
+      <Space size="large" style={{ marginBottom: 12 }} wrap>
+        <Space>
+          <Switch size="small" checked={sectionEnabled} onChange={v => { setSectionEnabled(v); persist(servers, v) }} />
+          <Text style={{ fontSize: 12 }}>Enable external MCP servers</Text>
+        </Space>
+        <Space>
+          <Text style={{ fontSize: 12 }} type="secondary">Connect timeout</Text>
+          <InputNumber size="small" min={1} max={600} value={connectTimeout} style={{ width: 90 }} aria-label="Connect timeout"
+            onChange={v => setConnectTimeout(v ?? 20)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} addonAfter="s" />
+        </Space>
+        <Space>
+          <Text style={{ fontSize: 12 }} type="secondary">Call timeout</Text>
+          <InputNumber size="small" min={1} max={3600} value={callTimeout} style={{ width: 90 }} aria-label="Call timeout"
+            onChange={v => setCallTimeout(v ?? 60)} onBlur={commitTimeouts} onPressEnter={commitTimeouts} addonAfter="s" />
+        </Space>
+      </Space>
+
+      {servers.length === 0
+        ? <Empty description="No MCP servers configured" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        : <Table size="small" rowKey="name" dataSource={servers} columns={columns} pagination={false} />}
+
+      <Modal
+        open={editing !== null}
+        title={editing === -1 ? 'New MCP server' : `Edit — ${editingName}`}
+        width={680}
+        onCancel={() => setEditing(null)}
+        onOk={saveDraft}
+        okText="Save"
+        confirmLoading={busy}
+        maskClosable={false}
+        okButtonProps={{ icon: <CheckOutlined /> }}
+        cancelButtonProps={{ icon: <CloseOutlined /> }}
+      >
+        <Form layout="vertical" size="small">
+          <Form.Item label="Name" required tooltip="Short id; namespaces the tools (mcp_<name>_<tool>).">
+            <Input placeholder="github" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
+          </Form.Item>
+          <Form.Item label="Transport">
+            <Select options={MCP_TRANSPORTS} value={draft.transport} onChange={v => setDraft({ ...draft, transport: v })} />
+          </Form.Item>
+          {draft.transport === 'stdio' ? (
+            <>
+              <Form.Item label="Command" required tooltip="The executable to spawn (a stdio MCP server).">
+                <Input placeholder="uvx" style={{ fontFamily: 'monospace' }} value={draft.command} onChange={e => setDraft({ ...draft, command: e.target.value })} />
+              </Form.Item>
+              <Form.Item label="Arguments" tooltip="One per line.">
+                <Input.TextArea autoSize={{ minRows: 2 }} placeholder={'mcp-server-filesystem\n/srv/data'} style={{ fontFamily: 'monospace' }} value={argsText} onChange={e => setArgsText(e.target.value)} />
+              </Form.Item>
+              <Form.Item label="Environment variables">
+                <KvEditor rows={envRows} onChange={setEnvRows} keyPlaceholder="NAME" valuePlaceholder="value" />
+              </Form.Item>
+              <Form.Item label="Working directory">
+                <Input placeholder="(optional)" style={{ fontFamily: 'monospace' }} value={draft.cwd} onChange={e => setDraft({ ...draft, cwd: e.target.value })} />
+              </Form.Item>
+            </>
+          ) : (
+            <>
+              <Form.Item label="URL" required tooltip="The MCP server endpoint.">
+                <Input placeholder="https://mcp.example.com/mcp" style={{ fontFamily: 'monospace' }} value={draft.url} onChange={e => setDraft({ ...draft, url: e.target.value })} />
+              </Form.Item>
+              <Form.Item label="Headers" tooltip="Static request headers. A credential-derived Authorization header is added on top (unless you set one here).">
+                <KvEditor rows={headerRows} onChange={setHeaderRows} keyPlaceholder="Header" valuePlaceholder="value" />
+              </Form.Item>
+            </>
+          )}
+
+          <Divider style={{ margin: '4px 0 12px' }} />
+
+          <Form.Item label="Credential" tooltip="A Credentials-tab entry (keychain-backed). For http/sse it becomes an Authorization header (or the header below); for stdio it's injected as the credential's env vars. Only the id is stored.">
+            <Select allowClear placeholder="None" value={draft.credential || undefined}
+              onChange={v => setDraft({ ...draft, credential: v ?? '' })}
+              options={credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))} />
+          </Form.Item>
+          {isRemote && (
+            <Form.Item label="Credential header" tooltip="Send the secret raw under this header (e.g. X-API-Key) instead of Authorization: Bearer.">
+              <Input placeholder="Authorization (default)" value={draft.credential_header} onChange={e => setDraft({ ...draft, credential_header: e.target.value })} />
+            </Form.Item>
+          )}
+          <Form.Item label="Proxy" tooltip="Per-server HTTP CONNECT proxy — for servers on a different corporate network. Applies to http/sse; exported as *_PROXY for a stdio subprocess.">
+            <Input placeholder="http://proxy:8080 (optional)" style={{ fontFamily: 'monospace' }} value={draft.proxy} onChange={e => setDraft({ ...draft, proxy: e.target.value })} />
+          </Form.Item>
+          <Form.Item label="Autonomy" tooltip="How this server's tools are gated. Confirm is safe-by-default.">
+            <Select options={MCP_AUTONOMY} value={draft.autonomy ?? ''} onChange={v => setDraft({ ...draft, autonomy: v })} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Switch size="small" checked={draft.enabled !== false} onChange={v => setDraft({ ...draft, enabled: v })} />
+              <Text style={{ fontSize: 12 }}>Enabled</Text>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  )
+}
+
 export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, connectedHosts, allRemoteHosts }: SettingsDrawerProps) {
   return (
     <Drawer title="Settings" placement="right" width="min(96vw, 1040px)" open={open} onClose={onClose}>
@@ -4342,6 +4622,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'repos',     label: 'Repos',      children: <ReposTab /> },
           { key: 'credentials', label: 'Credentials', children: <CredentialsTab /> },
           { key: 'denylist',  label: 'Denylist',   children: <DenylistTab /> },
+          { key: 'mcp',       label: 'MCP',        children: <McpTab /> },
           { key: 'configSync', label: 'Config Sync', children: <ConfigSyncTab /> },
           { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
           { key: 'teams',     label: 'Teams',      children: <TeamsTab /> },

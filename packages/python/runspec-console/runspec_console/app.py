@@ -341,6 +341,15 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             pass
 
+    # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
+    # join the chat agent's toolset. Best-effort and idempotent — a no-op unless
+    # servers are configured and the `mcp` extra is installed; a slow/down server
+    # just lands disconnected (visible in mcp_status) and never blocks startup.
+    try:
+        bridge.mcp_start()
+    except Exception:  # noqa: BLE001
+        pass
+
     if dev:
         url = f"http://localhost:{port}"
     else:

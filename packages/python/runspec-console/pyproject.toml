@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.221.0"
+version = "0.222.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -78,6 +78,12 @@ phoenix = [
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
 ]
+# External MCP servers ([mcp] / [[mcp.servers]]): let the chat agent connect to
+# outside MCP servers (stdio / streamable-HTTP / SSE) and use their tools
+# alongside the runnables. Opt-in — the console is inert unless servers are
+# configured; the feature reports itself unavailable until this extra installs
+# the MCP client SDK. See docs/console-mcp.md.
+mcp = ["mcp>=1.0"]
 # PyWinRT projection for two notification surfaces: *reading* system toasts (the
 # listener trigger source — Teams / Slack / any toast, needs the `.Management`
 # namespace + a user consent grant) and *sending* confirm toasts (notify.py —
@@ -98,7 +104,7 @@ notifications = [
 # Recursive self-reference (resolved by pip/poetry); excludes `dev`. Win32-only
 # deps inside `notifications` keep their markers, so `[all]` is safe on any OS.
 all = [
-    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule,otel,phoenix]",
+    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule,otel,phoenix,mcp]",
 ]
 dev = [
     "ruff==0.15.20",
@@ -109,6 +115,7 @@ dev = [
     "apscheduler>=3.10",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
+    "mcp>=1.0",
 ]
 
 [tool.pytest.ini_options]
@@ -119,5 +126,5 @@ python_version = "3.11"
 mypy_path = "../runspec"
 
 [[tool.mypy.overrides]]
-module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*", "opentelemetry.*", "phoenix.*"]
+module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*", "opentelemetry.*", "phoenix.*", "mcp.*"]
 ignore_missing_imports = true

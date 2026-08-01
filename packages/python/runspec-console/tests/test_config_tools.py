@@ -32,6 +32,7 @@ class _ConfigBridge:
     _exec_tools = Bridge._exec_tools
     _action_tools = Bridge._action_tools
     _config_tools = Bridge._config_tools
+    _mcp_tools = Bridge._mcp_tools
     _run_config_tool = Bridge._run_config_tool
     _config_manage_hosts = Bridge._config_manage_hosts
     _config_manage_groups = Bridge._config_manage_groups

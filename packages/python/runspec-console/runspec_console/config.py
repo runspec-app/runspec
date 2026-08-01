@@ -344,6 +344,179 @@ def read_phoenix() -> dict[str, Any]:
     }
 
 
+def read_mcp() -> dict[str, Any]:
+    """The ``[mcp]`` settings — external MCP servers the chat agent connects to.
+
+    The console is normally an MCP *server* (``runspec serve`` publishes each
+    runnable as a leaf tool); this section makes it an MCP *client*, folding the
+    tools of external servers into the agent's toolset (gated by the normal
+    autonomy/confirm system). Requires the optional ``mcp`` extra
+    (``pip install runspec-console[mcp]``); a locked-down deployment simply
+    leaves ``[[mcp.servers]]`` empty (or sets ``[mcp] enabled = false``) and the
+    manager stays inert.
+
+    ``enabled`` (default true) is the section kill switch. ``call_timeout`` /
+    ``connect_timeout`` (seconds) bound a single tool call and the initial
+    connect. Each ``[[mcp.servers]]`` entry has:
+
+    * ``name`` (required) — a short id; namespaces the tools (``mcp_<name>_…``).
+    * ``transport`` — ``stdio`` (spawn ``command``), ``http`` (streamable-HTTP at
+      ``url``), or ``sse`` (``url``). Inferred from ``command``/``url`` if unset.
+    * ``command`` / ``args`` / ``env`` / ``cwd`` — for a ``stdio`` server.
+    * ``url`` / ``headers`` — for an ``http`` / ``sse`` server.
+    * ``enabled`` (default true) — per-server toggle.
+    * ``autonomy`` — ``autonomous`` / ``confirm`` / ``manual`` override for this
+      server's tools. Unset ⇒ ``confirm`` (an external tool is a side effect
+      until the operator trusts the server): trust is opt-in, as elsewhere.
+    * ``credential`` — a named-credential id (Settings → Credentials). Its
+      secret (keychain-backed) is resolved at connect time: for an ``http`` /
+      ``sse`` server it becomes an ``Authorization: Bearer`` header (``Basic``
+      for a ``userpass`` credential), or the raw value under ``credential_header``
+      if set; for a ``stdio`` server it is injected as the credential's
+      name-derived env vars. Only the id is stored here (seed/sync-safe — the
+      metadata rides ``runspec_credentials.toml``, the secret never leaves the
+      keychain).
+    * ``credential_header`` — override the header the credential's secret is sent
+      under (e.g. ``X-API-Key``); default ``Authorization`` (Bearer/Basic).
+    * ``proxy`` — an HTTP CONNECT proxy URL (``http://proxy:8080``, scheme
+      optional) this server is reached through, so servers on different corporate
+      networks each get their own egress. Mirrors ``[ssh] proxy`` / Config Sync's
+      ``proxy``. Applies to ``http`` / ``sse``; for ``stdio`` it is exported to
+      the subprocess as ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``ALL_PROXY``."""
+    raw = read_config().get("mcp")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    servers: list[dict[str, Any]] = []
+    raw_servers = cfg.get("servers")
+    if isinstance(raw_servers, list):
+        for s in raw_servers:
+            if not isinstance(s, dict):
+                continue
+            name = str(s.get("name") or "").strip()
+            if not name:
+                continue
+            command = str(s.get("command") or "").strip()
+            url = str(s.get("url") or "").strip()
+            transport = str(s.get("transport") or "").strip().lower()
+            if transport not in ("stdio", "http", "sse"):
+                transport = "stdio" if command else ("http" if url else "stdio")
+            env_raw = s.get("env")
+            env = (
+                {str(k): str(v) for k, v in env_raw.items()}
+                if isinstance(env_raw, dict)
+                else {}
+            )
+            hdr_raw = s.get("headers")
+            headers = (
+                {str(k): str(v) for k, v in hdr_raw.items()}
+                if isinstance(hdr_raw, dict)
+                else {}
+            )
+            autonomy = str(s.get("autonomy") or "").strip().lower()
+            if autonomy not in ("autonomous", "confirm", "manual"):
+                autonomy = ""
+            servers.append(
+                {
+                    "name": name,
+                    "transport": transport,
+                    "command": command,
+                    "args": [str(a) for a in (s.get("args") or [])],
+                    "env": env,
+                    "cwd": str(s.get("cwd") or "").strip(),
+                    "url": url,
+                    "headers": headers,
+                    "enabled": bool(s.get("enabled", True)),
+                    "autonomy": autonomy,
+                    "credential": str(s.get("credential") or "").strip(),
+                    "credential_header": str(s.get("credential_header") or "").strip(),
+                    "proxy": str(s.get("proxy") or "").strip(),
+                }
+            )
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "servers": servers,
+        "call_timeout": max(1.0, float(cfg.get("call_timeout", 60) or 60)),
+        "connect_timeout": max(1.0, float(cfg.get("connect_timeout", 20) or 20)),
+    }
+
+
+def _clean_mcp_server(raw: dict[str, Any]) -> dict[str, Any]:
+    """One ``[[mcp.servers]]`` entry, normalised for *writing* — only set fields
+    are emitted so config.toml stays tidy (empty strings / dicts / lists are
+    dropped; ``enabled`` is written only when False since the default is True)."""
+    name = str(raw.get("name") or "").strip()
+    command = str(raw.get("command") or "").strip()
+    url = str(raw.get("url") or "").strip()
+    transport = str(raw.get("transport") or "").strip().lower()
+    if transport not in ("stdio", "http", "sse"):
+        transport = "stdio" if command else ("http" if url else "stdio")
+    out: dict[str, Any] = {"name": name, "transport": transport}
+    if transport == "stdio":
+        if command:
+            out["command"] = command
+        args = [str(a) for a in (raw.get("args") or []) if str(a) != ""]
+        if args:
+            out["args"] = args
+        env = {
+            str(k): str(v) for k, v in (raw.get("env") or {}).items() if str(k).strip()
+        }
+        if env:
+            out["env"] = env
+        cwd = str(raw.get("cwd") or "").strip()
+        if cwd:
+            out["cwd"] = cwd
+    else:
+        if url:
+            out["url"] = url
+        headers = {
+            str(k): str(v)
+            for k, v in (raw.get("headers") or {}).items()
+            if str(k).strip()
+        }
+        if headers:
+            out["headers"] = headers
+    autonomy = str(raw.get("autonomy") or "").strip().lower()
+    if autonomy in ("autonomous", "confirm", "manual"):
+        out["autonomy"] = autonomy
+    for key in ("credential", "credential_header", "proxy"):
+        val = str(raw.get(key) or "").strip()
+        if val:
+            out[key] = val
+    if raw.get("enabled") is False:
+        out["enabled"] = False
+    return out
+
+
+def write_mcp(section: dict[str, Any] | None) -> None:
+    """Replace the ``[mcp]`` table (external MCP servers) in config.toml, or drop
+    it entirely when there's nothing to persist. Only non-default fields are
+    written, so an all-defaults section round-trips to no ``[mcp]`` block at all.
+    Every other config section is preserved."""
+
+    def mutate(cfg: dict[str, Any]) -> None:
+        servers = [
+            _clean_mcp_server(s)
+            for s in (section or {}).get("servers", [])
+            if isinstance(s, dict) and str(s.get("name") or "").strip()
+        ]
+        table: dict[str, Any] = {}
+        if (section or {}).get("enabled") is False:
+            table["enabled"] = False
+        ct = (section or {}).get("call_timeout")
+        if ct is not None and float(ct) != 60.0:
+            table["call_timeout"] = float(ct)
+        cct = (section or {}).get("connect_timeout")
+        if cct is not None and float(cct) != 20.0:
+            table["connect_timeout"] = float(cct)
+        if servers:
+            table["servers"] = servers
+        if table:
+            cfg["mcp"] = table
+        else:
+            cfg.pop("mcp", None)  # all-defaults, no servers → no section
+
+    update_config(mutate)
+
+
 def config_path() -> Path:
     return app_dir() / "config.toml"
 

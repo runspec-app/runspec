@@ -245,6 +245,13 @@ class Bridge(
         from .phoenix import PhoenixServer
 
         self._phoenix_server = PhoenixServer()
+        # External MCP servers the chat agent connects to ([mcp] / [[mcp.servers]]).
+        # Constructed cheaply (no SDK import, no connection) so the Bridge always
+        # has one; app.py calls mcp_start() at bring-up to actually connect. A
+        # no-op unless servers are configured and the `mcp` extra is installed.
+        from .mcp_client import McpManager
+
+        self._mcp = McpManager(credential_resolver=self._mcp_credential)
         self._install_ssh_log_forwarder()
         # Apply any baseline config bundled in the deployment package before the
         # first load, so a fresh / air-gapped install is configured with no git
@@ -273,6 +280,8 @@ class Bridge(
         # Kill any console-managed Phoenix subprocess so closing the app leaves no
         # orphan holding the collector port.
         atexit.register(self._phoenix_server.stop)
+        # Close any live MCP client sessions (terminating stdio subprocesses).
+        atexit.register(self._mcp.stop)
         # Unblock any in-flight turn parked at the autonomy gate so closing the
         # app can't hang waiting to join a worker stuck in event.wait(). Registered
         # last so it runs first (LIFO) — before concurrent.futures joins workers.

@@ -152,6 +152,11 @@ class AutonomyMixin:
             # unknown/missing action, gated by default) prompts first.
             action = str((tool_input or {}).get("action") or "").lower()
             return "autonomous" if action in ("list", "get") else "confirm"
+        if getattr(self, "_mcp", None) is not None and self._is_mcp_tool(tool_name):
+            # External MCP tool — the level set on its server ([mcp] autonomy),
+            # defaulting to confirm. An outside tool is a side effect until the
+            # operator trusts the server, so it prompts unless opted down.
+            return self._mcp.autonomy_for(tool_name)
         if tool_name == "run_runnable":
             # Resolve the inner runnable so the gate reflects what actually runs —
             # not the generic wrapper. The level + per-arg escalation come from the
@@ -726,7 +731,9 @@ class AutonomyMixin:
             # and can be stopped mid-run. Runnable executions (run_runnable /
             # search meta-tools) keep their own invoke_runnable card and are
             # excluded.
-            if tool_name in _BUILTIN_TOOL_NAMES:
+            if tool_name in _BUILTIN_TOOL_NAMES or (
+                getattr(self, "_mcp", None) is not None and self._is_mcp_tool(tool_name)
+            ):
                 out = await self._run_builtin_tool_tracked(
                     tool_name, tool_input, chat_id
                 )
@@ -1176,6 +1183,8 @@ class AutonomyMixin:
             return self._run_action_tool(tool_name, dict(tool_input or {}), chat_id)
         if tool_name in _CONFIG_TOOL_NAMES:
             return self._run_config_tool(tool_name, dict(tool_input or {}), chat_id)
+        if getattr(self, "_mcp", None) is not None and self._is_mcp_tool(tool_name):
+            return self._run_mcp_tool(tool_name, dict(tool_input or {}))
         # Read-only discovery meta-tools (search mode) — no side effects, return JSON.
         if tool_name == "search_runnables":
             return self._run_search_tool(dict(tool_input or {}))

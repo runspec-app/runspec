@@ -109,6 +109,7 @@ def test_history_tool_offered_by_custom_agent_tools():
         "_workspace_tools",
         "_exec_tools",
         "_config_tools",
+        "_mcp_tools",
     ):
         setattr(stub, name, list)
     names = [t["name"] for t in Bridge._custom_agent_tools(stub)]

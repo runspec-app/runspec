@@ -620,6 +620,7 @@ class AgentToolsMixin:
                 *self._workspace_tools(),
                 *self._exec_tools(),
                 *self._config_tools(),
+                *self._mcp_tools(),
             ]
         self._reload_credentials()  # for the relay source_credential enum
         filters = self._filters
@@ -804,6 +805,7 @@ class AgentToolsMixin:
             *self._workspace_tools(),
             *self._exec_tools(),
             *self._config_tools(),
+            *self._mcp_tools(),
         ]
 
     def _outlook_tools(self) -> list[dict[str, Any]]:
@@ -2299,6 +2301,165 @@ class AgentToolsMixin:
             res["truncated"] = True
         res["text"] = text
         return json.dumps(res, default=str)
+
+    # ── external MCP servers (mcp_client.McpManager) ───────────────────────────
+
+    def _is_mcp_tool(self, tool_name: str) -> bool:
+        """True when ``tool_name`` is a live external MCP tool (a display name in
+        the manager's registry). Cheap; used by the autonomy gate + dispatch to
+        route MCP calls without a static name-set (MCP names are dynamic)."""
+        mgr = getattr(self, "_mcp", None)
+        return bool(mgr is not None and mgr.is_mcp_tool(tool_name))
+
+    def _mcp_tools(self) -> list[dict[str, Any]]:
+        """Anthropic-format schemas for every connected external MCP server's
+        tools, additive to the built-in toolset. Empty when no server is
+        connected (or the ``mcp`` extra is absent) so a base install is
+        unaffected. Never raises — a listing failure just yields no MCP tools."""
+        mgr = getattr(self, "_mcp", None)
+        if mgr is None:
+            return []
+        try:
+            return mgr.tools()
+        except Exception:  # noqa: BLE001 — additive; never break the tool list
+            logger.debug("listing MCP tools failed", exc_info=True)
+            return []
+
+    def _run_mcp_tool(self, tool_name: str, ti: dict[str, Any]) -> str:
+        """Execute an external MCP tool by display name and return its flattened
+        text (or an ``Error: …`` string). The autonomy gate has already decided;
+        the call is marshalled onto the manager's own event loop."""
+        mgr = getattr(self, "_mcp", None)
+        if mgr is None:
+            return f"Error: MCP tool '{tool_name}' is unavailable."
+        return mgr.call_tool(tool_name, dict(ti or {}))
+
+    def mcp_start(self) -> dict[str, Any]:
+        """Connect the configured external MCP servers (called once at app
+        bring-up; idempotent). Returns the manager status."""
+        mgr = getattr(self, "_mcp", None)
+        if mgr is None:
+            return {"available": False, "servers": []}
+        try:
+            mgr.start()
+        except Exception:  # noqa: BLE001 — a broken server never stops startup
+            logger.warning("MCP manager start failed", exc_info=True)
+        return mgr.status()
+
+    def mcp_status(self) -> dict[str, Any]:
+        """Report external-MCP availability + a per-server summary (for a
+        Settings tab and the agent's console context)."""
+        mgr = getattr(self, "_mcp", None)
+        if mgr is None:
+            return {"available": False, "servers": [], "tool_count": 0}
+        return mgr.status()
+
+    def mcp_reload(self) -> dict[str, Any]:
+        """Reconnect the MCP servers from the current ``[mcp]`` config (after an
+        edit) and return the fresh status."""
+        mgr = getattr(self, "_mcp", None)
+        if mgr is None:
+            return {"available": False, "servers": [], "tool_count": 0}
+        try:
+            mgr.reload()
+        except Exception:  # noqa: BLE001
+            logger.warning("MCP manager reload failed", exc_info=True)
+        return mgr.status()
+
+    def _mcp_credential(self, cred_id: str) -> dict[str, Any] | None:
+        """Resolve a named credential id to the secret material an MCP server
+        needs, or ``None``. Injected into the ``McpManager`` so the client stays
+        keyring-free. Reads the secret from the keychain at connect time (never
+        stored on the config / status / logs) and precomputes the credential's
+        name-derived env vars (for a stdio server). Mirrors the runnable path's
+        ``_credential_env`` resolution."""
+        cid = str(cred_id or "").strip()
+        if not cid:
+            return None
+        from . import credentials as cred
+
+        self._reload_credentials()
+        entry = self._credential_entry(cid)
+        if entry is None:
+            logger.warning("MCP credential_id %r not found; ignoring", cid)
+            return None
+        secret = cred.get_secret(cid)
+        return {
+            "id": cid,
+            "label": str(entry.get("label", "") or ""),
+            "kind": str(entry.get("kind", "userpass") or "userpass"),
+            "username": str(entry.get("username", "") or ""),
+            "secret": secret or "",
+            "env": cred.env_vars_for(entry, secret),
+        }
+
+    def get_mcp_config(self) -> dict[str, Any]:
+        """The full ``[mcp]`` section for the Settings tab — enabled, timeouts,
+        and the server list with every editable (non-secret) field. Secrets are
+        never here; a server only carries its ``credential`` id."""
+        return config_mod.read_mcp()
+
+    def save_mcp_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Validate + persist the ``[mcp]`` section from the Settings tab, then
+        reconnect the servers. Raises ``ValueError`` (rejecting the JS promise)
+        on invalid input so the tab can show the message; returns the fresh
+        ``mcp_status()`` on success."""
+        data = dict(payload or {})
+        raw_servers = data.get("servers")
+        servers = list(raw_servers) if isinstance(raw_servers, list) else []
+        seen: set[str] = set()
+        for s in servers:
+            if not isinstance(s, dict):
+                raise ValueError("Each MCP server must be a table.")
+            name = str(s.get("name") or "").strip()
+            if not name:
+                raise ValueError("Every MCP server needs a name.")
+            if name in seen:
+                raise ValueError(f"Duplicate MCP server name: {name!r}.")
+            seen.add(name)
+            transport = str(s.get("transport") or "").strip().lower()
+            command = str(s.get("command") or "").strip()
+            url = str(s.get("url") or "").strip()
+            if transport not in ("", "stdio", "http", "sse"):
+                raise ValueError(
+                    f"MCP server {name!r}: transport must be stdio, http, or sse."
+                )
+            effective = transport or (
+                "stdio" if command else "http" if url else "stdio"
+            )
+            if effective == "stdio" and not command:
+                raise ValueError(
+                    f"MCP server {name!r}: a stdio server needs a command."
+                )
+            if effective in ("http", "sse") and not url:
+                raise ValueError(
+                    f"MCP server {name!r}: an {effective} server needs a url."
+                )
+        config_mod.write_mcp(
+            {
+                "enabled": data.get("enabled", True),
+                "call_timeout": data.get("call_timeout"),
+                "connect_timeout": data.get("connect_timeout"),
+                "servers": servers,
+            }
+        )
+        return self.mcp_reload()
+
+    def mcp_credential_options(self) -> list[dict[str, Any]]:
+        """The named credentials available to bind to an MCP server, as
+        ``[{id, label, kind}]`` (no secrets) — the data a future Settings-tab
+        credential dropdown renders. Reuses the same store the Forms/relay
+        credential pickers read."""
+        self._reload_credentials()
+        return [
+            {
+                "id": str(c.get("id", "")),
+                "label": str(c.get("label", "") or c.get("id", "")),
+                "kind": str(c.get("kind", "") or ""),
+            }
+            for c in self._credentials
+            if c.get("id")
+        ]
 
     def _workspace_tools(self) -> list[dict[str, Any]]:
         """Schemas for the per-session workspace file tools. The workspace is a

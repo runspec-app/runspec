@@ -416,6 +416,7 @@ class _ToolBridge:
     _exec_tools = Bridge._exec_tools
     _action_tools = Bridge._action_tools
     _config_tools = Bridge._config_tools
+    _mcp_tools = Bridge._mcp_tools
     _run_custom_tool = Bridge._run_custom_tool
     _await_transfer = Bridge._await_transfer
     _emit_transfer_end = Bridge._emit_transfer_end

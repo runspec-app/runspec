@@ -22,6 +22,14 @@ _AUTONOMY_RANK = {"autonomous": 0, "confirm": 1, "supervised": 2, "manual": 3}
 # treats every _CUSTOM_TOOL_NAMES entry as "confirm").
 _CUSTOM_TOOL_NAMES = frozenset({"download_file", "relay_file", "manage_denylist"})
 
+# Prefix on every external-MCP tool's display name (mcp_client.py). External MCP
+# tool names are dynamic, so — unlike the built-in name-sets — MCP membership is
+# decided by the live registry (Bridge._is_mcp_tool). This prefix is kept free of
+# "__" (the host__runnable separator) so an MCP name is never mistaken for a
+# runnable, and lets self-free contexts (the _filter_headless_tools staticmethod)
+# recognise an MCP tool by name alone.
+_MCP_PREFIX = "mcp_"
+
 # Read-only discovery meta-tools used by search mode (tool_mode = "search"). They
 # have no side effects, so the autonomy gate lets them run without a prompt; the
 # side-effecting executor in that mode is ``run_runnable``, gated by the *inner*

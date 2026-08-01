@@ -178,6 +178,52 @@ export interface CredentialBackend {
   backend: string
 }
 
+// Settings → MCP. An external MCP server the chat agent connects to. `credential`
+// is a Credentials-tab id (keychain-backed; only the id is stored). `proxy` is a
+// per-server HTTP CONNECT proxy (servers can live on different networks).
+export interface McpServer {
+  name: string
+  transport: 'stdio' | 'http' | 'sse'
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  cwd?: string
+  url?: string
+  headers?: Record<string, string>
+  enabled?: boolean
+  autonomy?: '' | 'autonomous' | 'confirm' | 'manual'
+  credential?: string
+  credential_header?: string
+  proxy?: string
+}
+export interface McpConfig {
+  enabled: boolean
+  call_timeout: number
+  connect_timeout: number
+  servers: McpServer[]
+}
+export interface McpServerStatus {
+  name: string
+  transport: string
+  connected: boolean
+  tool_count: number
+  error: string
+  credential: string
+  proxy: string
+}
+export interface McpStatus {
+  available: boolean
+  reason?: string
+  started?: boolean
+  tool_count: number
+  servers: McpServerStatus[]
+}
+export interface McpCredentialOption {
+  id: string
+  label: string
+  kind: string
+}
+
 // Settings → Config Sync. Where to pull the console's config files from (a git
 // repo, at a tag/ref), which credential authenticates, and the last successful
 // pull. The secret is never here — it lives in the keyring under credential_id.
@@ -1033,6 +1079,15 @@ export interface BridgeApi {
   save_credential: (entry: Credential) => Promise<{ id?: string; error?: string }>
   delete_credential: (id: string) => Promise<void>
   credentials_backend: () => Promise<CredentialBackend>
+  // Settings → MCP (external MCP servers the chat agent connects to). get/save the
+  // [mcp] section; save validates, writes config.toml, reconnects, and returns the
+  // fresh status. mcp_status/mcp_reload report/refresh live connection state;
+  // mcp_credential_options feeds the per-server credential dropdown (no secrets).
+  get_mcp_config: () => Promise<McpConfig>
+  save_mcp_config: (payload: McpConfig) => Promise<McpStatus>
+  mcp_status: () => Promise<McpStatus>
+  mcp_reload: () => Promise<McpStatus>
+  mcp_credential_options: () => Promise<McpCredentialOption[]>
   // Config Sync (Settings → Config Sync): pull config files from a git repo by
   // tag. get/save the settings, list the repo's tags for the ref dropdown, and
   // run a pull (overwrites local config, backing up first; hot-reloads after).
