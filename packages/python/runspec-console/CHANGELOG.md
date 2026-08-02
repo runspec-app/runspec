@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.225.0] — 2026-08-02
+
+### Fixed
+- **No more `RuntimeError: cannot schedule new futures after interpreter
+  shutdown` traceback on exit.** The fleet-refresh watcher (`bridge_internals`)
+  is a daemon thread that periodically submits host-discovery work to a
+  `ThreadPoolExecutor`; on app close it could wake and submit *after* the
+  interpreter had begun shutting down, dying with that traceback. The loop now
+  runs each cycle through `_refresh_tick`, which swallows exactly that
+  shutdown-time error and stops the watcher quietly (any other error still
+  propagates). Cosmetic — the app already exited cleanly — but it removes the
+  scary-looking teardown traceback.
+- **Launching local Phoenix no longer drags Phoenix into the console process.**
+  `phoenix.available()` now probes with `importlib.util.find_spec("phoenix")`
+  instead of `import phoenix`, so checking "is it installed?" (e.g. on
+  `[phoenix] auto_start`) no longer *executes* arize-phoenix's heavy module-load
+  side effects — ensuring its working dir, registering alembic plugins + sandbox
+  adapters — in the console's own process and log. Phoenix still runs only as a
+  subprocess; the console process stays clean and starts faster. Together with
+  the refresh-watcher fix, this also narrows the shutdown-race window that made
+  the traceback above reproducible when closing right after `auto_start`.
+
+
 ## [0.224.0] — 2026-08-02
 
 ### Changed

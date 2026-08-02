@@ -506,13 +506,32 @@ class InternalsMixin:
 
         def _loop() -> None:
             while True:
-                self._refresh_cycle()
+                if not self._refresh_tick():
+                    return  # interpreter is shutting down — stop the watcher
                 interval = refresh_settings(self.get_config().get("refresh"))[
                     "interval"
                 ]
                 time.sleep(interval)
 
         threading.Thread(target=_loop, daemon=True).start()
+
+    def _refresh_tick(self) -> bool:
+        """Run one refresh cycle. Returns ``False`` when the process is exiting so
+        the daemon watcher loop stops quietly, ``True`` to keep looping.
+
+        On app close this daemon thread can wake from its sleep and reach
+        ``_refresh_cycle``'s ``ThreadPoolExecutor.submit`` *after* the interpreter
+        has begun shutting down, which raises ``RuntimeError: cannot schedule new
+        futures after interpreter shutdown``. That's teardown, not a fault — swallow
+        it and stop the loop instead of letting the thread die with a traceback.
+        Any other error keeps the old behaviour (propagates)."""
+        try:
+            self._refresh_cycle()
+        except RuntimeError as exc:
+            if "cannot schedule new futures" in str(exc):
+                return False
+            raise
+        return True
 
     def _probe_one(self, h: dict[str, Any], *, jitter: float = 0) -> None:
         """One host's connectivity probe (a refresh-cycle worker task): optional

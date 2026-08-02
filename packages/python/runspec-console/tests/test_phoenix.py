@@ -49,20 +49,35 @@ def _force_available(monkeypatch: pytest.MonkeyPatch, ok: bool = True) -> None:
 
 
 def test_available_reason_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Simulate the import failing regardless of the real environment.
-    import builtins
+    # available() probes with find_spec (never imports phoenix) — simulate absence
+    # regardless of the real environment.
+    import importlib.util
 
-    real_import = builtins.__import__
-
-    def fake_import(name: str, *a: Any, **k: Any) -> Any:
-        if name == "phoenix" or name.startswith("phoenix."):
-            raise ImportError("no phoenix")
-        return real_import(name, *a, **k)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
     ok, reason = phx.available()
     assert ok is False
     assert "pip install runspec-console[phoenix]" in reason
+
+
+def test_available_true_when_spec_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A found spec ⇒ installed; find_spec is used, so the package is never executed.
+    import importlib.util
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    assert phx.available() == (True, "")
+
+
+def test_available_treats_broken_install_as_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib.util
+
+    def boom(name: str) -> Any:
+        raise ImportError("partial install")
+
+    monkeypatch.setattr(importlib.util, "find_spec", boom)
+    ok, _ = phx.available()
+    assert ok is False
 
 
 def test_traces_endpoint() -> None:

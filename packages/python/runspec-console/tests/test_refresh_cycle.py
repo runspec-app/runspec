@@ -357,3 +357,30 @@ def test_refresh_cycle_bounds_concurrency_and_orders_phases():
     assert "runspec:hosts_updated" in events[:first_disc]
     assert events[:first_disc].count("probe") == 20  # all probes done pre-discovery
     assert "disc" not in events[: events.index("runspec:hosts_updated")]
+
+
+# ── _refresh_tick shutdown guard ──────────────────────────────────────────────
+
+
+def test_refresh_tick_stops_quietly_on_interpreter_shutdown():
+    """On app close the refresh daemon can reach ThreadPoolExecutor.submit after
+    interpreter shutdown began ("cannot schedule new futures ..."). _refresh_tick
+    swallows exactly that and returns False so the loop stops without a traceback;
+    a normal cycle returns True; any other error still propagates."""
+    import pytest
+
+    from runspec_console.bridge_internals import InternalsMixin
+
+    class _FakeSelf:
+        def __init__(self, exc):
+            self._exc = exc
+
+        def _refresh_cycle(self):
+            if self._exc is not None:
+                raise self._exc
+
+    shutdown = RuntimeError("cannot schedule new futures after interpreter shutdown")
+    assert InternalsMixin._refresh_tick(_FakeSelf(shutdown)) is False
+    assert InternalsMixin._refresh_tick(_FakeSelf(None)) is True
+    with pytest.raises(RuntimeError):
+        InternalsMixin._refresh_tick(_FakeSelf(RuntimeError("something else")))

@@ -41,14 +41,22 @@ _POLL_INTERVAL_S = 0.25
 
 
 def available() -> tuple[bool, str]:
-    """``(True, "")`` when ``arize-phoenix`` imports; else ``(False, reason)``.
+    """``(True, "")`` when ``arize-phoenix`` is installed; else ``(False, reason)``.
 
-    Pure probe (mirrors ``observability.available()`` /
-    ``ScheduleSource.available()``); drives the Phoenix tab's "install the extra"
-    hint. Never raises."""
+    Probes with ``importlib.util.find_spec`` rather than ``import phoenix`` so the
+    check never *executes* the package: importing arize-phoenix has heavy
+    module-load side effects (ensures its working dir, registers alembic plugins +
+    sandbox adapters, spins up machinery) that would otherwise run — and log — in
+    the console's own process, purely to answer "is it installed?". We only ever
+    run Phoenix as a subprocess (`python -m phoenix.server.main serve`), so the
+    package is never needed in-process. Never raises."""
+    import importlib.util
+
     try:
-        import phoenix  # noqa: F401
-    except Exception:  # noqa: BLE001 — any import failure ⇒ unavailable
+        found = importlib.util.find_spec("phoenix") is not None
+    except Exception:  # noqa: BLE001 — a broken/partial install ⇒ treat as absent
+        found = False
+    if not found:
         return (
             False,
             "Phoenix not installed — pip install runspec-console[phoenix]",
