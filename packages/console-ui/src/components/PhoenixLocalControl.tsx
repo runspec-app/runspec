@@ -62,7 +62,7 @@ export function PhoenixLocalControl() {
     <div>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
         <strong>Local Phoenix</strong> — run a private, on-machine{' '}
-        <a href="https://phoenix.arize.com/" target="_blank" rel="noreferrer">Arize Phoenix</a>{' '}
+        <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noreferrer">Arize Phoenix</a>{' '}
         server (an OTLP collector + trace-analysis UI) and route this console's own agent
         traces to it — fully local, no external backend or API keys. Its UI opens in your
         browser. Requires the <code>phoenix</code> extra:{' '}

@@ -4,7 +4,7 @@ The console already emits an OpenTelemetry [trace per agent
 turn](console-telemetry.md) (`turn → LLM call → tool call`). The **Local
 Phoenix** control (Settings → Telemetry) lets you view and analyse those traces
 **entirely locally**: it launches a private
-[Arize Phoenix](https://phoenix.arize.com/) server on your machine — an OTLP
+[Arize Phoenix](https://github.com/Arize-ai/phoenix) server on your machine — an OTLP
 collector *and* an LLM-aware trace-analysis web UI in one process — and routes
 the console's own traces to it. Phoenix's own UI opens in your **browser**; the
 console manages the server but does not embed Phoenix's (large, full-featured)

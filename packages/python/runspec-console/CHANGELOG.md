@@ -8,6 +8,14 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.227.1] — 2026-08-02
+
+### Fixed
+- **Corrected the "Arize Phoenix" link.** The Local Phoenix control (and the
+  docs) linked to `https://phoenix.arize.com/`, which doesn't resolve; it now
+  points at the canonical GitHub repo `https://github.com/Arize-ai/phoenix`.
+
+
 ## [0.227.0] — 2026-08-02
 
 ### Added
@@ -191,7 +199,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **Local Phoenix observability tab (`[phoenix]` extra).** A new **Phoenix** tab
-  launches a private, on-machine [Arize Phoenix](https://phoenix.arize.com/)
+  launches a private, on-machine [Arize Phoenix](https://github.com/Arize-ai/phoenix)
   server — an OTLP collector *and* an LLM-aware trace-analysis web UI in one
   process — and **routes this console's own agent traces to it automatically**, so
   every turn (`turn → LLM call → tool call`) shows up in a fully local trace
