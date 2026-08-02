@@ -45,6 +45,7 @@ nav:
   - Console:
     - Get started: console-quickstart.md
     - Working with the agent: console-agent.md
+    - Sandboxed code execution: console-sandbox.md
     - Hosts & fleet: console-hosts.md
     - Automation — triggers, schedules, rota: console-automation.md
     - Runbooks: console-runbooks.md

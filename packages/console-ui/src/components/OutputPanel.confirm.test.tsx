@@ -168,6 +168,45 @@ describe('OutputPanel autonomy-gate confirm', () => {
     })
   })
 
+  it('shows sandboxed code in a non-editable confirm with REAL newlines, not escaped \\n', () => {
+    // A search-mode use_tool wrapper: display_name (run_python_sandboxed) ≠ the
+    // segment's tool_name (use_tool) → not editable → the read-only <pre>. Before
+    // the fix it rendered JSON.stringify(code), i.e. one line full of \n that the
+    // operator couldn't read. Now the code shows with its real line breaks.
+    const { container } = render(<OutputPanel blocks={[chatBlockWithRunningTool('use_tool')]} />)
+    const code = 'import os\nprint(os.getcwd())'
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-c',
+      tool_name: 'use_tool',
+      tool_input: { name: 'run_python_sandboxed', input: { code } },
+      display_name: 'run_python_sandboxed',
+      display_input: { code },
+      autonomy: 'confirm',
+    })
+    const pre = container.querySelector('pre')
+    expect(pre).not.toBeNull()
+    const text = (pre as HTMLPreElement).textContent || ''
+    expect(text).toContain('import os\nprint(os.getcwd())') // real newline
+    expect(text).not.toContain('\\n') // not the JSON-escaped form
+  })
+
+  it('joins an array-of-lines code value for display in the confirm', () => {
+    const { container } = render(<OutputPanel blocks={[chatBlockWithRunningTool('use_tool')]} />)
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-a',
+      tool_name: 'use_tool',
+      tool_input: { name: 'run_python_sandboxed', input: { code: ['a = 2', 'print(a)'] } },
+      display_name: 'run_python_sandboxed',
+      display_input: { code: ['a = 2', 'print(a)'] },
+      autonomy: 'confirm',
+    })
+    const text = (container.querySelector('pre') as HTMLPreElement).textContent || ''
+    expect(text).toContain('a = 2\nprint(a)')
+    expect(text).not.toContain('["a = 2"') // not shown as a raw JSON array
+  })
+
   it('falls back to "run" when the backend sends no confirm_verb', () => {
     // Back-compat: an older backend omits confirm_verb → the button stays
     // "Approve & run" (a runnable/executing tool, the safe default).

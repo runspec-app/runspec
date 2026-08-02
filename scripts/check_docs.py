@@ -97,6 +97,7 @@ NON_RUNSPEC_SECTIONS = {
     "self_service",
     "chat_history",
     "workspace",
+    "sandbox",
     "plugins",
     "telemetry",
     "phoenix",

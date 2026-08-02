@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.223.0"
+version = "0.224.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -58,6 +58,13 @@ git-sync = ["dulwich>=0.22"]
 # the cron/interval engine. Cross-platform; the schedule source reports itself
 # unavailable until installed.
 schedule = ["apscheduler>=3.10"]
+# Code sandbox: run_python_sandboxed / run_sql_sandboxed execute untrusted Python
+# inside a WASM/WASI CPython interpreter under wasmtime — no network, no host
+# filesystem beyond the session workspace, no subprocess. The ~20 MB WASI Python
+# binary is fetched on first use into app-data (SHA-256 verified) or supplied via
+# [sandbox] wasm_path for air-gapped installs. The tools report themselves
+# unavailable (and are hidden from the agent) until this extra is installed.
+sandbox = ["wasmtime>=20"]
 # OpenTelemetry (OTLP) agent tracing (Settings → Telemetry / [telemetry]): export
 # turn / LLM-call / tool-call spans to any OTel backend — LangSmith, Langfuse,
 # Phoenix, Jaeger, Grafana Tempo. Opt-in ([telemetry] enabled=false by default);
@@ -126,5 +133,5 @@ python_version = "3.11"
 mypy_path = "../runspec"
 
 [[tool.mypy.overrides]]
-module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*", "opentelemetry.*", "phoenix.*", "mcp.*"]
+module = ["paramiko.*", "win32gui", "win32con", "win32api", "pywintypes", "pythoncom", "win32com.*", "winrt.*", "webview.*", "openai.*", "anthropic.*", "boto3.*", "botocore.*", "apscheduler.*", "opentelemetry.*", "phoenix.*", "mcp.*", "wasmtime", "wasmtime.*"]
 ignore_missing_imports = true

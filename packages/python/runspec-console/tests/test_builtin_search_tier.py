@@ -41,7 +41,7 @@ DEFERRED = [
     "outlook_inbox",
     "repo_grep",
     "create_document",
-    "run_python",
+    "run_python_sandboxed",
     "manage_hosts",
 ]
 META = {"search_runnables", "run_runnable", "describe_runnable"}
@@ -411,9 +411,9 @@ def test_run_tool_sync_fails_closed_on_wrapped_use_tool():
 
 def test_run_tool_sync_dispatches_describe_tool():
     out = json.loads(
-        _SyncStub()._run_tool_sync("describe_tool", {"names": ["run_python"]})
+        _SyncStub()._run_tool_sync("describe_tool", {"names": ["run_python_sandboxed"]})
     )
-    assert out["tools"][0]["name"] == "run_python"
+    assert out["tools"][0]["name"] == "run_python_sandboxed"
 
 
 def test_describe_autonomous_use_tool_gated_when_unwrapped_is_skipped():

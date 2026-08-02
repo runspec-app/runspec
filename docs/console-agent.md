@@ -184,15 +184,27 @@ configurable under **Settings → Chat History**.
 Each conversation gets a scratch **workspace** on disk. Large tool results
 spill there automatically (with a shape summary for big JSON), and the agent
 uses `workspace_grep` / `workspace_read` to sift them without re-reading
-everything into context. Two confirm-gated tools execute code in that
-workspace: `run_python` (console interpreter) and `run_sql` (SQLite;
-read-only queries run without confirmation). The confirmation gate is the
-security control; to remove the capability entirely set:
+everything into context. Two tools execute code in that workspace, inside a
+**WASM/WASI capability sandbox** (no network, no host filesystem beyond the
+workspace, no subprocess, memory + hard wall-clock limits): `run_python_sandboxed`
+(a Python snippet — pass `code` as a string or a list of lines) and
+`run_sql_sandboxed` (SQLite; read-only queries run without confirmation). The
+Python stdlib (incl. `sqlite3`) is available; the console's own installed
+packages are not. `run_python_sandboxed` still asks for confirmation as operator
+governance on top of the sandbox.
+
+The sandbox needs the `[sandbox]` extra (`pip install runspec-console[sandbox]`,
+pulls `wasmtime`) and a WASI Python binary (fetched on first use, or set
+`[sandbox] wasm_path` for air-gapped installs). If it's unavailable the tools are
+simply hidden — there is never a fallback to un-sandboxed execution. To remove
+the capability entirely regardless:
 
 ```toml
 [workspace]
 code_exec = false
 ```
+
+See `console-sandbox.md` for the full model.
 
 ---
 

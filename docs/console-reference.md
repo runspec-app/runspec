@@ -73,9 +73,24 @@ documented with the fleet setup in [Hosts & fleet](console-hosts.md#ssh-tuning).
 | Key | Default | Meaning |
 |---|---|---|
 | `spill_threshold` | 32768 | Tool results above this many bytes spill to workspace files |
-| `code_exec` | `true` | Master switch for the `run_python` / `run_sql` tools |
-| `exec_timeout` | 30 | Seconds before an executed snippet is killed |
+| `code_exec` | `true` | Master switch for the `run_python_sandboxed` / `run_sql_sandboxed` tools |
+| `exec_timeout` | 30 | Seconds before a sandboxed run is killed (hard limit — the run is a killable subprocess) |
 | `headless_retention_days` | 7 | How long trigger/schedule-run workspaces are kept |
+
+## `[sandbox]`
+
+Settings for the WASM/WASI code-execution sandbox behind `run_python_sandboxed` /
+`run_sql_sandboxed` (see [Sandboxed code execution](console-sandbox.md)). Needs
+the `[sandbox]` extra (`pip install runspec-console[sandbox]`).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Kill switch (with `[workspace] code_exec`); either false drops the tools |
+| `mem_mb` | 512 | Guest memory ceiling (MB) |
+| `fuel` | *(unset)* | Optional wasmtime CPU-instruction cap; unset ⇒ the wall-clock timeout is the guard |
+| `wasm_path` | *(unset)* | Explicit path to a WASI CPython `python.wasm` (air-gapped installs) |
+| `auto_download` | `true` | Fetch the pinned binary on first use when none is found locally |
+| `url` / `sha256` | *(pinned)* | Override the download source (private mirror) |
 
 ## `[web]`
 

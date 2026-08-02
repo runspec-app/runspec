@@ -181,15 +181,17 @@ _WORKSPACE_TOOL_NAMES = frozenset(
     }
 )
 
-# Code-execution tools rooted in the current session's workspace (cwd jailed to
-# it). ``run_python`` executes an arbitrary snippet/file with the console's own
-# interpreter and is ALWAYS confirm-gated — it runs as the operator with full
-# privileges, so the confirm gate (not the path-jail) is the security control.
-# ``run_sql`` runs SQL against a sqlite file in the workspace; read-only queries
+# Code-execution tools that run inside a WASM/WASI capability sandbox rooted at the
+# current session's workspace (see sandbox.py). ``run_python_sandboxed`` executes
+# an arbitrary snippet/file inside the sandbox — no network, no host filesystem
+# beyond the workspace, no subprocess — and is ALWAYS confirm-gated (operator
+# governance on top of the boundary). ``run_sql_sandboxed`` runs SQL against a
+# sqlite file in the workspace *in the same sandbox*; read-only queries
 # (SELECT/EXPLAIN/read PRAGMA) run autonomously via a read-only connection,
-# writes/DDL confirm-gate. Both dropped entirely when ``[workspace] code_exec``
-# is false. See _effective_tool_autonomy / _run_exec_tool / codeexec.py.
-_EXEC_TOOL_NAMES = frozenset({"run_python", "run_sql"})
+# writes/DDL confirm-gate. Both dropped entirely when the sandbox runtime is
+# unavailable (fail-closed) or ``[workspace] code_exec`` / ``[sandbox] enabled``
+# is false. See _effective_tool_autonomy / _run_exec_tool / codeexec.py / sandbox.py.
+_EXEC_TOOL_NAMES = frozenset({"run_python_sandboxed", "run_sql_sandboxed"})
 
 # Console-configuration tools — edit the fleet (runspec_hosts.toml), the group
 # registry (runspec_groups.toml), triggers (runspec_triggers.toml), and the

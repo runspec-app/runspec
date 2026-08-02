@@ -71,8 +71,8 @@ mode:
 | `workspace_*` (7) | **Load-bearing:** the spill envelope tells the model "the full output is in `tool-results/…`, read it with `workspace_read`/`workspace_grep`". A discovery hop between "output spilled" and "read it back" would break the console's large-output story. |
 
 Everything else in `_BUILTIN_TOOL_NAMES` is the **deferred long tail**:
-Outlook, repo, transfer + `manage_denylist`, action tools, `run_python`/
-`run_sql`, config tools. The split is computed from the *live* tool list
+Outlook, repo, transfer + `manage_denylist`, action tools,
+`run_python_sandboxed`/`run_sql_sandboxed`, config tools. The split is computed from the *live* tool list
 (`_deferred_builtin_tools()` filters `_custom_agent_tools()`), so it is
 availability-aware — a tool that wouldn't have been offered inline (Outlook
 off-Windows, transfer with no remotes) is not offered through the tier

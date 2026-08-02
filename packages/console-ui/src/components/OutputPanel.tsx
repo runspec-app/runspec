@@ -661,9 +661,23 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
 }
 
 // Edit-buffer encoding for editable confirmations: a plain string stays bare
-// (so a path/text isn't shown wrapped in quotes), everything else is JSON.
+// (so a path/text isn't shown wrapped in quotes), a list of lines (e.g. a
+// run_python_sandboxed `code` array) is joined with real newlines so multi-line
+// source is readable/editable rather than shown as ["…","…"], everything else is JSON.
 function jsonValue(v: unknown): string {
-  return typeof v === 'string' ? v : JSON.stringify(v)
+  if (typeof v === 'string') return v
+  if (Array.isArray(v) && v.every(x => typeof x === 'string')) return (v as string[]).join('\n')
+  return JSON.stringify(v)
+}
+
+// Read-only display of a confirm arg's value. A multi-line string or a list of
+// lines (a code snippet / SQL / document body) renders with its real newlines so
+// it's legible instead of a JSON blob full of \n; short scalars keep their compact
+// JSON form (so a string still reads as "n1", a number as 1) — unchanged.
+function displayArgValue(v: unknown): string {
+  if (Array.isArray(v) && v.every(x => typeof x === 'string')) return (v as string[]).join('\n')
+  if (typeof v === 'string' && v.includes('\n')) return v
+  return JSON.stringify(v)
 }
 
 // Parse an edited field back to a value: try JSON (so 42/true/[...] round-trip),
@@ -838,7 +852,7 @@ function ToolCallBlock({
                       <Input.TextArea
                         size="small"
                         value={val}
-                        autoSize={{ minRows: 2, maxRows: 12 }}
+                        autoSize={{ minRows: 2, maxRows: 20 }}
                         onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}
                         style={{ fontFamily: 'monospace', fontSize: 11 }}
                       />
@@ -857,15 +871,22 @@ function ToolCallBlock({
           ) : approveArgs.length > 0 ? (
             // The header preview ellipsises; show the full args here, wrapped, so
             // the operator can see exactly what they're approving — a many-arg
-            // runnable used to push this (and the buttons) off-screen.
+            // runnable used to push this (and the buttons) off-screen. This is the
+            // path hit when a sandboxed code call arrives via search-mode use_tool
+            // (unwrapped, so not editable): render string / line-array values with
+            // their REAL newlines (not JSON-escaped \n) so the code is readable,
+            // and auto-grow to a generous cap before scrolling.
             <pre style={{
               margin: '0 0 10px', padding: '8px 10px',
               background: c.codeBg, borderRadius: 4,
               fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: c.sub,
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-              maxHeight: 180, overflowY: 'auto',
+              maxHeight: 340, overflowY: 'auto',
             }}>
-              {approveArgs.map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join('\n')}
+              {approveArgs.map(([k, v]) => {
+                const s = displayArgValue(v)
+                return s.includes('\n') ? `${k} =\n${s}` : `${k} = ${s}`
+              }).join('\n')}
             </pre>
           ) : null}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

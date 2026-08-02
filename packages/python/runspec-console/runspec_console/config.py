@@ -222,10 +222,13 @@ def read_workspace() -> dict[str, Any]:
     trigger/schedule workspaces live after the isolated turn finishes (chat
     workspaces follow ``[chat_history]`` retention).
 
-    ``code_exec`` (default true) — whether the ``run_python`` / ``run_sql`` agent
-    tools are offered at all; a locked-down deployment sets it false to drop them
-    (defense-in-depth beyond the confirm gate). ``exec_timeout`` (seconds,
-    default 30) — the wall-clock ceiling for a ``run_python`` subprocess."""
+    ``code_exec`` (default true) — whether the ``run_python_sandboxed`` /
+    ``run_sql_sandboxed`` agent tools are offered at all; a locked-down deployment
+    sets it false to drop them entirely (a hard off-switch *on top of* the WASM
+    sandbox and the confirm gate). ``exec_timeout`` (seconds, default 30) — the
+    wall-clock ceiling for a sandboxed run. The sandbox itself (runtime,
+    memory/fuel limits, WASI binary) is configured under ``[sandbox]`` — see
+    :func:`read_sandbox`."""
     raw = read_config().get("workspace")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     return {
@@ -256,6 +259,38 @@ def read_web() -> dict[str, Any]:
         "max_bytes": max(1, int(cfg.get("max_bytes", 2_000_000) or 2_000_000)),
         "ca_bundle": ca or None,
         "tls_verify": bool(cfg.get("tls_verify", True)),
+    }
+
+
+def read_sandbox() -> dict[str, Any]:
+    """The ``[sandbox]`` settings for the WASM/WASI code-execution sandbox behind
+    ``run_python_sandboxed`` / ``run_sql_sandboxed`` (see :mod:`sandbox`).
+
+    ``enabled`` (default true) — a kill switch mirroring ``[workspace] code_exec``;
+    either being false drops the tools. ``mem_mb`` (default 512, clamped ≥ 16) —
+    the guest memory ceiling. ``fuel`` (default unset/``None``) — an optional
+    wasmtime CPU-fuel cap; when unset the wall-clock ``[workspace] exec_timeout``
+    is the runaway guard. ``wasm_path`` — an explicit path to a WASI CPython
+    ``python.wasm`` (overrides the app-data cache; for air-gapped installs).
+    ``auto_download`` (default true) — fetch the pinned binary on first use when no
+    local one is found. ``url`` / ``sha256`` override the pinned download source
+    (private mirror)."""
+    raw = read_config().get("sandbox")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    fuel_raw = cfg.get("fuel")
+    fuel: int | None
+    try:
+        fuel = int(str(fuel_raw)) if fuel_raw not in (None, "", False) else None
+    except (TypeError, ValueError):
+        fuel = None
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "mem_mb": max(16, int(cfg.get("mem_mb", 512) or 512)),
+        "fuel": fuel if (fuel is None or fuel > 0) else None,
+        "wasm_path": str(cfg.get("wasm_path") or "").strip() or None,
+        "auto_download": bool(cfg.get("auto_download", True)),
+        "url": str(cfg.get("url") or "").strip() or None,
+        "sha256": str(cfg.get("sha256") or "").strip() or None,
     }
 
 

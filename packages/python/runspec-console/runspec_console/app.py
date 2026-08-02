@@ -350,6 +350,29 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         pass
 
+    # Warm the WASM code-sandbox's compiled-module cache in the background so the
+    # first run_python_sandboxed call isn't slow. Best-effort and download-free:
+    # only compiles when the runtime + binary are already present locally (a
+    # missing binary is left to lazy download-on-first-use behind the confirm gate).
+    try:
+        from . import sandbox
+
+        def _warm_sandbox() -> None:
+            try:
+                sandbox.ensure_cwasm()
+            except Exception:  # noqa: BLE001 — warming is best-effort
+                pass
+
+        if (
+            _config.read_workspace().get("code_exec", True)
+            and _config.read_sandbox().get("enabled", True)
+            and sandbox._wasmtime() is not None
+            and sandbox.wasm_path() is not None
+        ):
+            threading.Thread(target=_warm_sandbox, daemon=True).start()
+    except Exception:  # noqa: BLE001
+        pass
+
     if dev:
         url = f"http://localhost:{port}"
     else:

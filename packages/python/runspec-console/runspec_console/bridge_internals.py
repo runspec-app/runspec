@@ -1206,14 +1206,23 @@ class InternalsMixin:
             "a file, workspace_grep to search, and workspace_write to save "
             "a distilled note. All autonomous; scoped to this session only."
         )
-        if config_mod.read_workspace().get("code_exec", True):
+        from . import sandbox
+
+        if (
+            config_mod.read_workspace().get("code_exec", True)
+            and config_mod.read_sandbox().get("enabled", True)
+            and sandbox.available()
+        ):
             lines.append(
-                "You can also process what's in the workspace: run_python runs a "
-                "Python snippet with the workspace as its working dir (read a "
-                "spilled file, reshape/join data, compute, print) — it asks the "
-                "operator to approve first; run_sql queries a SQLite file in the "
-                "workspace (read-only queries run without asking). Prefer these "
-                "over doing heavy data-wrangling by hand."
+                "You can also process what's in the workspace inside a secure WASM "
+                "sandbox (no network, no host access — only this workspace): "
+                "run_python_sandboxed runs a Python snippet with the workspace as "
+                "its working dir (read a spilled file, reshape/join data, compute, "
+                "print; stdlib incl. sqlite3, but not the console's own installed "
+                "packages) — it asks the operator to approve first; "
+                "run_sql_sandboxed queries a SQLite file in the workspace "
+                "(read-only queries run without asking). Prefer these over doing "
+                "heavy data-wrangling by hand."
             )
 
         return "\n".join(lines)

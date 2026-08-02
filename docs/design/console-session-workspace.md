@@ -268,37 +268,57 @@ runs hermetic: each turn only ever sees its own workspace.
   over long-lived git checkouts. Workspaces are ephemeral, per-session, and
   strictly agent-internal.
 
-## 10. Code execution in the workspace (`run_python` / `run_sql`, 0.166.0)
+## 10. Sandboxed code execution in the workspace (`run_python_sandboxed` / `run_sql_sandboxed`, 0.166.0; WASM sandbox 0.224.0)
 
-Two **confirm-gated** agent tools let the agent *process* what the workspace
-holds — read a spilled `tool-results/…` file, reshape or join data, query a
-SQLite file — instead of doing heavy data-wrangling token-by-token. They live in
-the pure `codeexec.py` module (kept out of `workspaces.py`, whose contract stays
-"file I/O, no subprocess"); the dispatcher is `bridge_agent_tools._run_exec_tool`
-and the schemas are `_exec_tools()`.
+Two agent tools let the agent *process* what the workspace holds — read a spilled
+`tool-results/…` file, reshape or join data, query a SQLite file — instead of
+doing heavy data-wrangling token-by-token. Execution happens inside a **WASM/WASI
+capability sandbox** (`sandbox.py`); the pure classification/normalisation helpers
+live in `codeexec.py` (no runtime, so the autonomy gate can import them without
+`wasmtime`). The dispatcher is `bridge_agent_tools._run_exec_tool`, the schemas
+are `_exec_tools()`, and the killable subprocess is `_sandbox_worker.py`.
 
-- **`run_python`** runs an inline snippet (fed on stdin) or a workspace-relative
-  `.py` file with the console's own `sys.executable`, `cwd` set to the workspace.
+- **`run_python_sandboxed`** runs an inline snippet (`code`, a string *or* a list
+  of lines) or a workspace-relative `.py` file (`file`) inside a WASI CPython
+  interpreter under `wasmtime`. The workspace is preopened as the guest `/ws` and
+  set as the cwd, so relative `open("tool-results/x.json")` still works.
   Interpreter output (`stdout`/`stderr`/`exit_code`/`timed_out`) is returned, and
   a large result spills to `tool-results/` like any big tool output.
-- **`run_sql`** runs one SQL statement against a workspace-relative SQLite file
-  using stdlib `sqlite3` in-process (no code execution). Read-only statements
-  open the database `mode=ro`.
+- **`run_sql_sandboxed`** runs one SQL statement against a workspace-relative
+  SQLite file *in the same sandbox* (the WASI CPython build embeds `sqlite3`).
+  Read-only statements open the database `mode=ro` in-guest.
 
-**Trust posture (deliberate).** The console is single-user and runs *as the
-operator*. `run_python` executes arbitrary code with the operator's full
-privileges — the path-jail only bounds *which file the tool is pointed at* and
-the subprocess cwd; it does **not** sandbox what the code can touch. So **the
-confirm gate is the security control here, not the jail** — `run_python` is
-always `confirm`, exactly like `create_document` / `repo_write` / `outlook_send`.
-`run_sql` classifies the statement (`codeexec.classify_sql`): a read
-(`SELECT`/`EXPLAIN`/read `PRAGMA`/`VALUES`/`WITH … SELECT`) runs **autonomously**
-and can't mutate (enforced by the `mode=ro` connection, not just the classifier);
-anything else confirm-gates. We add a wall-clock timeout
-(`[workspace] exec_timeout`, default 30s) and output caps/spill as honest,
-proportionate rails, but deliberately do **not** attempt OS sandboxing / network
-isolation / hard rlimits — that would be security theater on a Windows-first
-desktop console whose operator already has shell-equivalent power over the whole
-fleet via SSH runnables. A locked-down deployment drops both tools with
-`[workspace] code_exec = false` (defense-in-depth beyond the confirm gate);
-`_exec_tools()` then returns `[]` so they never reach the model.
+**Sandbox posture (0.224.0).** The sandbox is a **real security boundary**, not a
+relabel. Enforced by the runtime, not by policy the code could bypass:
+
+- **No network** — WASI preview1 exposes no sockets.
+- **No host filesystem** beyond the single preopened workspace — `open("/etc/passwd")`
+  fails with *no such file*; the guest physically cannot see anything else
+  (stronger than the old path-jail, which only bounded the file *argument*).
+- **No subprocess / host process access; no host environment or secrets.**
+- **Bounded** — a memory cap (`Store` limits) and a **hard wall-clock timeout**
+  (`[workspace] exec_timeout`, default 30s). The run happens in a *killable worker
+  subprocess*, so even a guest blocked in a host syscall (`time.sleep`, a blocking
+  read) is stopped at the deadline, and the operator's Cancel works mid-run — a
+  guarantee in-process epoch interruption alone can't give.
+
+The confirm gate remains **on top** as operator governance: `run_python_sandboxed`
+is always `confirm`, exactly like `create_document` / `repo_write` / `outlook_send`
+— it is no longer the *only* control. `run_sql_sandboxed` classifies the statement
+(`codeexec.classify_sql`): a read (`SELECT`/`EXPLAIN`/read `PRAGMA`/`VALUES`/`WITH …
+SELECT`) runs **autonomously** and can't mutate (enforced by the `mode=ro`
+connection *and* the sandbox); anything else confirm-gates. The Python stdlib is
+available inside the sandbox; the console's own installed packages are **not** (it
+is isolated) — enough for json/csv/re/statistics/sqlite reshaping, which is what
+these tools are for.
+
+**Runtime & distribution.** The heavy pieces are optional: the `[sandbox]` extra
+pulls `wasmtime`, and the ~20 MB WASI CPython `.wasm` is resolved from
+`[sandbox] wasm_path` / `$RUNSPEC_SANDBOX_WASM` / an app-data cache (downloaded on
+first use, SHA-256 verified; pre-placed for air-gapped installs). The compiled
+module is serialized to disk (`.cwasm`), so a worker subprocess deserializes it in
+~0.04 s (warm calls ~0.1–0.6 s). **Fail-closed:** if the runtime or binary can't be
+made ready, `_exec_tools()` returns `[]` and the tools never reach the model —
+there is **never** a fallback to un-sandboxed host execution. `[workspace]
+code_exec = false` (or `[sandbox] enabled = false`) drops them on top. See
+`docs/console-sandbox.md`.

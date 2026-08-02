@@ -2680,39 +2680,54 @@ class AgentToolsMixin:
         ]
 
     def _exec_tools(self) -> list[dict[str, Any]]:
-        """Schemas for the workspace code-execution tools (``run_python`` /
-        ``run_sql``). Returns ``[]`` when ``[workspace] code_exec`` is false, so a
-        locked-down deployment never sees them (mirrors ``_outlook_tools`` when
-        Outlook is unavailable). ``run_python`` is confirm-gated; ``run_sql`` runs
+        """Schemas for the sandboxed code-execution tools
+        (``run_python_sandboxed`` / ``run_sql_sandboxed``). Returns ``[]`` when the
+        WASM sandbox runtime is unavailable (fail-closed — never a host fallback),
+        when ``[workspace] code_exec`` is false, or when ``[sandbox] enabled`` is
+        false, so a locked-down or un-provisioned deployment never sees them
+        (mirrors ``_outlook_tools`` when Outlook is unavailable).
+        ``run_python_sandboxed`` is confirm-gated; ``run_sql_sandboxed`` runs
         read-only queries autonomously and confirm-gates writes (see
         ``_effective_tool_autonomy``)."""
+        from . import sandbox
+
         if not config_mod.read_workspace().get("code_exec", True):
+            return []
+        if not config_mod.read_sandbox().get("enabled", True):
+            return []
+        if not sandbox.available():
             return []
         return [
             {
-                "name": "run_python",
+                "name": "run_python_sandboxed",
                 "description": (
-                    "Run a short Python script in the current session's workspace "
-                    "(the sandbox that holds spilled tool outputs). The working "
-                    "directory is the workspace, so you can read a spilled "
-                    "'tool-results/…' file, reshape or join data, compute a result, "
-                    "and print it. Use this to process what tools/prompts hand you "
-                    "instead of doing it by hand. Runs with the console's own "
-                    "Python (its installed packages are importable). stdout/stderr "
-                    "and the exit code are returned; large output spills to the "
-                    "workspace. This runs real code on the machine, so it always "
-                    "asks the operator to approve first. **Provide exactly one of "
-                    "`code` (the Python source as a string) or `file` (a workspace "
-                    "path) — the call fails if you send neither.**"
+                    "Run a short Python script in a secure WASM sandbox scoped to "
+                    "the current session's workspace. The sandbox has NO network, "
+                    "NO access to the host filesystem beyond this workspace, and NO "
+                    "subprocess/host access — only the workspace is visible, as the "
+                    "working directory, so you can read a spilled 'tool-results/…' "
+                    "file, reshape or join data, compute a result, and print it. "
+                    "Use this to process what tools/prompts hand you instead of "
+                    "doing it by hand. The Python standard library is available "
+                    "(json, csv, re, statistics, sqlite3, …); the console's own "
+                    "installed packages are NOT (the sandbox is isolated). "
+                    "stdout/stderr and the exit code are returned; large output "
+                    "spills to the workspace. The operator approves each run. "
+                    "**Provide exactly one of `code` or `file`.** `code` may be a "
+                    "single string OR a list of lines (['import os', 'print(1)']) — "
+                    "use the list form for multi-line scripts to avoid escaping "
+                    "newlines."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "code": {
-                            "type": "string",
+                            "type": ["string", "array"],
+                            "items": {"type": "string"},
                             "description": (
-                                "Python source to run (fed on stdin). Provide this "
-                                "OR 'file', not both."
+                                "Python source to run — a string, or a list of "
+                                "lines joined with newlines. Provide this OR "
+                                "'file', not both."
                             ),
                         },
                         "file": {
@@ -2726,13 +2741,13 @@ class AgentToolsMixin:
                 },
             },
             {
-                "name": "run_sql",
+                "name": "run_sql_sandboxed",
                 "description": (
                     "Run a SQL statement against a SQLite database file inside the "
-                    "current session's workspace. Read-only queries "
-                    "(SELECT/EXPLAIN/PRAGMA) run without asking; anything that "
-                    "writes (INSERT/UPDATE/DELETE/CREATE/…) asks the operator to "
-                    "approve first. Returns ``{columns, rows, rowcount, "
+                    "current session's workspace, executed in the WASM sandbox. "
+                    "Read-only queries (SELECT/EXPLAIN/PRAGMA) run without asking; "
+                    "anything that writes (INSERT/UPDATE/DELETE/CREATE/…) asks the "
+                    "operator to approve first. Returns ``{columns, rows, rowcount, "
                     "returned, truncated}``; rows past 'max_rows' are dropped."
                 ),
                 "input_schema": {
@@ -2919,7 +2934,7 @@ class AgentToolsMixin:
         context. ``cancel_event`` makes a long ``run_python`` interruptible."""
         import uuid
 
-        from . import codeexec, workspaces
+        from . import codeexec, sandbox, workspaces
 
         root = self._current_workspace_root(chat_id)
         if root is None:
@@ -2933,10 +2948,25 @@ class AgentToolsMixin:
                     )
                 }
             )
+        if not sandbox.available():
+            return json.dumps(
+                {
+                    "error": (
+                        "the code sandbox is unavailable — "
+                        + (sandbox.unavailable_reason() or "runtime not ready")
+                    )
+                }
+            )
         root.mkdir(parents=True, exist_ok=True)
+        timeout_s = config_mod.read_workspace().get("exec_timeout", 30)
+        cancel = (
+            (lambda: bool(cancel_event and cancel_event.is_set()))
+            if cancel_event is not None
+            else None
+        )
         try:
-            if name == "run_python":
-                code = ti.get("code")
+            if name == "run_python_sandboxed":
+                code = codeexec.normalize_code(ti.get("code"))
                 file_rel = ti.get("file")
                 # A model (often via a schema-loose gateway) sometimes emits the
                 # call with no `code`. Return a directive, self-describing error —
@@ -2946,45 +2976,42 @@ class AgentToolsMixin:
                     return json.dumps(
                         {
                             "error": (
-                                "run_python: no Python source received. Call it "
-                                "again with the 'code' argument set to the Python "
-                                "source (a string), or 'file' set to a "
-                                "workspace-relative .py path — provide exactly one."
+                                "run_python_sandboxed: no Python source received. "
+                                "Call it again with the 'code' argument set to the "
+                                "Python source (a string or a list of lines), or "
+                                "'file' set to a workspace-relative .py path — "
+                                "provide exactly one."
                             ),
                             "received_keys": sorted(str(k) for k in ti),
                         }
                     )
                 if on_progress is not None:
-                    on_progress("running python…")
-                result = codeexec.run_python(
+                    on_progress("running python (sandboxed)…")
+                result = sandbox.run_python(
                     root,
                     code=code,
                     file_rel=file_rel,
-                    timeout_s=config_mod.read_workspace().get("exec_timeout", 30),
-                    cancel=(
-                        (lambda: bool(cancel_event and cancel_event.is_set()))
-                        if cancel_event is not None
-                        else None
-                    ),
+                    timeout_s=timeout_s,
+                    cancel=cancel,
                 )
-            elif name == "run_sql":
+            elif name == "run_sql_sandboxed":
                 query = str(ti.get("query") or "")
                 if not query.strip():
-                    return json.dumps({"error": "run_sql needs a query"})
-                db_path = workspaces.jail(root, str(ti.get("db") or ""))
-                if not db_path.is_file():
-                    return json.dumps(
-                        {"error": f"no such workspace database: {ti.get('db')}"}
-                    )
+                    return json.dumps({"error": "run_sql_sandboxed needs a query"})
                 try:
                     max_rows = int(ti.get("max_rows") or _EXEC_MAX_ROWS)
                 except (TypeError, ValueError):
                     max_rows = _EXEC_MAX_ROWS
-                result = codeexec.run_sql(
-                    db_path,
+                if on_progress is not None:
+                    on_progress("running sql (sandboxed)…")
+                result = sandbox.run_sql(
+                    root,
+                    str(ti.get("db") or ""),
                     query,
                     read_only=codeexec.classify_sql(query) == "read",
                     max_rows=max(1, max_rows),
+                    timeout_s=timeout_s,
+                    cancel=cancel,
                 )
             else:
                 return json.dumps({"error": f"unknown exec tool: {name}"})

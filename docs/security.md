@@ -447,12 +447,12 @@ Key properties, all verified in `bridge_autonomy.py`:
 | Session-workspace files | `workspace_ls`, `workspace_read`, `workspace_grep`, `workspace_write`, … | **autonomous** (read-only or path-jailed to the current session's workspace) |
 | Denylist **read** | `manage_denylist action=list` | **autonomous** |
 | Console-config **read** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_saved_runs` `action=list`, `manage_rota action=get` | **autonomous** (read-only; see §7.4) |
-| Read-only workspace SQL | `run_sql` (SELECT/EXPLAIN, read-only connection) | **autonomous** |
+| Read-only workspace SQL | `run_sql_sandboxed` (SELECT/EXPLAIN, read-only connection, in the WASM sandbox) | **autonomous** |
 | **Write** to M365 | `outlook_draft`, `outlook_send`, `outlook_move`, `outlook_categorize`, … | **confirm** |
 | **Write** to repo / files | `repo_write`, `repo_sync`, `download_file`, `relay_file` | **confirm** |
 | Denylist **mutate**, schedules, documents, events, desktop actions | `manage_denylist add/all/clear/mode`, `create_schedule`, `create_document`, `emit_event`, `open_url`, `open_file`, `reveal_in_folder` | **confirm** |
 | Console-config **mutate** | `manage_hosts`/`manage_groups`/`manage_triggers`/`manage_rota`/`manage_saved_runs` mutations | **confirm** — and chat-only (§7.4) |
-| Arbitrary code execution | `run_python` (any snippet, console interpreter); `run_sql` writes/DDL | **always confirm** — the gate, not a sandbox, is the security control; both tools are removed entirely by the `[workspace] code_exec = false` kill switch |
+| Sandboxed code execution | `run_python_sandboxed` (any snippet, in a WASM sandbox); `run_sql_sandboxed` writes/DDL | **always confirm** — the code runs in a WASI capability sandbox (workspace-only, no network, no host access, hard-timeout in a killable subprocess), *and* the confirm gate governs on top. Fail-closed: dropped entirely when the sandbox runtime is unavailable or `[workspace] code_exec = false` / `[sandbox] enabled = false`. See `docs/console-sandbox.md` |
 | Run a runnable | `run_runnable` | **inherited from the target runnable's spec** |
 | Run a saved preset | `run_saved_run` | **inherited from the underlying runnable(s)** — the gate expands the preset and resolves each target's autonomy (one grouped, editable confirm across a fan-out; most-restrictive wins; `manual` blocks), never a blanket action-tool prompt |
 

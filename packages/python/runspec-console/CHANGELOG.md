@@ -8,6 +8,48 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.224.0] — 2026-08-02
+
+### Changed
+- **The code-execution tools now run in a real WASM sandbox, and are renamed to
+  say so: `run_python` → `run_python_sandboxed`, `run_sql` → `run_sql_sandboxed`.**
+  Previously `run_python` executed arbitrary code as the operator with full
+  privileges — the confirm gate was the *only* security control, and the tool
+  was honestly *not* sandboxed. It now runs untrusted Python inside a WASI
+  CPython interpreter under `wasmtime` with **no ambient authority**: only the
+  current chat session's workspace is visible (preopened as `/ws`, so relative
+  `open(...)` still works — the intended "reshape spilled tool output" use is
+  preserved and now *enforced*), **no network**, **no host filesystem beyond the
+  workspace**, **no subprocess/host access**, a memory cap, and a **hard
+  wall-clock timeout + working Cancel** (the run happens in a killable worker
+  subprocess, so even a guest blocked in `time.sleep` is stopped at the
+  deadline). The Python stdlib — including `sqlite3`, so `run_sql_sandboxed` runs
+  in the sandbox too — is available; the console's own installed packages are
+  not (the sandbox is isolated). `run_python_sandboxed` stays confirm-gated as
+  operator governance; read-only `run_sql_sandboxed` stays autonomous. This is a
+  real boundary an evaluator can inspect, not a relabel.
+- **`run_python_sandboxed`'s `code` argument now accepts a list of lines** (e.g.
+  `["import os", "print(os.getcwd())"]`) in addition to a plain string, so the
+  agent can pass a multi-line script without JSON-escaping every newline.
+- **The confirm card now shows multi-line code readably.** The read-only "what's
+  going to run" preview (shown when a sandboxed call arrives via search-mode
+  `use_tool`) renders string / line-array values with their **real newlines**
+  instead of a JSON blob full of `\n`, and auto-grows to a taller cap before
+  scrolling; the editable arg textarea grows to more rows too.
+
+### Added
+- **`[sandbox]` optional extra** (`pip install runspec-console[sandbox]`, pulls
+  `wasmtime`) and a `[sandbox]` config section (`enabled`, `mem_mb`, `fuel`,
+  `wasm_path`, `auto_download`, `url`, `sha256`). The ~20 MB WASI CPython binary
+  is fetched on first use into app-data (SHA-256 verified) or supplied via
+  `[sandbox] wasm_path` / `RUNSPEC_SANDBOX_WASM` for air-gapped installs; the
+  compiled module is cached (serialized) so warm calls start in ~0.1 s.
+- **Fail-closed availability.** When the sandbox runtime/binary is unavailable,
+  the tools are dropped from the agent's toolset entirely (mirrors `_outlook_tools`)
+  — there is **never** a fallback to un-sandboxed host execution. The existing
+  `[workspace] code_exec = false` kill switch still drops them on top. See
+  `docs/console-sandbox.md`.
+
 ## [0.223.0] — 2026-08-01
 
 ### Changed

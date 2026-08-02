@@ -133,13 +133,14 @@ class AutonomyMixin:
         if tool_name in _WORKSPACE_TOOL_NAMES:
             # read/write inside the current session's workspace only — no prompt
             return "autonomous"
-        if tool_name == "run_python":
-            # Arbitrary code on the console machine as the operator — the confirm
-            # gate (not the path-jail) is the security control here. Always prompt.
+        if tool_name == "run_python_sandboxed":
+            # Arbitrary code inside the WASM sandbox (workspace-only, no network,
+            # no host access) — still confirm-gated as operator governance on top
+            # of the boundary. Always prompt.
             return "confirm"
-        if tool_name == "run_sql":
+        if tool_name == "run_sql_sandboxed":
             # Read-only SQL against a workspace sqlite db runs autonomously (it
-            # can't mutate — opened mode=ro); writes/DDL confirm-gate.
+            # can't mutate — opened mode=ro, in the sandbox); writes/DDL confirm.
             from . import codeexec
 
             q = str((tool_input or {}).get("query") or "")
