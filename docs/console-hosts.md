@@ -66,6 +66,33 @@ pre-configured fleet.
 
 ---
 
+## Local venvs
+
+The local machine (the synthetic `local` host) always discovers runnables in the
+venv the console itself runs in. To discover **more than one local venv** — the
+same multi-venv support remote hosts have — configure glob patterns in
+**Settings → Local venvs**. Every directory a glob matches is scanned for a venv
+(probed for `Scripts\runspec.exe` on Windows, `bin/runspec` on POSIX) and its
+runnables appear under the `local` host, tagged with the venv's directory name
+just like a remote host's venvs.
+
+The globs live in `config.toml` as a `[local]` section:
+
+```toml
+[local]
+venv_globs = ["C:\\venvs\\*"]
+```
+
+Because they live in `config.toml`, the globs ride [Config Sync](console-team.md)
+and the config seed. That's the point: unlike per-machine absolute paths, one
+versioned *convention* (e.g. `C:\venvs\*`) works across a fleet of identical
+machines — each console scans its own filesystem and resolves the venvs it
+actually has. The Settings tab shows a live preview of what the globs resolve to
+on **this** machine (the console's own venv is always first). With no `[local]`
+config, only the console's own venv is discovered — the default behaviour.
+
+---
+
 ## File transfer & filters
 
 The console moves files between hosts over its existing SSH connections. The

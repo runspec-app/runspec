@@ -8,6 +8,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.227.0] — 2026-08-02
+
+### Added
+- **Multiple local Python venvs (auto-discovered).** The console previously
+  discovered runnables only in the single venv it is installed into. It now
+  discovers **additional local venvs** too — the same multi-venv support remote
+  hosts already have (`runspec_paths` list), for the local machine. Rather than
+  per-machine absolute paths (which can't be controlled fleet-wide the way synced
+  remote paths can), a new `[local] venv_globs` *convention* in `config.toml`
+  names glob patterns (e.g. `C:\venvs\*`) that each console scans at discovery
+  time; every matched directory holding a runspec binary
+  (`Scripts\runspec.exe` / `bin/runspec`) is surfaced under the synthetic `local`
+  host alongside the console's own venv. Because the globs live in `config.toml`
+  they ride **Config Sync** and the config seed — one versioned glob works across
+  a fleet of identical machines, each resolving its own real venvs. Everything
+  downstream was already list-driven (per-venv discovery, group-matched
+  execution, per-venv sidebar counts), so extra venvs light up with no other
+  change. Edit the globs (with a live preview of what they resolve to on this
+  machine) in **Settings → Local venvs**. Default (no config) is byte-identical
+  to before: only the console's own venv. New `config.read_local`,
+  `hosts.resolve_local_venvs`, bridge `get_local_venv_config` /
+  `save_local_venv_config`; the wiring is a single change in
+  `bridge_internals._local_host_entry`. See `docs/console-hosts.md`.
+
+
 ## [0.226.0] — 2026-08-02
 
 ### Fixed

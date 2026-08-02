@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption } from '../bridge'
+import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PhoenixLocalControl } from './PhoenixLocalControl'
@@ -1396,6 +1396,92 @@ function ProfilesManager({
         </Space.Compact>
       </div>
     </Modal>
+  )
+}
+
+function LocalVenvsTab() {
+  const [globs, setGlobs] = useState<string[]>([])
+  const [resolved, setResolved] = useState<LocalVenvConfig['resolved']>([])
+  const [ownVenv, setOwnVenv] = useState<string>('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  const apply = useCallback((cfg: LocalVenvConfig) => {
+    setGlobs(cfg.globs ?? [])
+    setResolved(cfg.resolved ?? [])
+    setOwnVenv(cfg.own_venv ?? '')
+  }, [])
+
+  useEffect(() => { bridge.get_local_venv_config().then(apply) }, [apply])
+
+  const setGlob = (i: number, v: string) => setGlobs(gs => gs.map((g, j) => (j === i ? v : g)))
+  const removeGlob = (i: number) => setGlobs(gs => gs.filter((_, j) => j !== i))
+  const addGlob = () => setGlobs(gs => [...gs, ''])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      // Drop blank rows so an empty field doesn't trip the backend validator.
+      const cleaned = globs.map(g => g.trim()).filter(Boolean)
+      const cfg = await bridge.save_local_venv_config(cleaned)
+      apply(cfg)
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : 'Could not save local venvs')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div style={{ maxWidth: 620 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        Discover runnables in <strong>more than one local Python venv</strong> — the same multi-venv support remote hosts
+        have, for this machine. The console's own venv is always discovered; add glob patterns below whose matched
+        directories are each scanned for a venv (probed for <code>Scripts\runspec.exe</code> / <code>bin/runspec</code>).
+      </Typography.Paragraph>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        These globs live in <code>config.toml</code>, so they ride <strong>Config Sync</strong> and the config seed — one
+        versioned convention (e.g. <code>C:\venvs\*</code>) works across a fleet of identical machines, and each console
+        resolves its own real venvs. The matches shown below are specific to <strong>this</strong> machine.
+      </Typography.Paragraph>
+
+      <Typography.Text strong style={{ fontSize: 13 }}>Venv search globs</Typography.Text>
+      <div style={{ marginTop: 8 }}>
+        {globs.map((g, i) => (
+          <Space key={i} align="baseline" style={{ display: 'flex', marginBottom: 6 }}>
+            <Input
+              value={g}
+              onChange={e => setGlob(i, e.target.value)}
+              placeholder="C:\venvs\*"
+              style={{ width: 420, fontFamily: 'monospace' }}
+            />
+            <MinusCircleOutlined onClick={() => removeGlob(i)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+          </Space>
+        ))}
+        <Button type="dashed" size="small" onClick={addGlob} icon={<PlusOutlined />} style={{ marginTop: 2 }}>Add glob</Button>
+      </div>
+
+      <Divider style={{ margin: '16px 0' }} />
+      <Typography.Text strong style={{ fontSize: 13 }}>Resolved on this machine</Typography.Text>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: 4 }}>
+        The venvs the console will discover locally (own venv first). Save to refresh after editing the globs.
+      </Typography.Paragraph>
+      {resolved.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No local venvs resolved yet" />
+      ) : (
+        <div>
+          {resolved.map(r => (
+            <div key={r.path} style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
+              <Tag color="blue">{r.venv_name}</Tag>
+              <Text style={{ fontSize: 12, fontFamily: 'monospace', wordBreak: 'break-all' }}>{r.path}</Text>
+              {r.path === ownVenv && <Text type="secondary" style={{ fontSize: 11 }}>(console's own venv)</Text>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Divider style={{ margin: '16px 0' }} />
+      <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+    </div>
   )
 }
 
@@ -4620,6 +4706,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} /> },
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
+          { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
           { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
           { key: 'savedRuns',   label: 'Saved runs',   children: <SavedRunsTab /> },
           { key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> },

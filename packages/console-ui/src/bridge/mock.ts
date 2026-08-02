@@ -710,6 +710,19 @@ export const mockApi: BridgeApi = {
 
   save_jump_hosts: async (hosts) => { console.log('[mock] save_jump_hosts', hosts) },
 
+  get_local_venv_config: async () => ({
+    globs: ['C:/venvs/*'],
+    own_venv: 'C:/venvs/console/Scripts/runspec.exe',
+    resolved: [
+      { path: 'C:/venvs/console/Scripts/runspec.exe', venv_name: 'console' },
+      { path: 'C:/venvs/ops-tools/Scripts/runspec.exe', venv_name: 'ops-tools' },
+    ],
+  }),
+  save_local_venv_config: async (globs) => {
+    console.log('[mock] save_local_venv_config', globs)
+    return { globs, own_venv: 'C:/venvs/console/Scripts/runspec.exe', resolved: [{ path: 'C:/venvs/console/Scripts/runspec.exe', venv_name: 'console' }] }
+  },
+
   get_groups: async () => [
     { name: 'Production', description: 'Prod fleet' },
     { name: 'Staging', description: '' },

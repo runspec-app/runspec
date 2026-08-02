@@ -424,19 +424,24 @@ class InternalsMixin:
         return sorted(applied)
 
     def _local_host_entry(self) -> dict[str, Any]:
-        """Synthetic entry for the venv runspec-console itself runs in."""
+        """Synthetic entry for the local machine — the venv runspec-console itself
+        runs in, plus any additional venvs matched by the ``[local] venv_globs``
+        convention (``config.read_local`` → ``hosts.resolve_local_venvs``). The
+        console's own venv is always first (the default). Everything downstream is
+        list-driven (per-venv discovery, group-matched execution, per-venv sidebar
+        counts), so extra local venvs light up with no other change."""
         scripts = Path(sys.executable).parent
-        # Windows venvs use Scripts\runspec.exe; Linux/Mac use bin/runspec
+        # Windows venvs use Scripts\runspec.exe; Linux/Mac use bin/runspec.
+        # Fallback: the expected path even if runspec isn't installed yet.
+        own = str(scripts / "runspec.exe")
         for name in ("runspec.exe", "runspec"):
             candidate = scripts / name
             if candidate.exists():
-                return {"name": "local", "runspec_paths": [str(candidate)], "ssh": None}
-        # Fallback: construct the expected path even if not yet installed
-        return {
-            "name": "local",
-            "runspec_paths": [str(scripts / "runspec.exe")],
-            "ssh": None,
-        }
+                own = str(candidate)
+                break
+        globs = config_mod.read_local().get("venv_globs") or []
+        paths = hosts_mod.resolve_local_venvs(globs, own_path=own)
+        return {"name": "local", "runspec_paths": paths, "ssh": None}
 
     def _host_entry(self, host: str) -> dict[str, Any] | None:
         if host == "local":

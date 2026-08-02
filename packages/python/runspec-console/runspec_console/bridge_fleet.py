@@ -293,6 +293,60 @@ class FleetMixin:
         self._dispatch("runspec:hosts_updated", {})
         threading.Thread(target=self._refresh_cycle, daemon=True).start()
 
+    # ── local venv auto-discovery ([local] venv_globs) ────────────────────────
+
+    def get_local_venv_config(self) -> dict[str, Any]:
+        """The local machine's venv auto-discovery config (Settings → Local venvs).
+
+        Returns the saved ``[local] venv_globs`` convention **and** a live preview
+        of what it resolves to on *this* machine:
+        ``{globs, own_venv, resolved: [{path, venv_name}]}``. ``own_venv`` (always
+        present, first) is the console's own venv; ``resolved`` is every local venv
+        currently discovered (own + glob matches). The globs ride Config Sync / the
+        config seed (config.toml); ``resolved`` is machine-local — what actually
+        exists here — so the editor can show that honestly."""
+        globs = config_mod.read_local().get("venv_globs") or []
+        paths = utils_mod._paths(self._local_host_entry())
+        resolved = [{"path": p, "venv_name": hosts_mod.venv_name(p)} for p in paths]
+        return {
+            "globs": list(globs),
+            "own_venv": paths[0] if paths else "",
+            "resolved": resolved,
+        }
+
+    def save_local_venv_config(self, globs: list[str]) -> dict[str, Any]:
+        """Persist the ``[local] venv_globs`` convention, then rediscover.
+
+        Validates ``globs`` is a list of non-empty strings (raising ``ValueError``
+        to reject the JS promise so the tab can show the message), writes it into
+        config.toml via :func:`config.update_config` (atomic, preserves every other
+        section), then signals host-list consumers and kicks a refresh cycle so the
+        new venvs appear without a restart. Returns the fresh
+        :meth:`get_local_venv_config`."""
+        if not isinstance(globs, list) or any(
+            not isinstance(g, str) or not g.strip() for g in globs
+        ):
+            raise ValueError("venv_globs must be a list of non-empty strings")
+        cleaned = [g.strip() for g in globs]
+
+        def _mutate(cfg: dict[str, Any]) -> None:
+            local = cfg.get("local")
+            if not isinstance(local, dict):
+                local = {}
+            if cleaned:
+                local["venv_globs"] = cleaned
+            else:
+                local.pop("venv_globs", None)
+            if local:
+                cfg["local"] = local
+            else:
+                cfg.pop("local", None)
+
+        config_mod.update_config(_mutate)
+        self._dispatch("runspec:hosts_updated", {})
+        threading.Thread(target=self._refresh_cycle, daemon=True).start()
+        return self.get_local_venv_config()
+
     # ── host-group registry (runspec_groups.toml) ─────────────────────────────
 
     def get_groups(self) -> list[dict[str, Any]]:

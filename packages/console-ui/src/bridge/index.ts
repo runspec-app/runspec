@@ -448,6 +448,17 @@ export interface JumpHost {
   room_catalog?: string[]  // optional per-queue catalog allowlist (bare self-service runnable names)
 }
 
+// The local machine's venv auto-discovery config (Settings → Local venvs). The
+// `globs` convention lives in config.toml so it rides Config Sync / the config
+// seed (one versioned glob works fleet-wide); `resolved` is what those globs
+// actually match on THIS machine (machine-local), with the console's own venv
+// (`own_venv`) always first.
+export interface LocalVenvConfig {
+  globs: string[]
+  own_venv: string
+  resolved: { path: string; venv_name: string }[]
+}
+
 export interface HistoryLogLine {
   ts: string
   level: string
@@ -1032,6 +1043,11 @@ export interface BridgeApi {
   get_jump_hosts: () => Promise<JumpHost[]>
   save_jump_hosts: (hosts: JumpHost[]) => Promise<void>
   import_jump_hosts: (tomlContent: string) => Promise<JumpHost[]>
+  // Local machine venv auto-discovery ([local] venv_globs in config.toml). get
+  // returns the saved globs + a live preview of what they resolve to here; save
+  // validates + persists them (raises on bad input), then rediscovers.
+  get_local_venv_config: () => Promise<LocalVenvConfig>
+  save_local_venv_config: (globs: string[]) => Promise<LocalVenvConfig>
   // Canonical host-group registry (runspec_groups.toml) — the controlled
   // vocabulary the host editor's group dropdown is populated from (synced).
   get_groups: () => Promise<HostGroup[]>

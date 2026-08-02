@@ -28,10 +28,18 @@ A host entry:
 
 Legacy single-path form is still accepted for backward compatibility:
   runspec_path = "/path/to/runspec"
+
+The synthetic ``local`` host (the console's own machine) is not configured here.
+Its own venv is always discovered automatically; additional local venvs are
+resolved from the ``[local] venv_globs`` convention in config.toml (see
+:func:`resolve_local_venvs` and ``config.read_local``), so one synced/seedable
+glob (e.g. ``C:\\venvs\\*``) works across a fleet of identical machines.
 """
 
 from __future__ import annotations
 
+import glob as _glob
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -213,6 +221,59 @@ def site_packages(runspec_path: str) -> Path | None:
             if d.name.startswith("python") and (d / "site-packages").exists():
                 return d / "site-packages"
     return None
+
+
+# Probe order for a runspec binary inside a venv root — Windows Scripts\ first,
+# then POSIX bin/ (mirrors _local_host_entry and run_local's candidate order).
+_RUNSPEC_IN_VENV = ("Scripts/runspec.exe", "bin/runspec")
+
+
+def resolve_local_venvs(globs: list[str], *, own_path: str) -> list[str]:
+    """Resolve the local machine's runspec binaries from a set of venv-root globs.
+
+    This is the local mirror of a remote host's ``runspec_paths`` list: one binary
+    per venv, from which :func:`venv_name` derives the group everything downstream
+    keys on (per-venv discovery, group-matched execution, per-venv sidebar counts).
+
+    ``own_path`` is the runspec binary of the venv the console itself runs in — it
+    is always **first** in the result (the default venv) and always present, so
+    local behavior is unchanged when no globs are configured. Each glob is expanded
+    non-recursively (:func:`glob.glob`); every matched **directory** is treated as
+    a candidate venv root and probed for a runspec binary in the usual layout
+    (``Scripts/runspec.exe`` on Windows, then ``bin/runspec`` on POSIX). Roots
+    without one are skipped, so a glob like ``C:\\venvs\\*`` that also matches
+    non-venv dirs is self-filtering. Results are de-duplicated by real path, so a
+    glob that also matches the console's own venv doesn't list it twice.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def _add(p: str) -> None:
+        try:
+            key = os.path.realpath(p)
+        except OSError:
+            key = p
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(p)
+
+    if own_path:
+        _add(own_path)
+    for pattern in globs or []:
+        pat = str(pattern or "").strip()
+        if not pat:
+            continue
+        for match in sorted(_glob.glob(pat)):
+            root = Path(match)
+            if not root.is_dir():
+                continue
+            for rel in _RUNSPEC_IN_VENV:
+                candidate = root / rel
+                if candidate.exists():
+                    _add(str(candidate))
+                    break
+    return out
 
 
 def _toml_value(v: Any) -> str:

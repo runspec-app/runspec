@@ -262,6 +262,29 @@ def read_web() -> dict[str, Any]:
     }
 
 
+def read_local() -> dict[str, Any]:
+    """The ``[local]`` settings for the local machine's venv auto-discovery.
+
+    ``venv_globs`` (default ``[]``) — glob patterns whose matched directories are
+    each scanned for a local venv (probed for ``Scripts/runspec.exe`` /
+    ``bin/runspec``) and surfaced under the synthetic ``local`` host alongside the
+    console's own venv. Empty ⇒ no scanning ⇒ only the console's own venv (today's
+    behavior, byte-identical). This lives in config.toml on purpose so the
+    *convention* rides Config Sync / the config seed — one versioned glob (e.g.
+    ``C:\\venvs\\*``) works on every identical machine, each resolving its own real
+    venvs, unlike per-machine absolute paths which can't be controlled fleet-wide.
+    See :func:`hosts.resolve_local_venvs`."""
+    raw = read_config().get("local")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    globs_raw = cfg.get("venv_globs")
+    globs = (
+        [str(g).strip() for g in globs_raw if str(g).strip()]
+        if isinstance(globs_raw, list)
+        else []
+    )
+    return {"venv_globs": globs}
+
+
 def read_sandbox() -> dict[str, Any]:
     """The ``[sandbox]`` settings for the WASM/WASI code-execution sandbox behind
     ``run_python_sandboxed`` / ``run_sql_sandboxed`` (see :mod:`sandbox`).
