@@ -10,6 +10,7 @@ crash detection, and the launch env vars.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from typing import Any
 
@@ -121,6 +122,9 @@ def test_start_success_sets_running_and_env(
         return _FakeProc(alive=True)
 
     monkeypatch.setattr(phx.subprocess, "Popen", fake_popen)
+    # Pin the launch argv so the assertion doesn't depend on whether a `phoenix`
+    # console script happens to sit next to the test interpreter.
+    monkeypatch.setattr(phx, "_phoenix_argv", lambda: ["phoenix", "serve"])
     # Port closed before launch (so we don't "adopt"); HTTP ready after (came up).
     monkeypatch.setattr(phx, "_port_open", lambda *a, **k: False)
     monkeypatch.setattr(phx, "_http_ready", lambda *a, **k: True)
@@ -131,7 +135,7 @@ def test_start_success_sets_running_and_env(
     assert st["running"] is True
     assert st["port"] == 6007
     assert st["url"] == "http://127.0.0.1:6007"
-    assert captured["cmd"][1:] == ["-m", "phoenix.server.main", "serve"]
+    assert captured["cmd"] == ["phoenix", "serve"]
     assert captured["env"]["PHOENIX_PORT"] == "6007"
     assert captured["env"]["PHOENIX_HOST"] == "127.0.0.1"
     # Assistant is disabled by default (local-privacy stance).
@@ -300,3 +304,81 @@ def test_terminate_kill_fallback_on_timeout(monkeypatch: pytest.MonkeyPatch) -> 
     server.stop()
     assert proc.terminated is True
     assert proc.killed is True  # escalated to kill after the terminate timed out
+
+
+# ── launch argv (#the fix): prefer the `phoenix` console script ────────────────
+
+
+def test_phoenix_argv_prefers_console_script(monkeypatch, tmp_path):
+    """When a `phoenix`/`phoenix.exe` sits next to the interpreter (a normal venv
+    with the extra installed), launch *that* — the same entry `phoenix serve` uses
+    — not `python -m phoenix.server.main` (which misbehaves under Windows spawn)."""
+    fake_python = tmp_path / ("python.exe" if os.name == "nt" else "python")
+    fake_python.write_text("")
+    script_name = "phoenix.exe" if os.name == "nt" else "phoenix"
+    script = tmp_path / script_name
+    script.write_text("")
+    monkeypatch.setattr(phx.sys, "executable", str(fake_python))
+    assert phx._phoenix_argv() == [str(script), "serve"]
+
+
+def test_phoenix_argv_fallback_when_no_script(monkeypatch, tmp_path):
+    fake_python = tmp_path / "python"
+    fake_python.write_text("")
+    monkeypatch.setattr(phx.sys, "executable", str(fake_python))
+    assert phx._phoenix_argv() == [
+        str(fake_python),
+        "-m",
+        "phoenix.server.main",
+        "serve",
+    ]
+
+
+def test_start_captures_server_log(monkeypatch, tmp_path):
+    """The server's stdout+stderr are captured to {working_dir}/phoenix-server.log
+    (not DEVNULL) so a failed/slow start is diagnosable."""
+    _force_available(monkeypatch, ok=True)
+    monkeypatch.setattr(phx, "_phoenix_argv", lambda: ["phoenix", "serve"])
+    monkeypatch.setattr(phx, "_port_open", lambda *a, **k: False)
+    monkeypatch.setattr(phx, "_http_ready", lambda *a, **k: True)
+    captured: dict[str, Any] = {}
+
+    def fake_popen(cmd, env, **k):
+        captured["stdout"] = k.get("stdout")
+        captured["stderr"] = k.get("stderr")
+        return _FakeProc(alive=True)
+
+    monkeypatch.setattr(phx.subprocess, "Popen", fake_popen)
+    server = phx.PhoenixServer()
+    wd = tmp_path / "phx"
+    server.start({"port": 6006, "working_dir": str(wd)})
+    log = wd / "phoenix-server.log"
+    assert log.exists()
+    assert captured["stdout"] is not None
+    assert captured["stdout"] is not phx.subprocess.DEVNULL
+    assert captured["stderr"] is phx.subprocess.STDOUT
+    server.stop()  # closes the file handle
+
+
+def test_start_honours_startup_timeout(monkeypatch):
+    _force_available(monkeypatch, ok=True)
+    monkeypatch.setattr(phx, "_phoenix_argv", lambda: ["phoenix", "serve"])
+    monkeypatch.setattr(phx, "_port_open", lambda *a, **k: False)
+    monkeypatch.setattr(phx.subprocess, "Popen", lambda *a, **k: _FakeProc(alive=True))
+
+    server = phx.PhoenixServer()
+    seen: dict[str, float] = {}
+    monkeypatch.setattr(
+        server, "_wait_until_up", lambda port, timeout: seen.update(t=timeout) or True
+    )
+    server.start({"port": 6006, "working_dir": "", "startup_timeout": 12.5})
+    assert seen["t"] == 12.5
+
+    # Absent ⇒ the module default.
+    seen.clear()
+    server.stop()
+    monkeypatch.setattr(
+        server, "_wait_until_up", lambda port, timeout: seen.update(t=timeout) or True
+    )
+    server.start({"port": 6006, "working_dir": ""})
+    assert seen["t"] == phx._DEFAULT_START_TIMEOUT_S

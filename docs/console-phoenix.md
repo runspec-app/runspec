@@ -74,6 +74,7 @@ port = 6006                 # where Phoenix serves its collector + UI
 auto_start = false          # launch Phoenix automatically when the console starts
 working_dir = ""            # persistent trace store (defaults to {app_dir}/phoenix)
 assistant = false           # Phoenix's built-in agent assistant (off by default)
+startup_timeout = 60        # seconds to wait for the server to come up
 
 # Escape hatch: any extra PHOENIX_* variables to pass to the server at launch.
 [phoenix.env]
@@ -83,9 +84,10 @@ PHOENIX_ENABLE_MCP_SERVER = "false"
 | Key | Default | Meaning |
 |---|---|---|
 | `port` | `6006` | The port Phoenix serves on (collector **and** UI). Change it if 6006 is taken. |
-| `auto_start` | `false` | Start Phoenix at app launch instead of on demand from the tab. |
-| `working_dir` | `{app_dir}/phoenix` | Where Phoenix persists its SQLite trace store, so traces survive restarts. |
+| `auto_start` | `false` | Start Phoenix at app launch instead of on demand from the control. |
+| `working_dir` | `{app_dir}/phoenix` | Where Phoenix persists its SQLite trace store, so traces survive restarts. Also where the server's log (`phoenix-server.log`) is written. |
 | `assistant` | `false` | Enable Phoenix's built-in agent assistant (its `/chat` endpoint). **Off by default** — see [Privacy](#privacy-the-assistant-is-off-by-default) below. |
+| `startup_timeout` | `60` | Seconds to wait for the server to answer before giving up (clamped 5–600). Raise it on a slow host where first-run migrations take longer. |
 | `[phoenix.env]` | `{}` | A sub-table of extra `PHOENIX_*` environment variables passed to the server at launch — the escape hatch for any Phoenix setting without a typed knob. Non-`PHOENIX_*` keys are ignored. Applied last, so it overrides the knobs above. |
 
 ### Privacy: the assistant is off by default
@@ -128,12 +130,16 @@ and, since it doesn't own that process, **Stop** leaves it running.
 ## Troubleshooting
 
 - **"Phoenix isn't installed"** — run `pip install "runspec-console[phoenix]"` in
-  the console's virtualenv and reopen the tab.
-- **The embedded UI is blank / "Couldn't embed the Phoenix UI"** — your webview
-  is blocking the frame. Use **Open in browser**; everything else works the same.
+  the console's virtualenv and reopen Settings → Telemetry.
+- **`server did not come up on port … within …s`** — the console captures the
+  server's output to **`phoenix-server.log`** in the `working_dir`
+  (default `{app_dir}/phoenix`); open it to see why. First-run migrations can be
+  slow on some hosts — raise `[phoenix] startup_timeout`. As a sanity check, the
+  server should also start by hand from the venv with `phoenix serve`; if that
+  works but the console's Start doesn't, capture the log and file it.
 - **Port already in use** — set `[phoenix] port` to a free port, or stop the
-  other server. If another Phoenix is serving on the configured port the console
-  will adopt it.
-- **No traces appear** — confirm the tab shows **running**, then run a fresh
-  agent turn. Traces are batched, so allow a few seconds. Very short sessions
-  flush on stop.
+  other server. If another Phoenix is already serving on the configured port the
+  console **adopts** it instead of launching a second one.
+- **No traces appear** — confirm the control shows **running**, then run a fresh
+  agent turn and, in Phoenix, click into the **Default** project. Traces are
+  batched, so allow a few seconds; very short sessions flush on stop.

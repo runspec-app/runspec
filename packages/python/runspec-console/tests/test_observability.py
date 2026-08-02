@@ -119,6 +119,7 @@ def test_read_phoenix_defaults(monkeypatch, tmp_path):
     assert p["auto_start"] is False
     assert p["working_dir"] == str(tmp_path / "phoenix")
     assert p["assistant"] is False  # off by default — keeps the feature local
+    assert p["startup_timeout"] == 60.0  # default; slow hosts can raise it
     assert p["env"] == {}
 
 
@@ -132,6 +133,7 @@ def test_read_phoenix_reads_and_clamps(monkeypatch):
                 "auto_start": True,
                 "working_dir": " /srv/px ",
                 "assistant": True,
+                "startup_timeout": 5000,  # over-range → clamped to 600
                 # Only PHOENIX_* keys survive; others are dropped as out of scope.
                 "env": {"PHOENIX_ENABLE_MCP_SERVER": "false", "PATH": "/evil"},
             }
@@ -142,6 +144,7 @@ def test_read_phoenix_reads_and_clamps(monkeypatch):
     assert p["auto_start"] is True
     assert p["working_dir"] == "/srv/px"
     assert p["assistant"] is True
+    assert p["startup_timeout"] == 600.0  # clamped 5–600
     assert p["env"] == {"PHOENIX_ENABLE_MCP_SERVER": "false"}
 
 

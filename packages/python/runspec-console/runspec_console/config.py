@@ -357,12 +357,17 @@ def read_phoenix() -> dict[str, Any]:
     in. ``env`` is a passthrough sub-table of extra ``PHOENIX_*`` environment
     variables applied to the server at launch (an escape hatch for any Phoenix
     setting not surfaced as a typed knob; non-``PHOENIX_*`` keys are ignored).
-    Both ride Config Sync / the config seed like the rest of ``config.toml``."""
+    ``startup_timeout`` (seconds, default 60, clamped 5–600) is how long to wait
+    for the server to answer HTTP before giving up — raise it on a slow host where
+    first-run migrations take longer. All ride Config Sync / the config seed like
+    the rest of ``config.toml``."""
     raw = read_config().get("phoenix")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     port = int(cfg.get("port", DEFAULT_PHOENIX_PORT) or DEFAULT_PHOENIX_PORT)
     port = min(65535, max(1, port))
     wd = str(cfg.get("working_dir") or "").strip()
+    timeout = float(cfg.get("startup_timeout", 60) or 60)
+    timeout = min(600.0, max(5.0, timeout))
     raw_env = cfg.get("env")
     env: dict[str, str] = {}
     if isinstance(raw_env, dict):
@@ -375,6 +380,7 @@ def read_phoenix() -> dict[str, Any]:
         "auto_start": bool(cfg.get("auto_start", False)),
         "working_dir": wd or str(app_dir() / "phoenix"),
         "assistant": bool(cfg.get("assistant", False)),
+        "startup_timeout": timeout,
         "env": env,
     }
 

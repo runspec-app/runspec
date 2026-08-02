@@ -8,6 +8,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.226.0] — 2026-08-02
+
+### Fixed
+- **Local Phoenix now launches via the `phoenix` console script, not
+  `python -m phoenix.server.main`.** On some hosts (notably Windows) Start failed
+  with `server did not come up on port 6006 within 30s` even though
+  `phoenix serve` worked by hand. Cause: `python -m phoenix.server.main serve`
+  isn't equivalent to the `phoenix` entry point (`phoenix.server.main:main`) — it
+  depends on a module `__main__` guard and interacts badly with multiprocessing
+  `spawn`, so the process starts but never binds the port. `phoenix.py` now
+  prefers the `phoenix`/`phoenix.exe` console script installed next to the
+  interpreter (the exact thing `phoenix serve` runs), falling back to `-m` only if
+  it isn't found (`_phoenix_argv`).
+
+### Added
+- **Phoenix server output is captured to `phoenix-server.log`** in the
+  `working_dir` (was `DEVNULL`), so a failed or slow start is diagnosable instead
+  of silent — the "did not come up" warning now points at the log.
+- **`[phoenix] startup_timeout`** (seconds, default **60**, clamped 5–600, up from
+  a hardcoded 30) — raise it on a slow host where first-run migrations take
+  longer.
+
+
 ## [0.225.0] — 2026-08-02
 
 ### Fixed

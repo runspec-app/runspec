@@ -34,10 +34,31 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# How long start() waits for the collector/UI port to accept connections before
-# giving up and reporting the server didn't come up.
-_START_TIMEOUT_S = 30.0
+# Default seconds start() waits for the HTTP layer to respond before reporting
+# the server didn't come up. Overridable via [phoenix] startup_timeout — first-run
+# alembic migrations + sandbox init can be slow on some hosts.
+_DEFAULT_START_TIMEOUT_S = 60.0
 _POLL_INTERVAL_S = 0.25
+
+
+def _phoenix_argv() -> list[str]:
+    """The argv to launch the Phoenix server.
+
+    Prefer the ``phoenix`` **console script** installed next to this interpreter —
+    the exact entry ``phoenix serve`` uses (arize-phoenix declares
+    ``phoenix = "phoenix.server.main:main"``). Launching ``python -m
+    phoenix.server.main serve`` instead is *not* equivalent: it depends on a
+    module ``__main__`` guard and, on Windows, interacts badly with multiprocessing
+    ``spawn`` — the server process can start but never bind the port (looks like a
+    slow/failed start). The console-script wrapper handles ``spawn`` correctly.
+    Fall back to ``-m`` only when the script isn't found (non-standard layout)."""
+    bindir = Path(sys.executable).parent
+    names = ("phoenix.exe", "phoenix") if os.name == "nt" else ("phoenix",)
+    for name in names:
+        exe = bindir / name
+        if exe.exists():
+            return [str(exe), "serve"]
+    return [sys.executable, "-m", "phoenix.server.main", "serve"]
 
 
 def available() -> tuple[bool, str]:
@@ -48,8 +69,8 @@ def available() -> tuple[bool, str]:
     module-load side effects (ensures its working dir, registers alembic plugins +
     sandbox adapters, spins up machinery) that would otherwise run — and log — in
     the console's own process, purely to answer "is it installed?". We only ever
-    run Phoenix as a subprocess (`python -m phoenix.server.main serve`), so the
-    package is never needed in-process. Never raises."""
+    run Phoenix as a subprocess (see ``_phoenix_argv``), so the package is never
+    needed in-process. Never raises."""
     import importlib.util
 
     try:
@@ -114,6 +135,10 @@ class PhoenixServer:
         # True when we're using a server we didn't launch (already listening on the
         # port). It's usable, but stop() must not kill it — we don't own it.
         self._adopted = False
+        # Open file handle capturing the managed server's stdout/stderr, and its
+        # path — so a failed/slow start is diagnosable instead of vanishing.
+        self._log_fh: Any = None
+        self._log_path: str = ""
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -181,28 +206,44 @@ class PhoenixServer:
             for k, v in (cfg.get("env") or {}).items():
                 env[str(k)] = str(v)
 
-            cmd = [sys.executable, "-m", "phoenix.server.main", "serve"]
+            cmd = _phoenix_argv()
+            # Capture the server's stdout+stderr to a log file (truncated each
+            # launch) so a wrong invocation / bind error is diagnosable rather than
+            # lost to DEVNULL. Falls back to DEVNULL if the file can't be opened.
+            self._close_log()
+            out: Any = subprocess.DEVNULL
+            if working_dir:
+                try:
+                    self._log_path = str(Path(working_dir) / "phoenix-server.log")
+                    self._log_fh = open(self._log_path, "wb")  # noqa: SIM115
+                    out = self._log_fh
+                except OSError:
+                    self._log_fh = None
+                    self._log_path = ""
             try:
                 self._proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
                     cmd,
                     env=env,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=out,
+                    stderr=subprocess.STDOUT if out is not subprocess.DEVNULL else out,
                     stdin=subprocess.DEVNULL,
                 )
             except Exception as exc:  # noqa: BLE001 — degrade, never raise
                 logger.warning("phoenix: failed to launch server: %s", exc)
+                self._close_log()
                 self._proc = None
                 self._port = 0
                 return self.status()
 
             self._port = port
             self._adopted = False  # we own this process
-            if not self._wait_until_up(port):
+            timeout = float(cfg.get("startup_timeout") or _DEFAULT_START_TIMEOUT_S)
+            if not self._wait_until_up(port, timeout):
                 logger.warning(
-                    "phoenix: server did not come up on port %d within %.0fs",
+                    "phoenix: server did not come up on port %d within %.0fs%s",
                     port,
-                    _START_TIMEOUT_S,
+                    timeout,
+                    f" — see {self._log_path}" if self._log_path else "",
                 )
                 self._terminate_locked()
             else:
@@ -221,12 +262,12 @@ class PhoenixServer:
 
     # ── internals ─────────────────────────────────────────────────────────────
 
-    def _wait_until_up(self, port: int) -> bool:
+    def _wait_until_up(self, port: int, timeout: float) -> bool:
         # Wait for the HTTP layer to actually respond, not just the TCP port to
         # open — so by the time we report "running" and the tab points its iframe
         # at the server, the page is serveable (no connection-refused flash).
         url = f"http://{self._host}:{port}/"
-        deadline = time.monotonic() + _START_TIMEOUT_S
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             # A crash before it comes up: give up early.
             proc = self._proc
@@ -237,17 +278,27 @@ class PhoenixServer:
             time.sleep(_POLL_INTERVAL_S)
         return False
 
+    def _close_log(self) -> None:
+        """Close the captured-output file handle if open (best-effort)."""
+        fh, self._log_fh = self._log_fh, None
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def _terminate_locked(self) -> None:
         """Kill the managed subprocess if we own one. Caller holds ``_lock``."""
         proc, self._proc = self._proc, None
-        if proc is None or proc.poll() is not None:
-            return
         try:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
         except Exception:  # noqa: BLE001 — teardown must never raise
             logger.warning("phoenix: error stopping server", exc_info=True)
+        finally:
+            self._close_log()
