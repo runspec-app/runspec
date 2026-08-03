@@ -65,9 +65,17 @@ class ObservabilityMixin:
 
     def _route_traces_to_phoenix(self, port: int) -> None:
         """Live-route the OTLP exporter to the local Phoenix (loopback, no auth),
-        overlaying only ``enabled`` + ``endpoint`` onto the saved telemetry config
-        so service name / sampling / capture_content carry over. Not persisted —
-        a transient route for the duration of the local session."""
+        overlaying ``enabled`` + ``endpoint`` onto the saved telemetry config so
+        service name / sampling carry over. Not persisted — a transient route for
+        the duration of the local session.
+
+        ``capture_content`` is overridden from ``[phoenix] capture_content``
+        (default **true**), *not* inherited from ``[telemetry]``: the general
+        privacy default (off) exists because that path exports to an *external*
+        backend, whereas local Phoenix stays on the machine — so capturing the
+        prompt / completion / tool-arg text (which is what makes a trace readable
+        in Phoenix) is both safe and the useful default here. Secret-looking args
+        are still scrubbed, and resolved credentials never reach the span layer."""
         if not port:
             return
         from . import config as config_mod
@@ -84,6 +92,8 @@ class ObservabilityMixin:
                 "api_key_command": None,
                 "ca_bundle": None,
                 "tls_verify": True,
+                # Local ⇒ capture content by default (see docstring).
+                "capture_content": config_mod.read_phoenix()["capture_content"],
             }
         )
         try:

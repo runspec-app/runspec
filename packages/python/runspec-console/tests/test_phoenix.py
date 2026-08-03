@@ -382,3 +382,53 @@ def test_start_honours_startup_timeout(monkeypatch):
     )
     server.start({"port": 6006, "working_dir": ""})
     assert seen["t"] == phx._DEFAULT_START_TIMEOUT_S
+
+
+# ── auto-wire: local Phoenix captures content by default ───────────────────────
+
+
+def test_route_traces_to_phoenix_captures_content(monkeypatch):
+    """Routing to local Phoenix overlays enabled + endpoint, clears auth, and
+    takes capture_content from [phoenix] (default true) — NOT the [telemetry]
+    value (default false, for the external path). Other telemetry keys carry over."""
+    from runspec_console import config as config_mod
+    from runspec_console import observability
+    from runspec_console.bridge_observability import ObservabilityMixin
+
+    monkeypatch.setattr(
+        config_mod,
+        "read_telemetry",
+        lambda: {
+            "enabled": False,
+            "endpoint": None,
+            "headers": {"x-api-key": "secret"},
+            "service_name": "svc",
+            "sample_ratio": 0.5,
+            "capture_content": False,  # the external-path default
+            "api_key_command": "keyring get x",
+            "ca_bundle": "/ca.pem",
+            "tls_verify": False,
+        },
+    )
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(observability, "reconfigure", lambda cfg: seen.update(cfg))
+
+    # Default [phoenix] ⇒ capture_content True.
+    monkeypatch.setattr(config_mod, "read_phoenix", lambda: {"capture_content": True})
+    ObservabilityMixin._route_traces_to_phoenix(object(), 6006)
+    assert seen["enabled"] is True
+    assert seen["endpoint"] == "http://127.0.0.1:6006/v1/traces"
+    assert (
+        seen["capture_content"] is True
+    )  # from [phoenix], overriding telemetry's False
+    assert seen["service_name"] == "svc"  # carried over
+    assert seen["sample_ratio"] == 0.5  # carried over
+    assert seen["headers"] == {}  # cleared — loopback, no auth
+    assert seen["api_key_command"] is None
+    assert seen["ca_bundle"] is None
+
+    # Opt out via [phoenix] capture_content = false.
+    seen.clear()
+    monkeypatch.setattr(config_mod, "read_phoenix", lambda: {"capture_content": False})
+    ObservabilityMixin._route_traces_to_phoenix(object(), 6006)
+    assert seen["capture_content"] is False

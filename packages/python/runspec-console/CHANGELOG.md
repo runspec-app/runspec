@@ -8,6 +8,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.228.0] — 2026-08-02
+
+### Changed
+- **Local Phoenix now captures prompt / completion / tool-argument content by
+  default.** The general `[telemetry] capture_content` stays **off** (that path
+  exports to an external backend), but local Phoenix stays on the machine, and
+  content is what makes a trace actually readable in Phoenix. The auto-wire now
+  sets `capture_content` from a new **`[phoenix] capture_content`** knob
+  (default **true**) instead of inheriting the telemetry value — so the trace
+  line reads `capture_content=True` for local. Secret-looking arguments are still
+  scrubbed and resolved credentials never reach the span layer. Set
+  `[phoenix] capture_content = false` for structure-only local traces.
+
+### Docs
+- Troubleshooting: if `phoenix-server.log` shows a database/migration error,
+  delete the Phoenix `working_dir` (its SQLite store) and let it recreate on the
+  next Start.
+
+
 ## [0.227.1] — 2026-08-02
 
 ### Fixed

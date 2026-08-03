@@ -382,8 +382,13 @@ def read_phoenix() -> dict[str, Any]:
     setting not surfaced as a typed knob; non-``PHOENIX_*`` keys are ignored).
     ``startup_timeout`` (seconds, default 60, clamped 5–600) is how long to wait
     for the server to answer HTTP before giving up — raise it on a slow host where
-    first-run migrations take longer. All ride Config Sync / the config seed like
-    the rest of ``config.toml``."""
+    first-run migrations take longer. ``capture_content`` (default **true**)
+    attaches prompt / completion / tool-arg text to the local traces — the general
+    ``[telemetry] capture_content`` defaults *off* because that path exports to an
+    external backend, but local Phoenix stays on the machine, so capturing content
+    (what makes a trace readable) is the safe, useful default; set it false to keep
+    local traces structure-only. Secret-looking args are scrubbed regardless. All
+    ride Config Sync / the config seed like the rest of ``config.toml``."""
     raw = read_config().get("phoenix")
     cfg = dict(raw) if isinstance(raw, dict) else {}
     port = int(cfg.get("port", DEFAULT_PHOENIX_PORT) or DEFAULT_PHOENIX_PORT)
@@ -404,6 +409,7 @@ def read_phoenix() -> dict[str, Any]:
         "working_dir": wd or str(app_dir() / "phoenix"),
         "assistant": bool(cfg.get("assistant", False)),
         "startup_timeout": timeout,
+        "capture_content": bool(cfg.get("capture_content", True)),
         "env": env,
     }
 

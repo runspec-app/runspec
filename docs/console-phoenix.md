@@ -59,10 +59,13 @@ runspec.agent.turn                     ← the whole turn
    └─ execute_tool <tool>              ← each tool call, with its autonomy decision
 ```
 
-Content (prompts / completions / tool-argument text) is **not** attached unless
-you set `capture_content = true` in `[telemetry]` — the same privacy gate as the
-export path. Structure (models, token counts, tool names, decisions, durations)
-is always present.
+Unlike the remote export path (where content is **off** by default so nothing
+sensitive leaves the machine), **local Phoenix captures the prompt / completion /
+tool-argument text by default** — it stays on your machine, and that content is
+what makes a trace actually readable in Phoenix. Secret-looking arguments are
+still scrubbed, and resolved credentials never reach the span layer. Set
+`[phoenix] capture_content = false` if you'd rather keep local traces
+structure-only (models, token counts, tool names, decisions, durations).
 
 ## Configuration — `[phoenix]`
 
@@ -75,6 +78,7 @@ auto_start = false          # launch Phoenix automatically when the console star
 working_dir = ""            # persistent trace store (defaults to {app_dir}/phoenix)
 assistant = false           # Phoenix's built-in agent assistant (off by default)
 startup_timeout = 60        # seconds to wait for the server to come up
+capture_content = true      # attach prompt/completion/tool text (local ⇒ on)
 
 # Escape hatch: any extra PHOENIX_* variables to pass to the server at launch.
 [phoenix.env]
@@ -88,6 +92,7 @@ PHOENIX_ENABLE_MCP_SERVER = "false"
 | `working_dir` | `{app_dir}/phoenix` | Where Phoenix persists its SQLite trace store, so traces survive restarts. Also where the server's log (`phoenix-server.log`) is written. |
 | `assistant` | `false` | Enable Phoenix's built-in agent assistant (its `/chat` endpoint). **Off by default** — see [Privacy](#privacy-the-assistant-is-off-by-default) below. |
 | `startup_timeout` | `60` | Seconds to wait for the server to answer before giving up (clamped 5–600). Raise it on a slow host where first-run migrations take longer. |
+| `capture_content` | `true` | Attach prompt / completion / tool-argument **text** to the local traces (secret-looking args scrubbed). **On by default** because local Phoenix stays on the machine — unlike the remote `[telemetry] capture_content` (off). Set false for structure-only local traces. |
 | `[phoenix.env]` | `{}` | A sub-table of extra `PHOENIX_*` environment variables passed to the server at launch — the escape hatch for any Phoenix setting without a typed knob. Non-`PHOENIX_*` keys are ignored. Applied last, so it overrides the knobs above. |
 
 ### Privacy: the assistant is off by default
@@ -137,6 +142,11 @@ and, since it doesn't own that process, **Stop** leaves it running.
   slow on some hosts — raise `[phoenix] startup_timeout`. As a sanity check, the
   server should also start by hand from the venv with `phoenix serve`; if that
   works but the console's Start doesn't, capture the log and file it.
+- **The log shows a database / migration error** — Phoenix's SQLite store in the
+  `working_dir` (default `~/.phoenix` or `[phoenix] working_dir`) can get into a
+  bad state. Stop the console and **delete that folder**; Phoenix recreates a
+  fresh store on the next Start. (You lose previously stored traces, not your
+  console config.)
 - **Port already in use** — set `[phoenix] port` to a free port, or stop the
   other server. If another Phoenix is already serving on the configured port the
   console **adopts** it instead of launching a second one.
