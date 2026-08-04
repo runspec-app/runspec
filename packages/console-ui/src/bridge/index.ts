@@ -973,17 +973,6 @@ export interface DenylistHostStatus {
   rules?: DenylistRule[]
 }
 
-// Status of the console-managed local Arize Phoenix server (Phoenix tab).
-// `available` false (with `reason`) means the `phoenix` extra isn't installed;
-// `running`/`url`/`port` describe a live (or adopted) local server.
-export interface PhoenixStatus {
-  available: boolean
-  reason: string
-  running: boolean
-  url: string
-  port: number
-}
-
 export interface BridgeApi {
   get_hosts: () => Promise<Host[]>
   // Disable / re-enable runnables across fleet hosts (a kill switch). Edits each
@@ -1245,15 +1234,6 @@ export interface BridgeApi {
   cancel_break: () => Promise<{ ok: boolean }>
   // Lock auto-suspend live indicator: current screen-lock state (cheap probe).
   screen_state: () => Promise<LockState>
-  // Local Arize Phoenix server (Phoenix tab): launch / stop / poll a private,
-  // on-machine OTLP collector + trace-UI. phoenix_start also live-routes the
-  // console's own agent traces to it; phoenix_stop restores the saved route.
-  phoenix_status: () => Promise<PhoenixStatus>
-  phoenix_start: () => Promise<PhoenixStatus>
-  phoenix_stop: () => Promise<PhoenixStatus>
-  // Open the running Phoenix UI in the OS browser (fallback when the iframe can't
-  // frame it). Opens the server's own known URL, http(s) only.
-  phoenix_open: () => Promise<{ ok: boolean; url: string }>
   // Wake/sleep Windows Voice access listening (injects Alt+Shift+B host-side —
   // same chord both ways; the UI tracks state). Speak button wakes after focusing
   // the box; sending sleeps. {ok:false} off Windows / on failure (operator can

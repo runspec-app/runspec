@@ -8,7 +8,7 @@ declared in ``[mcp]`` / ``[[mcp.servers]]`` in ``config.toml`` — appear in the
 chat agent's toolset alongside runnables and the built-in tools, routed through
 the same autonomy/confirm gate.
 
-Design, mirroring ``observability.py`` / ``phoenix.py``:
+Design, mirroring ``observability.py``:
 
 * **Opt-in, config-gated, best-effort, never raises into the agent loop.** No
   ``[mcp]`` servers ⇒ the manager is inert. A failed connection is recorded and

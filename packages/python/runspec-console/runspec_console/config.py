@@ -43,11 +43,6 @@ DEFAULT_BACKUPS_KEEP = 5
 DEFAULT_TELEMETRY_PROTOCOL = "http/protobuf"
 DEFAULT_TELEMETRY_SERVICE_NAME = "runspec-console"
 
-# `[phoenix]` defaults — a local Arize Phoenix server (OTLP collector + trace-UI)
-# the console can launch for private, zero-config trace analysis. Phoenix serves
-# both its OTLP/HTTP collector and its web UI on one port (6006 by default).
-DEFAULT_PHOENIX_PORT = 6006
-
 
 def app_dir() -> Path:
     env = os.environ.get("APPDATA")
@@ -358,59 +353,6 @@ def read_telemetry() -> dict[str, Any]:
         "capture_content": bool(cfg.get("capture_content", False)),
         "api_key_command": str(cfg.get("api_key_command") or "").strip() or None,
         "api_key_header": str(cfg.get("api_key_header") or "x-api-key").strip(),
-    }
-
-
-def read_phoenix() -> dict[str, Any]:
-    """The ``[phoenix]`` settings for a console-managed local Arize Phoenix server.
-
-    Phoenix is an OTLP collector + LLM-aware trace-analysis web UI in one process,
-    both served on ``port`` (default 6006). When the console launches it, the
-    existing OTLP exporter is live-routed to ``http://127.0.0.1:{port}/v1/traces``
-    so agent turns land in a fully local, private trace explorer with no external
-    backend. ``auto_start`` (default false) brings the server up at app launch;
-    otherwise it starts on demand from the Phoenix tab. ``working_dir`` is where
-    Phoenix persists its SQLite trace store across restarts — defaults to
-    ``{app_dir}/phoenix``. Requires the optional ``phoenix`` extra
-    (``pip install runspec-console[phoenix]``).
-
-    ``assistant`` (default **false**) gates Phoenix's built-in agent assistant
-    (its ``/chat`` endpoint, which can call an external LLM + do web/bash). It's
-    **off by default** to keep this feature fully local — set it true to opt back
-    in. ``env`` is a passthrough sub-table of extra ``PHOENIX_*`` environment
-    variables applied to the server at launch (an escape hatch for any Phoenix
-    setting not surfaced as a typed knob; non-``PHOENIX_*`` keys are ignored).
-    ``startup_timeout`` (seconds, default 60, clamped 5–600) is how long to wait
-    for the server to answer HTTP before giving up — raise it on a slow host where
-    first-run migrations take longer. ``capture_content`` (default **true**)
-    attaches prompt / completion / tool-arg text to the local traces — the general
-    ``[telemetry] capture_content`` defaults *off* because that path exports to an
-    external backend, but local Phoenix stays on the machine, so capturing content
-    (what makes a trace readable) is the safe, useful default; set it false to keep
-    local traces structure-only. Secret-looking args are scrubbed regardless. All
-    ride Config Sync / the config seed like the rest of ``config.toml``."""
-    raw = read_config().get("phoenix")
-    cfg = dict(raw) if isinstance(raw, dict) else {}
-    port = int(cfg.get("port", DEFAULT_PHOENIX_PORT) or DEFAULT_PHOENIX_PORT)
-    port = min(65535, max(1, port))
-    wd = str(cfg.get("working_dir") or "").strip()
-    timeout = float(cfg.get("startup_timeout", 60) or 60)
-    timeout = min(600.0, max(5.0, timeout))
-    raw_env = cfg.get("env")
-    env: dict[str, str] = {}
-    if isinstance(raw_env, dict):
-        for k, v in raw_env.items():
-            ks = str(k).strip()
-            if ks.startswith("PHOENIX_"):  # scoped to Phoenix's own vars only
-                env[ks] = str(v)
-    return {
-        "port": port,
-        "auto_start": bool(cfg.get("auto_start", False)),
-        "working_dir": wd or str(app_dir() / "phoenix"),
-        "assistant": bool(cfg.get("assistant", False)),
-        "startup_timeout": timeout,
-        "capture_content": bool(cfg.get("capture_content", True)),
-        "env": env,
     }
 
 

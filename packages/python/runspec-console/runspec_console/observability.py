@@ -196,11 +196,9 @@ def reconfigure(config: dict[str, Any] | None = None) -> bool:
 
     ``init_tracing`` is deliberately idempotent (it returns early once a tracer
     exists), so it can't switch endpoints on its own. ``reconfigure`` is the seam
-    for doing exactly that at runtime — the console calls it when it launches (or
-    stops) a local Phoenix server to live-route the OTLP exporter to / away from
-    ``http://127.0.0.1:<port>/v1/traces`` **without persisting** to
-    ``config.toml``, so a user's saved remote ``[telemetry]`` backend is never
-    clobbered by a transient local session.
+    for doing exactly that at runtime — re-pointing the OTLP exporter at a
+    different endpoint / config without a restart, e.g. to route to a transient
+    backend without persisting to ``config.toml``.
 
     Best-effort and never raises: flushes + shuts down the current provider,
     resets to the disabled no-op state, then re-inits. Returns whatever

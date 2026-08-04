@@ -39,7 +39,6 @@ from .bridge_config_tools import ConfigToolsMixin
 from .bridge_search import SearchMixin
 from .bridge_internals import InternalsMixin
 from .bridge_triggers import TriggersMixin
-from .bridge_observability import ObservabilityMixin
 
 
 class Bridge(
@@ -58,7 +57,6 @@ class Bridge(
     SearchMixin,
     InternalsMixin,
     TriggersMixin,
-    ObservabilityMixin,
 ):
     def __init__(self) -> None:
         self._window: Any = None
@@ -239,12 +237,6 @@ class Bridge(
         # (the gate evaluates `now` live) and self-clears. Held only in memory so a
         # break is naturally transient (lost on restart, which is fine).
         self._break_until: datetime | None = None
-        # Local Arize Phoenix server manager (opt-in `phoenix` extra). Constructed
-        # unconditionally — it's a lazy-import no-op until phoenix_start() is
-        # called from the tab (or auto_start at bring-up). See phoenix.py.
-        from .phoenix import PhoenixServer
-
-        self._phoenix_server = PhoenixServer()
         # External MCP servers the chat agent connects to ([mcp] / [[mcp.servers]]).
         # Constructed cheaply (no SDK import, no connection) so the Bridge always
         # has one; app.py calls mcp_start() at bring-up to actually connect. A
@@ -277,9 +269,6 @@ class Bridge(
         atexit.register(self._close_ssh_pool)
         atexit.register(self.stop_chat)  # stop the room reconnect supervisor
         atexit.register(self.stop_triggers)  # quit any source pump threads cleanly
-        # Kill any console-managed Phoenix subprocess so closing the app leaves no
-        # orphan holding the collector port.
-        atexit.register(self._phoenix_server.stop)
         # Close any live MCP client sessions (terminating stdio subprocesses).
         atexit.register(self._mcp.stop)
         # Unblock any in-flight turn parked at the autonomy gate so closing the

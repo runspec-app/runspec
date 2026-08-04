@@ -1376,10 +1376,6 @@ export const mockApi: BridgeApi = {
     return { ok: true }
   },
   screen_state: async () => 'unlocked' as const,
-  phoenix_status: async () => ({ available: true, reason: '', running: false, url: '', port: 0 }),
-  phoenix_start: async () => ({ available: true, reason: '', running: true, url: 'http://127.0.0.1:6006', port: 6006 }),
-  phoenix_stop: async () => ({ available: true, reason: '', running: false, url: '', port: 0 }),
-  phoenix_open: async () => ({ ok: true, url: 'http://127.0.0.1:6006' }),
   start_voice_dictation: async () => ({ ok: false }),
   stop_voice_dictation: async () => ({ ok: false }),
   get_trigger_board: async () => [

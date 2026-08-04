@@ -4,7 +4,6 @@ import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckO
 import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
-import { PhoenixLocalControl } from './PhoenixLocalControl'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames, initialFormValues } from '../views/FormsView'
 import {
@@ -4274,10 +4273,6 @@ export function TelemetryTab() {
 
   return (
     <div style={{ maxWidth: 620 }}>
-      <PhoenixLocalControl />
-
-      <Divider style={{ margin: '14px 0' }}>or export to a backend</Divider>
-
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
         OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
@@ -4285,6 +4280,24 @@ export function TelemetryTab() {
         <code> pip install runspec-console[otel]</code>. Standard <code>OTEL_*</code> environment
         variables fill in anything left blank below.
       </Typography.Paragraph>
+
+      <div style={{ marginBottom: 12 }}>
+        <Button
+          size="small"
+          onClick={() => {
+            setEnabled(true)
+            setEndpoint('http://127.0.0.1:6006/v1/traces')
+            setCaptureContent(true)
+          }}
+        >
+          Use local Phoenix
+        </Button>
+        <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+          Fills the endpoint for a locally-run <a href="https://github.com/Arize-ai/phoenix" target="_blank" rel="noreferrer">Arize Phoenix</a> and
+          enables content capture — run <code>phoenix serve</code> in its own venv first, then Save.
+        </Typography.Text>
+      </div>
+
       {row('Enable tracing', <Switch checked={enabled} onChange={setEnabled} />)}
       {row('OTLP endpoint', <Input style={{ width: 380 }} placeholder="https://…/v1/traces  (blank ⇒ OTEL_EXPORTER_OTLP_ENDPOINT)" value={endpoint} onChange={e => setEndpoint(e.target.value)} disabled={!enabled} />)}
       {row('Protocol', <Select style={{ width: 180 }} value={protocol} onChange={setProtocol} disabled={!enabled} options={[{ value: 'http/protobuf', label: 'http/protobuf' }]} />)}

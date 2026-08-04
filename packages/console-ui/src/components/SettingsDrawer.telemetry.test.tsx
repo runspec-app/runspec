@@ -35,10 +35,6 @@ vi.mock('../bridge', () => ({
         if (typeof prop === 'symbol') return undefined
         if (prop === 'get_config') return getConfig
         if (prop === 'save_config') return saveConfig
-        // The embedded PhoenixLocalControl calls phoenix_status() on mount and
-        // chains .then, so the default stub must return a promise.
-        if (prop === 'phoenix_status')
-          return () => Promise.resolve({ available: false, reason: '', running: false, url: '', port: 0 })
         return vi.fn().mockResolvedValue(undefined)
       },
     },
@@ -75,5 +71,20 @@ describe('TelemetryTab Save round-trip', () => {
     // The "ship the command, not the key" fields round-trip.
     expect(saved.telemetry.api_key_command).toBe('keyring get langsmith key')
     expect(saved.telemetry.api_key_header).toBe('x-api-key')
+  })
+
+  it('the "Use local Phoenix" preset fills the endpoint, enables, and captures content', async () => {
+    getConfig.mockResolvedValue({})  // start from a blank telemetry section
+    render(<TelemetryTab />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /use local phoenix/i }))
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    const saved = saveConfig.mock.calls[0][0] as { telemetry: Record<string, unknown> }
+    expect(saved.telemetry.enabled).toBe(true)
+    expect(saved.telemetry.endpoint).toBe('http://127.0.0.1:6006/v1/traces')
+    expect(saved.telemetry.capture_content).toBe(true)
   })
 })

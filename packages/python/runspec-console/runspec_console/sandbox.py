@@ -27,7 +27,7 @@ Heavy deps are optional and lazy: `wasmtime` (the runtime) ships in the
 (bundled path / env / config / app-data cache, downloaded on first use with a
 SHA-256 check). :func:`available` reports readiness so a console without the extra
 simply doesn't offer the tools — **fail-closed, never a host-execution fallback**
-(that would defeat the whole point). Mirrors ``phoenix.py`` / ``observability.py``.
+(that would defeat the whole point). Mirrors ``observability.py``.
 """
 
 from __future__ import annotations

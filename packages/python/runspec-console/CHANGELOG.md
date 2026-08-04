@@ -8,6 +8,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.229.0] — 2026-08-03
+
+### Removed
+- **The console-managed local Phoenix server is gone; Phoenix is now decoupled.**
+  The console no longer bundles `arize-phoenix` (the `phoenix` extra is removed),
+  no longer launches / stops / adopts a Phoenix subprocess, and the Settings →
+  Telemetry Start/Stop control is gone (along with `phoenix.py`,
+  `bridge_observability.py`, the `phoenix_*` bridge methods, `config.read_phoenix`,
+  and the `[phoenix]` config section). This tied the two too tightly — Phoenix's
+  version was pinned in the console's own venv (so a Phoenix UI bug meant touching
+  the console), and the console owned Phoenix's process, DB, and export lifecycle.
+
+  **Migration** — to keep local trace analysis: install `arize-phoenix` in its
+  **own venv**, run `phoenix serve`, then in Settings → Telemetry click the new
+  **Use local Phoenix** button (fills endpoint `http://127.0.0.1:6006/v1/traces` +
+  enables tracing + content capture) and Save. This uses the existing OTLP export
+  path (needs only the `otel` extra), so you now update Phoenix independently of
+  the console. A leftover `[phoenix]` section in `config.toml` is simply ignored.
+  See `docs/console-phoenix.md`.
+
+### Added
+- **"Use local Phoenix" preset** in Settings → Telemetry — a one-click helper that
+  fills the OTLP endpoint for a locally-run Phoenix. Pure form-fill: no dependency,
+  no managed process.
+
+
 ## [0.228.0] — 2026-08-02
 
 ### Changed

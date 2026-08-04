@@ -331,16 +331,6 @@ def main() -> None:
 
     observability.init_tracing(_config.read_telemetry())
 
-    # Optionally bring up a console-managed local Phoenix server (OTLP collector +
-    # trace UI) at launch and route agent traces to it. Off by default — the
-    # Phoenix tab starts it on demand. Best-effort; a missing extra / launch
-    # failure must not stop the console. See phoenix.py / docs/console-phoenix.md.
-    if _config.read_phoenix().get("auto_start"):
-        try:
-            bridge.phoenix_start()
-        except Exception:  # noqa: BLE001
-            pass
-
     # Connect any external MCP servers ([mcp] / [[mcp.servers]]) so their tools
     # join the chat agent's toolset. Best-effort and idempotent — a no-op unless
     # servers are configured and the `mcp` extra is installed; a slow/down server
@@ -421,11 +411,6 @@ def main() -> None:
     try:
         webview.start(**start_kwargs)
     finally:
-        # Stop any console-managed Phoenix server promptly (atexit also covers it),
-        # then flush any batched spans before the process exits (no-op when tracing
-        # off) so a short session doesn't drop its last traces.
-        try:
-            bridge.phoenix_stop()
-        except Exception:  # noqa: BLE001
-            pass
+        # Flush any batched spans before the process exits (no-op when tracing off)
+        # so a short session doesn't drop its last traces.
         observability.shutdown()
