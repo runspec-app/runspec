@@ -266,6 +266,95 @@ def shutdown() -> None:
         pass
 
 
+def flush() -> bool:
+    """Force-flush batched spans to the backend **without** shutting the provider
+    down, so a just-emitted span (e.g. the test trace) lands immediately instead
+    of waiting for the batch interval — and tracing keeps working afterwards
+    (unlike ``shutdown``). Best-effort; ``False`` when there's no live provider."""
+    provider = _PROVIDER
+    if provider is None:
+        return False
+    try:
+        return bool(provider.force_flush())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def send_test_trace() -> dict[str, Any]:
+    """Emit one representative ``turn → llm request → tool call`` trace using the
+    real span helpers, then :func:`flush` it so it reaches the backend right away.
+
+    This is the "does my telemetry actually work" probe: it exercises the exact
+    span shape and ``gen_ai.*`` / ``runspec.*`` attributes a live agent turn
+    produces, and — when :func:`capture_content` is on — attaches sample prompt /
+    completion / tool-argument text (including a secret-looking key, to show the
+    scrubbing) so content rendering can be verified too. Returns a summary dict
+    (``ok``, ``trace_id``, span names, ``capture_content``, ``flushed``) for the
+    UI; ``ok=False`` with a ``reason`` when tracing is not active."""
+    if not enabled():
+        return {"ok": False, "reason": "tracing is not active"}
+    from types import SimpleNamespace
+
+    trace_id = ""
+    try:
+        handle = begin_turn("test", "telemetry-test", model="runspec-test-model")
+        try:
+            ctx = handle.span.get_span_context()
+            trace_id = format(ctx.trace_id, "032x")
+        except Exception:  # noqa: BLE001 — id is decorative, never fail the probe
+            pass
+        with llm_span(provider="runspec-console", model="runspec-test-model") as _llm:
+            add_prompt(
+                [
+                    {
+                        "role": "user",
+                        "content": "runspec-console telemetry test — is this pipeline working?",
+                    }
+                ]
+            )
+            set_llm_response(
+                _llm,
+                SimpleNamespace(stop_reason="stop"),
+                {"input": 42, "output": 17, "cache_read": 8},
+            )
+            add_completion(
+                "Sample completion from the runspec-console telemetry test trace."
+            )
+        with tool_span(
+            "run_runnable",
+            "telemetry-test",
+            decision="run",
+            tool_call_id="telemetry-test-call",
+        ) as _tool:
+            add_tool_arguments(
+                _tool,
+                {
+                    "host": "local",
+                    "runnable": "greeter",
+                    "name": "world",
+                    # capture_content scrubs this to «redacted» — verifies scrubbing
+                    "password": "hunter2",
+                },
+            )
+            set_tool_exit(_tool, "hello world\n")
+            set_tool_decision(_tool, "approved")
+        end_turn(handle, usage={"input": 42, "output": 17})
+    except Exception as exc:  # noqa: BLE001 — surface the failure, don't raise
+        return {"ok": False, "reason": f"emit failed: {exc}"}
+    flushed = flush()
+    return {
+        "ok": True,
+        "trace_id": trace_id,
+        "spans": [
+            "runspec.agent.turn",
+            "chat runspec-test-model",
+            "execute_tool run_runnable",
+        ],
+        "capture_content": _CAPTURE_CONTENT,
+        "flushed": flushed,
+    }
+
+
 # ── span context managers — yield None (and do nothing) when disabled ─────────
 
 

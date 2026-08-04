@@ -64,7 +64,9 @@ turns appear within a few seconds (spans are batched).
 
 - **No traces appear** — confirm Settings → Telemetry shows **Enable tracing** on
   with the endpoint set, that `phoenix serve` is actually running on 6006, then run
-  a fresh agent turn and click into the **Default** project in Phoenix.
+  a fresh agent turn and click into the **Default** project in Phoenix. To check the
+  connection without running a turn, click **Send test trace** on that tab — it emits
+  and flushes one sample trace straight to Phoenix.
 - **Phoenix won't start / its log shows a database or migration error** — Phoenix's
   SQLite store (in its working dir, default `~/.phoenix`) can get into a bad state.
   Stop Phoenix and **delete that folder**; it recreates a fresh store on the next

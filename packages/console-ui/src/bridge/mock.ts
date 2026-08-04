@@ -694,6 +694,15 @@ export const mockApi: BridgeApi = {
 
   save_config: async (data) => { console.log('[mock] save_config', data) },
 
+  send_test_trace: async () => ({
+    ok: true,
+    trace_id: '0123456789abcdef0123456789abcdef',
+    spans: ['runspec.agent.turn', 'chat runspec-test-model', 'execute_tool run_runnable'],
+    endpoint: 'http://127.0.0.1:6006/v1/traces',
+    capture_content: true,
+    flushed: true,
+  }),
+
   test_notification: async () => ({ toast_available: false, toast_reason: 'mock', sound_available: false, window_found: false }),
   test_sound: async () => false,
   sound_pack_info: async (path?: string) => ({ dir: path ?? '', exists: false, covered: {}, categories: [] }),

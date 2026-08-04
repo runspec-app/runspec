@@ -4232,6 +4232,8 @@ export function TelemetryTab() {
   const [apiKeyHeader, setApiKeyHeader] = useState('x-api-key')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<Awaited<ReturnType<typeof bridge.send_test_trace>> | null>(null)
 
   useEffect(() => {
     bridge.get_config().then(cfg => {
@@ -4279,6 +4281,19 @@ export function TelemetryTab() {
       })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
     } finally { setSaving(false) }
+  }
+
+  // Save the current form, then ask the backend to emit + flush one test trace.
+  // Saving first means the test exercises exactly what's on screen (the backend
+  // reconfigures the tracer from the saved config), so "Save then test" is one click.
+  const handleTest = async () => {
+    setTesting(true); setTestResult(null)
+    try {
+      await handleSave()
+      setTestResult(await bridge.send_test_trace())
+    } catch (e) {
+      setTestResult({ ok: false, reason: String((e as Error)?.message || e) })
+    } finally { setTesting(false) }
   }
 
   const row = (label: string, control: ReactNode) => (
@@ -4369,7 +4384,37 @@ export function TelemetryTab() {
       {row('CA bundle (private CA / TLS proxy)', <Input style={{ width: 360 }} placeholder="path to a .pem" value={caBundle} onChange={e => setCaBundle(e.target.value)} disabled={!enabled} />)}
       {row('Verify TLS certificate', <Switch checked={tlsVerify} onChange={setTlsVerify} disabled={!enabled} />)}
 
-      <Button type="primary" loading={saving} onClick={handleSave} style={{ marginTop: 6 }}>{saved ? 'Saved' : 'Save'}</Button>
+      <Space style={{ marginTop: 6 }}>
+        <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+        <Button loading={testing} disabled={!enabled} onClick={handleTest}>Send test trace</Button>
+      </Space>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+        Saves, then emits one sample <strong>turn → LLM call → tool call</strong> trace and flushes it
+        immediately — so you can confirm the backend receives it (and, with content capture on, renders
+        prompt / completion / argument text) without waiting for a real agent turn.
+      </Typography.Paragraph>
+      {testResult && (
+        <Alert
+          type={testResult.ok ? 'success' : 'error'}
+          showIcon
+          style={{ marginTop: 10 }}
+          message={testResult.ok ? 'Test trace sent' : 'Could not send a test trace'}
+          description={
+            testResult.ok ? (
+              <span style={{ fontSize: 12 }}>
+                Sent {testResult.spans?.length ?? 3} spans to <code>{testResult.endpoint}</code>
+                {testResult.trace_id ? <> — trace <code>{testResult.trace_id}</code></> : null}.{' '}
+                {testResult.capture_content
+                  ? 'Content capture is on (sample text attached; secret-looking args scrubbed).'
+                  : 'Content capture is off (structure only).'}{' '}
+                Open your backend and look for it{testResult.flushed ? ' (flushed now)' : ' (batched — may take a moment)'}.
+              </span>
+            ) : (
+              <span style={{ fontSize: 12 }}>{testResult.reason}</span>
+            )
+          }
+        />
+      )}
     </div>
   )
 }

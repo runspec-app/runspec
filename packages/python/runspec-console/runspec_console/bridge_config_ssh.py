@@ -235,6 +235,43 @@ class ConfigSshMixin:
         if old.get("chat") != new.get("chat") or self._ssh_pool is not pool_before:
             self.restart_chat()
 
+    def send_test_trace(self) -> dict[str, Any]:
+        """Emit one representative agent-turn trace (``turn → LLM call → tool
+        call``) to the configured OTLP backend and flush it immediately, so the
+        operator can verify the telemetry pipeline end-to-end — connectivity *and*
+        span shape/rendering — without running a real agent turn.
+
+        Reconfigures the tracer from the currently-saved ``[telemetry]`` config
+        first, so a just-saved endpoint / enable / capture-content is picked up
+        without a restart. Returns a UI-friendly result dict: ``ok`` plus either a
+        ``reason`` (when it can't run) or ``trace_id`` / ``spans`` / ``endpoint`` /
+        ``capture_content`` / ``flushed`` (on success)."""
+        from . import observability
+
+        ok, reason = observability.available()
+        if not ok:
+            return {"ok": False, "reason": reason}
+        cfg = config_mod.read_telemetry()
+        if not cfg.get("enabled"):
+            return {
+                "ok": False,
+                "reason": "Enable tracing and Save first, then send a test trace.",
+            }
+        # Re-point the live exporter at the latest saved config (endpoint /
+        # headers / capture_content) without a restart — this is what reconfigure
+        # exists for. A failure here means the endpoint/config is bad.
+        if not observability.reconfigure(cfg):
+            return {
+                "ok": False,
+                "reason": (
+                    "Tracing failed to initialise — check the endpoint and the "
+                    "console log."
+                ),
+            }
+        result = observability.send_test_trace()
+        result.setdefault("endpoint", cfg.get("endpoint") or "<OTEL_* env / default>")
+        return result
+
     def _commit_ssh_fields(self, **fields: Any) -> None:
         """Atomically merge ``fields`` into the ``[ssh]`` section under the config
         lock (read-modify-write can't race another Settings save), then re-apply.

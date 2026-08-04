@@ -416,3 +416,76 @@ def test_capture_content_attaches_and_scrubs(exporter, monkeypatch):
     assert "web1" in args  # non-secret kept
     assert "sekret" not in args  # secret scrubbed
     assert "«redacted»" in args
+
+
+# ── 5. send_test_trace() — the operator's "does telemetry work" probe ─────────
+
+
+def test_send_test_trace_disabled_returns_reason():
+    """With tracing off it can't emit — reports ok=False with a reason, no raise."""
+    obs.reset_for_test()
+    r = obs.send_test_trace()
+    assert r["ok"] is False
+    assert "not active" in r["reason"]
+
+
+@otel_only
+def test_send_test_trace_emits_connected_tree(exporter):
+    """send_test_trace() emits a real turn → llm → tool tree in one trace with the
+    same attributes a live turn produces, and reports ok + trace_id + flushed.
+    Content off ⇒ no prompt/completion/argument text."""
+    obs.init_tracing_for_test(exporter, capture_content=False)
+    result = obs.send_test_trace()
+    assert result["ok"] is True
+    assert result["flushed"] is True
+    assert result["capture_content"] is False
+    assert len(result["trace_id"]) == 32
+
+    finished = exporter.get_finished_spans()
+    spans = {sp.name: sp for sp in finished}
+    assert "runspec.agent.turn" in spans
+    assert "chat runspec-test-model" in spans
+    assert "execute_tool run_runnable" in spans
+
+    turn = spans["runspec.agent.turn"]
+    llm = spans["chat runspec-test-model"]
+    tool = spans["execute_tool run_runnable"]
+
+    # One connected trace, and the reported trace_id matches the root span.
+    assert len({sp.context.trace_id for sp in finished}) == 1
+    assert format(turn.context.trace_id, "032x") == result["trace_id"]
+
+    # Parenting under the turn.
+    assert llm.parent.span_id == turn.context.span_id
+    assert tool.parent.span_id == turn.context.span_id
+
+    # The attributes a live turn produces.
+    assert turn.attributes["runspec.turn.kind"] == "test"
+    assert llm.attributes["gen_ai.request.model"] == "runspec-test-model"
+    assert tool.attributes["gen_ai.tool.name"] == "run_runnable"
+    assert tool.attributes["runspec.tool.autonomy_decision"] == "run"
+    assert tool.attributes["runspec.tool.operator_decision"] == "approved"
+
+    # Content off ⇒ no text attributes.
+    assert "gen_ai.prompt" not in llm.attributes
+    assert "gen_ai.completion" not in llm.attributes
+    assert "gen_ai.tool.call.arguments" not in tool.attributes
+
+
+@otel_only
+def test_send_test_trace_capture_content_scrubs(exporter):
+    """With capture_content on the test trace carries sample prompt/completion and
+    scrubbed tool-argument text — so content rendering (and scrubbing) is verified."""
+    obs.init_tracing_for_test(exporter, capture_content=True)
+    result = obs.send_test_trace()
+    assert result["ok"] is True and result["capture_content"] is True
+
+    spans = {sp.name: sp for sp in exporter.get_finished_spans()}
+    llm = spans["chat runspec-test-model"]
+    tool = spans["execute_tool run_runnable"]
+    assert "gen_ai.prompt" in llm.attributes
+    assert "gen_ai.completion" in llm.attributes
+    args = tool.attributes["gen_ai.tool.call.arguments"]
+    assert "world" in args  # non-secret kept
+    assert "hunter2" not in args  # secret scrubbed
+    assert "«redacted»" in args

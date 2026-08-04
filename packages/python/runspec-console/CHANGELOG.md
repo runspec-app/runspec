@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.231.0] — 2026-08-04
+
+### Added
+- **Settings → Telemetry: a "Send test trace" button.** Verify the telemetry
+  pipeline end-to-end — connectivity *and* span shape/rendering — without waiting
+  for a real agent turn. It saves the current settings, re-points the tracer at the
+  saved config, then emits one representative `turn → LLM call → tool call` trace
+  (the exact `gen_ai.*` / `runspec.*` attributes a live turn produces) and
+  **flushes it immediately** so it lands at the backend right away. With content
+  capture on it attaches sample prompt / completion / tool-argument text (including
+  a secret-looking arg, so scrubbing is visible). The result panel reports the
+  trace id, endpoint, span count, and content-capture state.
+
+### API
+- New bridge method `send_test_trace()` — reconfigures from the saved `[telemetry]`
+  config, emits + flushes one sample trace, and returns a UI-friendly result
+  (`ok` / `reason` / `trace_id` / `spans` / `endpoint` / `capture_content` /
+  `flushed`). Backed by new `observability.send_test_trace()` (emits the tree via
+  the real span helpers) and `observability.flush()` (force-flush without shutting
+  the provider down, unlike `shutdown()`).
+
+
 ## [0.230.0] — 2026-08-04
 
 ### Fixed

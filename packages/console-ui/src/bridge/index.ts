@@ -1013,6 +1013,20 @@ export interface BridgeApi {
   open_docs: () => Promise<void>
   list_providers: () => Promise<{ value: string; label: string }[]>
   save_config: (data: Record<string, unknown>) => Promise<void>
+  // Emit one representative agent-turn trace (turn → LLM call → tool call) to the
+  // configured OTLP backend and flush it immediately, so the operator can verify
+  // the [telemetry] pipeline without running a real turn. Reconfigures the tracer
+  // from the saved config first (picks up a just-saved endpoint). ok=false carries
+  // a reason; on success, trace_id / spans / endpoint / capture_content / flushed.
+  send_test_trace: () => Promise<{
+    ok: boolean
+    reason?: string
+    trace_id?: string
+    spans?: string[]
+    endpoint?: string
+    capture_content?: boolean
+    flushed?: boolean
+  }>
   // Fire a test toast + taskbar flash + confirm sound; reports which channels are
   // available (Settings → Sounds & Notifications). window_found surfaces the
   // flash/focus title-match prerequisite.

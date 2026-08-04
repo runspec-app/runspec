@@ -22,9 +22,10 @@ const INITIAL_CONFIG: Record<string, unknown> = {
   },
 }
 
-const { getConfig, saveConfig } = vi.hoisted(() => ({
+const { getConfig, saveConfig, sendTestTrace } = vi.hoisted(() => ({
   getConfig: vi.fn(),
   saveConfig: vi.fn(),
+  sendTestTrace: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -35,6 +36,7 @@ vi.mock('../bridge', () => ({
         if (typeof prop === 'symbol') return undefined
         if (prop === 'get_config') return getConfig
         if (prop === 'save_config') return saveConfig
+        if (prop === 'send_test_trace') return sendTestTrace
         return vi.fn().mockResolvedValue(undefined)
       },
     },
@@ -45,6 +47,14 @@ describe('TelemetryTab Save round-trip', () => {
   beforeEach(() => {
     getConfig.mockReset().mockResolvedValue(INITIAL_CONFIG)
     saveConfig.mockReset().mockResolvedValue(undefined)
+    sendTestTrace.mockReset().mockResolvedValue({
+      ok: true,
+      trace_id: '0123456789abcdef0123456789abcdef',
+      spans: ['runspec.agent.turn', 'chat runspec-test-model', 'execute_tool run_runnable'],
+      endpoint: 'https://langsmith.internal/otel/v1/traces',
+      capture_content: false,
+      flushed: true,
+    })
   })
 
   it('hydrates from config and round-trips the telemetry section on Save', async () => {
@@ -86,5 +96,20 @@ describe('TelemetryTab Save round-trip', () => {
     expect(saved.telemetry.enabled).toBe(true)
     expect(saved.telemetry.endpoint).toBe('http://127.0.0.1:6006/v1/traces')
     expect(saved.telemetry.capture_content).toBe(true)
+  })
+
+  it('"Send test trace" saves first, calls the bridge, and shows the result', async () => {
+    render(<TelemetryTab />)
+    await screen.findByDisplayValue('https://langsmith.internal/otel/v1/traces')
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /send test trace/i }))
+    })
+    // Saved before sending, then emitted the trace.
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(sendTestTrace).toHaveBeenCalledTimes(1))
+    // The success result surfaces the trace id.
+    await screen.findByText(/test trace sent/i)
+    await screen.findByText(/0123456789abcdef0123456789abcdef/)
   })
 })

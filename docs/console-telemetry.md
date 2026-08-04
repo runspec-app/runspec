@@ -96,6 +96,26 @@ Tool execution dispatches onto a worker thread, but the tool span is opened
 before that hand-off, so a runnable's execution stays **parented to its turn's
 trace** — the whole turn is one connected tree.
 
+## Verify it works — send a test trace
+
+You don't have to run a real agent turn to check the pipeline. In **Settings →
+Telemetry**, click **Send test trace**. It saves the current settings, then emits
+one representative `turn → LLM call → tool call` trace — the exact `gen_ai.*` /
+`runspec.*` span shape a live turn produces — and **flushes it immediately**, so it
+should appear in your backend within a second or two rather than waiting for the
+batch interval.
+
+- With **content capture off**, the test trace carries structure only (models,
+  token counts, tool names, decisions) — enough to confirm connectivity and the
+  span tree renders.
+- With **content capture on**, it also attaches sample prompt / completion /
+  tool-argument text — including a secret-looking argument, so you can see the
+  [scrubbing](#privacy) in action.
+
+The result panel reports the trace id, the endpoint it went to, and whether content
+was captured. If it fails, the message says why (tracing not enabled, the `otel`
+extra missing, or the endpoint didn't initialise) — fix that and try again.
+
 ## Choosing a backend
 
 Because the console emits **standard OTLP**, switching backends is only an
@@ -268,6 +288,8 @@ never needs OpenTelemetry as a hard dependency.
 - **No spans arrive.** Confirm the `otel` extra is installed (the Telemetry tab
   says so), `enabled = true`, and the `endpoint` is the **traces** path your
   backend expects (often `.../v1/traces`). Spans are batched and flushed on exit.
+  Click **Send test trace** (Settings → Telemetry) to emit + flush one immediately
+  and isolate whether the problem is connectivity or a quiet agent.
 - **TLS errors to an internal backend.** Set `ca_bundle` to your CA `.pem`. A
   short session's spans flush on shutdown; a crash may drop the last batch.
 - **A page behind SSH, not a backend.** Telemetry is only the tracing exporter;
