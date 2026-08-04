@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.230.0] — 2026-08-04
+
+### Fixed
+- **Multi-line runbook step text now serialises as readable TOML.** A step whose
+  `text` spans lines was written as one escaped line (`text = "a\nb"`), fine in the
+  modal but unreadable/undiffable in the file and an external editor. `memory._save`
+  (and the wiki `docsgen._runbook_to_toml`) now pass `multiline_strings=True`, so
+  multi-line strings land as triple-quoted `"""…"""` literals. Single-line strings
+  are unaffected and it round-trips identically.
+- **The Runbooks editor no longer clobbers runbooks changed outside it.** It saved by
+  **overwriting the whole collection from a stale in-memory snapshot**, so editing one
+  runbook silently reverted any runbook changed on disk (or via Config Sync) since the
+  console loaded — and dropped every runbook's `discoverable` audience. Save and delete
+  now touch a **single entry** via backend read-modify-write (`save_runbook_entry` /
+  `delete_runbook`, on `memory.save_runbook`/`memory.delete_runbook`), leaving the rest
+  of the file exactly as it is and preserving `discoverable`.
+- **A `choice` parameter can now be given a default (so it can be optional).** The
+  arg-row editor showed *options* **or** *default* — for `choice` it rendered only the
+  options field, so no default could be set, and a default-less arg is inferred
+  `required`. Choice rows now show both the options and a default picker (drawn from
+  those options).
+- **A parameter `description` can now be edited in the console.** It round-tripped in
+  the data and file but had **no input widget** in the arg row; the row now has a
+  description field.
+
+### API
+- New bridge methods `save_runbook_entry(entry)` and `delete_runbook(id)` (single-entry
+  read-modify-write) — the Settings → Runbooks editor's save/delete path.
+
+
 ## [0.229.0] — 2026-08-03
 
 ### Removed

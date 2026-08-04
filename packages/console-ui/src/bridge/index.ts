@@ -1185,6 +1185,12 @@ export interface BridgeApi {
   // Persist the whole collection from the Settings editor (validates each args
   // table; rejects with {ok:false,error} if one is malformed).
   save_runbooks: (runbooks: Runbook[]) => Promise<{ ok: boolean; count?: number; error?: string }>
+  // Upsert a single runbook via backend read-modify-write — the editor's save path.
+  // Leaves other runbooks (incl. ones changed on disk since load) untouched and
+  // preserves each one's `discoverable` audience. Rejects with {ok:false,error}.
+  save_runbook_entry: (entry: Runbook) => Promise<{ ok: boolean; id?: string; error?: string }>
+  // Delete a single runbook by id via backend read-modify-write (others untouched).
+  delete_runbook: (runbook_id: string) => Promise<{ ok: boolean; removed?: boolean; error?: string }>
   // Render a runbook's body with the operator's form values (validated against its
   // args) + optional extra instructions, then start a chat turn tagged with the
   // runbook. Returns {chat_id, message} (the rendered text the UI shows) or {error}.

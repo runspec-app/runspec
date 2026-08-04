@@ -59,7 +59,8 @@ host = { type = "choice", options = ["web-01", "web-02"], description = "Node to
 Steps are an ordered `[[runbook.step]]` array — each step its own block with the
 prose the agent follows (`text`) and an optional short `title`. This keeps the
 file readable and diffable in your Config-Sync repo instead of one long quoted
-string. At run time the console renders the steps back to numbered prose
+string; multi-line step text is written as a triple-quoted `"""…"""` block, so it
+stays readable in an external editor too. At run time the console renders the steps back to numbered prose
 (`1. …`, `2. Restart unhealthy nodes: …`) and hands it to the agent, so a step
 is just an instruction: `web-01__http-check` is the `host__runnable` tool token
 it calls (a step can also name a [host group](console-hosts.md#groups) to fan
@@ -73,6 +74,13 @@ them), conditional logic lives in the prose — write *"if the node is healthy,
 skip the restart"* right in a step. A step carries only `text` and `title`; there
 are deliberately no `condition`/`goto`/step-reference fields (that would be a
 [workflow engine](design/console-triggers.md), which is out of scope).
+
+A parameter with a `default` is **optional**; one without a default is treated as
+**required** (the operator must supply it). To make a `choice` optional, give it a
+default in the editor (or a `default = …` in the file) — the **Settings → Runbooks**
+arg editor shows a default picker for choice params alongside their options, plus a
+description field. Editing a runbook there saves that one entry only, so runbooks you
+changed in the file directly (or that arrived via Config Sync) are left intact.
 
 !!! note "Legacy `steps` string"
     Older runbooks used a single `steps = """…"""` string instead of the

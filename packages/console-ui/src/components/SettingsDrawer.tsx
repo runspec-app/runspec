@@ -3365,17 +3365,17 @@ function RunbooksTab() {
   }
   const cancel = () => { setEditingKey(null); form.resetFields() }
 
-  // Persist the whole collection (mirrors save_jump_hosts). Existing runbooks are sent
-  // by their stored argsRaw table; the edited one is rebuilt from the form rows.
-  const persist = async (rows: Array<Record<string, unknown>>) => {
-    const res = await bridge.save_runbooks(rows as unknown as Runbook[])
-    if (!res.ok) { message.error(res.error || 'Could not save runbook'); return false }
+  // Refresh the `$` menu / run modal elsewhere in the app after a change.
+  const afterChange = async () => {
     await load()
-    // Refresh the `$` menu / run modal elsewhere in the app.
     window.dispatchEvent(new CustomEvent('runspec:runbooks_changed'))
-    return true
   }
 
+  // Save just the edited runbook (single-entry read-modify-write on the backend), NOT
+  // the whole collection. The old bulk save rebuilt every other runbook from a stale
+  // in-memory snapshot, so it clobbered runbooks changed on disk / via Config Sync since
+  // load, and dropped their `discoverable` audience. Saving one entry leaves the rest
+  // exactly as they are on disk.
   const save = async () => {
     const values = await form.validateFields()
     const id = (values.id ?? '').trim()
@@ -3389,20 +3389,16 @@ function RunbooksTab() {
       tags: values.tags ?? [],
       argsRaw: rowsToArgsRaw(values.args),
     }
-    const others = runbooks
-      .filter(s => s.id !== (editingKey || id))
-      .map(s => ({
-        id: s.id, title: s.title, symptom: s.symptom, steps: s.steps,
-        tags: s.tags, argsRaw: s.argsRaw ?? {},
-      }))
-    if (await persist([...others, edited])) { setEditingKey(null); form.resetFields() }
+    const res = await bridge.save_runbook_entry(edited as unknown as Runbook)
+    if (!res.ok) { message.error(res.error || 'Could not save runbook'); return }
+    await afterChange()
+    setEditingKey(null); form.resetFields()
   }
 
   const remove = async (id: string) => {
-    const rows = runbooks
-      .filter(s => s.id !== id)
-      .map(s => ({ id: s.id, title: s.title, symptom: s.symptom, steps: s.steps, tags: s.tags, argsRaw: s.argsRaw ?? {} }))
-    await persist(rows)
+    const res = await bridge.delete_runbook(id)
+    if (!res.ok) { message.error(res.error || 'Could not delete runbook'); return }
+    await afterChange()
   }
 
   return (
@@ -3503,29 +3499,50 @@ function RunbooksTab() {
             {(fields, { add, remove }) => (
               <>
                 {fields.map(({ key, name, ...rest }) => (
-                  <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginBottom: 6 }}>
-                    <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0, width: 130 }}
-                      rules={[{ required: true, message: 'name' }]}>
-                      <Input placeholder="name" style={{ fontFamily: 'monospace' }} />
+                  <div key={key} style={{ border: '1px solid #2a2a2a', borderRadius: 6, padding: '6px 8px', marginBottom: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                      <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0, width: 130 }}
+                        rules={[{ required: true, message: 'name' }]}>
+                        <Input placeholder="name" style={{ fontFamily: 'monospace' }} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'type']} style={{ marginBottom: 0, width: 96 }} initialValue="str">
+                        <Select options={RUNBOOK_ARG_TYPES.map(t => ({ label: t, value: t }))} />
+                      </Form.Item>
+                      {/* choice shows options AND a default (drawn from those options); other
+                          types show a plain default input. A default makes the param optional
+                          (no default → inferred required). Re-render on type OR options change. */}
+                      <Form.Item noStyle shouldUpdate={(p, c) =>
+                        p.args?.[name]?.type !== c.args?.[name]?.type
+                        || p.args?.[name]?.options !== c.args?.[name]?.options}>
+                        {() => {
+                          if (form.getFieldValue(['args', name, 'type']) !== 'choice') {
+                            return (
+                              <Form.Item {...rest} name={[name, 'default']} style={{ marginBottom: 0, width: 150 }}>
+                                <Input placeholder="default (optional)" />
+                              </Form.Item>
+                            )
+                          }
+                          const opts: string[] = form.getFieldValue(['args', name, 'options']) ?? []
+                          return (
+                            <>
+                              <Form.Item {...rest} name={[name, 'options']} style={{ marginBottom: 0, width: 140 }}>
+                                <Select mode="tags" placeholder="options" tokenSeparators={[',']} />
+                              </Form.Item>
+                              <Form.Item {...rest} name={[name, 'default']} style={{ marginBottom: 0, width: 130 }}>
+                                <Select allowClear placeholder="default" options={opts.map(o => ({ label: o, value: o }))} />
+                              </Form.Item>
+                            </>
+                          )
+                        }}
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'required']} valuePropName="checked" style={{ marginBottom: 0 }}>
+                        <Tooltip title="Required (ignored when a default is set)"><Switch size="small" /></Tooltip>
+                      </Form.Item>
+                      <MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+                    </div>
+                    <Form.Item {...rest} name={[name, 'description']} style={{ marginBottom: 0, marginTop: 6 }}>
+                      <Input size="small" placeholder="description (optional) — shown in the run form" />
                     </Form.Item>
-                    <Form.Item {...rest} name={[name, 'type']} style={{ marginBottom: 0, width: 96 }} initialValue="str">
-                      <Select options={RUNBOOK_ARG_TYPES.map(t => ({ label: t, value: t }))} />
-                    </Form.Item>
-                    <Form.Item noStyle shouldUpdate={(p, c) => p.args?.[name]?.type !== c.args?.[name]?.type}>
-                      {() => form.getFieldValue(['args', name, 'type']) === 'choice' ? (
-                        <Form.Item {...rest} name={[name, 'options']} style={{ marginBottom: 0, width: 150 }}>
-                          <Select mode="tags" placeholder="options" tokenSeparators={[',']} />
-                        </Form.Item>
-                      ) : (
-                        <Form.Item {...rest} name={[name, 'default']} style={{ marginBottom: 0, width: 150 }}>
-                          <Input placeholder="default" />
-                        </Form.Item>
-                      )}
-                    </Form.Item>
-                    <Form.Item {...rest} name={[name, 'required']} valuePropName="checked" style={{ marginBottom: 0 }}>
-                      <Tooltip title="Required"><Switch size="small" /></Tooltip>
-                    </Form.Item>
-                    <MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
                   </div>
                 ))}
                 <Button type="dashed" size="small" onClick={() => add({ type: 'str' })} icon={<PlusOutlined />}>

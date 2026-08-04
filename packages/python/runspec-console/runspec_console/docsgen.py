@@ -405,7 +405,7 @@ def _runbook_to_toml(runbook: dict[str, Any]) -> str:
         entry["steps"] = runbook.get("steps", "")
     if runbook.get("args"):
         entry["args"] = dict(runbook["args"])
-    return tomli_w.dumps({"runbook": [entry]})
+    return tomli_w.dumps({"runbook": [entry]}, multiline_strings=True)
 
 
 def _params_table(args_table: dict[str, Any] | None) -> list[str]:

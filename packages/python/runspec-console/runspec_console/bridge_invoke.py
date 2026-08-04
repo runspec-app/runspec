@@ -566,6 +566,62 @@ class InvokeMixin:
         memory.save_runbooks(normalised)
         return {"ok": True, "count": len(normalised)}
 
+    def save_runbook_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """Upsert a **single** runbook from the Settings editor via read-modify-write
+        (``memory.save_runbook`` re-reads the file, replaces this id, keeps the rest),
+        instead of the whole-collection bulk write. This is the data-loss fix: the old
+        bulk save rebuilt every *other* runbook from a stale in-memory snapshot, so an
+        edit here clobbered any runbook changed on disk (or via Config Sync) since load —
+        and silently dropped ``discoverable`` (which the editor doesn't carry). Here only
+        this entry is touched, and ``discoverable`` is preserved from the stored entry
+        unless the caller explicitly provides it (the editor never does)."""
+        from . import memory, runbookargs
+
+        sid = str(entry.get("id") or "").strip() or memory._slug(
+            str(entry.get("title") or "")
+        )
+        if not sid:
+            return {"ok": False, "error": "A runbook needs an id or a title."}
+        raw = entry.get("argsRaw")
+        if not isinstance(raw, dict):
+            raw = entry.get("args") if isinstance(entry.get("args"), dict) else None
+        # Accept the model's JSON type spellings (string→str, …) the same way the agent
+        # save path does, then validate the declaration shape.
+        raw = runbookargs.normalize_arg_types(raw) if raw else raw
+        if raw:
+            errors = runbookargs.validate_runbook_arg_table(raw)
+            if errors:
+                return {"ok": False, "error": f"Runbook '{sid}': " + "; ".join(errors)}
+        steps = entry.get("steps")
+        step_errors = runbookargs.validate_runbook_steps(steps)
+        if step_errors:
+            return {"ok": False, "error": f"Runbook '{sid}': " + "; ".join(step_errors)}
+        # Carry forward publish audience unless explicitly supplied (editor omits it).
+        if "discoverable" in entry:
+            discoverable = entry.get("discoverable") or []
+        else:
+            existing = memory.load_runbook(sid) or {}
+            discoverable = existing.get("discoverable") or []
+        memory.save_runbook(
+            sid,
+            title=str(entry.get("title") or "").strip(),
+            symptom=str(entry.get("symptom") or "").strip(),
+            steps=steps if isinstance(steps, (list, tuple)) else str(steps or ""),
+            tags=[str(t).strip() for t in (entry.get("tags") or []) if str(t).strip()],
+            args=raw or None,
+            discoverable=discoverable,
+        )
+        return {"ok": True, "id": sid}
+
+    def delete_runbook(self, runbook_id: str) -> dict[str, Any]:
+        """Delete a single runbook by id via read-modify-write (the other runbooks,
+        including any edited on disk since load, are left untouched). Pairs with
+        ``save_runbook_entry`` so the editor never bulk-overwrites the file."""
+        from . import memory
+
+        removed = memory.delete_runbook(str(runbook_id or ""))
+        return {"ok": True, "removed": removed}
+
     def run_runbook(
         self,
         runbook_id: str,

@@ -1180,6 +1180,8 @@ export const mockApi: BridgeApi = {
   rename_conversation: async (_id: string, _title: string) => {},
   get_runbooks: async () => [],
   save_runbooks: async () => ({ ok: true, count: 0 }),
+  save_runbook_entry: async () => ({ ok: true, id: '' }),
+  delete_runbook: async () => ({ ok: true, removed: true }),
   run_runbook: async (runbookId, _values, _extra) => ({ chat_id: `mock-runbook-${runbookId}`, message: `$${runbookId}` }),
   get_saved_runs: async () => [
     {

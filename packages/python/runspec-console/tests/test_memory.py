@@ -102,6 +102,83 @@ def test_runbook_replace_by_id(mem):
     assert len(runbooks) == 1 and runbooks[0]["title"] == "v2"
 
 
+def test_save_runbook_entry_preserves_other_entries_and_discoverable(mem):
+    """The editor's single-entry save must not disturb other runbooks — including ones
+    changed on disk since the console loaded — nor drop their publish audience. This is
+    the data-loss fix: the old whole-collection bulk save rebuilt every other runbook
+    from a stale snapshot and omitted `discoverable`."""
+    from runspec_console.bridge_invoke import InvokeMixin
+
+    class _Stub(InvokeMixin):
+        pass
+
+    bridge = _Stub()
+    mem.save_runbook("a", title="A", steps=[{"text": "aa"}], discoverable=["operator"])
+    mem.save_runbook("b", title="B", steps=[{"text": "bb"}])
+    # 'a' is edited on disk in a way the console never saw (external editor / Config Sync).
+    rows = mem.load_runbooks()
+    for r in rows:
+        if r["id"] == "a":
+            r["title"] = "A edited externally"
+    mem.save_runbooks(rows)
+
+    # The editor saves only 'b' (its payload carries no 'discoverable').
+    res = bridge.save_runbook_entry(
+        {"id": "b", "title": "B2", "steps": [{"text": "bb2"}]}
+    )
+    assert res["ok"] and res["id"] == "b"
+    a = mem.load_runbook("a")
+    assert a["title"] == "A edited externally"  # external edit survives
+    assert a["discoverable"] == ["operator"]  # audience not dropped
+    assert mem.load_runbook("b")["title"] == "B2"
+
+    # delete_runbook removes only its target.
+    assert bridge.delete_runbook("a") == {"ok": True, "removed": True}
+    assert [r["id"] for r in mem.load_runbooks()] == ["b"]
+
+
+def test_save_runbook_entry_normalises_type_aliases(mem):
+    """A JSON type spelling from an editor round-trip is normalised before validation."""
+    from runspec_console.bridge_invoke import InvokeMixin
+
+    class _Stub(InvokeMixin):
+        pass
+
+    res = _Stub().save_runbook_entry(
+        {
+            "id": "r",
+            "title": "R",
+            "steps": [{"text": "go {{n}}"}],
+            "argsRaw": {"n": {"type": "integer"}},
+        }
+    )
+    assert res["ok"]
+    assert mem.load_runbook("r")["args"]["n"]["type"] == "int"
+
+
+def test_multiline_step_text_serialises_as_triple_quoted(mem):
+    """A step `text` with newlines must land as a readable triple-quoted TOML literal,
+    not one escaped line — so runbooks are editable in an external editor / git."""
+    mem.save_runbook(
+        "ml", title="ML", steps=[{"text": "line one\nline two\nline three"}]
+    )
+    raw = mem.runbooks_path().read_text(encoding="utf-8")
+    assert '"""' in raw
+    assert "\\n" not in raw  # not the escaped single-line form
+    # And it round-trips back to the same text on read.
+    assert mem.load_runbook("ml")["step"][0]["text"] == "line one\nline two\nline three"
+
+
+def test_delete_runbook_removes_only_that_entry(mem):
+    mem.save_runbook("a", title="A", steps="x")
+    mem.save_runbook("b", title="B", steps="y")
+    assert mem.delete_runbook("a") is True
+    assert [r["id"] for r in mem.load_runbooks()] == ["b"]
+    # Deleting a missing id is a no-op that reports False.
+    assert mem.delete_runbook("nope") is False
+    assert mem.delete_runbook("") is False
+
+
 def test_runbook_args_roundtrip(mem):
     """A runbook's [runbook.args] table survives save → load verbatim."""
     args = {

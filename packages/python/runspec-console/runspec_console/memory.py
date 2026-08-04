@@ -66,7 +66,12 @@ def _load(path: Path, key: str) -> list[dict[str, Any]]:
 
 
 def _save(path: Path, key: str, rows: list[dict[str, Any]]) -> None:
-    text = tomli_w.dumps({key: rows})
+    # multiline_strings=True renders any newline-containing string as a triple-quoted
+    # """…""" literal instead of one escaped line — so a multi-line runbook step `text`
+    # (or a memory fact / legacy `steps` body) stays readable and diffable in the file
+    # and in an external editor. Single-line strings are unaffected and it round-trips
+    # identically on read.
+    text = tomli_w.dumps({key: rows}, multiline_strings=True)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
@@ -255,6 +260,23 @@ def list_runbooks() -> list[dict[str, Any]]:
 def load_runbook(runbook_id: str) -> dict[str, Any] | None:
     """One full runbook (title/symptom/steps/tags/args) by id, or None."""
     return next((s for s in load_runbooks() if s.get("id") == runbook_id), None)
+
+
+def delete_runbook(runbook_id: str) -> bool:
+    """Remove one runbook by id via read-modify-write (the whole file is re-read, the
+    matching entry dropped, and the rest written back untouched) — so deleting one
+    runbook never disturbs the others, including any edited on disk since load. Returns
+    True if an entry was removed."""
+    rid = str(runbook_id or "").strip()
+    if not rid:
+        return False
+    with _LOCK:
+        rows = _load(runbooks_path(), "runbook")
+        kept = [s for s in rows if s.get("id") != rid]
+        if len(kept) == len(rows):
+            return False
+        _save(runbooks_path(), "runbook", kept)
+    return True
 
 
 def save_runbook(
