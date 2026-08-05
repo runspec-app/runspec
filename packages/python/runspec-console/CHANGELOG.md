@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.231.1] — 2026-08-05
+
+### Fixed
+- **Linux: blank window on startup — corrupt-looking bundled icon.** The
+  generated app icon was always a PNG-compressed `.ico`. On Windows WebView2
+  loads it fine, but pywebview's GTK backend hands it to
+  `Gtk.Window.set_icon_from_file()`, whose gdk-pixbuf ICO loader rejects it with
+  *"Compressed icons are not supported"* — and that exception aborts window
+  creation, leaving a 10×10 stub window that reads as a silent black screen.
+  `_build_icon()` is now platform-aware: Windows still gets a real `.ico`, every
+  other backend gets a bare `.png` (which gdk-pixbuf and Qt both load cleanly).
+- **Linux: blank window on startup — `localStorage` is `null` under WebKitGTK.**
+  pywebview defaults `private_mode=True`, which on the GTK/WebKit backend sets
+  `enable_html5_local_storage = False`, so `window.localStorage` is `null` and the
+  frontend threw `TypeError: null is not an object (evaluating
+  'localStorage.getItem')` before React mounted — another silent black screen.
+  The window is now created with `private_mode=False` (which also matches intent:
+  the console persists UI prefs across restarts). As defense-in-depth, an inline
+  guard in `index.html` installs a minimal in-memory `localStorage` shim before
+  the bundle loads if the backend still exposes storage as `null`/unusable, so a
+  bad backend degrades to "prefs don't persist this session" instead of failing
+  to load.
+
+
 ## [0.231.0] — 2026-08-04
 
 ### Added

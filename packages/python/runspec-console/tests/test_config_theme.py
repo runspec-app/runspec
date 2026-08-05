@@ -10,6 +10,8 @@ accent_color (cached per-colour).
 
 from __future__ import annotations
 
+import sys
+
 import runspec_console.config as cfg
 
 
@@ -186,15 +188,51 @@ def test_icon_colour_follows_accent(monkeypatch, tmp_path):
 def test_build_icon_caches_per_colour(monkeypatch, tmp_path):
     from runspec_console import app as app_mod
 
+    # Windows gets an .ico; every other backend gets a .png (gdk-pixbuf's ICO
+    # loader rejects a PNG-compressed .ico and aborts GTK window creation).
+    ext = "ico" if sys.platform == "win32" else "png"
+
     _cfg_path(monkeypatch, tmp_path)
     cfg.write_config({"console": {"theme": {"accent_color": "#b3001b"}}})
     p = app_mod._build_icon()
-    assert p is not None and p.name == "runspec_console-b3001b-rgba.ico"
+    assert p is not None and p.name == f"runspec_console-b3001b-rgba.{ext}"
     assert p.exists()
     # a different accent → a different cache file
     cfg.write_config({"console": {"theme": {"accent_color": "#0958d9"}}})
     p2 = app_mod._build_icon()
-    assert p2 is not None and p2.name == "runspec_console-0958d9-rgba.ico"
+    assert p2 is not None and p2.name == f"runspec_console-0958d9-rgba.{ext}"
+
+
+def test_build_icon_non_windows_emits_png(monkeypatch, tmp_path):
+    # On a non-Windows backend the generated icon is a bare .png (no ICO
+    # container) so pywebview's GTK/Qt icon loader accepts it — a PNG-compressed
+    # .ico throws "Compressed icons are not supported" in gdk-pixbuf and aborts
+    # window creation, leaving a blank stub window.
+    from runspec_console import app as app_mod
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    _cfg_path(monkeypatch, tmp_path)
+    cfg.write_config({"console": {"theme": {"accent_color": "#b3001b"}}})
+    p = app_mod._build_icon()
+    assert p is not None and p.suffix == ".png"
+    # A real PNG file starts with the PNG signature (no 6-byte ICO header first).
+    assert p.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_build_icon_windows_emits_ico(monkeypatch, tmp_path):
+    # On Windows the generated icon stays a real .ico wrapping the RGBA PNG.
+    from runspec_console import app as app_mod
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    _cfg_path(monkeypatch, tmp_path)
+    cfg.write_config({"console": {"theme": {"accent_color": "#b3001b"}}})
+    p = app_mod._build_icon()
+    assert p is not None and p.suffix == ".ico"
+    data = p.read_bytes()
+    # ICO header: reserved=0, type=1 (icon), count=1.
+    assert data[:6] == b"\x00\x00\x01\x00\x01\x00"
+    # The RGBA PNG is embedded inside the ICO container.
+    assert b"\x89PNG\r\n\x1a\n" in data
 
 
 def test_build_icon_emits_opaque_rgba(monkeypatch, tmp_path):
@@ -278,4 +316,5 @@ def test_build_icon_pkg_ref_missing_falls_back_to_square(monkeypatch, tmp_path):
         }
     )
     p = app_mod._build_icon()
-    assert p is not None and p.name == "runspec_console-b3001b-rgba.ico"
+    ext = "ico" if sys.platform == "win32" else "png"
+    assert p is not None and p.name == f"runspec_console-b3001b-rgba.{ext}"

@@ -160,11 +160,20 @@ def _build_icon() -> Path | None:
 
     r, g, b = _icon_rgb()
     w = 32
+    # Windows gets a real `.ico` (WebView2 taskbar icon); every other backend gets
+    # a plain `.png`. pywebview's GTK backend hands the icon straight to
+    # `Gtk.Window.set_icon_from_file()`, whose gdk-pixbuf ICO loader rejects a
+    # PNG-compressed `.ico` ("Compressed icons are not supported") — and that
+    # exception aborts window creation, leaving a blank 10×10 stub window with no
+    # visible error. A `.png` loads cleanly on GTK and Qt alike. (Qt/WebKit are
+    # equally happy with a PNG, so anything non-Windows takes this path.)
+    is_windows = sys.platform == "win32"
+    ext = "ico" if is_windows else "png"
     # `-rgba` in the name forces a regenerate over any stale pre-0.155.1 cache,
     # which declared 32bpp but embedded a 24-bit RGB PNG (no alpha) — Windows
     # filled the missing alpha with garbage, rendering the square with a dark-grey
     # artifact. The fix below emits a real opaque RGBA PNG.
-    cache = config_path().parent / f"runspec_console-{r:02x}{g:02x}{b:02x}-rgba.ico"
+    cache = config_path().parent / f"runspec_console-{r:02x}{g:02x}{b:02x}-rgba.{ext}"
     if cache.exists():
         return cache
     try:
@@ -188,12 +197,16 @@ def _build_icon() -> Path | None:
             + _chunk(b"IDAT", zlib.compress(scanlines))
             + _chunk(b"IEND", b"")
         )
-        ico = (
-            struct.pack("<HHH", 0, 1, 1)
-            + struct.pack("<BBBBHHII", w, w, 0, 0, 1, 32, len(png), 22)
-            + png
-        )
-        cache.write_bytes(ico)
+        if is_windows:
+            payload = (
+                struct.pack("<HHH", 0, 1, 1)
+                + struct.pack("<BBBBHHII", w, w, 0, 0, 1, 32, len(png), 22)
+                + png
+            )
+        else:
+            # A bare PNG — gdk-pixbuf / Qt load it directly, no ICO container.
+            payload = png
+        cache.write_bytes(payload)
         return cache
     except Exception:
         return None
@@ -398,6 +411,14 @@ def main() -> None:
         text_select=True,
         # Ctrl+scroll / pinch to zoom the whole UI (readability / accessibility).
         zoomable=True,
+        # Keep a persistent, working web storage. pywebview defaults
+        # private_mode=True, which on the GTK/WebKit backend flips
+        # enable_html5_local_storage off — so window.localStorage is *null* and
+        # the frontend crashes on its first getItem() before React mounts (a
+        # silent black screen on Linux). It also matches intent: the console
+        # persists UI prefs (collapsed groups, per-runnable credential picks, …)
+        # in localStorage across restarts.
+        private_mode=False,
     )
     bridge.set_window(window)
 

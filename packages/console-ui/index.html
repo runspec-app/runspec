@@ -4,6 +4,65 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>runspec console</title>
+    <script>
+      // Defense-in-depth for web storage. Some webview backends expose
+      // window.localStorage as null — notably pywebview's WebKitGTK backend in
+      // private mode (enable_html5_local_storage=False) — and an unguarded
+      // localStorage.getItem() then throws before React mounts, leaving a silent
+      // black screen. The app's primary fix is private_mode=False (app.py); this
+      // inline guard runs *before* the bundle and installs a minimal in-memory
+      // shim if storage is missing or unusable, so a bad backend degrades to
+      // "prefs don't persist this session" instead of failing to load at all.
+      (function () {
+        var usable = false
+        try {
+          var ls = window.localStorage
+          if (ls) {
+            ls.setItem('__runspec_probe__', '1')
+            ls.removeItem('__runspec_probe__')
+            usable = true
+          }
+        } catch (e) {
+          usable = false
+        }
+        if (usable) return
+        var mem = Object.create(null)
+        var shim = {
+          getItem: function (k) {
+            return Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null
+          },
+          setItem: function (k, v) {
+            mem[k] = String(v)
+          },
+          removeItem: function (k) {
+            delete mem[k]
+          },
+          clear: function () {
+            mem = Object.create(null)
+          },
+          key: function (i) {
+            return Object.keys(mem)[i] != null ? Object.keys(mem)[i] : null
+          },
+        }
+        Object.defineProperty(shim, 'length', {
+          get: function () {
+            return Object.keys(mem).length
+          },
+        })
+        try {
+          Object.defineProperty(window, 'localStorage', {
+            value: shim,
+            configurable: true,
+          })
+        } catch (e2) {
+          try {
+            window.localStorage = shim
+          } catch (e3) {
+            /* nothing more we can do */
+          }
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
