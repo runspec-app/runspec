@@ -301,6 +301,37 @@ def _enable_native_context_menu(webview_module: Any, *, open_devtools: bool) -> 
     return True
 
 
+def _window_kwargs() -> dict[str, object]:
+    """Static keyword args for the main webview window.
+
+    Extracted from :func:`main` so a unit test can pin the invariants that are
+    easy to regress and expensive to catch by eye — chiefly
+    ``private_mode=False``. pywebview defaults ``private_mode=True``, which on the
+    GTK/WebKit backend flips ``enable_html5_local_storage`` off, so
+    ``window.localStorage`` is *null* and the frontend crashes on its first
+    ``getItem()`` before React mounts (a silent black screen on Linux). Keeping it
+    false also matches intent: the console persists UI prefs (collapsed groups,
+    per-runnable credential picks, …) in localStorage across restarts.
+    """
+    return {
+        "width": 1440,
+        "height": 900,
+        "min_size": (1024, 600),
+        # Paint the window the dark-theme content colour (App.tsx contentBg) so
+        # there's no white flash before the SPA mounts.
+        "background_color": "#111111",
+        # Native "are you sure?" guard so an accidental close doesn't drop an
+        # in-progress agent run or chat.
+        "confirm_close": True,
+        # Let users select & copy arbitrary page text (not just inputs/outputs).
+        "text_select": True,
+        # Ctrl+scroll / pinch to zoom the whole UI (readability / accessibility).
+        "zoomable": True,
+        # See the docstring — must stay False so localStorage works on WebKitGTK.
+        "private_mode": False,
+    }
+
+
 def _on_started(title: str) -> None:
     """webview ``started`` hook: native title-bar styling."""
     _apply_dwm_title_bar(title)
@@ -398,27 +429,7 @@ def main() -> None:
         window_title,
         url,
         js_api=bridge,
-        width=1440,
-        height=900,
-        min_size=(1024, 600),
-        # Paint the window the dark-theme content colour (App.tsx contentBg) so
-        # there's no white flash before the SPA mounts.
-        background_color="#111111",
-        # Native "are you sure?" guard so an accidental close doesn't drop an
-        # in-progress agent run or chat.
-        confirm_close=True,
-        # Let users select & copy arbitrary page text (not just inputs/outputs).
-        text_select=True,
-        # Ctrl+scroll / pinch to zoom the whole UI (readability / accessibility).
-        zoomable=True,
-        # Keep a persistent, working web storage. pywebview defaults
-        # private_mode=True, which on the GTK/WebKit backend flips
-        # enable_html5_local_storage off — so window.localStorage is *null* and
-        # the frontend crashes on its first getItem() before React mounts (a
-        # silent black screen on Linux). It also matches intent: the console
-        # persists UI prefs (collapsed groups, per-runnable credential picks, …)
-        # in localStorage across restarts.
-        private_mode=False,
+        **_window_kwargs(),
     )
     bridge.set_window(window)
 

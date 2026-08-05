@@ -1291,6 +1291,65 @@ jobs:
           python -c "from runspec_console.sources.outlook import OutlookSource, save_reply_draft; ok, reason = OutlookSource().available(); assert ok, reason; print('outlook source available OK')"
           python -c "from runspec_console.sources.notifications import NotificationSource; r = NotificationSource().available(); assert isinstance(r, tuple) and len(r) == 2, r; print('notifications source available ->', r)"
 
+  # Launch-path smoke for the packaged desktop app. The console-quality/-test/-ui
+  # jobs never exercise the real GTK / gdk-pixbuf paths where two Linux-only
+  # startup bugs shipped: a gdk-pixbuf-incompatible window icon (a PNG-compressed
+  # .ico that aborts GTK window creation) and localStorage disabled by
+  # pywebview's private_mode default (null window.localStorage → blank screen).
+  # This builds the bundled frontend and decodes the generated window icon through
+  # the *actual* gdk-pixbuf loader GTK uses — a faithful reproduction that stays
+  # deterministic (no display server / WebKit, so no flake). The localStorage
+  # regression is covered by a unit test (console-test) and the index.html guard
+  # test (console-ui); this job owns the icon-loader half.
+  console-app-smoke:
+    name: runspec-console app smoke (ubuntu)
+    needs: changes
+    if: needs.changes.outputs.console == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The GTK icon loader lives in the distro's gdk-pixbuf; python3-gi exposes
+      # it to the system Python. We deliberately use that system Python (not
+      # setup-python, which can't see apt-installed typelibs).
+      - name: Install the GTK icon loader (gdk-pixbuf introspection)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-gi gir1.2-gdkpixbuf-2.0
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: packages/console-ui/package-lock.json
+
+      - name: Build the bundled frontend (emits into the wheel's dist/)
+        working-directory: packages/console-ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assert the bundle landed where the wheel ships it
+        run: test -f packages/python/runspec-console/runspec_console/dist/index.html
+
+      # --system-site-packages so the venv can import apt's python3-gi. Deps
+      # mirror the console-test job so the import chain resolves identically.
+      - name: Install console + test deps
+        run: |
+          python3 -m venv --system-site-packages /tmp/appsmoke
+          /tmp/appsmoke/bin/pip install --upgrade pip
+          /tmp/appsmoke/bin/pip install -e packages/python/runspec
+          /tmp/appsmoke/bin/pip install pytest anthropic paramiko cryptography tomli-w dulwich
+
+      - name: Window icon decodes through the real gdk-pixbuf loader
+        working-directory: packages/python/runspec-console
+        env:
+          PYTHONPATH: .
+        run: |
+          /tmp/appsmoke/bin/python -c "import gi; gi.require_version('GdkPixbuf','2.0'); from gi.repository import GdkPixbuf; print('gdk-pixbuf import OK')"
+          /tmp/appsmoke/bin/pytest tests/test_icon_gtk_loadable.py -v
+
   # ── runspec-webops (Node runnable package) ───────────────────────────────────
 
   webops:
@@ -1581,7 +1640,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, console-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, docs-check]
+    needs: [python-quality, python-test, node, linux-quality, linux-test, linux-core-quality, linux-core-test, jsm-quality, jsm-test, snow-quality, snow-test, logops-quality, logops-test, logops-core-quality, logops-core-test, playbook-quality, playbook-test, claude-quality, claude-test, windows-quality, windows-unit, windows-smoke, console-quality, console-test, console-ui, console-smoke, console-app-smoke, webops, webops-core-quality, webops-core-test, fs-core-quality, fs-core-test, fs-quality, fs-test, docs-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1624,6 +1683,7 @@ jobs:
           check "console-test"    "${{ needs.console-test.result }}"
           check "console-ui"      "${{ needs.console-ui.result }}"
           check "console-smoke"   "${{ needs.console-smoke.result }}"
+          check "console-app-smoke" "${{ needs.console-app-smoke.result }}"
           check "webops"          "${{ needs.webops.result }}"
           check "webops-core-quality" "${{ needs.webops-core-quality.result }}"
           check "webops-core-test"    "${{ needs.webops-core-test.result }}"
