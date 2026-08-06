@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.231.2] — 2026-08-06
+
+### Fixed
+- **Footer tool count is now deduplicated.** The bottom-left catalogue
+  indicator summed runnables across every host and venv, so a tool discovered
+  on several hosts inflated the headline total. It now shows the number of
+  **distinct tool names** (a tool exposed on multiple hosts/venvs counts once);
+  the raw sum is preserved and surfaced in the hover popover as
+  "(N incl. duplicates)" only when it differs. The change-flash highlight tracks
+  the displayed distinct count. `App.tsx` `catalogue` memo gains `distinct`.
+
+
 ## [0.231.1] — 2026-08-05
 
 ### Fixed
