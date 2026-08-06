@@ -245,13 +245,17 @@ export default function App() {
     ? hostFilteredRunnables.filter(r => activeScope.includes(r.group))
     : hostFilteredRunnables
 
-  // Catalogue stats for the footer indicator: total tools, distinct hosts/venvs,
-  // and a per-host → per-venv breakdown for the hover popover. Recomputed when the
+  // Catalogue stats for the footer indicator: `distinct` (unique tool names — the
+  // headline count, so a tool exposed on several hosts/venvs is counted once),
+  // `total` (raw sum incl. those duplicates), distinct hosts/venvs, and a
+  // per-host → per-venv breakdown for the hover popover. Recomputed when the
   // runnables cache changes — so the count visibly grows as discovery streams hosts
   // in on startup, and settles at a number you learn to expect.
   const catalogue = useMemo(() => {
     const byHost = new Map<string, Map<string, number>>()
+    const distinctNames = new Set<string>()
     for (const r of runnables) {
+      distinctNames.add(r.name)
       let venvs = byHost.get(r.host)
       if (!venvs) { venvs = new Map(); byHost.set(r.host, venvs) }
       venvs.set(r.group, (venvs.get(r.group) ?? 0) + 1)
@@ -269,7 +273,7 @@ export default function App() {
     const byHostTotal: Record<string, number> = {}
     const byHostVenvs: Record<string, { group: string; count: number }[]> = {}
     for (const h of hostsBreakdown) { byHostTotal[h.host] = h.total; byHostVenvs[h.host] = h.venvs }
-    return { total: runnables.length, hostCount: byHost.size, venvCount, hostsBreakdown, byHostTotal, byHostVenvs }
+    return { total: runnables.length, distinct: distinctNames.size, hostCount: byHost.size, venvCount, hostsBreakdown, byHostTotal, byHostVenvs }
   }, [runnables])
 
   // Briefly highlight the footer catalogue count whenever it changes, so the eye
@@ -278,12 +282,12 @@ export default function App() {
   const prevTotalRef = React.useRef<number | null>(null)
   useEffect(() => {
     const prev = prevTotalRef.current
-    prevTotalRef.current = catalogue.total
-    if (prev === null || prev === catalogue.total) return  // skip first paint / no-op
+    prevTotalRef.current = catalogue.distinct
+    if (prev === null || prev === catalogue.distinct) return  // skip first paint / no-op
     setCountFlash(true)
     const t = setTimeout(() => setCountFlash(false), 700)
     return () => clearTimeout(t)
-  }, [catalogue.total])
+  }, [catalogue.distinct])
 
   const handleScopeToggle = (group: string) => {
     setActiveScope(prev =>
@@ -950,14 +954,18 @@ export default function App() {
                   </Popover>
                 )
               })()}
-              {/* Catalogue: total tools, growing live while discovery streams hosts in */}
+              {/* Catalogue: distinct tool count (deduped by name), growing live while discovery streams hosts in */}
               <Popover
                 placement="topLeft"
                 mouseEnterDelay={0.2}
                 content={
                   <div style={{ maxWidth: 280, maxHeight: 320, overflowY: 'auto', fontSize: 12 }}>
                     <div style={{ marginBottom: 6, color: iconCol }}>
-                      {catalogue.total} runnable{catalogue.total === 1 ? '' : 's'} across{' '}
+                      {catalogue.distinct} distinct tool{catalogue.distinct === 1 ? '' : 's'}
+                      {catalogue.total !== catalogue.distinct && (
+                        <span> ({catalogue.total} incl. duplicates)</span>
+                      )}
+                      {' '}across{' '}
                       {catalogue.venvCount} venv{catalogue.venvCount === 1 ? '' : 's'} on{' '}
                       {catalogue.hostCount} host{catalogue.hostCount === 1 ? '' : 's'}
                       {!discovery.ready && discovery.total > 0 && (
@@ -994,8 +1002,8 @@ export default function App() {
                       color: countFlash ? '#52c41a' : titleCol,
                       fontWeight: countFlash ? 600 : 400,
                       transition: 'color 0.6s ease, font-weight 0.6s ease',
-                    }}>{catalogue.total}</span>
-                    {' '}tool{catalogue.total === 1 ? '' : 's'}
+                    }}>{catalogue.distinct}</span>
+                    {' '}tool{catalogue.distinct === 1 ? '' : 's'}
                     {catalogue.venvCount > 0 && <span> · {catalogue.venvCount} venv{catalogue.venvCount === 1 ? '' : 's'}</span>}
                     {!discovery.ready && discovery.total > 0 && (
                       <span style={{ opacity: 0.7 }}> · {discovery.done}/{discovery.total} hosts</span>
