@@ -1,0 +1,156 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-gitlab — GitLab reads as a runspec runnable, ported from the GitLab MCP
+# server: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+#
+# One runnable, `gitlab`, with a verb per read tool. `runspec serve` re-expands
+# each verb into its own leaf MCP tool (gitlab_get-issue, gitlab_list-pipelines,
+# …), so a runspec-console agent calls them individually — over SSH on any fleet
+# host.
+#
+# The tools are PORTED onto the GitLab REST API (v4), not proxied from GitLab's
+# hosted MCP server, so no extra process is involved. Auth is env-var driven:
+#   GITLAB_URL  (default https://gitlab.com) + GITLAB_TOKEN  (a personal access
+#   token). Per-environment overrides use a GITLAB_<ENV>_ prefix (e.g.
+#   GITLAB_UAT_TOKEN), selected with the global --env (dev/uat/prod) arg.
+#
+# `project` accepts a numeric id or a URL-path (`group/subgroup/project`); it
+# falls back to GITLAB_PROJECT when omitted.
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+
+[gitlab]
+description = "Read GitLab issues, merge requests, pipelines, and repository files (over the REST API)"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "gitlab whoami", description = "Verify the token and show the authenticated user"},
+  {cmd = "gitlab list-issues --project group/app --state opened", description = "List a project's open issues"},
+  {cmd = "gitlab get-merge-request-changes --project 42 --mr-iid 17", description = "Show a merge request's diffs"},
+  {cmd = "gitlab get-job-log --project group/app --job-id 9001 --tail 100", description = "Tail the last 100 lines of a CI job log"},
+  {cmd = "gitlab get-file --project group/app --file-path src/main.py --ref main", description = "Read a repository file at a ref"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+[gitlab.args]
+env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, description = "Target environment (selects GITLAB_<ENV>_* vars)"}
+
+# ── identity / projects ────────────────────────────────────────────────────
+
+[gitlab.commands.whoami]
+description = "Return the authenticated user for the configured token (a quick identity/token check)"
+autonomy = "autonomous"
+
+[gitlab.commands.get-project]
+description = "Fetch a single project's metadata by numeric id or namespace/project path"
+autonomy = "autonomous"
+[gitlab.commands.get-project.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+
+[gitlab.commands.search-projects]
+description = "Search visible projects by name/path"
+autonomy = "autonomous"
+[gitlab.commands.search-projects.args]
+search = {type = "str", required = true, description = "Text to match against project name/path"}
+membership = {type = "flag", default = false, description = "Only projects the token's user is a member of"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+# ── issues ─────────────────────────────────────────────────────────────────
+
+[gitlab.commands.list-issues]
+description = "List a project's issues, optionally filtered by state/labels/search"
+autonomy = "autonomous"
+[gitlab.commands.list-issues.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+state = {type = "choice", options = ["opened", "closed", "all"], required = false, description = "Issue state filter"}
+labels = {type = "str", required = false, description = "Comma-separated label list to filter by"}
+search = {type = "str", required = false, description = "Match title/description text"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.get-issue]
+description = "Fetch a single issue by its project-scoped internal id (iid)"
+autonomy = "autonomous"
+[gitlab.commands.get-issue.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+issue-iid = {type = "int", required = true, description = "Issue internal id (the #N shown in the UI)"}
+
+# ── merge requests ─────────────────────────────────────────────────────────
+
+[gitlab.commands.list-merge-requests]
+description = "List a project's merge requests, optionally filtered by state"
+autonomy = "autonomous"
+[gitlab.commands.list-merge-requests.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+state = {type = "choice", options = ["opened", "closed", "merged", "locked", "all"], required = false, description = "Merge request state filter"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.get-merge-request]
+description = "Fetch a single merge request by its project-scoped internal id (iid)"
+autonomy = "autonomous"
+[gitlab.commands.get-merge-request.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+
+[gitlab.commands.get-merge-request-changes]
+description = "Fetch a merge request together with its file changes / diffs"
+autonomy = "autonomous"
+[gitlab.commands.get-merge-request-changes.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+
+# ── pipelines / jobs ───────────────────────────────────────────────────────
+
+[gitlab.commands.list-pipelines]
+description = "List a project's CI/CD pipelines, optionally filtered by ref/status"
+autonomy = "autonomous"
+[gitlab.commands.list-pipelines.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+ref = {type = "str", required = false, description = "Branch or tag to filter by"}
+status = {type = "choice", options = ["created", "waiting_for_resource", "preparing", "pending", "running", "success", "failed", "canceled", "skipped", "manual", "scheduled"], required = false, description = "Pipeline status filter"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.get-pipeline-jobs]
+description = "List the jobs of a pipeline (by pipeline id)"
+autonomy = "autonomous"
+[gitlab.commands.get-pipeline-jobs.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+pipeline-id = {type = "int", required = true, description = "Pipeline id (not the iid)"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.get-job-log]
+description = "Fetch a CI job's log (trace) as text; pass --tail to return only the last N lines"
+autonomy = "autonomous"
+[gitlab.commands.get-job-log.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+job-id = {type = "int", required = true, description = "Job id"}
+tail = {type = "int", required = false, description = "Return only the last N lines (logs are large — usually pass this)"}
+
+# ── repository ─────────────────────────────────────────────────────────────
+
+[gitlab.commands.get-file]
+description = "Read a single repository file at a ref (base64 is decoded; non-UTF-8 files are flagged binary)"
+autonomy = "autonomous"
+[gitlab.commands.get-file.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+file-path = {type = "str", required = true, description = "Path within the repository (e.g. src/main.py)"}
+ref = {type = "str", default = "HEAD", description = "Branch, tag, or commit (default HEAD = the default branch tip)"}
+
+[gitlab.commands.list-tree]
+description = "List a repository tree at a path/ref; --recursive walks subdirectories"
+autonomy = "autonomous"
+[gitlab.commands.list-tree.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+path = {type = "str", required = false, description = "Subdirectory to list (default: repository root)"}
+ref = {type = "str", required = false, description = "Branch, tag, or commit (default: the default branch)"}
+recursive = {type = "flag", default = false, description = "Walk subdirectories recursively"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
