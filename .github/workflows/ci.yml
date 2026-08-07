@@ -1215,10 +1215,13 @@ jobs:
       # (anthropic for the adapter, paramiko for the SSH executor) and run
       # against the source tree via PYTHONPATH. The core `runspec` is installed
       # from the sibling path (skillargs parses/validates skill args via it).
+      # pywebview is included so test_window_kwargs can validate the create_window
+      # / start kwargs against the *real* pywebview signatures (it imports headless,
+      # no GUI backend needed) — the guard for private_mode-on-the-wrong-call.
       - name: Install test deps
         run: |
           pip install -e ../runspec
-          pip install pytest anthropic paramiko cryptography tomli-w dulwich
+          pip install pytest anthropic paramiko cryptography tomli-w dulwich pywebview
 
       - name: Run tests
         env:

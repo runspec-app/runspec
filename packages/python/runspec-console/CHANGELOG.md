@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.231.3] — 2026-08-07
+
+### Fixed
+- **Console failed to start — `create_window() got an unexpected keyword argument
+  'private_mode'`.** The 0.231.1 localStorage fix passed `private_mode=False` to
+  `webview.create_window()`, but `private_mode` is a parameter of
+  `webview.start()` (alongside `icon`), not `create_window` — so `create_window`
+  raised `TypeError` and the app never opened. Surfaced on Windows but the call
+  fails on every platform. Moved `private_mode=False` to the `webview.start()`
+  call where it belongs (localStorage still works on WebKitGTK; UI prefs still
+  persist across restarts). The window kwargs / start kwargs are now split into
+  `_window_kwargs()` / `_start_kwargs()`, and a new test validates each dict
+  against the **real** installed pywebview signatures — the earlier test mocked
+  `webview` with a `**kwargs` stub, so it accepted the bad argument and missed the
+  regression.
+
+
 ## [0.231.2] — 2026-08-06
 
 ### Fixed

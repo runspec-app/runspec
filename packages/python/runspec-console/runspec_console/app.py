@@ -302,16 +302,11 @@ def _enable_native_context_menu(webview_module: Any, *, open_devtools: bool) -> 
 
 
 def _window_kwargs() -> dict[str, object]:
-    """Static keyword args for the main webview window.
+    """Static keyword args for :func:`webview.create_window`.
 
-    Extracted from :func:`main` so a unit test can pin the invariants that are
-    easy to regress and expensive to catch by eye — chiefly
-    ``private_mode=False``. pywebview defaults ``private_mode=True``, which on the
-    GTK/WebKit backend flips ``enable_html5_local_storage`` off, so
-    ``window.localStorage`` is *null* and the frontend crashes on its first
-    ``getItem()`` before React mounts (a silent black screen on Linux). Keeping it
-    false also matches intent: the console persists UI prefs (collapsed groups,
-    per-runnable credential picks, …) in localStorage across restarts.
+    Note ``private_mode`` is deliberately NOT here — it's a parameter of
+    :func:`webview.start`, not ``create_window`` (passing it to ``create_window``
+    raises ``TypeError``). See :func:`_start_kwargs`.
     """
     return {
         "width": 1440,
@@ -327,9 +322,30 @@ def _window_kwargs() -> dict[str, object]:
         "text_select": True,
         # Ctrl+scroll / pinch to zoom the whole UI (readability / accessibility).
         "zoomable": True,
+    }
+
+
+def _start_kwargs(
+    *, debug: bool, on_started: Any, icon: str | None
+) -> dict[str, object]:
+    """Keyword args for :func:`webview.start`.
+
+    ``private_mode=False`` lives here (a ``start`` parameter, alongside ``icon``):
+    pywebview defaults ``private_mode=True``, which on the GTK/WebKit backend flips
+    ``enable_html5_local_storage`` off, so ``window.localStorage`` is *null* and the
+    frontend crashes on its first ``getItem()`` before React mounts (a silent black
+    screen on Linux). Keeping it false also matches intent — the console persists UI
+    prefs (collapsed groups, per-runnable credential picks, …) across restarts.
+    """
+    kwargs: dict[str, object] = {
+        "debug": debug,
+        "func": on_started,
         # See the docstring — must stay False so localStorage works on WebKitGTK.
         "private_mode": False,
     }
+    if icon:
+        kwargs["icon"] = icon
+    return kwargs
 
 
 def _on_started(title: str) -> None:
@@ -433,13 +449,12 @@ def main() -> None:
     )
     bridge.set_window(window)
 
-    start_kwargs: dict[str, object] = {
-        "debug": webview_debug,
-        "func": lambda: _on_started(window_title),
-    }
     icon = _build_icon()
-    if icon:
-        start_kwargs["icon"] = str(icon)
+    start_kwargs = _start_kwargs(
+        debug=webview_debug,
+        on_started=lambda: _on_started(window_title),
+        icon=str(icon) if icon else None,
+    )
     try:
         webview.start(**start_kwargs)
     finally:
