@@ -64,6 +64,18 @@ def test_dispatch_get_job_log_tail(monkeypatch) -> None:
     assert result["truncated"] is True
 
 
+def test_dispatch_mr_conflicts_uses_web_endpoint(monkeypatch) -> None:
+    seen = _capture(monkeypatch, httpx.Response(200, json={"files": []}))
+    h = _harness()
+    spec = h.expect_ok(["get-merge-request-conflicts", "--project", "grp/app", "--mr-iid", "3"])
+    result = cli._dispatch(spec, CFG)
+    h.close()
+    assert result == {"files": []}
+    # non-public web endpoint, not /api/v4
+    assert seen["path"] == "/grp/app/-/merge_requests/3/conflicts"
+    assert "/api/v4" not in seen["path"]
+
+
 def test_dispatch_whoami(monkeypatch) -> None:
     seen = _capture(monkeypatch, httpx.Response(200, json={"username": "alice"}))
     h = _harness()

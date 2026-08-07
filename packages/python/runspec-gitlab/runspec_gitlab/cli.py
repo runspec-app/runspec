@@ -24,7 +24,11 @@ from runspec_gitlab_core import (
     get_issue,
     get_job_log,
     get_merge_request,
-    get_merge_request_changes,
+    get_merge_request_commits,
+    get_merge_request_conflicts,
+    get_merge_request_diffs,
+    get_merge_request_notes,
+    get_merge_request_pipelines,
     get_pipeline_jobs,
     get_project,
     list_issues,
@@ -79,8 +83,41 @@ def _dispatch(spec: rs.RunSpec, config: GitlabConfig) -> Any:
         )
     if command == "get-merge-request":
         return get_merge_request(config, mr_iid=spec.mr_iid.value, project=spec.project.value)
-    if command == "get-merge-request-changes":
-        return get_merge_request_changes(config, mr_iid=spec.mr_iid.value, project=spec.project.value)
+    if command == "get-merge-request-diffs":
+        return get_merge_request_diffs(
+            config,
+            mr_iid=spec.mr_iid.value,
+            project=spec.project.value,
+            per_page=spec.per_page.value,
+            page=spec.page.value,
+        )
+    if command == "get-merge-request-commits":
+        return get_merge_request_commits(
+            config,
+            mr_iid=spec.mr_iid.value,
+            project=spec.project.value,
+            per_page=spec.per_page.value,
+            page=spec.page.value,
+        )
+    if command == "get-merge-request-notes":
+        return get_merge_request_notes(
+            config,
+            mr_iid=spec.mr_iid.value,
+            project=spec.project.value,
+            sort=spec.sort.value,
+            per_page=spec.per_page.value,
+            page=spec.page.value,
+        )
+    if command == "get-merge-request-pipelines":
+        return get_merge_request_pipelines(
+            config,
+            mr_iid=spec.mr_iid.value,
+            project=spec.project.value,
+            per_page=spec.per_page.value,
+            page=spec.page.value,
+        )
+    if command == "get-merge-request-conflicts":
+        return get_merge_request_conflicts(config, mr_iid=spec.mr_iid.value, project=spec.project.value)
     if command == "list-pipelines":
         return list_pipelines(
             config,

@@ -98,10 +98,50 @@ autonomy = "autonomous"
 project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
 mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
 
-[gitlab.commands.get-merge-request-changes]
-description = "Fetch a merge request together with its file changes / diffs"
+[gitlab.commands.get-merge-request-diffs]
+description = "List a merge request's file diffs (the canonical get_merge_request_diffs tool)"
 autonomy = "autonomous"
-[gitlab.commands.get-merge-request-changes.args]
+[gitlab.commands.get-merge-request-diffs.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.get-merge-request-commits]
+description = "List the commits on a merge request (canonical get_merge_request_commits)"
+autonomy = "autonomous"
+[gitlab.commands.get-merge-request-commits.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.get-merge-request-notes]
+description = "List a merge request's notes/comments (canonical get_merge_request_notes)"
+autonomy = "autonomous"
+[gitlab.commands.get-merge-request-notes.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+sort = {type = "choice", options = ["asc", "desc"], required = false, description = "Sort order by created date"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.get-merge-request-pipelines]
+description = "List the pipelines run for a merge request (canonical get_merge_request_pipelines)"
+autonomy = "autonomous"
+[gitlab.commands.get-merge-request-pipelines.args]
+project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
+mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
+per-page = {type = "int", default = 20, description = "Results per page (GitLab caps at 100)"}
+page = {type = "int", default = 1, description = "Page number"}
+
+[gitlab.commands.get-merge-request-conflicts]
+# Best-effort: GitLab has no public /api/v4 conflicts endpoint — this relays
+# the non-public web-UI endpoint (/{project}/-/merge_requests/:iid/conflicts),
+# so the response shape is GitLab's and may change between versions.
+description = "Fetch a merge request's conflict files (best-effort; relays GitLab's non-public web conflicts endpoint)"
+autonomy = "autonomous"
+[gitlab.commands.get-merge-request-conflicts.args]
 project = {type = "str", short = "-p", required = false, description = "Project id or path (falls back to GITLAB_PROJECT)"}
 mr-iid = {type = "int", required = true, description = "Merge request internal id (the !N shown in the UI)"}
 

@@ -111,10 +111,16 @@ def gitlab_request(
     config: GitlabConfig,
     params: dict[str, Any] | None = None,
     raw: bool = False,
+    api: bool = True,
     timeout: int = 30,
 ) -> Any:
-    """Make an authenticated request against ``{base_url}/api/v4`` and return the
-    parsed JSON body (or the raw text when ``raw=True`` — used for job traces).
+    """Make an authenticated request and return the parsed JSON body (or the raw
+    text when ``raw=True`` — used for job traces).
+
+    By default the request targets the public REST API at ``{base_url}/api/v4``.
+    Pass ``api=False`` to hit ``{base_url}{path}`` directly — used only for the
+    non-public web endpoints GitLab does not expose under ``/api/v4`` (e.g. the
+    merge-request conflicts endpoint).
 
     ``path`` should start with ``/`` (e.g. ``/projects/1/issues``). ``None`` values
     in ``params`` are dropped and booleans are rendered as ``"true"``/``"false"``.
@@ -133,9 +139,10 @@ def gitlab_request(
                 continue
             clean[key] = "true" if value is True else "false" if value is False else value
 
+    prefix = "/api/v4" if api else ""
     resp = httpx.request(
         method,
-        f"{config.base_url}/api/v4{path}",
+        f"{config.base_url}{prefix}{path}",
         headers=headers,
         params=clean,
         timeout=timeout,

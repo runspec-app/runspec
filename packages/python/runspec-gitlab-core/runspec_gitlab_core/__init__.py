@@ -26,11 +26,15 @@ from runspec_gitlab_core.client import (
 from runspec_gitlab_core.issues import get_issue, list_issues
 from runspec_gitlab_core.merge_requests import (
     get_merge_request,
-    get_merge_request_changes,
+    get_merge_request_commits,
+    get_merge_request_conflicts,
+    get_merge_request_diffs,
+    get_merge_request_notes,
+    get_merge_request_pipelines,
     list_merge_requests,
 )
 from runspec_gitlab_core.pipelines import get_job_log, get_pipeline_jobs, list_pipelines
-from runspec_gitlab_core.projects import get_project, search_projects, whoami
+from runspec_gitlab_core.projects import get_project, resolve_project_path, search_projects, whoami
 from runspec_gitlab_core.repository import get_file, list_tree
 
 __all__ = [
@@ -40,6 +44,7 @@ __all__ = [
     "config_from_env",
     "gitlab_request",
     "encode_project",
+    "resolve_project_path",
     "VALID_ENVS",
     "DEFAULT_URL",
     # identity / projects
@@ -52,7 +57,11 @@ __all__ = [
     # merge requests
     "list_merge_requests",
     "get_merge_request",
-    "get_merge_request_changes",
+    "get_merge_request_diffs",
+    "get_merge_request_commits",
+    "get_merge_request_notes",
+    "get_merge_request_pipelines",
+    "get_merge_request_conflicts",
     # pipelines / jobs
     "list_pipelines",
     "get_pipeline_jobs",

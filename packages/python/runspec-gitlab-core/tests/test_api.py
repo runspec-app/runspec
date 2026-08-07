@@ -12,7 +12,11 @@ from runspec_gitlab_core import (
     get_file,
     get_issue,
     get_job_log,
-    get_merge_request_changes,
+    get_merge_request_commits,
+    get_merge_request_conflicts,
+    get_merge_request_diffs,
+    get_merge_request_notes,
+    get_merge_request_pipelines,
     list_issues,
     list_pipelines,
     list_tree,
@@ -78,10 +82,56 @@ def test_missing_project_raises(monkeypatch):
         list_issues(cfg)
 
 
-def test_mr_changes_path(monkeypatch):
-    seen = _capture(monkeypatch, httpx.Response(200, json={"changes": []}))
-    get_merge_request_changes(CFG, 12)
-    assert seen["path"] == "/api/v4/projects/grp%2Fapp/merge_requests/12/changes"
+def test_mr_diffs_path(monkeypatch):
+    seen = _capture(monkeypatch, httpx.Response(200, json=[]))
+    get_merge_request_diffs(CFG, 12)
+    assert seen["path"] == "/api/v4/projects/grp%2Fapp/merge_requests/12/diffs"
+
+
+def test_mr_commits_path(monkeypatch):
+    seen = _capture(monkeypatch, httpx.Response(200, json=[]))
+    get_merge_request_commits(CFG, 12)
+    assert seen["path"] == "/api/v4/projects/grp%2Fapp/merge_requests/12/commits"
+
+
+def test_mr_notes_path_and_sort(monkeypatch):
+    seen = _capture(monkeypatch, httpx.Response(200, json=[]))
+    get_merge_request_notes(CFG, 12, sort="desc")
+    assert seen["path"] == "/api/v4/projects/grp%2Fapp/merge_requests/12/notes"
+    assert seen["query"]["sort"] == "desc"
+
+
+def test_mr_pipelines_path(monkeypatch):
+    seen = _capture(monkeypatch, httpx.Response(200, json=[]))
+    get_merge_request_pipelines(CFG, 12)
+    assert seen["path"] == "/api/v4/projects/grp%2Fapp/merge_requests/12/pipelines"
+
+
+def test_mr_conflicts_uses_non_api_web_path(monkeypatch):
+    # CFG.project is a path ("grp/app") — no id resolution, one request, no /api/v4.
+    seen = _capture(monkeypatch, httpx.Response(200, json={"files": []}))
+    result = get_merge_request_conflicts(CFG, 12)
+    assert result == {"files": []}
+    assert seen["path"] == "/grp/app/-/merge_requests/12/conflicts"
+    assert "/api/v4" not in seen["path"]
+
+
+def test_mr_conflicts_resolves_numeric_id_to_path(monkeypatch):
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.raw_path.decode()
+        calls.append(path)
+        if path == "/api/v4/projects/99":
+            return httpx.Response(200, json={"path_with_namespace": "grp/app"})
+        return httpx.Response(200, json={"files": ["x"]})
+
+    mock_request(monkeypatch, handler)
+    cfg = GitlabConfig(base_url="https://gl", token="tok", project="99")
+    result = get_merge_request_conflicts(cfg, 5)
+    assert "/api/v4/projects/99" in calls  # numeric id resolved via the API
+    assert "/grp/app/-/merge_requests/5/conflicts" in calls  # then the web endpoint
+    assert result == {"files": ["x"]}
 
 
 def test_list_pipelines_filters(monkeypatch):

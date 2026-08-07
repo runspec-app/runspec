@@ -16,6 +16,25 @@ def _project(config: GitlabConfig, project: str | None) -> str:
     return encode_project(target)
 
 
+def resolve_project_path(config: GitlabConfig, project: str | None = None) -> str:
+    """Resolve the target project to its ``namespace/path`` form for non-API web
+    endpoints (which need real slashes, not a numeric id or a %2F-encoded path).
+
+    A numeric id is resolved to ``path_with_namespace`` via one API call; a path
+    is returned as-is.
+    """
+    target = project or config.project
+    if not target:
+        raise GitlabError("No project — pass project or set it on the config (GITLAB_PROJECT)")
+    target = str(target)
+    if target.isdigit():
+        path = get_project(config, target).get("path_with_namespace")
+        if not path:
+            raise GitlabError(f"Could not resolve a path for project id {target}")
+        return str(path)
+    return target
+
+
 def whoami(config: GitlabConfig) -> dict[str, Any]:
     """Return the authenticated user (``GET /user``) — a quick token/identity check."""
     return gitlab_request("GET", "/user", config=config)

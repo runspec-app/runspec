@@ -2,6 +2,29 @@
 
 All notable changes to `runspec-gitlab` are documented here.
 
+## [0.2.0]
+
+Reconciled the verb set against GitLab's canonical MCP tool registry
+(`app/services/mcp/tools/manager.rb` + the `route_setting :mcp` declarations in
+the REST route files) and closed the gaps. **17 read verbs** now (all
+`autonomy = "autonomous"`).
+
+- **Renamed** `get-merge-request-changes` → `get-merge-request-diffs` — matches
+  the canonical `get_merge_request_diffs` tool and its `/diffs` endpoint; the old
+  verb used the deprecated `/changes` endpoint. **Breaking** vs 0.1.0.
+- **Added** canonical MR read tools: `get-merge-request-commits`,
+  `get-merge-request-notes`, `get-merge-request-pipelines`,
+  `get-merge-request-conflicts`.
+- `get-merge-request-conflicts` is **best-effort** — GitLab has no public
+  `/api/v4` conflicts endpoint (its MCP server calls an internal service in
+  process), so it relays the non-public web-UI endpoint
+  (`/{project}/-/merge_requests/:iid/conflicts`) and returns its JSON verbatim;
+  the shape is GitLab's and may change between versions.
+- Docs now separate the canonical 1:1 ports from the extra REST reads GitLab has
+  no MCP tool for (`whoami`, `get-project`, `search-projects`, `list-issues`,
+  `get-file`, `list-tree`).
+- Requires `runspec-gitlab-core >= 0.2.0`.
+
 ## [0.1.0]
 
 Initial release. One runnable, `gitlab`, with a read verb per tool of the
