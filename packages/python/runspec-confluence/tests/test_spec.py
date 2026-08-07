@@ -15,6 +15,9 @@ VALUES = {
     "content": "<p>hi</p>",
     "label": "runbook",
     "text": "hello",
+    "dest": "/tmp/out",
+    "file": "/tmp/f.pdf",
+    "filename": "doc.pdf",
 }
 
 

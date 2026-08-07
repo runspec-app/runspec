@@ -299,3 +299,31 @@ description = "Fetch a customer request by issue id or key"
 autonomy = "autonomous"
 [jira.commands.get-request.args]
 issue-id-or-key = {type = "str", required = true, description = "Request issue id or key"}
+
+# ── attachments ────────────────────────────────────────────────────────────
+
+[jira.commands.list-attachments]
+description = "List an issue's attachments (id + filename per attachment)"
+autonomy = "autonomous"
+[jira.commands.list-attachments.args]
+key = {type = "str", required = true, description = "Issue key"}
+
+[jira.commands.download-attachments]
+description = "Download all of an issue's attachments into a directory on this host"
+autonomy = "confirm"
+[jira.commands.download-attachments.args]
+key = {type = "str", required = true, description = "Issue key"}
+dest = {type = "path", required = true, description = "Destination directory to write the attachments into"}
+
+[jira.commands.add-attachment]
+description = "Upload a local file as an attachment on an issue"
+autonomy = "confirm"
+[jira.commands.add-attachment.args]
+key = {type = "str", required = true, description = "Issue key"}
+file = {type = "path", required = true, description = "Local file to upload"}
+
+[jira.commands.remove-attachment]
+description = "Delete an attachment by its id"
+autonomy = "confirm"
+[jira.commands.remove-attachment.args]
+attachment-id = {type = "str", required = true, description = "Attachment id"}

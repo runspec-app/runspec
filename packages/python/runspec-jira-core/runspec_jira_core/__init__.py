@@ -13,6 +13,12 @@ per project" on top. Each function returns plain data and raises
 :class:`JiraError` on failure. Cloud and Server/Data Center are both supported.
 """
 
+from runspec_jira_core.attachments import (
+    add_attachment,
+    download_attachments,
+    list_attachments,
+    remove_attachment,
+)
 from runspec_jira_core.client import (
     build_client,
     build_servicedesk,
@@ -110,4 +116,9 @@ __all__ = [
     "list_request_type_fields",
     "create_customer_request",
     "get_request",
+    # attachments
+    "list_attachments",
+    "download_attachments",
+    "add_attachment",
+    "remove_attachment",
 ]

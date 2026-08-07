@@ -32,6 +32,9 @@ VALUES = {
     "request-type-id": "17",
     "field-values": "{}",
     "issue-id-or-key": "SD-1",
+    "dest": "/tmp/out",
+    "file": "/tmp/f.txt",
+    "attachment-id": "10500",
 }
 
 

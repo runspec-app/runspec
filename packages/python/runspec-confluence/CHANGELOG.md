@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.2.0] — 2026-08-07
+
+Add four attachment verbs to the `confluence` runnable: `get-attachments`
+(autonomous), and `download-attachments` / `upload-attachment` / `delete-attachment`
+(confirm). `download-attachments --dest <dir>` writes a page's attachments to a
+local directory; `upload-attachment --file <path>` uploads a local file. Requires
+`runspec-confluence-core >= 0.2.0`.
+
 ## [0.1.0] — 2026-08-07
 
 Initial release. A `confluence` runnable ported from the Atlassian MCP server

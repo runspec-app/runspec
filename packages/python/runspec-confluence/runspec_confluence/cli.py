@@ -23,7 +23,10 @@ from runspec_confluence_core import (
     add_label,
     config_from_env,
     create_page,
+    delete_attachment,
     delete_page,
+    download_attachments,
+    get_attachments,
     get_comments,
     get_labels,
     get_page,
@@ -36,6 +39,7 @@ from runspec_confluence_core import (
     move_page,
     search,
     update_page,
+    upload_attachment,
 )
 
 
@@ -105,6 +109,23 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
         return add_label(config, spec.page_id.value, spec.label.value)
     if command == "add-comment":
         return add_comment(config, spec.page_id.value, spec.text.value)
+
+    # ── attachments ──
+    if command == "get-attachments":
+        return get_attachments(config, spec.page_id.value, limit=spec.limit.value, filename=spec.filename.value)
+    if command == "download-attachments":
+        return download_attachments(config, spec.page_id.value, str(spec.dest.value))
+    if command == "upload-attachment":
+        return upload_attachment(
+            config,
+            spec.page_id.value,
+            str(spec.file.value),
+            name=spec.name.value,
+            content_type=spec.content_type.value,
+            comment=spec.comment.value,
+        )
+    if command == "delete-attachment":
+        return delete_attachment(config, spec.page_id.value, spec.filename.value)
 
     # require-command = true makes a bare invocation unreachable.
     raise SystemExit("no command — see `confluence --help`")  # pragma: no cover

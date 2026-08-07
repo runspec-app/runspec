@@ -2,6 +2,13 @@
 
 All notable changes to `runspec-jira-core` are documented here.
 
+## [0.2.0] — 2026-08-07
+
+Add issue attachment helpers over the SDK's attachment methods:
+`list_attachments`, `download_attachments`, `add_attachment`, `remove_attachment`.
+Binary content is path-in / path-out — downloads write to a destination
+directory, uploads read a local file path.
+
 ## [0.1.0] — 2026-08-07
 
 Initial release. Pure-Python Jira Software/Core + Service Desk helpers over

@@ -20,6 +20,7 @@ import runspec as rs
 from runspec_jira_core import (
     JiraConfig,
     JiraError,
+    add_attachment,
     add_comment,
     add_watcher,
     add_worklog,
@@ -30,6 +31,7 @@ from runspec_jira_core import (
     create_issue_link,
     create_remote_issue_link,
     delete_issue,
+    download_attachments,
     edit_comment,
     get_all_projects,
     get_create_fields,
@@ -44,9 +46,11 @@ from runspec_jira_core import (
     get_worklog,
     jql_search,
     link_to_epic,
+    list_attachments,
     list_request_type_fields,
     list_request_types,
     list_transitions,
+    remove_attachment,
     remove_issue_link,
     remove_watcher,
     search_assignable_users,
@@ -191,6 +195,16 @@ def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
         )
     if command == "get-request":
         return get_request(config, spec.issue_id_or_key.value)
+
+    # ── attachments ──
+    if command == "list-attachments":
+        return list_attachments(config, spec.key.value)
+    if command == "download-attachments":
+        return download_attachments(config, spec.key.value, str(spec.dest.value))
+    if command == "add-attachment":
+        return add_attachment(config, spec.key.value, str(spec.file.value))
+    if command == "remove-attachment":
+        return remove_attachment(config, spec.attachment_id.value)
 
     # require-command = true makes a bare invocation unreachable.
     raise SystemExit("no command — see `jira --help`")  # pragma: no cover

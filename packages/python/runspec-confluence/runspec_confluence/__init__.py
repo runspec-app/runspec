@@ -14,7 +14,10 @@ from runspec_confluence_core import (
     add_label,
     config_from_env,
     create_page,
+    delete_attachment,
     delete_page,
+    download_attachments,
+    get_attachments,
     get_comments,
     get_labels,
     get_page,
@@ -27,6 +30,7 @@ from runspec_confluence_core import (
     move_page,
     search,
     update_page,
+    upload_attachment,
 )
 
 __all__ = [
@@ -49,4 +53,8 @@ __all__ = [
     "get_comments",
     "add_comment",
     "get_page_restrictions",
+    "get_attachments",
+    "download_attachments",
+    "upload_attachment",
+    "delete_attachment",
 ]

@@ -2,6 +2,12 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.2.0] — 2026-08-07
+
+Add page attachment helpers over the SDK's attachment methods: `get_attachments`,
+`download_attachments`, `upload_attachment`, `delete_attachment`. Binary content
+is path-in / path-out.
+
 ## [0.1.0] — 2026-08-07
 
 Initial release. Pure-Python Confluence helpers over `atlassian-python-api` — the

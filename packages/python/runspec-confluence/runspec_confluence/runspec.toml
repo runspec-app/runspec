@@ -164,3 +164,37 @@ autonomy = "confirm"
 [confluence.commands.add-comment.args]
 page-id = {type = "str", required = true, description = "Page id"}
 text = {type = "str", required = true, description = "Comment text"}
+
+# ── attachments ────────────────────────────────────────────────────────────
+
+[confluence.commands.get-attachments]
+description = "List a page's attachments (optionally filtered by filename)"
+autonomy = "autonomous"
+[confluence.commands.get-attachments.args]
+page-id = {type = "str", required = true, description = "Page id"}
+limit = {type = "int", default = 50, description = "Max attachments"}
+filename = {type = "str", required = false, description = "Only attachments with this filename"}
+
+[confluence.commands.download-attachments]
+description = "Download all of a page's attachments into a directory on this host"
+autonomy = "confirm"
+[confluence.commands.download-attachments.args]
+page-id = {type = "str", required = true, description = "Page id"}
+dest = {type = "path", required = true, description = "Destination directory to write the attachments into"}
+
+[confluence.commands.upload-attachment]
+description = "Upload a local file as an attachment on a page"
+autonomy = "confirm"
+[confluence.commands.upload-attachment.args]
+page-id = {type = "str", required = true, description = "Page id"}
+file = {type = "path", required = true, description = "Local file to upload"}
+name = {type = "str", required = false, description = "Attachment name (defaults to the file's name)"}
+content-type = {type = "str", required = false, description = "MIME type (e.g. application/pdf)"}
+comment = {type = "str", required = false, description = "Version comment for the attachment"}
+
+[confluence.commands.delete-attachment]
+description = "Delete a page attachment by filename"
+autonomy = "confirm"
+[confluence.commands.delete-attachment.args]
+page-id = {type = "str", required = true, description = "Page id"}
+filename = {type = "str", required = true, description = "Attachment filename to delete"}

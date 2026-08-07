@@ -13,6 +13,12 @@ and raises :class:`ConfluenceError` on failure. Cloud and Server/Data Center are
 both supported.
 """
 
+from runspec_confluence_core.attachments import (
+    delete_attachment,
+    download_attachments,
+    get_attachments,
+    upload_attachment,
+)
 from runspec_confluence_core.client import build_client, translate_errors
 from runspec_confluence_core.config import VALID_ENVS, ConfluenceConfig, config_from_env
 from runspec_confluence_core.content import (
@@ -64,4 +70,9 @@ __all__ = [
     "get_comments",
     "add_comment",
     "get_page_restrictions",
+    # attachments
+    "get_attachments",
+    "download_attachments",
+    "upload_attachment",
+    "delete_attachment",
 ]

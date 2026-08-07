@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.2.0] — 2026-08-07
+
+Add four attachment verbs to the `jira` runnable: `list-attachments`
+(autonomous), and `download-attachments` / `add-attachment` / `remove-attachment`
+(confirm). `download-attachments --dest <dir>` writes an issue's attachments to a
+local directory; `add-attachment --file <path>` uploads a local file. Requires
+`runspec-jira-core >= 0.2.0`.
+
 ## [0.1.0] — 2026-08-07
 
 Initial release. A full-featured `jira` runnable ported from the Atlassian MCP
