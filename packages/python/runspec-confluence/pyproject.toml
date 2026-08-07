@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-confluence"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Confluence runnable for runspec — pages, search, comments, labels, and restrictions (Cloud + Server/Data Center)"
+dependencies = [
+    # 0.44.0 surfaces inherited args (the global --env) on each leaf subcommand's
+    # MCP tool via `runspec serve`.
+    "runspec>=0.44.0",
+    "runspec-confluence-core>=0.1.0",
+]
+
+[project.scripts]
+# Entry point name MUST match the runnable name in runspec.toml (`confluence`).
+confluence = "runspec_confluence.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.15.20",
+    "mypy",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

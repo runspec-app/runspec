@@ -1,0 +1,166 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-confluence — a Confluence runnable ported from the Atlassian MCP
+# server (sooperset/mcp-atlassian), onto atlassian-python-api.
+#
+# One runnable, `confluence`, with a verb per tool. `runspec serve` re-expands
+# each verb into its own leaf MCP tool (confluence_get-page, confluence_create-page,
+# …), so a runspec-console agent calls them individually — over SSH on any fleet
+# host, with no second server process.
+#
+# Cloud and Server/Data Center. Auth is env-var driven:
+#   CONFLUENCE_URL + (CONFLUENCE_PERSONAL_TOKEN | CONFLUENCE_USERNAME + CONFLUENCE_API_TOKEN)
+# Per-environment overrides use a CONFLUENCE_<ENV>_ prefix, selected with the
+# global --env (dev/uat/prod) arg. Cloud vs Server/DC is set by CONFLUENCE_CLOUD,
+# else inferred from a .atlassian.net host.
+#
+# Reads are autonomous; writes require confirmation. Page bodies are passed in a
+# Confluence representation via --content-format (storage XHTML by default, or
+# wiki/editor). Markdown conversion is not done here.
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+
+[confluence]
+description = "Read and manage Confluence pages, spaces, comments, and labels (Cloud or Server/Data Center)"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "confluence get-page --page-id 12345 --expand body.storage", description = "Fetch a page with its storage body"},
+  {cmd = "confluence search --cql 'space = DOCS AND text ~ onboarding'", description = "Search content with CQL"},
+  {cmd = "confluence create-page --space DOCS --title 'Runbook' --content '<p>Steps</p>'", description = "Create a page"},
+  {cmd = "confluence add-comment --page-id 12345 --text 'Reviewed'", description = "Comment on a page"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+[confluence.args]
+env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, description = "Target environment (selects CONFLUENCE_<ENV>_* vars, falling back to CONFLUENCE_*)"}
+
+# ── reads → autonomous ─────────────────────────────────────────────────────
+
+[confluence.commands.search]
+description = "Search content with CQL (Confluence Query Language); returns one page of results"
+autonomy = "autonomous"
+[confluence.commands.search.args]
+cql = {type = "str", required = true, description = "CQL query, e.g. 'type = page AND space = DOCS AND text ~ \"onboarding\"'"}
+limit = {type = "int", default = 25, description = "Max results"}
+start = {type = "int", default = 0, description = "Pagination offset"}
+expand = {type = "str", required = false, description = "Comma-separated expand sections"}
+
+[confluence.commands.get-page]
+description = "Fetch a page by id, or by space + title"
+autonomy = "autonomous"
+[confluence.commands.get-page.args]
+page-id = {type = "str", required = false, description = "Page id"}
+space = {type = "str", required = false, description = "Space key (with --title; falls back to CONFLUENCE_SPACE)"}
+title = {type = "str", required = false, description = "Page title (with --space)"}
+expand = {type = "str", required = false, description = "Comma-separated expand sections, e.g. body.storage,version"}
+
+[confluence.commands.get-page-children]
+description = "List a page's immediate child pages"
+autonomy = "autonomous"
+[confluence.commands.get-page-children.args]
+page-id = {type = "str", required = true, description = "Parent page id"}
+
+[confluence.commands.get-page-ancestors]
+description = "List a page's ancestor pages (breadcrumb, root first)"
+autonomy = "autonomous"
+[confluence.commands.get-page-ancestors.args]
+page-id = {type = "str", required = true, description = "Page id"}
+
+[confluence.commands.get-page-history]
+description = "Return a page's content history (created/last-updated, versions)"
+autonomy = "autonomous"
+[confluence.commands.get-page-history.args]
+page-id = {type = "str", required = true, description = "Page id"}
+
+[confluence.commands.get-labels]
+description = "List a page's labels"
+autonomy = "autonomous"
+[confluence.commands.get-labels.args]
+page-id = {type = "str", required = true, description = "Page id"}
+
+[confluence.commands.get-comments]
+description = "List a page's comments (rendered bodies)"
+autonomy = "autonomous"
+[confluence.commands.get-comments.args]
+page-id = {type = "str", required = true, description = "Page id"}
+limit = {type = "int", default = 25, description = "Max comments"}
+
+[confluence.commands.get-page-restrictions]
+description = "Return the view/edit restrictions on a page"
+autonomy = "autonomous"
+[confluence.commands.get-page-restrictions.args]
+page-id = {type = "str", required = true, description = "Page id"}
+
+[confluence.commands.get-space]
+description = "Fetch a space's metadata"
+autonomy = "autonomous"
+[confluence.commands.get-space.args]
+space-key = {type = "str", required = true, description = "Space key"}
+
+[confluence.commands.get-space-pages]
+description = "List pages in a space (one page of results)"
+autonomy = "autonomous"
+[confluence.commands.get-space-pages.args]
+space = {type = "str", required = true, description = "Space key"}
+limit = {type = "int", default = 50, description = "Max results"}
+start = {type = "int", default = 0, description = "Pagination offset"}
+
+# ── writes → confirm ───────────────────────────────────────────────────────
+
+[confluence.commands.create-page]
+description = "Create a page. --content is in the --content-format representation."
+autonomy = "confirm"
+[confluence.commands.create-page.args]
+space = {type = "str", required = true, description = "Space key"}
+title = {type = "str", required = true, description = "Page title"}
+content = {type = "str", required = true, description = "Page body in the --content-format representation"}
+parent-id = {type = "str", required = false, description = "Parent page id"}
+content-format = {type = "choice", options = ["storage", "wiki", "editor"], default = "storage", description = "Body representation (storage = Confluence XHTML)"}
+
+[confluence.commands.update-page]
+description = "Update a page. --title is required by the API even when only the body changes."
+autonomy = "confirm"
+[confluence.commands.update-page.args]
+page-id = {type = "str", required = true, description = "Page id"}
+title = {type = "str", required = true, description = "Page title (pass the current title if unchanged)"}
+content = {type = "str", required = false, description = "New body in the --content-format representation"}
+parent-id = {type = "str", required = false, description = "New parent page id"}
+content-format = {type = "choice", options = ["storage", "wiki", "editor"], default = "storage", description = "Body representation"}
+version-comment = {type = "str", required = false, description = "Version comment for the edit"}
+minor-edit = {type = "flag", default = false, description = "Mark as a minor edit (no notifications)"}
+
+[confluence.commands.delete-page]
+description = "Delete a page (and, with --recursive, its descendants)"
+autonomy = "confirm"
+[confluence.commands.delete-page.args]
+page-id = {type = "str", required = true, description = "Page id"}
+recursive = {type = "flag", default = false, description = "Also delete descendant pages"}
+
+[confluence.commands.move-page]
+description = "Move a page relative to a target (append under it, or above/below)"
+autonomy = "confirm"
+[confluence.commands.move-page.args]
+space = {type = "str", required = true, description = "Space key of the page"}
+page-id = {type = "str", required = true, description = "Page id to move"}
+target-id = {type = "str", required = false, description = "Target page id"}
+target-title = {type = "str", required = false, description = "Target page title (alternative to --target-id)"}
+position = {type = "choice", options = ["append", "above", "below"], default = "append", description = "Placement relative to the target"}
+
+[confluence.commands.add-label]
+description = "Add a label to a page"
+autonomy = "confirm"
+[confluence.commands.add-label.args]
+page-id = {type = "str", required = true, description = "Page id"}
+label = {type = "str", required = true, description = "Label to add"}
+
+[confluence.commands.add-comment]
+description = "Add a comment to a page"
+autonomy = "confirm"
+[confluence.commands.add-comment.args]
+page-id = {type = "str", required = true, description = "Page id"}
+text = {type = "str", required = true, description = "Comment text"}
