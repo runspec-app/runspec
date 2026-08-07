@@ -1,0 +1,301 @@
+#:schema https://runspec.app/runspec.schema.json
+
+# runspec-jira — a full-featured Jira runnable ported from the Atlassian MCP
+# server (sooperset/mcp-atlassian), onto atlassian-python-api.
+#
+# One runnable, `jira`, with a verb per tool. `runspec serve` re-expands each
+# verb into its own leaf MCP tool (jira_get-issue, jira_create-issue, …), so a
+# runspec-console agent calls them individually — over SSH on any fleet host,
+# with no second server process.
+#
+# Covers Jira Software/Core AND Service Desk (JSM), on Cloud and Server/Data
+# Center. Auth is env-var driven:
+#   JIRA_URL + (JIRA_PERSONAL_TOKEN  |  JIRA_USERNAME + JIRA_API_TOKEN)
+# Per-environment overrides use a JIRA_<ENV>_ prefix (e.g. JIRA_UAT_URL),
+# selected with the global --env (dev/uat/prod) arg. Cloud vs Server/DC is set
+# by JIRA_CLOUD, else inferred from a .atlassian.net host.
+#
+# Reads are autonomous; writes require confirmation. JSON-object arguments
+# (--additional-fields, --fields, --visibility, --worklog-json, --field-values)
+# are passed as strings and parsed by the runnable.
+
+[config]
+autonomy-default = "confirm"
+
+[config.logging]
+store = "per-run"
+
+[jira]
+description = "Query and manipulate Jira issues, projects, and service-desk requests (Cloud or Server/Data Center)"
+output = "json"
+require-command = true
+examples = [
+  {cmd = "jira get-issue --key PROJ-1", description = "Fetch a single issue"},
+  {cmd = "jira search --jql 'assignee = currentUser() AND statusCategory != Done'", description = "Run a JQL search"},
+  {cmd = "jira create-issue --project PROJ --summary 'Fix login' --issue-type Bug", description = "Create an issue"},
+  {cmd = "jira transition-issue --key PROJ-1 --status Done", description = "Move an issue to a status"},
+  {cmd = "jira list-request-types --service-desk-id 5", description = "List a service desk's request types"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+[jira.args]
+env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, description = "Target environment (selects JIRA_<ENV>_* vars, falling back to JIRA_*)"}
+
+# ── issues ─────────────────────────────────────────────────────────────────
+
+[jira.commands.get-issue]
+description = "Fetch a single issue by key, optionally limiting fields or expanding sections"
+autonomy = "autonomous"
+[jira.commands.get-issue.args]
+key = {type = "str", required = true, description = "Issue key, e.g. PROJ-123"}
+fields = {type = "str", multiple = true, required = false, description = "Restrict to these fields (repeat --fields)"}
+expand = {type = "str", required = false, description = "Comma-separated expand sections (e.g. changelog,renderedFields)"}
+
+[jira.commands.create-issue]
+description = "Create an issue in a project. Extra/custom fields go through --additional-fields as a JSON object."
+autonomy = "confirm"
+[jira.commands.create-issue.args]
+project = {type = "str", required = true, description = "Project key"}
+summary = {type = "str", required = true, description = "Issue summary"}
+issue-type = {type = "str", required = true, description = "Issue type name, e.g. Bug, Task, Story"}
+description = {type = "str", required = false, description = "Issue description (wiki markup on DC; plain text on Cloud)"}
+additional-fields = {type = "str", required = false, description = "JSON object of extra fields merged into the create payload, e.g. '{\"labels\":[\"x\"],\"priority\":{\"name\":\"High\"}}'"}
+
+[jira.commands.update-issue]
+description = "Update an issue's fields from a JSON object"
+autonomy = "confirm"
+[jira.commands.update-issue.args]
+key = {type = "str", required = true, description = "Issue key"}
+fields = {type = "str", required = true, description = "JSON object of fields to set, e.g. '{\"summary\":\"New title\"}'"}
+
+[jira.commands.assign-issue]
+description = "Assign an issue to a user (accountId on Cloud, username on Server/DC)"
+autonomy = "confirm"
+[jira.commands.assign-issue.args]
+key = {type = "str", required = true, description = "Issue key"}
+assignee = {type = "str", required = true, description = "Cloud accountId or Server/DC username"}
+
+[jira.commands.delete-issue]
+description = "Delete an issue (and, by default, its subtasks)"
+autonomy = "confirm"
+[jira.commands.delete-issue.args]
+key = {type = "str", required = true, description = "Issue key"}
+delete-subtasks = {type = "flag", default = true, description = "Also delete subtasks (default true)"}
+
+# ── search ─────────────────────────────────────────────────────────────────
+
+[jira.commands.search]
+description = "Search issues with JQL; returns one page (pass --start/--limit to page)"
+autonomy = "autonomous"
+[jira.commands.search.args]
+jql = {type = "str", required = true, description = "JQL query string"}
+fields = {type = "str", multiple = true, required = false, description = "Fields to return (repeat --fields; default all)"}
+limit = {type = "int", default = 50, description = "Max results (maxResults)"}
+start = {type = "int", default = 0, description = "Pagination offset (startAt)"}
+expand = {type = "str", required = false, description = "Comma-separated expand sections"}
+
+[jira.commands.get-project-issues]
+description = "List a project's issues, newest first (one page)"
+autonomy = "autonomous"
+[jira.commands.get-project-issues.args]
+project-key = {type = "str", required = true, description = "Project key"}
+limit = {type = "int", default = 50, description = "Max results"}
+
+# ── transitions ────────────────────────────────────────────────────────────
+
+[jira.commands.list-transitions]
+description = "List the workflow transitions available from an issue's current status"
+autonomy = "autonomous"
+[jira.commands.list-transitions.args]
+key = {type = "str", required = true, description = "Issue key"}
+
+[jira.commands.transition-issue]
+description = "Move an issue to a target status by name (resolves the workflow transition automatically)"
+autonomy = "confirm"
+[jira.commands.transition-issue.args]
+key = {type = "str", required = true, description = "Issue key"}
+status = {type = "str", required = true, description = "Target status name, e.g. 'In Progress', Done"}
+fields = {type = "str", required = false, description = "JSON object of fields required by the transition screen"}
+
+# ── comments ───────────────────────────────────────────────────────────────
+
+[jira.commands.add-comment]
+description = "Add a comment to an issue"
+autonomy = "confirm"
+[jira.commands.add-comment.args]
+key = {type = "str", required = true, description = "Issue key"}
+body = {type = "str", required = true, description = "Comment body"}
+visibility = {type = "str", required = false, description = "JSON object restricting visibility, e.g. '{\"type\":\"role\",\"value\":\"Administrators\"}'"}
+
+[jira.commands.edit-comment]
+description = "Edit an existing comment on an issue"
+autonomy = "confirm"
+[jira.commands.edit-comment.args]
+key = {type = "str", required = true, description = "Issue key"}
+comment-id = {type = "str", required = true, description = "Comment id"}
+body = {type = "str", required = true, description = "New comment body"}
+
+# ── links ──────────────────────────────────────────────────────────────────
+
+[jira.commands.get-link-types]
+description = "List the issue link types available on the instance (e.g. Blocks, Relates)"
+autonomy = "autonomous"
+
+[jira.commands.create-issue-link]
+description = "Link two issues with a named link type"
+autonomy = "confirm"
+[jira.commands.create-issue-link.args]
+link-type = {type = "str", required = true, description = "Link type name, e.g. Blocks"}
+inward-issue = {type = "str", required = true, description = "The inward issue key (e.g. the blocker)"}
+outward-issue = {type = "str", required = true, description = "The outward issue key (e.g. the blocked)"}
+comment = {type = "str", required = false, description = "Optional comment to add with the link"}
+
+[jira.commands.link-to-epic]
+description = "Link an issue to an epic (Cloud parent / Server/DC Epic Link field)"
+autonomy = "confirm"
+[jira.commands.link-to-epic.args]
+issue-key = {type = "str", required = true, description = "Issue to link"}
+epic-key = {type = "str", required = true, description = "Epic issue key"}
+epic-link-field = {type = "str", required = false, description = "Force a specific Epic Link custom field id (customfield_XXXXX)"}
+
+[jira.commands.create-remote-issue-link]
+description = "Attach a remote (web) link to an issue"
+autonomy = "confirm"
+[jira.commands.create-remote-issue-link.args]
+issue-key = {type = "str", required = true, description = "Issue key"}
+url = {type = "str", required = true, description = "The web URL to link to"}
+title = {type = "str", required = true, description = "Link title"}
+relationship = {type = "str", required = false, description = "Optional relationship label"}
+
+[jira.commands.remove-issue-link]
+description = "Remove an issue link by its id"
+autonomy = "confirm"
+[jira.commands.remove-issue-link.args]
+link-id = {type = "str", required = true, description = "Issue link id"}
+
+# ── worklog ────────────────────────────────────────────────────────────────
+
+[jira.commands.get-worklog]
+description = "Return an issue's work log entries"
+autonomy = "autonomous"
+[jira.commands.get-worklog.args]
+key = {type = "str", required = true, description = "Issue key"}
+
+[jira.commands.add-worklog]
+description = "Log work on an issue (pass --time-sec, or a full --worklog-json object)"
+autonomy = "confirm"
+[jira.commands.add-worklog.args]
+key = {type = "str", required = true, description = "Issue key"}
+time-sec = {type = "int", required = false, description = "Time spent in seconds"}
+started = {type = "str", required = false, description = "Start time (ISO 8601, e.g. 2026-08-07T09:00:00.000+0000)"}
+comment = {type = "str", required = false, description = "Worklog comment"}
+worklog-json = {type = "str", required = false, description = "Full worklog JSON object (overrides the scalar args)"}
+
+# ── projects ───────────────────────────────────────────────────────────────
+
+[jira.commands.get-all-projects]
+description = "List every project visible to the configured credentials"
+autonomy = "autonomous"
+
+[jira.commands.search-projects]
+description = "Filter visible projects by a substring of name or key"
+autonomy = "autonomous"
+[jira.commands.search-projects.args]
+query = {type = "str", required = true, description = "Text to match against project name/key"}
+
+[jira.commands.get-project-components]
+description = "List a project's components"
+autonomy = "autonomous"
+[jira.commands.get-project-components.args]
+project-key = {type = "str", required = true, description = "Project key"}
+
+[jira.commands.get-project-issue-types]
+description = "List the issue types available when creating in a project"
+autonomy = "autonomous"
+[jira.commands.get-project-issue-types.args]
+project-key = {type = "str", required = true, description = "Project key"}
+
+[jira.commands.get-create-fields]
+description = "Return the create-screen field metadata for a project (the discovery step before create-issue --additional-fields)"
+autonomy = "autonomous"
+[jira.commands.get-create-fields.args]
+project-key = {type = "str", required = true, description = "Project key"}
+
+# ── fields ─────────────────────────────────────────────────────────────────
+
+[jira.commands.search-fields]
+description = "List fields, optionally filtered by a substring of name or id (find a custom field's id)"
+autonomy = "autonomous"
+[jira.commands.search-fields.args]
+query = {type = "str", required = false, description = "Text to match against field name/id"}
+
+# ── users ──────────────────────────────────────────────────────────────────
+
+[jira.commands.get-user-profile]
+description = "Fetch a user profile (Cloud: --account-id; Server/DC: --username or --key)"
+autonomy = "autonomous"
+[jira.commands.get-user-profile.args]
+username = {type = "str", required = false, description = "Server/DC username"}
+account-id = {type = "str", required = false, description = "Cloud accountId"}
+key = {type = "str", required = false, description = "Server/DC user key"}
+
+[jira.commands.search-assignable-users]
+description = "List users assignable to issues in a project (one page)"
+autonomy = "autonomous"
+[jira.commands.search-assignable-users.args]
+project-key = {type = "str", required = true, description = "Project key"}
+start = {type = "int", default = 0, description = "Pagination offset"}
+limit = {type = "int", default = 50, description = "Max results"}
+
+# ── watchers ───────────────────────────────────────────────────────────────
+
+[jira.commands.get-watchers]
+description = "List the watchers of an issue"
+autonomy = "autonomous"
+[jira.commands.get-watchers.args]
+key = {type = "str", required = true, description = "Issue key"}
+
+[jira.commands.add-watcher]
+description = "Add a watcher to an issue (username on Server/DC, accountId on Cloud)"
+autonomy = "confirm"
+[jira.commands.add-watcher.args]
+key = {type = "str", required = true, description = "Issue key"}
+user = {type = "str", required = true, description = "Username (Server/DC) or accountId (Cloud)"}
+
+[jira.commands.remove-watcher]
+description = "Remove a watcher (Cloud: --account-id; Server/DC: --user)"
+autonomy = "confirm"
+[jira.commands.remove-watcher.args]
+key = {type = "str", required = true, description = "Issue key"}
+user = {type = "str", required = false, description = "Server/DC username"}
+account-id = {type = "str", required = false, description = "Cloud accountId"}
+
+# ── service desk (JSM) ─────────────────────────────────────────────────────
+
+[jira.commands.list-request-types]
+description = "List the request types offered by a service desk"
+autonomy = "autonomous"
+[jira.commands.list-request-types.args]
+service-desk-id = {type = "str", required = false, description = "Service desk id (falls back to JIRA_SERVICE_DESK_ID)"}
+
+[jira.commands.list-request-type-fields]
+description = "List the fields a request type expects (feeds raise-request)"
+autonomy = "autonomous"
+[jira.commands.list-request-type-fields.args]
+request-type-id = {type = "str", required = true, description = "Request type id"}
+service-desk-id = {type = "str", required = false, description = "Service desk id (falls back to JIRA_SERVICE_DESK_ID)"}
+
+[jira.commands.raise-request]
+description = "Raise a customer request. --field-values is a JSON object keyed by fieldId (see list-request-type-fields)."
+autonomy = "confirm"
+[jira.commands.raise-request.args]
+request-type-id = {type = "str", required = true, description = "Request type id"}
+field-values = {type = "str", required = true, description = "JSON object of fieldId: value, e.g. '{\"summary\":\"Laptop broken\"}'"}
+service-desk-id = {type = "str", required = false, description = "Service desk id (falls back to JIRA_SERVICE_DESK_ID)"}
+raise-on-behalf-of = {type = "str", required = false, description = "Raise the request on behalf of this reporter"}
+
+[jira.commands.get-request]
+description = "Fetch a customer request by issue id or key"
+autonomy = "autonomous"
+[jira.commands.get-request.args]
+issue-id-or-key = {type = "str", required = true, description = "Request issue id or key"}

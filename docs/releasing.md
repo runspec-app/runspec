@@ -40,6 +40,8 @@ publishes. Publishing is always an explicit step.
 | `runspec-fs-core` | `packages/python/runspec-fs-core/pyproject.toml` | `fs-core-v` | `fs-core-release.yml` | PyPI + GitHub Release |
 | `runspec-gitlab` | `packages/python/runspec-gitlab/pyproject.toml` | `gitlab-v` | `gitlab-release.yml` | PyPI + GitHub Release |
 | `runspec-gitlab-core` | `packages/python/runspec-gitlab-core/pyproject.toml` | `gitlab-core-v` | `gitlab-core-release.yml` | PyPI + GitHub Release |
+| `runspec-jira` | `packages/python/runspec-jira/pyproject.toml` | `jira-v` | `jira-release.yml` | PyPI + GitHub Release |
+| `runspec-jira-core` | `packages/python/runspec-jira-core/pyproject.toml` | `jira-core-v` | `jira-core-release.yml` | PyPI + GitHub Release |
 | `runspec-jsm` | `packages/python/runspec-jsm/pyproject.toml` | `jsm-v` | `jsm-release.yml` | PyPI + GitHub Release |
 | `runspec-snow` | `packages/python/runspec-snow/pyproject.toml` | `snow-v` | `snow-release.yml` | PyPI + GitHub Release |
 | `runspec-console` | `packages/python/runspec-console/pyproject.toml` | `console-v` | `console-release.yml` | PyPI + GitHub Release |
@@ -112,6 +114,9 @@ means the tag doesn't exist yet and the run fails.
 - **`runspec-gitlab` depends on `runspec-gitlab-core`** — same rule: publish
   `runspec-gitlab-core` to PyPI **first**, then `runspec-gitlab`, so its
   `runspec-gitlab-core>=…` floor resolves.
+- **`runspec-jira` depends on `runspec-jira-core`** — same rule: publish
+  `runspec-jira-core` to PyPI **first**, then `runspec-jira`, so its
+  `runspec-jira-core>=…` floor resolves.
 
 ## For automated/agent sessions
 
