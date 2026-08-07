@@ -1,5 +1,15 @@
 # runspec-linux Changelog
 
+## [0.8.0] — 2026-08-07
+
+The Docker runnables can now run as another user. `list-containers`,
+`container-logs`, and `restart-container` gain the mutually-exclusive
+`--run-as <user>` / `--sudo` pair (+ `--become-method sudo|su`) — the same
+`exclusive`-group escalation the service/log runnables use — so they work where
+the Docker socket needs root or `docker`-group membership (`--sudo` runs docker
+as root). Requires `runspec-linux-core >= 0.5.0`.
+
+
 ## [0.7.0] — 2026-08-01
 
 Enhancements for corporate application support, devops, and performance work.

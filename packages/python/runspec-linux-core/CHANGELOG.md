@@ -1,5 +1,17 @@
 # runspec-linux-core Changelog
 
+## [0.5.0] — 2026-08-07
+
+The Docker container helpers now take the same per-invocation `run_as` /
+`become_method` escalation as the log/service helpers, since the Docker daemon
+socket is typically root- or `docker`-group-owned. `list_containers`,
+`container_logs`, and `restart_container` gain keyword-only `run_as` /
+`become_method` params and wrap their `docker` subprocess with `build_become`;
+a failed escalated command raises `CommandError` with the passwordless-sudo hint
+(`container_logs` no longer returns the sudo error as log lines when `run_as` is
+set). No behaviour change when `run_as` is unset.
+
+
 ## [0.4.0] — 2026-08-01
 
 New shared privilege-escalation module `runspec_linux_core.become` — the single

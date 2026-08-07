@@ -355,6 +355,27 @@ short       = "-a"
 description = "Include stopped containers"
 default     = false
 
+# Escalation: the Docker daemon socket is usually root/docker-group owned.
+[list-containers.args.run-as]
+type        = "str"
+description = "Run docker as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[list-containers.args.sudo]
+type        = "flag"
+description = "Run docker as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[list-containers.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[list-containers.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
+
 [container-logs]
 serve       = ["local"]
 description = "Fetch recent log output from a Docker container"
@@ -372,6 +393,27 @@ short       = "-n"
 description = "Number of lines to return"
 default     = 50
 
+# Escalation: the Docker daemon socket is usually root/docker-group owned.
+[container-logs.args.run-as]
+type        = "str"
+description = "Run docker as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[container-logs.args.sudo]
+type        = "flag"
+description = "Run docker as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[container-logs.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[container-logs.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
+
 [restart-container]
 serve       = ["local"]
 description = "Restart a Docker container"
@@ -382,6 +424,27 @@ output      = "json"
 type        = "str"
 short       = "-c"
 description = "Container name or ID"
+
+# Escalation: the Docker daemon socket is usually root/docker-group owned.
+[restart-container.args.run-as]
+type        = "str"
+description = "Run docker as this specific OS user (via sudo -n -u / su). Mutually exclusive with --sudo."
+required    = false
+
+[restart-container.args.sudo]
+type        = "flag"
+description = "Run docker as root (via sudo). Mutually exclusive with --run-as."
+default     = false
+
+[restart-container.args.become-method]
+type        = "choice"
+options     = ["sudo", "su"]
+description = "How to escalate for --run-as/--sudo: sudo (passwordless, -n) or su."
+default     = "sudo"
+
+[restart-container.groups.escalation]
+exclusive   = true
+args        = ["run-as", "sudo"]
 
 # ── Packages ──────────────────────────────────────────────────────────────────
 
