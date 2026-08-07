@@ -30,6 +30,7 @@ from runspec_confluence_core.content import (
     get_page_restrictions,
 )
 from runspec_confluence_core.errors import ConfluenceError
+from runspec_confluence_core.mdconvert import markdown_to_storage
 from runspec_confluence_core.pages import (
     create_page,
     delete_page,
@@ -75,4 +76,6 @@ __all__ = [
     "download_attachments",
     "upload_attachment",
     "delete_attachment",
+    # markdown
+    "markdown_to_storage",
 ]

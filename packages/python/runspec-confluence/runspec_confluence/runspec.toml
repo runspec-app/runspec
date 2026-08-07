@@ -120,7 +120,7 @@ space = {type = "str", required = true, description = "Space key"}
 title = {type = "str", required = true, description = "Page title"}
 content = {type = "str", required = true, description = "Page body in the --content-format representation"}
 parent-id = {type = "str", required = false, description = "Parent page id"}
-content-format = {type = "choice", options = ["storage", "wiki", "editor"], default = "storage", description = "Body representation (storage = Confluence XHTML)"}
+content-format = {type = "choice", options = ["storage", "wiki", "editor", "markdown"], default = "storage", description = "Body representation (storage = Confluence XHTML; markdown is converted to storage client-side)"}
 
 [confluence.commands.update-page]
 description = "Update a page. --title is required by the API even when only the body changes."
@@ -130,7 +130,7 @@ page-id = {type = "str", required = true, description = "Page id"}
 title = {type = "str", required = true, description = "Page title (pass the current title if unchanged)"}
 content = {type = "str", required = false, description = "New body in the --content-format representation"}
 parent-id = {type = "str", required = false, description = "New parent page id"}
-content-format = {type = "choice", options = ["storage", "wiki", "editor"], default = "storage", description = "Body representation"}
+content-format = {type = "choice", options = ["storage", "wiki", "editor", "markdown"], default = "storage", description = "Body representation (markdown is converted to storage client-side)"}
 version-comment = {type = "str", required = false, description = "Version comment for the edit"}
 minor-edit = {type = "flag", default = false, description = "Mark as a minor edit (no notifications)"}
 

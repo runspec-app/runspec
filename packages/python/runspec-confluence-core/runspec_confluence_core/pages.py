@@ -7,6 +7,18 @@ from typing import Any
 from runspec_confluence_core.client import build_client, translate_errors
 from runspec_confluence_core.config import ConfluenceConfig
 from runspec_confluence_core.errors import ConfluenceError
+from runspec_confluence_core.mdconvert import markdown_to_storage
+
+
+def _render_body(body: str | None, representation: str) -> tuple[str | None, str]:
+    """Resolve the body + representation, converting Markdown to storage XHTML.
+
+    ``representation="markdown"`` is a runspec-side convenience (not a Confluence
+    representation): the body is converted to ``storage`` here.
+    """
+    if representation == "markdown":
+        return (markdown_to_storage(body) if body else body), "storage"
+    return body, representation
 
 
 @translate_errors
@@ -52,8 +64,10 @@ def create_page(
     representation: str = "storage",
 ) -> Any:
     """Create a page. ``body`` is in ``representation`` format (``storage`` XHTML by
-    default, or ``wiki`` / ``editor``)."""
-    return build_client(config).create_page(space, title, body, parent_id=parent_id, representation=representation)
+    default, or ``wiki`` / ``editor`` / ``markdown`` — ``markdown`` is converted to
+    storage client-side)."""
+    rendered, rep = _render_body(body, representation)
+    return build_client(config).create_page(space, title, rendered, parent_id=parent_id, representation=rep)
 
 
 @translate_errors
@@ -69,13 +83,15 @@ def update_page(
     minor_edit: bool = False,
 ) -> Any:
     """Update a page. ``title`` is required by the API even when only the body
-    changes (pass the page's current title)."""
+    changes (pass the page's current title). ``representation="markdown"`` converts
+    the body to storage client-side."""
+    rendered, rep = _render_body(body, representation)
     return build_client(config).update_page(
         page_id,
         title,
-        body=body,
+        body=rendered,
         parent_id=parent_id,
-        representation=representation,
+        representation=rep,
         minor_edit=minor_edit,
         version_comment=version_comment,
     )

@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.3.0] — 2026-08-07
+
+Add Markdown support: `create_page` / `update_page` accept
+`representation="markdown"` and convert the body to Confluence storage XHTML
+client-side (new `mdconvert.markdown_to_storage`, over the `markdown` library —
+now a dependency). Best-effort: headings, lists, tables, fenced code, links, and
+emphasis convert cleanly; Confluence macros are not produced.
+
 ## [0.2.0] — 2026-08-07
 
 Add page attachment helpers over the SDK's attachment methods: `get_attachments`,

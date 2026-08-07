@@ -2,6 +2,12 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.3.0] — 2026-08-07
+
+`create-page` / `update-page` gain a `markdown` option on `--content-format`,
+converting a Markdown body to Confluence storage client-side (best-effort, over
+the `markdown` library). Requires `runspec-confluence-core >= 0.3.0`.
+
 ## [0.2.0] — 2026-08-07
 
 Add four attachment verbs to the `confluence` runnable: `get-attachments`

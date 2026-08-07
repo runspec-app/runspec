@@ -49,7 +49,7 @@ def test_content_format_defaults_storage() -> None:
 def test_bad_content_format_rejected() -> None:
     h = _harness()
     h.expect_exit(
-        ["create-page", "--space", "DOCS", "--title", "T", "--content", "x", "--content-format", "markdown"],
+        ["create-page", "--space", "DOCS", "--title", "T", "--content", "x", "--content-format", "rst"],
         contains="content-format",
     )
     h.close()
