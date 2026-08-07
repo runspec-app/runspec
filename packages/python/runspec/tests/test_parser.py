@@ -1038,3 +1038,53 @@ class TestHyphenatedArgValidation:
             runspec.parse(script_name="my-tool", argv=[])
         assert exc.value.code == 1
         assert "--output-file" in capsys.readouterr().out
+
+
+@pytest.fixture()
+def escalation_spec_dir(tmp_path, monkeypatch):
+    """A runnable with a str + flag in an `exclusive` group — the shape
+    runspec-linux's --run-as / --sudo escalation uses."""
+    (tmp_path / "runspec.toml").write_text(
+        textwrap.dedent("""\
+            [task]
+            [task.args.run-as]
+            type = "str"
+            required = false
+            [task.args.sudo]
+            type = "flag"
+            default = false
+            [task.groups.escalation]
+            exclusive = true
+            args = ["run-as", "sudo"]
+        """),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+class TestExclusiveGroupWithFlag:
+    """A defaulted flag must not read as "provided" — otherwise an exclusive
+    group containing a flag can never allow its other member to be set.
+    Regression: `--run-as x` alone tripped the group because `sudo` defaulted
+    to False (not None) and looked provided.
+    """
+
+    def test_str_member_alone_is_allowed(self, escalation_spec_dir):
+        result = runspec.parse(script_name="task", argv=["--run-as", "deploy"])
+        assert result.run_as.value == "deploy"
+        assert result.sudo.value is False
+
+    def test_flag_member_alone_is_allowed(self, escalation_spec_dir):
+        result = runspec.parse(script_name="task", argv=["--sudo"])
+        assert result.sudo.value is True
+
+    def test_neither_is_allowed(self, escalation_spec_dir):
+        result = runspec.parse(script_name="task", argv=[])
+        assert result.sudo.value is False
+
+    def test_both_is_rejected(self, escalation_spec_dir, capsys):
+        with pytest.raises(SystemExit) as exc:
+            runspec.parse(script_name="task", argv=["--run-as", "deploy", "--sudo"])
+        assert exc.value.code == 1
+        assert "escalation" in capsys.readouterr().out

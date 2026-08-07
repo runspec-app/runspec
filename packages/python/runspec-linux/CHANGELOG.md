@@ -1,5 +1,19 @@
 # runspec-linux Changelog
 
+## [0.8.1] — 2026-08-07
+
+### Fixed
+
+- The `--run-as <user>` / `--sudo` escalation args could not be used at all: the
+  `exclusive` group rejected `--run-as deploy` on its own (in runspec-console
+  Forms and on the CLI) with "`--run-as` and `--sudo` cannot be used together",
+  because a defaulted `--sudo` flag read as "provided". The root-cause fix is in
+  `runspec` core (0.50.1 — argument groups now ignore defaulted values); this
+  release raises the floor to `runspec >= 0.50.1` so the escalation runnables
+  (`restart-service`, `tail-log`, `search-log`, `journalctl`, `set-sysctl`,
+  `service-detail`, `open-ports`, `list-containers`, `container-logs`,
+  `restart-container`) work as intended. No runnable/arg definitions changed.
+
 ## [0.8.0] — 2026-08-07
 
 The Docker runnables can now run as another user. `list-containers`,

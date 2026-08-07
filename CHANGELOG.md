@@ -7,6 +7,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.50.1] — 2026-08-07
+
+### Fixed
+
+- **Argument groups now ignore defaults when deciding what was "provided".**
+  Group constraints (`exclusive` / `inclusive` / `exactly-one` / `at-least-one`
+  / conditional) are validated *after* defaults are applied, and a `flag` left
+  unset carries its `false` default (not `None`), so it read as "provided". That
+  made an `exclusive` group containing a flag impossible to satisfy — e.g. a
+  `--run-as <user>` / `--sudo` pair rejected `--run-as deploy` on its own with
+  "`--run-as` and `--sudo` cannot be used together" even though `--sudo` was
+  never passed. `parse()` now feeds `validate_groups` a source-filtered view so
+  only args the user actually supplied (cli/env) count as provided; defaulted
+  values no longer trip any group constraint.
+
 ## [node-0.37.0] — 2026-07-19
 
 ### Added

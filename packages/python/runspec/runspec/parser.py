@@ -230,8 +230,16 @@ def _parse_impl(
     arg_errors = validate_args(parsed_values, raw_script["args"])
     raise_if_errors(arg_errors)
 
-    # 11. Pass 2 — validate groups
-    group_errors = validate_groups(parsed_values, raw_script["groups"])
+    # 11. Pass 2 — validate groups.
+    # Groups constrain what the user *explicitly provided*, not what defaulting
+    # filled in. `parsed_values` here has defaults applied, so a flag left unset
+    # carries its `False` default (not None) and a defaulted arg carries its
+    # value — both of which would otherwise read as "provided" and, e.g., make an
+    # `exclusive` group containing a flag impossible to satisfy. Pass a
+    # source-filtered view where only cli/env-supplied args carry a value.
+    _explicit_sources = ("cli", "env", "runspec_env")
+    group_values = {k: (v if sources.get(k) in _explicit_sources else None) for k, v in parsed_values.items()}
+    group_errors = validate_groups(group_values, raw_script["groups"])
     raise_if_errors(group_errors)
 
     # 12. Coerce values to native Python types

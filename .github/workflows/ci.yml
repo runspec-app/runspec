@@ -310,10 +310,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        # runspec-linux-core, runspec-webops-core and runspec-fs-core aren't
-        # published yet — install them from the sibling sources so the
-        # runspec-linux deps resolve locally.
+        # Install the in-tree runspec core + the *-core siblings from source so
+        # the runspec-linux deps resolve locally — runspec-linux floors on a
+        # runspec version that may not be published to PyPI yet (the core fix and
+        # the wrapper floor bump ship together).
         run: |
+          pip install -e ../runspec
           pip install -e ../runspec-linux-core
           pip install -e ../runspec-webops-core
           pip install -e ../runspec-fs-core
@@ -343,10 +345,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        # runspec-linux-core, runspec-webops-core and runspec-fs-core aren't
-        # published yet — install them from the sibling sources so the
-        # runspec-linux deps resolve locally.
+        # Install the in-tree runspec core + the *-core siblings from source so
+        # the runspec-linux deps resolve locally — runspec-linux floors on a
+        # runspec version that may not be published to PyPI yet (the core fix and
+        # the wrapper floor bump ship together).
         run: |
+          pip install -e ../runspec
           pip install -e ../runspec-linux-core
           pip install -e ../runspec-webops-core
           pip install -e ../runspec-fs-core
@@ -363,8 +367,10 @@ jobs:
       - name: Wheel smoke test
         run: |
           python -m venv /tmp/smoke
-          # Install the unpublished core dependencies first, then the wheel under test.
-          /tmp/smoke/bin/pip install ../runspec-linux-core ../runspec-webops-core ../runspec-fs-core
+          # Install the unpublished core dependencies first (incl. the in-tree
+          # runspec core, since the wrapper floors on a version that may not be
+          # on PyPI yet), then the wheel under test.
+          /tmp/smoke/bin/pip install ../runspec ../runspec-linux-core ../runspec-webops-core ../runspec-fs-core
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/system-info
           /tmp/smoke/bin/cert-check --help
