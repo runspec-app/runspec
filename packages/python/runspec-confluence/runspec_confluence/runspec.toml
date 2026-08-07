@@ -38,6 +38,7 @@ examples = [
 # ── global args (inherited by every verb) ──────────────────────────────────
 [confluence.args]
 env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, description = "Target environment (selects CONFLUENCE_<ENV>_* vars, falling back to CONFLUENCE_*)"}
+confluence-pat = {type = "password", required = false, description = "Confluence Personal Access Token (Server/DC). Optional; overrides CONFLUENCE_PERSONAL_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_CONFLUENCE_ARG_CONFLUENCE_PAT), never on the command line."}
 
 # ── reads → autonomous ─────────────────────────────────────────────────────
 

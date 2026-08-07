@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-jira` are documented here.
 
+## [0.3.0] — 2026-08-07
+
+Add an optional `--jira-pat` secret arg (a `password`-typed inherited global) for
+the Jira Personal Access Token, so a credential can be supplied through
+runspec-console (via the `RUNSPEC_JIRA_ARG_JIRA_PAT` secret channel) instead of the
+`JIRA_PERSONAL_TOKEN` env var. The arg is named `jira-pat` (not `pat`) so
+runspec-console derives a distinct env var from it. When set it overrides env credentials. Being a `password` arg it is
+refused on the command line, kept out of logs/audit, and omitted from the agent's
+MCP tool schemas. Requires `runspec-jira-core >= 0.3.0`.
+
 ## [0.2.0] — 2026-08-07
 
 Add four attachment verbs to the `jira` runnable: `list-attachments`

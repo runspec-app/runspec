@@ -213,7 +213,7 @@ def _dispatch(spec: rs.RunSpec, config: JiraConfig) -> Any:
 def main() -> None:
     spec = rs.parse("jira")
     try:
-        config = config_from_env(env=spec.env.value)
+        config = config_from_env(env=spec.env.value, personal_token_override=spec.jira_pat.value)
         result = _dispatch(spec, config)
     except (JiraError, ValueError) as exc:
         _emit({"error": str(exc), "kind": type(exc).__name__})

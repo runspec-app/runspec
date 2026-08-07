@@ -2,6 +2,14 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.4.0] — 2026-08-07
+
+`config_from_env` gains a keyword-only `personal_token_override` — when set it is
+used as the PAT and is authoritative (satisfies the credential requirement on its
+own, takes precedence over env Basic credentials); the base URL is still read from
+the environment. Lets a caller supply the token out-of-band (e.g. the runnable's
+`--pat` secret arg from runspec-console) without env credentials.
+
 ## [0.3.0] — 2026-08-07
 
 Add Markdown support: `create_page` / `update_page` accept

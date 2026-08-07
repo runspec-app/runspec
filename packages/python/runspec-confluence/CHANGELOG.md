@@ -2,6 +2,16 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.4.0] — 2026-08-07
+
+Add an optional `--confluence-pat` secret arg (a `password`-typed inherited global)
+for the Confluence Personal Access Token, so a credential can be supplied through
+runspec-console (via the `RUNSPEC_CONFLUENCE_ARG_CONFLUENCE_PAT` secret channel)
+instead of the `CONFLUENCE_PERSONAL_TOKEN` env var. The arg is named
+`confluence-pat` (not `pat`) so runspec-console derives a distinct env var from it. When set it overrides env credentials. Being a
+`password` arg it is refused on the command line, kept out of logs/audit, and
+omitted from the agent's MCP tool schemas. Requires `runspec-confluence-core >= 0.4.0`.
+
 ## [0.3.0] — 2026-08-07
 
 `create-page` / `update-page` gain a `markdown` option on `--content-format`,

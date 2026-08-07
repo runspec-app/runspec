@@ -40,6 +40,7 @@ examples = [
 # ── global args (inherited by every verb) ──────────────────────────────────
 [jira.args]
 env = {type = "choice", options = ["dev", "uat", "prod"], short = "-e", required = false, description = "Target environment (selects JIRA_<ENV>_* vars, falling back to JIRA_*)"}
+jira-pat = {type = "password", required = false, description = "Jira Personal Access Token (Server/DC). Optional; overrides JIRA_PERSONAL_TOKEN. Supplied via the runspec-console credential/secret channel (RUNSPEC_JIRA_ARG_JIRA_PAT), never on the command line."}
 
 # ── issues ─────────────────────────────────────────────────────────────────
 

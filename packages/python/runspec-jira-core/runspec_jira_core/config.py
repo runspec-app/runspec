@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from runspec_jira_core.errors import JiraError
 
@@ -64,7 +65,7 @@ def _resolve_cloud(url: str, override: str | None) -> bool:
     return ".atlassian.net" in url.lower()
 
 
-def config_from_env(env: str | None = None) -> JiraConfig:
+def config_from_env(env: str | None = None, *, personal_token_override: str | None = None) -> JiraConfig:
     """Build a :class:`JiraConfig` from environment variables.
 
     When ``env`` (or the ``JIRA_ENV`` variable) selects dev/uat/prod, the
@@ -72,6 +73,12 @@ def config_from_env(env: str | None = None) -> JiraConfig:
     back to the unprefixed ``JIRA_*`` family for single-instance setups. Raises
     :class:`JiraError` with an actionable message when the env label is invalid,
     the base URL is missing, or no usable credentials are configured.
+
+    ``personal_token_override`` — when set (e.g. from the ``--pat`` secret arg
+    supplied through runspec-console) — is used as the PAT and is authoritative:
+    it satisfies the credential requirement on its own and takes precedence over
+    any env-configured Basic credentials. The base URL is still read from the
+    environment.
     """
     env = env or os.environ.get("JIRA_ENV")
     if env is not None:
@@ -91,23 +98,24 @@ def config_from_env(env: str | None = None) -> JiraConfig:
         hint = f"JIRA_{env.upper()}_URL" if env else "JIRA_URL"
         raise JiraError(f"No base URL configured — set {hint}")
 
+    verify = lookup("VERIFY_SSL")
+    verify_ssl = True if verify is None else verify.strip().lower() not in _FALSEY
+    common: dict[str, Any] = {
+        "url": url.rstrip("/"),
+        "cloud": _resolve_cloud(url, lookup("CLOUD")),
+        "service_desk_id": lookup("SERVICE_DESK_ID"),
+        "project_key": lookup("PROJECT_KEY"),
+        "verify_ssl": verify_ssl,
+        "env": env,
+    }
+
+    if personal_token_override:
+        return JiraConfig(personal_token=personal_token_override, **common)
+
     username = lookup("USERNAME")
     api_token = lookup("API_TOKEN")
     personal_token = lookup("PERSONAL_TOKEN")
     if not personal_token and not (username and api_token):
         raise JiraError("No credentials configured — set JIRA_PERSONAL_TOKEN (Server/DC PAT) or JIRA_USERNAME + JIRA_API_TOKEN (Cloud email + API token, or DC basic auth)")
 
-    verify = lookup("VERIFY_SSL")
-    verify_ssl = True if verify is None else verify.strip().lower() not in _FALSEY
-
-    return JiraConfig(
-        url=url.rstrip("/"),
-        cloud=_resolve_cloud(url, lookup("CLOUD")),
-        username=username,
-        api_token=api_token,
-        personal_token=personal_token,
-        service_desk_id=lookup("SERVICE_DESK_ID"),
-        project_key=lookup("PROJECT_KEY"),
-        verify_ssl=verify_ssl,
-        env=env,
-    )
+    return JiraConfig(username=username, api_token=api_token, personal_token=personal_token, **common)
