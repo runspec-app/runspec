@@ -6,6 +6,7 @@ import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
 import { useIsDark, useAccent, withAlpha, textSecondary } from '../ThemeContext'
 import { PathInput } from './PathInput'
+import { runnableHidden } from '../toolVisibility'
 
 const { Text } = Typography
 
@@ -1067,6 +1068,17 @@ export function FormsView({
   const isDark = useIsDark()
   const [search, setSearch] = useState('')
   const [modalState, setModalState] = useState<ModalState | null>(null)
+  // [tool_visibility] hidden_from_all — runnables hidden everywhere in the
+  // console, including this Forms list. The agent toolset + catalogs are filtered
+  // server-side; this is the display filter for the Forms surface. Refreshed when
+  // the Settings → Agent tools tab saves.
+  const [hiddenAll, setHiddenAll] = useState<string[]>([])
+  useEffect(() => {
+    const load = () => bridge.get_tool_visibility().then(v => setHiddenAll(v.hidden_from_all ?? [])).catch(() => {})
+    load()
+    window.addEventListener('runspec:tool_visibility_changed', load)
+    return () => window.removeEventListener('runspec:tool_visibility_changed', load)
+  }, [])
 
   // Open modal when slash command routes a pending form here
   useEffect(() => {
@@ -1109,10 +1121,16 @@ export function FormsView({
     openModal(runnable)
   }
 
+  // Drop runnables hidden everywhere ([tool_visibility] hidden_from_all) before
+  // any other filtering, so they never appear as Forms cards.
+  const visibleRunnables = hiddenAll.length > 0
+    ? runnables.filter(r => !runnableHidden(r.name, r.group, r.host, hiddenAll))
+    : runnables
+
   // Filter by host selection and group scope
   const hostFiltered = selectedHost
-    ? runnables.filter(r => r.host === selectedHost)
-    : runnables
+    ? visibleRunnables.filter(r => r.host === selectedHost)
+    : visibleRunnables
 
   const scopeFiltered = activeScope.length > 0
     ? hostFiltered.filter(r => activeScope.includes(r.group))

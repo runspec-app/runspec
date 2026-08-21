@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from runspec_windows.graph import GraphDepError, GraphError
-from runspec_windows.graph.auth import get_token
+from runspec_o365 import GraphDepError, GraphError
+from runspec_o365.auth import get_token
 
 try:
     import httpx
@@ -22,7 +22,7 @@ def graph_get(path: str, params: dict | None = None, scopes: list[str] | None = 
     message. ``path`` should start with ``/`` (e.g. ``/me/messages``).
     """
     if httpx is None:
-        raise GraphDepError("The 'httpx' package is required for Microsoft Graph runnables. Install with: pip install 'runspec-windows[graph]'")
+        raise GraphDepError("The 'httpx' package is required for Microsoft Graph runnables. Reinstall with: pip install runspec-o365")
     token = get_token(scopes)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     if params and "$search" in params:

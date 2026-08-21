@@ -59,8 +59,7 @@ jobs:
           from importlib.resources import files
           pkg = files('runspec_windows')
           assert (pkg / 'runspec.toml').is_file(), 'runspec.toml missing from wheel'
-          import runspec_windows
-          assert runspec_windows.graph_get and runspec_windows.get_token
+          import runspec_windows  # noqa: F401
           print('Wheel contents OK')
           "
 

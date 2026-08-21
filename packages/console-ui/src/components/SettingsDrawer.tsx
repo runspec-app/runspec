@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption } from '../bridge'
+import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
 import { credEnvNames, initialFormValues } from '../views/FormsView'
+import { runnableHidden } from '../toolVisibility'
 import {
   commandPathOptions, CredentialsSection, effectiveArgsForPath, RunnableArgsBlock,
   runnableSelectOptions, TargetFormItems, runnablesForTarget, splitFixedAndOpen,
@@ -1477,6 +1478,190 @@ function LocalVenvsTab() {
           ))}
         </div>
       )}
+
+      <Divider style={{ margin: '16px 0' }} />
+      <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+    </div>
+  )
+}
+
+// One row per distinct runnable name (the agent hides by name across hosts).
+interface RunnableRow { name: string; group: string; host: string; hosts: number }
+
+function AgentToolsTab() {
+  const [rows, setRows] = useState<RunnableRow[]>([])
+  const [fromAgent, setFromAgent] = useState<string[]>([])
+  const [fromAll, setFromAll] = useState<string[]>([])
+  const [query, setQuery] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    bridge.get_runnables('all').then(rs => {
+      const byName = new Map<string, RunnableRow>()
+      for (const r of rs) {
+        const ex = byName.get(r.name)
+        if (ex) ex.hosts += 1
+        else byName.set(r.name, { name: r.name, group: r.group ?? '', host: r.host ?? '', hosts: 1 })
+      }
+      setRows([...byName.values()].sort((a, b) => a.name.localeCompare(b.name)))
+    })
+    bridge.get_tool_visibility().then(v => {
+      setFromAgent(v.hidden_from_agent ?? [])
+      setFromAll(v.hidden_from_all ?? [])
+    })
+  }, [])
+
+  // Effective state for a row, matching name/group/host against both lists.
+  const stateFor = (r: RunnableRow): 'visible' | 'agent' | 'all' => {
+    if (runnableHidden(r.name, r.group, r.host, fromAll)) return 'all'
+    if (runnableHidden(r.name, r.group, r.host, fromAgent)) return 'agent'
+    return 'visible'
+  }
+  // A row hidden by a non-exact-name pattern (a glob or a group:/host: rule) —
+  // its per-row control is read-only; the operator edits the Advanced lists.
+  const viaPattern = (r: RunnableRow): 'agent' | 'all' | null => {
+    if (fromAll.includes(r.name)) return null
+    if (runnableHidden(r.name, r.group, r.host, fromAll)) return 'all'
+    if (fromAgent.includes(r.name)) return null
+    if (runnableHidden(r.name, r.group, r.host, fromAgent)) return 'agent'
+    return null
+  }
+
+  const setRowState = (name: string, next: 'visible' | 'agent' | 'all') => {
+    const drop = (xs: string[]) => xs.filter(x => x !== name)
+    const add = (xs: string[]) => (xs.includes(name) ? xs : [...xs, name])
+    if (next === 'visible') { setFromAgent(drop); setFromAll(drop) }
+    else if (next === 'agent') { setFromAgent(xs => add(drop(xs))); setFromAll(drop) }
+    else { setFromAll(xs => add(drop(xs))); setFromAgent(drop) }
+  }
+
+  const parseList = (text: string) =>
+    text.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const payload: ToolVisibility = {
+        hidden_from_agent: [...new Set(fromAgent.map(s => s.trim()).filter(Boolean))],
+        hidden_from_all: [...new Set(fromAll.map(s => s.trim()).filter(Boolean))],
+      }
+      const out = await bridge.save_tool_visibility(payload)
+      setFromAgent(out.hidden_from_agent ?? [])
+      setFromAll(out.hidden_from_all ?? [])
+      window.dispatchEvent(new CustomEvent('runspec:tool_visibility_changed'))
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : 'Could not save tool visibility')
+    } finally { setSaving(false) }
+  }
+
+  const q = query.trim().toLowerCase()
+  const shown = q ? rows.filter(r => r.name.toLowerCase().includes(q) || r.group.toLowerCase().includes(q)) : rows
+  const hiddenCount = rows.filter(r => stateFor(r) !== 'visible').length
+
+  const columns = [
+    {
+      title: 'Runnable', dataIndex: 'name', key: 'name',
+      render: (v: string, r: RunnableRow) => (
+        <span><code>{v}</code>{r.hosts > 1 && <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>×{r.hosts} hosts</Text>}</span>
+      ),
+    },
+    { title: 'Group', dataIndex: 'group', key: 'group', render: (v: string) => v ? <Tag>{v}</Tag> : <Text type="secondary">—</Text> },
+    {
+      title: 'Visibility', key: 'vis', width: 320,
+      render: (_: unknown, r: RunnableRow) => {
+        const via = viaPattern(r)
+        return (
+          <Space size="small">
+            <Segmented
+              size="small"
+              value={stateFor(r)}
+              disabled={via !== null}
+              onChange={val => setRowState(r.name, val as 'visible' | 'agent' | 'all')}
+              options={[
+                { label: 'Visible', value: 'visible' },
+                { label: 'Hide from agent', value: 'agent' },
+                { label: 'Hide everywhere', value: 'all' },
+              ]}
+            />
+            {via && <Tooltip title="Hidden by a pattern in the Advanced lists below — edit it there."><Tag color="orange">via pattern</Tag></Tooltip>}
+          </Space>
+        )
+      },
+    },
+  ]
+
+  return (
+    <div style={{ maxWidth: 780 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        Hide runnables you can't use from the <strong>agent's toolset</strong> — they stop bloating the model's tool list
+        and it stops trying tools that will never work (e.g. Office 365 runnables where Microsoft Graph is blocked).
+        <strong> Hide from agent</strong> removes a runnable from the chat/trigger/schedule agent only (still usable in the
+        Forms tab); <strong>Hide everywhere</strong> also removes it from the Forms tab and the room/self-service catalogs.
+      </Typography.Paragraph>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        This is <strong>curation, not a safety block</strong> — a hidden runnable is still installed and directly runnable
+        (that's what the Denylist is for). The two lists live in <code>config.toml</code>, so they ride
+        <strong> Config Sync</strong> and the config seed — a baseline can hide capabilities fleet-wide from one source.
+      </Typography.Paragraph>
+
+      <Space style={{ marginBottom: 8 }}>
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="Filter runnables…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          style={{ width: 280 }}
+        />
+        <Text type="secondary" style={{ fontSize: 12 }}>{hiddenCount} hidden of {rows.length}</Text>
+      </Space>
+
+      {rows.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No runnables discovered yet" />
+      ) : (
+        <Table<RunnableRow>
+          size="small"
+          rowKey="name"
+          dataSource={shown}
+          columns={columns}
+          pagination={{ pageSize: 12, size: 'small', hideOnSinglePage: true }}
+        />
+      )}
+
+      <Collapse
+        ghost
+        style={{ marginTop: 8 }}
+        items={[{
+          key: 'advanced',
+          label: 'Advanced — glob patterns',
+          children: (
+            <div>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 11 }}>
+                One pattern per line (or comma-separated). Globs match the runnable name (<code>outlook-*</code>); prefix
+                with <code>group:</code> or <code>host:</code> to hide a whole group/host (<code>group:m365</code>).
+              </Typography.Paragraph>
+              <Text strong style={{ fontSize: 12 }}>Hidden from agent</Text>
+              <Input.TextArea
+                autoSize={{ minRows: 2, maxRows: 8 }}
+                style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}
+                value={fromAgent.join('\n')}
+                onChange={e => setFromAgent(parseList(e.target.value))}
+                placeholder="outlook-*"
+              />
+              <Text strong style={{ fontSize: 12, display: 'block', marginTop: 10 }}>Hidden everywhere</Text>
+              <Input.TextArea
+                autoSize={{ minRows: 2, maxRows: 8 }}
+                style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}
+                value={fromAll.join('\n')}
+                onChange={e => setFromAll(parseList(e.target.value))}
+                placeholder="group:m365"
+              />
+            </div>
+          ),
+        }]}
+      />
 
       <Divider style={{ margin: '16px 0' }} />
       <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
@@ -4782,6 +4967,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
           { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
           { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
           { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
+          { key: 'agentTools', label: 'Agent tools', children: <AgentToolsTab /> },
           { key: 'runbooks',    label: 'Runbooks',     children: <RunbooksTab /> },
           { key: 'savedRuns',   label: 'Saved runs',   children: <SavedRunsTab /> },
           { key: 'selfService', label: 'Self-Service', children: <SelfServiceTab /> },

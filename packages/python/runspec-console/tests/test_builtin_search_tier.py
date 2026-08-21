@@ -52,6 +52,7 @@ class _Stub:
     _tool_mode = Bridge._tool_mode
     _defer_builtins_enabled = Bridge._defer_builtins_enabled
     _runnables_to_tools = Bridge._runnables_to_tools
+    _visible_runnables = Bridge._visible_runnables
     _search_mode_tools = Bridge._search_mode_tools
     _deferred_builtin_tools = Bridge._deferred_builtin_tools
     _builtin_meta_tools = Bridge._builtin_meta_tools

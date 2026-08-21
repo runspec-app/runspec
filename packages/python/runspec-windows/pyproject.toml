@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-windows"
-version = "0.4.0"
+version = "0.5.0"
 requires-python = ">=3.10"
-description = "Windows system admin + Microsoft 365 (Outlook, Teams) runnables for runspec"
+description = "Windows system admin + cross-platform web/TLS/API runnables for runspec"
 dependencies = [
     "runspec>=0.44.0",
     "runspec-webops-core>=0.1.0",
@@ -14,17 +14,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Microsoft Graph runnables (Outlook + Teams). Pure HTTP — no pywin32 needed.
-graph = [
-    "msal>=1.28",
-    "httpx>=0.27",
-]
+# Microsoft 365 / Graph runnables moved to the standalone `runspec-o365` package
+# in 0.5.0 (so a console/fleet without Graph access doesn't carry them). The old
+# `[graph]` extra no longer exists — `pip install runspec-o365` for those.
 dev = [
     "ruff==0.15.20",
     "mypy",
     "pytest>=8.0",
-    "msal>=1.28",
-    "httpx>=0.27",
 ]
 
 [project.scripts]
@@ -81,34 +77,12 @@ http-headers         = "runspec_windows.webops:main_http_headers"
 redirect-trace       = "runspec_windows.webops:main_redirect_trace"
 dns-lookup           = "runspec_windows.webops:main_dns_lookup"
 api-spec             = "runspec_windows.webops:main_api_spec"
-# Microsoft Graph — account
-graph-login          = "runspec_windows.graph.account:main_graph_login"
-graph-whoami         = "runspec_windows.graph.account:main_graph_whoami"
-# Microsoft Graph — Outlook
-outlook-unread       = "runspec_windows.graph.outlook:main_outlook_unread"
-outlook-search       = "runspec_windows.graph.outlook:main_outlook_search"
-outlook-folders      = "runspec_windows.graph.outlook:main_outlook_folders"
-# Microsoft Graph — Calendar
-calendar-upcoming    = "runspec_windows.graph.calendar:main_calendar_upcoming"
-calendar-today       = "runspec_windows.graph.calendar:main_calendar_today"
-next-meeting         = "runspec_windows.graph.calendar:main_next_meeting"
-# Microsoft Graph — OneDrive / Files
-onedrive-recent      = "runspec_windows.graph.files:main_onedrive_recent"
-onedrive-search      = "runspec_windows.graph.files:main_onedrive_search"
-onedrive-list        = "runspec_windows.graph.files:main_onedrive_list"
-# Microsoft Graph — Teams
-teams-list-chats     = "runspec_windows.graph.teams:main_teams_list_chats"
-teams-read-chat      = "runspec_windows.graph.teams:main_teams_read_chat"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.10"
-
-[[tool.mypy.overrides]]
-module = ["msal.*"]
-ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 200

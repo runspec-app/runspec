@@ -1,14 +1,6 @@
-"""runspec-windows — Windows system admin + Microsoft 365 runnables for runspec.
+"""runspec-windows — Windows system-admin + cross-platform web/TLS runnables.
 
-Public API (parallels runspec-linux's ``nc_send``): ``graph_get`` and
-``get_token`` let other wrapper runnables reuse the authenticated Microsoft
-Graph client without re-implementing the device-code flow.
-
-Importing this package never requires the optional ``[graph]`` dependencies —
-``msal``/``httpx`` are imported lazily and only when a Graph call is made.
+The Microsoft 365 / Graph runnables (Outlook, Teams, Calendar, OneDrive) and
+their ``graph_get`` / ``get_token`` public API moved to the standalone
+``runspec-o365`` package in 0.5.0 — ``pip install runspec-o365`` for those.
 """
-
-from runspec_windows.graph.auth import get_token
-from runspec_windows.graph.client import graph_get
-
-__all__ = ["graph_get", "get_token"]

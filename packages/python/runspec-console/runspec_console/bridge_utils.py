@@ -5,6 +5,7 @@ Moved out of bridge.py verbatim; imported by bridge.py and the Bridge mixins.
 
 from __future__ import annotations
 
+import fnmatch
 import gzip
 import hashlib
 import json
@@ -19,6 +20,43 @@ from .bridge_const import (
     PUTTY_PROXY_SESSION,
     _EVENT_LEVELS,
 )
+
+
+def runnable_hidden(
+    name: str,
+    group: str | None,
+    host: str | None,
+    patterns: Any,
+) -> bool:
+    """Return True if a runnable matches any hide *pattern* (glob).
+
+    Each pattern is a shell glob (``fnmatch``) matched against the runnable
+    ``name``. A ``group:`` / ``host:`` prefix instead matches the runnable's
+    group / host, so ``group:m365`` hides a whole group and ``host:prod-*`` a
+    host. Unlike the core denylist's ``_matches_any`` (empty ⇒ matches all),
+    the default here is the **inverse**: an empty / missing pattern list hides
+    nothing — hiding is opt-in per pattern.
+
+    Used by :meth:`Bridge._visible_runnables` to filter the runnables cache for
+    the agent toolset / Forms / catalog surfaces (see
+    :func:`config.read_tool_visibility`)."""
+    if not patterns:
+        return False
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    for raw in patterns:
+        pat = str(raw).strip()
+        if not pat:
+            continue
+        if pat.startswith("group:"):
+            target, glob = group or "", pat[len("group:") :]
+        elif pat.startswith("host:"):
+            target, glob = host or "", pat[len("host:") :]
+        else:
+            target, glob = name or "", pat
+        if fnmatch.fnmatch(target, glob):
+            return True
+    return False
 
 
 def _normalize_path(p: str) -> str:

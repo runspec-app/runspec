@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-o365"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Microsoft 365 (Outlook, Teams, Calendar, OneDrive) runnables for runspec — pure HTTP via Microsoft Graph, split out of runspec-windows"
+dependencies = [
+    # 0.44.0 surfaces inherited args on each leaf subcommand's MCP tool via
+    # `runspec serve`.
+    "runspec>=0.44.0",
+    # Microsoft Graph: delegated auth (device-code) + HTTP. No pywin32, no secret.
+    # Hard deps here (not an extra) — this package *is* the Graph package.
+    "msal>=1.28",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+# Entry-point names MUST match the runnable names in runspec.toml.
+# Microsoft Graph — account
+graph-login          = "runspec_o365.account:main_graph_login"
+graph-whoami         = "runspec_o365.account:main_graph_whoami"
+# Microsoft Graph — Outlook
+outlook-unread       = "runspec_o365.outlook:main_outlook_unread"
+outlook-search       = "runspec_o365.outlook:main_outlook_search"
+outlook-folders      = "runspec_o365.outlook:main_outlook_folders"
+# Microsoft Graph — Calendar
+calendar-upcoming    = "runspec_o365.calendar:main_calendar_upcoming"
+calendar-today       = "runspec_o365.calendar:main_calendar_today"
+next-meeting         = "runspec_o365.calendar:main_next_meeting"
+# Microsoft Graph — OneDrive / Files
+onedrive-recent      = "runspec_o365.files:main_onedrive_recent"
+onedrive-search      = "runspec_o365.files:main_onedrive_search"
+onedrive-list        = "runspec_o365.files:main_onedrive_list"
+# Microsoft Graph — Teams
+teams-list-chats     = "runspec_o365.teams:main_teams_list_chats"
+teams-read-chat      = "runspec_o365.teams:main_teams_read_chat"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.15.20",
+    "mypy",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+
+[[tool.mypy.overrides]]
+module = ["msal.*", "tomli.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

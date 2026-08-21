@@ -280,6 +280,42 @@ def read_local() -> dict[str, Any]:
     return {"venv_globs": globs}
 
 
+def read_tool_visibility() -> dict[str, Any]:
+    """The ``[tool_visibility]`` settings for hiding runnable tools from surfaces.
+
+    Two independent glob lists let the operator curate which runnables appear
+    where (matched against the runnable *name*, with optional ``group:<glob>`` /
+    ``host:<glob>`` qualifiers to hide a whole group/host):
+
+    - ``hidden_from_agent`` — dropped from the chat/trigger/schedule **agent
+      toolset** only; the runnable stays usable in the Forms tab and the
+      room/self-service catalog.
+    - ``hidden_from_all`` — dropped **everywhere** in the console: the agent
+      toolset *and* the Forms tab *and* the catalogs.
+
+    So agent surfaces filter by the *union* of both lists; Forms/catalog surfaces
+    filter by ``hidden_from_all`` only. Empty/missing ⇒ hide nothing (today's
+    behavior, byte-identical). This is **curation, not a safety block** — a hidden
+    runnable is still installed and directly runnable (unlike the denylist, which
+    refuses execution). It lives in config.toml on purpose so the lists ride
+    Config Sync / the config seed — a corporate seed can ship a baseline
+    ``[tool_visibility]`` to hide capabilities a fleet can't use (e.g. Office 365
+    runnables where Graph is blocked). See :func:`bridge_utils.runnable_hidden`."""
+    raw = read_config().get("tool_visibility")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+
+    def _list(key: str) -> list[str]:
+        val = cfg.get(key)
+        if not isinstance(val, list):
+            return []
+        return [str(p).strip() for p in val if str(p).strip()]
+
+    return {
+        "hidden_from_agent": _list("hidden_from_agent"),
+        "hidden_from_all": _list("hidden_from_all"),
+    }
+
+
 def read_sandbox() -> dict[str, Any]:
     """The ``[sandbox]`` settings for the WASM/WASI code-execution sandbox behind
     ``run_python_sandboxed`` / ``run_sql_sandboxed`` (see :mod:`sandbox`).

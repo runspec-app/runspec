@@ -862,6 +862,7 @@ def _catalog_stub(runnables: list[dict[str, Any]]):
     s._runbook_index = {}
     s._published_catalogs = {}
     s._publish_catalog = types.MethodType(Bridge._publish_catalog, s)
+    s._visible_runnables = types.MethodType(Bridge._visible_runnables, s)
     s._build_room_runbooks = types.MethodType(Bridge._build_room_runbooks, s)
     return s
 

@@ -335,9 +335,9 @@ class SearchMixin:
     def _runnables_for_id(self, rid: str) -> list[dict[str, Any]]:
         """Every cached runnable whose dedup id is ``rid`` (one per host that has
         it). Falls back to an explicit ``host__name`` so a caller can address one
-        host directly. Empty when nothing matches."""
-        with self._lock:
-            runnables = list(self._runnables_cache)
+        host directly. Empty when nothing matches. Hidden-from-agent runnables are
+        excluded here too, so a hidden tool can't be run/described by id."""
+        runnables = self._visible_runnables("agent")
         matches = [r for r in runnables if self._dedup_tool_name(r) == rid]
         if matches:
             return matches
@@ -607,8 +607,7 @@ class SearchMixin:
         an empty query browses (optionally filtered by host/group)."""
         from .catalog import arg_to_property
 
-        with self._lock:
-            runnables = list(self._runnables_cache)
+        runnables = self._visible_runnables("agent")
         groups: dict[tuple[str, str], dict[str, Any]] = {}
         order: list[tuple[str, str]] = []
         for r in runnables:
@@ -899,8 +898,8 @@ class SearchMixin:
             limit = int(self.get_config().get("llm", {}).get("tool_index_limit", 300))
         except (TypeError, ValueError):
             limit = 300
+        runnables = self._visible_runnables("agent")
         with self._lock:
-            runnables = list(self._runnables_cache)
             ready = self._discovery_ready
             done, total = self._discovery_progress
         seen: dict[tuple[str, str], dict[str, Any]] = {}

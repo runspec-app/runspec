@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from runspec_windows.graph import GraphAuthError, GraphDepError, GraphError, account, auth, calendar, client, files, outlook, teams
+from runspec_o365 import GraphAuthError, GraphDepError, GraphError, account, auth, calendar, client, files, outlook, teams
 
 # ── pure formatters ────────────────────────────────────────────────────────────
 
@@ -174,7 +174,7 @@ def test_get_token_silent_success(monkeypatch):
 def test_client_id_missing_raises(monkeypatch):
     monkeypatch.delenv("RUNSPEC_GRAPH_CLIENT_ID", raising=False)
     monkeypatch.setattr(auth, "_read_graph_toml", lambda: {})
-    from runspec_windows.graph import GraphConfigError
+    from runspec_o365 import GraphConfigError
 
     with pytest.raises(GraphConfigError):
         auth.client_id()

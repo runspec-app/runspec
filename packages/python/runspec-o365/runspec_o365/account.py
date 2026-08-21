@@ -6,11 +6,10 @@ import json
 
 import runspec as rs
 
-from runspec_windows import _platform
-from runspec_windows.graph import GraphError
-from runspec_windows.graph._emit import run_graph
-from runspec_windows.graph.auth import device_login
-from runspec_windows.graph.client import graph_get
+from runspec_o365 import GraphError
+from runspec_o365._emit import fail, run_graph
+from runspec_o365.auth import device_login
+from runspec_o365.client import graph_get
 
 
 def main_graph_login() -> None:
@@ -28,9 +27,9 @@ def main_graph_login() -> None:
             )
         )
     except GraphError as e:
-        _platform.fail(str(e), kind=type(e).__name__)
+        fail(str(e), kind=type(e).__name__)
     except Exception as e:
-        _platform.fail(str(e))
+        fail(str(e))
 
 
 def main_graph_whoami() -> None:

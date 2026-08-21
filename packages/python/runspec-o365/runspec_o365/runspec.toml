@@ -1,0 +1,165 @@
+[config]
+autonomy-default = "autonomous"
+
+[config.logging]
+# Per-invocation log files: one {runnable}.{utc-ts}.{run_id}.log per run.
+# Multi-writer safe for shared venvs — no in-process rotation (use
+# `runspec logs` to view/compact/prune). rotate/keep are inert under per-run.
+store = "per-run"
+
+# ── Microsoft Graph — account ─────────────────────────────────────────────────
+
+[graph-login]
+serve       = ["local"]
+description = "Sign in to Microsoft 365 via device-code flow and cache the token"
+autonomy    = "confirm"
+output      = "json"
+
+[graph-whoami]
+serve       = ["local"]
+description = "Report the signed-in Microsoft 365 user (Graph /me)"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Microsoft Graph — Outlook ─────────────────────────────────────────────────
+
+[outlook-unread]
+serve       = ["local"]
+description = "List unread Outlook messages from the inbox via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[outlook-unread.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of messages to return"
+default     = 20
+
+[outlook-search]
+serve       = ["local"]
+description = "Search Outlook messages by free-text query via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[outlook-search.args.query]
+type        = "str"
+short       = "-q"
+description = "Search terms (matched across subject, body, and sender)"
+
+[outlook-search.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of messages to return"
+default     = 20
+
+[outlook-folders]
+serve       = ["local"]
+description = "List Outlook mail folders with unread/total counts via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Microsoft Graph — Calendar ────────────────────────────────────────────────
+
+[calendar-upcoming]
+serve       = ["local"]
+description = "List upcoming calendar events over the next N days via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[calendar-upcoming.args.days]
+type        = "int"
+short       = "-d"
+description = "Look-ahead window in days"
+default     = 7
+
+[calendar-upcoming.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of events to return"
+default     = 20
+
+[calendar-today]
+serve       = ["local"]
+description = "List today's calendar events via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[next-meeting]
+serve       = ["local"]
+description = "Show the next upcoming calendar event via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+# ── Microsoft Graph — OneDrive / Files ────────────────────────────────────────
+
+[onedrive-recent]
+serve       = ["local"]
+description = "List recently used OneDrive/SharePoint files via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[onedrive-recent.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of files to return"
+default     = 20
+
+[onedrive-search]
+serve       = ["local"]
+description = "Search OneDrive/SharePoint files by name or content via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[onedrive-search.args.query]
+type        = "str"
+short       = "-q"
+description = "Search text"
+
+[onedrive-search.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of results to return"
+default     = 20
+
+[onedrive-list]
+serve       = ["local"]
+description = "List the contents of a OneDrive folder via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[onedrive-list.args.path]
+type        = "str"
+short       = "-p"
+description = "Folder path relative to the drive root (default: root)"
+default     = "/"
+
+# ── Microsoft Graph — Teams ───────────────────────────────────────────────────
+
+[teams-list-chats]
+serve       = ["local"]
+description = "List the signed-in user's Teams chats via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[teams-list-chats.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of chats to return"
+default     = 20
+
+[teams-read-chat]
+serve       = ["local"]
+description = "Read recent messages from a Teams chat via Microsoft Graph"
+autonomy    = "autonomous"
+output      = "json"
+
+[teams-read-chat.args.chat-id]
+type        = "str"
+description = "Chat id (from teams-list-chats)"
+
+[teams-read-chat.args.count]
+type        = "int"
+short       = "-n"
+description = "Maximum number of messages to return"
+default     = 20
+

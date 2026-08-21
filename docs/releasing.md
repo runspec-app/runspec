@@ -35,6 +35,7 @@ publishes. Publishing is always an explicit step.
 | `runspec-linux` | `packages/python/runspec-linux/pyproject.toml` | `linux-v` | `linux-release.yml` | PyPI + GitHub Release |
 | `runspec-linux-core` | `packages/python/runspec-linux-core/pyproject.toml` | `linux-core-v` | `linux-core-release.yml` | PyPI + GitHub Release |
 | `runspec-windows` | `packages/python/runspec-windows/pyproject.toml` | `windows-v` | `windows-release.yml` | PyPI + GitHub Release |
+| `runspec-o365` | `packages/python/runspec-o365/pyproject.toml` | `o365-v` | `o365-release.yml` | PyPI + GitHub Release |
 | `runspec-webops-core` | `packages/python/runspec-webops-core/pyproject.toml` | `webops-core-v` | `webops-core-release.yml` | PyPI + GitHub Release |
 | `runspec-fs` | `packages/python/runspec-fs/pyproject.toml` | `fs-v` | `fs-release.yml` | PyPI + GitHub Release |
 | `runspec-fs-core` | `packages/python/runspec-fs-core/pyproject.toml` | `fs-core-v` | `fs-core-release.yml` | PyPI + GitHub Release |

@@ -69,6 +69,7 @@ class _ToolBridge:
         return {"llm": {"tool_mode": "per_host"}}
 
     _runnables_to_tools = Bridge._runnables_to_tools
+    _visible_runnables = Bridge._visible_runnables
     _build_input_schema = Bridge._build_input_schema
     _tool_mode = Bridge._tool_mode
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)

@@ -8,6 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.232.0] — 2026-08-21
+
+### Added
+- **Agent tool visibility — hide runnables you can't use (Settings → Agent
+  tools).** A new `[tool_visibility]` config section with two independent glob
+  lists curates which runnables reach which surface, matched against the runnable
+  name (a `group:`/`host:` prefix hides a whole group/host):
+  - `hidden_from_agent` — dropped from the chat/trigger/schedule **agent toolset**
+    only; still usable in the Forms tab and the room/self-service catalog.
+  - `hidden_from_all` — dropped **everywhere**: the agent toolset *and* the Forms
+    tab *and* the catalogs.
+
+  Agent surfaces filter by the union of both lists; Forms/catalog surfaces by
+  `hidden_from_all` only. This fixes unusable runnables (e.g. the Office 365 /
+  Graph runnables where Microsoft Graph is blocked) bloating the model's tool
+  list and the agent trying tools that can never work. It is **curation, not a
+  safety block** — a hidden runnable is still installed and directly runnable
+  (that's the Denylist's job; the denylist never hid tools from the agent, it
+  only refused execution). The lists live in `config.toml`, so they ride Config
+  Sync and the config seed — a corporate baseline can hide capabilities
+  fleet-wide from one versioned source. New `config.read_tool_visibility()`,
+  `bridge_utils.runnable_hidden()`, the `Bridge._visible_runnables(surface)`
+  chokepoint (applied to the agent toolset, all three `tool_mode = "search"`
+  reads including run-by-id, and the room catalog publish), bridge
+  `get_tool_visibility`/`save_tool_visibility`, and a Settings → Agent tools tab
+  (per-runnable Visible / Hide from agent / Hide everywhere, plus advanced glob
+  lists). The Forms tab filters `hidden_from_all` client-side.
+
+### Changed
+- **Dependency: `runspec-windows[graph]` → `runspec-windows`.** The 13 Microsoft
+  365 / Graph runnables moved out of `runspec-windows` into the new standalone
+  `runspec-o365` package (which the console does **not** depend on), so Office 365
+  runnables are now opt-in (`pip install runspec-o365`) instead of always
+  installed with the console. The `[graph]` extra no longer exists on
+  `runspec-windows`.
+
+
 ## [0.231.3] — 2026-08-07
 
 ### Fixed

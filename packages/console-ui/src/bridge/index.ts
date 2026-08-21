@@ -459,6 +459,16 @@ export interface LocalVenvConfig {
   resolved: { path: string; venv_name: string }[]
 }
 
+// The [tool_visibility] hide lists (Settings → Agent tools). Glob patterns
+// matched against a runnable name; a "group:"/"host:" prefix hides a whole
+// group/host. hidden_from_agent drops runnables from the agent toolset only;
+// hidden_from_all also drops them from the Forms tab + catalogs. Curation, not
+// a safety block — hidden runnables stay directly runnable.
+export interface ToolVisibility {
+  hidden_from_agent: string[]
+  hidden_from_all: string[]
+}
+
 export interface HistoryLogLine {
   ts: string
   level: string
@@ -1051,6 +1061,11 @@ export interface BridgeApi {
   // validates + persists them (raises on bad input), then rediscovers.
   get_local_venv_config: () => Promise<LocalVenvConfig>
   save_local_venv_config: (globs: string[]) => Promise<LocalVenvConfig>
+  // Agent-tool visibility ([tool_visibility] in config.toml). get returns the
+  // two hide lists; save validates + persists them (raises on bad input) — the
+  // lists ride Config Sync / the config seed.
+  get_tool_visibility: () => Promise<ToolVisibility>
+  save_tool_visibility: (payload: ToolVisibility) => Promise<ToolVisibility>
   // Canonical host-group registry (runspec_groups.toml) — the controlled
   // vocabulary the host editor's group dropdown is populated from (synced).
   get_groups: () => Promise<HostGroup[]>

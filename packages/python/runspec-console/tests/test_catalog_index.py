@@ -33,6 +33,7 @@ class _Bridge:
     _dedup_tool_name = Bridge._dedup_tool_name
     _catalog_index_enabled = Bridge._catalog_index_enabled
     _build_catalog_index = Bridge._build_catalog_index
+    _visible_runnables = Bridge._visible_runnables
     _fold_catalog_index = Bridge._fold_catalog_index
     _tool_mode = Bridge._tool_mode
     _defer_builtins_enabled = Bridge._defer_builtins_enabled

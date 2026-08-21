@@ -1,5 +1,27 @@
 # runspec-windows Changelog
 
+## [0.5.0] — 2026-08-21
+
+### Removed — Microsoft 365 / Graph runnables (moved to `runspec-o365`)
+
+- The 13 Microsoft 365 / Graph runnables — `graph-login`, `graph-whoami`,
+  `outlook-unread`, `outlook-search`, `outlook-folders`, `calendar-upcoming`,
+  `calendar-today`, `next-meeting`, `onedrive-recent`, `onedrive-search`,
+  `onedrive-list`, `teams-list-chats`, `teams-read-chat` — **moved out of this
+  package into the new standalone [`runspec-o365`](../runspec-o365)** package.
+  The `[graph]` extra (and its `msal`/`httpx` deps), the `runspec_windows.graph`
+  subpackage, and the `graph_get` / `get_token` public API are gone from here.
+- **Why:** `runspec-console` depended on `runspec-windows[graph]`, so the Office
+  365 runnables were always installed with the console and cluttered the agent's
+  toolset even where Microsoft Graph is blocked. They're now opt-in: `pip install
+  runspec-o365`.
+- **Migration:** `pip install runspec-o365`; the MSAL token cache moved to
+  `%APPDATA%/runspec-o365/`, so run `graph-login` once to re-authenticate. The
+  `RUNSPEC_GRAPH_*` env vars are unchanged. Consumers importing
+  `from runspec_windows import graph_get, get_token` switch to
+  `from runspec_o365 import graph_get, get_token`.
+
+
 ## [0.4.0] — 2026-08-01
 
 Make the console agent a Windows corporate-desktop expert: filesystem access

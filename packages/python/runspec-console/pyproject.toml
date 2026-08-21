@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.231.3"
+version = "0.232.0"
 requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5.0",
@@ -13,10 +13,14 @@ dependencies = [
     "cryptography>=42.0",
     "paramiko>=3.0",
     "tomli-w>=1.0",  # config.toml serialisation (valid TOML for nested/array tables)
-    # Surfaces the Windows system-admin + Microsoft 365 runnables in the console
-    # UI automatically (discovered via `runspec local`). Windows-only — the
-    # marker keeps it off non-Windows installs and CI.
-    "runspec-windows[graph]>=0.1.0 ; sys_platform == 'win32'",
+    # Surfaces the Windows system-admin + cross-platform web/TLS runnables in the
+    # console UI automatically (discovered via `runspec local`). Windows-only —
+    # the marker keeps it off non-Windows installs and CI. The Microsoft 365 /
+    # Graph runnables are NOT pulled in (they moved to the standalone
+    # `runspec-o365` package, which the console deliberately does not depend on so
+    # a Graph-blocked fleet doesn't carry unusable tools — `pip install
+    # runspec-o365` to opt in).
+    "runspec-windows>=0.5.0 ; sys_platform == 'win32'",
 ]
 
 [tool.hatch.build.targets.wheel]

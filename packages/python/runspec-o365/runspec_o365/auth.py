@@ -1,8 +1,8 @@
 """auth.py — Microsoft Graph delegated auth via MSAL device-code flow.
 
-Token cache persists to ``%APPDATA%/runspec-windows/msal_cache.bin``. The Azure
+Token cache persists to ``%APPDATA%/runspec-o365/msal_cache.bin``. The Azure
 ``client_id`` (a public client — no secret) and ``tenant`` come from the
-environment or ``%APPDATA%/runspec-windows/graph.toml``.
+environment or ``%APPDATA%/runspec-o365/graph.toml``.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from runspec_windows.graph import GraphAuthError, GraphConfigError, GraphDepError
+from runspec_o365 import GraphAuthError, GraphConfigError, GraphDepError
 
 try:
     import msal
@@ -34,13 +34,13 @@ _AUTHORITY_BASE = "https://login.microsoftonline.com"
 
 def _require_msal() -> Any:
     if msal is None:
-        raise GraphDepError("The 'msal' package is required for Microsoft Graph runnables. Install with: pip install 'runspec-windows[graph]'")
+        raise GraphDepError("The 'msal' package is required for Microsoft Graph runnables. Reinstall with: pip install runspec-o365")
     return msal
 
 
 def config_dir() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home() / ".config")
-    d = Path(base) / "runspec-windows"
+    d = Path(base) / "runspec-o365"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -63,7 +63,7 @@ def _read_graph_toml() -> dict:
 def client_id() -> str:
     cid = os.environ.get("RUNSPEC_GRAPH_CLIENT_ID") or _read_graph_toml().get("client_id")
     if not cid:
-        raise GraphConfigError("No Azure client id. Set RUNSPEC_GRAPH_CLIENT_ID or add client_id to %APPDATA%/runspec-windows/graph.toml. See the README for app-registration steps.")
+        raise GraphConfigError("No Azure client id. Set RUNSPEC_GRAPH_CLIENT_ID or add client_id to %APPDATA%/runspec-o365/graph.toml. See the README for app-registration steps.")
     return str(cid)
 
 

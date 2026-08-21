@@ -651,8 +651,7 @@ class TriggersMixin:
 
         try:
             key = spec["room"]
-            with self._lock:
-                runnables = list(self._runnables_cache)
+            runnables = self._visible_runnables("forms")
             allowlist = spec.get("catalog_allowlist")
             ss_names = self_service_mod.self_service_names(
                 self_service_mod.load_self_service(config_mod.self_service_path())

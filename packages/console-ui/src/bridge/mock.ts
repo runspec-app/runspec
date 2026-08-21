@@ -732,6 +732,12 @@ export const mockApi: BridgeApi = {
     return { globs, own_venv: 'C:/venvs/console/Scripts/runspec.exe', resolved: [{ path: 'C:/venvs/console/Scripts/runspec.exe', venv_name: 'console' }] }
   },
 
+  get_tool_visibility: async () => ({ hidden_from_agent: [], hidden_from_all: [] }),
+  save_tool_visibility: async (payload) => {
+    console.log('[mock] save_tool_visibility', payload)
+    return { hidden_from_agent: payload.hidden_from_agent ?? [], hidden_from_all: payload.hidden_from_all ?? [] }
+  },
+
   get_groups: async () => [
     { name: 'Production', description: 'Prod fleet' },
     { name: 'Staging', description: '' },

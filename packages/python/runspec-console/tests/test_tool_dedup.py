@@ -65,6 +65,7 @@ class _Bridge:
     _allowed_hosts = Bridge._allowed_hosts
     _build_input_schema = Bridge._build_input_schema
     _runnables_to_tools = Bridge._runnables_to_tools
+    _visible_runnables = Bridge._visible_runnables
     _resolve_tool_target = Bridge._resolve_tool_target
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
     _run_tool_sync = Bridge._run_tool_sync

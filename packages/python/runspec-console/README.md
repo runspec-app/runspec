@@ -14,10 +14,11 @@ runspec-console
 ```
 
 On **Windows**, installing the console automatically pulls in
-[`runspec-windows`](https://pypi.org/project/runspec-windows/) (with its
-`[graph]` extra), so its Windows system-administration and Microsoft 365
-runnables appear in the UI with no extra step. The dependency is gated to
-`sys_platform == "win32"`, so it's skipped on macOS/Linux.
+[`runspec-windows`](https://pypi.org/project/runspec-windows/), so its Windows
+system-administration and cross-platform web/TLS runnables appear in the UI with
+no extra step. The dependency is gated to `sys_platform == "win32"`, so it's
+skipped on macOS/Linux. The Microsoft 365 runnables are **not** pulled in
+automatically — see below.
 
 To add more runnables, just `pip install` the package that provides them into
 the same environment (e.g. `runspec-linux`) — the console picks them up on the
@@ -32,10 +33,13 @@ becomes visible.
 
 ## Microsoft 365 runnables (Outlook · Teams · Calendar · OneDrive)
 
-These ship in `runspec-windows` and authenticate as the signed-in user via the
-Microsoft Graph **device-code** flow (no client secret). The full setup lives in
-the [runspec-windows README](https://pypi.org/project/runspec-windows/); the
-short version:
+These live in the separate [`runspec-o365`](https://pypi.org/project/runspec-o365/)
+package (they used to ship in `runspec-windows`, but the console no longer pulls
+them in — so a Graph-blocked deployment isn't cluttered with unusable tools).
+**Opt in with `pip install runspec-o365`** into the console's environment, then
+restart. They authenticate as the signed-in user via the Microsoft Graph
+**device-code** flow (no client secret). The full setup lives in the
+[runspec-o365 README](https://pypi.org/project/runspec-o365/); the short version:
 
 1. **Register an app** in your Entra (Azure AD) tenant
    (*App registrations → New registration*).
@@ -45,7 +49,7 @@ short version:
    `Mail.Read`, `Chat.Read`, `Calendars.Read`, `Files.Read.All`, then grant
    consent.
 4. Copy the **Application (client) ID** and **Directory (tenant) ID**.
-5. Drop them in `%APPDATA%\runspec-windows\graph.toml` (the client id is not a
+5. Drop them in `%APPDATA%\runspec-o365\graph.toml` (the client id is not a
    secret):
 
    ```toml

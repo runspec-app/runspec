@@ -464,6 +464,42 @@ class AgentToolsMixin:
             schema["required"] = required
         return schema
 
+    def _visible_runnables(self, surface: str) -> list[dict[str, Any]]:
+        """Return the runnables cache with ``[tool_visibility]`` hides applied.
+
+        ``surface`` selects which hide lists apply (see
+        :func:`config.read_tool_visibility`):
+
+        - ``"agent"`` — drop runnables matched by ``hidden_from_agent`` **or**
+          ``hidden_from_all`` (the agent toolset / search reads / catalog index).
+        - ``"forms"`` — drop only ``hidden_from_all`` (the Forms feed and the
+          room/self-service catalog publish).
+
+        Hiding is curation, not a safety block — a hidden runnable is still
+        installed and directly runnable (the denylist is the run-time gate)."""
+        with self._lock:
+            runnables = list(self._runnables_cache)
+        try:
+            vis = config_mod.read_tool_visibility()
+        except Exception:
+            logger.debug("read_tool_visibility failed", exc_info=True)
+            return runnables
+        patterns = list(vis.get("hidden_from_all") or [])
+        if surface == "agent":
+            patterns += list(vis.get("hidden_from_agent") or [])
+        if not patterns:
+            return runnables
+        return [
+            r
+            for r in runnables
+            if not utils_mod.runnable_hidden(
+                str(r.get("name") or ""),
+                r.get("group"),
+                r.get("host"),
+                patterns,
+            )
+        ]
+
     def _runnables_to_tools(
         self,
         allow: Collection[str] | None = None,
@@ -509,8 +545,7 @@ class AgentToolsMixin:
             if deferred:
                 tools.extend(self._builtin_meta_tools(deferred))
             return tools
-        with self._lock:
-            runnables = list(self._runnables_cache)
+        runnables = self._visible_runnables("agent")
         tools: list[dict[str, Any]] = []
         seen_tool_names: set[str] = set()
 
@@ -2392,6 +2427,59 @@ class AgentToolsMixin:
             "secret": secret or "",
             "env": cred.env_vars_for(entry, secret),
         }
+
+    def get_tool_visibility(self) -> dict[str, Any]:
+        """The ``[tool_visibility]`` hide lists for the Settings → Agent tools tab.
+
+        Returns ``{hidden_from_agent, hidden_from_all}`` — glob patterns matched
+        against a runnable name (``group:``/``host:`` qualifiers hide a whole
+        group/host). ``hidden_from_agent`` drops runnables from the agent toolset
+        only; ``hidden_from_all`` also drops them from the Forms tab and catalogs.
+        Curation, not a safety block — hidden runnables stay directly runnable."""
+        return config_mod.read_tool_visibility()
+
+    def save_tool_visibility(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Validate + persist the ``[tool_visibility]`` hide lists, then refresh.
+
+        ``payload`` carries ``hidden_from_agent`` / ``hidden_from_all`` (each a
+        list of non-empty glob strings). Raises ``ValueError`` (rejecting the JS
+        promise so the tab can show the message) on invalid input, writes into
+        config.toml via :func:`config.update_config` (atomic, preserves every
+        other section — so the lists ride Config Sync / the config seed), signals
+        the UI to re-filter, and returns the fresh :meth:`get_tool_visibility`."""
+        data = dict(payload or {})
+
+        def _clean(key: str) -> list[str]:
+            val = data.get(key, [])
+            if not isinstance(val, list) or any(
+                not isinstance(p, str) or not p.strip() for p in val
+            ):
+                raise ValueError(f"{key} must be a list of non-empty strings")
+            # de-dup preserving order
+            out: list[str] = []
+            for p in val:
+                s = p.strip()
+                if s not in out:
+                    out.append(s)
+            return out
+
+        from_agent = _clean("hidden_from_agent")
+        from_all = _clean("hidden_from_all")
+
+        def _mutate(cfg: dict[str, Any]) -> None:
+            section: dict[str, Any] = {}
+            if from_agent:
+                section["hidden_from_agent"] = from_agent
+            if from_all:
+                section["hidden_from_all"] = from_all
+            if section:
+                cfg["tool_visibility"] = section
+            else:
+                cfg.pop("tool_visibility", None)
+
+        config_mod.update_config(_mutate)
+        self._dispatch("runspec:tool_visibility_changed", {})
+        return self.get_tool_visibility()
 
     def get_mcp_config(self) -> dict[str, Any]:
         """The full ``[mcp]`` section for the Settings tab — enabled, timeouts,

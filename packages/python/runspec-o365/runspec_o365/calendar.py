@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import runspec as rs
 
-from runspec_windows.graph._emit import run_graph
-from runspec_windows.graph.client import graph_get
+from runspec_o365._emit import run_graph
+from runspec_o365.client import graph_get
 
 _EVENT_SELECT = "subject,start,end,organizer,location,onlineMeeting,isOnlineMeeting,webLink"
 

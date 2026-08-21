@@ -662,7 +662,7 @@ adapter honours it.
 | Aspect | Finding | Source |
 |---|---|---|
 | Core library runtime deps | **Zero** on Python 3.11+ (stdlib only; `tomli` only on 3.10) | `runspec/pyproject.toml` |
-| Console runtime deps | `pywebview`, `runspec`, `cryptography`, `paramiko`, `tomli-w` (+ Windows: `pywin32`, `runspec-windows[graph]`) | `runspec-console/pyproject.toml` |
+| Console runtime deps | `pywebview`, `runspec`, `cryptography`, `paramiko`, `tomli-w` (+ Windows: `pywin32`, `runspec-windows`; Microsoft 365 via optional `runspec-o365`) | `runspec-console/pyproject.toml` |
 | AI/optional features | Extras: `anthropic`/`openai`/`bedrock`/`langserve`/`credentials`(keyring)/`git-sync`(dulwich)/`schedule`(apscheduler)/`notifications` | `runspec-console/pyproject.toml` |
 | Version specifiers | **Floors (`>=`), not pins**; no lockfile | `pyproject.toml` files |
 | Publishing | PyPI via **OIDC trusted publishing** (`pypa/gh-action-pypi-publish`); no long-lived PyPI secret | `.github/workflows/*release.yml` |
