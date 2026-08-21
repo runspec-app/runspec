@@ -161,10 +161,12 @@ middlebox may be intercepting the connection") rather than a raw traceback.
 
 ```toml
 [ssh]
-pool         = true   # false → legacy connect-per-call (escape hatch)
-keepalive    = 30     # seconds; 0 disables
-max_sessions = 8      # max concurrent channels per pooled transport
-idle_ttl     = 300    # seconds before an unused transport is reaped
+pool            = true   # false → legacy connect-per-call (escape hatch)
+keepalive       = 30     # seconds; 0 disables
+max_sessions    = 8      # max concurrent channels per pooled transport
+idle_ttl        = 300    # seconds before an unused transport is reaped
+connect_retries = 1      # inline retries on a *transient* handshake failure
+                         #   (banner/session blip) before recording backoff
 
 [refresh]
 interval       = 30   # seconds between cycles
@@ -176,6 +178,66 @@ backoff_max    = 300  # seconds cap
 
 Existing `[ssh]` connect/banner/auth timeouts and `host_key_checking` are
 unchanged.
+
+## Follow-up: key rotation (runspec-console 0.233.0)
+
+Rotation (`bridge_config_ssh._do_rotate_ssh_key`) was listed above as a call
+site to route through the pool, but shipped still using connect-per-call
+`ssh_run` — **sequentially**, two fresh handshakes per host (push over the old
+key, then verify the new key), with no retry and no progress logging. On a large
+fleet this reproduced #104's symptoms *inside* rotation: a small, shifting subset
+of hosts failing every run with "Error reading SSH protocol banner" /
+"No existing session", plus a long, silent run.
+
+0.233.0 addresses this without moving the *verify* off a genuinely fresh
+connection (it must actually test the new key):
+
+- **Transient retry.** A shared `executor.is_transient_ssh_error()` classifier
+  distinguishes a retryable throttle/blip (banner, no-existing-session, reset,
+  timeout, EOF-during-negotiation, administratively-prohibited) from a durable
+  fault (auth failure, no route, or a *non-UTF-8* banner = a proxy answering the
+  port — deliberately **not** retried). The pool retries the transient case
+  inline (`[ssh] connect_retries`) before backoff; rotation retries each
+  push/verify step (`[ssh] rotate_retries`, default 2) — but only a
+  connection-level failure (`ssh_run` → `-1`), never a command that ran and
+  returned non-zero.
+- **Bounded concurrency.** Push+verify run across a `ThreadPoolExecutor` sized to
+  `[ssh] max_concurrent` (each worker does its host's push then verify
+  sequentially, so ≤ `max_concurrent` handshakes are ever in flight — same
+  `MaxStartups` guard as the refresh cycle), with per-host start jitter
+  (`[ssh] rotate_jitter`) applied only when hosts queue behind the bound.
+- **Observability.** A `runspec:rotate_progress` event (per-host done/total) plus
+  Dev-tab `ssh.rotate` log lines make a long rotation legible while it runs; the
+  Settings → SSH rotation dialog renders the event as a live progress bar.
+
+### Self-cleaning `authorized_keys`
+
+Rotation used to *append* the new key and never remove the old one, so each
+rotation grew a host's `authorized_keys` by one runspec key — and a rotation that
+failed to commit still left its pushed-but-unused key on every host that
+succeeded. The push is now **prune-and-append**, keyed on identifying which keys
+the console itself placed:
+
+- **Marker.** Generated public keys carry a stable comment
+  (`ssh-ed25519 … runspec-console`, `_KEY_MARKER`). Matching by the leading base64
+  is unsafe — every ed25519 key shares the `AAAAC3NzaC1lZDI1NTE5AAAAI` algorithm
+  header — so a comment marker is the reliable discriminator.
+- **Prune set.** `_build_rotation_push_cmd` builds one host-independent `sh`/`awk`
+  command that drops any line which is marker-tagged *or* an exact blob-match to a
+  key derived from the console's own backup files (`_stale_key_blobs` reads
+  `*.pub.bak.*` and derives from `*.bak.*` privates — this also removes the
+  pre-marker keys that carry no comment), **except** the current key and the new
+  key, which are always kept. The operator's own keys are never touched (only
+  lines that are plainly ours are dropped).
+- **No lockout.** The current key is kept until the rotation commits (it's the key
+  the live session authenticates with); on commit it becomes a backup, so the
+  *next* rotation prunes it. A host converges to just the current + incoming
+  runspec key. The rewrite is atomic — temp file in `~/.ssh`, a `test -s` guard so
+  it can never truncate `authorized_keys` to empty, and `cat >` back onto the
+  original file to preserve its perms / owner / SELinux context.
+
+Verified by `test_rotate_key_cleanup.py`, which runs the generated command
+through a real `sh`/`awk` against a seeded `authorized_keys`.
 
 ## Acceptance criteria (from #104)
 

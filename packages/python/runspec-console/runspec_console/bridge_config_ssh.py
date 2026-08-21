@@ -7,6 +7,7 @@ instance, so ``self`` carries all shared state.
 from __future__ import annotations
 
 import os
+import random
 import threading
 import time
 import webbrowser
@@ -35,6 +36,79 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
+
+
+# Comment appended to every runspec-console-generated public key, so a rotation
+# can identify (and prune) the keys *it* put in a host's authorized_keys without
+# touching the operator's own keys. A key line reads
+# ``ssh-ed25519 <base64-blob> runspec-console``. Matching by this marker is safe;
+# matching by the leading base64 is not — every ed25519 key shares the same
+# ``AAAAC3NzaC1lZDI1NTE5AAAAI`` prefix (the algorithm + length header), so it
+# would also match the operator's own keys. Do not change this string — a host
+# still carrying keys tagged with an older marker would no longer be recognised.
+_KEY_MARKER = "runspec-console"
+
+# Cap on how many historical (backup-derived) key blobs are threaded into a
+# single push command, so the remote command stays a sane length on a console
+# that has rotated dozens of times. The marker prunes the rest regardless; the
+# newest backups are the ones most likely to still be sitting on a host.
+_MAX_STALE_BLOBS = 50
+
+
+def _key_blob(line: str) -> str:
+    """The base64 key material (2nd field) of an OpenSSH public-key line — the
+    stable identity of a key, independent of its trailing comment. ``""`` for a
+    blank/malformed line or one carrying key options (where field 2 isn't the
+    blob); runspec keys never carry options, so this identifies ours reliably."""
+    parts = line.split()
+    return parts[1] if len(parts) >= 2 and parts[0].startswith("ssh-") else ""
+
+
+def _build_rotation_push_cmd(
+    new_line: str, old_blob: str, remove_blobs: list[str]
+) -> str:
+    """Build the per-host rotation push command: prune the console's *stale* keys
+    from ``authorized_keys`` (marker-tagged, or an exact blob-match to a key the
+    console generated before), then ensure the new key is present — atomically,
+    keeping the operator's own keys and the current key untouched.
+
+    Safety properties:
+      * The current key (``old_blob``) and the new key are always kept, so the
+        push never removes the key the live session authenticates with — no
+        lockout even if the rotation later fails to commit.
+      * A line is only ever *dropped* when it is plainly one of ours (marker
+        comment, or blob in the console's own backup set); everything else —
+        including keys carrying command/from options — is preserved verbatim.
+      * Writes through a temp file in ``~/.ssh`` and only overwrites
+        ``authorized_keys`` once the rebuild is non-empty (``test -s``), copying
+        the bytes back (``cat >``) so the file's existing perms / owner / SELinux
+        context are preserved. A failure at any step leaves the original intact.
+
+    All interpolated values (base64 blobs, the marker) come from a fixed charset
+    with no shell/awk metacharacters, so single-quoting the awk program is safe.
+    """
+    new_blob = _key_blob(new_line)
+    keep = [b for b in (old_blob, new_blob) if b]
+    begin = "".join(f'keep["{b}"]=1;' for b in keep)
+    begin += "".join(f'rm["{b}"]=1;' for b in remove_blobs)
+    prog = (
+        "BEGIN{" + begin + "}"
+        "{"
+        "if(NF>=2&&($2 in keep)){print;next}"  # never drop current / new
+        f'if(index($0,"{_KEY_MARKER}")>0){{next}}'  # drop our marker-tagged keys
+        "if(NF>=2&&($2 in rm)){next}"  # drop keys we generated before
+        "print"  # keep everything else (operator's own keys)
+        "}"
+    )
+    return (
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+        "touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
+        'ak="$HOME/.ssh/authorized_keys" && '
+        'tmp="$(mktemp "$HOME/.ssh/ak.XXXXXX" 2>/dev/null || echo "$HOME/.ssh/ak.$$")" && '
+        f'awk \'{prog}\' "$ak" > "$tmp" && '
+        f"{{ grep -qF '{new_blob}' \"$tmp\" || printf '%s\\n' '{new_line}' >> \"$tmp\"; }} && "
+        'test -s "$tmp" && cat "$tmp" > "$ak" && rm -f "$tmp"'
+    )
 
 
 class ConfigSshMixin:
@@ -364,6 +438,11 @@ class ConfigSshMixin:
             .decode()
             .strip()
         )
+        # Tag the key with a stable comment so rotation can recognise and prune
+        # the keys the console itself placed on a host (see _KEY_MARKER). The
+        # comment is ignored by sshd for authentication.
+        if _key_blob(pub) and _KEY_MARKER not in pub:
+            pub = f"{pub} {_KEY_MARKER}"
         # Persist the public key next to the private key so it can be copied
         # again later (e.g. to authorise it on a host after the fact).
         try:
@@ -751,9 +830,212 @@ class ConfigSshMixin:
         finally:
             self._rotating = False
 
-    def _do_rotate_ssh_key(self) -> dict[str, Any]:
-        from .executor import ssh_run
+    def _rotate_emit(self, level: str, message: str) -> None:
+        """Surface a rotation-progress line in the Dev tab's ``ssh`` category so a
+        long fleet-wide rotation is observable while it runs (it used to emit
+        nothing until it finished). Best-effort — never breaks the rotation, and
+        a no-op on a bridge without the Dev-tab plumbing (unit-test stubs)."""
+        emit = getattr(self, "_emit_ssh_log", None)
+        if emit is None:
+            return
+        try:
+            emit({"level": level, "logger": "ssh.rotate", "message": message})
+        except Exception:
+            pass
 
+    def _rotate_progress(self, **payload: Any) -> None:
+        """Dispatch a ``runspec:rotate_progress`` event so the UI can show a live
+        per-host progress bar during rotation. Best-effort / stub-safe."""
+        dispatch = getattr(self, "_dispatch", None)
+        if dispatch is None:
+            return
+        try:
+            dispatch("runspec:rotate_progress", payload)
+        except Exception:
+            pass
+
+    def _rotate_ssh_run(
+        self,
+        ssh_target: str,
+        command: str,
+        *,
+        identity_file: str | None,
+        global_ssh_config: dict[str, Any],
+        retries: int,
+    ) -> tuple[int, str, str]:
+        """``executor.ssh_run`` with a bounded retry on a *transient connection*
+        failure (banner/session/timeout under a bastion throttle).
+
+        Only a connect/exec-level failure (``ssh_run`` returns ``-1``) is retried,
+        and only when the error looks transient — a command that ran and returned
+        non-zero (a real push/verify failure) is returned as-is. This is what
+        stops the "9 of 96, different hosts each run" transient losses: a blip on
+        one host's handshake no longer becomes a hard rotation failure.
+        """
+        from . import executor as executor_mod
+
+        code, out, err = -1, "", ""
+        for attempt in range(retries + 1):
+            code, out, err = executor_mod.ssh_run(
+                ssh_target,
+                command,
+                identity_file=identity_file,
+                global_ssh_config=global_ssh_config,
+            )
+            if code != -1 or attempt >= retries:
+                break
+            if not executor_mod.is_transient_ssh_error(err):
+                break
+            delay = 1.0 * (attempt + 1) + random.uniform(0, 1.0)
+            self._rotate_emit(
+                "DEBUG",
+                f"{ssh_target}: transient SSH error ({err.strip()}); "
+                f"retrying in {delay:.1f}s (attempt {attempt + 2}/{retries + 1})",
+            )
+            time.sleep(delay)
+        return code, out, err
+
+    def _stale_key_blobs(self, key_dir: Path, exclude: set[str]) -> list[str]:
+        """Base64 blobs of keys the console generated in the past — the historical
+        pile a rotation should prune from remote ``authorized_keys``.
+
+        Sourced from the console's own backup files under ``key_dir``: the
+        ``*.pub.bak.*`` public backups (read directly) and the ``*.bak.*`` private
+        backups (public key derived), so it catches even the pre-marker keys that
+        carry no identifying comment. ``exclude`` (the current + new blobs) is
+        removed so we never list a key we must keep. Newest-first, capped at
+        ``_MAX_STALE_BLOBS`` to bound the remote command length. Best-effort — an
+        unreadable/undecodable backup is skipped, never fatal to a rotation."""
+        blobs: list[str] = []
+        seen: set[str] = set(exclude)
+
+        def _add(blob: str) -> None:
+            if blob and blob not in seen:
+                seen.add(blob)
+                blobs.append(blob)
+
+        # Newest backups first (they're likeliest to still be on a host).
+        def _ts(p: Path) -> str:
+            return p.name.rsplit(".", 1)[-1]
+
+        pub_baks = sorted(
+            key_dir.glob("runspec_ed25519*.pub.bak.*"), key=_ts, reverse=True
+        )
+        for p in pub_baks:
+            try:
+                _add(_key_blob(p.read_text(encoding="utf-8")))
+            except OSError:
+                continue
+            if len(blobs) >= _MAX_STALE_BLOBS:
+                return blobs
+
+        # Private backups without a matching .pub.bak — derive the public blob.
+        priv_baks = sorted(
+            (
+                p
+                for p in key_dir.glob("runspec_ed25519.bak.*")
+                if p.suffix != ".ppk" and ".pub." not in p.name
+            ),
+            key=_ts,
+            reverse=True,
+        )
+        for p in priv_baks:
+            _add(self._derive_pub_blob(p))
+            if len(blobs) >= _MAX_STALE_BLOBS:
+                break
+        return blobs
+
+    def _derive_pub_blob(self, private_path: Path) -> str:
+        """The base64 public blob of an OpenSSH private key file, or ``""`` if it
+        can't be read/parsed (a corrupt or non-ed25519 backup is simply skipped)."""
+        try:
+            from cryptography.hazmat.primitives import serialization as _serial
+
+            data = private_path.read_bytes()
+            key = _serial.load_ssh_private_key(data, password=None)
+            pub = (
+                key.public_key()
+                .public_bytes(
+                    encoding=_serial.Encoding.OpenSSH,
+                    format=_serial.PublicFormat.OpenSSH,
+                )
+                .decode()
+            )
+            return _key_blob(pub)
+        except Exception:
+            return ""
+
+    def _rotate_push_verify_one(
+        self,
+        host: dict[str, Any],
+        *,
+        push_cmd: str,
+        new_path: Path,
+        global_ssh: dict[str, Any],
+        global_idf: str,
+        retries: int,
+        jitter: float,
+    ) -> dict[str, Any]:
+        """Push the new public key to one host (over the old key) then verify the
+        new key authenticates — each step retried on a transient blip. Returns the
+        per-host result row. Safe to run concurrently across hosts.
+
+        ``push_cmd`` is the host-independent prune-and-append command built once
+        per rotation (see ``_build_rotation_push_cmd``): it installs the new key
+        *and* removes the stale keys the console left on the host before, keeping
+        the operator's own keys and the current key untouched."""
+        if jitter:
+            time.sleep(random.uniform(0, jitter))  # spread the connects
+
+        name = host.get("name", "?")
+        ssh_target = host.get("ssh", "")
+        host_idf = host.get("identityFile") or global_idf
+        self._rotate_emit("DEBUG", f"{name}: pushing new key")
+
+        exit_code, _out, stderr = self._rotate_ssh_run(
+            ssh_target,
+            push_cmd,
+            identity_file=host_idf,
+            global_ssh_config=global_ssh,
+            retries=retries,
+        )
+        if exit_code != 0:
+            err = stderr.strip() or f"push failed (exit {exit_code})"
+            self._rotate_emit("WARNING", f"{name}: push failed — {err}")
+            return {
+                "host": name,
+                "pushed": False,
+                "verified": False,
+                "skipped": False,
+                "error": err,
+            }
+
+        v_code, v_out, v_err = self._rotate_ssh_run(
+            ssh_target,
+            "echo ok",
+            identity_file=str(new_path),
+            global_ssh_config=global_ssh,
+            retries=retries,
+        )
+        verified = v_code == 0 and "ok" in v_out
+        if verified:
+            self._rotate_emit("DEBUG", f"{name}: new key verified")
+        else:
+            self._rotate_emit(
+                "WARNING",
+                f"{name}: verify failed — {v_err.strip() or v_out.strip()}",
+            )
+        return {
+            "host": name,
+            "pushed": True,
+            "verified": verified,
+            "skipped": False,
+            "error": ""
+            if verified
+            else (v_err.strip() or v_out.strip() or f"verify failed (exit {v_code})"),
+        }
+
+    def _do_rotate_ssh_key(self) -> dict[str, Any]:
         key_dir = Path(os.environ.get("APPDATA", "~")).expanduser() / "runspec-console"
         canonical = key_dir / "runspec_ed25519"
         new_path = key_dir / "runspec_ed25519.new"
@@ -808,18 +1090,17 @@ class ConfigSshMixin:
                 "message": f"Current key file not found: {global_idf}. Restore the file or generate a fresh key.",
             }
 
-        # Steps 3 & 4 — push then verify each host
-        per_host: list[dict[str, Any]] = []
+        # Steps 3 & 4 — push then verify each host.
+        #
+        # Two classes up front (no SSH): hosts to *skip* (disconnected, or a
+        # per-host key override) and hosts to *process*. Skips keep only the old
+        # key and are surfaced in per_host + the manual snippet in the UI.
+        skipped: list[dict[str, Any]] = []
+        to_process: list[dict[str, Any]] = []
         for host in remote_hosts:
             name = host.get("name", "?")
-            ssh_target = host.get("ssh", "")
-            host_idf = host.get("identityFile") or global_idf
-
-            # Skip disconnected hosts — pushing would just fail and block the whole
-            # rotation. They keep only the old key and must be updated manually once
-            # reconnected (surfaced in per_host + the manual snippet in the UI).
             if not connected_snapshot.get(name, False):
-                per_host.append(
+                skipped.append(
                     {
                         "host": name,
                         "pushed": False,
@@ -828,11 +1109,8 @@ class ConfigSshMixin:
                         "error": "disconnected — new key not pushed; update manually",
                     }
                 )
-                continue
-
-            # Skip hosts with a different per-host key — their session uses a different key
-            if host.get("identityFile") and host.get("identityFile") != global_idf:
-                per_host.append(
+            elif host.get("identityFile") and host.get("identityFile") != global_idf:
+                skipped.append(
                     {
                         "host": name,
                         "pushed": False,
@@ -841,56 +1119,102 @@ class ConfigSshMixin:
                         "error": "per-host key override — rotate manually",
                     }
                 )
-                continue
+            else:
+                to_process.append(host)
 
-            # Push new public key using old key
-            push_cmd = (
-                f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-                f"touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
-                f"grep -qF '{public_key}' ~/.ssh/authorized_keys || "
-                f"printf '%s\\n' '{public_key}' >> ~/.ssh/authorized_keys"
-            )
-            exit_code, _out, stderr = ssh_run(
-                ssh_target,
-                push_cmd,
-                identity_file=host_idf,
-                global_ssh_config=global_ssh,
-            )
-            if exit_code != 0:
-                per_host.append(
-                    {
-                        "host": name,
-                        "pushed": False,
-                        "verified": False,
-                        "skipped": False,
-                        "error": stderr.strip() or f"push failed (exit {exit_code})",
-                    }
-                )
-                continue
+        total = len(to_process)
+        self._rotate_emit(
+            "INFO",
+            f"key rotation starting — pushing new key to {total} connected host(s), "
+            f"{len(skipped)} skipped",
+        )
+        self._rotate_progress(done=0, total=total, host="", phase="start")
 
-            # Verify new key works
-            v_code, v_out, v_err = ssh_run(
-                ssh_target,
-                "echo ok",
-                identity_file=str(new_path),
-                global_ssh_config=global_ssh,
+        # Push + verify each host concurrently, bounded by the same handshake cap
+        # the refresh cycle honours (sshd MaxStartups) rather than one-at-a-time —
+        # each worker does its host's push then verify sequentially, so at most
+        # ``workers`` handshakes are ever in flight. Per-host jitter (only when
+        # hosts queue behind the bound) spreads the connects; a transient
+        # banner/session blip on push or verify is retried before it counts as a
+        # host failure. Results are merged back in the original host order.
+        from concurrent.futures import ThreadPoolExecutor
+        from .ssh_pool import pool_settings
+
+        ssh_settings = pool_settings(cfg.get("ssh"))
+        workers = max(1, min(ssh_settings["max_concurrent"], total or 1))
+        try:
+            retries = max(0, int(global_ssh.get("rotate_retries", 2)))
+        except (TypeError, ValueError):
+            retries = 2
+        try:
+            rotate_jitter = float(global_ssh.get("rotate_jitter", 3))
+        except (TypeError, ValueError):
+            rotate_jitter = 3.0
+        jitter = rotate_jitter if total > workers else 0.0
+
+        # Build the host-independent prune-and-append push command once. It
+        # installs the new key AND removes the stale keys the console left behind
+        # on earlier rotations (identified by the runspec marker comment, or an
+        # exact blob-match to a key in the console's own backup files) — so
+        # authorized_keys stops accumulating a new runspec key every rotation.
+        # The current key (old_blob) and the new key are always kept, so the push
+        # can never remove the key the live session authenticates with.
+        old_blob = _key_blob(self._public_key_for(global_idf).get("public_key", ""))
+        new_blob = _key_blob(public_key)
+        remove_blobs = self._stale_key_blobs(
+            key_dir, exclude={b for b in (old_blob, new_blob) if b}
+        )
+        push_cmd = _build_rotation_push_cmd(public_key, old_blob, remove_blobs)
+        if remove_blobs:
+            self._rotate_emit(
+                "INFO",
+                f"rotation will prune up to {len(remove_blobs)} stale runspec "
+                "key(s) from each host's authorized_keys",
             )
-            verified = v_code == 0 and "ok" in v_out
-            per_host.append(
-                {
-                    "host": name,
-                    "pushed": True,
-                    "verified": verified,
-                    "skipped": False,
-                    "error": ""
-                    if verified
-                    else (
-                        v_err.strip()
-                        or v_out.strip()
-                        or f"verify failed (exit {v_code})"
-                    ),
-                }
+
+        done_lock = threading.Lock()
+        progress = {"done": 0}
+
+        def _process(host: dict[str, Any]) -> dict[str, Any]:
+            result = self._rotate_push_verify_one(
+                host,
+                push_cmd=push_cmd,
+                new_path=new_path,
+                global_ssh=global_ssh,
+                global_idf=global_idf,
+                retries=retries,
+                jitter=jitter,
             )
+            with done_lock:
+                progress["done"] += 1
+                done_n = progress["done"]
+            self._rotate_progress(
+                done=done_n,
+                total=total,
+                host=result["host"],
+                phase="verified" if result["verified"] else "failed",
+            )
+            return result
+
+        processed: list[dict[str, Any]] = []
+        if to_process:
+            with ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="ssh-rotate"
+            ) as ex:
+                processed = list(ex.map(_process, to_process))
+
+        # Merge skips + processed back into the input host order for a stable UI.
+        by_name = {r["host"]: r for r in (skipped + processed)}
+        per_host: list[dict[str, Any]] = [
+            by_name[h.get("name", "?")]
+            for h in remote_hosts
+            if h.get("name", "?") in by_name
+        ]
+        verified_now = sum(1 for r in processed if r["verified"])
+        self._rotate_emit(
+            "INFO",
+            f"key rotation push/verify complete — {verified_now}/{total} verified",
+        )
 
         # Step 5 — commit gate: all non-skipped hosts must be verified, AND at least
         # one host must have actually been verified. The second clause prevents

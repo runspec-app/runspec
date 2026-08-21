@@ -35,6 +35,8 @@ DEFAULT_IDLE_TTL = 300  # s; reap a transport unused for longer than this
 DEFAULT_MAX_CONCURRENT = 5  # max concurrent NEW handshakes across the fleet
 DEFAULT_BACKOFF_BASE = 5  # s; per-host exponential backoff base
 DEFAULT_BACKOFF_MAX = 300  # s; per-host backoff cap
+DEFAULT_CONNECT_RETRIES = 1  # inline retries on a *transient* handshake failure
+DEFAULT_CONNECT_RETRY_DELAY = 1.0  # s base delay between inline handshake retries
 
 DEFAULT_REFRESH_INTERVAL = 30  # s between refresh cycles
 DEFAULT_REFRESH_JITTER = 3  # +/- s of per-host start jitter
@@ -91,6 +93,7 @@ def pool_settings(ssh_cfg: dict[str, Any] | None) -> dict[str, Any]:
         "max_concurrent": max(1, _int("max_concurrent", DEFAULT_MAX_CONCURRENT)),
         "backoff_base": _int("backoff_base", DEFAULT_BACKOFF_BASE),
         "backoff_max": _int("backoff_max", DEFAULT_BACKOFF_MAX),
+        "connect_retries": max(0, _int("connect_retries", DEFAULT_CONNECT_RETRIES)),
     }
 
 
@@ -400,10 +403,12 @@ class SSHConnectionPool:
                 self._conns[key] = conn
             return conn
 
-    def _connect(
+    def _handshake_once(
         self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
-    ) -> PooledConnection:
-        key = _host_key(ssh_target, identity_file, cfg)
+    ) -> Any:
+        """One bounded handshake attempt — holds the global handshake semaphore
+        only for the duration of the connect so a retry sleep never occupies a
+        storm-cap slot."""
         self._handshakes.acquire()
         try:
             client = self._make_client(ssh_target, identity_file, cfg)
@@ -412,17 +417,59 @@ class SSHConnectionPool:
                 transport = client.get_transport()
                 if transport is not None:
                     transport.set_keepalive(keepalive)
-        except Exception as exc:
-            delay = self._record_failure(key)
-            self._event(
-                "WARNING",
-                f"SSH connect to {ssh_target} failed ({exc}); backing off {delay:.0f}s",
-            )
-            raise
+            return client
         finally:
             self._handshakes.release()
-        self._record_success(key)
-        return PooledConnection(client, self._settings["max_sessions"], self._clock)
+
+    def _connect(
+        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+    ) -> PooledConnection:
+        """Open a fresh transport, retrying a *transient* handshake failure a few
+        times before giving up and recording backoff.
+
+        A single banner/session blip (bastion ``MaxStartups`` throttle, slow
+        banner, a transport dropped mid-negotiation under a connection burst)
+        used to immediately record exponential backoff, so the host showed
+        disconnected for the whole window — reading as a "slow"/failed connect
+        on a profile switch. Retrying the transient case inline clears the blip
+        without a user-visible failure; a durable error (auth, no route,
+        non-SSH banner) still fails fast on the first attempt.
+        """
+        from .executor import is_transient_ssh_error
+
+        key = _host_key(ssh_target, identity_file, cfg)
+        retries = int(self._settings.get("connect_retries", DEFAULT_CONNECT_RETRIES))
+        last_exc: BaseException | None = None
+        for attempt in range(retries + 1):
+            try:
+                client = self._handshake_once(ssh_target, identity_file, cfg)
+            except Exception as exc:
+                last_exc = exc
+                transient = is_transient_ssh_error(exc)
+                if transient and attempt < retries:
+                    delay = DEFAULT_CONNECT_RETRY_DELAY * (attempt + 1)
+                    delay += self._rng(0, delay * 0.5)  # jitter so retries spread
+                    self._event(
+                        "DEBUG",
+                        f"SSH connect to {ssh_target} hit a transient error "
+                        f"({exc}); retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 2}/{retries + 1})",
+                    )
+                    time.sleep(delay)
+                    continue
+                break
+            else:
+                self._record_success(key)
+                return PooledConnection(
+                    client, self._settings["max_sessions"], self._clock
+                )
+        delay = self._record_failure(key)
+        self._event(
+            "WARNING",
+            f"SSH connect to {ssh_target} failed ({last_exc}); backing off {delay:.0f}s",
+        )
+        assert last_exc is not None
+        raise last_exc
 
     # ── per-host backoff ───────────────────────────────────────────────────────
 

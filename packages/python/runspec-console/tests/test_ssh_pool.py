@@ -417,10 +417,63 @@ def test_close_all_closes_every_transport():
 # ── settings resolution ───────────────────────────────────────────────────────
 
 
+# ── inline retry on a transient handshake failure ─────────────────────────────
+
+
+def test_transient_connect_failure_is_retried_then_succeeds(monkeypatch):
+    """A single banner/session blip on a *fresh* handshake is retried inline and
+    clears without a user-visible failure or a backoff being recorded."""
+    monkeypatch.setattr("runspec_console.ssh_pool.time.sleep", lambda *_: None)
+    attempts = {"n": 0}
+
+    def make_client(target, idf, cfg):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise OSError("Error reading SSH protocol banner")
+        return FakeClient()
+
+    pool = make_pool(make_client=make_client, rng=lambda a, b: 0.0)
+    code, out, _ = pool.run("u@h", "true")
+    assert code == 0 and attempts["n"] == 2
+    assert not pool._backoff  # a retried-away blip never records backoff
+
+
+def test_transient_connect_failure_exhausts_retries_then_backs_off(monkeypatch):
+    monkeypatch.setattr("runspec_console.ssh_pool.time.sleep", lambda *_: None)
+    attempts = {"n": 0}
+
+    def boom(*a):
+        attempts["n"] += 1
+        raise OSError("Error reading SSH protocol banner")
+
+    # connect_retries=2 → 3 attempts total before giving up + recording backoff.
+    pool = make_pool({"connect_retries": 2}, make_client=boom, rng=lambda a, b: 0.0)
+    code, _, _ = pool.run("u@h", "true")
+    assert code == -1 and attempts["n"] == 3
+    assert pool._backoff  # gave up → backoff recorded
+
+
+def test_durable_connect_failure_is_not_retried():
+    """A non-transient error (auth, refused) fails on the first attempt — retrying
+    would just waste handshakes against a host that will keep rejecting us."""
+    attempts = {"n": 0}
+
+    def make_client(*a):
+        attempts["n"] += 1
+        raise OSError("Permission denied (publickey).")
+
+    pool = make_pool(
+        {"connect_retries": 3}, make_client=make_client, rng=lambda a, b: 0.0
+    )
+    code, _, _ = pool.run("u@h", "true")
+    assert code == -1 and attempts["n"] == 1
+
+
 def test_pool_settings_defaults_and_overrides():
     d = pool_settings(None)
     assert d["enabled"] is True
     assert d["keepalive"] == 30 and d["max_sessions"] == 8
+    assert d["connect_retries"] == 1
 
     o = pool_settings({"pool": False, "keepalive": 0, "max_sessions": 4})
     assert o["enabled"] is False

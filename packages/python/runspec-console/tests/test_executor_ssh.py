@@ -20,6 +20,7 @@ from runspec_console.executor import (
     _http_connect_sock,
     _make_ssh_client,
     friendly_ssh_error,
+    is_transient_ssh_error,
 )
 
 
@@ -40,6 +41,44 @@ def test_friendly_error_explains_banner_timeout():
 
 def test_friendly_error_passes_through_unknown():
     assert friendly_ssh_error("Connection refused") == "Connection refused"
+
+
+# ── is_transient_ssh_error ────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "Error reading SSH protocol banner",
+        "SSHException: No existing session",
+        "SSH session not active",
+        "Connection reset by peer",
+        "timed out",
+        "EOF during negotiation",
+        "open failed: administratively prohibited",
+    ],
+)
+def test_transient_errors_are_retryable(msg):
+    assert is_transient_ssh_error(msg) is True
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "Authentication failed.",
+        "Permission denied (publickey).",
+        "Connection refused",
+        "No route to host",
+        # A non-UTF-8 banner is a proxy/middlebox, not a throttle — not retryable.
+        "Error reading SSH protocol banner'utf-8' codec can't decode byte 0x8b",
+    ],
+)
+def test_durable_errors_are_not_retryable(msg):
+    assert is_transient_ssh_error(msg) is False
+
+
+def test_transient_accepts_an_exception_object():
+    assert is_transient_ssh_error(OSError("Error reading SSH protocol banner")) is True
 
 
 # ── fake HTTP CONNECT proxy ───────────────────────────────────────────────────

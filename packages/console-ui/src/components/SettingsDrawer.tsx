@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider } from 'antd'
+import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
 import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -573,7 +573,7 @@ function keyAgeDays(createdAt: string | null): number | null {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
 }
 
-function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { onKeyChanged?: () => void; connectedHosts?: string[]; allRemoteHosts?: string[] }) {
+export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { onKeyChanged?: () => void; connectedHosts?: string[]; allRemoteHosts?: string[] }) {
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -585,6 +585,10 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
   const [keyCreatedAt, setKeyCreatedAt] = useState<string | null>(null)
   const [configDir, setConfigDir] = useState<string>('')
   const [rotationResult, setRotationResult] = useState<{ committed: boolean; perHost: RotateHostResult[]; publicKey: string } | null>(null)
+  // Live per-host progress emitted by the backend during a rotation (via the
+  // `runspec:rotate_progress` event) so a large-fleet rotation shows a moving
+  // bar instead of a frozen "Rotating…" button.
+  const [rotateProgress, setRotateProgress] = useState<{ done: number; total: number; host: string; phase: string } | null>(null)
   const [copyAllOpen, setCopyAllOpen] = useState(false)
 
   const loadConfig = () => {
@@ -623,6 +627,19 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
 
   useEffect(() => { loadConfig() }, [form])
   useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
+  useEffect(() => {
+    const onProgress = (e: Event) => {
+      const d = (e as CustomEvent).detail as { done?: number; total?: number; host?: string; phase?: string }
+      setRotateProgress({
+        done: Number(d.done ?? 0),
+        total: Number(d.total ?? 0),
+        host: String(d.host ?? ''),
+        phase: String(d.phase ?? ''),
+      })
+    }
+    window.addEventListener('runspec:rotate_progress', onProgress)
+    return () => window.removeEventListener('runspec:rotate_progress', onProgress)
+  }, [])
   useEffect(() => {
     if (!selectedHost && connectedHosts.length > 0) setSelectedHost(connectedHosts[0])
   }, [connectedHosts, selectedHost])
@@ -697,6 +714,7 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
     setGenerating(true)
     setPublicKey(null)
     setRotationResult(null)
+    setRotateProgress(null)
     try {
       const result = await bridge.rotate_ssh_key()
       setRotationResult({ committed: result.committed, perHost: result.per_host, publicKey: result.public_key })
@@ -717,6 +735,8 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
       }
     } finally {
       setGenerating(false)
+      // The per-host results panel now tells the full story; drop the live bar.
+      setRotateProgress(null)
     }
   }
 
@@ -967,6 +987,23 @@ function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [] }: { on
           </Tooltip>
         )}
       </Space>
+
+      {/* Live rotation progress — a moving bar while the fleet-wide push/verify runs */}
+      {generating && rotateProgress && rotateProgress.total > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <Progress
+            percent={Math.round((rotateProgress.done / rotateProgress.total) * 100)}
+            size="small"
+            status="active"
+          />
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+            Pushing &amp; verifying {rotateProgress.done}/{rotateProgress.total} host{rotateProgress.total !== 1 ? 's' : ''}
+            {rotateProgress.host ? (
+              <> — last: <span style={{ fontFamily: 'monospace' }}>{rotateProgress.host}</span>{rotateProgress.phase === 'failed' ? ' ✗' : ' ✓'}</>
+            ) : '…'}
+          </Text>
+        </div>
+      )}
 
       {/* Per-host rotation results */}
       {rotationResult && rotationResult.perHost.length > 0 && (

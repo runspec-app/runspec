@@ -48,6 +48,13 @@ class _StubBridge:
 
     _generate_keypair_to_path = Bridge._generate_keypair_to_path
     _commit_key_rotation = Bridge._commit_key_rotation
+    _public_key_for = Bridge._public_key_for
+    _stale_key_blobs = Bridge._stale_key_blobs
+    _derive_pub_blob = Bridge._derive_pub_blob
+    _rotate_emit = Bridge._rotate_emit
+    _rotate_progress = Bridge._rotate_progress
+    _rotate_ssh_run = Bridge._rotate_ssh_run
+    _rotate_push_verify_one = Bridge._rotate_push_verify_one
     _do_rotate_ssh_key = Bridge._do_rotate_ssh_key
     rotate_ssh_key = Bridge.rotate_ssh_key
 
@@ -197,3 +204,92 @@ def test_no_remote_hosts_commits(tmp_path, monkeypatch):
     assert result["committed"] is True
     assert result["per_host"] == []
     assert list(key_dir.glob("runspec_ed25519.bak.*"))
+
+
+def test_transient_push_failure_is_retried_then_commits(tmp_path, monkeypatch):
+    """A transient SSH blip on push (banner/session under a bastion throttle) is
+    retried rather than counted as a hard host failure — the regression behind
+    '9 of 96, different hosts each run'. The host recovers and rotation commits."""
+    import runspec_console.bridge_config_ssh as bcs
+
+    monkeypatch.setattr(bcs.time, "sleep", lambda *_: None)  # no real backoff wait
+    hosts = [{"name": "flaky", "ssh": "user@flaky"}]
+    connected = {"flaky": True}
+    bridge, key_dir, canonical = _setup(tmp_path, monkeypatch, hosts, connected)
+
+    calls = {"push": 0}
+
+    def flaky_ssh_run(
+        ssh_target, command, identity_file=None, global_ssh_config=None, timeout=15
+    ):
+        is_verify = command.strip() == "echo ok"
+        if is_verify:
+            return 0, "ok\n", ""
+        calls["push"] += 1
+        if calls["push"] == 1:
+            # transient connect failure — ssh_run signals it with code -1
+            return -1, "", "Error reading SSH protocol banner"
+        return 0, "", ""
+
+    monkeypatch.setattr(executor, "ssh_run", flaky_ssh_run)
+
+    result = bridge.rotate_ssh_key()
+
+    assert calls["push"] == 2  # retried once, then succeeded
+    assert result["committed"] is True
+    by_host = {h["host"]: h for h in result["per_host"]}
+    assert by_host["flaky"]["verified"] is True
+
+
+def test_durable_push_failure_is_not_retried(tmp_path, monkeypatch):
+    """A command that ran and returned non-zero (a real failure) is NOT retried."""
+    import runspec_console.bridge_config_ssh as bcs
+
+    monkeypatch.setattr(bcs.time, "sleep", lambda *_: None)
+    hosts = [{"name": "broken", "ssh": "user@broken"}]
+    connected = {"broken": True}
+    bridge, key_dir, canonical = _setup(tmp_path, monkeypatch, hosts, connected)
+
+    calls = {"push": 0}
+
+    def ssh_run(
+        ssh_target, command, identity_file=None, global_ssh_config=None, timeout=15
+    ):
+        if command.strip() == "echo ok":
+            return 0, "ok\n", ""
+        calls["push"] += 1
+        return 1, "", "disk full"  # ran, returned non-zero — durable
+
+    monkeypatch.setattr(executor, "ssh_run", ssh_run)
+
+    result = bridge.rotate_ssh_key()
+
+    assert calls["push"] == 1  # no retry on a real command failure
+    assert result["committed"] is False
+
+
+def test_rotation_emits_progress_and_logs(tmp_path, monkeypatch):
+    """Rotation surfaces per-host progress + a Dev-tab log line while it runs
+    (it used to emit nothing until it finished)."""
+    hosts = [
+        {"name": "a", "ssh": "user@a"},
+        {"name": "b", "ssh": "user@b"},
+    ]
+    connected = {"a": True, "b": True}
+    bridge, key_dir, canonical = _setup(tmp_path, monkeypatch, hosts, connected)
+    monkeypatch.setattr(executor, "ssh_run", _make_ssh_run({}))
+
+    events: list = []
+    logs: list = []
+    bridge._dispatch = lambda ev, payload=None: events.append((ev, payload))
+    bridge._emit_ssh_log = lambda detail: logs.append(detail)
+
+    result = bridge.rotate_ssh_key()
+
+    assert result["committed"] is True
+    progress = [p for ev, p in events if ev == "runspec:rotate_progress"]
+    # a start frame + one per processed host
+    assert any(p.get("phase") == "start" for p in progress)
+    assert {p.get("host") for p in progress if p.get("host")} == {"a", "b"}
+    assert progress[-1]["done"] == progress[-1]["total"] == 2
+    assert any(d.get("logger") == "ssh.rotate" for d in logs)

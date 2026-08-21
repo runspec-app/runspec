@@ -216,6 +216,45 @@ def friendly_ssh_error(exc: BaseException | str) -> str:
     return msg
 
 
+# Substrings identifying an SSH failure that is *transient* — a load/throttle
+# artefact of the moment (bastion ``MaxStartups``, a banner that arrived slowly,
+# a transport torn down mid-auth) rather than a durable, host-specific fault
+# (wrong key, auth refused, no route). A transient failure is worth one or two
+# quick retries; a durable one is not (retrying just wastes handshakes). The
+# non-UTF-8 banner case ("codec can't decode") is deliberately excluded — that
+# is a proxy/middlebox answering the port, which a retry won't clear.
+_TRANSIENT_SSH_MARKERS = (
+    "error reading ssh protocol banner",
+    "no existing session",
+    "session not active",
+    "ssh session not active",
+    "connection reset",
+    "reset by peer",
+    "timed out",
+    "timeout",
+    "connection closed",
+    "eof during negotiation",
+    "administratively prohibited",
+    "channel closed",
+)
+
+
+def is_transient_ssh_error(exc: BaseException | str) -> bool:
+    """True if ``exc`` looks like a transient SSH connect/exec failure.
+
+    Used to decide whether a failed handshake or command is worth retrying —
+    the same class of error (``MaxStartups`` throttle, slow banner, a transport
+    dropped mid-auth under a connection burst) that shows up on a *different*
+    small subset of hosts on every fleet-wide pass and clears on a quick retry.
+    A non-UTF-8 banner (proxy/middlebox) and auth failures are *not* transient.
+    """
+    low = str(exc).lower()
+    # A non-UTF-8 banner is a proxy/middlebox, not a throttle — don't retry it.
+    if "banner" in low and ("codec can't decode" in low or "invalid start byte" in low):
+        return False
+    return any(marker in low for marker in _TRANSIENT_SSH_MARKERS)
+
+
 def shell_join(parts: list[str]) -> str:
     """Join an argv token list into a single shell command line, quoting each
     token so a user-supplied arg value cannot inject shell syntax.

@@ -8,6 +8,69 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.233.0] — 2026-08-21
+
+### Fixed
+- **SSH key rotation across a large fleet — reliable, fast, and observable.**
+  Rotation (`rotate_ssh_key`) never got the connection-pool treatment the rest
+  of the console did (issue #104): it pushed + verified each host **sequentially**
+  over **fresh connect-per-call handshakes**, with **no retry** and **no logging**.
+  On a large fleet that surfaced as a small, *shifting* subset of hosts failing
+  every run (e.g. 9 of 96) with *"Error reading SSH protocol banner"* (bastion
+  `MaxStartups` / slow banner) and *"No existing session"* (transport dropped
+  mid-auth under load) — classic transient blips that a single retry clears — and
+  a very long, silent run. Rotation now:
+  - **Retries a transient push/verify blip** before counting a host as failed
+    (`[ssh] rotate_retries`, default 2). Only a *connection-level* failure is
+    retried; a command that ran and returned non-zero (a real failure) is not.
+  - **Pushes + verifies hosts concurrently**, bounded by the same handshake cap
+    the refresh cycle honours (`[ssh] max_concurrent`), with per-host start
+    jitter (`[ssh] rotate_jitter`) — turning a minutes-long serial pass into a
+    bounded-concurrency one without tripping `MaxStartups`.
+  - **Emits per-host progress** (a new `runspec:rotate_progress` event) and Dev-tab
+    `ssh.rotate` log lines while it runs, instead of nothing until it finished.
+    The Settings → SSH rotation dialog renders that event as a **live progress
+    bar** (done/total + the last host verified) so a large-fleet rotation shows
+    movement instead of a frozen "Rotating…" button.
+- **Key rotation no longer piles up stale keys in `authorized_keys`.** Every
+  rotation used to *append* a new public key and never remove the old one, so a
+  host's `authorized_keys` grew by one runspec key each rotation — and a rotation
+  that failed to commit (some host unreachable) still left its pushed-but-unused
+  key on every host that succeeded. Two changes fix this:
+  - Generated keys now carry a stable comment marker (`ssh-ed25519 … runspec-console`)
+    so a rotation can recognise the keys the console itself placed on a host.
+    (Matching by the leading base64 can't work — every ed25519 key shares the same
+    `AAAAC3NzaC1lZDI1NTE5AAAAI` prefix, so it would also match the operator's own
+    keys.)
+  - The rotation push now **prunes the console's stale keys** while installing the
+    new one — any line that is marker-tagged *or* an exact blob-match to a key in
+    the console's own backup files (which also cleans up the pre-marker keys that
+    carry no comment) — **always keeping the operator's own keys and the current
+    key**. The current key is never removed before the rotation commits, so there
+    is no lockout risk; it becomes a backup on commit and is pruned by the next
+    rotation. Net: a host converges to just the current + incoming runspec key, and
+    leftovers from a failed rotation are cleaned up on the next attempt. The rewrite
+    is atomic (temp file in `~/.ssh`, `test -s` guard before overwrite, `cat >` to
+    preserve the file's perms/owner/SELinux context).
+- **Profile switching / discovery no longer stalls on a transient handshake
+  blip.** The SSH connection pool now **retries a transient handshake failure
+  inline** (`[ssh] connect_retries`, default 1) before recording exponential
+  backoff. Previously a single banner/session blip on a cold connect immediately
+  backed the host off and showed it disconnected for the whole window — which
+  read as a "slow" or failed connect when switching host profiles and produced
+  the matching Dev-tab banner errors. A *durable* error (auth failure, no route,
+  a non-UTF-8 "proxy answered the port" banner) still fails fast on the first
+  attempt — retrying those would only waste handshakes.
+
+### Added
+- New shared `executor.is_transient_ssh_error()` classifier distinguishing a
+  retryable throttle/blip from a durable, host-specific fault; used by both the
+  pool's inline reconnect and rotation's per-step retry.
+- `[ssh]` config knobs: `connect_retries` (pool inline handshake retries),
+  `rotate_retries` (rotation per-step retries), `rotate_jitter` (rotation
+  per-host start jitter). All have safe defaults; existing configs are unchanged.
+
+
 ## [0.232.0] — 2026-08-21
 
 ### Added

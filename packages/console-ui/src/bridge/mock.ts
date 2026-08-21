@@ -1144,7 +1144,14 @@ export const mockApi: BridgeApi = {
   },
 
   rotate_ssh_key: async () => {
-    await new Promise(r => setTimeout(r, 1800))
+    // Emit the same per-host progress events the real backend does, so the
+    // rotation dialog's progress bar is exercisable in dev/mock mode.
+    const total = 2
+    window.dispatchEvent(new CustomEvent('runspec:rotate_progress', { detail: { done: 0, total, host: '', phase: 'start' } }))
+    await new Promise(r => setTimeout(r, 900))
+    window.dispatchEvent(new CustomEvent('runspec:rotate_progress', { detail: { done: 1, total, host: 'prod-1', phase: 'verified' } }))
+    await new Promise(r => setTimeout(r, 900))
+    window.dispatchEvent(new CustomEvent('runspec:rotate_progress', { detail: { done: 2, total, host: 'prod-2', phase: 'verified' } }))
     MOCK_KEY_CREATED_AT = new Date().toISOString()
     return {
       ok: true, committed: true,
