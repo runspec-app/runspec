@@ -23,6 +23,13 @@ from runspec_linux_core.containers import (
     list_containers,
     restart_container,
 )
+from runspec_linux_core.cron import (
+    add_cron,
+    clear_cron,
+    list_cron,
+    remove_cron,
+    validate_schedule,
+)
 from runspec_linux_core.errors import CommandError, LinuxCoreError, ToolNotFoundError
 from runspec_linux_core.files import backup_files, find_large_files
 from runspec_linux_core.investigate import (
@@ -111,6 +118,12 @@ __all__ = [
     "list_containers",
     "container_logs",
     "restart_container",
+    # cron
+    "list_cron",
+    "add_cron",
+    "remove_cron",
+    "clear_cron",
+    "validate_schedule",
     # packages
     "detect_manager",
     "list_packages",

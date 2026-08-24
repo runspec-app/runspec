@@ -1,5 +1,22 @@
 # runspec-linux Changelog
 
+## [0.9.0] — 2026-08-24
+
+New `cron` runnable — full crontab management for the runspec-console agent (and
+the CLI), one binary with a verb per operation: `list` (autonomous), `add`,
+`remove`, and `clear` (all `confirm`). `runspec serve` flattens each verb into
+its own leaf MCP tool (`cron_list`, `cron_add`, `cron_remove`, `cron_clear`).
+Like the venv/`fs` runnables it carries per-invocation escalation via two
+inherited global args — `--run-as <user>` (+ `--become-method sudo|su`) — so the
+operator/agent picks **whose** crontab each verb manages: "run as `deploy`"
+reads and writes `deploy`'s own crontab (`sudo -n -u` / `su`); empty targets the
+caller's own. `add` takes a `--schedule` (5 fields or an `@nickname`),
+`--command`, optional `--comment`, and `--allow-duplicate` (it is idempotent by
+default); `remove` selects by `--match` (command substring / exact line) or
+`--index` (from `cron list`), enforced by an `exactly-one` group. Backed by the
+new `runspec_linux_core.cron` helpers; raises the `runspec-linux-core` floor to
+`>= 0.6.0`.
+
 ## [0.8.1] — 2026-08-07
 
 ### Fixed

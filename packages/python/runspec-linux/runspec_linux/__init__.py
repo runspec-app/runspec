@@ -8,10 +8,12 @@ depend on ``runspec-linux-core`` directly instead.
 """
 
 from runspec_linux_core import (
+    add_cron,
     backup_files,
     check_memory,
     check_port,
     check_service,
+    clear_cron,
     configure_pip,
     container_logs,
     create_venv,
@@ -24,6 +26,7 @@ from runspec_linux_core import (
     journalctl,
     last_logins,
     list_containers,
+    list_cron,
     list_packages,
     list_processes,
     list_services,
@@ -31,6 +34,7 @@ from runspec_linux_core import (
     nc_send,
     ping_host,
     reboot_host,
+    remove_cron,
     remove_package,
     restart_container,
     restart_service,
@@ -44,10 +48,12 @@ from runspec_linux_core import (
 )
 
 __all__ = [
+    "add_cron",
     "backup_files",
     "check_memory",
     "check_port",
     "check_service",
+    "clear_cron",
     "configure_pip",
     "container_logs",
     "create_venv",
@@ -60,6 +66,7 @@ __all__ = [
     "journalctl",
     "last_logins",
     "list_containers",
+    "list_cron",
     "list_packages",
     "list_processes",
     "list_services",
@@ -67,6 +74,7 @@ __all__ = [
     "nc_send",
     "ping_host",
     "reboot_host",
+    "remove_cron",
     "remove_package",
     "restart_container",
     "restart_service",

@@ -1351,3 +1351,54 @@ autonomy = "confirm"
 [fs.commands.move-file.args]
 source = {type = "path", required = true, description = "Path to move"}
 destination = {type = "path", required = true, description = "New path (must not already exist)"}
+
+# ── cron (crontab management; local, or remote via runspec-console) ──────────
+[cron]
+serve = ["local"]
+description = "Manage a user's cron jobs (crontab): list, add, remove, clear. Local, or remote via runspec-console."
+output = "json"
+require-command = true
+examples = [
+  {cmd = "cron list", description = "List the current user's cron jobs"},
+  {cmd = "cron add --schedule '0 3 * * *' --command '/opt/app/backup.sh' --comment 'nightly backup'", description = "Add a job that runs at 03:00 daily"},
+  {cmd = "cron add --schedule @reboot --command '/opt/app/warmup.sh'", description = "Add a job with an @nickname schedule"},
+  {cmd = "cron remove --match backup.sh", description = "Remove every job whose command contains 'backup.sh'"},
+  {cmd = "cron --run-as deploy list", description = "Manage another OS user's crontab (chosen per invocation, via sudo -n -u / su)"},
+]
+
+# ── global args (inherited by every verb) ──────────────────────────────────
+# Per-invocation run-as: the operator/agent picks WHOSE crontab each verb
+# manages. The crontab command is escalated to that user via sudo -n -u / su,
+# so "run as bob" == "manage bob's crontab". Empty = the caller's own crontab.
+[cron.args]
+run-as        = {type = "str",    required = false, description = "Manage this OS user's crontab instead of the caller's (via sudo -n -u / su, chosen per invocation). POSIX only; needs passwordless sudo for the target user."}
+become-method = {type = "choice", options = ["sudo", "su"], default = "sudo", description = "How to escalate to --run-as."}
+
+# ── read → autonomous ──────────────────────────────────────────────────────
+[cron.commands.list]
+description = "List the jobs in the crontab as structured records (schedule, command, and any attached comment). A user with no crontab is reported as empty, not an error."
+autonomy = "autonomous"
+
+# ── mutations → confirm ────────────────────────────────────────────────────
+[cron.commands.add]
+description = "Add a cron job (schedule + command) to the crontab. Idempotent: an identical schedule+command line is left as-is unless --allow-duplicate is set."
+autonomy = "confirm"
+[cron.commands.add.args]
+schedule = {type = "str", required = true, description = "Cron schedule: five fields 'min hour day-of-month month day-of-week' (e.g. '0 3 * * *'), or an @nickname (@reboot, @daily, @hourly, ...)."}
+command = {type = "str", required = true, description = "Command line cron runs (executed via /bin/sh)."}
+comment = {type = "str", required = false, description = "Optional note written as a '# comment' line directly above the job (read back as the job's comment)."}
+allow-duplicate = {type = "flag", default = false, description = "Add the job even if an identical schedule+command line already exists."}
+
+[cron.commands.remove]
+description = "Remove job(s) from the crontab, selected by --match (command substring or exact line) or --index (0-based position from `cron list`). Removing nothing is not an error."
+autonomy = "confirm"
+[cron.commands.remove.args]
+match = {type = "str", required = false, description = "Remove every job whose command contains this substring, or whose full 'schedule command' line equals it."}
+index = {type = "int", required = false, description = "Remove the job at this 0-based position among the crontab's jobs (the index shown by `cron list`)."}
+[cron.commands.remove.groups.selector]
+exactly-one = true
+args = ["match", "index"]
+
+[cron.commands.clear]
+description = "Remove the user's entire crontab (crontab -r). A no-op when the user has no crontab."
+autonomy = "confirm"

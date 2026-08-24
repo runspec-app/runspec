@@ -1,5 +1,26 @@
 # runspec-linux-core Changelog
 
+## [0.6.0] — 2026-08-24
+
+New `runspec_linux_core.cron` module — pure helpers for managing a user's
+crontab: `list_cron`, `add_cron`, `remove_cron`, `clear_cron`, plus the
+`validate_schedule` shape check. Each takes the same keyword-only `run_as` /
+`become_method` escalation as the container/venv helpers and wraps its
+`crontab` subprocess with `build_become`, so "run as `bob`" reads/writes
+`bob`'s own crontab (`sudo -n -u bob crontab -l` / `crontab -`); with no
+`run_as` the caller's crontab is used. Editing is a read-modify-write (crontab
+has no append/delete verbs): the whole new table is piped to `crontab -`.
+`list_cron` returns structured job records (schedule, command, an attached
+`# comment`, `special` for `@nickname` schedules) plus environment
+assignments; a user with no crontab is reported `exists: false`, not an error.
+`add_cron` is idempotent (an identical `schedule command` line is left as-is
+unless `allow_duplicate`); `remove_cron` selects by command `match` or job
+`index` and drops a preceding `# comment` line with the job. Schedules,
+commands, and comments are guarded against newline injection. Failures raise
+`ToolNotFoundError` (no `crontab`), `CommandError` (non-zero subprocess, with
+the passwordless-sudo hint), or `ValueError` (bad input).
+
+
 ## [0.5.0] — 2026-08-07
 
 The Docker container helpers now take the same per-invocation `run_as` /

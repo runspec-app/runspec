@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-linux"
-version = "0.8.1"
+version = "0.9.0"
 requires-python = ">=3.10"
 description = "Linux system admin runnables for runspec"
 dependencies = [
     "runspec>=0.50.1",
-    "runspec-linux-core>=0.5.0",
+    "runspec-linux-core>=0.6.0",
     "runspec-webops-core>=0.1.0",
     "runspec-fs-core>=0.2.0",
 ]
@@ -59,6 +59,8 @@ install-into-venv = "runspec_linux.venvs:main_install_into_venv"
 configure-pip     = "runspec_linux.venvs:main_configure_pip"
 nc-command        = "runspec_linux.nc_command:main"
 which             = "runspec_linux.commands:main_which"
+# Cron / crontab management (backed by runspec-linux-core)
+cron              = "runspec_linux.cron:main"
 # Filesystem (folded from runspec-fs; backed by runspec-fs-core)
 fs                = "runspec_linux.fs.cli:main"
 # Web / TLS probes (runspec-webops-core; cross-platform)
