@@ -1,0 +1,675 @@
+"""
+ssh_pool.py — centralized, reusing SSH connection pool (issue #104).
+
+The console's background refresh used to open a fresh SSH handshake for every
+connectivity probe *and* every discovery call, concurrently for every host,
+every 30s — a self-generated connection storm that trips bastion
+``sshd MaxStartups`` / rate limits and surfaces as "Error reading SSH protocol
+banner". See ``docs/design/ssh-connection-pool.md``.
+
+This module keeps one long-lived paramiko transport per host, reused across
+refresh cycles and across every SSH operation in the app. A warm transport
+serves new commands over fresh *channels* (no new handshake); we only pay a
+handshake when there is no live transport yet. Keepalive holds the transport
+open against idle-disconnect; per-host exponential backoff stops a dead host
+from being re-hammered; a global semaphore bounds concurrent *handshakes* and a
+per-transport semaphore bounds concurrent *channels* (``sshd MaxSessions``).
+
+The pool builds connections via ``executor._make_ssh_client`` so all the
+existing connection shaping (proxy, ~/.ssh/config, host-key policy, explicit
+timeouts) is inherited unchanged. ``executor.ssh_run`` / ``run_remote`` remain
+the connect-per-call path used by ``pool = false`` and by key rotation.
+"""
+
+from __future__ import annotations
+
+import random
+import threading
+import time
+from typing import Any, Callable
+
+# Pool / refresh defaults. Overridable via [ssh] and [refresh] in config.toml.
+DEFAULT_KEEPALIVE = 30  # s; transport keepalive (0 disables)
+DEFAULT_MAX_SESSIONS = 8  # max concurrent channels per transport (< sshd's 10)
+DEFAULT_IDLE_TTL = 300  # s; reap a transport unused for longer than this
+DEFAULT_MAX_CONCURRENT = 5  # max concurrent NEW handshakes across the fleet
+DEFAULT_BACKOFF_BASE = 5  # s; per-host exponential backoff base
+DEFAULT_BACKOFF_MAX = 300  # s; per-host backoff cap
+DEFAULT_CONNECT_RETRIES = 1  # inline retries on a *transient* handshake failure
+DEFAULT_CONNECT_RETRY_DELAY = 1.0  # s base delay between inline handshake retries
+
+DEFAULT_REFRESH_INTERVAL = 30  # s between refresh cycles
+DEFAULT_REFRESH_JITTER = 3  # +/- s of per-host start jitter
+DEFAULT_REFRESH_WORKERS_FLOOR = 16  # min bounded workers for the refresh fan-out
+
+
+def refresh_settings(
+    refresh_cfg: dict[str, Any] | None,
+    *,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+) -> dict[str, Any]:
+    """Resolve refresh-loop tunables from the ``[refresh]`` config section.
+
+    ``workers`` bounds the OS-thread fan-out of the refresh cycle (probe +
+    discovery) so it stays a small constant regardless of fleet size — the
+    handshake cost is already capped by ``[ssh] max_concurrent``, so a worker
+    count a small multiple above it overlaps warm-transport discovery without
+    ever spawning one thread per host. Default: ``max(16, 2 * max_concurrent)``;
+    an explicit positive ``[refresh] workers`` overrides it.
+    """
+    cfg = refresh_cfg or {}
+
+    def _int(key: str, default: int) -> int:
+        try:
+            return int(cfg.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    workers = _int("workers", 0)
+    if workers <= 0:
+        workers = max(DEFAULT_REFRESH_WORKERS_FLOOR, 2 * max(1, max_concurrent))
+    return {
+        "interval": max(1, _int("interval", DEFAULT_REFRESH_INTERVAL)),
+        "jitter": max(0, _int("jitter", DEFAULT_REFRESH_JITTER)),
+        "workers": max(1, workers),
+    }
+
+
+def pool_settings(ssh_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve pool tunables from the ``[ssh]`` config section (with defaults)."""
+    cfg = ssh_cfg or {}
+
+    def _int(key: str, default: int) -> int:
+        try:
+            return int(cfg.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "enabled": cfg.get("pool", True) is not False,
+        "keepalive": _int("keepalive", DEFAULT_KEEPALIVE),
+        "max_sessions": max(1, _int("max_sessions", DEFAULT_MAX_SESSIONS)),
+        "idle_ttl": _int("idle_ttl", DEFAULT_IDLE_TTL),
+        "max_concurrent": max(1, _int("max_concurrent", DEFAULT_MAX_CONCURRENT)),
+        "backoff_base": _int("backoff_base", DEFAULT_BACKOFF_BASE),
+        "backoff_max": _int("backoff_max", DEFAULT_BACKOFF_MAX),
+        "connect_retries": max(0, _int("connect_retries", DEFAULT_CONNECT_RETRIES)),
+    }
+
+
+class BackoffError(RuntimeError):
+    """Raised when a host is in its connect-backoff window — fail fast, no handshake."""
+
+
+def _host_key(ssh_target: str, identity_file: str | None, cfg: dict[str, Any]) -> tuple:
+    """Identity for a pooled connection.
+
+    A change to any field that shapes the connection (target, key, user, proxy,
+    ssh_config opt-in) forces a fresh transport rather than silently reusing one
+    built for a different destination/credential.
+    """
+    return (
+        ssh_target,
+        identity_file or "",
+        cfg.get("user", ""),
+        cfg.get("identityFile", ""),
+        cfg.get("proxy", ""),
+        bool(cfg.get("use_ssh_config")),
+    )
+
+
+class PooledConnection:
+    """A single keepalive'd paramiko client, shared across channels.
+
+    Channels (one per in-flight command) are bounded by ``max_sessions`` so we
+    never exceed the server's per-connection ``MaxSessions``. The transport is
+    never closed by callers — only by the pool (idle reap / shutdown / on a dead
+    connection).
+    """
+
+    def __init__(self, client: Any, max_sessions: int, clock: Callable[[], float]):
+        self._client = client
+        self._sessions = threading.BoundedSemaphore(max_sessions)
+        self._clock = clock
+        self.last_used = clock()
+
+    def is_alive(self, idle_ttl: int) -> bool:
+        """True if the transport is still usable and not stale.
+
+        Cheap: ``transport.is_active()`` plus an idle-TTL check. A transport that
+        died silently (server reboot, NAT/VPN flap) reports inactive here, so the
+        pool transparently rebuilds it on next use.
+        """
+        transport = self._client.get_transport()
+        if transport is None or not transport.is_active():
+            return False
+        if idle_ttl and (self._clock() - self.last_used) > idle_ttl:
+            return False
+        return True
+
+    def run(self, command: str, timeout: int) -> tuple[int, str, str]:
+        """Run one command over a fresh channel on this transport."""
+        self._sessions.acquire()
+        try:
+            self.last_used = self._clock()
+            _, stdout, stderr = self._client.exec_command(command, timeout=timeout)
+            out = stdout.read().decode("utf-8", errors="replace")
+            err = stderr.read().decode("utf-8", errors="replace")
+            code = stdout.channel.recv_exit_status()
+            self.last_used = self._clock()
+            return code, out, err
+        finally:
+            self._sessions.release()
+
+    def open_session(self) -> tuple[Any, Callable[[], None]]:
+        """Open a raw channel for streaming (long-running invocations).
+
+        Returns ``(channel, release)``. The caller drives the channel and must
+        call ``release()`` when done — it frees the session slot but leaves the
+        transport open for reuse. The channel-semaphore slot is held for the full
+        lifetime of the streamed command.
+        """
+        self._sessions.acquire()
+        try:
+            self.last_used = self._clock()
+            transport = self._client.get_transport()
+            if transport is None:
+                raise OSError("transport closed")
+            channel = transport.open_session()
+        except BaseException:
+            self._sessions.release()
+            raise
+
+        released = threading.Event()
+
+        def release() -> None:
+            if not released.is_set():
+                released.set()
+                self.last_used = self._clock()
+                self._sessions.release()
+
+        return channel, release
+
+    def open_sftp(self) -> tuple[Any, Callable[[], None]]:
+        """Open an SFTP channel on this transport for a file transfer.
+
+        Returns ``(sftp, release)``; mirrors :meth:`open_session`. The session
+        slot is held for the lifetime of the transfer; ``release()`` closes the
+        SFTP channel and frees the slot, leaving the transport warm for reuse.
+        """
+        self._sessions.acquire()
+        try:
+            self.last_used = self._clock()
+            sftp = self._client.open_sftp()
+        except BaseException:
+            self._sessions.release()
+            raise
+
+        released = threading.Event()
+
+        def release() -> None:
+            if not released.is_set():
+                released.set()
+                try:
+                    sftp.close()
+                except Exception:
+                    pass
+                self.last_used = self._clock()
+                self._sessions.release()
+
+        return sftp, release
+
+    def open_direct_tcpip(
+        self, dest_host: str, dest_port: int
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open a ``direct-tcpip`` channel through this transport (jump → dest).
+
+        Used to tunnel an ad-hoc SSH connection to ``dest_host:dest_port`` via a
+        pooled jump host. Returns ``(channel, release)``; the session slot is held
+        until ``release()`` (caller drives the channel as a ``sock=``).
+        """
+        self._sessions.acquire()
+        try:
+            self.last_used = self._clock()
+            transport = self._client.get_transport()
+            if transport is None:
+                raise OSError("transport closed")
+            chan = transport.open_channel(
+                "direct-tcpip", (dest_host, dest_port), ("127.0.0.1", 0)
+            )
+        except BaseException:
+            self._sessions.release()
+            raise
+
+        released = threading.Event()
+
+        def release() -> None:
+            if not released.is_set():
+                released.set()
+                try:
+                    chan.close()
+                except Exception:
+                    pass
+                self.last_used = self._clock()
+                self._sessions.release()
+
+        return chan, release
+
+    def open_exec(self, command: str) -> tuple[Any, Callable[[], None]]:
+        """Open a session channel and ``exec`` ``command`` on this transport.
+
+        The channel's stdout is read with ``recv`` and stdin written with
+        ``sendall`` — the same byte-stream interface as ``open_direct_tcpip`` — so
+        callers (e.g. the chat exec transport) drive it identically. Returns
+        ``(channel, release)``; the session slot is held until ``release()``.
+        """
+        self._sessions.acquire()
+        try:
+            self.last_used = self._clock()
+            transport = self._client.get_transport()
+            if transport is None:
+                raise OSError("transport closed")
+            chan = transport.open_session()
+            chan.exec_command(command)
+        except BaseException:
+            self._sessions.release()
+            raise
+
+        released = threading.Event()
+
+        def release() -> None:
+            if not released.is_set():
+                released.set()
+                try:
+                    chan.close()
+                except Exception:
+                    pass
+                self.last_used = self._clock()
+                self._sessions.release()
+
+        return chan, release
+
+    def close(self) -> None:
+        try:
+            self._client.close()
+        except Exception:
+            pass
+
+
+class SSHConnectionPool:
+    """Thread-safe pool of reused SSH connections, one per host.
+
+    Locking: a per-host lock serialises connect/reconnect for a single host (so
+    one host never races itself) while different hosts connect in parallel. A
+    short ``_map_lock`` guards the host→connection map and the per-host lock
+    registry only.
+    """
+
+    def __init__(
+        self,
+        *,
+        settings: dict[str, Any],
+        make_client: Callable[..., Any],
+        clock: Callable[[], float] = time.monotonic,
+        rng: Callable[[float, float], float] = random.uniform,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ):
+        self._settings = settings
+        self._make_client = make_client
+        self._clock = clock
+        self._rng = rng
+        self._on_event = on_event
+        self._conns: dict[tuple, PooledConnection] = {}
+        self._locks: dict[tuple, threading.Lock] = {}
+        self._backoff: dict[
+            tuple, tuple[int, float]
+        ] = {}  # key → (fails, next_attempt)
+        self._map_lock = threading.Lock()
+        self._handshakes = threading.BoundedSemaphore(settings["max_concurrent"])
+
+    def _event(self, level: str, message: str) -> None:
+        """Surface a pool-lifecycle event (reuse / connect / backoff / reap).
+
+        Forwarded to the Dev tab via the bridge as a ``runspec:ssh`` row so the
+        pool's behavior is diagnosable. Never raises — diagnostics must not break
+        the connection path.
+        """
+        if self._on_event is None:
+            return
+        try:
+            self._on_event({"level": level, "logger": "ssh.pool", "message": message})
+        except Exception:
+            pass
+
+    # ── locking helpers ────────────────────────────────────────────────────────
+
+    def _host_lock(self, key: tuple) -> threading.Lock:
+        with self._map_lock:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[key] = lock
+            return lock
+
+    # ── connection lifecycle ───────────────────────────────────────────────────
+
+    def _acquire_conn(
+        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+    ) -> PooledConnection:
+        """Return a live pooled connection, reconnecting/connecting as needed.
+
+        Raises ``BackoffError`` when the host is in its backoff window, or the
+        underlying connect exception on a fresh handshake failure.
+        """
+        key = _host_key(ssh_target, identity_file, cfg)
+        idle_ttl = self._settings["idle_ttl"]
+
+        # Fast path: a live connection, no per-host lock needed.
+        with self._map_lock:
+            conn = self._conns.get(key)
+        if conn is not None and conn.is_alive(idle_ttl):
+            self._event("DEBUG", f"reusing SSH connection to {ssh_target}")
+            return conn
+
+        with self._host_lock(key):
+            # Re-check under the lock — another thread may have just connected.
+            with self._map_lock:
+                conn = self._conns.get(key)
+            if conn is not None and conn.is_alive(idle_ttl):
+                self._event("DEBUG", f"reusing SSH connection to {ssh_target}")
+                return conn
+            had_dead = conn is not None
+            if conn is not None:
+                conn.close()
+                with self._map_lock:
+                    self._conns.pop(key, None)
+
+            remaining = self._backoff_remaining(key)
+            if remaining is not None:
+                self._event(
+                    "DEBUG",
+                    f"skipping {ssh_target}: in connect-backoff ({remaining:.0f}s left)",
+                )
+                raise BackoffError(f"host in connect-backoff for {remaining:.0f}s")
+
+            conn = self._connect(ssh_target, identity_file, cfg)
+            self._event(
+                "INFO" if had_dead else "DEBUG",
+                f"reconnected to {ssh_target} (previous transport dropped)"
+                if had_dead
+                else f"opened SSH connection to {ssh_target}",
+            )
+            with self._map_lock:
+                self._conns[key] = conn
+            return conn
+
+    def _handshake_once(
+        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+    ) -> Any:
+        """One bounded handshake attempt — holds the global handshake semaphore
+        only for the duration of the connect so a retry sleep never occupies a
+        storm-cap slot."""
+        self._handshakes.acquire()
+        try:
+            client = self._make_client(ssh_target, identity_file, cfg)
+            keepalive = self._settings["keepalive"]
+            if keepalive:
+                transport = client.get_transport()
+                if transport is not None:
+                    transport.set_keepalive(keepalive)
+            return client
+        finally:
+            self._handshakes.release()
+
+    def _connect(
+        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+    ) -> PooledConnection:
+        """Open a fresh transport, retrying a *transient* handshake failure a few
+        times before giving up and recording backoff.
+
+        A single banner/session blip (bastion ``MaxStartups`` throttle, slow
+        banner, a transport dropped mid-negotiation under a connection burst)
+        used to immediately record exponential backoff, so the host showed
+        disconnected for the whole window — reading as a "slow"/failed connect
+        on a profile switch. Retrying the transient case inline clears the blip
+        without a user-visible failure; a durable error (auth, no route,
+        non-SSH banner) still fails fast on the first attempt.
+        """
+        from .executor import is_transient_ssh_error
+
+        key = _host_key(ssh_target, identity_file, cfg)
+        retries = int(self._settings.get("connect_retries", DEFAULT_CONNECT_RETRIES))
+        last_exc: BaseException | None = None
+        for attempt in range(retries + 1):
+            try:
+                client = self._handshake_once(ssh_target, identity_file, cfg)
+            except Exception as exc:
+                last_exc = exc
+                transient = is_transient_ssh_error(exc)
+                if transient and attempt < retries:
+                    delay = DEFAULT_CONNECT_RETRY_DELAY * (attempt + 1)
+                    delay += self._rng(0, delay * 0.5)  # jitter so retries spread
+                    self._event(
+                        "DEBUG",
+                        f"SSH connect to {ssh_target} hit a transient error "
+                        f"({exc}); retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 2}/{retries + 1})",
+                    )
+                    time.sleep(delay)
+                    continue
+                break
+            else:
+                self._record_success(key)
+                return PooledConnection(
+                    client, self._settings["max_sessions"], self._clock
+                )
+        delay = self._record_failure(key)
+        self._event(
+            "WARNING",
+            f"SSH connect to {ssh_target} failed ({last_exc}); backing off {delay:.0f}s",
+        )
+        assert last_exc is not None
+        raise last_exc
+
+    # ── per-host backoff ───────────────────────────────────────────────────────
+
+    def _backoff_remaining(self, key: tuple) -> float | None:
+        """Seconds left in the host's backoff window, or None if it's clear."""
+        with self._map_lock:
+            entry = self._backoff.get(key)
+        if entry and self._clock() < entry[1]:
+            return entry[1] - self._clock()
+        return None
+
+    def _record_success(self, key: tuple) -> None:
+        with self._map_lock:
+            self._backoff.pop(key, None)
+
+    def _record_failure(self, key: tuple) -> float:
+        base = self._settings["backoff_base"]
+        cap = self._settings["backoff_max"]
+        with self._map_lock:
+            fails = self._backoff.get(key, (0, 0.0))[0] + 1
+            delay = min(base * (2 ** (fails - 1)), cap)
+            delay += self._rng(0, max(1.0, delay * 0.1))  # jitter so retries spread
+            self._backoff[key] = (fails, self._clock() + delay)
+        return delay
+
+    # ── public API ─────────────────────────────────────────────────────────────
+
+    def run(
+        self,
+        ssh_target: str,
+        command: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+        timeout: int = 15,
+    ) -> tuple[int, str, str]:
+        """Run one command on the host, reusing a pooled transport.
+
+        Mirrors ``executor.ssh_run`` return shape ``(code, out, err)``; on any
+        failure returns ``(-1, "", message)`` so callers need no try/except.
+        One transparent reconnect is attempted if a *reused* transport turns out
+        to be dead at exec time.
+        """
+        cfg = global_ssh_config or {}
+        for attempt in (1, 2):
+            try:
+                conn = self._acquire_conn(ssh_target, identity_file, cfg)
+            except BackoffError as exc:
+                return -1, "", str(exc)
+            except Exception as exc:
+                return -1, "", str(exc)
+            try:
+                return conn.run(command, timeout)
+            except Exception as exc:
+                # A reused transport may have died between is_alive() and exec —
+                # drop it and retry once with a fresh handshake.
+                self._drop(ssh_target, identity_file, cfg)
+                if attempt == 2:
+                    return -1, "", str(exc)
+        return -1, "", "unreachable"
+
+    def open_session(
+        self,
+        ssh_target: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open a streaming channel on a pooled transport (for run_remote).
+
+        Returns ``(channel, release)``. Raises on connect failure / backoff so
+        the streaming caller can report it.
+        """
+        cfg = global_ssh_config or {}
+        conn = self._acquire_conn(ssh_target, identity_file, cfg)
+        return conn.open_session()
+
+    def open_sftp(
+        self,
+        ssh_target: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open an SFTP channel on a pooled transport (for file transfer).
+
+        Returns ``(sftp, release)``. Raises on connect failure / backoff so the
+        caller can report it.
+        """
+        cfg = global_ssh_config or {}
+        conn = self._acquire_conn(ssh_target, identity_file, cfg)
+        return conn.open_sftp()
+
+    def open_direct_tcpip(
+        self,
+        ssh_target: str,
+        dest_host: str,
+        dest_port: int,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> tuple[Any, Callable[[], None]]:
+        """Open a ``direct-tcpip`` channel through a pooled jump transport."""
+        cfg = global_ssh_config or {}
+        conn = self._acquire_conn(ssh_target, identity_file, cfg)
+        return conn.open_direct_tcpip(dest_host, dest_port)
+
+    def open_exec(
+        self,
+        ssh_target: str,
+        command: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> tuple[Any, Callable[[], None]]:
+        """Exec ``command`` on a pooled transport, returning ``(channel, release)``.
+
+        The chat exec transport uses this to run ``console-room connect`` on the
+        host when SSH port-forwarding is unavailable — no ``direct-tcpip`` needed.
+        """
+        cfg = global_ssh_config or {}
+        conn = self._acquire_conn(ssh_target, identity_file, cfg)
+        return conn.open_exec(command)
+
+    def connectable(
+        self,
+        ssh_target: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> bool:
+        """True if a live pooled transport can be obtained — the probe-free
+        connectivity check. Replaces the standalone ``ssh host true`` handshake:
+        if discovery can get a transport, the host is connected."""
+        cfg = global_ssh_config or {}
+        try:
+            conn = self._acquire_conn(ssh_target, identity_file, cfg)
+        except Exception:
+            return False
+        return conn.is_alive(self._settings["idle_ttl"])
+
+    def _drop(
+        self, ssh_target: str, identity_file: str | None, cfg: dict[str, Any]
+    ) -> None:
+        key = _host_key(ssh_target, identity_file, cfg)
+        with self._map_lock:
+            conn = self._conns.pop(key, None)
+        if conn is not None:
+            conn.close()
+
+    def drop(
+        self,
+        ssh_target: str,
+        *,
+        identity_file: str | None = None,
+        global_ssh_config: dict[str, Any] | None = None,
+    ) -> None:
+        """Close and evict one host's pooled transport (public wrapper over
+        ``_drop``). Used to tear down a host's standing connection immediately when
+        it leaves the active profile's scope — keyword args match ``run`` /
+        ``connectable`` so callers pass the same identity/config."""
+        self._drop(ssh_target, identity_file, global_ssh_config or {})
+
+    def reap(self) -> int:
+        """Close transports idle beyond ``idle_ttl``. Returns the count reaped.
+
+        Called once per refresh cycle (cheap, deterministic) instead of running a
+        separate timer thread.
+        """
+        idle_ttl = self._settings["idle_ttl"]
+        if not idle_ttl:
+            return 0
+        with self._map_lock:
+            stale = [k for k, c in self._conns.items() if not c.is_alive(idle_ttl)]
+            dropped = [self._conns.pop(k) for k in stale]
+        # close outside the map lock — close() does network I/O
+        for key, conn in zip(stale, dropped):
+            conn.close()
+            self._event("DEBUG", f"reaped idle SSH connection to {key[0]}")
+        return len(dropped)
+
+    def close_all(self) -> None:
+        """Close every pooled transport — called on app shutdown."""
+        with self._map_lock:
+            conns = list(self._conns.values())
+            self._conns.clear()
+            self._backoff.clear()
+        for c in conns:
+            c.close()
+
+    def update_settings(self, settings: dict[str, Any]) -> None:
+        """Apply new behavioural tunables to the live pool without dropping any
+        connections (keepalive / idle_ttl / max_sessions / backoff).
+
+        The caller must guarantee ``enabled`` and ``max_concurrent`` are
+        unchanged — those can't be applied to a running pool (one decides whether
+        the pool exists at all, the other sizes the handshake semaphore), so they
+        require a rebuild. Connection-*shaping* changes (user / proxy / identity)
+        need nothing here either: they alter the connection key, so the next use
+        opens a fresh transport and the stale one is reaped.
+        """
+        with self._map_lock:
+            self._settings = settings

@@ -1,10 +1,21 @@
 # Design: `runspec emit --claude-plugin`
 
-> **Status: prototype shipped as a hand-rolled example** at
-> `examples/claude-code-plugin/` — a working Claude Code plugin (MCP server
-> entry + autonomy PreToolUse hook + manifest generator) built with **zero core
-> changes**. This document records why it works, where the fidelity gaps are,
-> and what a first-class `runspec emit --claude-plugin` would add.
+> **Status: superseded for the multi-host case by the `runspec-fleet` package**
+> (`packages/python/runspec-fleet/`, `docs/fleet.md`). Rather than *emitting* a
+> per-host plugin directory, `runspec-fleet` ships a single installable plugin
+> backed by a local MCP **gateway**: one config file lists all hosts (local +
+> remote SSH venvs), discovery is **live** (the gateway declares
+> `tools.listChanged` and pushes `notifications/tools/list_changed` from a
+> background thread, and rewrites the autonomy manifest on every change — no
+> manual `generate_manifest.py`), and credentials are injected per call as
+> name-derived env vars (keychain-backed, shared with runspec-console),
+> auto-matched to a runnable by its declared arg `env`. The hand-rolled
+> `examples/claude-code-plugin/` remains as the minimal, zero-dependency
+> single-host reference.
+>
+> The original prototype notes below are retained for the rationale (why the
+> PreToolUse hook carries autonomy, the baked-manifest-vs-live-query trade-off,
+> the secrets layering) — all of which `runspec-fleet` builds on.
 
 ## Problem
 

@@ -1,0 +1,13 @@
+{
+  "name": "runspec-fleet",
+  "owner": {
+    "name": "runspec"
+  },
+  "plugins": [
+    {
+      "name": "runspec-fleet",
+      "source": "./",
+      "description": "Local and remote runspec runnables as MCP tools in Claude Code, from one config file, gated by their declared autonomy"
+    }
+  ]
+}
