@@ -1,8 +1,8 @@
 # Design: `runspec emit --claude-plugin`
 
-> **Status: superseded for the multi-host case by the `runspec-fleet` package**
-> (`packages/python/runspec-fleet/`, `docs/fleet.md`). Rather than *emitting* a
-> per-host plugin directory, `runspec-fleet` ships a single installable plugin
+> **Status: superseded for the multi-host case by the `runspec-mcp` package**
+> (`packages/python/runspec-mcp/`, `docs/mcp.md`). Rather than *emitting* a
+> per-host plugin directory, `runspec-mcp` ships a single installable plugin
 > backed by a local MCP **gateway**: one config file lists all hosts (local +
 > remote SSH venvs), discovery is **live** (the gateway declares
 > `tools.listChanged` and pushes `notifications/tools/list_changed` from a
@@ -15,7 +15,7 @@
 >
 > The original prototype notes below are retained for the rationale (why the
 > PreToolUse hook carries autonomy, the baked-manifest-vs-live-query trade-off,
-> the secrets layering) — all of which `runspec-fleet` builds on.
+> the secrets layering) — all of which `runspec-mcp` builds on.
 
 ## Problem
 

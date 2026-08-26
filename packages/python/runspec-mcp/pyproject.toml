@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runspec-mcp"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Connect Claude Code to local and remote runspec runnables as MCP tools, from one config file"
+readme = "README.md"
+license = "MIT"
+dependencies = [
+    # 0.48.0 for the `discoverable` boolean + serve leaf globals; the gateway
+    # reuses runspec.cli._build_schema and runspec.become.build_become_argv.
+    "runspec>=0.48.0",
+    # Warm SSH connection pool for remote venvs (mirrors runspec-console).
+    "paramiko>=3.0",
+    # Managed ed25519 keypair generation (also a transitive paramiko dep).
+    "cryptography>=41",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# Secret storage in the OS keychain. Without it the gateway still runs; only
+# credential injection is disabled (same opt-in split as runspec-console).
+credentials = ["keyring>=24"]
+dev = [
+    "ruff==0.15.20",
+    "mypy",
+    "pytest>=8.0",
+    "keyring>=24",
+    # Dev-only: the parity tests import the console originals to assert the
+    # vendored transport/credential/merge helpers behave identically.
+    "runspec-console",
+]
+
+[project.scripts]
+runspec-mcp = "runspec_mcp.cli:main"
+
+# A corporate seed package can ship a config_seed/ dir under either group; the
+# fleet reads both so one seed configures the console and the plugin alike.
+# [project.entry-points."runspec_mcp.config_seed"]
+# mycorp = "mycorp_fleet"
+
+[tool.hatch.build.targets.wheel]
+# The Claude Code plugin under runspec_mcp/plugin/ ships as package data so
+# `runspec-mcp plugin-path` can point Claude Code at it.
+packages = ["runspec_mcp"]
+artifacts = ["runspec_mcp/plugin/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+# Vendored-verbatim modules follow the console's own typing upstream; kept
+# honest by tests/test_parity.py rather than re-checked here.
+exclude = "runspec_mcp/(executor|ssh_pool|configmerge|hosts)\\.py$"
+
+[[tool.mypy.overrides]]
+module = ["paramiko.*", "keyring.*", "tomli", "runspec.*", "runspec_console.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 200
+target-version = "py310"
+# These modules are vendored verbatim from runspec-console and kept
+# behaviour-identical by tests/test_parity.py — they follow the console's own
+# lint config upstream; restyling them here would create drift, so we don't lint
+# them locally.
+extend-exclude = ["runspec_mcp/executor.py", "runspec_mcp/ssh_pool.py", "runspec_mcp/configmerge.py", "runspec_mcp/hosts.py", "runspec_mcp/plugin"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# try/except/pass with an explanatory comment (best-effort swallow) reads more
+# clearly than contextlib.suppress here, and matches the vendored modules.
+ignore = ["SIM105"]

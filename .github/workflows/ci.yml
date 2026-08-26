@@ -58,7 +58,7 @@ jobs:
       jira-core: ${{ steps.filter.outputs.jira-core }}
       confluence: ${{ steps.filter.outputs.confluence }}
       confluence-core: ${{ steps.filter.outputs.confluence-core }}
-      fleet: ${{ steps.filter.outputs.fleet }}
+      mcp: ${{ steps.filter.outputs.mcp }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v7
@@ -112,8 +112,8 @@ jobs:
             scheduler:
               - 'packages/python/runspec-scheduler/**'
               - '.github/workflows/ci.yml'
-            fleet:
-              - 'packages/python/runspec-fleet/**'
+            mcp:
+              - 'packages/python/runspec-mcp/**'
               - '.github/workflows/ci.yml'
             console:
               - 'packages/python/runspec-console/**'
@@ -1017,12 +1017,12 @@ jobs:
           # The runnable must be discoverable by the console over `runspec local`.
           /tmp/smoke/bin/runspec local --format json | /tmp/smoke/bin/python -c "import json,sys; assert any(r['runnable']=='runspec-scheduler' for r in json.load(sys.stdin)), 'not discoverable'; print('discovery OK')"
 
-  # ── runspec-fleet (the Claude Code MCP gateway) ─────────────────────────────
+  # ── runspec-mcp (the Claude Code MCP gateway) ─────────────────────────────
 
-  fleet-quality:
-    name: "fleet quality / ${{ matrix.check }}"
+  mcp-quality:
+    name: "mcp quality / ${{ matrix.check }}"
     needs: changes
-    if: needs.changes.outputs.fleet == 'true'
+    if: needs.changes.outputs.mcp == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1030,7 +1030,7 @@ jobs:
         check: [lint, format]
     defaults:
       run:
-        working-directory: packages/python/runspec-fleet
+        working-directory: packages/python/runspec-mcp
     steps:
       - uses: actions/checkout@v7
 
@@ -1053,14 +1053,14 @@ jobs:
         if: matrix.check == 'format'
         run: ruff format --check .
 
-  fleet-test:
-    name: runspec-fleet test
+  mcp-test:
+    name: runspec-mcp test
     needs: changes
-    if: needs.changes.outputs.fleet == 'true'
+    if: needs.changes.outputs.mcp == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/python/runspec-fleet
+        working-directory: packages/python/runspec-mcp
     steps:
       - uses: actions/checkout@v7
 
@@ -1077,7 +1077,7 @@ jobs:
           pip install --no-deps -e ../runspec-console
 
       - name: Type check
-        run: mypy runspec_fleet
+        run: mypy runspec_mcp
 
       - name: Run tests (incl. parity vs the console originals)
         run: pytest
@@ -1094,12 +1094,12 @@ jobs:
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/python -c "
           from importlib.resources import files
-          root = files('runspec_fleet') / 'plugin'
+          root = files('runspec_mcp') / 'plugin'
           assert (root / '.claude-plugin' / 'plugin.json').is_file(), 'plugin.json missing from wheel'
           assert (root / 'hooks' / 'autonomy_gate.py').is_file(), 'hook missing from wheel'
           print('Wheel contents OK')
           "
-          /tmp/smoke/bin/runspec-fleet --version
+          /tmp/smoke/bin/runspec-mcp --version
 
   # ── runspec-room (the chat-room server) ─────────────────────────────────────
 
