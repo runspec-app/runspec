@@ -27,6 +27,7 @@ from runspec_webops_core.openapi import (
     parse_document,
     summarize_spec,
 )
+from runspec_webops_core.proxy import open_socket, resolve_proxy
 from runspec_webops_core.tls import (
     CertInfo,
     TlsPeer,
@@ -64,4 +65,7 @@ __all__ = [
     "parse_document",
     "summarize_spec",
     "describe_operation",
+    # proxy
+    "resolve_proxy",
+    "open_socket",
 ]

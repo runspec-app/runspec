@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-windows"
-version = "0.5.0"
+version = "0.6.0"
 requires-python = ">=3.10"
 description = "Windows system admin + cross-platform web/TLS/API runnables for runspec"
 dependencies = [
     "runspec>=0.44.0",
-    "runspec-webops-core>=0.1.0",
+    "runspec-webops-core>=0.2.0",
     "runspec-fs-core>=0.2.0",
 ]
 

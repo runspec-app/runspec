@@ -331,6 +331,12 @@ short       = "-t"
 description = "Connection timeout in seconds"
 default     = 10
 
+[cert-check.args.proxy]
+type        = "str"
+short       = "-x"
+description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
+
 [cert-chain]
 serve       = ["local"]
 description = "Show the full TLS certificate chain (leaf -> intermediates -> root)"
@@ -354,6 +360,12 @@ short       = "-t"
 description = "Connection timeout in seconds"
 default     = 10
 
+[cert-chain.args.proxy]
+type        = "str"
+short       = "-x"
+description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
+
 [tls-info]
 serve       = ["local"]
 description = "Report the negotiated TLS protocol, cipher, and trust result for a host"
@@ -376,6 +388,12 @@ type        = "int"
 short       = "-t"
 description = "Connection timeout in seconds"
 default     = 10
+
+[tls-info.args.proxy]
+type        = "str"
+short       = "-x"
+description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
 
 [http-check]
 serve       = ["local"]
@@ -405,6 +423,12 @@ type        = "flag"
 short       = "-k"
 description = "Skip TLS certificate verification"
 default     = false
+
+[http-check.args.proxy]
+type        = "str"
+short       = "-x"
+description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
 
 [http-headers]
 serve       = ["local"]
@@ -436,6 +460,12 @@ short       = "-k"
 description = "Skip TLS certificate verification"
 default     = false
 
+[http-headers.args.proxy]
+type        = "str"
+short       = "-x"
+description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
+
 [redirect-trace]
 serve       = ["local"]
 description = "Follow an HTTP redirect chain and list each hop with status and Location"
@@ -464,6 +494,12 @@ type        = "flag"
 short       = "-k"
 description = "Skip TLS certificate verification"
 default     = false
+
+[redirect-trace.args.proxy]
+type        = "str"
+short       = "-x"
+description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
 
 [dns-lookup]
 serve       = ["local"]
@@ -538,6 +574,12 @@ type        = "flag"
 short       = "-k"
 description = "Skip TLS certificate verification when fetching the spec"
 default     = false
+
+[api-spec.args.proxy]
+type        = "str"
+short       = "-x"
+description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
 
 # ── Corporate networking diagnostics (proxy / VPN / DNS / route / GPO) ─────────
 

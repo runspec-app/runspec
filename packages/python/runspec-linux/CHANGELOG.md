@@ -1,5 +1,22 @@
 # runspec-linux Changelog
 
+## [0.10.0] — 2026-08-26
+
+### Added — `--proxy` on the web/TLS runnables (auto-detect by default)
+
+- `cert-check`, `cert-chain`, `tls-info`, `http-check`, `http-headers`,
+  `redirect-trace`, and `api-spec` gained an optional `--proxy` / `-x` argument
+  and now **auto-detect a proxy by default** (via `runspec-webops-core` 0.2.0),
+  so they work against internal addresses reachable only through a proxy.
+- With no `--proxy`, the proxy is discovered from the proxy environment variables
+  (`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`, honouring `NO_PROXY`). `--proxy
+  host:port` (or `http://host:port`) overrides; `--proxy direct` forces a direct
+  connection. (WPAD/PAC system-settings discovery is Windows-only, in
+  `runspec-windows`.)
+- TLS runnables tunnel via HTTP `CONNECT`, so the inspected certificate is the
+  target host's, not the proxy's. `dns-lookup` is unchanged (a DNS lookup cannot
+  be proxied). Bumps the `runspec-webops-core` dependency to `>=0.2.0`.
+
 ## [0.9.0] — 2026-08-24
 
 New `cron` runnable — full crontab management for the runspec-console agent (and

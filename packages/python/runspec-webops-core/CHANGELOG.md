@@ -1,5 +1,34 @@
 # runspec-webops-core Changelog
 
+## [0.2.0] — 2026-08-26
+
+### Added — proxy discovery + CONNECT tunnelling
+
+- New `proxy` module: the web/TLS helpers no longer connect only *directly* to
+  the target — they now resolve and use an HTTP proxy the way a browser does, so
+  internal hosts reachable only via a corporate proxy stop timing out.
+- `resolve_proxy(url, explicit=None)` picks the proxy for a URL in this order:
+  an **explicit** override (the literal `"direct"` forces none) → the
+  **environment** (`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`, honouring
+  `NO_PROXY`) → on **Windows**, the *system* configuration via WinHTTP —
+  **WPAD auto-detect and PAC scripts evaluated per-URL** (`WinHttpGetProxyForUrl`,
+  matching Edge/Chrome), then the per-user manual proxy (with its bypass list),
+  then the machine-wide `netsh winhttp` default → otherwise **direct**. The
+  Windows path is best-effort — any failure falls through to a direct connection
+  rather than raising.
+- `open_socket(host, port, timeout, proxy=None)` opens a raw TCP socket,
+  issuing an HTTP `CONNECT` when a proxy applies so TLS is driven to the *real*
+  host through the tunnel (the inspected certificate is the target's, not the
+  proxy's). Plain-HTTP requests through a proxy use the absolute-URI request
+  form. Embedded `user:pass@` proxy credentials become a `Proxy-Authorization:
+  Basic` header.
+- Every network helper gained a `proxy` parameter (default `None` =
+  auto-discover; `"direct"` forces none): `probe`, `fetch_headers`,
+  `trace_redirects`, `fetch_body`, `load_document`, and `connect_peer`. Proxy is
+  re-resolved per redirect hop so a cross-host bypass is honoured.
+- Still stdlib-only and dependency-free (the Windows path uses `ctypes`, no new
+  runtime dependency).
+
 ## [0.1.0] — 2026-06-22
 
 Initial release.

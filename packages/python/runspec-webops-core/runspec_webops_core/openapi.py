@@ -39,10 +39,14 @@ class SpecError(WebopsCoreError):
 # ── loading ───────────────────────────────────────────────────────────────────
 
 
-def load_document(source: str, timeout: float = 15.0, insecure: bool = False) -> dict:
-    """Fetch (URL) or read (file path) a spec and parse it into a dict."""
+def load_document(source: str, timeout: float = 15.0, insecure: bool = False, proxy: str | None = None) -> dict:
+    """Fetch (URL) or read (file path) a spec and parse it into a dict.
+
+    ``proxy`` is forwarded to the fetch for URL sources (``"direct"`` forces no
+    proxy; ``None`` auto-discovers); it is ignored for local file paths.
+    """
     if source.startswith(("http://", "https://")):
-        status, body = fetch_body(source, timeout=timeout, insecure=insecure)
+        status, body = fetch_body(source, timeout=timeout, insecure=insecure, proxy=proxy)
         if status >= 400:
             raise SpecError(f"fetching {source} returned HTTP {status}")
     else:

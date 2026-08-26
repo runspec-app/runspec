@@ -1,5 +1,23 @@
 # runspec-windows Changelog
 
+## [0.6.0] — 2026-08-26
+
+### Added — `--proxy` on the web/TLS runnables (auto-detect by default)
+
+- `cert-check`, `cert-chain`, `tls-info`, `http-check`, `http-headers`,
+  `redirect-trace`, and `api-spec` gained an optional `--proxy` / `-x` argument
+  and now **auto-detect a proxy by default** (via `runspec-webops-core` 0.2.0),
+  so they work against internal addresses that are only reachable through a
+  corporate proxy — the same way Edge/Chrome do.
+- With no `--proxy`, the proxy is discovered from the proxy environment variables
+  and, on Windows, the **system settings** — WPAD auto-detect and PAC scripts are
+  evaluated per-URL via WinHTTP, then the per-user manual proxy, then the
+  machine-wide `netsh winhttp` default. `--proxy host:port` (or
+  `http://host:port`) overrides; `--proxy direct` forces a direct connection.
+- TLS runnables tunnel via HTTP `CONNECT`, so the inspected certificate is the
+  target host's, not the proxy's. `dns-lookup` is unchanged (a DNS lookup cannot
+  be proxied). Bumps the `runspec-webops-core` dependency to `>=0.2.0`.
+
 ## [0.5.0] — 2026-08-21
 
 ### Removed — Microsoft 365 / Graph runnables (moved to `runspec-o365`)

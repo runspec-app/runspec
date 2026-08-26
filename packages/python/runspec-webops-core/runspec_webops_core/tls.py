@@ -13,7 +13,6 @@ below are pure so they can be unit-tested without a socket.
 from __future__ import annotations
 
 import hashlib
-import socket
 import ssl
 import tempfile
 from dataclasses import dataclass, field
@@ -21,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from runspec_webops_core.errors import ConnectError
+from runspec_webops_core.proxy import open_socket, resolve_proxy
 
 # Certificate freshness buckets.
 OK = "ok"
@@ -225,11 +225,11 @@ def _decode_der(der: bytes) -> dict:
         Path(path).unlink(missing_ok=True)
 
 
-def _verify_trust(host: str, port: int, servername: str, timeout: float) -> tuple[bool, str | None]:
+def _verify_trust(host: str, port: int, servername: str, timeout: float, proxy: str | None = None) -> tuple[bool, str | None]:
     """Second connection with full verification — captures the trust verdict."""
     ctx = ssl.create_default_context()
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock, ctx.wrap_socket(sock, server_hostname=servername):
+        with open_socket(host, port, timeout, proxy) as sock, ctx.wrap_socket(sock, server_hostname=servername):
             return True, None
     except ssl.SSLCertVerificationError as e:
         return False, getattr(e, "verify_message", None) or str(e)
@@ -241,25 +241,31 @@ def _verify_trust(host: str, port: int, servername: str, timeout: float) -> tupl
         return False, str(e)
 
 
-def connect_peer(host: str, port: int = 443, timeout: float = 10.0, servername: str | None = None) -> TlsPeer:
+def connect_peer(host: str, port: int = 443, timeout: float = 10.0, servername: str | None = None, proxy: str | None = None) -> TlsPeer:
     """Open a TLS connection and capture the cert chain, protocol, cipher, trust.
+
+    ``proxy`` overrides proxy resolution (``"direct"`` forces none; ``None``
+    auto-discovers from the environment and, on Windows, the system config). When
+    a proxy applies the connection is CONNECT-tunnelled, so the certificate
+    inspected is the real host's, not the proxy's.
 
     Raises :class:`ConnectError` only when the endpoint is unreachable — an
     untrusted / expired certificate is reported, not raised.
     """
     sni = servername or host
+    resolved = resolve_proxy(f"https://{host}:{port}", proxy)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock, ctx.wrap_socket(sock, server_hostname=sni) as ssock:
+        with open_socket(host, port, timeout, resolved) as sock, ctx.wrap_socket(sock, server_hostname=sni) as ssock:
             protocol = ssock.version()
             cipher = ssock.cipher()
             chain = _peer_chain(ssock)
     except (OSError, TimeoutError, ssl.SSLError) as e:
         raise ConnectError(f"connection to {host}:{port} failed: {e}") from e
 
-    authorized, auth_error = _verify_trust(host, port, sni, timeout)
+    authorized, auth_error = _verify_trust(host, port, sni, timeout, resolved)
     return TlsPeer(
         chain=chain,
         protocol=protocol,
