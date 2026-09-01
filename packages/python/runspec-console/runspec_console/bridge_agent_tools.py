@@ -52,6 +52,19 @@ _HISTORY_TOOL_LOG_LINES = 200
 # navigation aid, not a dump; the truncation note tells the agent to narrow.
 _FILES_TOOL_MAX_ENTRIES = 300
 
+# The self-recovery reflection turn injected when a turn fails after its network
+# retries are spent (``_append_recovery_prompt`` / ``_max_self_recoveries``). Asks
+# the agent to take stock and resume rather than the loop ending the whole task on
+# an error — the catchall the operator asked for.
+_RECOVERY_PROMPT = (
+    "The previous step was interrupted by an error before it could finish: "
+    "{detail}. This may have been a transient problem (for example a network "
+    "timeout). Review the conversation so far, work out what you have already "
+    "completed and what is still outstanding, and continue the task from where it "
+    "left off — re-running only the step that failed. If the same error happens "
+    "again, stop and give a short summary of what you finished and what remains."
+)
+
 
 def _parse_dt(value: Any) -> datetime | None:
     """Parse an ISO-8601 datetime string from a tool arg into a naive local-time
@@ -261,6 +274,61 @@ class AgentToolsMixin:
         except (TypeError, ValueError):
             return _MAX_AGENT_ITERATIONS
         return n if n >= 1 else _MAX_AGENT_ITERATIONS
+
+    def _max_network_retries(self) -> int:
+        """How many times a single model call (the streaming request) may be
+        transparently retried after a **transient** failure — a read/connect
+        timeout, a dropped connection, a 429/5xx — from ``[llm]
+        max_network_retries`` (default 4, floored at 0). Retries only fire before
+        any text of the reply has been shown (so nothing is double-streamed) and are
+        spaced by an exponential backoff, so a proxy blip or an overloaded provider
+        no longer ends the whole turn on a bare, message-less exception. A durable
+        error (bad request, auth, unknown model) is never retried — see
+        ``adapters.base.is_transient_model_error``."""
+        try:
+            n = int(self.get_config().get("llm", {}).get("max_network_retries", 4))
+        except (TypeError, ValueError):
+            return 4
+        return n if n >= 0 else 4
+
+    def _max_self_recoveries(self) -> int:
+        """How many times a turn that still failed after exhausting its network
+        retries may be handed back to the agent to **analyse and resume** on its
+        own, from ``[llm] max_self_recoveries`` (default 1, floored at 0). Each
+        recovery injects a short reflection turn (what failed, what's done, what's
+        left) and re-enters the loop after a backoff, so a turn that would otherwise
+        die mid-task gets one bounded chance to recover — the network may have
+        settled, and the full conversation (including every tool result so far) is
+        still in context. 0 disables the catchall (the turn just ends with a
+        descriptive error)."""
+        try:
+            n = int(self.get_config().get("llm", {}).get("max_self_recoveries", 1))
+        except (TypeError, ValueError):
+            return 1
+        return n if n >= 0 else 1
+
+    @staticmethod
+    def _append_recovery_prompt(history: list[dict[str, Any]], detail: str) -> None:
+        """Append a self-recovery reflection turn to ``history`` (in place) asking
+        the agent to work out what's done and continue from where an error
+        interrupted it. Guarantees strict user/assistant alternation — which the
+        Anthropic API requires — by first inserting a short synthetic assistant note
+        whenever the last message isn't already an assistant turn (the common case:
+        the history ends on a ``tool_result`` user turn). ``detail`` is the
+        human-readable error from ``describe_exception``."""
+        if history and history[-1].get("role") != "assistant":
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "(the previous step was interrupted by an error before "
+                        "I could respond)"
+                    ),
+                }
+            )
+        history.append(
+            {"role": "user", "content": _RECOVERY_PROMPT.format(detail=detail)}
+        )
 
     @staticmethod
     def _sanitize_tool_name(raw: str) -> str:

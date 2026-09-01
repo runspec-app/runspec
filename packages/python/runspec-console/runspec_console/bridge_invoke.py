@@ -33,7 +33,12 @@ from .bridge_const import (
     _UI_OUTPUT_LINE_CAP,
     _UI_OUTPUT_BYTE_CAP,
 )
-from .adapters.base import is_output_truncation
+from .adapters.base import (
+    describe_exception,
+    is_output_truncation,
+    is_transient_model_error,
+    retry_delay,
+)
 from .bridge_utils import (
     _iso_now,
 )
@@ -1268,6 +1273,14 @@ class InvokeMixin:
         # hit, so the turn ends with a visible, resumable marker instead of silence.
         tool_rounds = 0
         hit_iteration_cap = False
+        # Transient model-call retries used so far this turn (a read/connect
+        # timeout, a dropped connection, a 429/5xx), bounded by
+        # _max_network_retries(); reset after any successful stream so each distinct
+        # model call gets its own budget. And self-recovery passes used so far
+        # (bounded by _max_self_recoveries()) — the catchall that hands a still-
+        # failing turn back to the agent to analyse and resume.
+        network_retries = 0
+        self_recoveries = 0
 
         # OpenTelemetry root span for the whole turn (no-op unless [telemetry] is
         # on). Started manually (not a `with`) so the large loop body needn't be
@@ -1302,6 +1315,13 @@ class InvokeMixin:
                     break
                 response: Any = None
                 assistant_text = ""  # this iteration's streamed assistant text
+                # Iteration-scoped outcome flags for the streaming call: a transient
+                # failure sets retry_iteration (re-attempt this same call); a durable
+                # or budget-exhausted failure sets errored + error_detail (recover or
+                # end). Handled just after the llm_span block below.
+                retry_iteration = False
+                errored = False
+                error_detail = ""
                 # Tag anything appended since the last iteration (the user message,
                 # a tool turn, a continuation) with this chat_id, then build the
                 # model's view from the history minus any excluded turns (the
@@ -1347,11 +1367,47 @@ class InvokeMixin:
                                 response = event[1]
                     except Exception as exc:
                         observability.record_exception(llm_span, exc)
-                        self._dispatch(
-                            "runspec:token",
-                            {"id": chat_id, "token": f"\n⚠ Error: {exc}"},
-                        )
-                        break
+                        detail = describe_exception(exc)
+                        max_net = self._max_network_retries()
+                        # A transient blip (read/connect timeout, dropped
+                        # connection, 429/5xx) with nothing shown yet → retry the
+                        # same call after a backoff, so the turn no longer dies on a
+                        # bare, often message-less exception. Once text has streamed
+                        # we don't retry the call (that would double the reply); the
+                        # self-recovery pass below handles it instead.
+                        if (
+                            is_transient_model_error(exc)
+                            and not assistant_text.strip()
+                            and network_retries < max_net
+                        ):
+                            network_retries += 1
+                            delay = retry_delay(network_retries)
+                            logger.warning(
+                                "chat %s: transient model-stream error (%s); "
+                                "retry %d/%d in %.1fs",
+                                chat_id,
+                                detail,
+                                network_retries,
+                                max_net,
+                                delay,
+                            )
+                            self._dispatch(
+                                "runspec:token",
+                                {
+                                    "id": chat_id,
+                                    "token": (
+                                        f"\n⏳ {detail} — retrying "
+                                        f"({network_retries}/{max_net})…"
+                                    ),
+                                },
+                            )
+                            retry_iteration = True
+                        else:
+                            logger.warning(
+                                "chat %s: model-stream error (%s)", chat_id, detail
+                            )
+                            errored = True
+                            error_detail = detail
 
                     if response is not None:
                         u = self._usage_from_response(response)
@@ -1366,9 +1422,64 @@ class InvokeMixin:
                     if assistant_text.strip():
                         observability.add_completion(assistant_text)
 
+                # Transient failure with nothing shown yet — back off and re-attempt
+                # this same model call (no history mutation, tool_rounds unchanged).
+                if retry_iteration:
+                    await asyncio.sleep(retry_delay(network_retries))
+                    continue
+
                 # Record this iteration's assistant prose for the saved transcript.
                 if assistant_text.strip():
                     turn_assistant_parts.append(assistant_text.strip())
+
+                # Durable / budget-exhausted model-call failure. Preserve any partial
+                # reply, then either hand the turn back to the agent to analyse and
+                # resume (the self-recovery catchall, bounded by _max_self_recoveries)
+                # or end the turn with a descriptive error — never the old bare,
+                # message-less "Error".
+                if errored:
+                    if assistant_text.strip():
+                        history.append({"role": "assistant", "content": assistant_text})
+                    if (
+                        not cancel.is_set()
+                        and self_recoveries < self._max_self_recoveries()
+                    ):
+                        self_recoveries += 1
+                        max_self = self._max_self_recoveries()
+                        logger.warning(
+                            "chat %s: self-recovery %d/%d after error (%s)",
+                            chat_id,
+                            self_recoveries,
+                            max_self,
+                            error_detail,
+                        )
+                        self._dispatch(
+                            "runspec:token",
+                            {
+                                "id": chat_id,
+                                "token": (
+                                    f"\n⚠ {error_detail}\n↻ Trying to recover "
+                                    f"({self_recoveries}/{max_self})…"
+                                ),
+                            },
+                        )
+                        self._append_recovery_prompt(history, error_detail)
+                        # Reset the per-call network budget so the recovery attempt
+                        # gets its own retries; back off to give the endpoint a
+                        # moment to settle.
+                        network_retries = 0
+                        await asyncio.sleep(retry_delay(self_recoveries, base=2.0))
+                        continue
+                    self._dispatch(
+                        "runspec:token",
+                        {"id": chat_id, "token": f"\n⚠ Error: {error_detail}"},
+                    )
+                    turn_assistant_parts.append(f"⚠ Error: {error_detail}")
+                    break
+
+                # A clean stream — reset the per-call transient-retry budget so a
+                # later blip in this turn gets its own full allowance.
+                network_retries = 0
 
                 # Persisting any clean assistant text is always safe (text-only,
                 # no tool pairing); do it whenever we're about to leave the loop.

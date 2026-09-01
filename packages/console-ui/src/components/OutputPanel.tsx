@@ -535,6 +535,64 @@ interface PendingConfirm {
   autonomy: string
 }
 
+// What the currently-active block is doing right now, for the sticky footer:
+// a running tool (its short name + any live progress) wins, else the model is
+// streaming its reply, else it's thinking/acting between steps.
+function activeActivity(block: InvocationBlock): { label: string; tool?: string; progress?: string } {
+  if (block.type === 'run') return { label: 'Running', tool: block.label.replace(/^\//, '') }
+  for (let i = block.segments.length - 1; i >= 0; i--) {
+    const seg = block.segments[i]
+    if (seg.kind === 'tool' && seg.entry.running) {
+      return { label: 'Running', tool: seg.entry.name.replace(/^[^_]+__/, ''), progress: seg.entry.progress }
+    }
+  }
+  if (block.currentText && block.currentText.length > 0) return { label: 'Responding…' }
+  return { label: 'Working…' }
+}
+
+// A sticky bottom activity bar shown while a turn is in flight. Long turns with
+// many tool cards push the card's own spinner far above the fold; this keeps a
+// live "still working" signal — the current step + elapsed time — pinned at the
+// bottom, and doubles as a jump-to-latest button. Its own 1s ticker keeps the
+// clock live without re-rendering the whole panel.
+function ActivityIndicator({ block, onClick }: { block: InvocationBlock; onClick: () => void }) {
+  const c = useCardTheme()
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick(x => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const act = activeActivity(block)
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(block.startedAt).getTime()) / 1000))
+  const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`
+  return (
+    <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 10, maxWidth: '90%' }}>
+      <Tooltip title="Jump to the latest activity">
+        <div
+          onClick={onClick}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+            background: c.headerBg, border: `1px solid ${c.cardBorder}`, borderRadius: 14,
+            padding: '4px 12px', maxWidth: '100%',
+            boxShadow: c.isDark ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.15)',
+          }}
+        >
+          <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} spin />
+          <Text style={{ fontSize: 12, color: c.dim, flexShrink: 0 }}>{act.label}</Text>
+          {act.tool && (
+            <Text code style={{ fontSize: 11, flexShrink: 0 }}>{act.tool}</Text>
+          )}
+          {act.progress && (
+            <Text ellipsis style={{ fontSize: 11, color: c.dim, fontFamily: 'monospace', maxWidth: 220 }}>{act.progress}</Text>
+          )}
+          <Text style={{ fontSize: 11, color: c.dim, flexShrink: 0, fontFamily: 'monospace' }}>· {elapsed}</Text>
+          <VerticalAlignBottomOutlined style={{ fontSize: 11, color: c.dim, flexShrink: 0 }} />
+        </div>
+      </Tooltip>
+    </div>
+  )
+}
+
 export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: OutputPanelProps) {
   const c = useCardTheme()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -596,6 +654,9 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
     if (el) el.scrollTop = el.scrollHeight
   }
 
+  // The turn/run currently in flight (if any), driving the sticky footer.
+  const activeBlock = blocks.find(b => !b.done)
+
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -639,8 +700,13 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
         </div>
       </div>
 
-      {/* Jump-to-bottom pill — appears when scrolled up */}
-      {showScrollDown && (
+      {/* Sticky activity indicator — pinned while a turn is in flight so the
+          "still working" signal survives long tool runs scrolling the card's own
+          spinner out of view; doubles as jump-to-latest. When nothing is active,
+          the plain jump-to-bottom pill takes over (only when scrolled up). */}
+      {activeBlock ? (
+        <ActivityIndicator block={activeBlock} onClick={scrollToBottom} />
+      ) : showScrollDown ? (
         <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
           <Button
             size="small"
@@ -655,7 +721,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
             latest
           </Button>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

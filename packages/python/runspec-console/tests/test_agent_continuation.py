@@ -113,6 +113,9 @@ def _chat_stub(max_cont: int = 3, max_tool_rounds: int | None = None):
     s._visible_history = types.MethodType(Bridge._visible_history, s)
     s._max_continuations = types.MethodType(Bridge._max_continuations, s)
     s._max_tool_rounds = types.MethodType(Bridge._max_tool_rounds, s)
+    s._max_network_retries = types.MethodType(Bridge._max_network_retries, s)
+    s._max_self_recoveries = types.MethodType(Bridge._max_self_recoveries, s)
+    s._append_recovery_prompt = Bridge._append_recovery_prompt  # @staticmethod
     s._agentic_chat_turn = types.MethodType(Bridge._agentic_chat_turn, s)
     return s
 

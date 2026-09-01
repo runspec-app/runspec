@@ -63,6 +63,126 @@ def is_output_truncation(stop_reason: str | None) -> bool:
     return (stop_reason or "").strip().lower() in _OUTPUT_TRUNCATION_STOPS
 
 
+# ── model-call error classification + recovery ────────────────────────────────
+#
+# A model request rides HTTP(S) — a corporate proxy, an SSH-tunnelled gateway, an
+# overloaded API — so a single call can die on a transient blip (a read timeout, a
+# dropped connection, a 429/503) that a plain retry would sail past. The agent loop
+# classifies the exception with these helpers so it can retry the *same* call
+# instead of ending the whole turn on a bare, often message-less exception (an
+# ``httpx.ReadTimeout`` stringifies to ""). Kept here — SDK-free and pure — so both
+# the chat loop and the headless trigger/schedule loop share one classifier, and so
+# they're unit-testable without a live provider.
+
+# Exception class names (matched across the __cause__/__context__ chain and each
+# class's MRO) that mean a transient network / provider blip worth retrying. Matched
+# by *name* rather than by importing httpx / the anthropic SDK, so the classifier
+# stays dependency-free and works whichever provider raised it.
+_TRANSIENT_EXC_NAMES = frozenset(
+    {
+        # httpx / anyio timeouts + connection failures
+        "TimeoutException",
+        "ReadTimeout",
+        "WriteTimeout",
+        "ConnectTimeout",
+        "PoolTimeout",
+        "ReadError",
+        "WriteError",
+        "ConnectError",
+        "CloseError",
+        "NetworkError",
+        "ProxyError",
+        "RemoteProtocolError",
+        "LocalProtocolError",
+        # stdlib / urllib3 / socket
+        "ConnectionError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "IncompleteRead",
+        "ProtocolError",
+        # provider SDK (anthropic / openai) transient shapes
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "OverloadedError",
+        "ServiceUnavailableError",
+        "RateLimitError",
+    }
+)
+
+# HTTP status codes (on an exception carrying a ``status_code``) that a retry can
+# clear: request timeout, conflict, rate limit, and the 5xx server/gateway family.
+_TRANSIENT_STATUS_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
+
+
+def is_transient_model_error(exc: BaseException) -> bool:
+    """True when ``exc`` looks like a transient model-call failure worth retrying
+    (a read/connect timeout, a dropped connection, a 429/5xx) rather than a durable
+    error (bad request, auth failure, unknown model). Walks the exception's
+    ``__cause__``/``__context__`` chain and each link's MRO, matching class names
+    against :data:`_TRANSIENT_EXC_NAMES`, and honours a ``status_code`` attribute in
+    :data:`_TRANSIENT_STATUS_CODES`. Name/attribute-based so it never imports a
+    provider SDK. Pure/testable."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        for klass in type(cur).__mro__:
+            if klass.__name__ in _TRANSIENT_EXC_NAMES:
+                return True
+        code = getattr(cur, "status_code", None)
+        try:
+            if code is not None and int(code) in _TRANSIENT_STATUS_CODES:
+                return True
+        except (TypeError, ValueError):
+            pass
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+# Human hints for exception classes whose ``str()`` is commonly empty — otherwise
+# the surfaced error is just the bare class name (e.g. "httpx.ReadTimeout"), which
+# is exactly what left the operator staring at "Error" with no explanation.
+_EXC_HINTS = {
+    "ReadTimeout": "the model took too long to respond (read timeout)",
+    "ConnectTimeout": "could not reach the model endpoint in time (connect timeout)",
+    "WriteTimeout": "timed out sending the request to the model (write timeout)",
+    "PoolTimeout": "no free connection to the model endpoint in time (pool timeout)",
+    "TimeoutException": "the model request timed out",
+    "APITimeoutError": "the model request timed out",
+    "ConnectError": "could not connect to the model endpoint",
+    "APIConnectionError": "could not connect to the model endpoint",
+    "RemoteProtocolError": "the model connection closed unexpectedly",
+    "ConnectionResetError": "the model connection was reset",
+    "OverloadedError": "the model provider is overloaded",
+}
+
+
+def describe_exception(exc: BaseException) -> str:
+    """A readable one-line description of ``exc`` for the operator: a qualified
+    ``module.ClassName: message``, or — when the message is empty (as it is for a
+    bare ``httpx.ReadTimeout``) — the qualified class name plus a plain-language
+    hint. Never returns an empty string, so a model-call failure can no longer show
+    up as a lone "Error". Pure/testable."""
+    name = type(exc).__name__
+    module = (type(exc).__module__ or "").split(".")[0]
+    label = f"{module}.{name}" if module and module != "builtins" else name
+    msg = str(exc).strip()
+    if msg:
+        return f"{label}: {msg}"
+    hint = _EXC_HINTS.get(name, "")
+    return f"{label} — {hint}" if hint else label
+
+
+def retry_delay(attempt: int, *, base: float = 1.0, cap: float = 15.0) -> float:
+    """Backoff delay (seconds) before retry number ``attempt`` (1-based):
+    exponential ``base * 2**(attempt-1)``, clamped to ``cap``. Deterministic (no
+    jitter) so it's easy to test and reason about; the model loop uses it to space
+    out retries of a transient model-call failure."""
+    n = max(1, int(attempt))
+    return float(min(cap, base * (2 ** (n - 1))))
+
+
 # ── api_key_command execution ─────────────────────────────────────────────────
 #
 # A corporate deployment often fetches the API key from a shipped helper rather

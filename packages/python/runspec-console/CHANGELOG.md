@@ -8,7 +8,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.233.0] — 2026-08-21
+## [0.234.0] — 2026-09-01
+
+### Fixed / Added
+- **Agent turns survive a transient model-call failure instead of ending as a
+  bare "Error".** A chat turn that had run many tool calls could end with just
+  the word *Error*: the streaming request raised an `httpx.ReadTimeout` (which
+  stringifies to `""`), and the loop surfaced `⚠ Error: ` with nothing after it
+  and stopped. Three layers now address this, in both the chat loop
+  (`_agentic_chat_turn`) and the headless trigger/schedule loop
+  (`_run_isolated_agent_turn`):
+  - **Descriptive errors.** A model-call failure is now surfaced via
+    `adapters.base.describe_exception` — a qualified `module.ClassName: message`,
+    or (when the message is empty, as it is for a bare timeout) the class name
+    plus a plain-language hint (e.g. *"httpx.ReadTimeout — the model took too
+    long to respond (read timeout)"*). Never an empty "Error" again.
+  - **Transient retries in code.** A read/connect timeout, a dropped connection,
+    or a 429/5xx (classified by `adapters.base.is_transient_model_error`, matched
+    across the exception `__cause__`/`__context__` chain) is retried
+    automatically — up to `[llm] max_network_retries` (default 4), spaced by
+    exponential backoff — **before any text has streamed** (so nothing is
+    double-streamed). A durable error (bad request, auth, unknown model) is never
+    retried.
+  - **Self-recovery catchall.** If a turn still fails after its network retries
+    are spent, it's handed back to the agent **once** (bounded by
+    `[llm] max_self_recoveries`, default 1) to analyse what's done and resume: a
+    short reflection turn is injected — keeping strict user/assistant alternation
+    — and the loop re-enters after a backoff, with the full conversation
+    (including every tool result so far) still in context. `0` on either knob
+    disables that layer.
+- **Sticky "still working" activity indicator in the Console.** A long turn
+  stacks many tool cards, scrolling the card's own spinner far above the fold, so
+  an in-flight turn looked stalled. A live footer is now pinned to the bottom of
+  the transcript while a turn/run is in flight — the current step (the running
+  tool's short name + any live progress, or *Responding…* / *Working…*) plus
+  elapsed time — and it doubles as a jump-to-latest button. It disappears the
+  moment the turn is done; the plain jump-to-bottom pill takes over when idle
+  (`OutputPanel.tsx`).
 
 ### Fixed
 - **SSH key rotation across a large fleet — reliable, fast, and observable.**

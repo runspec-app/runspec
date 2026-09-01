@@ -321,9 +321,12 @@ def _chat_stub():
         "_visible_history",
         "_max_continuations",
         "_max_tool_rounds",
+        "_max_network_retries",
+        "_max_self_recoveries",
         "_gated_run_tool_async",
     ):
         setattr(s, meth, types.MethodType(getattr(Bridge, meth), s))
+    s._append_recovery_prompt = Bridge._append_recovery_prompt  # @staticmethod
     return s
 
 

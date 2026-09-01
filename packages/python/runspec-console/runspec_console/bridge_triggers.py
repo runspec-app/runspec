@@ -36,6 +36,11 @@ from .bridge_helpers import (
     _RotaPresenceWatcher,
 )
 from .bridge_utils import format_result_for_room
+from .adapters.base import (
+    describe_exception,
+    is_transient_model_error,
+    retry_delay,
+)
 
 from typing import TYPE_CHECKING
 
@@ -2371,6 +2376,12 @@ class TriggersMixin:
         actions: list[str] = []  # one line per tool the agent ran
         tool_rounds = 0  # tool-execution rounds, bounded by _max_tool_rounds()
         hit_iteration_cap = False
+        # Transient model-call retries + self-recovery passes used this turn — same
+        # resilience as the chat loop, so a headless trigger/schedule turn no longer
+        # dies silently on a network blip. Bounded by _max_network_retries() /
+        # _max_self_recoveries().
+        network_retries = 0
+        self_recoveries = 0
 
         # OpenTelemetry root span for this headless turn — closes the tracing gap
         # the reactive/scheduled paths had (no-op unless [telemetry] is on). Kind
@@ -2398,6 +2409,9 @@ class TriggersMixin:
                 break
             response: Any = None
             assistant_text = ""
+            retry_iteration = False
+            errored = False
+            error_detail = ""
             try:
                 # A per-call copy with the catalog index folded into the first user
                 # message (search mode only); the stored history stays clean.
@@ -2426,11 +2440,84 @@ class TriggersMixin:
                         observability.add_completion(assistant_text)
             except Exception as exc:  # noqa: BLE001
                 observability.record_exception(observability.current_span(), exc)
+                detail = describe_exception(exc)
+                max_net = self._max_network_retries()
+                # Transient blip, nothing shown yet → retry the same call after a
+                # backoff (mirrors the chat loop). Otherwise fall through to the
+                # self-recovery / descriptive-error handling below.
+                if (
+                    is_transient_model_error(exc)
+                    and not assistant_text.strip()
+                    and network_retries < max_net
+                ):
+                    network_retries += 1
+                    logger.warning(
+                        "trigger %s: transient model-stream error (%s); retry %d/%d",
+                        chat_id,
+                        detail,
+                        network_retries,
+                        max_net,
+                    )
+                    self._dispatch(
+                        "runspec:token",
+                        {
+                            "id": chat_id,
+                            "token": (
+                                f"\n⏳ {detail} — retrying "
+                                f"({network_retries}/{max_net})…"
+                            ),
+                        },
+                    )
+                    retry_iteration = True
+                else:
+                    logger.warning(
+                        "trigger %s: model-stream error (%s)", chat_id, detail
+                    )
+                    errored = True
+                    error_detail = detail
+            if retry_iteration:
+                await asyncio.sleep(retry_delay(network_retries))
+                continue
+            # Durable / budget-exhausted failure — hand the turn back to the agent to
+            # analyse and resume (bounded by _max_self_recoveries), or end with a
+            # descriptive error instead of the old bare, message-less "Error".
+            if errored:
+                if assistant_text.strip():
+                    history.append({"role": "assistant", "content": assistant_text})
+                if (
+                    not cancel.is_set()
+                    and self_recoveries < self._max_self_recoveries()
+                ):
+                    self_recoveries += 1
+                    max_self = self._max_self_recoveries()
+                    logger.warning(
+                        "trigger %s: self-recovery %d/%d after error (%s)",
+                        chat_id,
+                        self_recoveries,
+                        max_self,
+                        error_detail,
+                    )
+                    self._dispatch(
+                        "runspec:token",
+                        {
+                            "id": chat_id,
+                            "token": (
+                                f"\n⚠ {error_detail}\n↻ Trying to recover "
+                                f"({self_recoveries}/{max_self})…"
+                            ),
+                        },
+                    )
+                    self._append_recovery_prompt(history, error_detail)
+                    network_retries = 0
+                    await asyncio.sleep(retry_delay(self_recoveries, base=2.0))
+                    continue
                 self._dispatch(
-                    "runspec:token", {"id": chat_id, "token": f"\n⚠ Error: {exc}"}
+                    "runspec:token",
+                    {"id": chat_id, "token": f"\n⚠ Error: {error_detail}"},
                 )
-                final_text = f"⚠ Error: {exc}"
+                final_text = f"⚠ Error: {error_detail}"
                 break
+            network_retries = 0  # clean stream — reset the per-call retry budget
             if stopped:
                 break
             if (
