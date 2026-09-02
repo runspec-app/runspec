@@ -2,6 +2,24 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.5.0] — 2026-09-02
+
+Surface the `runspec-confluence-core` 0.5.0 additions on the runnable (requires
+`runspec-confluence-core >= 0.5.0`).
+
+- **New verbs:** `whoami` (current user), `list-spaces`, `search-by-label`, and
+  `search-text` (plain-text search wrapped as a `siteSearch` CQL via
+  `cql_from_text`, or a full CQL expression used verbatim). All autonomous reads.
+- **`get-page-children`** now takes `--child-type` (page/comment/attachment),
+  `--start`, and `--limit` (was immediate child pages only).
+- **`get-comments`** and **`get-attachments`** gain a `--start` pagination offset.
+- **`get-page --markdown`** renders the fetched body to Markdown as a `markdown`
+  field (forces `body.storage` expand when `--expand` is unset), via the core
+  `html_to_markdown`.
+- **Proxy + private-CA support** (no new flags): `CONFLUENCE_PROXY_URL` routes
+  requests through a proxy and `CONFLUENCE_VERIFY_SSL` may be a CA-bundle path —
+  both read by `config_from_env` and forwarded to the client.
+
 ## [0.4.0] — 2026-08-07
 
 Add an optional `--confluence-pat` secret arg (a `password`-typed inherited global)

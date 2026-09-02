@@ -22,12 +22,14 @@ from runspec_confluence_core import (
     add_comment,
     add_label,
     config_from_env,
+    cql_from_text,
     create_page,
     delete_attachment,
     delete_page,
     download_attachments,
     get_attachments,
     get_comments,
+    get_current_user,
     get_labels,
     get_page,
     get_page_ancestors,
@@ -36,8 +38,11 @@ from runspec_confluence_core import (
     get_page_restrictions,
     get_space,
     get_space_pages,
+    html_to_markdown,
+    list_spaces,
     move_page,
     search,
+    search_by_label,
     update_page,
     upload_attachment,
 )
@@ -47,6 +52,26 @@ def _emit(payload: Any) -> None:
     print(json.dumps(payload, default=str))
 
 
+def _get_page_maybe_markdown(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
+    """Fetch a page; with --markdown, attach a Markdown rendering of its body.
+
+    When --markdown is set and --expand was not given, force ``body.storage`` so
+    there is a body to convert. The raw page is returned unchanged plus a top-level
+    ``markdown`` field (only when a body is present)."""
+    expand = spec.expand.value
+    want_markdown = spec.markdown.value
+    if want_markdown and not expand:
+        expand = "body.storage,version"
+    page = get_page(config, page_id=spec.page_id.value, space=spec.space.value, title=spec.title.value, expand=expand)
+    if want_markdown and isinstance(page, dict):
+        body = page.get("body") or {}
+        section = body.get("storage") or body.get("view") or {}
+        html = section.get("value") if isinstance(section, dict) else None
+        if html:
+            return {**page, "markdown": html_to_markdown(html)}
+    return page
+
+
 def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
     """Run the active verb against ``config``, unpacking only its declared args."""
     command = spec.runspec_command
@@ -54,10 +79,19 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
     # ── reads ──
     if command == "search":
         return search(config, spec.cql.value, start=spec.start.value, limit=spec.limit.value, expand=spec.expand.value)
+    if command == "search-text":
+        cql = cql_from_text(spec.query.value, space_key=spec.space.value, content_type=spec.content_type.value)
+        return search(config, cql, start=spec.start.value, limit=spec.limit.value)
+    if command == "search-by-label":
+        return search_by_label(config, spec.label.value, space_key=spec.space.value, start=spec.start.value, limit=spec.limit.value)
+    if command == "whoami":
+        return get_current_user(config)
+    if command == "list-spaces":
+        return list_spaces(config, space_type=spec.space_type.value, start=spec.start.value, limit=spec.limit.value)
     if command == "get-page":
-        return get_page(config, page_id=spec.page_id.value, space=spec.space.value, title=spec.title.value, expand=spec.expand.value)
+        return _get_page_maybe_markdown(spec, config)
     if command == "get-page-children":
-        return get_page_children(config, spec.page_id.value)
+        return get_page_children(config, spec.page_id.value, child_type=spec.child_type.value, start=spec.start.value, limit=spec.limit.value)
     if command == "get-page-ancestors":
         return get_page_ancestors(config, spec.page_id.value)
     if command == "get-page-history":
@@ -65,7 +99,7 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
     if command == "get-labels":
         return get_labels(config, spec.page_id.value)
     if command == "get-comments":
-        return get_comments(config, spec.page_id.value, limit=spec.limit.value)
+        return get_comments(config, spec.page_id.value, start=spec.start.value, limit=spec.limit.value)
     if command == "get-page-restrictions":
         return get_page_restrictions(config, spec.page_id.value)
     if command == "get-space":
@@ -112,7 +146,7 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
 
     # ── attachments ──
     if command == "get-attachments":
-        return get_attachments(config, spec.page_id.value, limit=spec.limit.value, filename=spec.filename.value)
+        return get_attachments(config, spec.page_id.value, start=spec.start.value, limit=spec.limit.value, filename=spec.filename.value)
     if command == "download-attachments":
         return download_attachments(config, spec.page_id.value, str(spec.dest.value))
     if command == "upload-attachment":

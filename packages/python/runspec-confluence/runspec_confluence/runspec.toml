@@ -16,7 +16,12 @@
 #
 # Reads are autonomous; writes require confirmation. Page bodies are passed in a
 # Confluence representation via --content-format (storage XHTML by default, or
-# wiki/editor). Markdown conversion is not done here.
+# wiki/editor/markdown; markdown is converted to storage client-side on write).
+# `get-page --markdown` renders a fetched body back to Markdown (read side).
+#
+# Proxy + private-CA support is env-driven (no CLI flags): CONFLUENCE_PROXY_URL
+# routes requests through a proxy, and CONFLUENCE_VERIFY_SSL may be a CA-bundle
+# path (or a false-y value to disable verification).
 
 [config]
 autonomy-default = "confirm"
@@ -51,6 +56,38 @@ limit = {type = "int", default = 25, description = "Max results"}
 start = {type = "int", default = 0, description = "Pagination offset"}
 expand = {type = "str", required = false, description = "Comma-separated expand sections"}
 
+[confluence.commands.search-text]
+description = "Search content by plain text (wrapped as a siteSearch CQL); pass an already-CQL query to use it verbatim"
+autonomy = "autonomous"
+[confluence.commands.search-text.args]
+query = {type = "str", required = true, description = "Plain-text query (or a full CQL expression, used verbatim)"}
+space = {type = "str", required = false, description = "Restrict to this space key"}
+content-type = {type = "str", required = false, description = "Restrict to a content type, e.g. page or blogpost"}
+limit = {type = "int", default = 25, description = "Max results"}
+start = {type = "int", default = 0, description = "Pagination offset"}
+
+[confluence.commands.search-by-label]
+description = "Find content tagged with a label (optionally within one space)"
+autonomy = "autonomous"
+[confluence.commands.search-by-label.args]
+label = {type = "str", required = true, description = "Label to search for"}
+space = {type = "str", required = false, description = "Restrict to this space key"}
+limit = {type = "int", default = 25, description = "Max results"}
+start = {type = "int", default = 0, description = "Pagination offset"}
+
+[confluence.commands.whoami]
+description = "Show the authenticated user for the configured credentials"
+autonomy = "autonomous"
+[confluence.commands.whoami.args]
+
+[confluence.commands.list-spaces]
+description = "List spaces (one page of results)"
+autonomy = "autonomous"
+[confluence.commands.list-spaces.args]
+space-type = {type = "choice", options = ["global", "personal"], required = false, description = "Filter to global or personal spaces"}
+limit = {type = "int", default = 25, description = "Max results"}
+start = {type = "int", default = 0, description = "Pagination offset"}
+
 [confluence.commands.get-page]
 description = "Fetch a page by id, or by space + title"
 autonomy = "autonomous"
@@ -59,12 +96,16 @@ page-id = {type = "str", required = false, description = "Page id"}
 space = {type = "str", required = false, description = "Space key (with --title; falls back to CONFLUENCE_SPACE)"}
 title = {type = "str", required = false, description = "Page title (with --space)"}
 expand = {type = "str", required = false, description = "Comma-separated expand sections, e.g. body.storage,version"}
+markdown = {type = "flag", default = false, description = "Also render the page body to Markdown as a 'markdown' field (forces body.storage expand when --expand is unset)"}
 
 [confluence.commands.get-page-children]
-description = "List a page's immediate child pages"
+description = "List a page's immediate children of a given type (one page of results)"
 autonomy = "autonomous"
 [confluence.commands.get-page-children.args]
 page-id = {type = "str", required = true, description = "Parent page id"}
+child-type = {type = "choice", options = ["page", "comment", "attachment"], default = "page", description = "Child content type to list"}
+limit = {type = "int", default = 25, description = "Max results"}
+start = {type = "int", default = 0, description = "Pagination offset"}
 
 [confluence.commands.get-page-ancestors]
 description = "List a page's ancestor pages (breadcrumb, root first)"
@@ -90,6 +131,7 @@ autonomy = "autonomous"
 [confluence.commands.get-comments.args]
 page-id = {type = "str", required = true, description = "Page id"}
 limit = {type = "int", default = 25, description = "Max comments"}
+start = {type = "int", default = 0, description = "Pagination offset"}
 
 [confluence.commands.get-page-restrictions]
 description = "Return the view/edit restrictions on a page"
@@ -174,6 +216,7 @@ autonomy = "autonomous"
 [confluence.commands.get-attachments.args]
 page-id = {type = "str", required = true, description = "Page id"}
 limit = {type = "int", default = 50, description = "Max attachments"}
+start = {type = "int", default = 0, description = "Pagination offset"}
 filename = {type = "str", required = false, description = "Only attachments with this filename"}
 
 [confluence.commands.download-attachments]

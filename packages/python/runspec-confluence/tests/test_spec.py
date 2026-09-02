@@ -8,6 +8,7 @@ SPEC = Path(__file__).parent.parent / "runspec_confluence" / "runspec.toml"
 
 VALUES = {
     "cql": "type = page",
+    "query": "onboarding",
     "page-id": "12345",
     "space": "DOCS",
     "space-key": "DOCS",
