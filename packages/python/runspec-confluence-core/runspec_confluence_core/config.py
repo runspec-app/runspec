@@ -41,8 +41,21 @@ class ConfluenceConfig:
     api_token: str | None = None
     personal_token: str | None = None
     space: str | None = None
-    verify_ssl: bool = True
+    verify_ssl: bool | str = True
+    proxies: dict[str, str] | None = None
     env: str | None = None
+
+    def resolve_verify(self) -> bool | str:
+        """Resolve ``verify_ssl`` into the value ``requests`` expects.
+
+        ``requests``' ``verify`` is either a bool (verify against the system CA
+        store, or skip verification) or a path string to a CA bundle to verify
+        against. A non-empty string is returned as-is (the CA-bundle path); an
+        empty string means "use the default", so it resolves to ``True``.
+        """
+        if isinstance(self.verify_ssl, str):
+            return self.verify_ssl or True
+        return self.verify_ssl
 
 
 def _env_first(names: list[str]) -> str | None:
@@ -59,6 +72,24 @@ def _resolve_cloud(url: str, override: str | None) -> bool:
     if override is not None:
         return override.strip().lower() in _TRUTHY
     return ".atlassian.net" in url.lower()
+
+
+def _resolve_verify_ssl(value: str | None) -> bool | str:
+    """Parse ``CONFLUENCE_VERIFY_SSL`` into a bool or a CA-bundle path.
+
+    Unset defaults to ``True``. A falsey/truthy token (``0``/``false``/``no``/
+    ``off`` and ``1``/``true``/``yes``/``on``) maps to the bool; any other value
+    is treated as a filesystem path to a CA bundle to verify against.
+    """
+    if value is None:
+        return True
+    token = value.strip()
+    lowered = token.lower()
+    if lowered in _FALSEY:
+        return False
+    if lowered in _TRUTHY:
+        return True
+    return token
 
 
 def config_from_env(env: str | None = None, *, personal_token_override: str | None = None) -> ConfluenceConfig:
@@ -94,13 +125,14 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
         hint = f"CONFLUENCE_{env.upper()}_URL" if env else "CONFLUENCE_URL"
         raise ConfluenceError(f"No base URL configured — set {hint}")
 
-    verify = lookup("VERIFY_SSL")
-    verify_ssl = True if verify is None else verify.strip().lower() not in _FALSEY
+    proxy_url = lookup("PROXY_URL")
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     common: dict[str, Any] = {
         "url": url.rstrip("/"),
         "cloud": _resolve_cloud(url, lookup("CLOUD")),
         "space": lookup("SPACE"),
-        "verify_ssl": verify_ssl,
+        "verify_ssl": _resolve_verify_ssl(lookup("VERIFY_SSL")),
+        "proxies": proxies,
         "env": env,
     }
 

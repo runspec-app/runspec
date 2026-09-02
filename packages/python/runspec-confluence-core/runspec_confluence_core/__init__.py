@@ -37,12 +37,20 @@ from runspec_confluence_core.pages import (
     get_page,
     get_page_ancestors,
     get_page_children,
-    get_space,
-    get_space_pages,
     move_page,
     update_page,
 )
-from runspec_confluence_core.search import search
+from runspec_confluence_core.search import cql_from_text, search, search_by_label
+from runspec_confluence_core.spaces import get_space, get_space_pages, list_spaces
+from runspec_confluence_core.summarise import (
+    html_to_markdown,
+    simplify_attachment,
+    simplify_comment,
+    simplify_page,
+    simplify_space,
+    simplify_user,
+)
+from runspec_confluence_core.users import get_current_user
 
 __all__ = [
     # config / client
@@ -60,10 +68,16 @@ __all__ = [
     "update_page",
     "delete_page",
     "move_page",
+    # spaces
+    "list_spaces",
     "get_space_pages",
     "get_space",
+    # users
+    "get_current_user",
     # search
     "search",
+    "search_by_label",
+    "cql_from_text",
     # content
     "get_page_history",
     "get_labels",
@@ -76,6 +90,12 @@ __all__ = [
     "download_attachments",
     "upload_attachment",
     "delete_attachment",
-    # markdown
+    # markdown (write) / summarise (read)
     "markdown_to_storage",
+    "html_to_markdown",
+    "simplify_page",
+    "simplify_comment",
+    "simplify_space",
+    "simplify_user",
+    "simplify_attachment",
 ]

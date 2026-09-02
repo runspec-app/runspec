@@ -4,13 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-confluence-core"
-version = "0.4.0"
+version = "0.5.0"
 requires-python = ">=3.10"
 description = "Pure-Python Confluence helpers (over atlassian-python-api) — the importable core behind runspec-confluence (no runspec dependency, no runnables)"
 dependencies = [
     "atlassian-python-api>=3.41",
-    # Markdown → Confluence storage (XHTML) conversion for --content-format markdown.
+    # Markdown → Confluence storage (XHTML) conversion for --content-format markdown (writes).
     "markdown>=3.4",
+    # Confluence HTML → Markdown conversion for read-side summarise.html_to_markdown.
+    "markdownify>=1.2,<2",
 ]
 
 [project.optional-dependencies]
@@ -26,9 +28,9 @@ testpaths = ["tests"]
 [tool.mypy]
 python_version = "3.10"
 
-# `markdown` ships no type stubs; we only call markdown.markdown().
+# `markdown` / `markdownify` ship no type stubs; we only call the top-level API.
 [[tool.mypy.overrides]]
-module = ["markdown"]
+module = ["markdown", "markdownify"]
 ignore_missing_imports = true
 
 [tool.ruff]

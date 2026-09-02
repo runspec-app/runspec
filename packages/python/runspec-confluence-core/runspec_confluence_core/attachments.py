@@ -9,14 +9,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from runspec_confluence_core.client import build_client, translate_errors
+from runspec_confluence_core.client import _cap_limit, build_client, translate_errors
 from runspec_confluence_core.config import ConfluenceConfig
 
 
 @translate_errors
-def get_attachments(config: ConfluenceConfig, page_id: str, *, limit: int = 50, filename: str | None = None) -> Any:
-    """List a page's attachments (optionally filtered by ``filename``)."""
-    return build_client(config).get_attachments_from_content(page_id, limit=limit, filename=filename)
+def get_attachments(config: ConfluenceConfig, page_id: str, *, start: int = 0, limit: int = 50, filename: str | None = None) -> Any:
+    """List a page's attachments (optionally filtered by ``filename``) — one page
+    of results."""
+    return build_client(config).get_attachments_from_content(page_id, start=start, limit=_cap_limit(limit), filename=filename)
 
 
 @translate_errors

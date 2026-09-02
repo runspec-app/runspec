@@ -1,10 +1,10 @@
-"""pages.py — page read/create/update/delete/move + space listing."""
+"""pages.py — page read/create/update/delete/move (space listing lives in spaces.py)."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from runspec_confluence_core.client import build_client, translate_errors
+from runspec_confluence_core.client import _cap_limit, build_client, translate_errors
 from runspec_confluence_core.config import ConfluenceConfig
 from runspec_confluence_core.errors import ConfluenceError
 from runspec_confluence_core.mdconvert import markdown_to_storage
@@ -42,9 +42,10 @@ def get_page(
 
 
 @translate_errors
-def get_page_children(config: ConfluenceConfig, page_id: str) -> Any:
-    """List a page's immediate child pages."""
-    return build_client(config).get_child_pages(page_id)
+def get_page_children(config: ConfluenceConfig, page_id: str, *, child_type: str = "page", start: int = 0, limit: int = 25) -> Any:
+    """List a page's immediate children of ``child_type`` (``page`` by default;
+    ``comment`` / ``attachment`` also valid) — one page of results."""
+    return build_client(config).get_page_child_by_type(page_id, type=child_type, start=start, limit=_cap_limit(limit))
 
 
 @translate_errors
@@ -116,15 +117,3 @@ def move_page(
 ) -> Any:
     """Move a page relative to a target (``append`` under it, or ``above``/``below``)."""
     return build_client(config).move_page(space, page_id, target_id=target_id, target_title=target_title, position=position)
-
-
-@translate_errors
-def get_space_pages(config: ConfluenceConfig, space: str, *, start: int = 0, limit: int = 50) -> Any:
-    """List pages in a space (one page of results)."""
-    return build_client(config).get_all_pages_from_space(space, start=start, limit=limit)
-
-
-@translate_errors
-def get_space(config: ConfluenceConfig, space_key: str) -> Any:
-    """Fetch a space's metadata."""
-    return build_client(config).get_space(space_key)

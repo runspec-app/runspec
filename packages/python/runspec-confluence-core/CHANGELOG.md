@@ -2,6 +2,33 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.5.0] — 2026-09-02
+
+Proxy + CA-bundle support and new read helpers.
+
+- **Connection:** `ConfluenceConfig` gains `proxies: dict[str, str] | None` and
+  widens `verify_ssl` to `bool | str` (a string is a CA-bundle path). New
+  `ConfluenceConfig.resolve_verify()` normalises `verify_ssl` into the value
+  `requests` expects. `config_from_env` reads `CONFLUENCE_PROXY_URL` (env-prefix
+  aware) into `proxies`, and `CONFLUENCE_VERIFY_SSL` now accepts a CA-bundle path
+  in addition to a bool token. `build_client` forwards both to
+  `atlassian.Confluence` (passed straight through to `requests`).
+- **New helpers:** `list_spaces` and `get_current_user`; `search_by_label` and
+  `cql_from_text` (turns a plain-text query into a `siteSearch ~ "…"` CQL, or
+  passes an already-CQL query through — ported from the mcp-atlassian search
+  heuristic). `get_page_children` now takes `child_type`/`start`/`limit` and uses
+  `get_page_child_by_type`.
+- **Pagination:** new `client._cap_limit(limit, cap=100)` clamps page sizes;
+  `get_comments` and `get_attachments` gain a `start` argument.
+- **Read-side shaping (new `summarise` module):** `html_to_markdown` (Confluence
+  HTML → Markdown, via `markdownify` — now a dependency) plus `simplify_page` /
+  `simplify_comment` / `simplify_space` / `simplify_user` / `simplify_attachment`
+  that trim a raw API response to a small, stable dict. This is the read
+  counterpart to `mdconvert.markdown_to_storage` (writes); the two are **not**
+  inverses.
+- `get_space` / `get_space_pages` moved from `pages` to the new `spaces` module;
+  both remain importable from the package root (back-compat).
+
 ## [0.4.0] — 2026-08-07
 
 `config_from_env` gains a keyword-only `personal_token_override` — when set it is

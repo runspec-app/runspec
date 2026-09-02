@@ -22,7 +22,9 @@ _T = TypeVar("_T")
 
 
 def _auth_kwargs(config: ConfluenceConfig) -> dict[str, Any]:
-    base: dict[str, Any] = {"url": config.url, "cloud": config.cloud, "verify_ssl": config.verify_ssl}
+    base: dict[str, Any] = {"url": config.url, "cloud": config.cloud, "verify_ssl": config.resolve_verify()}
+    if config.proxies:
+        base["proxies"] = config.proxies
     if config.username and config.api_token:
         base.update(username=config.username, password=config.api_token)
     elif config.personal_token:
@@ -33,8 +35,23 @@ def _auth_kwargs(config: ConfluenceConfig) -> dict[str, Any]:
 
 
 def build_client(config: ConfluenceConfig) -> Confluence:
-    """Construct an ``atlassian.Confluence`` client for ``config``."""
+    """Construct an ``atlassian.Confluence`` client for ``config``.
+
+    ``verify_ssl`` is resolved to a bool or a CA-bundle path and ``proxies`` (when
+    set) is forwarded — ``AtlassianRestAPI`` passes both straight through to
+    ``requests``.
+    """
     return Confluence(**_auth_kwargs(config))
+
+
+def _cap_limit(limit: int, cap: int = 100) -> int:
+    """Clamp a page-size ``limit`` to ``[1, cap]``.
+
+    Confluence rejects oversized page sizes; callers pass this through to the SDK
+    so a caller-supplied ``limit`` can't exceed the server's ceiling."""
+    if limit < 1:
+        return 1
+    return min(limit, cap)
 
 
 def _message(exc: requests.HTTPError) -> str:

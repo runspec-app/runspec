@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from runspec_confluence_core.client import build_client, translate_errors
+from runspec_confluence_core.client import _cap_limit, build_client, translate_errors
 from runspec_confluence_core.config import ConfluenceConfig
 
 
@@ -27,9 +27,9 @@ def add_label(config: ConfluenceConfig, page_id: str, label: str) -> Any:
 
 
 @translate_errors
-def get_comments(config: ConfluenceConfig, page_id: str, *, limit: int = 25) -> Any:
-    """List a page's comments (rendered bodies)."""
-    return build_client(config).get_page_comments(page_id, expand="body.view", limit=limit)
+def get_comments(config: ConfluenceConfig, page_id: str, *, start: int = 0, limit: int = 25) -> Any:
+    """List a page's comments (rendered bodies) — one page of results."""
+    return build_client(config).get_page_comments(page_id, expand="body.view", start=start, limit=_cap_limit(limit))
 
 
 @translate_errors

@@ -73,3 +73,48 @@ def test_dataclass_defaults():
     cfg = ConfluenceConfig(url="https://x", cloud=True)
     assert cfg.verify_ssl is True
     assert cfg.space is None
+    assert cfg.proxies is None
+
+
+def test_resolve_verify_bool():
+    assert ConfluenceConfig(url="x", cloud=True, verify_ssl=True).resolve_verify() is True
+    assert ConfluenceConfig(url="x", cloud=True, verify_ssl=False).resolve_verify() is False
+
+
+def test_resolve_verify_path():
+    cfg = ConfluenceConfig(url="x", cloud=True, verify_ssl="/etc/ssl/corp-ca.pem")
+    assert cfg.resolve_verify() == "/etc/ssl/corp-ca.pem"
+
+
+def test_resolve_verify_empty_string_defaults_true():
+    assert ConfluenceConfig(url="x", cloud=True, verify_ssl="").resolve_verify() is True
+
+
+def test_proxy_url_from_env(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://acme.atlassian.net/wiki")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    monkeypatch.setenv("CONFLUENCE_PROXY_URL", "http://proxy.corp:8080")
+    cfg = config_from_env()
+    assert cfg.proxies == {"http": "http://proxy.corp:8080", "https": "http://proxy.corp:8080"}
+
+
+def test_no_proxy_url_leaves_none(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://acme.atlassian.net/wiki")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    assert config_from_env().proxies is None
+
+
+def test_verify_ssl_falsey_from_env(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://acme.atlassian.net/wiki")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    monkeypatch.setenv("CONFLUENCE_VERIFY_SSL", "false")
+    assert config_from_env().verify_ssl is False
+
+
+def test_verify_ssl_path_from_env(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://acme.atlassian.net/wiki")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    monkeypatch.setenv("CONFLUENCE_VERIFY_SSL", "/etc/ssl/corp-ca.pem")
+    cfg = config_from_env()
+    assert cfg.verify_ssl == "/etc/ssl/corp-ca.pem"
+    assert cfg.resolve_verify() == "/etc/ssl/corp-ca.pem"
