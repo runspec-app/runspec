@@ -7,6 +7,8 @@ output into structured JSON.
 
 from __future__ import annotations
 
+import pytest
+
 from runspec_windows import netdiag
 
 # ── proxy ─────────────────────────────────────────────────────────────────────
@@ -24,6 +26,18 @@ def test_parse_winhttp_proxy_configured() -> None:
     assert out["direct"] is False
     assert out["proxy_server"] == "proxy.corp:8080"
     assert out["bypass_list"] == "*.corp.local"
+
+
+def test_effective_proxy_resolves_per_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # effective_proxy delegates to the webops-core resolver, so an env proxy /
+    # NO_PROXY bypass are reflected — the actual proxy a given URL would use.
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+        monkeypatch.delenv(var, raising=False)
+        monkeypatch.delenv(var.lower(), raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "proxy.corp:8080")
+    monkeypatch.setenv("NO_PROXY", ".corp.local")
+    assert netdiag.effective_proxy("https://api.example.com/x") == "proxy.corp:8080"
+    assert netdiag.effective_proxy("https://svc.corp.local/x") == "direct"
 
 
 # ── vpn ───────────────────────────────────────────────────────────────────────

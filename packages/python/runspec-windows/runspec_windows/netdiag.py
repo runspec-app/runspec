@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 import runspec as rs
+from runspec_webops_core import resolve_proxy
 
 from runspec_windows import _platform
 
@@ -100,11 +101,27 @@ def collect_proxy() -> dict:
     }
 
 
+def effective_proxy(url: str) -> str:
+    """Resolve the *effective* proxy a specific URL would use — the real decision
+    the web runnables make (proxy env vars, then the Windows system config with
+    WPAD/PAC evaluated for this URL). Returns ``"direct"`` when none applies.
+
+    This is the actionable counterpart to the static config that
+    :func:`collect_proxy` reports: it says which proxy a given URL actually goes
+    through, PAC and bypass rules included.
+    """
+    return resolve_proxy(url) or "direct"
+
+
 def main_proxy_settings() -> None:
-    rs.parse("proxy-settings")
+    spec = rs.parse("proxy-settings")
     _platform.ensure_windows()
     try:
-        print(json.dumps(collect_proxy()))
+        result = collect_proxy()
+        url = spec.url.value
+        if url:
+            result["effective_for_url"] = {"url": url, "proxy": effective_proxy(url)}
+        print(json.dumps(result))
     except Exception as e:
         _platform.fail(str(e))
 

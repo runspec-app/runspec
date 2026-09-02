@@ -1,5 +1,25 @@
 # runspec-windows Changelog
 
+## [0.7.0] — 2026-09-01
+
+### Added — `--ca-bundle` on the web/TLS runnables
+
+- `cert-check`, `cert-chain`, `tls-info`, `http-check`, `http-headers`,
+  `redirect-trace`, and `api-spec` gained an optional `--ca-bundle` argument (a
+  PEM path) to verify TLS against a **private/internal CA or a TLS-intercepting
+  proxy** — the common companion to `--proxy`, since a proxy that inspects TLS
+  presents its own CA. Ignored with `--insecure`. Requires
+  `runspec-webops-core >= 0.3.0`.
+
+### Added — `proxy-settings --url` (effective per-URL proxy)
+
+- `proxy-settings` gained an optional `--url` / `-u` argument. Alongside the
+  static config it already reports (WinHTTP / WinINET / PAC / env), it now also
+  resolves the **effective proxy that specific URL would use** — the real
+  decision the web runnables make, with WPAD/PAC evaluated per-URL and bypass
+  rules applied — via the shared `runspec-webops-core` resolver. Answers "which
+  proxy does *this* URL actually go through?" for debugging PAC setups.
+
 ## [0.6.0] — 2026-08-26
 
 ### Added — `--proxy` on the web/TLS runnables (auto-detect by default)

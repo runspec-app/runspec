@@ -33,6 +33,7 @@ from runspec_webops_core.tls import (
     TlsPeer,
     cert_status,
     chain_report,
+    client_ssl_context,
     connect_peer,
     days_until,
     leaf_report,
@@ -52,6 +53,7 @@ __all__ = [
     "chain_report",
     "days_until",
     "cert_status",
+    "client_ssl_context",
     # http
     "probe",
     "classify",

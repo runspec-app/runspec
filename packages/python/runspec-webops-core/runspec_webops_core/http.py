@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlsplit
 
 from runspec_webops_core.errors import ConnectError
 from runspec_webops_core.proxy import http_connection, resolve_proxy
+from runspec_webops_core.tls import client_ssl_context
 
 _USER_AGENT = "runspec-webops"
 
@@ -43,13 +44,14 @@ def classify(status: int) -> str:
     return "unknown"
 
 
-def _request(url: str, timeout: float, method: str, insecure: bool, proxy: str | None = None) -> tuple[int, str, list[tuple[str, str]], float]:
+def _request(url: str, timeout: float, method: str, insecure: bool, proxy: str | None = None, ca_bundle: str | None = None) -> tuple[int, str, list[tuple[str, str]], float]:
     """Issue one request and return ``(status, reason, headers, elapsed_ms)``.
 
     ``proxy`` overrides proxy resolution for this request (``"direct"`` forces no
     proxy); when ``None`` the proxy is auto-discovered from the environment and,
-    on Windows, the system configuration. Raises :class:`ConnectError` on any
-    transport-level failure.
+    on Windows, the system configuration. ``ca_bundle`` is a PEM path of extra CA
+    certs to verify against (private CA / TLS-intercepting proxy); ``insecure``
+    overrides it. Raises :class:`ConnectError` on any transport-level failure.
     """
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
@@ -63,12 +65,7 @@ def _request(url: str, timeout: float, method: str, insecure: bool, proxy: str |
     if parts.query:
         path = f"{path}?{parts.query}"
 
-    ctx = None
-    if is_https:
-        ctx = ssl.create_default_context()
-        if insecure:
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
+    ctx = client_ssl_context(insecure, ca_bundle) if is_https else None
 
     resolved = resolve_proxy(url, proxy)
     conn, prefix, extra_headers = http_connection(parts.scheme, parts.hostname, port, timeout, ctx, resolved)
@@ -87,14 +84,16 @@ def _request(url: str, timeout: float, method: str, insecure: bool, proxy: str |
         conn.close()
 
 
-def fetch_body(url: str, timeout: float = 15.0, insecure: bool = False, max_bytes: int = 10_000_000, max_redirects: int = 5, proxy: str | None = None) -> tuple[int, str]:
+def fetch_body(url: str, timeout: float = 15.0, insecure: bool = False, max_bytes: int = 10_000_000, max_redirects: int = 5, proxy: str | None = None, ca_bundle: str | None = None) -> tuple[int, str]:
     """GET a URL and return ``(status, body_text)``, following redirects.
 
     Used to retrieve documents (e.g. an OpenAPI spec). The body is size-capped so
     a runaway endpoint can't exhaust memory. ``proxy`` overrides proxy resolution
     (``"direct"`` forces none; ``None`` auto-discovers) and is re-evaluated per
-    redirect hop, so a cross-host bypass is honoured. Raises :class:`ConnectError`
-    on a transport failure or when the body exceeds ``max_bytes``.
+    redirect hop, so a cross-host bypass is honoured. ``ca_bundle`` is a PEM path
+    of extra CA certs to verify against (private CA / TLS proxy); ``insecure``
+    overrides it. Raises :class:`ConnectError` on a transport failure or when the
+    body exceeds ``max_bytes``.
     """
     current = url
     seen: set[str] = set()
@@ -114,12 +113,7 @@ def fetch_body(url: str, timeout: float = 15.0, insecure: bool = False, max_byte
         if parts.query:
             path = f"{path}?{parts.query}"
 
-        ctx = None
-        if is_https:
-            ctx = ssl.create_default_context()
-            if insecure:
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
+        ctx = client_ssl_context(insecure, ca_bundle) if is_https else None
 
         resolved = resolve_proxy(current, proxy)
         conn, prefix, extra_headers = http_connection(parts.scheme, parts.hostname, port, timeout, ctx, resolved)
@@ -157,9 +151,9 @@ def _header(headers: list[tuple[str, str]], name: str) -> str | None:
     return None
 
 
-def probe(url: str, timeout: float = 10.0, method: str = "GET", insecure: bool = False, proxy: str | None = None) -> dict:
+def probe(url: str, timeout: float = 10.0, method: str = "GET", insecure: bool = False, proxy: str | None = None, ca_bundle: str | None = None) -> dict:
     """Single-request probe: status, timing, ``server`` / ``location`` headers."""
-    status, reason, headers, elapsed = _request(url, timeout, method, insecure, proxy)
+    status, reason, headers, elapsed = _request(url, timeout, method, insecure, proxy, ca_bundle)
     return {
         "url": url,
         "status": status,
@@ -171,9 +165,9 @@ def probe(url: str, timeout: float = 10.0, method: str = "GET", insecure: bool =
     }
 
 
-def fetch_headers(url: str, timeout: float = 10.0, method: str = "HEAD", insecure: bool = False, proxy: str | None = None) -> dict:
+def fetch_headers(url: str, timeout: float = 10.0, method: str = "HEAD", insecure: bool = False, proxy: str | None = None, ca_bundle: str | None = None) -> dict:
     """Fetch response headers and report on the security headers (present/missing)."""
-    status, reason, headers, elapsed = _request(url, timeout, method, insecure, proxy)
+    status, reason, headers, elapsed = _request(url, timeout, method, insecure, proxy, ca_bundle)
     header_map = {key.lower(): value for key, value in headers}
     security: dict[str, str | None] = {}
     missing: list[str] = []
@@ -194,7 +188,7 @@ def fetch_headers(url: str, timeout: float = 10.0, method: str = "HEAD", insecur
     }
 
 
-def trace_redirects(url: str, timeout: float = 10.0, max_hops: int = 10, insecure: bool = False, proxy: str | None = None) -> dict:
+def trace_redirects(url: str, timeout: float = 10.0, max_hops: int = 10, insecure: bool = False, proxy: str | None = None, ca_bundle: str | None = None) -> dict:
     """Walk the redirect chain, recording each hop until a non-3xx or ``max_hops``."""
     hops: list[dict] = []
     seen: set[str] = set()
@@ -205,7 +199,7 @@ def trace_redirects(url: str, timeout: float = 10.0, max_hops: int = 10, insecur
             hops.append({"url": current, "status": None, "status_text": "redirect loop", "location": None, "time_ms": 0.0})
             break
         seen.add(current)
-        status, reason, headers, elapsed = _request(current, timeout, "GET", insecure, proxy)
+        status, reason, headers, elapsed = _request(current, timeout, "GET", insecure, proxy, ca_bundle)
         location = _header(headers, "location")
         hops.append(
             {

@@ -180,6 +180,24 @@ def chain_report(peer: TlsPeer, now: float | None = None) -> list[dict]:
 # ── network I/O ───────────────────────────────────────────────────────────────
 
 
+def client_ssl_context(insecure: bool = False, ca_bundle: str | None = None) -> ssl.SSLContext:
+    """Build a verifying client SSL context, optionally trusting a custom CA bundle.
+
+    ``ca_bundle`` is a path to a PEM file of extra CA certificate(s) to verify
+    against — for a private/internal CA or a TLS-intercepting proxy. ``insecure``
+    turns verification off entirely (``CERT_NONE``), which overrides ``ca_bundle``.
+    Raises :class:`ConnectError` when the bundle path can't be loaded.
+    """
+    try:
+        ctx = ssl.create_default_context(cafile=ca_bundle) if ca_bundle else ssl.create_default_context()
+    except OSError as e:
+        raise ConnectError(f"could not load CA bundle {ca_bundle!r}: {e}") from e
+    if insecure:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
 def _peer_chain(ssock: ssl.SSLSocket) -> list[CertInfo]:
     """Return the server-presented certificate chain (leaf first).
 
@@ -225,9 +243,12 @@ def _decode_der(der: bytes) -> dict:
         Path(path).unlink(missing_ok=True)
 
 
-def _verify_trust(host: str, port: int, servername: str, timeout: float, proxy: str | None = None) -> tuple[bool, str | None]:
-    """Second connection with full verification — captures the trust verdict."""
-    ctx = ssl.create_default_context()
+def _verify_trust(host: str, port: int, servername: str, timeout: float, proxy: str | None = None, ca_bundle: str | None = None) -> tuple[bool, str | None]:
+    """Second connection with full verification — captures the trust verdict.
+
+    ``ca_bundle`` adds a custom CA to the trust store (private CA / TLS proxy).
+    """
+    ctx = client_ssl_context(ca_bundle=ca_bundle)
     try:
         with open_socket(host, port, timeout, proxy) as sock, ctx.wrap_socket(sock, server_hostname=servername):
             return True, None
@@ -241,13 +262,15 @@ def _verify_trust(host: str, port: int, servername: str, timeout: float, proxy: 
         return False, str(e)
 
 
-def connect_peer(host: str, port: int = 443, timeout: float = 10.0, servername: str | None = None, proxy: str | None = None) -> TlsPeer:
+def connect_peer(host: str, port: int = 443, timeout: float = 10.0, servername: str | None = None, proxy: str | None = None, ca_bundle: str | None = None) -> TlsPeer:
     """Open a TLS connection and capture the cert chain, protocol, cipher, trust.
 
     ``proxy`` overrides proxy resolution (``"direct"`` forces none; ``None``
     auto-discovers from the environment and, on Windows, the system config). When
     a proxy applies the connection is CONNECT-tunnelled, so the certificate
-    inspected is the real host's, not the proxy's.
+    inspected is the real host's, not the proxy's. ``ca_bundle`` is a PEM path
+    used only for the trust verdict — the inspection connection is unverified
+    regardless, so the chain is still reported for an untrusted endpoint.
 
     Raises :class:`ConnectError` only when the endpoint is unreachable — an
     untrusted / expired certificate is reported, not raised.
@@ -265,7 +288,7 @@ def connect_peer(host: str, port: int = 443, timeout: float = 10.0, servername: 
     except (OSError, TimeoutError, ssl.SSLError) as e:
         raise ConnectError(f"connection to {host}:{port} failed: {e}") from e
 
-    authorized, auth_error = _verify_trust(host, port, sni, timeout, resolved)
+    authorized, auth_error = _verify_trust(host, port, sni, timeout, resolved, ca_bundle)
     return TlsPeer(
         chain=chain,
         protocol=protocol,

@@ -1,5 +1,16 @@
 # runspec-linux Changelog
 
+## [0.11.0] — 2026-09-01
+
+### Added — `--ca-bundle` on the web/TLS runnables
+
+- `cert-check`, `cert-chain`, `tls-info`, `http-check`, `http-headers`,
+  `redirect-trace`, and `api-spec` gained an optional `--ca-bundle` argument (a
+  PEM path) to verify TLS against a **private/internal CA or a TLS-intercepting
+  proxy** — the common companion to `--proxy`, since a proxy that inspects TLS
+  presents its own CA. Ignored with `--insecure`. Requires
+  `runspec-webops-core >= 0.3.0`.
+
 ## [0.10.0] — 2026-08-26
 
 ### Added — `--proxy` on the web/TLS runnables (auto-detect by default)

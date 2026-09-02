@@ -842,6 +842,11 @@ short       = "-x"
 description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
 required    = false
 
+[cert-check.args.ca-bundle]
+type        = "str"
+description = "Path to a CA bundle (PEM) to verify TLS against — for a private/internal CA or a TLS-intercepting proxy. Ignored with --insecure"
+required    = false
+
 [cert-chain]
 serve       = ["local"]
 description = "Show the full TLS certificate chain (leaf -> intermediates -> root)"
@@ -871,6 +876,11 @@ short       = "-x"
 description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
 required    = false
 
+[cert-chain.args.ca-bundle]
+type        = "str"
+description = "Path to a CA bundle (PEM) to verify TLS against — for a private/internal CA or a TLS-intercepting proxy. Ignored with --insecure"
+required    = false
+
 [tls-info]
 serve       = ["local"]
 description = "Report the negotiated TLS protocol, cipher, and trust result for a host"
@@ -898,6 +908,11 @@ default     = 10
 type        = "str"
 short       = "-x"
 description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
+
+[tls-info.args.ca-bundle]
+type        = "str"
+description = "Path to a CA bundle (PEM) to verify TLS against — for a private/internal CA or a TLS-intercepting proxy. Ignored with --insecure"
 required    = false
 
 [http-check]
@@ -933,6 +948,11 @@ default     = false
 type        = "str"
 short       = "-x"
 description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
+
+[http-check.args.ca-bundle]
+type        = "str"
+description = "Path to a CA bundle (PEM) to verify TLS against — for a private/internal CA or a TLS-intercepting proxy. Ignored with --insecure"
 required    = false
 
 [http-headers]
@@ -971,6 +991,11 @@ short       = "-x"
 description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
 required    = false
 
+[http-headers.args.ca-bundle]
+type        = "str"
+description = "Path to a CA bundle (PEM) to verify TLS against — for a private/internal CA or a TLS-intercepting proxy. Ignored with --insecure"
+required    = false
+
 [redirect-trace]
 serve       = ["local"]
 description = "Follow an HTTP redirect chain and list each hop with status and Location"
@@ -1004,6 +1029,11 @@ default     = false
 type        = "str"
 short       = "-x"
 description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
+
+[redirect-trace.args.ca-bundle]
+type        = "str"
+description = "Path to a CA bundle (PEM) to verify TLS against — for a private/internal CA or a TLS-intercepting proxy. Ignored with --insecure"
 required    = false
 
 [dns-lookup]
@@ -1084,6 +1114,11 @@ default     = false
 type        = "str"
 short       = "-x"
 description = "Proxy override (host:port or http://host:port); 'direct' forces a direct connection. Default: auto-detect from proxy env vars and, on Windows, the system settings (WPAD/PAC), like the browsers"
+required    = false
+
+[api-spec.args.ca-bundle]
+type        = "str"
+description = "Path to a CA bundle (PEM) to verify TLS against — for a private/internal CA or a TLS-intercepting proxy. Ignored with --insecure"
 required    = false
 
 # ── Performance tuning & analysis ─────────────────────────────────────────────

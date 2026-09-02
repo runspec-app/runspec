@@ -1,5 +1,22 @@
 # runspec-webops-core Changelog
 
+## [0.3.0] — 2026-09-01
+
+### Added — custom CA bundle for TLS verification
+
+- Every network helper gained a `ca_bundle` parameter (a PEM path): `probe`,
+  `fetch_headers`, `trace_redirects`, `fetch_body`, `load_document`, and
+  `connect_peer`. It verifies TLS against a **private/internal CA or a
+  TLS-intercepting proxy** — the common companion to proxy support, since a
+  corporate proxy that inspects TLS presents its own CA. `insecure` still turns
+  verification off entirely and overrides `ca_bundle`.
+- New `client_ssl_context(insecure=False, ca_bundle=None)` centralises client
+  SSL-context construction (used by the HTTP and TLS-trust paths); a bad bundle
+  path raises a clear `ConnectError`. Exported from the package.
+- For `connect_peer`, `ca_bundle` affects only the trust verdict — the
+  inspection connection stays unverified, so the chain is still reported for an
+  untrusted endpoint.
+
 ## [0.2.0] — 2026-08-26
 
 ### Added — proxy discovery + CONNECT tunnelling

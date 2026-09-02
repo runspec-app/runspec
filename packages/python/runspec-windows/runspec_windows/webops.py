@@ -40,7 +40,7 @@ def main_cert_check() -> None:
     spec = rs.parse("cert-check")
     host, port = spec.host.value, spec.port.value
     try:
-        peer = connect_peer(host, port, spec.timeout.value, proxy=spec.proxy.value)
+        peer = connect_peer(host, port, spec.timeout.value, proxy=spec.proxy.value, ca_bundle=spec.ca_bundle.value)
         report = leaf_report(peer, spec.warn_days.value)
     except ConnectError as e:
         _emit({"error": str(e), "host": host, "port": port})
@@ -54,7 +54,7 @@ def main_cert_chain() -> None:
     spec = rs.parse("cert-chain")
     host, port = spec.host.value, spec.port.value
     try:
-        peer = connect_peer(host, port, spec.timeout.value, proxy=spec.proxy.value)
+        peer = connect_peer(host, port, spec.timeout.value, proxy=spec.proxy.value, ca_bundle=spec.ca_bundle.value)
     except ConnectError as e:
         _emit({"error": str(e), "host": host, "port": port})
         sys.exit(2)
@@ -65,7 +65,7 @@ def main_tls_info() -> None:
     spec = rs.parse("tls-info")
     host, port = spec.host.value, spec.port.value
     try:
-        peer = connect_peer(host, port, spec.timeout.value, proxy=spec.proxy.value)
+        peer = connect_peer(host, port, spec.timeout.value, proxy=spec.proxy.value, ca_bundle=spec.ca_bundle.value)
     except ConnectError as e:
         _emit({"error": str(e), "host": host, "port": port})
         sys.exit(2)
@@ -87,7 +87,7 @@ def main_http_check() -> None:
     url = spec.url.value
     expect = spec.expect_status.value
     try:
-        result = probe(url, spec.timeout.value, insecure=spec.insecure.value, proxy=spec.proxy.value)
+        result = probe(url, spec.timeout.value, insecure=spec.insecure.value, proxy=spec.proxy.value, ca_bundle=spec.ca_bundle.value)
     except ConnectError as e:
         _emit({"error": str(e), "url": url})
         sys.exit(2)
@@ -100,7 +100,7 @@ def main_http_headers() -> None:
     spec = rs.parse("http-headers")
     url = spec.url.value
     try:
-        result = fetch_headers(url, spec.timeout.value, method=spec.method.value, insecure=spec.insecure.value, proxy=spec.proxy.value)
+        result = fetch_headers(url, spec.timeout.value, method=spec.method.value, insecure=spec.insecure.value, proxy=spec.proxy.value, ca_bundle=spec.ca_bundle.value)
     except ConnectError as e:
         _emit({"error": str(e), "url": url})
         sys.exit(2)
@@ -111,7 +111,7 @@ def main_redirect_trace() -> None:
     spec = rs.parse("redirect-trace")
     url = spec.url.value
     try:
-        result = trace_redirects(url, spec.timeout.value, max_hops=spec.max_hops.value, insecure=spec.insecure.value, proxy=spec.proxy.value)
+        result = trace_redirects(url, spec.timeout.value, max_hops=spec.max_hops.value, insecure=spec.insecure.value, proxy=spec.proxy.value, ca_bundle=spec.ca_bundle.value)
     except ConnectError as e:
         _emit({"error": str(e), "url": url})
         sys.exit(2)
@@ -132,7 +132,7 @@ def main_api_spec() -> None:
     spec = rs.parse("api-spec")
     source = spec.source.value
     try:
-        doc = load_document(source, spec.timeout.value, insecure=spec.insecure.value, proxy=spec.proxy.value)
+        doc = load_document(source, spec.timeout.value, insecure=spec.insecure.value, proxy=spec.proxy.value, ca_bundle=spec.ca_bundle.value)
         if spec.operation.value or spec.path.value:
             result: object = describe_operation(
                 doc,

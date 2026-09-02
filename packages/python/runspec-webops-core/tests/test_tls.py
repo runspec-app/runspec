@@ -1,10 +1,12 @@
 """Pure TLS reporting logic — no socket required."""
 
+import ssl
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
-from runspec_webops_core import cert_status, chain_report, days_until, leaf_report
+from runspec_webops_core import cert_status, chain_report, client_ssl_context, days_until, leaf_report
 from runspec_webops_core.errors import ConnectError
 from runspec_webops_core.tls import (
     EXPIRED,
@@ -46,6 +48,34 @@ def test_alt_names_keeps_dns_only() -> None:
 def test_issuer_label_prefers_cn_then_org() -> None:
     assert _issuer_label(((("commonName", "Some CA"),),)) == "Some CA"
     assert _issuer_label(((("organizationName", "Acme"),),)) == "Acme"
+
+
+def test_client_ssl_context_default_verifies() -> None:
+    ctx = client_ssl_context()
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_client_ssl_context_insecure_disables_verification() -> None:
+    ctx = client_ssl_context(insecure=True)
+    assert ctx.verify_mode == ssl.CERT_NONE
+    assert ctx.check_hostname is False
+
+
+def test_client_ssl_context_loads_ca_bundle(tmp_path) -> None:
+    # A valid PEM (a copy of the system default CAs) loads without error.
+    system_cafile = ssl.get_default_verify_paths().cafile
+    if not system_cafile or not Path(system_cafile).is_file():
+        pytest.skip("no system CA bundle to copy")
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text(Path(system_cafile).read_text())
+    ctx = client_ssl_context(ca_bundle=str(bundle))
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_client_ssl_context_bad_ca_bundle_raises() -> None:
+    with pytest.raises(ConnectError, match="CA bundle"):
+        client_ssl_context(ca_bundle="/no/such/ca-bundle.pem")
 
 
 def _ssl_info(cn: str, issuer_cn: str, not_after: str) -> dict:

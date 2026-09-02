@@ -78,6 +78,12 @@ def test_probe_bad_scheme_raises() -> None:
         probe("ftp://example.com", timeout=2)
 
 
+def test_probe_bad_ca_bundle_raises() -> None:
+    # A missing CA bundle fails at context build, before any network I/O.
+    with pytest.raises(ConnectError, match="CA bundle"):
+        probe("https://example.com", timeout=2, ca_bundle="/no/such/ca.pem")
+
+
 def test_fetch_headers_flags_missing_security(server: str) -> None:
     res = fetch_headers(f"{server}/ok", timeout=5)
     assert res["security"]["strict_transport_security"] == "max-age=63072000"
