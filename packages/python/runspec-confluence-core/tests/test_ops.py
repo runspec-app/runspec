@@ -103,6 +103,22 @@ def test_get_comments_expands_body(install):
     assert kwargs["expand"] == "body.view"
 
 
+def test_get_comments_expand_overridable(install):
+    client, _ = install(returns={"get_page_comments": {"results": []}})
+    get_comments(CLOUD, "9", expand="body.storage,history")
+    _, kwargs = client.last("get_page_comments")
+    assert kwargs["expand"] == "body.storage,history"
+
+
+def test_get_attachments_expand(install):
+    from runspec_confluence_core import get_attachments
+
+    client, _ = install(returns={"get_attachments_from_content": {"results": []}})
+    get_attachments(CLOUD, "9", expand="version,history")
+    _, kwargs = client.last("get_attachments_from_content")
+    assert kwargs["expand"] == "version,history"
+
+
 def test_add_label(install):
     client, _ = install()
     add_label(CLOUD, "9", "runbook")

@@ -2,6 +2,58 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.6.0] — 2026-09-02
+
+Server/Data-Center correctness fixes and read-shaping improvements. **Three
+items change output for existing callers** (marked ⚠).
+
+**Bugs**
+
+- ⚠ **`cql_from_text` is Server/DC-safe by default.** Plain text now wraps as
+  `text ~ "…"` (works on Cloud *and* Server/DC) instead of the **Cloud-only**
+  `siteSearch ~ "…"`, which silently returned nothing on Server/DC. New
+  `text_field` param (default `"text"`) — pass `"siteSearch"` for the Cloud
+  relevance-ranked field.
+- **`cql_from_text` parenthesises a passed-through CQL query** before appending
+  `type`/`space` clauses, so an `OR` in the query isn't re-scoped by the
+  higher-binding `AND` (`a OR b` + type → `(a OR b) AND type = "page"`).
+- ⚠ **`get_space_pages` returns `{"results": [...]}`** (a bounded single page)
+  instead of the SDK's lazy generator, which serialised as `"<generator object>"`,
+  walked the entire space (hundreds of requests), and let `HTTPError` escape
+  untranslated. Pre-existing since 0.4.0.
+- ⚠ **`simplify_user` reads both Cloud and Server/DC shapes** — Server/DC nests
+  email at `details.business.email`, and carries `type`/`userKey`/`profilePicture`
+  (avatar). Previously it yielded little more than the username on Server/DC.
+
+**Missing capability**
+
+- **`expand` plumbed through six read ops** (`search_by_label`,
+  `get_page_children`, `get_attachments`, `list_spaces`, `get_space`, and
+  `get_comments` — whose `body.view` default is now overridable). Without it the
+  API omits the sections the `simplify_*` helpers read.
+- **`simplify_*` field gaps filled:** `simplify_comment` adds `author`/`created`
+  (from `history`, distinct from the last-edit `version.by`); `simplify_space`
+  adds `description`; `simplify_attachment` adds `created`/`created_by` and reads
+  `fileSize` from `metadata` as well as `extensions`.
+
+**Additions**
+
+- **`detect_verify() -> bool | str`** — best-effort platform trust-store
+  detection (inject `truststore` if installed; else a known system CA-bundle
+  path; else `True`). **Never returns `False`** — verification stays on unless a
+  caller opts out with `verify_ssl=False`.
+- ⚠ **`html_to_markdown` uses ATX headings + a stable `-` bullet** (markdownify
+  defaults were Setext headings and cycling `*+-` bullets, which read poorly and
+  can't express h3+).
+- **`simplify_page(..., body_as_markdown=False)`** — opt in to convert the body
+  HTML to Markdown instead of embedding raw storage/view HTML.
+
+**Docs**
+
+- Add `CONSUMERS.md` — what a private wrapper package needs from core (construct
+  `ConfluenceConfig` directly, proxy / `verify_ssl` injection points, the
+  sparse-dict contract the `simplify_*` helpers produce).
+
 ## [0.5.0] — 2026-09-02
 
 Proxy + CA-bundle support and new read helpers.

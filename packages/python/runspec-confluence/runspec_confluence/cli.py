@@ -80,7 +80,9 @@ def _dispatch(spec: rs.RunSpec, config: ConfluenceConfig) -> Any:
     if command == "search":
         return search(config, spec.cql.value, start=spec.start.value, limit=spec.limit.value, expand=spec.expand.value)
     if command == "search-text":
-        cql = cql_from_text(spec.query.value, space_key=spec.space.value, content_type=spec.content_type.value)
+        # siteSearch is Cloud-only (relevance-ranked); Server/DC uses text.
+        text_field = "siteSearch" if config.cloud else "text"
+        cql = cql_from_text(spec.query.value, space_key=spec.space.value, content_type=spec.content_type.value, text_field=text_field)
         return search(config, cql, start=spec.start.value, limit=spec.limit.value)
     if command == "search-by-label":
         return search_by_label(config, spec.label.value, space_key=spec.space.value, start=spec.start.value, limit=spec.limit.value)

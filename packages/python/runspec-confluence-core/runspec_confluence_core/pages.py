@@ -42,10 +42,11 @@ def get_page(
 
 
 @translate_errors
-def get_page_children(config: ConfluenceConfig, page_id: str, *, child_type: str = "page", start: int = 0, limit: int = 25) -> Any:
+def get_page_children(config: ConfluenceConfig, page_id: str, *, child_type: str = "page", start: int = 0, limit: int = 25, expand: str | None = None) -> Any:
     """List a page's immediate children of ``child_type`` (``page`` by default;
-    ``comment`` / ``attachment`` also valid) — one page of results."""
-    return build_client(config).get_page_child_by_type(page_id, type=child_type, start=start, limit=_cap_limit(limit))
+    ``comment`` / ``attachment`` also valid) — one page of results. ``expand``
+    requests extra sections (e.g. ``body.view``)."""
+    return build_client(config).get_page_child_by_type(page_id, type=child_type, start=start, limit=_cap_limit(limit), expand=expand)
 
 
 @translate_errors

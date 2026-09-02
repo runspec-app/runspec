@@ -14,10 +14,10 @@ from runspec_confluence_core.config import ConfluenceConfig
 
 
 @translate_errors
-def get_attachments(config: ConfluenceConfig, page_id: str, *, start: int = 0, limit: int = 50, filename: str | None = None) -> Any:
+def get_attachments(config: ConfluenceConfig, page_id: str, *, start: int = 0, limit: int = 50, filename: str | None = None, expand: str | None = None) -> Any:
     """List a page's attachments (optionally filtered by ``filename``) — one page
-    of results."""
-    return build_client(config).get_attachments_from_content(page_id, start=start, limit=_cap_limit(limit), filename=filename)
+    of results. ``expand`` requests extra sections (e.g. ``version,history``)."""
+    return build_client(config).get_attachments_from_content(page_id, start=start, limit=_cap_limit(limit), filename=filename, expand=expand)
 
 
 @translate_errors

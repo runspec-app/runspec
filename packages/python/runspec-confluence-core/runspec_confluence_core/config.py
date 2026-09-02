@@ -58,6 +58,45 @@ class ConfluenceConfig:
         return self.verify_ssl
 
 
+# Well-known system CA-bundle locations, probed by detect_verify().
+_SYSTEM_CA_BUNDLES = (
+    "/etc/pki/tls/certs/ca-bundle.crt",  # RHEL / CentOS / Fedora
+    "/etc/ssl/certs/ca-certificates.crt",  # Debian / Ubuntu / Alpine
+    "/etc/ssl/ca-bundle.pem",  # openSUSE
+    "/etc/pki/tls/cacert.pem",  # older RHEL
+)
+
+
+def detect_verify() -> bool | str:
+    """Best-effort platform trust-store detection, returning a value for
+    ``ConfluenceConfig.verify_ssl`` (requests' ``verify``).
+
+    - If ``truststore`` is installed, inject it into ``ssl`` (so the OS trust
+      store — Windows cert store, macOS keychain, Linux system bundle — is used)
+      and return ``True``.
+    - Otherwise, return the first existing well-known system CA-bundle path
+      (RHEL / Debian / SUSE locations) — common on corporate Server/DC hosts.
+    - Otherwise return ``True`` (fall back to ``certifi``, requests' default).
+
+    It **never returns ``False``**: unlike the implementation this is ported from
+    (which silently disables verification when no bundle is found), verification
+    stays on and a caller opts out explicitly with ``verify_ssl=False``. A
+    deployment can alternatively install ``pip_system_certs`` to route requests
+    through the OS store with no call here at all.
+    """
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+        return True
+    except Exception:
+        pass
+    for path in _SYSTEM_CA_BUNDLES:
+        if os.path.isfile(path):
+            return path
+    return True
+
+
 def _env_first(names: list[str]) -> str | None:
     """Return the first non-empty environment variable among ``names``."""
     for name in names:

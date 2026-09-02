@@ -26,11 +26,26 @@ from markdownify import markdownify as _md
 
 def html_to_markdown(html: str | None) -> str:
     """Convert Confluence HTML (storage or rendered ``view`` body) to Markdown
-    (best-effort, via ``markdownify`` with default options). Confluence-specific
-    macros are not interpreted."""
+    (best-effort, via ``markdownify``). Confluence-specific macros are not
+    interpreted.
+
+    Overrides two markdownify defaults that read poorly for documents: headings
+    render as **ATX** (``# Heading``) rather than Setext (Setext can't express h3+,
+    so any real document mixes both styles), and bullets are a stable ``-`` rather
+    than the default ``*+-`` that cycles by nesting depth (which makes nested lists
+    harder to read)."""
     if not html:
         return ""
-    return _md(html).strip()
+    return _md(html, heading_style="ATX", bullets="-").strip()
+
+
+def _dig(raw: Any, *keys: str) -> Any:
+    """Walk nested dicts by ``keys``, returning ``None`` if any hop is missing."""
+    for key in keys:
+        if not isinstance(raw, dict):
+            return None
+        raw = raw.get(key)
+    return raw
 
 
 def _link_url(raw: dict[str, Any]) -> str | None:
@@ -68,8 +83,12 @@ def _put(out: dict[str, Any], key: str, value: Any) -> None:
         out[key] = value
 
 
-def simplify_page(raw: dict[str, Any]) -> dict[str, Any]:
-    """Trim a page response to id/title/type/space/version/author/url/body."""
+def simplify_page(raw: dict[str, Any], *, body_as_markdown: bool = False) -> dict[str, Any]:
+    """Trim a page response to id/title/type/space/version/author/url/body.
+
+    ``body_as_markdown`` opts into converting the body HTML to Markdown (via
+    :func:`html_to_markdown`) — the body is then ``{"value": <markdown>, "format":
+    "markdown"}`` — instead of embedding the raw storage/view HTML verbatim."""
     out: dict[str, Any] = {}
     _put(out, "id", raw.get("id"))
     _put(out, "type", raw.get("type"))
@@ -92,12 +111,19 @@ def simplify_page(raw: dict[str, Any]) -> dict[str, Any]:
     ancestors = raw.get("ancestors") or []
     if ancestors:
         out["ancestors"] = [{"id": a.get("id"), "title": a.get("title")} for a in ancestors]
-    _put(out, "body", _body(raw))
+    body = _body(raw)
+    if body and body_as_markdown:
+        body = {"value": html_to_markdown(body["value"]), "format": "markdown"}
+    _put(out, "body", body)
     return out
 
 
 def simplify_comment(raw: dict[str, Any]) -> dict[str, Any]:
-    """Trim a comment response to id/title/body/version/url."""
+    """Trim a comment response to id/title/body/version/author/created/url.
+
+    The version's ``by``/``number`` describe the last edit, so the original
+    author and creation date are read from ``history`` (present when the fetch
+    expands it — e.g. ``get_comments(..., expand="body.view,history")``)."""
     out: dict[str, Any] = {}
     _put(out, "id", raw.get("id"))
     _put(out, "title", raw.get("title"))
@@ -109,45 +135,61 @@ def simplify_comment(raw: dict[str, Any]) -> dict[str, Any]:
     if version:
         _put(out, "version", version.get("number"))
         _put(out, "by", _person(version.get("by")))
+    history = raw.get("history") or {}
+    _put(out, "created", history.get("createdDate"))
+    _put(out, "author", _person(history.get("createdBy")))
     return out
 
 
 def simplify_space(raw: dict[str, Any]) -> dict[str, Any]:
-    """Trim a space response to id/key/name/type/status/url."""
+    """Trim a space response to id/key/name/type/status/description/url."""
     out: dict[str, Any] = {}
     _put(out, "id", raw.get("id"))
     _put(out, "key", raw.get("key"))
     _put(out, "name", raw.get("name"))
     _put(out, "type", raw.get("type"))
     _put(out, "status", raw.get("status"))
+    _put(out, "description", _dig(raw, "description", "plain", "value"))
     _put(out, "url", _link_url(raw))
     return out
 
 
 def simplify_user(raw: dict[str, Any]) -> dict[str, Any]:
-    """Trim a user response to identity fields (Cloud accountId / DC userKey)."""
+    """Trim a user response to identity fields, reading **both** Cloud and
+    Server/Data Center shapes.
+
+    Cloud returns ``accountId``/``accountType`` and a top-level ``email``;
+    Server/DC returns ``type``/``username``/``userKey``, nests the address at
+    ``details.business.email``, and carries an avatar at ``profilePicture.path``.
+    """
     out: dict[str, Any] = {}
     _put(out, "accountId", raw.get("accountId"))
     _put(out, "accountType", raw.get("accountType"))
+    _put(out, "type", raw.get("type"))
     _put(out, "userKey", raw.get("userKey"))
     _put(out, "username", raw.get("username") or raw.get("name"))
     _put(out, "displayName", _person(raw))
-    _put(out, "email", raw.get("email") or raw.get("emailAddress"))
+    _put(out, "email", raw.get("email") or raw.get("emailAddress") or _dig(raw, "details", "business", "email"))
+    _put(out, "avatar", _dig(raw, "profilePicture", "path"))
     return out
 
 
 def simplify_attachment(raw: dict[str, Any]) -> dict[str, Any]:
-    """Trim an attachment response to id/title/mediaType/fileSize/version/url."""
+    """Trim an attachment response to id/title/mediaType/fileSize/version/created/url."""
     out: dict[str, Any] = {}
     _put(out, "id", raw.get("id"))
     _put(out, "title", raw.get("title"))
     metadata = raw.get("metadata") or {}
     _put(out, "mediaType", metadata.get("mediaType"))
     extensions = raw.get("extensions") or {}
-    _put(out, "fileSize", extensions.get("fileSize"))
+    # fileSize has lived under both extensions and metadata across API versions.
+    _put(out, "fileSize", extensions.get("fileSize") or metadata.get("fileSize"))
     version = raw.get("version") or {}
     if version:
         _put(out, "version", version.get("number"))
+    history = raw.get("history") or {}
+    _put(out, "created", history.get("createdDate"))
+    _put(out, "created_by", _person(history.get("createdBy")))
     links = raw.get("_links") or {}
     _put(out, "download", links.get("download"))
     _put(out, "url", _link_url(raw))

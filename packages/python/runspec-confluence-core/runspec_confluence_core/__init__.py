@@ -20,7 +20,7 @@ from runspec_confluence_core.attachments import (
     upload_attachment,
 )
 from runspec_confluence_core.client import build_client, translate_errors
-from runspec_confluence_core.config import VALID_ENVS, ConfluenceConfig, config_from_env
+from runspec_confluence_core.config import VALID_ENVS, ConfluenceConfig, config_from_env, detect_verify
 from runspec_confluence_core.content import (
     add_comment,
     add_label,
@@ -57,6 +57,7 @@ __all__ = [
     "ConfluenceConfig",
     "ConfluenceError",
     "config_from_env",
+    "detect_verify",
     "build_client",
     "translate_errors",
     "VALID_ENVS",

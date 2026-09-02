@@ -1,6 +1,9 @@
+import sys
+
 import pytest
 
-from runspec_confluence_core.config import ConfluenceConfig, config_from_env
+from runspec_confluence_core import config as config_mod
+from runspec_confluence_core.config import ConfluenceConfig, config_from_env, detect_verify
 
 
 def test_cloud_basic_from_env(monkeypatch):
@@ -118,3 +121,24 @@ def test_verify_ssl_path_from_env(monkeypatch):
     cfg = config_from_env()
     assert cfg.verify_ssl == "/etc/ssl/corp-ca.pem"
     assert cfg.resolve_verify() == "/etc/ssl/corp-ca.pem"
+
+
+def test_detect_verify_never_false():
+    result = detect_verify()
+    assert result is not False
+    assert result is True or isinstance(result, str)
+
+
+def test_detect_verify_returns_system_bundle(monkeypatch, tmp_path):
+    # Force the no-truststore path, then point the probe at a real file.
+    monkeypatch.setitem(sys.modules, "truststore", None)
+    bundle = tmp_path / "ca-bundle.crt"
+    bundle.write_text("-----BEGIN CERTIFICATE-----")
+    monkeypatch.setattr(config_mod, "_SYSTEM_CA_BUNDLES", (str(tmp_path / "missing.pem"), str(bundle)))
+    assert detect_verify() == str(bundle)
+
+
+def test_detect_verify_falls_back_to_true(monkeypatch):
+    monkeypatch.setitem(sys.modules, "truststore", None)
+    monkeypatch.setattr(config_mod, "_SYSTEM_CA_BUNDLES", ("/nope/a.pem", "/nope/b.pem"))
+    assert detect_verify() is True

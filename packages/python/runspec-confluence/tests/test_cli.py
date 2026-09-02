@@ -103,7 +103,7 @@ def test_dispatch_list_spaces(fake) -> None:
     cli._dispatch(spec, CFG)
     h.close()
     _, kwargs = fake.last("get_all_spaces")
-    assert kwargs == {"space_type": "global", "start": 0, "limit": 10}
+    assert kwargs == {"space_type": "global", "start": 0, "limit": 10, "expand": None}
 
 
 def test_dispatch_search_text_wraps_plain_text(fake) -> None:
@@ -135,7 +135,7 @@ def test_dispatch_get_page_children_typed(fake) -> None:
     h.close()
     args, kwargs = fake.last("get_page_child_by_type")
     assert args == ("9",)
-    assert kwargs == {"type": "comment", "start": 0, "limit": 5}
+    assert kwargs == {"type": "comment", "start": 0, "limit": 5, "expand": None}
 
 
 def test_dispatch_get_comments_start(fake) -> None:

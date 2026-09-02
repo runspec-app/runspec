@@ -27,9 +27,11 @@ def add_label(config: ConfluenceConfig, page_id: str, label: str) -> Any:
 
 
 @translate_errors
-def get_comments(config: ConfluenceConfig, page_id: str, *, start: int = 0, limit: int = 25) -> Any:
-    """List a page's comments (rendered bodies) — one page of results."""
-    return build_client(config).get_page_comments(page_id, expand="body.view", start=start, limit=_cap_limit(limit))
+def get_comments(config: ConfluenceConfig, page_id: str, *, start: int = 0, limit: int = 25, expand: str = "body.view") -> Any:
+    """List a page's comments — one page of results. ``expand`` defaults to
+    ``body.view`` (rendered bodies) but is overridable (e.g. add ``history`` for
+    author/created facts, or ``body.storage`` for the source)."""
+    return build_client(config).get_page_comments(page_id, expand=expand, start=start, limit=_cap_limit(limit))
 
 
 @translate_errors

@@ -2,6 +2,19 @@
 
 All notable changes to `runspec-confluence` are documented here.
 
+## [0.6.0] — 2026-09-02
+
+Track `runspec-confluence-core` 0.6.0 (dep bumped to `>=0.6.0`).
+
+- **`search-text` is now correct on Server/Data Center.** The verb passes
+  `text_field="siteSearch"` only when the instance is Cloud, and `"text"`
+  otherwise — Server/DC has no `siteSearch` field, so plain-text search there
+  previously returned nothing.
+- Inherits the core 0.6.0 fixes visible through the runnable: `get-space-pages`
+  now returns a materialised `{"results": [...]}` page (no leaked generator);
+  `whoami` returns useful fields on Server/DC; `get-page --markdown` renders
+  ATX headings and `-` bullets.
+
 ## [0.5.0] — 2026-09-02
 
 Surface the `runspec-confluence-core` 0.5.0 additions on the runnable (requires
