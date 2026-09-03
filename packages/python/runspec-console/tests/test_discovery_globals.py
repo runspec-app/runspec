@@ -101,3 +101,45 @@ def test_no_commands_runnable_unchanged():
     )[0]
     assert "commands" not in flat
     assert all(not a.get("inherited") for a in flat["args"])
+
+
+# ── autonomy threading (mirror core inference.infer_script) ────────────────────
+#
+# The package [config] autonomy-default must reach every subcommand that omits
+# its own autonomy — matching core parse()/serve, which the console gate now
+# reads from the cached leaf node.
+
+_AUT_SPEC: dict[str, Any] = {
+    "args": {},
+    "commands": {
+        # inherits the package default
+        "inherit": {"args": {}},
+        # declares its own — wins over the default
+        "explicit": {"autonomy": "confirm", "args": {}},
+        # nested: leaf omits → also inherits the default
+        "group": {"args": {}, "commands": {"leaf": {"args": {}}}},
+    },
+}
+
+
+def test_subcommand_inherits_config_autonomy_default():
+    root = _spec_to_runnables("t", _AUT_SPEC, "h", "g", "autonomous")[0]
+    assert root["autonomy"] == "autonomous"
+    assert root["commands"]["inherit"]["autonomy"] == "autonomous"
+
+
+def test_subcommand_own_autonomy_wins_over_default():
+    root = _spec_to_runnables("t", _AUT_SPEC, "h", "g", "autonomous")[0]
+    assert root["commands"]["explicit"]["autonomy"] == "confirm"
+
+
+def test_nested_subcommand_inherits_config_autonomy_default():
+    root = _spec_to_runnables("t", _AUT_SPEC, "h", "g", "autonomous")[0]
+    assert root["commands"]["group"]["commands"]["leaf"]["autonomy"] == "autonomous"
+
+
+def test_subcommand_default_confirm_when_no_config_default():
+    # No package default → the library default "confirm" reaches every leaf.
+    root = _spec_to_runnables("t", _AUT_SPEC, "h", "g")[0]
+    assert root["commands"]["inherit"]["autonomy"] == "confirm"
+    assert root["commands"]["group"]["commands"]["leaf"]["autonomy"] == "confirm"

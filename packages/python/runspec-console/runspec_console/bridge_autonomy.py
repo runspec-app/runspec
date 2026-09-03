@@ -66,6 +66,34 @@ if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
 
 
+def _command_path(inner_args: dict[str, Any]) -> list[str]:
+    """Normalise the call's chosen subcommand to a path, mirroring
+    ``_run_tool_sync``: a ``str`` → one-element path, a ``list`` → the path as-is
+    (a saved run stores a possibly-nested path), missing/empty → ``[]``."""
+    chosen = (inner_args or {}).get("command")
+    if isinstance(chosen, list):
+        return [str(c) for c in chosen if str(c)]
+    if isinstance(chosen, str) and chosen:
+        return [chosen]
+    return []
+
+
+def _command_leaf_node(
+    cached: dict[str, Any], command_path: list[str]
+) -> dict[str, Any]:
+    """The runnable node reached by walking ``command_path`` into ``cached``'s
+    ``commands``. A bad/absent segment stops the walk and returns the last valid
+    node (fail-safe — never raises). With an empty path the leaf *is* ``cached``,
+    so non-subcommand runnables resolve exactly as before."""
+    node = cached or {}
+    for seg in command_path:
+        nxt = (node.get("commands") or {}).get(seg)
+        if not isinstance(nxt, dict):
+            break
+        node = nxt
+    return node
+
+
 class AutonomyMixin:
     def _effective_tool_autonomy(
         self, tool_name: str, tool_input: dict[str, Any]
@@ -181,8 +209,17 @@ class AutonomyMixin:
             inner_args = tool_input or {}
         if not r:
             return "confirm"
-        level = r.get("autonomy") or "confirm"
-        for arg in r.get("args") or []:
+        # Resolve autonomy from the *invoked subcommand leaf*, not the top-level
+        # runnable — mirrors core parser._resolve_subcommand/effective_autonomy,
+        # which reads the resolved leaf's own autonomy (a leaf's level replaces
+        # the parent's; it is not escalated against it). Without a command the
+        # leaf is the top node, so plain runnables are unchanged.
+        leaf = _command_leaf_node(r, _command_path(inner_args))
+        level = leaf.get("autonomy") or "confirm"
+        # The leaf's args are the *effective* set (inherited globals + the
+        # subcommand's own), so this one loop covers both global and
+        # subcommand-scoped per-arg autonomy escalation.
+        for arg in leaf.get("args") or []:
             if arg.get("name") in inner_args and arg.get("autonomy"):
                 if _AUTONOMY_RANK.get(arg["autonomy"], 0) > _AUTONOMY_RANK.get(
                     level, 0

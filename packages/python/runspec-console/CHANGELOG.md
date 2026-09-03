@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.236.1] — 2026-09-03
+
+### Fixed
+- **Per-subcommand autonomy is now honoured by the agent gate.** When the agent
+  ran a runnable that targets a subcommand (verb), the confirm/autonomous/manual
+  gate read only the **top-level runnable's** `autonomy` (and its global args),
+  ignoring the subcommand's own declared `autonomy`. This under-gated (a `confirm`/
+  `manual` verb under an `autonomous`/`confirm` parent ran without a prompt) and
+  over-gated (an `autonomous` verb under a `confirm` parent still prompted) —
+  diverging from core `parse()` and `runspec serve`, which resolve autonomy from
+  the invoked leaf. `_effective_tool_autonomy` now walks the call's `command` into
+  the cached subcommand node and resolves the level (and per-arg escalation) from
+  that leaf's own autonomy and effective args. Non-subcommand runnables are
+  unaffected. (`bridge_autonomy.py`)
+- **Package `[config] autonomy-default` now reaches every subcommand.** Discovery
+  threaded the package autonomy default into the top-level runnable but passed
+  `None` into subcommand recursion, so a subcommand omitting `autonomy` defaulted
+  to `"confirm"` regardless of the package default. It now inherits the package
+  default at every depth, matching core `inference.infer_script`.
+  (`discovery.py`)
+
+
 ## [0.236.0] — 2026-09-03
 
 ### Added

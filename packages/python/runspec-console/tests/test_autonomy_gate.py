@@ -13,6 +13,7 @@ import threading
 import time
 
 from runspec_console.bridge import Bridge
+from runspec_console.bridge_autonomy import _command_leaf_node, _command_path
 
 
 class _StubBridge:
@@ -42,6 +43,10 @@ class _StubBridge:
     def get_config(self):
         return {}  # default tool_mode = "dedup"
 
+    def _visible_runnables(self, surface):
+        # Tool-visibility filtering is orthogonal to the gate under test.
+        return self._runnables_cache
+
     _tool_mode = Bridge._tool_mode
     _sanitize_tool_name = staticmethod(Bridge._sanitize_tool_name)
     _dedup_tool_name = Bridge._dedup_tool_name
@@ -49,6 +54,11 @@ class _StubBridge:
     _host_selector_key = Bridge._host_selector_key
     _resolve_tool_target = Bridge._resolve_tool_target
     _effective_tool_autonomy = Bridge._effective_tool_autonomy
+    # run_runnable resolution path
+    _runnables_for_id = Bridge._runnables_for_id
+    _resolve_id_host = Bridge._resolve_id_host
+    _runbook_id_hint = staticmethod(Bridge._runbook_id_hint)
+    _coerce_run_args = staticmethod(Bridge._coerce_run_args)
     _confirm_decision = Bridge._confirm_decision
     _confirm_card_view = Bridge._confirm_card_view
     _register_confirm = Bridge._register_confirm
@@ -87,6 +97,119 @@ def test_effective_autonomy_arg_escalates():
     assert b._effective_tool_autonomy("local__flush-dns", {}) == "confirm"
     # arg provided → escalates to the more restrictive per-arg level
     assert b._effective_tool_autonomy("local__flush-dns", {"force": True}) == "manual"
+
+
+# ── per-subcommand autonomy (the gate must read the invoked leaf) ──────────────
+#
+# Mirrors the discovery cache shape (discovery._spec_to_runnables): a top-level
+# runnable with its own autonomy + global args, and a `commands` map whose leaf
+# nodes carry their OWN autonomy and effective args (inherited globals + own).
+
+
+def _cmd(autonomy, args=None, commands=None):
+    node = {"name": "verb", "autonomy": autonomy, "args": args or []}
+    if commands:
+        node["commands"] = commands
+    return node
+
+
+def _runnable_with_commands(parent_autonomy="confirm", commands=None, args=None):
+    return [
+        {
+            "host": "local",
+            "name": "svc",
+            "autonomy": parent_autonomy,
+            "args": args or [],
+            "commands": commands or {},
+        }
+    ]
+
+
+def test_subcommand_autonomy_replaces_parent_looser():
+    # Parent confirm, subcommand autonomous → the leaf wins (over-gating fix:
+    # the console must NOT prompt on a verb the author marked safe).
+    b = _StubBridge(_runnable_with_commands("confirm", {"list": _cmd("autonomous")}))
+    assert b._effective_tool_autonomy("local__svc", {"command": "list"}) == "autonomous"
+
+
+def test_subcommand_autonomy_replaces_parent_stricter():
+    # Parent autonomous, subcommand confirm → the leaf wins (under-gating fix:
+    # the console MUST prompt even though the parent is autonomous).
+    b = _StubBridge(_runnable_with_commands("autonomous", {"add": _cmd("confirm")}))
+    assert b._effective_tool_autonomy("local__svc", {"command": "add"}) == "confirm"
+
+
+def test_subcommand_manual_from_autonomous_parent():
+    b = _StubBridge(_runnable_with_commands("autonomous", {"wipe": _cmd("manual")}))
+    assert b._effective_tool_autonomy("local__svc", {"command": "wipe"}) == "manual"
+
+
+def test_no_command_uses_top_level_level():
+    # A runnable with subcommands, invoked without a command → top-level level
+    # (unchanged behaviour; core require-command surfaces the real error later).
+    b = _StubBridge(_runnable_with_commands("autonomous", {"add": _cmd("confirm")}))
+    assert b._effective_tool_autonomy("local__svc", {}) == "autonomous"
+
+
+def test_subcommand_scoped_arg_escalates_only_when_supplied():
+    cmds = {"add": _cmd("autonomous", args=[{"name": "force", "autonomy": "manual"}])}
+    b = _StubBridge(_runnable_with_commands("confirm", cmds))
+    # command chosen, escalating arg absent → the leaf's own level
+    assert b._effective_tool_autonomy("local__svc", {"command": "add"}) == "autonomous"
+    # escalating arg supplied → most-restrictive wins
+    assert (
+        b._effective_tool_autonomy("local__svc", {"command": "add", "force": True})
+        == "manual"
+    )
+
+
+def test_nested_command_path_resolves_deep_leaf():
+    inner = {"endpoint": _cmd("manual")}
+    cmds = {"orders": _cmd("confirm", commands=inner)}
+    b = _StubBridge(_runnable_with_commands("autonomous", cmds))
+    assert (
+        b._effective_tool_autonomy("local__svc", {"command": ["orders", "endpoint"]})
+        == "manual"
+    )
+
+
+def test_unknown_command_segment_falls_back_to_last_valid_node():
+    # A bad segment stops the walk at the last valid node (here the top node) —
+    # never crashes, stays gated at the parent level.
+    b = _StubBridge(_runnable_with_commands("confirm", {"add": _cmd("autonomous")}))
+    assert b._effective_tool_autonomy("local__svc", {"command": "nope"}) == "confirm"
+
+
+def test_run_runnable_reads_subcommand_from_args():
+    # The run_runnable wrapper carries the command inside `args`; the gate must
+    # resolve the leaf just as for a direct call.
+    b = _StubBridge(_runnable_with_commands("autonomous", {"add": _cmd("confirm")}))
+    ti = {"id": "local__svc", "host": "local", "args": {"command": "add"}}
+    assert b._effective_tool_autonomy("run_runnable", ti) == "confirm"
+
+
+# ── leaf-resolution helpers (pure) ────────────────────────────────────────────
+
+
+def test_command_path_normalisation():
+    assert _command_path({}) == []
+    assert _command_path({"command": ""}) == []
+    assert _command_path({"command": "add"}) == ["add"]
+    assert _command_path({"command": ["a", "b"]}) == ["a", "b"]
+    assert _command_path({"command": ["a", "", "b"]}) == ["a", "b"]
+
+
+def test_command_leaf_node_walks_and_falls_back():
+    root = {
+        "autonomy": "confirm",
+        "commands": {"a": {"autonomy": "autonomous", "commands": {"b": {"x": 1}}}},
+    }
+    assert _command_leaf_node(root, [])["autonomy"] == "confirm"  # empty → root
+    assert _command_leaf_node(root, ["a"])["autonomy"] == "autonomous"
+    assert _command_leaf_node(root, ["a", "b"]) == {"x": 1}
+    # bad segment → last valid node (root here)
+    assert _command_leaf_node(root, ["nope"])["autonomy"] == "confirm"
+    assert _command_leaf_node({}, ["a"]) == {}
 
 
 # ── gate decisions ────────────────────────────────────────────────────────────

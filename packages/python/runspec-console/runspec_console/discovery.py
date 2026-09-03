@@ -191,7 +191,7 @@ def _spec_to_runnables(
         child_inherited = [{**a, "inherited": True} for a in effective_args]
         runnable["commands"] = {
             sub_name: _spec_to_runnables(
-                sub_name, sub_spec, host, group, None, child_inherited
+                sub_name, sub_spec, host, group, config_autonomy, child_inherited
             )[0]
             for sub_name, sub_spec in commands.items()
             if isinstance(sub_spec, dict)
