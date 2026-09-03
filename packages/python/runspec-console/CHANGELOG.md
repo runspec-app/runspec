@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.236.2] — 2026-09-03
+
+### Fixed
+- **Settings → Agent tools now refreshes its runnable list on a profile
+  switch.** The tab fetched `get_runnables("all")` once on mount and never
+  again, so after switching host profiles (which rebuilds the runnables cache
+  from only the active profile's hosts) it kept showing the previous profile's
+  runnables until the app was restarted. It now re-fetches the list on
+  `runspec:runnables_updated` and `runspec:hosts_updated` — mirroring how the
+  Forms surface stays live — so the visibility table reflects the active profile
+  without a restart. Only the runnable rows reload; any unsaved
+  Hide-from-agent / Hide-everywhere toggles are left untouched. The agent
+  toolset itself was already live (`Bridge._visible_runnables` reads the cache
+  per turn); this was a display-only staleness in the settings panel.
+  (`console-ui/src/components/SettingsDrawer.tsx`)
+
+
 ## [0.236.1] — 2026-09-03
 
 ### Fixed

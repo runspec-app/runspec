@@ -1534,19 +1534,33 @@ function AgentToolsTab() {
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    bridge.get_runnables('all').then(rs => {
-      const byName = new Map<string, RunnableRow>()
-      for (const r of rs) {
-        const ex = byName.get(r.name)
-        if (ex) ex.hosts += 1
-        else byName.set(r.name, { name: r.name, group: r.group ?? '', host: r.host ?? '', hosts: 1 })
-      }
-      setRows([...byName.values()].sort((a, b) => a.name.localeCompare(b.name)))
-    })
+    // The runnable list is scoped to the active host profile (the backend cache is
+    // rebuilt from _active_host_entries on a profile switch), so re-fetch it when
+    // discovery updates or hosts change — otherwise the tab shows the previous
+    // profile's runnables until the app restarts. Only `rows` is reloaded; pending
+    // (unsaved) visibility toggles in fromAgent/fromAll are left untouched.
+    const loadRows = () => {
+      bridge.get_runnables('all').then(rs => {
+        const byName = new Map<string, RunnableRow>()
+        for (const r of rs) {
+          const ex = byName.get(r.name)
+          if (ex) ex.hosts += 1
+          else byName.set(r.name, { name: r.name, group: r.group ?? '', host: r.host ?? '', hosts: 1 })
+        }
+        setRows([...byName.values()].sort((a, b) => a.name.localeCompare(b.name)))
+      }).catch(() => {})
+    }
+    loadRows()
     bridge.get_tool_visibility().then(v => {
       setFromAgent(v.hidden_from_agent ?? [])
       setFromAll(v.hidden_from_all ?? [])
     })
+    window.addEventListener('runspec:runnables_updated', loadRows)
+    window.addEventListener('runspec:hosts_updated', loadRows)
+    return () => {
+      window.removeEventListener('runspec:runnables_updated', loadRows)
+      window.removeEventListener('runspec:hosts_updated', loadRows)
+    }
   }, [])
 
   // Effective state for a row, matching name/group/host against both lists.
