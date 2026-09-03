@@ -2882,23 +2882,35 @@ function MailboxesTab() {
   // Live address — drives the shared-mailbox warning (a non-default address).
   const address = Form.useWatch('address', form)
 
+  // A mailbox/watch's folders as an editable string[] — accepts the new `folders`
+  // list and falls back to the legacy single `folder`. Empty = Inbox only.
+  const foldersOf = (mb: { folders?: string[]; folder?: string } | null | undefined): string[] =>
+    (mb?.folders && mb.folders.length ? mb.folders : mb?.folder ? [mb.folder] : [])
+  // Drop blanks and a lone "Inbox" (the default) so it round-trips cleanly.
+  const cleanFolders = (fs: string[] | undefined): string[] => {
+    const out = (fs ?? []).map(f => f.trim()).filter(Boolean)
+    return out.length === 1 && out[0].toLowerCase() === 'inbox' ? [] : out
+  }
+
   useEffect(() => {
     bridge.get_mailbox().then(mb => {
       setEnabled(mb !== null)
       form.setFieldsValue({
         address: mb?.address ?? '',
-        folder: mb?.folder ?? '',
+        folders: foldersOf(mb),
         label: mb?.label ?? '',
         once_per_thread: !!mb?.once_per_thread,
       })
     }).catch(console.error)
   }, [form])
-  useEffect(() => { bridge.get_watches().then(setWatches).catch(console.error) }, [])
+  useEffect(() => {
+    bridge.get_watches().then(ws => setWatches(ws.map(w => ({ ...w, folders: foldersOf(w) })))).catch(console.error)
+  }, [])
   useEffect(() => { bridge.config_dir().then(setConfigDir) }, [])
 
   const setWatch = (i: number, patch: Partial<Watch>) =>
     setWatches(ws => ws.map((w, j) => (j === i ? { ...w, ...patch } : w)))
-  const addWatch = () => setWatches(ws => [...ws, { address: '', folder: '', label: '' }])
+  const addWatch = () => setWatches(ws => [...ws, { address: '', folders: [], label: '' }])
   const removeWatch = (i: number) => setWatches(ws => ws.filter((_, j) => j !== i))
 
   const save = async () => {
@@ -2910,14 +2922,14 @@ function MailboxesTab() {
         const v = form.getFieldsValue()
         await bridge.save_mailbox({
           address: (v.address ?? '').trim(),
-          folder: (v.folder ?? '').trim() || 'Inbox',
+          folders: cleanFolders(v.folders),
           label: (v.label ?? '').trim(),
           once_per_thread: !!v.once_per_thread,
         })
       }
       await bridge.save_watches(watches.map(w => ({
         address: (w.address ?? '').trim(),
-        folder: (w.folder ?? '').trim() || 'Inbox',
+        folders: cleanFolders(w.folders),
         label: (w.label ?? '').trim(),
       })))
       setSaved(true)
@@ -2950,11 +2962,18 @@ function MailboxesTab() {
             <Input placeholder="helpdesk@corp.com (blank = my mailbox)" style={{ fontFamily: 'monospace' }} />
           </Form.Item>
           <Form.Item
-            name="folder"
-            label="Folder (optional)"
-            help={'A folder path under that mailbox, /-separated. Blank or "Inbox" monitors the Inbox.'}
+            name="folders"
+            label="Folders (optional)"
+            help={'Folder paths under this mailbox, /-separated (type one and press Enter for each). Leave empty to monitor the Inbox only. Each folder is watched independently and a trigger can match on the folder it landed in.'}
           >
-            <Input placeholder="Inbox, or e.g. Tickets/Open" style={{ fontFamily: 'monospace' }} />
+            <Select
+              mode="tags"
+              tokenSeparators={[',']}
+              placeholder="Inbox (leave empty), or e.g. Tickets/Open"
+              style={{ fontFamily: 'monospace', width: '100%' }}
+              open={false}
+              suffixIcon={null}
+            />
           </Form.Item>
           <Form.Item name="label" label="Label (optional)" help="A display name for this inbox.">
             <Input placeholder="e.g. Helpdesk" />
@@ -2972,13 +2991,15 @@ function MailboxesTab() {
               type="warning"
               showIcon
               style={{ marginBottom: 10 }}
-              message="Shared mailbox: no cross-console coordination"
+              message="Shared mailbox watched by several consoles?"
               description={
                 <span style={{ fontSize: 12 }}>
-                  If another console monitors this same mailbox + folder, both react to
-                  every new mail (duplicate replies / runs). Monitor one folder from one
-                  console, or let Outlook rules sort each operator's mail into a personal
-                  folder.
+                  Without coordination, every console reacts to every new mail
+                  (duplicate replies / runs). Enable a <b>claim</b> on the matching
+                  trigger (Triggers tab) so one operator claims each email &mdash; the
+                  item moves to a claim folder and only the winner proceeds. Otherwise
+                  monitor one folder from one console, or let Outlook rules sort each
+                  operator's mail into a personal folder.
                 </span>
               }
             />
@@ -3005,12 +3026,16 @@ function MailboxesTab() {
             onChange={e => setWatch(i, { address: e.target.value })}
             style={{ fontFamily: 'monospace', flex: 2 }}
           />
-          <Input
+          <Select
             size="small"
-            placeholder='folder (blank = "Inbox")'
-            value={w.folder}
-            onChange={e => setWatch(i, { folder: e.target.value })}
+            mode="tags"
+            tokenSeparators={[',']}
+            placeholder='folders (blank = "Inbox")'
+            value={w.folders ?? []}
+            onChange={(vals: string[]) => setWatch(i, { folders: vals })}
             style={{ fontFamily: 'monospace', flex: 2 }}
+            open={false}
+            suffixIcon={null}
           />
           <Input
             size="small"

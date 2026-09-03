@@ -47,6 +47,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
 
+# Seconds between cross-console claim-poll ticks: how quickly a parked card on one
+# console reflects a claim won on another. A move is server-side, so this is just
+# the visibility latency, not the claim's correctness — kept modest to limit COM.
+_CLAIM_POLL_INTERVAL = 25.0
+
 
 class TriggersMixin:
     def start_triggers(self) -> None:
@@ -133,6 +138,9 @@ class TriggersMixin:
             self._trigger_engine = engine
         for problem in problems:
             logger.info("trigger source: %s", problem)
+        # Cross-console claim visibility (parked cards flip to "claimed by X" when
+        # another console wins). Started once; survives engine restarts.
+        self._ensure_claim_poll()
         # Schedule source: bridge-owned (external). Built from the Schedules tab
         # (runspec_schedules.toml), it fires event-action schedules into
         # engine.feed() — where source="schedule" triggers match them like mail —
@@ -1704,6 +1712,13 @@ class TriggersMixin:
         # mailbox default" (anything non-bool, e.g. omitted/null) leaves it unset.
         if isinstance(trigger.get("once_per_thread"), bool):
             out["once_per_thread"] = trigger["once_per_thread"]
+        # Shared-mailbox claim gate. Only emit the pair when claim is on (the
+        # destination folder a claimed item is moved into); off is the default.
+        if bool(trigger.get("claim")):
+            out["claim"] = True
+            claim_folder = str(trigger.get("claim_folder") or "").strip()
+            if claim_folder:
+                out["claim_folder"] = claim_folder
         runnables = trigger.get("runnables")
         if isinstance(runnables, list):
             names = [str(r).strip() for r in runnables if str(r).strip()]
@@ -1882,6 +1897,132 @@ class TriggersMixin:
             payload.setdefault("text", text)
             payload.setdefault("body", text)
         return engine.fire_paste(name, Event.new("paste", etype, payload))
+
+    # ── shared-mailbox claim (Triggers tab Claim button + cross-console poll) ──
+
+    @staticmethod
+    def _claim_operator() -> str:
+        """The name recorded as the claimer — the console operator's OS login, so
+        operators on different consoles are distinguishable. Falls back to
+        ``"operator"``."""
+        import getpass
+
+        try:
+            return getpass.getuser() or "operator"
+        except Exception:
+            return "operator"
+
+    def claim_email(self, card_id: str) -> dict[str, Any]:
+        """Attempt to claim the parked email behind trigger card ``card_id`` (the
+        Triggers tab's Claim button).
+
+        The claim is a **Move of the shared item into the trigger's ``claim_folder``**
+        (Exchange as the shared store, no mail round-trip). On a win the card resumes
+        and runs the trigger's action; if another console already claimed it the card
+        resolves as "claimed by X"; a misconfiguration (missing claim folder) leaves
+        the card parked with an error so the operator can fix it and retry.
+
+        Returns ``{claimed: bool, owner?: str, error?: str}``. Windows-only in
+        effect (Outlook COM); a non-Windows console reports the error."""
+        engine = self._trigger_engine
+        if engine is None:
+            return {"claimed": False, "error": "The trigger engine isn't running."}
+        parked = engine.parked_claim(card_id)
+        if parked is None:
+            return {
+                "claimed": False,
+                "error": "This card is no longer awaiting a claim.",
+            }
+        trigger, event = parked
+        payload = event.payload
+        entry_id = str(payload.get("entry_id") or "")
+        mailbox = str(payload.get("mailbox") or "")
+        folder = str(payload.get("folder") or "")
+        conv = str(payload.get("conversation_id") or "")
+        subject = str(payload.get("subject") or "")
+        owner = self._claim_operator()
+
+        from .sources import outlook as ol
+
+        if not ol.outlook_available():
+            return {
+                "claimed": False,
+                "error": "Outlook isn't available on this console.",
+            }
+        try:
+            res = ol.claim_message(
+                entry_id,
+                owner,
+                mailbox=mailbox,
+                source_folder=folder,
+                claim_folder=trigger.claim_folder,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface to the operator; card stays parked
+            logger.warning("claim_email failed for card %s", card_id, exc_info=True)
+            return {"claimed": False, "error": str(exc)}
+
+        if res.get("claimed"):
+            engine.resume_claim(card_id)
+            return {"claimed": True, "owner": owner}
+        other = str(res.get("owner") or "") or ol.claim_owner(
+            mailbox=mailbox,
+            claim_folder=trigger.claim_folder,
+            conversation_id=conv,
+            subject=subject,
+        )
+        engine.mark_claimed_elsewhere(card_id, other)
+        return {"claimed": False, "owner": other}
+
+    def _ensure_claim_poll(self) -> None:
+        """Start the cross-console claim poll daemon once. It flips a parked card to
+        "claimed by X" when another console wins the item (its source message moves
+        out of the watched folder). Runs for the bridge's lifetime, self-guarding on
+        engine-None / no-parked-claims / Outlook-unavailable, so it needs no
+        explicit stop and survives engine restarts."""
+        if getattr(self, "_claim_poll_started", False):
+            return
+        self._claim_poll_started = True
+        threading.Thread(
+            target=self._claim_poll_loop, name="claim-poll", daemon=True
+        ).start()
+
+    def _claim_poll_loop(self) -> None:
+        """Wake on an interval; for each parked claim, probe whether its source
+        message is still in the watched folder. When it's gone (claimed elsewhere),
+        resolve the card noting the owner. Best-effort; a probe failure is logged,
+        never raised."""
+        from .sources import outlook as ol
+
+        while True:
+            time.sleep(_CLAIM_POLL_INTERVAL)
+            try:
+                engine = self._trigger_engine
+                if engine is None or not ol.outlook_available():
+                    continue
+                for card_id in engine.parked_claim_ids():
+                    parked = engine.parked_claim(card_id)
+                    if parked is None:
+                        continue
+                    trigger, event = parked
+                    payload = event.payload
+                    entry_id = str(payload.get("entry_id") or "")
+                    if not entry_id:
+                        continue
+                    mailbox = str(payload.get("mailbox") or "")
+                    folder = str(payload.get("folder") or "")
+                    if ol.item_in_folder(
+                        entry_id, mailbox=mailbox, source_folder=folder
+                    ):
+                        continue  # still here → still open
+                    owner = ol.claim_owner(
+                        mailbox=mailbox,
+                        claim_folder=trigger.claim_folder,
+                        conversation_id=str(payload.get("conversation_id") or ""),
+                        subject=str(payload.get("subject") or ""),
+                    )
+                    engine.mark_claimed_elsewhere(card_id, owner)
+            except Exception:
+                logger.debug("claim poll tick failed", exc_info=True)
 
     def get_trigger_board(self) -> list[dict[str, Any]]:
         """Snapshot of the run inbox's cards for this session (newest last)."""

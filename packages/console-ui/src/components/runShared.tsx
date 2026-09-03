@@ -10,6 +10,7 @@ import { CopyOutlined } from '@ant-design/icons'
 // client-side from a card-scoped tool_confirm (triggers only).
 export const COLUMNS: { key: string; label: string }[] = [
   { key: 'triggered', label: 'Triggered' },
+  { key: 'awaiting_claim', label: 'Awaiting claim' },
   { key: 'triage', label: 'Triage' },
   { key: 'awaiting_human', label: 'Awaiting human' },
   { key: 'running', label: 'Running' },
@@ -19,6 +20,9 @@ export const COLUMNS: { key: string; label: string }[] = [
 
 export const COLUMN_COLOR: Record<string, string> = {
   triggered: '#8c8c8c',
+  // A shared-mailbox email parked until an operator claims it (purple, distinct
+  // from the orange confirm-gate awaiting_human).
+  awaiting_claim: '#722ed1',
   triage: '#1677ff',
   awaiting_human: '#fa8c16',
   running: '#13c2c2',

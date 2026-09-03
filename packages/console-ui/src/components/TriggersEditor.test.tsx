@@ -85,6 +85,35 @@ describe('TriggersEditor form mapping', () => {
     expect(out.actions).toBeUndefined()
     expect(out.run).toBeUndefined()
   })
+
+  it('lifts match.folder into match_folder and back, keeping other match rows', () => {
+    const form = triggerToForm({
+      name: 'c', source: 'outlook', event: 'new_mail', mode: 'agent',
+      match: { folder: '^Tickets/Open$', subject: '(?i)reset' },
+      claim: true, claim_folder: 'Tickets/Claimed',
+    })
+    expect(form.match_folder).toBe('^Tickets/Open$')
+    expect(form.match).toEqual([{ field: 'subject', pattern: '(?i)reset' }])
+    expect(form.claim).toBe(true)
+    expect(form.claim_folder).toBe('Tickets/Claimed')
+
+    const out = formToTrigger(form)
+    expect(out.match).toEqual({ subject: '(?i)reset', folder: '^Tickets/Open$' })
+    expect(out.claim).toBe(true)
+    expect(out.claim_folder).toBe('Tickets/Claimed')
+  })
+
+  it('omits claim keys when the claim system is off', () => {
+    const out = formToTrigger({
+      name: 'a', source: 'outlook', event: 'new_mail', mode: 'agent',
+      autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
+      map: [], reply_draft: false, rule_kind: 'single', action_mode: 'sequential',
+      actions: [], rules: 'do it', runnables: [], action_allow: [],
+      claim: false, claim_folder: '',
+    })
+    expect(out.claim).toBeUndefined()
+    expect(out.claim_folder).toBeUndefined()
+  })
 })
 
 describe('run-target picker helpers', () => {

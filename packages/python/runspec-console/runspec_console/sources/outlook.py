@@ -17,8 +17,10 @@ while we're running; we never scan for backlog:
 * ``reminder`` — ``Application.Reminder``.
 
 Each ``new_mail`` is tagged with the ``mailbox``/``folder`` it came from so a
-trigger's ``match`` can scope to it. There is **no claim system** — see
-docs/design/email-folder-watch.md for the shared-mailbox duplication caveat.
+trigger's ``match`` can scope to it. Shared-mailbox duplication across consoles is
+handled by an **opt-in, per-trigger claim** — a claim moves the item into a
+configured folder (``claim_message`` below), Exchange as the shared store, no mail
+round-trip. See docs/design/email-claim-move.md and docs/design/email-folder-watch.md.
 
 COM event sinks need a thread that ``CoInitialize``s and runs a message pump. This
 source owns one daemon thread that binds every sink, then loops:
@@ -298,9 +300,11 @@ class OutlookSource:
 
         primary = config.read_mailbox()
         if primary is not None:
-            add(primary["address"], primary["folder"])
+            for folder in primary["folders"]:
+                add(primary["address"], folder)
         for extra in config.read_watches():
-            add(extra["address"], extra["folder"])
+            for folder in extra["folders"]:
+                add(extra["address"], folder)
         return watches
 
     def start(self, emit: EmitFn) -> None:
@@ -1784,6 +1788,212 @@ def move_message(entry_id: str, mailbox: str = "", folder: str = "") -> dict[str
             "folder": folder,
             "entry_id": _str(_attr(moved, "EntryID")) if moved is not None else "",
         }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+# ── shared-mailbox claim (move-based, Exchange-centralized) ────────────────────
+#
+# A claim-enabled trigger parks its card until an operator clicks Claim. The claim
+# is a **Move of the shared item into a configured folder that must exist**: the
+# move is server-side (no mail round-trip — unlike the removed X-Runspec-Claim
+# marker mail) and near-atomic, so on a shared mailbox watched by several consoles
+# exactly one wins. The loser is detected because its stale EntryID no longer
+# resolves in the source folder (a Move re-keys the item). The winner also stamps
+# a ``Claimed: <owner>`` category so the owner is recorded on the item for the
+# cross-console poll + loser label. See docs/design/email-claim-move.md.
+#
+# The pure helpers (``_claim_category`` / ``_owner_from_categories``) are
+# duck-typed/unit-tested; the COM calls are Windows-only.
+
+_CLAIM_PREFIX = "Claimed:"  # category marker prefix stamped on a claimed item
+
+
+def _claim_category(owner: str) -> str:
+    """The category string stamped on a claimed item (``"Claimed: <owner>"``). A
+    stable, human-readable marker that also shows in Outlook. Pure/testable."""
+    who = _str(owner).strip() or "unknown"
+    return f"{_CLAIM_PREFIX} {who}"
+
+
+def _owner_from_categories(categories: Any) -> str:
+    """The claimer's name from a ``Claimed: <owner>`` category, or ``""`` if none
+    is present. Case-insensitive on the prefix. Pure/testable."""
+    for cat in _split_categories(categories):
+        if cat.lower().startswith(_CLAIM_PREFIX.lower()):
+            return cat[len(_CLAIM_PREFIX) :].strip()
+    return ""
+
+
+def _same_folder(item: Any, folder: Any) -> bool:
+    """True when ``item`` currently lives in ``folder`` — compared by the folder's
+    ``EntryID`` (the item's ``Parent`` is its containing folder). Best-effort: any
+    COM read error ⇒ False (treat as 'not here')."""
+    try:
+        parent = item.Parent
+    except Exception:
+        return False
+    pid = _str(_attr(parent, "EntryID"))
+    fid = _str(_attr(folder, "EntryID"))
+    return bool(pid) and pid == fid
+
+
+def claim_message(
+    entry_id: str,
+    owner: str,
+    *,
+    mailbox: str = "",
+    source_folder: str = "",
+    claim_folder: str = "",
+) -> dict[str, Any]:
+    """Attempt to claim the shared message ``entry_id`` by moving it into
+    ``claim_folder`` (which **must already exist**).
+
+    Returns ``{claimed, owner, entry_id}``. ``claimed`` is ``True`` only when this
+    call won the item; ``False`` when it was already claimed elsewhere (the item no
+    longer resolves in ``source_folder`` — its EntryID was re-keyed by another
+    console's Move). Raises ``RuntimeError`` only for a genuine misconfiguration —
+    an empty ``claim_folder`` or a claim folder that doesn't exist — so the card can
+    tell the operator to fix it. Windows-only; win32 imports stay inside."""
+    if sys.platform != "win32":
+        raise RuntimeError("claim_message requires Windows (Outlook COM)")
+    if not entry_id:
+        raise RuntimeError("claim_message needs an entry_id")
+    if not str(claim_folder or "").strip():
+        raise RuntimeError("claim_message needs a claim folder")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+
+        # Validate the destination first so a missing claim folder is a clear error
+        # rather than a half-claim (category stamped, item not moved).
+        try:
+            dest = _resolve_watch(ns, mailbox, claim_folder)
+        except Exception as exc:
+            raise RuntimeError(
+                f"claim folder not found: {claim_folder!r} — it must already exist"
+            ) from exc
+
+        # The item may already be gone (another console won and re-keyed its id).
+        try:
+            item = ns.GetItemFromID(entry_id)
+        except Exception:
+            return {"claimed": False, "owner": "", "entry_id": ""}
+
+        # Still in the source folder? If a source folder was given and the item has
+        # moved out of it, someone already claimed it.
+        if source_folder:
+            try:
+                src = _resolve_watch(ns, mailbox, source_folder)
+            except Exception:
+                src = None
+            if src is not None and not _same_folder(item, src):
+                return {
+                    "claimed": False,
+                    "owner": _owner_from_categories(_attr(item, "Categories")),
+                    "entry_id": "",
+                }
+
+        # Stamp the owner marker (survives the move) then move — the move is the
+        # atomic claim. A move that raises means another console beat us to it.
+        item.Categories = _merge_categories(
+            _attr(item, "Categories"), _claim_category(owner), replace=False
+        )
+        try:
+            item.Save()
+        except Exception:
+            logger.debug("outlook: claim category save failed", exc_info=True)
+        try:
+            moved = item.Move(dest)
+        except Exception:
+            return {"claimed": False, "owner": "", "entry_id": ""}
+        return {
+            "claimed": True,
+            "owner": _str(owner).strip(),
+            "entry_id": _str(_attr(moved, "EntryID")) if moved is not None else "",
+        }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def claim_owner(
+    *,
+    mailbox: str = "",
+    claim_folder: str = "",
+    conversation_id: str = "",
+    subject: str = "",
+    scan: int = 100,
+) -> str:
+    """Best-effort: who claimed the item now sitting in ``claim_folder``? Searches
+    the folder (newest first, bounded by ``scan``) for the item matching
+    ``conversation_id`` (preferred) or ``subject`` and reads its ``Claimed:``
+    category. Returns ``""`` when it can't be determined. Windows-only."""
+    if sys.platform != "win32" or not str(claim_folder or "").strip():
+        return ""
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        try:
+            folder = _resolve_watch(ns, mailbox, claim_folder)
+            items = folder.Items
+            items.Sort("[ReceivedTime]", True)  # newest first
+        except Exception:
+            return ""
+        conv = _str(conversation_id).strip()
+        subj = _str(subject).strip()
+        for i, item in enumerate(items):
+            if i >= max(1, scan):
+                break
+            if conv and _str(_attr(item, "ConversationID")) == conv:
+                return _owner_from_categories(_attr(item, "Categories"))
+            if not conv and subj and _str(_attr(item, "Subject")).strip() == subj:
+                return _owner_from_categories(_attr(item, "Categories"))
+        return ""
+    except Exception:
+        logger.debug("outlook: claim_owner lookup failed", exc_info=True)
+        return ""
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def item_in_folder(
+    entry_id: str, *, mailbox: str = "", source_folder: str = ""
+) -> bool:
+    """Cheap probe for the claim poll: is ``entry_id`` still present in
+    ``source_folder``? ``False`` when it can't be resolved (re-keyed by a Move) or
+    has moved out — i.e. it was claimed elsewhere. Any COM error ⇒ ``False``
+    (fail-closed: the poll treats an unreadable item as gone). Windows-only."""
+    if sys.platform != "win32" or not entry_id:
+        return False
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+        try:
+            item = ns.GetItemFromID(entry_id)
+        except Exception:
+            return False
+        if not source_folder:
+            return True  # no folder to compare against → still resolvable is enough
+        try:
+            src = _resolve_watch(ns, mailbox, source_folder)
+        except Exception:
+            return True  # can't resolve the source folder → don't declare it gone
+        return _same_folder(item, src)
+    except Exception:
+        return False
     finally:
         pythoncom.CoUninitialize()
 

@@ -822,15 +822,26 @@ def write_config(data: dict[str, Any]) -> None:
         os.replace(tmp, path)
 
 
+def _is_scalar_or_scalar_list(value: Any) -> bool:
+    """A value that renders cleanly inside a ``[[table]]`` block: a scalar, or a
+    list of scalars (e.g. ``folders = ["a", "b"]``) — but not a nested table or a
+    list of tables."""
+    if isinstance(value, dict):
+        return False
+    if isinstance(value, list):
+        return all(not isinstance(e, (dict, list)) for e in value)
+    return True
+
+
 def _is_flat_table_array(value: Any) -> bool:
     """True for a non-empty list whose every element is a *flat* table (a dict
-    with no nested dict/list values) — i.e. a top-level array-of-tables such as
-    ``[[watch]]``."""
+    whose values are scalars or scalar lists) — i.e. a top-level array-of-tables
+    such as ``[[watch]]`` (whose entries may carry a ``folders`` array)."""
     return (
         isinstance(value, list)
         and len(value) > 0
         and all(isinstance(row, dict) for row in value)
-        and all(not isinstance(v, (dict, list)) for row in value for v in row.values())
+        and all(_is_scalar_or_scalar_list(v) for row in value for v in row.values())
     )
 
 
@@ -963,21 +974,45 @@ def read_chat() -> dict[str, Any]:
     return dict(chat) if isinstance(chat, dict) else {}
 
 
+def _normalize_folders(raw: dict[str, Any]) -> list[str]:
+    """The normalized ``folders`` list for a ``[mailbox]``/``[[watch]]`` entry.
+
+    Accepts the new ``folders`` array *and* the legacy scalar ``folder`` (read as
+    a one-element list). Each path is normalised the same way — blank, missing, or
+    ``"inbox"`` (case-insensitive) → ``"Inbox"`` — order-preserving deduped. An
+    empty/absent list → ``["Inbox"]`` (Inbox only). Pure/testable."""
+    entries = raw.get("folders")
+    if not isinstance(entries, list):
+        # Legacy scalar `folder` → a one-element list; missing → the Inbox.
+        entries = [raw.get("folder")]
+    out: list[str] = []
+    for item in entries:
+        folder = str(item or "").strip()
+        if not folder or folder.lower() == "inbox":
+            folder = "Inbox"
+        if folder not in out:
+            out.append(folder)
+    return out or ["Inbox"]
+
+
 def read_mailbox() -> dict[str, Any] | None:
     """The single ``[mailbox]`` the Outlook source monitors, or ``None`` when no
     ``[mailbox]`` table is configured (email monitoring off).
 
-    One inbox, with an optional folder inside it::
+    One inbox, with an optional list of folders inside it::
 
         [mailbox]
         address = "helpdesk@corp.com"   # blank/absent → the default account
-        folder  = "Tickets/Open"        # blank/absent/"inbox" → the Inbox
+        folders = ["Tickets/Open", "Tickets/Alerts"]  # blank/absent → the Inbox
         label   = "Helpdesk"            # optional display label
         once_per_thread = true          # default reply-suppression for triggers
 
     A present-but-empty ``[mailbox]`` means "watch my default account's Inbox".
     Normalisation: ``address`` blank/missing → ``""`` (the default account);
-    ``folder`` blank, missing, or ``"inbox"`` (case-insensitive) → ``"Inbox"``.
+    ``folders`` empty/missing → ``["Inbox"]``; each entry blank/``"inbox"``
+    (case-insensitive) → ``"Inbox"``, deduped. The legacy scalar ``folder = "X"``
+    is still read as ``folders = ["X"]``. ``folder`` is returned as ``folders[0]``
+    for existing readers that expect a single folder.
     ``once_per_thread`` (default ``False``) is the mailbox-wide default for
     suppressing replies — a trigger inherits it unless it sets its own
     ``once_per_thread`` (see triggers.py). There is no queue here — queues are
@@ -985,36 +1020,46 @@ def read_mailbox() -> dict[str, Any] | None:
     raw = read_config().get("mailbox")
     if not isinstance(raw, dict):
         return None
-    address = str(raw.get("address") or "").strip()
-    folder = str(raw.get("folder") or "").strip()
-    label = str(raw.get("label") or "").strip()
-    if not folder or folder.lower() == "inbox":
-        folder = "Inbox"
+    folders = _normalize_folders(raw)
     return {
-        "address": address,
-        "folder": folder,
-        "label": label,
+        "address": str(raw.get("address") or "").strip(),
+        "folders": folders,
+        "folder": folders[0],
+        "label": str(raw.get("label") or "").strip(),
         "once_per_thread": bool(raw.get("once_per_thread", False)),
     }
+
+
+def _folders_for_write(mailbox: dict[str, Any]) -> list[str]:
+    """The non-default ``folders`` list to emit for a mailbox/watch entry, or ``[]``
+    when it is just the Inbox (so a bare "watch my Inbox" entry stays empty on
+    disk). Accepts a ``folders`` list or the legacy scalar ``folder``; normalises
+    and drops a lone ``"Inbox"``. Pure/testable."""
+    folders = _normalize_folders(mailbox)
+    if folders == ["Inbox"]:
+        return []
+    return folders
 
 
 def write_mailbox(mailbox: dict[str, Any] | None) -> None:
     """Replace the ``[mailbox]`` table in config.toml (or drop it when ``mailbox``
     is ``None``), preserving every other section. Only set fields are emitted, so
-    "watch my own Inbox" round-trips to an empty ``[mailbox]`` table."""
+    "watch my own Inbox" round-trips to an empty ``[mailbox]`` table. The folders
+    list is written as ``folders = [...]`` (the legacy scalar ``folder`` is
+    dropped); a lone Inbox emits no ``folders`` key."""
 
     def mutate(cfg: dict[str, Any]) -> None:
         if not mailbox:
             cfg.pop("mailbox", None)
             return
         address = str(mailbox.get("address") or "").strip()
-        folder = str(mailbox.get("folder") or "").strip()
         label = str(mailbox.get("label") or "").strip()
+        folders = _folders_for_write(mailbox)
         entry: dict[str, Any] = {}
         if address:
             entry["address"] = address
-        if folder and folder.lower() != "inbox":
-            entry["folder"] = folder
+        if folders:
+            entry["folders"] = folders
         if label:
             entry["label"] = label
         if mailbox.get("once_per_thread"):
@@ -1036,8 +1081,10 @@ def read_watches() -> list[dict[str, Any]]:
         label   = "Alerts"
 
     Each entry is normalised exactly like ``[mailbox]`` (``address`` blank/missing →
-    ``""`` = the default account; ``folder`` blank/missing/``"inbox"`` → ``"Inbox"``)
-    and returned as ``{address, folder, label}``.
+    ``""`` = the default account; ``folders`` empty/missing → ``["Inbox"]``, each
+    entry blank/``"inbox"`` → ``"Inbox"``; the legacy scalar ``folder`` still read
+    as a one-element list) and returned as ``{address, folders, folder, label}``
+    (``folder`` = ``folders[0]`` for single-folder readers).
 
     These feed ``new_mail`` triggers **only** — they carry no room/helpdesk role:
     the room handshake and the email-verify "send-as" identity stay tied to the
@@ -1054,12 +1101,15 @@ def read_watches() -> list[dict[str, Any]]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        address = str(item.get("address") or "").strip()
-        folder = str(item.get("folder") or "").strip()
-        label = str(item.get("label") or "").strip()
-        if not folder or folder.lower() == "inbox":
-            folder = "Inbox"
-        out.append({"address": address, "folder": folder, "label": label})
+        folders = _normalize_folders(item)
+        out.append(
+            {
+                "address": str(item.get("address") or "").strip(),
+                "folders": folders,
+                "folder": folders[0],
+                "label": str(item.get("label") or "").strip(),
+            }
+        )
     return out
 
 
@@ -1073,13 +1123,13 @@ def write_watches(watches: list[dict[str, Any]] | None) -> None:
         entries: list[dict[str, Any]] = []
         for watch in watches or []:
             address = str(watch.get("address") or "").strip()
-            folder = str(watch.get("folder") or "").strip()
             label = str(watch.get("label") or "").strip()
+            folders = _folders_for_write(watch)
             entry: dict[str, Any] = {}
             if address:
                 entry["address"] = address
-            if folder and folder.lower() != "inbox":
-                entry["folder"] = folder
+            if folders:
+                entry["folders"] = folders
             if label:
                 entry["label"] = label
             entries.append(entry)
@@ -1125,7 +1175,7 @@ def read_sync() -> dict[str, Any]:
         subpath       = ""                # optional dir within the repo
         layers        = ["_base", "teams/emea"]  # ordered overlay dirs (low→high)
         files         = ["config.toml", "runspec_hosts.toml", ...]
-        preserve      = ["config.toml:mailbox.folder", ...]  # keep local on pull
+        preserve      = ["config.toml:mailbox.folders", ...]  # keep local on pull
         backups_keep  = 5                 # per-file backup retention (0 = keep all)
         last_ref      = "v1.4.0"          # stamped by a successful pull
         last_commit   = "a1b2c3d…"

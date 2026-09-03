@@ -138,12 +138,67 @@ def test_from_config_full():
             },
             "agent tool allowlist",
         ),
+        (
+            # claim only applies to the Outlook new_mail source.
+            {
+                "name": "t",
+                "source": "schedule",
+                "event": "tick",
+                "claim": True,
+                "claim_folder": "Claimed",
+                "match": {"folder": "^x$"},
+            },
+            "only supported for source='outlook'",
+        ),
+        (
+            # a claim trigger must scope to a folder (match.folder).
+            {
+                "name": "t",
+                "source": "outlook",
+                "event": "new_mail",
+                "claim": True,
+                "claim_folder": "Claimed",
+            },
+            "needs a folder to match on",
+        ),
+        (
+            # a claim trigger must name the destination folder.
+            {
+                "name": "t",
+                "source": "outlook",
+                "event": "new_mail",
+                "claim": True,
+                "match": {"folder": "^Open$"},
+            },
+            "needs 'claim_folder'",
+        ),
     ],
 )
 def test_from_config_errors(data, msg):
     with pytest.raises(ValueError) as exc:
         Trigger.from_config(data)
     assert msg in str(exc.value)
+
+
+def test_from_config_claim_fields():
+    t = Trigger.from_config(
+        {
+            "name": "hd",
+            "source": "outlook",
+            "event": "new_mail",
+            "claim": True,
+            "claim_folder": "Tickets/Claimed",
+            "match": {"folder": "^Tickets/Open$"},
+        }
+    )
+    assert t.claim is True
+    assert t.claim_folder == "Tickets/Claimed"
+
+
+def test_from_config_claim_defaults_off():
+    t = Trigger.from_config({"name": "t", "source": "outlook", "event": "new_mail"})
+    assert t.claim is False
+    assert t.claim_folder == ""
 
 
 def test_from_config_runnables_allowlist():
@@ -507,6 +562,86 @@ def test_engine_routes_matching_event_to_handler():
     # one card created, ending DONE
     assert len(cards) >= 1
     assert any(c.column == Column.DONE for c in cards)
+
+
+def _claim_trigger():
+    return Trigger.from_config(
+        {
+            "name": "hd",
+            "source": "outlook",
+            "event": "new_mail",
+            "claim": True,
+            "claim_folder": "Tickets/Claimed",
+            "match": {"folder": "^Tickets/Open$"},
+        }
+    )
+
+
+def test_claim_trigger_parks_without_running():
+    ran: list[str] = []
+
+    def handler(card, trigger, event):
+        ran.append(card.id)
+        card.move(Column.DONE)
+
+    engine, fake, cards = _engine([_claim_trigger()], handler, cards=[])
+    engine.start()
+    fake.fire("new_mail", {"folder": "Tickets/Open", "entry_id": "E1", "subject": "hi"})
+
+    # The handler never ran; the card sits parked awaiting a claim.
+    assert ran == []
+    assert cards[-1].column == Column.AWAITING_CLAIM
+    assert engine.parked_claim_ids() == [cards[-1].id]
+    trig, ev = engine.parked_claim(cards[-1].id)
+    assert trig.claim_folder == "Tickets/Claimed"
+    assert ev.payload["entry_id"] == "E1"
+
+
+def test_resume_claim_runs_the_action():
+    ran: list[str] = []
+
+    def handler(card, trigger, event):
+        ran.append(event.payload.get("entry_id", ""))
+        card.move(Column.DONE)
+
+    engine, fake, cards = _engine([_claim_trigger()], handler, cards=[])
+    engine.start()
+    fake.fire("new_mail", {"folder": "Tickets/Open", "entry_id": "E1"})
+    card_id = cards[-1].id
+
+    assert engine.resume_claim(card_id) is True
+    assert ran == ["E1"]  # the action ran on resume
+    assert cards[-1].column == Column.DONE
+    assert engine.parked_claim_ids() == []  # no longer parked
+    # A second resume is a no-op (already resolved).
+    assert engine.resume_claim(card_id) is False
+
+
+def test_mark_claimed_elsewhere_resolves_card():
+    engine, fake, cards = _engine([_claim_trigger()], lambda *a: None, cards=[])
+    engine.start()
+    fake.fire("new_mail", {"folder": "Tickets/Open", "entry_id": "E1"})
+    card_id = cards[-1].id
+
+    assert engine.mark_claimed_elsewhere(card_id, "alice") is True
+    assert cards[-1].column == Column.DONE
+    assert cards[-1].detail.get("claimed_by") == "alice"
+    assert engine.parked_claim_ids() == []
+
+
+def test_fire_test_bypasses_claim_gate():
+    # "Trigger now" on a claim trigger runs the action directly (no parking).
+    ran: list[str] = []
+
+    def handler(card, trigger, event):
+        ran.append(card.id)
+        card.move(Column.DONE)
+
+    engine, fake, cards = _engine([_claim_trigger()], handler, cards=[])
+    engine.start()
+    engine.fire_test("hd", _mail(folder="Tickets/Open", entry_id="E9"))
+    assert ran  # ran without a claim
+    assert engine.parked_claim_ids() == []
 
 
 def test_once_per_thread_fires_only_for_first_message_in_conversation():

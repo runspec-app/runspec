@@ -35,6 +35,7 @@ from typing import Any
 # Machine-local keys protected out of the box; merged with the user's list.
 DEFAULT_PRESERVE: tuple[str, ...] = (
     "config.toml:mailbox.folder",
+    "config.toml:mailbox.folders",
     "runspec_hosts.toml:*.room_user",
 )
 

@@ -213,18 +213,25 @@ watched folder — the broad case still works, and narrowing is opt-in.
 
 ---
 
-## 6. ⚠️ No claim coordination — read this for shared mailboxes
+## 6. ⚠️ Shared mailboxes — coordinate with an opt-in claim, or avoid fan-out
 
-runspec does **not** coordinate across consoles. Each console reacts to its own
-watched folders independently. Therefore:
+By default runspec does **not** coordinate across consoles. Each console reacts to
+its own watched folders independently. Therefore:
 
 > **If two or more consoles watch the *same* shared mailbox+folder, every one of
 > them fires its triggers on every new mail** — duplicate agent turns, duplicate
-> drafted replies, the same runnable run twice. This is intentional: the claim
-> system that used to arbitrate "who handles this" is gone.
+> drafted replies, the same runnable run twice.
 
-This feature is built for **"watch my own mailbox."** For shared mailboxes, keep
-exactly **one** of these true:
+**The fix for a shared helpdesk mailbox is the opt-in, per-trigger claim** (see
+`email-claim-move.md`): set `claim = true` + a `claim_folder` on the matching
+trigger. Each matched mail parks behind a **Claim** button; the winning operator's
+console **moves the item into the claim folder** (Exchange as the shared store, no
+mail round-trip) and only that console runs the action — the other consoles' cards
+flip to "claimed by X". This is a deliberate, reliable replacement for the removed
+`X-Runspec-Claim` marker-email mechanism.
+
+Without claim, this feature is built for **"watch my own mailbox."** For an
+un-claimed shared mailbox, keep exactly **one** of these true:
 
 - **One console per shared folder** — only one operator watches `support/Tickets`.
 - **Per-operator folders** — let **Outlook rules** route each operator's share of

@@ -28,6 +28,7 @@ EXPECTED = {
     "cancel_transfer",
     "check_dir_exists",
     "check_for_update",
+    "claim_email",
     "clear_chat",
     "close_adhoc",
     "close_window",

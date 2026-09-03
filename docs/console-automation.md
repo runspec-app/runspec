@@ -117,7 +117,7 @@ queue   = "support"               # a literal (no template) is passed verbatim
 validation (visible in the Event log). Payload fields you can `match` on and
 map from:
 
-- `outlook` `new_mail`: `from`, `to`, `subject`, `body`, `received`, `categories`, `entry_id`
+- `outlook` `new_mail`: `from`, `to`, `subject`, `body`, `received`, `categories`, `entry_id`, `mailbox`, `folder`, `conversation_id` (`mailbox`/`folder` tag which watched folder the mail landed in — a claim trigger matches on `folder`)
 - `outlook` `reminder`: `subject`, `start`, `location`, `is_meeting`, `organizer`
 - `notifications` `toast`: `app`, `title`, `body`, `text`
 
@@ -126,6 +126,67 @@ array with `action_mode = "sequential"` or `"parallel"`, up to 10) behind one
 grouped confirmation, with an optional single LLM extraction step whose
 output feeds the arg maps as `{{ _llm.* }}` templates. The Triggers editor
 builds all of this.
+
+### Monitoring a mailbox — folders
+
+The `outlook` `new_mail` source watches one **primary** mailbox plus optional
+extra mailboxes, configured in **Settings → Mailbox** and stored in
+`config.toml`. Each mailbox takes a **folders list** — leave it empty to
+monitor the Inbox only:
+
+```toml
+[mailbox]
+address = "helpdesk@corp.com"   # blank/absent → your own default account
+folders = ["Tickets/Open", "Tickets/Alerts"]  # empty/absent → the Inbox
+label   = "Helpdesk"            # optional display label
+
+# Additional watch-only mailboxes/folders (no room/sign-up identity):
+[[watch]]
+address = "alerts@corp.com"
+folders = ["Inbox", "Escalations"]
+```
+
+- `folders` are `/`-separated paths under `address`; each is watched
+  independently and its `new_mail` events are tagged with that `folder`, so a
+  trigger's `match.folder` can scope to one folder (queue).
+- Empty or absent `folders` (or the legacy single `folder = "…"`, still
+  accepted) monitors the **Inbox** only.
+- The folders list is machine-local: it's kept on your machine on a Config
+  Sync pull (`config.toml:mailbox.folders` is a `preserve` default).
+
+### Shared mailboxes — claim (one operator wins)
+
+When several consoles watch the **same** shared mailbox+folder, by default
+every one reacts to every new mail (duplicate replies / runs). Turn on a
+**claim** on the matching trigger so exactly one operator takes each email:
+
+```toml
+[triggers.helpdesk-claim]
+source       = "outlook"
+event        = "new_mail"
+mode         = "agent"            # after a claim, runs as usual (agent or rule)
+claim        = true               # park each matched mail behind a Claim button
+claim_folder = "Tickets/Claimed"  # an EXISTING folder a claimed email moves into
+
+[triggers.helpdesk-claim.match]
+folder = "^Tickets/Open$"         # required with claim — the folder to match on
+```
+
+How it works: a matched mail parks in the run inbox as **Awaiting claim** with
+a **Claim** button. Clicking it **moves the email into `claim_folder`** — the
+move is the claim, arbitrated by Exchange itself (no extra mail is sent). The
+winning console then runs the trigger's action; every other console's card
+flips to **"claimed by X"** and its Claim button disappears.
+
+- `claim_folder` **must already exist** — create it in Outlook first (a missing
+  folder shows an error on the card and the mail stays parked).
+- `claim` needs `match.folder` (the scope) and applies only to `outlook`
+  `new_mail`.
+- The Triggers editor exposes **Folder to match**, a **Claim-based system**
+  switch, and the **Claim folder** field for this.
+
+This is the reliable, opt-in replacement for coordinating a shared helpdesk
+mailbox across a team.
 
 ### Agent-mode triggers and action tools
 

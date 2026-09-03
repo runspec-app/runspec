@@ -19,10 +19,13 @@ from runspec_console.sources.outlook import (
     OutlookSource,
     _build_reminder_item,
     _calendar_options_key,
+    _claim_category,
     _compose_reply_draft,
     _connection_alive,
     _descend,
     _event_row,
+    _owner_from_categories,
+    _same_folder,
     _extract_join_url,
     _folder_segments,
     _office_version_root,
@@ -207,19 +210,27 @@ def test_watches_merges_primary_and_extras_and_dedupes(monkeypatch):
     import runspec_console.config as cfg
 
     monkeypatch.setattr(
-        cfg, "read_mailbox", lambda: {"address": "shared@corp", "folder": "Inbox"}
+        cfg,
+        "read_mailbox",
+        lambda: {"address": "shared@corp", "folders": ["Inbox"], "folder": "Inbox"},
     )
     monkeypatch.setattr(
         cfg,
         "read_watches",
         lambda: [
-            {"address": "", "folder": "Inbox", "label": ""},  # my own inbox
+            {"address": "", "folders": ["Inbox"], "folder": "Inbox", "label": ""},
             {
                 "address": "shared@corp",
+                "folders": ["Inbox"],
                 "folder": "Inbox",
                 "label": "",
             },  # dup of primary
-            {"address": "alerts@corp", "folder": "Ops", "label": ""},
+            {
+                "address": "alerts@corp",
+                "folders": ["Ops"],
+                "folder": "Ops",
+                "label": "",
+            },
         ],
     )
     assert OutlookSource()._watches() == [
@@ -229,13 +240,35 @@ def test_watches_merges_primary_and_extras_and_dedupes(monkeypatch):
     ]
 
 
+def test_watches_expands_a_folders_list(monkeypatch):
+    # One [mailbox] with several folders → one watch per folder (deduped).
+    import runspec_console.config as cfg
+
+    monkeypatch.setattr(
+        cfg,
+        "read_mailbox",
+        lambda: {
+            "address": "shared@corp",
+            "folders": ["Tickets/Open", "Alerts", "Tickets/Open"],
+            "folder": "Tickets/Open",
+        },
+    )
+    monkeypatch.setattr(cfg, "read_watches", lambda: [])
+    assert OutlookSource()._watches() == [
+        {"mailbox": "shared@corp", "folder": "Tickets/Open"},
+        {"mailbox": "shared@corp", "folder": "Alerts"},
+    ]
+
+
 def test_watches_extras_only_without_primary(monkeypatch):
     # No primary [mailbox] but a watch-only extra still produces a watch.
     import runspec_console.config as cfg
 
     monkeypatch.setattr(cfg, "read_mailbox", lambda: None)
     monkeypatch.setattr(
-        cfg, "read_watches", lambda: [{"address": "", "folder": "Inbox", "label": ""}]
+        cfg,
+        "read_watches",
+        lambda: [{"address": "", "folders": ["Inbox"], "folder": "Inbox", "label": ""}],
     )
     assert OutlookSource()._watches() == [{"mailbox": "", "folder": "Inbox"}]
 
@@ -257,6 +290,52 @@ def test_start_is_noop_when_unavailable(monkeypatch):
     src.stop()  # must not raise
     assert emitted == []
     assert src._thread is None
+
+
+# ── claim cores (pure, duck-typed) ────────────────────────────────────────────
+
+
+def test_claim_category_and_owner_roundtrip():
+    cat = _claim_category("alice")
+    assert cat == "Claimed: alice"
+    assert _owner_from_categories(cat) == "alice"
+    # Alongside unrelated categories, comma-joined as Outlook stores them.
+    assert _owner_from_categories("Red, Claimed: bob, Blue") == "bob"
+    # No claim marker present.
+    assert _owner_from_categories("Red, Blue") == ""
+    assert _owner_from_categories("") == ""
+
+
+def test_claim_category_blank_owner():
+    assert _claim_category("") == "Claimed: unknown"
+    assert _claim_category("   ") == "Claimed: unknown"
+
+
+def test_same_folder_compares_parent_entry_id():
+    item = SimpleNamespace(Parent=SimpleNamespace(EntryID="F1"))
+    assert _same_folder(item, SimpleNamespace(EntryID="F1")) is True
+    assert _same_folder(item, SimpleNamespace(EntryID="F2")) is False
+
+
+def test_same_folder_false_on_missing_parent():
+    class NoParent:
+        @property
+        def Parent(self):  # noqa: N802 — COM name
+            raise RuntimeError("gone")
+
+    assert _same_folder(NoParent(), SimpleNamespace(EntryID="F1")) is False
+    # Empty entry ids never match (avoids two blank ids reading as "same").
+    item = SimpleNamespace(Parent=SimpleNamespace(EntryID=""))
+    assert _same_folder(item, SimpleNamespace(EntryID="")) is False
+
+
+def test_claim_message_requires_windows():
+    if sys.platform == "win32":
+        pytest.skip("COM path exercised only off-Windows for the guard")
+    from runspec_console.sources.outlook import claim_message
+
+    with pytest.raises(RuntimeError, match="requires Windows"):
+        claim_message("E1", "alice", claim_folder="Claimed")
 
 
 def test_stop_joins_pump_and_dispatch_threads():

@@ -107,6 +107,38 @@ Settings for the agent's read-only `fetch_url` web-page tool (see
 | `ca_bundle` | — | Path to a private-CA bundle for internal HTTPS hosts |
 | `tls_verify` | `true` | Set `false` to skip TLS verification (TLS-intercepting proxies) |
 
+## `[mailbox]` and `[[watch]]` — email monitoring {#mailbox}
+
+The Outlook `new_mail` trigger source. Set in **Settings → Mailbox**. See
+[Monitoring a mailbox](console-automation.md#monitoring-a-mailbox-folders).
+
+`[mailbox]` — the primary monitored mailbox (also the room / sign-up identity):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `address` | your default account | The account or shared mailbox to monitor (blank = your own default account) |
+| `folders` | `["Inbox"]` | `/`-separated folder paths to watch under `address`; empty/absent = the Inbox only. The legacy scalar `folder = "…"` is still accepted. **Machine-local** on a Config Sync pull. |
+| `label` | — | Optional display label |
+| `once_per_thread` | `false` | Mailbox-wide default: fire on the first message in a thread, ignore later replies (a trigger can override) |
+
+`[[watch]]` — additional watch-only mailboxes/folders (feed `new_mail` triggers
+only; no room/sign-up role): same `address` / `folders` / `label` keys, no
+`once_per_thread`.
+
+Shared mailboxes watched by several consoles should enable a **claim** on the
+matching trigger (below) so exactly one operator handles each email.
+
+## `[triggers.<name>]` — mailbox claim keys {#trigger-claim}
+
+Triggers live in `runspec_triggers.toml` (Triggers tab). The claim gate for a
+shared-mailbox `outlook` / `new_mail` trigger adds two keys — see
+[Shared mailboxes — claim](console-automation.md#shared-mailboxes-claim-one-operator-wins):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `claim` | `false` | Park each matched mail behind a **Claim** button; the winning operator's console claims it and runs the action |
+| `claim_folder` | — | **Required when `claim = true`**: an **existing** folder a claimed email is moved into (the move is the claim). Also requires `match.folder` (the folder to scope to) |
+
 ## `[chat_history]`
 
 | Key | Default | Meaning |

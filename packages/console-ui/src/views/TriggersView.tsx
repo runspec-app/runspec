@@ -305,6 +305,24 @@ export function TriggersView() {
     setPending(prev => { const next = { ...prev }; delete next[cardId]; return next })
   }
 
+  // Shared-mailbox claim: which cards have a claim in flight (button spinner).
+  const [claiming, setClaiming] = useState<Record<string, boolean>>({})
+  const claimEmail = async (cardId: string) => {
+    if (claiming[cardId]) return
+    setClaiming(prev => ({ ...prev, [cardId]: true }))
+    try {
+      const res = await bridge.claim_email(cardId)
+      if (res.claimed) message.success('Claimed — running now.')
+      else if (res.error) message.error(res.error)
+      else message.info(res.owner ? `Already claimed by ${res.owner}.` : 'Already claimed on another console.')
+    } catch (err) {
+      console.error(err)
+      message.error('Could not claim this email.')
+    } finally {
+      setClaiming(prev => { const next = { ...prev }; delete next[cardId]; return next })
+    }
+  }
+
   const sendReply = async (room: string) => {
     const text = (convoDraft[room] || '').trim()
     if (!text) return
@@ -406,7 +424,14 @@ export function TriggersView() {
         transcripts={transcripts}
         emptyText="No trigger runs yet."
         renderRowExtra={card => (
-          pending[card.card_id] ? (
+          card.column === 'awaiting_claim' ? (
+            <Button
+              size="small" type="primary" loading={!!claiming[card.card_id]}
+              onClick={e => { e.stopPropagation(); claimEmail(card.card_id) }}
+            >
+              Claim
+            </Button>
+          ) : pending[card.card_id] ? (
             <Button
               size="small" type="primary"
               onClick={e => { e.stopPropagation(); setSelected(card.card_id) }}
@@ -443,6 +468,34 @@ export function TriggersView() {
                   )}
                 </div>
               ) : null}
+
+              {/* Shared-mailbox claim: this card is parked until an operator takes
+                  it. Claiming moves the email to the claim folder and runs the
+                  action; the poll flips it to "claimed by X" if another console won. */}
+              {card.column === 'awaiting_claim' && (
+                <div style={{
+                  border: `1px solid ${COLUMN_COLOR.awaiting_human}`, borderRadius: 6,
+                  padding: 12, marginBottom: 16,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: COLUMN_COLOR.awaiting_human, fontWeight: 600 }}>
+                      Awaiting claim
+                    </div>
+                    <div style={{ color: dim, fontSize: 12 }}>
+                      Claim to take this email — it moves to{' '}
+                      <code>{String(card.detail?.claim_folder ?? 'the claim folder')}</code>{' '}
+                      and this trigger runs. Only one console wins.
+                    </div>
+                  </div>
+                  <Button
+                    type="primary" loading={!!claiming[card.card_id]}
+                    onClick={() => claimEmail(card.card_id)}
+                  >
+                    Claim
+                  </Button>
+                </div>
+              )}
 
               {p && (
                 <div style={{

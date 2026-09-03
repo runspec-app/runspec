@@ -50,6 +50,12 @@ interface TriggerForm {
   action_allow?: string[]
   reply_draft: boolean
   reply_style?: string
+  // Shared-mailbox claim gate (outlook/new_mail). `match_folder` is the required
+  // folder-to-match (persisted as match.folder); `claim` gates the card behind a
+  // Claim button; `claim_folder` is the existing folder a claim moves the item to.
+  match_folder?: string
+  claim?: boolean
+  claim_folder?: string
 }
 
 export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
@@ -57,6 +63,9 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
   const match = (t.match ?? {}) as Record<string, unknown>
   const map = (t.map ?? {}) as Record<string, unknown>
   const actionsRaw = Array.isArray(t.actions) ? (t.actions as Record<string, unknown>[]) : []
+  // The claim gate's folder-to-match is surfaced as its own field, so pull it out
+  // of the generic match rows (it's persisted back under match.folder on save).
+  const matchFolder = match.folder != null ? String(match.folder) : ''
   return {
     name: String(t.name ?? ''),
     source: t.source ? String(t.source) : undefined,
@@ -64,7 +73,12 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
     mode: t.mode === 'rule' ? 'rule' : 'agent',
     autonomy: t.autonomy ? String(t.autonomy) : 'confirm',
     enabled: t.enabled !== false,
-    match: Object.entries(match).map(([field, pattern]) => ({ field, pattern: String(pattern) })),
+    match: Object.entries(match)
+      .filter(([field]) => field !== 'folder')
+      .map(([field, pattern]) => ({ field, pattern: String(pattern) })),
+    match_folder: matchFolder,
+    claim: !!t.claim,
+    claim_folder: t.claim_folder ? String(t.claim_folder) : '',
     // Absent → inherit the mailbox default; an explicit bool → on/off override.
     once_per_thread: typeof t.once_per_thread === 'boolean' ? (t.once_per_thread ? 'on' : 'off') : 'default',
     rules: t.rules ? String(t.rules) : '',
@@ -87,6 +101,8 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
 export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
   const matchObj: Record<string, string> = {}
   for (const m of v.match || []) if (m?.field?.trim()) matchObj[m.field.trim()] = (m.pattern ?? '').trim()
+  // The dedicated folder-to-match field persists back under match.folder.
+  if ((v.match_folder ?? '').trim()) matchObj.folder = (v.match_folder ?? '').trim()
   const base: Record<string, unknown> = {
     name: (v.name ?? '').trim(),
     source: v.source,
@@ -101,6 +117,11 @@ export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
   // trigger inherits the mailbox default.
   if (v.once_per_thread === 'on') base.once_per_thread = true
   else if (v.once_per_thread === 'off') base.once_per_thread = false
+  // Shared-mailbox claim gate (only meaningful for outlook/new_mail).
+  if (v.claim) {
+    base.claim = true
+    base.claim_folder = (v.claim_folder ?? '').trim()
+  }
   if (v.mode === 'rule') {
     base.pre_turn = (v.pre_turn ?? '').trim()
     if (v.rule_kind === 'list') {
@@ -493,7 +514,11 @@ export function TriggersEditor({
 
   const mode = Form.useWatch('mode', form)
   const source = Form.useWatch('source', form)
+  const event = Form.useWatch('event', form)
+  const claim = Form.useWatch('claim', form)
   const ruleKind = Form.useWatch('rule_kind', form)
+  // The shared-mailbox claim gate only applies to Outlook new_mail triggers.
+  const isMailNew = source === 'outlook' && event === 'new_mail'
   // The single-run target + the action-list rows, watched so the arg editor can
   // resolve the chosen runnable's declared args live.
   const runVal = Form.useWatch('run', form)
@@ -537,6 +562,7 @@ export function TriggersEditor({
       mode: 'agent', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
       runnables: [], map: [], reply_draft: false,
       rule_kind: 'single', action_mode: 'sequential', actions: [], action_allow: [], pre_turn: '',
+      match_folder: '', claim: false, claim_folder: '',
     })
     setEditing(true)
   }
@@ -648,8 +674,33 @@ export function TriggersEditor({
             <Segmented options={[{ label: 'Agent', value: 'agent' }, { label: 'Rule (fixed run)', value: 'rule' }]} />
           </Form.Item>
 
+          {isMailNew && (
+            <Form.Item name="match_folder" label="Folder to match"
+              rules={claim ? [{ required: true, whitespace: true, message: 'A claim trigger needs a folder to match on' }] : []}
+              help="The watched folder this trigger fires on (matched against the mail's folder), e.g. ^Tickets/Open$. Required when the claim system is on so the claim is scoped to one shared folder.">
+              <Input placeholder="^Tickets/Open$" style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+          )}
+
           <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>Match — every field's regex must match the event payload (empty = any event of that source/type)</label>
           {pairRow('match', 'field', 'pattern', 'subject', '(?i)password', 'Add match')}
+
+          {isMailNew && (
+            <>
+              <Form.Item name="claim" valuePropName="checked" label="Claim-based system"
+                style={{ marginBottom: 8 }}
+                help="Shared mailbox watched by several consoles: park each matched mail behind a Claim button so exactly one operator takes it. Claiming moves the email into the claim folder below and then runs this trigger's action.">
+                <Switch size="small" />
+              </Form.Item>
+              {claim && (
+                <Form.Item name="claim_folder" label="Claim folder (must exist)"
+                  rules={[{ required: true, whitespace: true, message: 'A claim trigger needs a destination folder' }]}
+                  help="An existing folder in the mailbox that a claimed email is moved into (the move is the claim — one operator wins). Create it in Outlook first.">
+                  <Input placeholder="Tickets/Claimed" style={{ fontFamily: 'monospace' }} />
+                </Form.Item>
+              )}
+            </>
+          )}
 
           {threaded && (
             <Form.Item name="once_per_thread" label="Replies" style={{ marginBottom: 10 }}

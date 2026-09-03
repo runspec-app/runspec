@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.236.0] — 2026-09-03
+
+### Added
+- **Shared-mailbox claim system (opt-in, per trigger) + a mailbox folders list.**
+  A shared helpdesk mailbox watched by several consoles can now coordinate who
+  handles each email, without the duplicate replies/runs the folder-watch model
+  otherwise produces.
+  - **Mailbox folders list.** `[mailbox]` and `[[watch]]` take a `folders` array
+    (empty ⇒ Inbox only); the Outlook source watches one folder per entry, tagging
+    each `new_mail` with its `folder`. The legacy scalar `folder = "…"` is still
+    read; `config.toml:mailbox.folders` is preserved machine-local on a Config Sync
+    pull. Settings → Mailbox edits the list (tags input).
+  - **Per-trigger claim.** A trigger with `claim = true` + `claim_folder` (and a
+    required `match.folder`) parks each matched mail behind a **Claim** button
+    instead of auto-running. Claiming **moves the shared item into `claim_folder`**
+    — the move is the claim, arbitrated by Exchange itself (server-side, no mail
+    round-trip, unlike the removed `X-Runspec-Claim` marker mail). The winning
+    console runs the trigger's action; the losers' cards flip to *claimed by X* via
+    a lightweight cross-console poll. `claim_folder` must already exist.
+  - New COM helpers `claim_message` / `claim_owner` / `item_in_folder`
+    (`sources/outlook.py`), the engine claim gate (`AWAITING_CLAIM` column,
+    `resume_claim` / `mark_claimed_elsewhere` / `parked_claim`), and the bridge
+    `claim_email` method + poll daemon. Triggers editor gains **Folder to match**,
+    a **Claim-based system** switch, and a **Claim folder** field. See
+    `docs/design/email-claim-move.md` and `docs/console-automation.md`.
+
+
 ## [0.235.0] — 2026-09-03
 
 ### Added

@@ -90,10 +90,17 @@ class TestReadMailbox(unittest.TestCase):
         # Present-but-empty [mailbox] means "watch my default account's Inbox".
         self.assertEqual(
             self._read({"mailbox": {}}),
-            {"address": "", "folder": "Inbox", "label": "", "once_per_thread": False},
+            {
+                "address": "",
+                "folders": ["Inbox"],
+                "folder": "Inbox",
+                "label": "",
+                "once_per_thread": False,
+            },
         )
 
     def test_all_fields(self) -> None:
+        # Legacy scalar `folder` is read as a one-element folders list.
         out = self._read(
             {
                 "mailbox": {
@@ -107,11 +114,29 @@ class TestReadMailbox(unittest.TestCase):
             out,
             {
                 "address": "it@corp",
+                "folders": ["Tickets/Open"],
                 "folder": "Tickets/Open",
                 "label": "IT",
                 "once_per_thread": False,
             },
         )
+
+    def test_folders_list(self) -> None:
+        # The new folders array: normalised, deduped; folder = folders[0].
+        out = self._read(
+            {
+                "mailbox": {
+                    "address": "it@corp",
+                    "folders": ["Tickets/Open", "inbox", "Tickets/Open", "Alerts"],
+                }
+            }
+        )
+        self.assertEqual(out["folders"], ["Tickets/Open", "Inbox", "Alerts"])
+        self.assertEqual(out["folder"], "Tickets/Open")
+
+    def test_empty_folders_list_is_inbox(self) -> None:
+        out = self._read({"mailbox": {"address": "it@corp", "folders": []}})
+        self.assertEqual(out["folders"], ["Inbox"])
 
     def test_inbox_aliases_normalize(self) -> None:
         self.assertEqual(
@@ -185,7 +210,18 @@ class TestWriteMailbox(unittest.TestCase):
         parsed = _roundtrip(out)
         self.assertEqual(
             parsed["mailbox"],
-            {"address": "it@corp", "folder": "Tickets/Open", "label": "IT"},
+            {"address": "it@corp", "folders": ["Tickets/Open"], "label": "IT"},
+        )
+
+    def test_folders_list_round_trips(self) -> None:
+        out = self._roundtrip(
+            {"address": "it@corp", "folders": ["Tickets/Open", "Alerts"]}
+        )
+        self.assertEqual(out["mailbox"]["folders"], ["Tickets/Open", "Alerts"])
+        parsed = _roundtrip(out)
+        self.assertEqual(
+            parsed["mailbox"],
+            {"address": "it@corp", "folders": ["Tickets/Open", "Alerts"]},
         )
 
 
@@ -212,7 +248,7 @@ class TestReadWatches(unittest.TestCase):
         # A bare [[watch]] entry = my own default account's Inbox.
         self.assertEqual(
             self._read({"watch": [{}]}),
-            [{"address": "", "folder": "Inbox", "label": ""}],
+            [{"address": "", "folders": ["Inbox"], "folder": "Inbox", "label": ""}],
         )
 
     def test_fields_and_normalisation(self) -> None:
@@ -220,22 +256,32 @@ class TestReadWatches(unittest.TestCase):
             {
                 "watch": [
                     {"address": " a@corp ", "folder": "inbox", "label": " A "},
-                    {"address": "b@corp", "folder": "Tickets/Open"},
+                    {"address": "b@corp", "folders": ["Tickets/Open", "Alerts"]},
                 ]
             }
         )
         self.assertEqual(
             out,
             [
-                {"address": "a@corp", "folder": "Inbox", "label": "A"},
-                {"address": "b@corp", "folder": "Tickets/Open", "label": ""},
+                {
+                    "address": "a@corp",
+                    "folders": ["Inbox"],
+                    "folder": "Inbox",
+                    "label": "A",
+                },
+                {
+                    "address": "b@corp",
+                    "folders": ["Tickets/Open", "Alerts"],
+                    "folder": "Tickets/Open",
+                    "label": "",
+                },
             ],
         )
 
     def test_non_dict_entries_skipped(self) -> None:
         self.assertEqual(
             self._read({"watch": ["nope", {}]}),
-            [{"address": "", "folder": "Inbox", "label": ""}],
+            [{"address": "", "folders": ["Inbox"], "folder": "Inbox", "label": ""}],
         )
 
 
@@ -286,7 +332,17 @@ class TestWriteWatches(unittest.TestCase):
         parsed = _roundtrip(out)
         self.assertEqual(
             parsed["watch"],
-            [{}, {"address": "b@corp", "folder": "Tickets/Open", "label": "B"}],
+            [{}, {"address": "b@corp", "folders": ["Tickets/Open"], "label": "B"}],
+        )
+
+    def test_folders_list_round_trips(self) -> None:
+        out = self._roundtrip(
+            [{"address": "b@corp", "folders": ["Tickets/Open", "Escalations"]}]
+        )
+        parsed = _roundtrip(out)
+        self.assertEqual(
+            parsed["watch"],
+            [{"address": "b@corp", "folders": ["Tickets/Open", "Escalations"]}],
         )
 
 

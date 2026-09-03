@@ -329,7 +329,11 @@ export interface DocsGenResult {
 // See docs/design/teams-and-email-monitoring.md.
 export interface Mailbox {
   address: string
-  folder: string
+  // The folders to monitor under this mailbox (each a /-separated path). Empty =
+  // the Inbox only. The legacy single `folder` is still read as a one-element
+  // list; `folder` is kept as folders[0] for single-folder callers.
+  folders?: string[]
+  folder?: string
   label: string
   // Mailbox-wide default for suppressing replies (once per thread). A trigger
   // inherits this unless it sets its own override. Default false.
@@ -343,7 +347,8 @@ export interface Mailbox {
 // to each trigger's own once_per_thread. See read_watches() in config.py.
 export interface Watch {
   address: string
-  folder: string
+  folders?: string[]
+  folder?: string
   label: string
 }
 
@@ -1358,6 +1363,10 @@ export interface BridgeApi {
   // through the trigger's match/rota/dedup gates (unlike test_trigger). `fields`
   // are extra key=value payload. `skipped` explains a gated no-run.
   submit_paste_input: (name: string, text: string, fields: Record<string, string>) => Promise<{ ok: boolean; skipped?: string; error?: string }>
+  // Claim the parked shared-mailbox email behind a trigger card (the Claim
+  // button). Moves the item into the trigger's claim folder — the winning console
+  // runs the action; a loser sees `owner`; a config error leaves it parked.
+  claim_email: (cardId: string) => Promise<{ claimed: boolean; owner?: string; error?: string }>
   // Schedules mirror the trigger run inbox + event log with their own feeds.
   get_schedule_board: () => Promise<RunCard[]>
   get_schedule_events: () => Promise<TriggerEvent[]>

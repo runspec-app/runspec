@@ -53,7 +53,8 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   triggers                   → console `runspec_triggers.toml` ([[triggers]])
 #   schedule                   → console `runspec_schedules.toml` ([[schedule]])
 #   runbook                    → console `runspec_runbooks.toml` ([[runbook]] runbooks)
-#   mailboxes                  → console `config.toml` email folder-watch list
+#   mailboxes                  → console `config.toml` email folder-watch list (legacy)
+#   mailbox / watch            → console `config.toml` monitored mailbox + folders list
 #   config_sync                → console `config.toml` Config Sync settings
 #   config_seed / seed         → console `config.toml` seed / `runspec_seed_state.toml`
 #   host                       → console `runspec_hosts.toml` ([[host]] fleet entries)
@@ -87,6 +88,8 @@ NON_RUNSPEC_SECTIONS = {
     "saved_run",
     "rota",
     "mailboxes",
+    "mailbox",
+    "watch",
     "config_sync",
     "config_seed",
     "seed",

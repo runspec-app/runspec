@@ -66,6 +66,8 @@ _TRIGGER_KEYS = frozenset(
         "action_mode",
         "pre_turn",
         "action_allow",
+        "claim",
+        "claim_folder",
     }
 )
 
@@ -170,12 +172,19 @@ class Column:
     TRIGGERED = "triggered"
     TRIAGE = "triage"
     AWAITING_HUMAN = "awaiting_human"
+    # A claim-enabled trigger parks here until an operator clicks Claim. Non-
+    # terminal (the run hasn't happened) but the engine does not force it to DONE
+    # on the parking dispatch — it sits until claimed or claimed-elsewhere.
+    AWAITING_CLAIM = "awaiting_claim"
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
 
 
 _TERMINAL = frozenset({Column.DONE, Column.FAILED})
+# Columns a card may rest in without the engine forcing a terminal DONE when the
+# handler returns / the dispatch parks (see TriggerEngine._dispatch / _run).
+_PARKED = frozenset({Column.AWAITING_CLAIM})
 
 
 # ── reply settings ──────────────────────────────────────────────────────────
@@ -269,6 +278,14 @@ class Trigger:
     # One model call, no runnable tools — it extracts, it does not act or branch.
     pre_turn: str = ""
     reply: ReplySettings = field(default_factory=ReplySettings)
+    # Shared-mailbox claim gate (outlook/new_mail only). When ``claim`` is true a
+    # matched mail does NOT auto-run: its card parks in ``awaiting_claim`` until an
+    # operator clicks Claim; the winning console moves the item into ``claim_folder``
+    # (which must already exist) and then runs the trigger's normal action. This
+    # coordinates several consoles watching one shared folder — exactly one wins.
+    # See docs/design/email-claim-move.md.
+    claim: bool = False
+    claim_folder: str = ""
 
     # Compiled match patterns, filled in __post_init__.
     _patterns: dict[str, re.Pattern[str]] = field(default_factory=dict, repr=False)
@@ -425,6 +442,28 @@ class Trigger:
             style=str(reply_raw.get("style") or ""),
         )
 
+        # Shared-mailbox claim gate. Only meaningful for the Outlook new_mail
+        # source; when on it needs a folder to scope to (match.folder) and a
+        # destination folder to move the claimed item into.
+        claim = bool(data.get("claim", False))
+        claim_folder = str(data.get("claim_folder") or "").strip()
+        if claim:
+            if source != "outlook" or event != "new_mail":
+                raise ValueError(
+                    f"trigger '{name}': 'claim' is only supported for "
+                    "source='outlook', event='new_mail'."
+                )
+            if not str(match.get("folder") or "").strip():
+                raise ValueError(
+                    f"trigger '{name}': a claim trigger needs a folder to match on — "
+                    "set [triggers.match] folder to the watched shared folder."
+                )
+            if not claim_folder:
+                raise ValueError(
+                    f"trigger '{name}': a claim trigger needs 'claim_folder' — the "
+                    "existing folder a claimed message is moved into."
+                )
+
         return cls(
             name=name,
             source=source,
@@ -445,6 +484,8 @@ class Trigger:
             action_allow=action_allow,
             pre_turn=str(data.get("pre_turn") or ""),
             reply=reply,
+            claim=claim,
+            claim_folder=claim_folder,
         )
 
     def matches(self, event: Event) -> bool:
@@ -686,6 +727,11 @@ class TriggerEngine:
         }
         self._lock = threading.Lock()
         self._started = False
+        # Claim gate: a claim-enabled trigger parks its card here (keyed by card id)
+        # instead of running, until the bridge resolves it. ``_claim_granted`` marks
+        # cards a claim was won for, so the re-dispatched run skips the gate.
+        self._parked_claims: dict[str, tuple[TriggerCard, Trigger, Event]] = {}
+        self._claim_granted: set[str] = set()
 
     # -- lifecycle --
 
@@ -760,13 +806,15 @@ class TriggerEngine:
         tab's "Trigger now" button — so a user can exercise a trigger without
         waiting for a real event. Deliberately bypasses ``match``, the rota gate,
         and once_per_thread dedup: the user explicitly chose *this* trigger to
-        test, so the run should always happen. Records an audit entry (matched)
-        and returns the run's Future. Returns ``None`` if no such trigger."""
+        test, so the run should always happen. Also bypasses the claim gate — a
+        synthetic test event has no real message to move, so it runs directly.
+        Records an audit entry (matched) and returns the run's Future. Returns
+        ``None`` if no such trigger."""
         trigger = next((t for t in self._triggers if t.name == name), None)
         if trigger is None:
             return None
         self._record_event(event, [name], [], [])
-        return self._dispatch(trigger, event)
+        return self._dispatch(trigger, event, claim_gate=False)
 
     def fire_paste(self, name: str, event: Event) -> dict[str, Any]:
         """Dispatch one named ``source = "paste"`` trigger with an operator-pasted
@@ -902,7 +950,9 @@ class TriggerEngine:
         except Exception:
             logger.exception("trigger event-audit hook failed")
 
-    def _dispatch(self, trigger: Trigger, event: Event) -> Future[None]:
+    def _dispatch(
+        self, trigger: Trigger, event: Event, *, claim_gate: bool = True
+    ) -> Future[None] | None:
         card = TriggerCard(
             id=uuid.uuid4().hex[:12],
             trigger=trigger.name,
@@ -920,20 +970,76 @@ class TriggerEngine:
             event.type,
             card.id,
         )
+        # Claim gate: a claim-enabled trigger parks the card until an operator wins
+        # the claim (bridge.claim_email → resume_claim). No action runs yet; the
+        # card sits in AWAITING_CLAIM and is not submitted to the executor.
+        if claim_gate and trigger.claim and card.id not in self._claim_granted:
+            self._parked_claims[card.id] = (card, trigger, event)
+            card.move(
+                Column.AWAITING_CLAIM,
+                claim=True,
+                claim_folder=trigger.claim_folder,
+                entry_id=str(event.payload.get("entry_id") or ""),
+                mailbox=str(event.payload.get("mailbox") or ""),
+                folder=str(event.payload.get("folder") or ""),
+            )
+            return None
         return self._executor.submit(self._run, card, trigger, event)
 
     def _run(self, card: TriggerCard, trigger: Trigger, event: Event) -> None:
         """Run one card's action, serialised against other runs of the same
-        trigger, with a guaranteed terminal column."""
+        trigger, with a guaranteed terminal column (unless the handler parked it)."""
         lock = self._trigger_locks.setdefault(trigger.name, threading.Lock())
         with lock:
             try:
                 self._handler(card, trigger, event)
-                if not card.terminal:
+                if not card.terminal and card.column not in _PARKED:
                     card.move(Column.DONE)
             except Exception as exc:  # noqa: BLE001 — surface on the card, don't crash the worker
                 logger.exception("trigger '%s' card %s failed", trigger.name, card.id)
                 card.move(Column.FAILED, error=str(exc))
+
+    # -- claim gate (shared-mailbox coordination) --
+
+    def parked_claim(self, card_id: str) -> tuple[Trigger, Event] | None:
+        """The ``(trigger, event)`` of a card parked awaiting claim, or ``None``.
+        The bridge reads the event payload (entry_id/mailbox/folder) + the
+        trigger's ``claim_folder`` to attempt the Exchange move."""
+        parked = self._parked_claims.get(card_id)
+        return (parked[1], parked[2]) if parked is not None else None
+
+    def parked_claim_ids(self) -> list[str]:
+        """Card ids currently parked awaiting a claim (for the bridge's poll)."""
+        return list(self._parked_claims)
+
+    def resume_claim(self, card_id: str) -> bool:
+        """A claim was won for ``card_id`` — run the trigger's action now. Marks the
+        card granted and re-dispatches ``_run`` (which skips the gate). Returns
+        ``False`` if the card isn't parked (already resolved / unknown)."""
+        parked = self._parked_claims.pop(card_id, None)
+        if parked is None:
+            return False
+        card, trigger, event = parked
+        self._claim_granted.add(card_id)
+        card.move(Column.TRIAGE, claimed=True)
+        self._executor.submit(self._run, card, trigger, event)
+        return True
+
+    def mark_claimed_elsewhere(self, card_id: str, owner: str = "") -> bool:
+        """The item was claimed on another console — resolve ``card_id`` as done,
+        noting the owner. Returns ``False`` if the card isn't parked."""
+        parked = self._parked_claims.pop(card_id, None)
+        if parked is None:
+            return False
+        card, _trigger, _event = parked
+        who = str(owner or "").strip()
+        card.move(
+            Column.DONE,
+            claimed_elsewhere=True,
+            claimed_by=who,
+            note=f"claimed by {who}" if who else "claimed on another console",
+        )
+        return True
 
 
 def load_triggers(configs: list[dict[str, Any]]) -> tuple[list[Trigger], list[str]]:
