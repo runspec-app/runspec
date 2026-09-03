@@ -7,6 +7,7 @@ import {
   HistoryOutlined,
   CalendarOutlined,
   BarChartOutlined,
+  BulbOutlined,
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
@@ -28,6 +29,7 @@ import {
 import { ConsoleView } from './views/ConsoleView'
 import { SpecsView } from './views/SpecsView'
 import { HistoryView } from './views/HistoryView'
+import { ImproveView } from './views/ImproveView'
 import { LogsView } from './views/LogsView'
 import { SchedulesView } from './views/SchedulesView'
 import { TriggersView } from './views/TriggersView'
@@ -48,7 +50,7 @@ import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type Host, type HostProfile, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, UI_FONT, textMuted, textSecondary, textFaint } from './ThemeContext'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'forms' | 'schedules' | 'triggers' | 'rota' | 'analytics' | 'improve' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -656,6 +658,7 @@ export default function App() {
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
     { key: 'logs'      as ViewKey, label: 'Logs',      icon: <FileTextOutlined /> },
     { key: 'analytics' as ViewKey, label: 'Analytics', icon: <BarChartOutlined /> },
+    { key: 'improve'   as ViewKey, label: 'Improve',   icon: <BulbOutlined /> },
     { key: 'specs'     as ViewKey, label: 'Specs',     icon: <AppstoreOutlined /> },
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
     {
@@ -1222,6 +1225,7 @@ export default function App() {
                     {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
+                    {view === 'improve'   && <ImproveView active={view === 'improve'} />}
                     {view === 'rota'      && <RotaView />}
                     {view === 'dev'       && <DevView />}
                   </div>

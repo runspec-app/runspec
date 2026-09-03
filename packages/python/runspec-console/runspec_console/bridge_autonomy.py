@@ -41,6 +41,7 @@ from .bridge_const import (
     _HISTORY_TOOL_NAMES,
     _FILES_TOOL_NAMES,
     _WEB_TOOL_NAMES,
+    _IMPROVE_TOOL_NAMES,
     _OUTLOOK_READ_TOOLS,
     _OUTLOOK_WRITE_TOOLS,
     _OUTLOOK_TOOL_NAMES,
@@ -130,6 +131,8 @@ class AutonomyMixin:
             return "autonomous"  # read-only directory listing — no side effects
         if tool_name in _WEB_TOOL_NAMES:
             return "autonomous"  # read-only web GET — no side effects
+        if tool_name in _IMPROVE_TOOL_NAMES:
+            return "autonomous"  # read-only analysis of local transcripts/history
         if tool_name in _WORKSPACE_TOOL_NAMES:
             # read/write inside the current session's workspace only — no prompt
             return "autonomous"
@@ -1164,6 +1167,8 @@ class AutonomyMixin:
             return self._run_files_tool(dict(tool_input or {}))
         if tool_name in _WEB_TOOL_NAMES:
             return self._run_web_tool(dict(tool_input or {}))
+        if tool_name in _IMPROVE_TOOL_NAMES:
+            return self._run_improve_tool(dict(tool_input or {}))
         if tool_name in _WORKSPACE_TOOL_NAMES:
             return self._run_workspace_tool(
                 tool_name,

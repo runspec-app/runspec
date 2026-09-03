@@ -8,6 +8,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.235.0] — 2026-09-03
+
+### Added
+- **Improve — a built-in evaluation + problem-report system (new *Improve* tab,
+  `[improve]` config).** A way to *continuously improve* the agent, the
+  runnables, and the app rather than debug one incident at a time. Improve mines
+  the data the console already keeps — saved chat conversations
+  (`conversations.py`) and the run-history audit records (`get_history_all`) — and
+  scores effectiveness: tool-search behaviour (the `search_runnables →
+  describe_runnable → run_runnable` funnel, empty searches), argument-discovery
+  **bounces** (classified unknown-arg / missing-required / bad-choice /
+  out-of-range from the preflight text), turns that had to be **stopped and given
+  guidance** (the `paused after N tool steps` marker), self-recovery, errors
+  (transcript `⚠ Error:` + run_summary non-zero exits / exceptions), and operator
+  **autonomy** denials/edits. One engine, two doors: an **evaluation sweep**
+  (manual or scheduled) and a **"report a problem"** action where the operator's
+  free-text comment is carried into the report so the LLM-judge pass can correlate
+  the complaint against the evidence.
+  - **Pure core `improve.py`** (stdlib only, unit-tested) builds the report;
+    **`bridge_improve.py`** (`ImproveMixin`) does the I/O — gathering inputs,
+    persisting a dated report to the machine-local store
+    (`config.improve_reports_dir()`), the optional **LLM-judge synthesis** via the
+    console's own adapter (`synthesize_improve_report` → ranked
+    `{category, target, why, fix, confidence}` recommendations), and a portable
+    `[[learning]]` snippet.
+  - **Developer handoff, no mail dependency:** `[improve] developer_emails` names
+    who a report is for (it ships in the config seed / rides Config Sync inside
+    `config.toml`, feeds the synthesis prompt, and is printed atop the report);
+    the **Email developers** button opens the operator's default mail client via a
+    `mailto:` (`improve_mailto`). Durable learnings ride out through the report —
+    the developer (or their coding agent) folds them into their Config Sync repo /
+    seed **on their own terms**; the console never writes back to a shared repo.
+  - **Agent tool `run_improve_report`** (read-only → autonomous; deferred, not a
+    hot built-in) lets the chat agent — or a scheduled `action = "prompt"` turn —
+    generate a report. Public JS API: `run_improve_report` /
+    `list_improve_reports` / `load_improve_report` / `delete_improve_report` /
+    `synthesize_improve_report` / `improve_mailto`. See
+    `docs/console-improve.md`, `docs/design/console-improve.md`.
+
+
 ## [0.234.0] — 2026-09-01
 
 ### Fixed / Added

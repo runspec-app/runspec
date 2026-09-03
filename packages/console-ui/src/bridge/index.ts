@@ -550,6 +550,62 @@ export interface ConversationMeta {
   preview: string
 }
 
+// ── Improve (effectiveness + problem report) ──────────────────────────────────
+export interface ImproveIncident {
+  conversation_id: string
+  turn_index: number
+  category: string
+  evidence: string
+  tool?: string
+  runnable?: string
+  bounce_kind?: string
+  run_id?: string
+  host?: string
+  ts?: string
+}
+
+export interface ImproveRecommendation {
+  category: string
+  target: string
+  why: string
+  fix: string
+  confidence: string
+}
+
+// A saved Improve report. `synthesis` (+ `markdown`/`learnings_toml` regenerated
+// with it) is attached only after the optional LLM-judge pass runs.
+export interface ImproveReport {
+  id: string
+  ts: string
+  kind: 'evaluation' | 'problem_report'
+  product_name: string
+  developer_emails: string[]
+  comment: string
+  window_days: number
+  since_iso: string
+  metrics: Record<string, number>
+  scores: Record<string, number>
+  bounce_kinds: Record<string, number>
+  autonomy_by_tool: Record<string, { denied: number; edited: number }>
+  runnables: Record<string, unknown>[]
+  incidents: ImproveIncident[]
+  incident_total: number
+  incident_shown: number
+  markdown?: string
+  learnings_toml?: string
+  synthesis?: { summary?: string; correlation?: string; recommendations?: ImproveRecommendation[] }
+  synthesis_error?: string
+}
+
+export interface ImproveReportMeta {
+  id: string
+  ts: string
+  kind: 'evaluation' | 'problem_report'
+  comment: string
+  product_name: string
+  has_synthesis: boolean
+}
+
 export interface ConversationTurn {
   // Absent ⇒ a chat exchange; 'operator_run' is an operator-initiated manual
   // runnable run, rendered for the operator but never replayed to the agent.
@@ -1207,6 +1263,22 @@ export interface BridgeApi {
   resume_conversation: (id: string) => Promise<{ ok: boolean; turns?: number; kept?: number; compacted?: boolean; summarized?: boolean; exact?: boolean; error?: string }>
   delete_conversation: (id: string) => Promise<void>
   rename_conversation: (id: string, title: string) => Promise<void>
+  // ── Improve (effectiveness + problem report) ──────────────────────────────────
+  // Mine this install's saved conversations + run history into an effectiveness
+  // report. A non-empty comment makes it a problem report (carried into the
+  // report for correlation). window_days 0 ⇒ the [improve] config default.
+  run_improve_report: (windowDays?: number, comment?: string) => Promise<ImproveReport>
+  // Saved reports, newest first.
+  list_improve_reports: () => Promise<ImproveReportMeta[]>
+  load_improve_report: (reportId: string) => Promise<ImproveReport | null>
+  delete_improve_report: (reportId: string) => Promise<boolean>
+  // Run the LLM-judge pass over a saved report → ranked recommendations (+ a
+  // comment↔evidence correlation for a problem report). Best-effort: returns the
+  // report with `synthesis_error` when no provider is configured or the call fails.
+  synthesize_improve_report: (reportId: string) => Promise<ImproveReport>
+  // Build a mailto: to the configured developer_emails with the report body, open
+  // the operator's default mail client, and return the URL (also usable as a link).
+  improve_mailto: (reportId: string) => Promise<string>
   // ── runbooks (user-invocable, parameterized runbooks) ─────────────────────────
   // All runbooks with their [runbook.args] parsed to ArgDef[] — feeds the `$` menu,
   // the run modal, and the Settings editor.

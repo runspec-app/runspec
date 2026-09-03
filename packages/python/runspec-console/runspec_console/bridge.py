@@ -39,6 +39,7 @@ from .bridge_config_tools import ConfigToolsMixin
 from .bridge_search import SearchMixin
 from .bridge_internals import InternalsMixin
 from .bridge_triggers import TriggersMixin
+from .bridge_improve import ImproveMixin
 
 
 class Bridge(
@@ -57,6 +58,7 @@ class Bridge(
     SearchMixin,
     InternalsMixin,
     TriggersMixin,
+    ImproveMixin,
 ):
     def __init__(self) -> None:
         self._window: Any = None

@@ -95,6 +95,14 @@ _FILES_TOOL_NAMES = frozenset({"list_files"})
 # needed). Dropped entirely by [web] enabled = false.
 _WEB_TOOL_NAMES = frozenset({"fetch_url"})
 
+# Improve: generate an effectiveness / problem report by mining this install's own
+# saved conversations + run history (tool-search funnels, argument bounces, stops,
+# errors, autonomy denials). Read-only analysis — no side effects, so the autonomy
+# gate runs it without a prompt. Rare and heavy (it reads across the whole history),
+# so it is NOT a hot built-in — fine deferred behind describe_tool/use_tool in
+# search mode. Offered only when [improve] enabled (default true).
+_IMPROVE_TOOL_NAMES = frozenset({"run_improve_report"})
+
 # Outlook Classic (desktop COM) agent tools. Reads are autonomous (no side
 # effects — local COM reads on the operator's box); draft/send are write actions
 # and prompt before running. Only offered when Outlook COM is available (Windows
@@ -250,6 +258,7 @@ _BUILTIN_TOOL_NAMES = (
     | _HISTORY_TOOL_NAMES
     | _FILES_TOOL_NAMES
     | _WEB_TOOL_NAMES
+    | _IMPROVE_TOOL_NAMES
     | _ACTION_TOOL_NAMES
     | _WORKSPACE_TOOL_NAMES
     | _EXEC_TOOL_NAMES

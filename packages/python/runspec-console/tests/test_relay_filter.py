@@ -412,6 +412,7 @@ class _ToolBridge:
     _history_tools = Bridge._history_tools
     _files_tools = Bridge._files_tools
     _web_tools = Bridge._web_tools
+    _improve_tools = Bridge._improve_tools
     _workspace_tools = Bridge._workspace_tools
     _exec_tools = Bridge._exec_tools
     _action_tools = Bridge._action_tools

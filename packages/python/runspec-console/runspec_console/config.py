@@ -184,6 +184,16 @@ def conversations_dir() -> Path:
     return app_dir() / "conversations"
 
 
+def improve_reports_dir() -> Path:
+    """Directory holding saved **Improve** reports (one `{ts}.json` per report) —
+    the effectiveness/problem-report analyses produced by the Improve tab.
+    **Machine-local** — a report is derived from this install's own transcripts +
+    run history, so it is **never** synced (not in Config Sync's KNOWN_FILES),
+    like conversations and History. The developer takes the report and folds any
+    durable learnings into their Config Sync repo / seed on their own terms."""
+    return app_dir() / "improve"
+
+
 def workspaces_root() -> Path:
     """Parent dir for per-session agent workspaces (one subdir per chat
     conversation, trigger event, or schedule run). Large runnable outputs get
@@ -254,6 +264,47 @@ def read_web() -> dict[str, Any]:
         "max_bytes": max(1, int(cfg.get("max_bytes", 2_000_000) or 2_000_000)),
         "ca_bundle": ca or None,
         "tls_verify": bool(cfg.get("tls_verify", True)),
+    }
+
+
+def read_improve() -> dict[str, Any]:
+    """The ``[improve]`` settings for the Improve (evaluation + problem-report)
+    feature, with defaults applied.
+
+    Lives in ``config.toml``, so it rides Config Sync / the config seed
+    automatically — a white-label deploy can bundle ``developer_emails`` and
+    ``product_name`` in its seed so a fresh install already knows who its reports
+    are for.
+
+    - ``enabled`` (default true): whether the Improve tab + agent tool are offered.
+    - ``product_name``: brand shown in the report + mail subject (falls back to the
+      resolved app title when blank).
+    - ``developer_emails``: recipients the report is addressed to and the mailto
+      pre-fills. The console never emails on its own — it only opens the operator's
+      default mail client (a mailto), and the developers fold any learnings back
+      into their sync repo / seed however they want.
+    - ``window_days`` (default 30): how far back to mine conversations + history.
+    - ``max_conversations`` (default 200): cap on conversations sampled per run.
+    - ``max_incidents`` (default 40): cap on flagged incidents in a report.
+    - ``llm_synthesis`` (default true): whether the LLM-judge recommendation pass is
+      offered (still needs a configured provider to actually run)."""
+    raw = read_config().get("improve")
+    cfg = dict(raw) if isinstance(raw, dict) else {}
+    emails = cfg.get("developer_emails")
+    if isinstance(emails, str):
+        parts = [e.strip() for e in re.split(r"[,;\s]+", emails) if e.strip()]
+    elif isinstance(emails, list):
+        parts = [str(e).strip() for e in emails if str(e).strip()]
+    else:
+        parts = []
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "product_name": str(cfg.get("product_name") or "").strip(),
+        "developer_emails": parts,
+        "window_days": max(1, int(cfg.get("window_days", 30) or 30)),
+        "max_conversations": max(1, int(cfg.get("max_conversations", 200) or 200)),
+        "max_incidents": max(1, int(cfg.get("max_incidents", 40) or 40)),
+        "llm_synthesis": bool(cfg.get("llm_synthesis", True)),
     }
 
 

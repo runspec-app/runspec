@@ -21,7 +21,7 @@ to read, seed, or sync them directly. All files are plain TOML.
 | `runspec_repos.toml` | Agent-accessible repo registry | Yes (checkout paths are machine-local) | Settings → Repos |
 | `runspec_self_service.toml` | Room self-service catalogue | Yes | Settings → Self-Service |
 | `runspec_memory.toml` | Agent memory | No — machine-local | Agent (`remember`) |
-| `conversations/`, `workspaces/`, `repos/` | Chat history, session scratch, repo checkouts | No | — |
+| `conversations/`, `workspaces/`, `repos/`, `improve/` | Chat history, session scratch, repo checkouts, [Improve](console-improve.md) reports | No | — |
 
 "Synced" means the file participates in [Config Sync](console-team.md) and
 package [config seeds](white-label.md); machine-local files never leave the
@@ -115,6 +115,25 @@ Settings for the agent's read-only `fetch_url` web-page tool (see
 | `max_conversations` / `max_age_days` | 200 / 90 | Retention pruning |
 | `compact_on_resume` | `false` | Use the model to summarise the middle of a long resumed chat (otherwise a mechanical note) |
 | `resume_keep_first` / `resume_keep_recent` | 1 / 20 | Turns kept verbatim when resuming a long chat |
+
+## `[improve]`
+
+Settings for the [Improve](console-improve.md) evaluation & problem-report
+feature. Lives in `config.toml`, so it rides Config Sync and the config seed —
+a white-label deployment can bundle who its developers are.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Master switch for the Improve tab + `run_improve_report` agent tool |
+| `product_name` | — | Brand shown in the report and mail subject (falls back to the app title) |
+| `developer_emails` | `[]` | Recipients the report is addressed to and the **Email developers** mailto pre-fills (a list, or a comma/space-separated string) |
+| `window_days` | 30 | Default look-back window mined from conversations + history |
+| `max_conversations` | 200 | Cap on conversations sampled per run |
+| `max_incidents` | 40 | Cap on flagged incidents in a report |
+| `llm_synthesis` | `true` | Offer the LLM recommendation pass (needs an `[llm]` provider) |
+
+Reports themselves are machine-local and **never synced** (each is derived from
+this install's own transcripts).
 
 ## `[plugins]`
 
