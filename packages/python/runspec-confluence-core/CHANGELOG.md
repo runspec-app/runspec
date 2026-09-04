@@ -2,6 +2,23 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.7.0] — 2026-09-04
+
+Enable HTTP retry with backoff by default. `build_client` now constructs the
+`atlassian.Confluence` client with `backoff_and_retry=True`, so transient
+throttling / outage responses (`429`, `413`, `503`, honouring `Retry-After`) are
+retried with exponential backoff instead of failing the call immediately. The
+SDK's own retry defaults are unbounded for an interactive/agent context (up to
+1000 attempts / 1800s), so this caps them to **5 attempts / 30s**. New
+`ConfluenceConfig.retry` field (default `True`) and `CONFLUENCE_RETRY` env var —
+set either false-y to restore the previous no-retry behaviour.
+
+The caps are configurable: `ConfluenceConfig.max_backoff_retries` /
+`max_backoff_seconds` (env `CONFLUENCE_MAX_BACKOFF_RETRIES` /
+`CONFLUENCE_MAX_BACKOFF_SECONDS`), defaulting to the exported
+`DEFAULT_MAX_BACKOFF_RETRIES` (5) / `DEFAULT_MAX_BACKOFF_SECONDS` (30) — so an
+importing package can tune them relative to the baseline.
+
 ## [0.6.0] — 2026-09-02
 
 Server/Data-Center correctness fixes and read-shaping improvements. **Three

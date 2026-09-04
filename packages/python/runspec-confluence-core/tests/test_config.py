@@ -77,6 +77,45 @@ def test_dataclass_defaults():
     assert cfg.verify_ssl is True
     assert cfg.space is None
     assert cfg.proxies is None
+    assert cfg.retry is True
+
+
+def test_retry_default_true_from_env(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://acme.atlassian.net/wiki")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    assert config_from_env().retry is True
+
+
+def test_retry_disabled_from_env(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://acme.atlassian.net/wiki")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    monkeypatch.setenv("CONFLUENCE_RETRY", "false")
+    assert config_from_env().retry is False
+
+
+def test_retry_caps_default_on_dataclass():
+    from runspec_confluence_core import DEFAULT_MAX_BACKOFF_RETRIES, DEFAULT_MAX_BACKOFF_SECONDS
+
+    cfg = ConfluenceConfig(url="https://x", cloud=True)
+    assert cfg.max_backoff_retries == DEFAULT_MAX_BACKOFF_RETRIES == 5
+    assert cfg.max_backoff_seconds == DEFAULT_MAX_BACKOFF_SECONDS == 30
+
+
+def test_retry_caps_from_env(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://acme.atlassian.net/wiki")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    monkeypatch.setenv("CONFLUENCE_MAX_BACKOFF_RETRIES", "8")
+    monkeypatch.setenv("CONFLUENCE_MAX_BACKOFF_SECONDS", "90")
+    cfg = config_from_env()
+    assert cfg.max_backoff_retries == 8
+    assert cfg.max_backoff_seconds == 90
+
+
+def test_retry_caps_env_non_numeric_falls_back(monkeypatch):
+    monkeypatch.setenv("CONFLUENCE_URL", "https://acme.atlassian.net/wiki")
+    monkeypatch.setenv("CONFLUENCE_PERSONAL_TOKEN", "p")
+    monkeypatch.setenv("CONFLUENCE_MAX_BACKOFF_RETRIES", "lots")
+    assert config_from_env().max_backoff_retries == 5
 
 
 def test_resolve_verify_bool():

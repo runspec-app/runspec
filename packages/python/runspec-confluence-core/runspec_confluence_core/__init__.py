@@ -20,7 +20,14 @@ from runspec_confluence_core.attachments import (
     upload_attachment,
 )
 from runspec_confluence_core.client import build_client, translate_errors
-from runspec_confluence_core.config import VALID_ENVS, ConfluenceConfig, config_from_env, detect_verify
+from runspec_confluence_core.config import (
+    DEFAULT_MAX_BACKOFF_RETRIES,
+    DEFAULT_MAX_BACKOFF_SECONDS,
+    VALID_ENVS,
+    ConfluenceConfig,
+    config_from_env,
+    detect_verify,
+)
 from runspec_confluence_core.content import (
     add_comment,
     add_label,
@@ -61,6 +68,8 @@ __all__ = [
     "build_client",
     "translate_errors",
     "VALID_ENVS",
+    "DEFAULT_MAX_BACKOFF_RETRIES",
+    "DEFAULT_MAX_BACKOFF_SECONDS",
     # pages
     "get_page",
     "get_page_children",

@@ -25,6 +25,16 @@ def _auth_kwargs(config: ConfluenceConfig) -> dict[str, Any]:
     base: dict[str, Any] = {"url": config.url, "cloud": config.cloud, "verify_ssl": config.resolve_verify()}
     if config.proxies:
         base["proxies"] = config.proxies
+    if config.retry:
+        # Retry transient throttling/outage responses (429/413/503, honouring
+        # Retry-After). The SDK's own defaults are unbounded for a CLI/agent
+        # (up to 1000 retries / 1800s); the config caps default to a sane
+        # ceiling (5 attempts / 30s) and are tunable per ConfluenceConfig.
+        base.update(
+            backoff_and_retry=True,
+            max_backoff_retries=config.max_backoff_retries,
+            max_backoff_seconds=config.max_backoff_seconds,
+        )
     if config.username and config.api_token:
         base.update(username=config.username, password=config.api_token)
     elif config.personal_token:
@@ -39,7 +49,10 @@ def build_client(config: ConfluenceConfig) -> Confluence:
 
     ``verify_ssl`` is resolved to a bool or a CA-bundle path and ``proxies`` (when
     set) is forwarded — ``AtlassianRestAPI`` passes both straight through to
-    ``requests``.
+    ``requests``. Unless ``config.retry`` is ``False``, transient responses
+    (429/413/503) are retried with exponential backoff, bounded by
+    ``config.max_backoff_retries`` / ``config.max_backoff_seconds`` (default
+    5 attempts / 30s).
     """
     return Confluence(**_auth_kwargs(config))
 

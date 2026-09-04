@@ -23,16 +23,45 @@ CLOUD = ConfluenceConfig(url="https://acme.atlassian.net/wiki", cloud=True, user
 DC = ConfluenceConfig(url="https://wiki.corp", cloud=False, personal_token="pat")
 
 
+_RETRY_KW = {"backoff_and_retry": True, "max_backoff_retries": 5, "max_backoff_seconds": 30}
+
+
 def test_build_client_basic_kwargs(install):
     _, made = install()
     build_client(CLOUD)
-    assert made["kw"] == {"url": "https://acme.atlassian.net/wiki", "cloud": True, "verify_ssl": True, "username": "me@x.com", "password": "tok"}
+    assert made["kw"] == {"url": "https://acme.atlassian.net/wiki", "cloud": True, "verify_ssl": True, **_RETRY_KW, "username": "me@x.com", "password": "tok"}
 
 
 def test_build_client_pat_kwargs(install):
     _, made = install()
     build_client(DC)
-    assert made["kw"] == {"url": "https://wiki.corp", "cloud": False, "verify_ssl": True, "token": "pat"}
+    assert made["kw"] == {"url": "https://wiki.corp", "cloud": False, "verify_ssl": True, **_RETRY_KW, "token": "pat"}
+
+
+def test_build_client_retry_on_by_default(install):
+    _, made = install()
+    build_client(CLOUD)
+    assert made["kw"]["backoff_and_retry"] is True
+    assert made["kw"]["max_backoff_retries"] == 5
+    assert made["kw"]["max_backoff_seconds"] == 30
+
+
+def test_build_client_retry_can_be_disabled(install):
+    from runspec_confluence_core import ConfluenceConfig
+
+    _, made = install()
+    build_client(ConfluenceConfig(url="https://x", cloud=True, personal_token="p", retry=False))
+    assert "backoff_and_retry" not in made["kw"]
+    assert "max_backoff_retries" not in made["kw"]
+
+
+def test_build_client_retry_caps_are_configurable(install):
+    from runspec_confluence_core import ConfluenceConfig
+
+    _, made = install()
+    build_client(ConfluenceConfig(url="https://x", cloud=True, personal_token="p", max_backoff_retries=10, max_backoff_seconds=120))
+    assert made["kw"]["max_backoff_retries"] == 10
+    assert made["kw"]["max_backoff_seconds"] == 120
 
 
 def test_get_page_by_id(install):

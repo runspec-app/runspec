@@ -24,6 +24,12 @@ VALID_ENVS = ("dev", "uat", "prod")
 _FALSEY = ("0", "false", "no", "off")
 _TRUTHY = ("1", "true", "yes", "on")
 
+# Default retry ceiling used when ``retry`` is on. Bounded for a CLI/agent
+# context (the SDK's own defaults are ~1000 attempts / 1800s). Importing
+# packages can reference these to tune relative to the baseline.
+DEFAULT_MAX_BACKOFF_RETRIES = 5
+DEFAULT_MAX_BACKOFF_SECONDS = 30
+
 
 @dataclass
 class ConfluenceConfig:
@@ -43,6 +49,9 @@ class ConfluenceConfig:
     space: str | None = None
     verify_ssl: bool | str = True
     proxies: dict[str, str] | None = None
+    retry: bool = True
+    max_backoff_retries: int = DEFAULT_MAX_BACKOFF_RETRIES
+    max_backoff_seconds: int = DEFAULT_MAX_BACKOFF_SECONDS
     env: str | None = None
 
     def resolve_verify(self) -> bool | str:
@@ -113,6 +122,17 @@ def _resolve_cloud(url: str, override: str | None) -> bool:
     return ".atlassian.net" in url.lower()
 
 
+def _env_int(value: str | None, default: int) -> int:
+    """Parse an integer env value, falling back to ``default`` when unset or
+    non-numeric."""
+    if value is None:
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        return default
+
+
 def _resolve_verify_ssl(value: str | None) -> bool | str:
     """Parse ``CONFLUENCE_VERIFY_SSL`` into a bool or a CA-bundle path.
 
@@ -166,12 +186,16 @@ def config_from_env(env: str | None = None, *, personal_token_override: str | No
 
     proxy_url = lookup("PROXY_URL")
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    retry = lookup("RETRY")
     common: dict[str, Any] = {
         "url": url.rstrip("/"),
         "cloud": _resolve_cloud(url, lookup("CLOUD")),
         "space": lookup("SPACE"),
         "verify_ssl": _resolve_verify_ssl(lookup("VERIFY_SSL")),
         "proxies": proxies,
+        "retry": True if retry is None else retry.strip().lower() not in _FALSEY,
+        "max_backoff_retries": _env_int(lookup("MAX_BACKOFF_RETRIES"), DEFAULT_MAX_BACKOFF_RETRIES),
+        "max_backoff_seconds": _env_int(lookup("MAX_BACKOFF_SECONDS"), DEFAULT_MAX_BACKOFF_SECONDS),
         "env": env,
     }
 
