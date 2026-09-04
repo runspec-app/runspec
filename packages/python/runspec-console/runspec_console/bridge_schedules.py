@@ -48,9 +48,34 @@ class SchedulesMixin:
         path = config_mod.hosts_path().parent / "runspec_schedules.toml"
         if not path.exists():
             return []
-        with open(path, "rb") as f:
-            data = tomllib.load(f)
+        try:
+            with open(path, "rb") as f:
+                data = tomllib.load(f)
+        except tomllib.TOMLDecodeError:
+            # A file corrupted by the pre-fix hand-rolled serialiser (unescaped
+            # backslashes/quotes → "Invalid hex value") would otherwise make
+            # every schedule read — and so every create/edit — fail forever.
+            # Back it up and start clean so the tab and the create tool recover;
+            # the raw file is preserved beside it for manual salvage.
+            self._backup_corrupt_schedules(path)
+            return []
         return data.get("schedule", [])
+
+    def _backup_corrupt_schedules(self, path: Path) -> None:
+        """Move an unparseable runspec_schedules.toml aside so the next write
+        doesn't clobber it; best-effort, never raises into the caller."""
+        try:
+            backup = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+            path.replace(backup)
+            logger.error(
+                "runspec_schedules.toml was unparseable; backed it up to %s and "
+                "starting from empty schedules. Recover any entries from that file.",
+                backup,
+            )
+        except Exception:
+            logger.exception(
+                "runspec_schedules.toml is unparseable and could not be backed up"
+            )
 
     def get_schedules(self) -> list[dict[str, Any]]:
         """The schedules for the Schedules tab, each with a computed ``nextRun``.

@@ -9,7 +9,10 @@ autonomy, argument plumbing, and the per-turn awareness block — all on any OS.
 from __future__ import annotations
 
 import json
+import time
 import types
+
+import pytest
 
 import runspec_console.config as cfg
 from runspec_console.bridge import Bridge
@@ -780,12 +783,33 @@ def test_parse_dt():
 
     from runspec_console.bridge_agent_tools import _parse_dt
 
+    # A naive local wall-clock time (the recommended form) is kept exactly.
     assert _parse_dt("2026-06-27T14:00") == datetime(2026, 6, 27, 14, 0)
-    assert _parse_dt("2026-06-27T14:00:00Z") == datetime(
-        2026, 6, 27, 14, 0
-    )  # tz dropped
     assert _parse_dt("") is None
     assert _parse_dt("garbage") is None
+
+
+@pytest.mark.skipif(
+    not hasattr(time, "tzset"), reason="TZ override needs tzset (POSIX)"
+)
+def test_parse_dt_converts_offset_aware_to_local(monkeypatch):
+    """An offset-aware input is converted to the operator's LOCAL wall-clock,
+    not silently stripped — the fix for the recurring 'reminder/meeting lands in
+    the wrong hour' bug when the agent converts a local time to UTC anyway."""
+    from datetime import datetime
+
+    from runspec_console.bridge_agent_tools import _parse_dt
+
+    monkeypatch.setenv("TZ", "America/New_York")  # UTC-4 in June (EDT)
+    time.tzset()
+    try:
+        # 2pm EDT wrongly sent as UTC ("...Z") must still land at 14:00 local.
+        assert _parse_dt("2026-06-27T18:00:00Z") == datetime(2026, 6, 27, 14, 0)
+        # An explicit local offset also lands at the intended local clock time.
+        assert _parse_dt("2026-06-27T14:00:00-04:00") == datetime(2026, 6, 27, 14, 0)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 # ── per-turn awareness (_console_context) ─────────────────────────────────────

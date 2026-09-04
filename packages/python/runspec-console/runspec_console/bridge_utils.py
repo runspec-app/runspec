@@ -719,28 +719,33 @@ def _aggregate_analytics(
     }
 
 
-def _toml_scalar(v: Any) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, str):
-        return f'"{v}"'
-    return str(v)
+def _strip_none_toml(value: Any) -> Any:
+    """Recursively drop ``None`` values so ``tomli_w`` (which has no null) can
+    serialise the structure. Mirrors ``config._strip_none``."""
+    if isinstance(value, dict):
+        return {k: _strip_none_toml(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_strip_none_toml(v) for v in value if v is not None]
+    return value
 
 
 def _write_schedules(path: Path, schedules: list[dict[str, Any]]) -> None:
-    lines = []
-    for s in schedules:
-        lines.append("[[schedule]]")
-        for k, v in s.items():
-            if k == "nextRun":  # display-only, computed by get_schedules
-                continue
-            if isinstance(v, dict):
-                inner = ", ".join(f"{ik} = {_toml_scalar(iv)}" for ik, iv in v.items())
-                lines.append(f"{k} = {{ {inner} }}")
-            else:
-                lines.append(f"{k} = {_toml_scalar(v)}")
-        lines.append("")
-    path.write_text("\n".join(lines), encoding="utf-8")
+    """Serialise the ``[[schedule]]`` entries with ``tomli_w`` so string values
+    (a natural-language ``prompt`` carrying a backslash — e.g. a Windows path —
+    a quote, or a newline), nested tables (``when``/``args``/``values``/
+    ``fields``), and lists are all emitted as *valid* TOML.
+
+    The previous hand-rolled serialiser wrapped every string in bare quotes
+    without escaping, so a ``prompt`` containing ``C:\\Users`` wrote
+    ``"C:\\Users"`` — an invalid ``\\U`` escape that made the file unparseable
+    ("Invalid hex value") and blocked every subsequent schedule create."""
+    import tomli_w
+
+    rows = [
+        _strip_none_toml({k: v for k, v in s.items() if k != "nextRun"})
+        for s in schedules
+    ]
+    path.write_text(tomli_w.dumps({"schedule": rows}), encoding="utf-8")
 
 
 # ── context-window indicator helpers (docs/design/console-context-indicator.md) ──

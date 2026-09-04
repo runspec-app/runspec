@@ -68,9 +68,18 @@ _RECOVERY_PROMPT = (
 
 def _parse_dt(value: Any) -> datetime | None:
     """Parse an ISO-8601 datetime string from a tool arg into a naive local-time
-    ``datetime`` (or ``None`` if blank/unparseable). Any timezone offset is dropped
-    — Outlook COM takes wall-clock local times — so an aware input is treated as
-    the operator's local time."""
+    ``datetime`` (or ``None`` if blank/unparseable). Outlook COM takes wall-clock
+    local times, so the returned datetime is always naive-local.
+
+    An **offset-aware** input (``...Z`` or ``+HH:MM``) is *converted* to the
+    operator's local timezone before the offset is dropped — not silently
+    treated as local. This is the fix for the recurring "reminder/meeting lands
+    in the wrong hour" bug: the agent is asked to pass a naive local time and
+    not convert to UTC, but it often converts anyway and passes e.g.
+    ``2026-06-27T18:00:00Z`` for a 2 pm EDT slot. Stripping the offset there
+    would save the event at 18:00 local (off by the machine's UTC offset);
+    converting first correctly yields 14:00 local. A naive input is already
+    local and is kept exactly as given."""
     text = str(value or "").strip()
     if not text:
         return None
@@ -78,7 +87,10 @@ def _parse_dt(value: Any) -> datetime | None:
         dt = datetime.fromisoformat(text.replace("Z", "+00:00").replace("z", "+00:00"))
     except ValueError:
         return None
-    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+    if dt.tzinfo is not None:
+        # astimezone() with no argument targets the system local timezone.
+        return dt.astimezone().replace(tzinfo=None)
+    return dt
 
 
 _RUNBOOK_MENU_CAP = 25
@@ -1192,17 +1204,24 @@ class AgentToolsMixin:
                         "start": {
                             "type": "string",
                             "description": (
-                                "Start time in the operator's LOCAL time, ISO 8601 "
-                                "(e.g. 2026-06-27T14:00 for 2pm local). Do NOT convert "
-                                "to UTC or add a timezone offset. Check console_status "
-                                "for the current local time when the request is relative."
+                                "Start time as a naive LOCAL wall-clock time, ISO 8601 "
+                                "with NO timezone (e.g. 2026-06-27T14:00 means 2pm in "
+                                "the operator's local timezone). Do NOT convert to UTC "
+                                "or append 'Z'/an offset — the value is the clock time "
+                                "the operator should see. When the request is relative "
+                                "('at 3pm', 'tomorrow morning'), read the current local "
+                                "date+time from console_status first and compute against "
+                                "that. (If you do include an offset it is converted back "
+                                "to local before saving, but a bare local time is "
+                                "expected.)"
                             ),
                         },
                         "end": {
                             "type": "string",
                             "description": (
-                                "End time in the operator's LOCAL time, ISO 8601. "
-                                "Defaults to 30 minutes after start."
+                                "End time as a naive LOCAL wall-clock time, ISO 8601 "
+                                "with NO timezone (same rule as start). Defaults to 30 "
+                                "minutes after start."
                             ),
                         },
                         "attendees": {

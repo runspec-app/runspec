@@ -31,6 +31,7 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
     ns = types.SimpleNamespace()
     for name in (
         "_read_schedules",
+        "_backup_corrupt_schedules",
         "get_schedules",
         "_schedule_next_run",
         "create_schedule",
@@ -152,6 +153,50 @@ def test_update_schedule_keeps_id_stable(tmp_path, monkeypatch):
         "a", {"id": "WRONG", "action": "event", "event": "e", "when": {"every": "5m"}}
     )
     assert [s["id"] for s in ns._read_schedules()] == ["a"]
+
+
+# ── _write_schedules: valid TOML for prompts with backslashes/quotes/newlines ──
+
+
+def test_write_schedules_escapes_prompt_with_backslash(tmp_path, monkeypatch):
+    """A prompt-action schedule whose natural-language prompt carries a Windows
+    path (``C:\\Users``), a quote, and a newline must round-trip. The pre-fix
+    hand-rolled serialiser wrote the ``\\U`` unescaped → "Invalid hex value",
+    which corrupted the file and blocked every later schedule create."""
+    ns = _stub(tmp_path, monkeypatch)
+    prompt = 'Review C:\\Users\\jason and check the "status"\nsecond line'
+    _seed(
+        tmp_path,
+        [
+            {
+                "id": "remind",
+                "action": "prompt",
+                "when": {"cron": "0 9 * * 1", "timezone": "America/New_York"},
+                "prompt": prompt,
+                "args": {"path": "C:\\logs\\app.log"},
+            }
+        ],
+    )
+    raw = ns._read_schedules()  # re-parses via tomllib — would raise if invalid
+    assert raw[0]["prompt"] == prompt
+    assert raw[0]["args"]["path"] == "C:\\logs\\app.log"
+
+
+def test_read_schedules_recovers_from_corrupt_file(tmp_path, monkeypatch):
+    """An already-corrupt file (from the pre-fix serialiser) is backed up and
+    read as empty, so the Schedules tab and create tool recover instead of
+    failing forever."""
+    ns = _stub(tmp_path, monkeypatch)
+    path = tmp_path / "runspec_schedules.toml"
+    # An unescaped Windows path — exactly what the old serialiser produced.
+    path.write_text(
+        '[[schedule]]\nid = "x"\nprompt = "C:\\Users\\jason"\n', encoding="utf-8"
+    )
+    assert ns._read_schedules() == []
+    # The raw file is preserved beside it for manual salvage, not deleted.
+    backups = list(tmp_path.glob("runspec_schedules.toml.corrupt-*"))
+    assert len(backups) == 1
+    assert not path.exists()
 
 
 # ── run_schedule_now: route by action, ignore enabled ─────────────────────────

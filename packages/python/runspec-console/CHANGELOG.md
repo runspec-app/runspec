@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.236.5] — 2026-09-04
+
+### Fixed
+- **`create_schedule` no longer corrupts `runspec_schedules.toml`.** The
+  hand-rolled schedule serialiser (`bridge_utils._write_schedules`) wrapped every
+  string in bare quotes without escaping, so a natural-language `prompt` (or any
+  arg value) containing a backslash — e.g. a Windows path `C:\Users\…` — wrote an
+  invalid `\U` escape. The file then failed to re-parse (`Invalid hex value (at
+  line N, column M)`), which surfaced as `✗ Could not create schedule: Invalid
+  hex value …` and — because every later create re-reads the file first — blocked
+  **all** subsequent schedule creation, whichever `when` (cron/every) or action
+  was used. The serialiser now uses `tomli_w`, so strings (backslashes, quotes,
+  newlines), nested tables (`when`/`args`/`values`/`fields`) and lists are all
+  emitted as valid TOML. `_read_schedules` also now backs up an already-corrupt
+  file aside (`runspec_schedules.toml.corrupt-<ts>`) and starts clean instead of
+  failing forever, so a console that already hit the bug recovers.
+- **Outlook event/reminder times land in the correct hour.** When the agent was
+  asked for a local time but converted it to UTC anyway (e.g. `2026-06-27T18:00:00Z`
+  for a 2 pm EDT slot — a recurring model habit), `_parse_dt` silently *stripped*
+  the offset and treated the UTC wall-clock as local, saving the event off by the
+  machine's UTC offset. An offset-aware input is now **converted** to the
+  operator's local timezone before the offset is dropped, so both a compliant
+  naive-local input and a wrongly-UTC-converted one land at the intended local
+  clock time. `outlook_create_event`'s `start`/`end` argument descriptions also
+  state the naive-local requirement more explicitly. (`bridge_agent_tools.py`)
+
+
 ## [0.236.4] — 2026-09-04
 
 ### Fixed
