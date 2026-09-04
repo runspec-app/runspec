@@ -155,13 +155,116 @@ def test_command_optional_when_not_required():
 def test_subcommand_own_args_merged_as_optional():
     tool = _tool_for(SPEC)
     props = tool["input_schema"]["properties"]
-    # drain's own `node` arg is offered, tagged with its command, but never forced
-    # at the top level (it only applies when command == "drain").
+    # drain's own `node` arg is offered, tagged with its command (+ required hint),
+    # but never forced at the top level (it only applies when command == "drain").
     assert "node" in props
-    assert "for the 'drain' command" in props["node"]["description"]
+    assert "for the 'drain' (required) command" in props["node"]["description"]
     assert "node" not in tool["input_schema"].get("required", [])
     # the global arg is still present
     assert "region" in props
+
+
+def test_shared_subcommand_arg_lists_all_owning_commands():
+    # An arg NAME declared by several subcommands must surface ONCE but name
+    # EVERY command that uses it — otherwise it looked like it belonged only to
+    # the first command and was hidden from the rest (the describe_runnable /
+    # dedup-tool subcommand-arg surfacing bug). Here `path` is used by all three.
+    spec: dict[str, Any] = {
+        "description": "fs",
+        "require-command": True,
+        "commands": {
+            "read": {"args": {"path": {"type": "str", "required": True}}},
+            "write": {
+                "args": {
+                    "path": {"type": "str", "required": True},
+                    "content": {"type": "str", "required": True},
+                }
+            },
+            "stat": {"args": {"path": {"type": "str", "required": True}}},
+        },
+    }
+    runnables = _spec_to_runnables("fs", spec, "local", "grp")
+    tool = next(
+        t
+        for t in _ToolBridge(runnables)._runnables_to_tools()
+        if t["name"] == "local__fs"
+    )
+    props = tool["input_schema"]["properties"]
+    # one `path` property, naming all three commands
+    assert "path" in props
+    desc = props["path"]["description"]
+    for cn in ("read", "write", "stat"):
+        assert f"'{cn}'" in desc, f"{cn} missing from shared-arg note: {desc!r}"
+    # an arg unique to one command still names just that command
+    assert "content" in props
+    assert "'write'" in props["content"]["description"]
+    assert "'read'" not in props["content"]["description"]
+
+
+# A 2-level runnable: `db list` (leaf) and `db restore full|incremental` (nested,
+# `restore` itself requires a further subcommand).
+NESTED_SPEC: dict[str, Any] = {
+    "description": "db admin",
+    "require-command": True,
+    "commands": {
+        "list": {"description": "list dbs"},
+        "restore": {
+            "description": "restore ops",
+            "require-command": True,
+            "commands": {
+                "full": {"args": {"target": {"type": "str", "required": True}}},
+                "incremental": {"args": {"target": {"type": "str", "required": True}}},
+            },
+        },
+    },
+}
+
+
+def test_flat_runnable_command_stays_string_enum():
+    # A flat (one-level) runnable is unchanged: `command` is a string enum of the
+    # verb names (no regression for fs/cron and every shipped subcommand runnable).
+    tool = _tool_for(SPEC)
+    cmd = tool["input_schema"]["properties"]["command"]
+    assert cmd["type"] == "string"
+    assert cmd["enum"] == ["drain", "list"]
+
+
+def test_nested_subcommand_command_is_array_path():
+    runnables = _spec_to_runnables("db", NESTED_SPEC, "local", "grp")
+    tool = next(
+        t
+        for t in _ToolBridge(runnables)._runnables_to_tools()
+        if t["name"] == "local__db"
+    )
+    cmd = tool["input_schema"]["properties"]["command"]
+    # nested → the agent gives a PATH array, not a single string
+    assert cmd["type"] == "array"
+    assert cmd["items"]["type"] == "string"
+    desc = cmd["description"]
+    # leaf/runnable paths are listed; the require-command `restore` node is NOT
+    assert "'list'" in desc
+    assert "'restore full'" in desc
+    assert "'restore incremental'" in desc
+    assert "'restore'" not in desc.replace("'restore full'", "").replace(
+        "'restore incremental'", ""
+    )
+    assert "command" in tool["input_schema"]["required"]  # require-command
+
+
+def test_nested_subcommand_shared_arg_lists_full_paths():
+    runnables = _spec_to_runnables("db", NESTED_SPEC, "local", "grp")
+    tool = next(
+        t
+        for t in _ToolBridge(runnables)._runnables_to_tools()
+        if t["name"] == "local__db"
+    )
+    props = tool["input_schema"]["properties"]
+    # `target` is declared by both nested leaves — surfaced once, naming both
+    # full paths (not just the first, and not the bare verb).
+    assert "target" in props
+    desc = props["target"]["description"]
+    assert "'restore full'" in desc
+    assert "'restore incremental'" in desc
 
 
 def test_flat_runnable_has_no_command_param():

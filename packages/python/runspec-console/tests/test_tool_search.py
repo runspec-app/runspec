@@ -214,6 +214,38 @@ def test_search_returns_typed_rows_collapsed_by_group_name():
     assert region["enum"] == ["us", "eu"] and region["default"] == "us"
 
 
+def test_search_row_lists_nested_command_paths():
+    # A subcommand runnable's search row must list its runnable paths (nested
+    # included, space-joined) — and exercises _search_runnables' subcommand walk.
+    runnables = [
+        _rn(
+            "a",
+            "db",
+            description="db admin",
+            requireCommand=True,
+            commands={
+                "list": {"requireCommand": False, "args": []},
+                "restore": {
+                    "requireCommand": True,
+                    "args": [],
+                    "commands": {
+                        "full": {"requireCommand": False, "args": []},
+                        "incremental": {"requireCommand": False, "args": []},
+                    },
+                },
+            },
+        )
+    ]
+    row = _search(runnables, "db")["results"][0]
+    assert row["command"]["required"] is True
+    assert set(row["command"]["options"]) == {
+        "list",
+        "restore full",
+        "restore incremental",
+    }
+    assert "restore" not in row["command"]["options"]  # require-command node
+
+
 def test_search_omits_password_args():
     runnables = [
         _rn(

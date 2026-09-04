@@ -8,7 +8,58 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
-## [0.236.5] — 2026-09-04
+## [0.236.8] — 2026-09-04
+
+### Added
+- **The agent can now reach NESTED subcommands, and their args surface.**
+  Previously every agent-facing surface capped subcommands at one level: the
+  runnable tool / `describe_runnable` exposed `command` as a single string enum
+  of the top-level verbs and only their direct args, so a two-level verb (e.g.
+  `db restore full`) was unreachable — and a runnable whose parent required a
+  further subcommand was entirely unrunnable by the agent (Forms, saved runs and
+  schedules already handled nesting). Now, when a runnable has any nested
+  subcommands, `command` becomes an **array path** (`["db", "restore", "full"]`)
+  with every runnable path enumerated, and each path's own args surface tagged
+  with the full path. The executor and autonomy gate already normalise `command`
+  through the shared `_command_path` helper (str or list), so no run-path change
+  was needed. **Flat (one-level) runnables are unchanged** — `command` stays a
+  string enum. New shared `bridge_utils.subcommand_paths` helper drives the
+  schema builder and the `search_runnables` rows; `_declared_arg_name_set` now
+  recurses so a nested arg named `host` can't be shadowed by the injected host
+  selector. (`bridge_agent_tools.py`, `bridge_search.py`, `bridge_utils.py`)
+- **Forms can run an optional-subcommand runnable at its top level.** When a node
+  has subcommands but doesn't *require* one, the run dialog now shows both the
+  subcommand picker **and** a Run form for the node's own/global args (with a
+  "Or run `<path>` directly" divider) — matching what the agent schema and core
+  already allow. A require-command node stays picker-only. (`FormsView.tsx`)
+
+### Fixed
+- **`run_runnable` executes the same subcommand leaf the autonomy gate
+  approved when `command` is a list.** In search mode the executor
+  (`_run_tool_sync`, `run_runnable` branch) built its command path with
+  `[cmd] if isinstance(cmd, str)`, dropping a **list-valued** `command` (the
+  shape saved runs and nested paths use, and a plausible model output) to `[]` —
+  so it ran the **top-level** runnable while the autonomy gate had already
+  resolved (and possibly auto-approved) the **subcommand leaf** via the shared
+  `_command_path` helper. The two could disagree on which node runs. The executor
+  now normalises `command` with that same `_command_path` helper, so the gate and
+  the executor always target the same node (and preflight validates against the
+  right leaf). (`bridge_autonomy.py`)
+
+### Fixed
+- **`describe_runnable` (and the dedup runnable tool) now surface a subcommand
+  arg shared by several verbs correctly.** When a runnable's subcommands each
+  declared an arg with the **same name** (e.g. `fs`'s `path` across
+  `read`/`write`/`edit`/`stat`), `_build_input_schema` added them per-command but
+  `add_arg` drops a duplicate name — so the shared arg surfaced **once**, tagged
+  with only the **first** command, and looked like it belonged to that command
+  alone (hidden from the rest). The subcommand args are now aggregated first: a
+  shared arg is surfaced once but its note names **every** command that declares
+  it, each with a per-command `(required)` hint (e.g. `path` → `(for the 'read'
+  (required), 'write' (required), 'stat' (required) commands)`). Args unique to
+  one command are unchanged apart from the added required hint. Affects both
+  `describe_runnable` and the `tool_mode` dedup/per_host runnable tool schema,
+  which share this builder. (`bridge_agent_tools.py`)
 
 ### Fixed
 - **`create_schedule` no longer corrupts `runspec_schedules.toml`.** The

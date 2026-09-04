@@ -655,7 +655,11 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
 
   const { rootRunnable, commandPath, currentNode } = state
   const hasSubcommands = Object.keys(currentNode.commands ?? {}).length > 0
-  const isAtArgs = !hasSubcommands
+  // A node can be run at its own level unless it *requires* a subcommand. So a
+  // leaf always can; a runnable that has subcommands but doesn't require one can
+  // ALSO run at the top level (with its own/global args) — offer both the picker
+  // and a Run form. Only a require-command node is picker-only.
+  const canRunHere = !currentNode.requireCommand
 
   const crumbs = [rootRunnable.name, ...commandPath]
 
@@ -730,46 +734,52 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
         </div>
       }
       footer={
-        isAtArgs ? (
+        canRunHere ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button onClick={onClose}>Cancel</Button>
-            <Button type="primary" onClick={handleSubmit}>Run</Button>
+            <Button type="primary" onClick={handleSubmit}>
+              {hasSubcommands ? `Run /${crumbs.join(' ')}` : 'Run'}
+            </Button>
           </div>
         ) : null
       }
     >
-      {hasSubcommands ? (
+      <div>
+        {currentNode.description && (
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
+            {currentNode.description}
+          </Text>
+        )}
+        {hasSubcommands && (
+          <div style={{ marginBottom: canRunHere ? 18 : 0 }}>
+            {currentNode.requireCommand ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>command required</Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  This runnable can't run on its own — pick a command to continue.
+                </Text>
+              </div>
+            ) : (
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
+                Choose a subcommand{canRunHere ? `, or run /${crumbs.join(' ')} at its top level below` : ''}:
+              </Text>
+            )}
+            <SubcommandPicker node={currentNode} onSelect={name => {
+              const newPath = [...commandPath, name]
+              window.dispatchEvent(new CustomEvent('forms:navigate', {
+                detail: { rootRunnable, commandPath: newPath, currentNode: resolveNode(rootRunnable, newPath) }
+              }))
+            }} />
+          </div>
+        )}
+        {canRunHere && (
         <div>
-          {currentNode.description && (
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: currentNode.requireCommand ? 8 : 14 }}>
-              {currentNode.description}
-            </Text>
-          )}
-          {currentNode.requireCommand ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-              <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>command required</Tag>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                This runnable can't run on its own — pick a command to continue.
+          {hasSubcommands && (
+            <div style={{ borderTop: '1px solid rgba(128,128,128,0.2)', paddingTop: 14, marginBottom: 4 }}>
+              <Text type="secondary" style={{ fontSize: 11, fontStyle: 'italic' }}>
+                Or run <Text code style={{ fontSize: 11 }}>{crumbs.join(' ')}</Text> directly:
               </Text>
             </div>
-          ) : (
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 14 }}>
-              Choose a subcommand:
-            </Text>
-          )}
-          <SubcommandPicker node={currentNode} onSelect={name => {
-            const newPath = [...commandPath, name]
-            window.dispatchEvent(new CustomEvent('forms:navigate', {
-              detail: { rootRunnable, commandPath: newPath, currentNode: resolveNode(rootRunnable, newPath) }
-            }))
-          }} />
-        </div>
-      ) : (
-        <div>
-          {currentNode.description && (
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 16 }}>
-              {currentNode.description}
-            </Text>
           )}
           <ArgForm node={currentNode} host={rootRunnable.host} runnable={rootRunnable.name} runAs={rootRunnable.runAs} group={rootRunnable.group} values={values} errors={errors} onChange={handleChange} boundArgs={boundArgs} />
           {creds.length > 0 && (
@@ -819,7 +829,8 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
             </div>
           )}
         </div>
-      )}
+        )}
+      </div>
     </Modal>
   )
 }

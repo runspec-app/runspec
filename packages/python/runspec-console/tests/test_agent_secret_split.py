@@ -38,6 +38,16 @@ class _AgentBridge:
     _scope_matches = staticmethod(Bridge._scope_matches)
     _credential_entry = Bridge._credential_entry
     _declared_arg_names = staticmethod(Bridge._declared_arg_names)
+    # search-mode run_runnable resolution + preflight
+    _resolve_id_host = Bridge._resolve_id_host
+    _runnables_for_id = Bridge._runnables_for_id
+    _runbook_id_hint = staticmethod(Bridge._runbook_id_hint)
+    _coerce_run_args = staticmethod(Bridge._coerce_run_args)
+    _preflight_validate = Bridge._preflight_validate
+    _node_at = staticmethod(Bridge._node_at)
+
+    def _visible_runnables(self, _surface):
+        return self._runnables_cache
 
     # Stubbed: the real _become_params imports the runspec core package, which
     # the console test suite runs without. Escalation isn't under test here.
@@ -96,6 +106,67 @@ def test_run_tool_sync_local_splits_password(monkeypatch):
 
     assert captured["args"] == {"service-username": "svc"}
     assert captured["secrets"] == {"user-password": "s3cret"}
+
+
+def _cached_sub(host: str) -> dict:
+    # A subcommand runnable: `db restore --target …`, restore marked autonomous.
+    return {
+        "host": host,
+        "name": "db",
+        "group": None,
+        "args": [],
+        "commands": {
+            "restore": {
+                "name": "restore",
+                "autonomy": "autonomous",
+                "args": [{"name": "target", "type": "str"}],
+            }
+        },
+    }
+
+
+def test_run_runnable_list_command_reaches_the_subcommand_leaf(monkeypatch):
+    # A model may send `command` as a nested list path (the shape saved runs use).
+    # The executor must descend to that leaf — the same node the autonomy gate
+    # resolved — not silently run the top-level runnable. Regression: the
+    # run_runnable branch used `[cmd] if str` and dropped a list to [].
+    captured: dict = {}
+
+    def fake_run_local(rp, runnable, args, command_path, on_line, on_done, **kw):
+        captured["command_path"] = command_path
+        captured["args"] = args
+
+    monkeypatch.setattr("runspec_console.executor.run_local", fake_run_local)
+    monkeypatch.setattr(
+        "runspec_console.bridge_utils._paths", lambda _e: ["/opt/app/runspec"]
+    )
+
+    b = _AgentBridge(entry={"name": "local"}, cached=_cached_sub("local"))
+    # command as a list path
+    b._run_tool_sync(
+        "run_runnable",
+        {
+            "id": "local__db",
+            "host": "local",
+            "command": ["restore"],
+            "args": {"target": "x"},
+        },
+    )
+    assert captured["command_path"] == ["restore"]
+    assert captured["args"] == {"target": "x"}
+
+    # command as a plain string resolves to the same leaf
+    captured.clear()
+    b._run_tool_sync(
+        "run_runnable",
+        {
+            "id": "local__db",
+            "host": "local",
+            "command": "restore",
+            "args": {"target": "x"},
+        },
+    )
+    assert captured["command_path"] == ["restore"]
 
 
 def test_run_tool_sync_remote_splits_password(monkeypatch):

@@ -1282,14 +1282,15 @@ class AutonomyMixin:
                 return resolved
             host, runnable, cached_r = resolved
             call_args = self._coerce_run_args(ti.get("args"))
-            chosen_command = ti.get("command")
             credential_id = str(ti.get("credential_id") or "")
             credential_id_list: list[str] = []
-            command_path = (
-                [chosen_command]
-                if isinstance(chosen_command, str) and chosen_command
-                else []
-            )
+            # Normalise `command` (str OR nested list path) with the SAME helper
+            # the autonomy gate uses (_effective_tool_autonomy → _command_path),
+            # so the node the gate approved is the node that runs. A bare
+            # `[chosen_command] if str` dropped a list-valued command (the shape
+            # saved runs and nested paths use) to `[]`, which ran the top-level
+            # runnable while the gate had resolved the subcommand leaf's autonomy.
+            command_path = _command_path(ti)
             preflight = self._preflight_validate(cached_r, command_path, call_args)
             if preflight:
                 return preflight

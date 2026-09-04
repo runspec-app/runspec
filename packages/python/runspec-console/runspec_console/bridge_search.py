@@ -11,6 +11,7 @@ import logging
 import re
 from typing import Any
 
+from . import bridge_utils as utils_mod
 from .bridge_const import _HOT_BUILTIN_NAMES
 
 from typing import TYPE_CHECKING
@@ -676,9 +677,12 @@ class SearchMixin:
             }
             commands = rep.get("commands") or {}
             if commands:
+                # Every runnable path (nested included) as a space-joined string;
+                # for a flat runnable these are just the top-level verb names.
+                paths = utils_mod.subcommand_paths(rep)
                 entry["command"] = {
                     "required": bool(rep.get("requireCommand")),
-                    "options": list(commands.keys()),
+                    "options": [" ".join(p) for p, _ in paths] or list(commands.keys()),
                 }
             rows.append(entry)
         result: dict[str, Any] = {"count": len(rows), "results": rows}

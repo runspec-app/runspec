@@ -59,6 +59,33 @@ def runnable_hidden(
     return False
 
 
+def subcommand_paths(
+    runnable: dict[str, Any],
+) -> list[tuple[list[str], dict[str, Any]]]:
+    """Every *runnable* subcommand PATH under ``runnable``, as ``(path, node)``.
+
+    ``path`` is the list of subcommand names to descend (``["db", "restore"]``);
+    ``node`` is the cached spec node it reaches. A node is included when it does
+    NOT itself require a further subcommand (leaves always qualify; an
+    intermediate node qualifies only when ``requireCommand`` is false — i.e. it
+    can run at its own level). Recurses to arbitrary depth, so nested verbs are
+    covered. Empty when the runnable has no commands. Order is a stable pre-order
+    walk of ``commands``."""
+    out: list[tuple[list[str], dict[str, Any]]] = []
+
+    def _walk(node: dict[str, Any], prefix: list[str]) -> None:
+        for cn, child in (node.get("commands") or {}).items():
+            if not isinstance(child, dict):
+                continue
+            path = prefix + [cn]
+            if not bool(child.get("requireCommand")):
+                out.append((path, child))
+            _walk(child, path)
+
+    _walk(runnable, [])
+    return out
+
+
 def _normalize_path(p: str) -> str:
     """Normalise a filesystem path to forward slashes for TOML storage.
 

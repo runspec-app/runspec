@@ -356,15 +356,21 @@ class AgentToolsMixin:
 
     @staticmethod
     def _declared_arg_name_set(r: dict[str, Any] | None) -> set[str]:
-        """Every arg name the runnable declares (globals + all subcommand args)."""
+        """Every arg name the runnable declares (globals + all subcommand args at
+        any depth). Recurses so a name declared only by a NESTED subcommand still
+        counts — otherwise the injected host-selector key could silently shadow a
+        real grandchild arg named ``host``."""
         names: set[str] = set()
-        for a in (r or {}).get("args") or []:
-            if a.get("name"):
-                names.add(a["name"])
-        for cmd in ((r or {}).get("commands") or {}).values():
-            for a in cmd.get("args") or []:
+
+        def _collect(node: dict[str, Any]) -> None:
+            for a in node.get("args") or []:
                 if a.get("name"):
                     names.add(a["name"])
+            for cmd in (node.get("commands") or {}).values():
+                if isinstance(cmd, dict):
+                    _collect(cmd)
+
+        _collect(r or {})
         return names
 
     def _host_selector_key(self, r: dict[str, Any] | None) -> str:
@@ -487,39 +493,91 @@ class AgentToolsMixin:
         # to name a command, so require-command runnables were unrunnable.
         commands = r.get("commands") or {}
         if commands:
-            cmd_names = list(commands.keys())
             require_command = bool(r.get("requireCommand"))
-            summary = "; ".join(
-                f"'{cn}'"
-                + (
-                    f" — {commands[cn].get('description')}"
-                    if commands[cn].get("description")
-                    else ""
-                )
-                for cn in cmd_names
-            )
-            properties["command"] = {
-                "type": "string",
-                "enum": cmd_names,
-                "description": (
-                    f"Subcommand to run ({summary}). "
+            # Every runnable subcommand PATH, to arbitrary depth. For a flat
+            # (one-level) runnable each path is a single name — the common case,
+            # kept byte-identical below. A nested runnable (a verb with its own
+            # sub-verbs) yields multi-segment paths the agent could not previously
+            # reach, because `command` was a single string enum of only the
+            # top-level names.
+            paths = utils_mod.subcommand_paths(r)
+            nested = any(len(p) > 1 for p, _ in paths)
+            if nested:
+                # A path: an array of subcommand names descending the tree. The
+                # executor + autonomy gate already normalise `command` through
+                # _command_path, which accepts a list, so this needs no run-path
+                # change. Valid paths are enumerated for the agent.
+                path_strs = [" ".join(p) for p, _ in paths]
+                example = paths[0][0] if paths else []
+                properties["command"] = {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Subcommand path to run — an array of subcommand names "
+                        f"descending the command tree (e.g. {example!r}). "
+                        f"Valid paths: {'; '.join(repr(s) for s in path_strs)}. "
+                        + (
+                            "Required: this runnable cannot run without a path."
+                            if require_command
+                            else "Optional — omit to run the runnable at its top level."
+                        )
+                    ),
+                }
+            else:
+                cmd_names = list(commands.keys())
+                summary = "; ".join(
+                    f"'{cn}'"
                     + (
-                        "Required: this runnable cannot run without choosing "
-                        "one of these commands."
-                        if require_command
-                        else "Optional — omit to run the runnable at its top level."
+                        f" — {commands[cn].get('description')}"
+                        if commands[cn].get("description")
+                        else ""
                     )
-                ),
-            }
+                    for cn in cmd_names
+                )
+                properties["command"] = {
+                    "type": "string",
+                    "enum": cmd_names,
+                    "description": (
+                        f"Subcommand to run ({summary}). "
+                        + (
+                            "Required: this runnable cannot run without choosing "
+                            "one of these commands."
+                            if require_command
+                            else "Optional — omit to run the runnable at its top level."
+                        )
+                    ),
+                }
             if require_command:
                 required.append("command")
-            # Each command's own (non-inherited) args become optional inputs,
-            # tagged with the command they belong to. Globals already added above.
-            for cn in cmd_names:
-                for arg in commands[cn].get("args") or []:
-                    if arg.get("inherited"):
+            # Each path's own (non-global) args become optional top-level inputs
+            # (a subcommand arg can't be JSON-schema-required at the top level — it
+            # only applies once that path is chosen — so the note names the owning
+            # path). An arg NAME shared by several paths is surfaced ONCE but
+            # tagged with EVERY path that declares it (with a per-path "(required)"
+            # hint): add_arg drops a duplicate name, so without aggregating first a
+            # shared arg like `path` surfaced only for the first command and was
+            # hidden from the rest. Root globals were already added above; skip
+            # them by name so an intermediate node's OWN args (inherited into a
+            # deeper leaf, tagged `inherited`) still surface for nested paths.
+            root_names = {a.get("name") for a in (r.get("args") or [])}
+            sub_owners: dict[str, list[str]] = {}
+            sub_spec: dict[str, dict[str, Any]] = {}
+            for path, node in paths:
+                label_path = " ".join(path)
+                for arg in node.get("args") or []:
+                    nm = arg.get("name", "")
+                    if not nm or nm in root_names or arg.get("type") == "password":
                         continue
-                    add_arg(arg, note=f"(for the '{cn}' command)")
+                    label = f"'{label_path}'" + (
+                        " (required)" if arg.get("required") else ""
+                    )
+                    sub_owners.setdefault(nm, []).append(label)
+                    sub_spec.setdefault(nm, arg)
+            for nm, labels in sub_owners.items():
+                plural = "s" if len(labels) > 1 else ""
+                add_arg(
+                    sub_spec[nm], note=f"(for the {', '.join(labels)} command{plural})"
+                )
 
         # Offer any in-scope credentials by id (override only — in-scope ones
         # apply automatically). The agent picks an *id*, never sees the secret.
