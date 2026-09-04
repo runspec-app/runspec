@@ -12,6 +12,7 @@ from runspec_console.triggers import Column, Trigger, TriggerCard
 from runspec_console.trigger_runner import (
     compose_system,
     draft_reply_schema,
+    mail_scope_note,
     make_handler,
     propose_reply_schema,
     render_event,
@@ -190,6 +191,42 @@ def test_compose_system_draft_note_only_when_available():
     assert "draft_reply" not in compose_system(t, "base", draft_available=False)
     on = compose_system(t, "base", draft_available=True)
     assert "draft_reply" in on and "terse" in on
+
+
+def test_mail_scope_note_names_mailbox_and_folder():
+    ev = Event.new(
+        "outlook",
+        "new_mail",
+        {"mailbox": "helpdesk@corp.com", "folder": "Tickets/Open"},
+    )
+    note = mail_scope_note(ev)
+    assert "helpdesk@corp.com" in note and "Tickets/Open" in note
+    assert "mailbox='helpdesk@corp.com'" in note and "folder='Tickets/Open'" in note
+    assert "outlook_search" in note
+
+
+def test_mail_scope_note_empty_without_location_or_for_other_events():
+    # A synthetic "Trigger now" event with no mailbox/folder → no note.
+    assert mail_scope_note(Event.new("outlook", "new_mail", {"body": "hi"})) == ""
+    # Non-mail events never get the note.
+    assert mail_scope_note(Event.new("outlook", "reminder", {"folder": "x"})) == ""
+    assert mail_scope_note(Event.new("chat", "message", {"folder": "x"})) == ""
+
+
+def test_mail_scope_note_folder_only():
+    ev = Event.new("outlook", "new_mail", {"folder": "Alerts"})
+    note = mail_scope_note(ev)
+    assert "folder 'Alerts'" in note and "folder='Alerts'" in note
+    assert "mailbox=" not in note  # default account → no mailbox arg
+
+
+def test_compose_system_folds_in_mail_scope():
+    t = Trigger.from_config({"name": "t", "source": "outlook", "event": "new_mail"})
+    ev = Event.new("outlook", "new_mail", {"mailbox": "hd@corp.com", "folder": "Open"})
+    sys = compose_system(t, "base", event=ev)
+    assert "folder='Open'" in sys and "mailbox='hd@corp.com'" in sys
+    # No event, or a located event omitted → no scope directive.
+    assert "folder=" not in compose_system(t, "base")
 
 
 # ── handler: agent mode ───────────────────────────────────────────────────────

@@ -8,6 +8,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.236.3] — 2026-09-03
+
+### Added
+- **"Mailbox to match" trigger field.** The Triggers editor now exposes a
+  `mailbox` scoping clause (persisted as `match.mailbox`) next to "Folder to
+  match", for Outlook `new_mail` triggers. A `new_mail` event is tagged with both
+  `mailbox` and `folder`, so a folder-only trigger fires for that folder in *any*
+  monitored mailbox; the new field scopes it to one mailbox (leave blank for any).
+
+### Fixed
+- **Agent-mode `new_mail` triggers are now mailbox- and folder-aware.** An
+  agent-mode turn is told which mailbox+folder the email arrived in and instructed
+  to target that location for Outlook reads (passing `mailbox`/`folder` to
+  `outlook_search`/`outlook_inbox`/`outlook_get_message`), instead of falling back
+  to the default Inbox — so "find an earlier/similar email" searches the right
+  place (`trigger_runner.mail_scope_note` folded into `compose_system`).
+- **"Trigger now" carries the mail's location.** For an Outlook trigger the test
+  dialog pre-fills the `folder`/`mailbox` fields from the trigger's match (a real
+  arriving email supplies them automatically), so a synthetic test run has the same
+  context a real email would rather than an empty payload.
+
+
 ## [0.236.2] — 2026-09-03
 
 ### Fixed

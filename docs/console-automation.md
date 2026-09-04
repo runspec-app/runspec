@@ -188,6 +188,32 @@ flips to **"claimed by X"** and its Claim button disappears.
 This is the reliable, opt-in replacement for coordinating a shared helpdesk
 mailbox across a team.
 
+### Scoping a trigger to one mailbox
+
+Every `new_mail` event is tagged with **both** `mailbox` and `folder`. A trigger
+that matches only on `folder` fires for that folder in **any** monitored mailbox
+— so if two mailboxes both have a `Tickets/Open`, one folder-only trigger reacts
+to both. To scope to a single mailbox, add a `mailbox` match:
+
+```toml
+[triggers.helpdesk-a.match]
+mailbox = "^helpdesk-a@corp\\.com$"   # only this mailbox
+folder  = "^Tickets/Open$"
+```
+
+The Triggers editor exposes this as a **Mailbox to match** field (optional)
+alongside **Folder to match**. Leave it blank to fire for the folder in any
+mailbox.
+
+### Agent-mode triggers know where the mail came from
+
+When an **agent-mode** `new_mail` trigger runs, the agent is told the mailbox and
+folder the email arrived in and instructed to target that location when it reads
+Outlook (e.g. searching for an earlier or similar message) — so it doesn't fall
+back to the default Inbox. Testing with **Trigger now** carries the same context:
+for an Outlook trigger the dialog pre-fills the `folder`/`mailbox` fields from the
+trigger's match (a real arriving email supplies them automatically).
+
 ### Agent-mode triggers and action tools
 
 An agent-mode trigger's turn has the full runnable toolset plus the agent's

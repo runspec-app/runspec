@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest'
 
-import { triggerToForm, formToTrigger, parseRun, composeRun, argsForRun } from './TriggersEditor'
+import { triggerToForm, formToTrigger, parseRun, composeRun, argsForRun, literalFromPattern } from './TriggersEditor'
 import type { Runnable } from '../bridge'
 
 describe('TriggersEditor form mapping', () => {
@@ -86,21 +86,36 @@ describe('TriggersEditor form mapping', () => {
     expect(out.run).toBeUndefined()
   })
 
-  it('lifts match.folder into match_folder and back, keeping other match rows', () => {
+  it('lifts match.mailbox/folder into their own fields and back, keeping other rows', () => {
     const form = triggerToForm({
       name: 'c', source: 'outlook', event: 'new_mail', mode: 'agent',
-      match: { folder: '^Tickets/Open$', subject: '(?i)reset' },
+      match: { mailbox: '^helpdesk@corp\\.com$', folder: '^Tickets/Open$', subject: '(?i)reset' },
       claim: true, claim_folder: 'Tickets/Claimed',
     })
+    expect(form.match_mailbox).toBe('^helpdesk@corp\\.com$')
     expect(form.match_folder).toBe('^Tickets/Open$')
     expect(form.match).toEqual([{ field: 'subject', pattern: '(?i)reset' }])
     expect(form.claim).toBe(true)
     expect(form.claim_folder).toBe('Tickets/Claimed')
 
     const out = formToTrigger(form)
-    expect(out.match).toEqual({ subject: '(?i)reset', folder: '^Tickets/Open$' })
+    expect(out.match).toEqual({
+      subject: '(?i)reset', mailbox: '^helpdesk@corp\\.com$', folder: '^Tickets/Open$',
+    })
     expect(out.claim).toBe(true)
     expect(out.claim_folder).toBe('Tickets/Claimed')
+  })
+
+  it('omits an empty mailbox-to-match (fires for any mailbox)', () => {
+    const out = formToTrigger({
+      name: 'c', source: 'outlook', event: 'new_mail', mode: 'agent',
+      autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
+      map: [], reply_draft: false, rule_kind: 'single', action_mode: 'sequential',
+      actions: [], rules: 'x', runnables: [], action_allow: [],
+      match_mailbox: '', match_folder: '^Tickets/Open$',
+    })
+    expect(out.match).toEqual({ folder: '^Tickets/Open$' })
+    expect((out.match as Record<string, unknown>).mailbox).toBeUndefined()
   })
 
   it('omits claim keys when the claim system is off', () => {
@@ -113,6 +128,18 @@ describe('TriggersEditor form mapping', () => {
     })
     expect(out.claim).toBeUndefined()
     expect(out.claim_folder).toBeUndefined()
+  })
+})
+
+describe('literalFromPattern (Trigger-now folder/mailbox pre-seed)', () => {
+  it('de-anchors and unescapes a simple pattern', () => {
+    expect(literalFromPattern('^Tickets/Open$')).toBe('Tickets/Open')
+    expect(literalFromPattern('^helpdesk@corp\\.com$')).toBe('helpdesk@corp.com')
+    expect(literalFromPattern('Inbox')).toBe('Inbox')
+  })
+  it('returns empty for a pattern with other regex metacharacters', () => {
+    expect(literalFromPattern('(?i)tickets|open')).toBe('')
+    expect(literalFromPattern('Tickets/.*')).toBe('')
   })
 })
 

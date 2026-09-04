@@ -50,9 +50,11 @@ interface TriggerForm {
   action_allow?: string[]
   reply_draft: boolean
   reply_style?: string
-  // Shared-mailbox claim gate (outlook/new_mail). `match_folder` is the required
-  // folder-to-match (persisted as match.folder); `claim` gates the card behind a
-  // Claim button; `claim_folder` is the existing folder a claim moves the item to.
+  // Shared-mailbox claim gate (outlook/new_mail). `match_mailbox`/`match_folder`
+  // are first-class scoping fields (persisted as match.mailbox / match.folder);
+  // `claim` gates the card behind a Claim button; `claim_folder` is the existing
+  // folder a claim moves the item to.
+  match_mailbox?: string
   match_folder?: string
   claim?: boolean
   claim_folder?: string
@@ -63,8 +65,9 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
   const match = (t.match ?? {}) as Record<string, unknown>
   const map = (t.map ?? {}) as Record<string, unknown>
   const actionsRaw = Array.isArray(t.actions) ? (t.actions as Record<string, unknown>[]) : []
-  // The claim gate's folder-to-match is surfaced as its own field, so pull it out
-  // of the generic match rows (it's persisted back under match.folder on save).
+  // The mailbox/folder scoping clauses are surfaced as their own fields, so pull
+  // them out of the generic match rows (persisted back under match.* on save).
+  const matchMailbox = match.mailbox != null ? String(match.mailbox) : ''
   const matchFolder = match.folder != null ? String(match.folder) : ''
   return {
     name: String(t.name ?? ''),
@@ -74,8 +77,9 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
     autonomy: t.autonomy ? String(t.autonomy) : 'confirm',
     enabled: t.enabled !== false,
     match: Object.entries(match)
-      .filter(([field]) => field !== 'folder')
+      .filter(([field]) => field !== 'folder' && field !== 'mailbox')
       .map(([field, pattern]) => ({ field, pattern: String(pattern) })),
+    match_mailbox: matchMailbox,
     match_folder: matchFolder,
     claim: !!t.claim,
     claim_folder: t.claim_folder ? String(t.claim_folder) : '',
@@ -101,7 +105,8 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
 export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
   const matchObj: Record<string, string> = {}
   for (const m of v.match || []) if (m?.field?.trim()) matchObj[m.field.trim()] = (m.pattern ?? '').trim()
-  // The dedicated folder-to-match field persists back under match.folder.
+  // The dedicated mailbox/folder-to-match fields persist back under match.*.
+  if ((v.match_mailbox ?? '').trim()) matchObj.mailbox = (v.match_mailbox ?? '').trim()
   if ((v.match_folder ?? '').trim()) matchObj.folder = (v.match_folder ?? '').trim()
   const base: Record<string, unknown> = {
     name: (v.name ?? '').trim(),
@@ -343,9 +348,37 @@ interface TestForm {
   fields: { key: string; value: string }[]
 }
 
-function TestTriggerModal({ name, onClose }: { name: string | null; onClose: () => void }) {
+// Turn a simple anchored regex the editor generates (e.g. "^Tickets/Open$") back
+// into the plain value, so a "Trigger now" test can pre-seed the mailbox/folder a
+// real email would carry. Strips ^…$ anchors and unescapes \. ; returns "" for a
+// pattern with other regex metacharacters (can't safely reduce it to a literal).
+export function literalFromPattern(pat: string): string {
+  let s = (pat || '').trim()
+  if (s.startsWith('^')) s = s.slice(1)
+  if (s.endsWith('$')) s = s.slice(0, -1)
+  s = s.replace(/\\\./g, '.')
+  return /[\\^$*+?()[\]{}|]/.test(s) ? '' : s
+}
+
+function TestTriggerModal({ name, trigger, onClose }: { name: string | null; trigger?: Record<string, unknown>; onClose: () => void }) {
   const [form] = Form.useForm<TestForm>()
   const [firing, setFiring] = useState(false)
+
+  // For an Outlook new_mail trigger, pre-seed the folder/mailbox fields from the
+  // trigger's own match, so the synthetic event carries the same location a real
+  // email would (otherwise the agent has no folder/mailbox and falls back to the
+  // default Inbox). Only the fields that reduce to a plain value are seeded.
+  const seedFields = () => {
+    const rows: { key: string; value: string }[] = []
+    const m = (trigger?.match ?? {}) as Record<string, unknown>
+    if (trigger?.source === 'outlook' && trigger?.event === 'new_mail') {
+      const folder = literalFromPattern(String(m.folder ?? ''))
+      const mailbox = literalFromPattern(String(m.mailbox ?? ''))
+      if (folder) rows.push({ key: 'folder', value: folder })
+      if (mailbox) rows.push({ key: 'mailbox', value: mailbox })
+    }
+    return rows
+  }
 
   const fire = async () => {
     const v = await form.validateFields()
@@ -380,9 +413,12 @@ function TestTriggerModal({ name, onClose }: { name: string | null; onClose: () 
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
         Fires this trigger immediately with a synthetic event — bypassing the match
         rules and the working-hours rota — so you can test it without waiting for a
-        real event. The message lands under the <code>body</code> field.
+        real event. The message lands under the <code>body</code> field. For an
+        Outlook trigger the <code>folder</code>/<code>mailbox</code> below are
+        pre-filled from its match so the run has the same location a real email
+        would; a real arriving email carries these automatically.
       </Text>
-      <Form form={form} layout="vertical" size="small" initialValues={{ body: '', fields: [] }}>
+      <Form form={form} layout="vertical" size="small" initialValues={{ body: '', fields: seedFields() }}>
         <Form.Item name="body" label="Message">
           <Input.TextArea
             autoSize={{ minRows: 3, maxRows: 10 }}
@@ -562,7 +598,7 @@ export function TriggersEditor({
       mode: 'agent', autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
       runnables: [], map: [], reply_draft: false,
       rule_kind: 'single', action_mode: 'sequential', actions: [], action_allow: [], pre_turn: '',
-      match_folder: '', claim: false, claim_folder: '',
+      match_mailbox: '', match_folder: '', claim: false, claim_folder: '',
     })
     setEditing(true)
   }
@@ -675,6 +711,12 @@ export function TriggersEditor({
           </Form.Item>
 
           {isMailNew && (
+            <Form.Item name="match_mailbox" label="Mailbox to match (optional)"
+              help="Scope this trigger to one monitored mailbox (matched against the mail's mailbox), e.g. ^helpdesk@corp\.com$. Leave blank to fire for a matching folder in ANY monitored mailbox — set it when two mailboxes share a folder name.">
+              <Input placeholder="^helpdesk@corp\.com$ (blank = any mailbox)" style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+          )}
+          {isMailNew && (
             <Form.Item name="match_folder" label="Folder to match"
               rules={claim ? [{ required: true, whitespace: true, message: 'A claim trigger needs a folder to match on' }] : []}
               help="The watched folder this trigger fires on (matched against the mail's folder), e.g. ^Tickets/Open$. Required when the claim system is on so the claim is scoped to one shared folder.">
@@ -777,7 +819,7 @@ export function TriggersEditor({
         </Form>
       </Modal>
 
-      <TestTriggerModal name={testName} onClose={() => setTestName(null)} />
+      <TestTriggerModal name={testName} trigger={triggers.find(t => t.name === testName)} onClose={() => setTestName(null)} />
       <PasteInputModal name={pasteName} onClose={() => setPasteName(null)} />
 
       {triggers.length === 0 && !editing ? (

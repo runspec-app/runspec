@@ -154,15 +154,58 @@ def render_event(event: Event) -> str:
     return "\n".join(lines)
 
 
+def mail_scope_note(event: Event) -> str:
+    """A directive telling the agent where the triggering email lives, so Outlook
+    reads target that mailbox+folder rather than the default Inbox.
+
+    An ``outlook``/``new_mail`` event is tagged with the ``mailbox`` and ``folder``
+    it arrived in (see sources/outlook.py). Without this the agent, asked to find an
+    earlier or similar message, searches the default Inbox and finds nothing (it
+    even narrates "yesterday's inbox"). Returns ``""`` for non-mail events or when
+    neither tag is present (e.g. a synthetic "Trigger now" event with no location),
+    so nothing is added spuriously. Pure/testable."""
+    if event.source != "outlook" or event.type != "new_mail":
+        return ""
+    mailbox = str(event.payload.get("mailbox") or "").strip()
+    folder = str(event.payload.get("folder") or "").strip()
+    if not mailbox and not folder:
+        return ""
+    where = " and ".join(
+        p
+        for p in (
+            f"mailbox '{mailbox}'" if mailbox else "",
+            f"folder '{folder}'" if folder else "",
+        )
+        if p
+    )
+    args = ", ".join(
+        p
+        for p in (
+            f"mailbox='{mailbox}'" if mailbox else "",
+            f"folder='{folder}'" if folder else "",
+        )
+        if p
+    )
+    return (
+        f"This email arrived in {where}. When you search or read Outlook for "
+        "related messages (an earlier, similar, or replying mail), target that "
+        f"same location — pass {args} to the outlook_inbox / outlook_search / "
+        "outlook_get_message tools. Do not search only the default Inbox."
+    )
+
+
 def compose_system(
     trigger: Trigger,
     base_system: str = "",
     *,
     draft_available: bool = False,
     draft_kind: str = "mail",
+    event: Event | None = None,
 ) -> str:
     """Build the system prompt for an agent-mode trigger: the base assistant
-    prompt, the trigger's own rules, and (when enabled) the reply-drafting note.
+    prompt, the trigger's own rules, an Outlook mailbox/folder scoping directive
+    (when ``event`` is a located ``new_mail``), and (when enabled) the
+    reply-drafting note.
 
     ``draft_kind`` selects which drafting tool the note describes — ``"mail"``
     for the Outlook ``draft_reply`` (saved to Drafts) or ``"room"`` for the chat
@@ -173,6 +216,10 @@ def compose_system(
         parts.append(base_system.strip())
     if trigger.rules.strip():
         parts.append("Rules for this trigger:\n" + trigger.rules.strip())
+    if event is not None:
+        scope = mail_scope_note(event)
+        if scope:
+            parts.append(scope)
     if draft_available:
         if draft_kind == "room":
             note = (
@@ -368,6 +415,7 @@ def make_handler(
             base_system,
             draft_available=draft,
             draft_kind="room" if is_chat else "mail",
+            event=event,
         )
         card.move(Column.TRIAGE)
         summary = ops.run_agent_turn(
