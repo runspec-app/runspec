@@ -1619,16 +1619,21 @@ export function useInvocationBlocks() {
     }
 
     const onToolEnd = (e: Event) => {
-      const { id, tool_name, output, output_chars, truncated } = (e as CustomEvent).detail as {
+      const { id, tool_name, output, output_chars, truncated, operator_decision } = (e as CustomEvent).detail as {
         id: string; tool_name: string; output: string
         output_chars?: number; truncated?: { orig_len: number; cap: number } | null
+        operator_decision?: 'approved' | 'edited' | 'denied' | ''
       }
       setBlocks(prev => prev.map(b => {
         if (b.id !== id) return b
         const newSegs = b.segments.map(seg => {
           if (seg.kind === 'tool' && seg.entry.name === tool_name && seg.entry.running) {
             const durationMs = seg.entry.startedAt ? Date.now() - seg.entry.startedAt : undefined
-            return { ...seg, entry: { ...seg.entry, output, running: false, durationMs, outputChars: output_chars, truncated: truncated ?? null } }
+            // Keep the confirm-gate badge on the live card (the backend sends the
+            // decision on tool_end) so an approved/denied action stays marked as
+            // gated instead of reverting to look like an autonomous run. "" = the
+            // gate never fired, so leave any existing value untouched.
+            return { ...seg, entry: { ...seg.entry, output, running: false, durationMs, outputChars: output_chars, truncated: truncated ?? null, ...(operator_decision ? { operatorDecision: operator_decision } : {}) } }
           }
           return seg
         })

@@ -180,12 +180,37 @@ def test_unknown_command_segment_falls_back_to_last_valid_node():
     assert b._effective_tool_autonomy("local__svc", {"command": "nope"}) == "confirm"
 
 
-def test_run_runnable_reads_subcommand_from_args():
-    # The run_runnable wrapper carries the command inside `args`; the gate must
-    # resolve the leaf just as for a direct call.
+def test_run_runnable_reads_subcommand_from_envelope():
+    # Search mode: the run_runnable schema carries `command` as a TOP-LEVEL
+    # envelope field (sibling to `args`), not inside `args`. The gate must read it
+    # from the envelope and resolve the leaf — otherwise it falls back to the
+    # top-level runnable's level (the search-mode over/under-gating bug).
     b = _StubBridge(_runnable_with_commands("autonomous", {"add": _cmd("confirm")}))
-    ti = {"id": "local__svc", "host": "local", "args": {"command": "add"}}
+    # parent autonomous, leaf 'add' confirm → must gate (under-gating guard)
+    ti = {"id": "local__svc", "host": "local", "command": "add", "args": {}}
     assert b._effective_tool_autonomy("run_runnable", ti) == "confirm"
+
+
+def test_run_runnable_autonomous_leaf_not_over_gated():
+    # parent confirm, leaf 'list' autonomous → must NOT prompt (the reported
+    # symptom: an autonomous subcommand still confirming in search mode).
+    b = _StubBridge(_runnable_with_commands("confirm", {"list": _cmd("autonomous")}))
+    ti = {"id": "local__svc", "host": "local", "command": "list", "args": {}}
+    assert b._effective_tool_autonomy("run_runnable", ti) == "autonomous"
+
+
+def test_run_runnable_subcommand_arg_escalates_from_envelope():
+    # The escalating arg lives in `args`; the command lives on the envelope.
+    cmds = {"add": _cmd("autonomous", args=[{"name": "force", "autonomy": "manual"}])}
+    b = _StubBridge(_runnable_with_commands("confirm", cmds))
+    base = {"id": "local__svc", "host": "local", "command": "add"}
+    assert (
+        b._effective_tool_autonomy("run_runnable", {**base, "args": {}}) == "autonomous"
+    )
+    assert (
+        b._effective_tool_autonomy("run_runnable", {**base, "args": {"force": True}})
+        == "manual"
+    )
 
 
 # ── leaf-resolution helpers (pure) ────────────────────────────────────────────
@@ -323,7 +348,7 @@ def test_async_manual_is_hard_blocked():
 def test_async_confirm_approve_runs():
     b = _StubBridge(_runnable("confirm"), run_result="RAN")
     out = _run_async_gate(b, {}, True)
-    assert out == "RAN"
+    assert out.endswith("RAN")  # tool ran; a [gate: …] note is prefixed
 
 
 def test_async_confirm_deny_does_not_run():
@@ -331,6 +356,28 @@ def test_async_confirm_deny_does_not_run():
     out = _run_async_gate(b, {}, False)
     assert "declined" in out
     assert out != "RAN"
+
+
+def test_async_approved_output_carries_gate_note_for_agent():
+    # The agent must know the call was human-gated: an approved gated result is
+    # prefixed with a [gate: …] note. The real tool output still follows.
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+    out = _run_async_gate(b, {}, True)
+    assert out.startswith("[gate: operator approved this confirm-gated call]")
+    assert out.endswith("RAN")
+
+
+def test_async_autonomous_output_has_no_gate_note():
+    # An ungated (autonomous) call carries no gate note — nothing to disclose.
+    b = _StubBridge(_runnable("autonomous"), run_result="RAN")
+    out = asyncio.run(b._gated_run_tool_async("local__flush-dns", {}, "chat1"))
+    assert out == "RAN"
+
+
+def test_async_denied_output_has_no_gate_prefix():
+    b = _StubBridge(_runnable("confirm"), run_result="RAN")
+    out = _run_async_gate(b, {}, False)
+    assert not out.startswith("[gate:")  # denial has its own wording, not the note
 
 
 def _run_async_gate_with_stage(b, decision):
@@ -361,7 +408,7 @@ def _run_async_gate_with_stage(b, decision):
 def test_async_stage_running_on_approve():
     b = _StubBridge(_runnable("confirm"), run_result="RAN")
     out, stages = _run_async_gate_with_stage(b, True)
-    assert out == "RAN"
+    assert out.endswith("RAN")  # tool ran; a [gate: …] note is prefixed
     assert stages == ["awaiting_human", "running"]
 
 

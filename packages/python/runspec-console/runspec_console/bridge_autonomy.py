@@ -201,12 +201,22 @@ class AutonomyMixin:
                 return "confirm"
             _host, _name, r = resolved
             inner_args = self._coerce_run_args(ti.get("args"))
+            # In search mode the chosen subcommand rides the run_runnable envelope
+            # as a top-level `command` field (sibling to `args`), NOT inside
+            # `args` — so read it from `ti`, exactly as _run_tool_sync (line ~1259)
+            # and _confirm_card_view do. Reading it from `inner_args` (the
+            # args-only dict) would always miss it and fall back to the top-level
+            # runnable's autonomy.
+            command_path = _command_path(ti)
         else:
             target = self._resolve_tool_target(tool_name, tool_input)
             if isinstance(target, str):
                 return "confirm"  # unresolved (bad host / unknown tool) → gated
             _host, _name, r, _host_key = target
             inner_args = tool_input or {}
+            # Dedup / per_host / saved-run calls carry `command` as a top-level
+            # property of the call input.
+            command_path = _command_path(inner_args)
         if not r:
             return "confirm"
         # Resolve autonomy from the *invoked subcommand leaf*, not the top-level
@@ -214,7 +224,7 @@ class AutonomyMixin:
         # which reads the resolved leaf's own autonomy (a leaf's level replaces
         # the parent's; it is not escalated against it). Without a command the
         # leaf is the top node, so plain runnables are unchanged.
-        leaf = _command_leaf_node(r, _command_path(inner_args))
+        leaf = _command_leaf_node(r, command_path)
         level = leaf.get("autonomy") or "confirm"
         # The leaf's args are the *effective* set (inherited globals + the
         # subcommand's own), so this one loop covers both global and
@@ -654,8 +664,11 @@ class AutonomyMixin:
         ``on_decision`` (chat turns only), when a confirm gate actually fires, is
         called with ``{"decision": "approved"|"edited"|"denied", "proposed_input":
         ...}`` so the caller can record the operator's decision on the saved
-        transcript's tool entry — for the operator's later review, never replayed
-        to the agent. Not called for autonomous ("run") or manual-only calls."""
+        transcript's tool entry (for the operator's later review) and echo it into
+        the live ``runspec:tool_end`` so the card keeps its badge without a reload.
+        Not called for autonomous ("run") or manual-only calls. Separately, an
+        approved/edited result is prefixed with a short ``[gate: …]`` note so the
+        agent itself knows the step was human-gated (denials already say so)."""
         inner_call: tuple[str, dict[str, Any]] | None = None
         if tool_name == "use_tool":
             # Deferred built-in (search mode). Resolve the inner tool now, but
@@ -783,6 +796,19 @@ class AutonomyMixin:
                     self._run_tool_sync, tool_name, tool_input, chat_id
                 )
             observability.set_tool_exit(_tool_span, out)
+            # Tell the agent the call went through a human confirm gate and how it
+            # was answered (approved / approved-with-edits). Autonomous "run" calls
+            # never reach here with a decision set, so an ungated call carries no
+            # note. Denials return earlier with their own note. This keeps the
+            # agent's account of what happened honest — it can say a human approved
+            # the step rather than presenting it as if it had run unsupervised.
+            if gate_operator_decision:
+                note = (
+                    "operator approved this confirm-gated call with edited arguments"
+                    if gate_operator_decision == "edited"
+                    else "operator approved this confirm-gated call"
+                )
+                out = f"[gate: {note}]\n{out}"
             return out
 
     async def _run_builtin_tool_tracked(

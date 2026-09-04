@@ -1567,8 +1567,11 @@ class InvokeMixin:
                         },
                     )
                     # Capture the operator's confirm-gate decision (if the gate
-                    # fires) so it can be recorded on the saved tool entry for the
-                    # operator's review — never replayed to the agent.
+                    # fires) so it can be recorded on the saved tool entry AND
+                    # echoed into the live tool_end below — the card keeps its
+                    # "you approved / denied / edited" badge without waiting for a
+                    # History reload. The dict itself is not replayed to the agent
+                    # (the agent learns of the gate from the [gate: …] output note).
                     gate_decision: dict[str, Any] = {}
                     try:
                         if cancel.is_set():
@@ -1604,6 +1607,12 @@ class InvokeMixin:
                             # or cut-off result — the [:2000] display can't show it.
                             "output_chars": len(output),
                             "truncated": utils_mod.parse_truncation(output),
+                            # The operator's gate decision (approved/edited/denied)
+                            # when a confirm gate fired this call; "" for an
+                            # autonomous run. Lets the live card show the same badge
+                            # a reloaded conversation gets, so an approved action
+                            # doesn't look like it ran unsupervised in hindsight.
+                            "operator_decision": gate_decision.get("decision") or "",
                         },
                     )
                     # Diagnostic: the *full* tool-result string the model will

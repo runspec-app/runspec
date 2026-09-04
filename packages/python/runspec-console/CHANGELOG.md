@@ -8,6 +8,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.236.4] — 2026-09-04
+
+### Fixed
+- **Per-subcommand autonomy now works in `tool_mode = "search"`.** The 0.236.1
+  fix resolved the invoked subcommand leaf's autonomy for dedup / per_host /
+  saved-run calls, but the search-mode `run_runnable` branch of
+  `_effective_tool_autonomy` read the chosen subcommand from the call's `args`
+  sub-dict — while the `run_runnable` schema carries `command` as a **top-level
+  envelope field** (sibling to `args`). So the command was invisible, the gate
+  fell back to the **top-level runnable's** autonomy, and an `autonomous`
+  subcommand still prompted (over-gating) — and, worse, a `confirm`/`manual`
+  subcommand under an `autonomous` parent would have run **without** a prompt
+  (under-gating). The branch now reads `command` from the envelope, exactly as
+  `_run_tool_sync` and `_confirm_card_view` do. (`bridge_autonomy.py`)
+
+### Added
+- **The confirm-gate decision stays visible on the live chat card, and the agent
+  is told the step was gated.** Previously, once the operator answered a confirm
+  prompt the awaiting card was cleared and `runspec:tool_end` carried no
+  decision, so the tool card reverted to look like an autonomous run — the
+  "you approved / denied / edited" badge only reappeared if the conversation was
+  reopened from History. `runspec:tool_end` now includes `operator_decision` and
+  the live reducer stamps it onto the card (`bridge_invoke.py`,
+  `console-ui/OutputPanel.tsx`). Separately, an approved/edited gated tool result
+  is now prefixed with a short `[gate: …]` note so the **agent** knows the call
+  went through a human confirm gate (denied calls already say so) — it can report
+  a human approved the step instead of presenting it as unsupervised.
+  (`bridge_autonomy.py`)
+
+
 ## [0.236.3] — 2026-09-03
 
 ### Added
