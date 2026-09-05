@@ -301,9 +301,21 @@ class ImproveMixin:
     def _load_improve(self, report_id: str) -> dict[str, Any] | None:
         p = self._improve_path(report_id)
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
+            report = json.loads(p.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             return None
+        # Address the report to the *currently* configured developers, not whoever
+        # was configured when it was generated. A report is often generated before
+        # [improve] developer_emails is set; overlaying live config here means
+        # adding that config takes effect on existing reports — the UI's "Email
+        # developers" button enables and the mailto addresses the right people —
+        # without having to regenerate. (run_improve_report already stamps live
+        # config at build time.)
+        try:
+            report["developer_emails"] = config_mod.read_improve()["developer_emails"]
+        except Exception:  # noqa: BLE001 — never fail a load over config
+            report.setdefault("developer_emails", [])
+        return report
 
     def _save_improve(self, report: dict[str, Any]) -> None:
         try:

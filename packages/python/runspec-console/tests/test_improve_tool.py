@@ -187,3 +187,24 @@ def test_synthesis_with_fake_adapter_attaches_recommendations(monkeypatch, tmp_p
     assert 'category = "runnable_args"' in out["learnings_toml"]
     # persisted, so a reload sees the synthesis
     assert stub.load_improve_report(rep["id"])["synthesis"]["summary"] == "ok"
+
+
+def test_load_improve_overlays_live_developer_emails(monkeypatch, tmp_path):
+    # A report generated before [improve] developer_emails was set: the stored
+    # recipients are empty. Adding the config afterward must take effect on the
+    # existing report (the UI's email button + the mailto), so _load_improve
+    # overlays the live config rather than trusting the frozen snapshot.
+    _redirect_store(monkeypatch, tmp_path)
+    d = tmp_path / "improve"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "r1.json").write_text(
+        json.dumps({"id": "r1", "developer_emails": []}), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        config_mod,
+        "read_improve",
+        lambda: _cfg(developer_emails=["new@x.com", "lead@x.com"]),
+    )
+    rep = _Stub().load_improve_report("r1")
+    assert rep is not None
+    assert rep["developer_emails"] == ["new@x.com", "lead@x.com"]

@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.239.2] — 2026-09-05
+
+### Fixed
+- **Improve tab: the "Email developers" button now activates when you configure
+  recipients.** The button and the mailto read `developer_emails` off the saved
+  report, which is frozen at generation time — so setting `[improve]
+  developer_emails` *after* a report existed never enabled it. Recipients are now
+  resolved from **live config**: `_load_improve` overlays the current
+  `[improve] developer_emails` onto every loaded report (so the mailto addresses
+  the right people and a reopened report's button enables), and the Improve tab
+  reads live config via `get_config()` on show and gates the button on it — so
+  adding the config takes effect without regenerating a report.
+  (`bridge_improve.py` `_load_improve`, `views/ImproveView.tsx`.)
+
+
 ## [0.239.1] — 2026-09-05
 
 ### Fixed

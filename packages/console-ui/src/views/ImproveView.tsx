@@ -25,6 +25,15 @@ const CAT_META: Record<string, { color: string; label: string }> = {
   autonomy_edited: { color: 'geekblue', label: 'Edited' },
 }
 
+// Parse [improve] developer_emails from live config — a comma/semicolon/space
+// list or an array (mirrors config.read_improve). So adding the config enables
+// the email button without regenerating a report. Exported for tests.
+export function parseEmails(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(e => String(e).trim()).filter(Boolean)
+  if (typeof v === 'string') return v.split(/[,;\s]+/).map(e => e.trim()).filter(Boolean)
+  return []
+}
+
 interface ImproveViewProps {
   active: boolean
 }
@@ -37,6 +46,9 @@ export function ImproveView({ active }: ImproveViewProps) {
   const [running, setRunning] = useState(false)
   const [synthing, setSynthing] = useState(false)
   const [loadedOnce, setLoadedOnce] = useState(false)
+  // Live [improve] developer_emails, refreshed each time the tab is shown so
+  // config added while the console is running takes effect immediately.
+  const [liveEmails, setLiveEmails] = useState<string[]>([])
 
   const refreshList = useMemo(
     () => async () => {
@@ -55,6 +67,19 @@ export function ImproveView({ active }: ImproveViewProps) {
       refreshList()
     }
   }, [active, loadedOnce, refreshList])
+
+  // Refresh the live developer-email config whenever the tab is shown.
+  useEffect(() => {
+    if (!active) return
+    bridge.get_config()
+      .then(cfg => setLiveEmails(parseEmails((cfg.improve as { developer_emails?: unknown } | undefined)?.developer_emails)))
+      .catch(() => { /* best-effort */ })
+  }, [active])
+
+  // The report is addressed to whoever config named when it loaded (the backend
+  // overlays live config); fall back to live config for a report still held in
+  // memory from before the config was added.
+  const emails = report?.developer_emails?.length ? report.developer_emails : liveEmails
 
   async function run(withComment: boolean) {
     setRunning(true)
@@ -94,7 +119,7 @@ export function ImproveView({ active }: ImproveViewProps) {
 
   async function emailDevelopers() {
     if (!report) return
-    if (!report.developer_emails?.length) {
+    if (!emails.length) {
       message.warning('No developer emails configured — set [improve] developer_emails in config.')
       return
     }
@@ -233,6 +258,7 @@ export function ImproveView({ active }: ImproveViewProps) {
           ) : (
             <ReportPanel
               report={report}
+              emails={emails}
               synthing={synthing}
               onSynthesize={synthesize}
               onEmail={emailDevelopers}
@@ -249,9 +275,10 @@ function pct(n: number | undefined): string {
 }
 
 function ReportPanel({
-  report, synthing, onSynthesize, onEmail,
+  report, emails, synthing, onSynthesize, onEmail,
 }: {
   report: ImproveReport
+  emails: string[]
   synthing: boolean
   onSynthesize: () => void
   onEmail: () => void
@@ -311,15 +338,15 @@ function ReportPanel({
             </Button>
             <Tooltip
               title={
-                report.developer_emails?.length
-                  ? `Email ${report.developer_emails.join(', ')}`
-                  : 'No developer_emails configured'
+                emails.length
+                  ? `Email ${emails.join(', ')}`
+                  : 'Set [improve] developer_emails in config to enable'
               }
             >
               <Button
                 type="primary"
                 icon={<MailOutlined />}
-                disabled={!report.developer_emails?.length}
+                disabled={!emails.length}
                 onClick={onEmail}
               >
                 Email developers

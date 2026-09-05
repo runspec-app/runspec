@@ -693,6 +693,7 @@ export const mockApi: BridgeApi = {
   get_config: async () => ({
     ssh: { user: 'jason', identityFile: 'C:/Users/jason/AppData/Roaming/runspec-console/runspec_ed25519', key_created_at: MOCK_KEY_CREATED_AT },
     llm: { apiBaseUrl: '', model: 'claude-opus-4-7' },
+    improve: { developer_emails: 'dev@example.com, lead@example.com' },
   }),
 
   save_config: async (data) => { console.log('[mock] save_config', data) },
