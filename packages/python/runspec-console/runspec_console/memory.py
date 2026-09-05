@@ -184,6 +184,53 @@ def search_memory(
         ]
 
 
+def list_memories(app: str | None = None) -> list[dict[str, Any]]:
+    """Every stored fact (optionally scoped to one ``app``), newest first, with the
+    fields an operator needs to prune — id, app, fact, tags, pinned, hits, created.
+
+    Unlike ``search_memory`` this takes no query, returns the *full* set, and is
+    strictly read-only (no ``hits`` increment), so the agent can enumerate what's
+    remembered — the list step of "help me prune my memories" — without a keyword to
+    guess or inflating recency stats just by looking."""
+    with _LOCK:
+        rows = _load(memory_path(), "memory")
+    # Newest first. The file is append-only (add_memory appends; _evict filters in
+    # place) and never synced, so its order is insertion order — reversing it is a
+    # reliable newest-first even for facts added in the same second (their `created`
+    # timestamps, at second granularity, would tie under a sort).
+    return [
+        {
+            "id": r.get("id"),
+            "app": r.get("app", _DEFAULT_APP),
+            "fact": r.get("fact"),
+            "tags": r.get("tags", []),
+            "pinned": bool(r.get("pinned")),
+            "hits": int(r.get("hits", 0)),
+            "created": r.get("created", ""),
+        }
+        for r in reversed(rows)
+        if not app or r.get("app") == app
+    ]
+
+
+def forget_memory(memory_id: str) -> bool:
+    """Remove one memory by id via read-modify-write (the whole file is re-read, the
+    matching entry dropped, and the rest written back untouched) — so forgetting one
+    fact never disturbs the others, including any added on disk since load. Mirrors
+    ``delete_runbook``. Returns True if an entry was removed, False for a blank/unknown
+    id."""
+    mid = str(memory_id or "").strip()
+    if not mid:
+        return False
+    with _LOCK:
+        rows = _load(memory_path(), "memory")
+        kept = [r for r in rows if r.get("id") != mid]
+        if len(kept) == len(rows):
+            return False
+        _save(memory_path(), "memory", kept)
+    return True
+
+
 #: Default count of pinned facts that fold into the system prompt (build_header).
 HEADER_MAX_FACTS = 6
 

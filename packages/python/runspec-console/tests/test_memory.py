@@ -78,6 +78,52 @@ def test_blank_fact_rejected(mem):
     assert mem.read_memory() == []
 
 
+def test_list_memories_returns_all_with_fields(mem):
+    mem.add_memory("first fact", app="a", tags=["t1"])
+    mem.add_memory("second fact", app="b", pin=True)
+    rows = mem.list_memories()
+    assert len(rows) == 2
+    # Newest first, and every prune-relevant field is present.
+    assert rows[0]["fact"] == "second fact"
+    assert rows[0]["pinned"] is True
+    assert {"id", "app", "fact", "tags", "pinned", "hits", "created"} <= set(rows[0])
+
+
+def test_list_memories_scoped_by_app(mem):
+    mem.add_memory("a fact", app="a")
+    mem.add_memory("b fact", app="b")
+    rows = mem.list_memories(app="b")
+    assert [r["app"] for r in rows] == ["b"]
+
+
+def test_list_memories_does_not_increment_hits(mem):
+    mem.add_memory("a fact", app="a")
+    mem.list_memories()
+    mem.list_memories(app="a")
+    # Pure read — unlike search_memory, listing never inflates recall stats.
+    assert mem.read_memory()[0]["hits"] == 0
+
+
+def test_forget_memory_removes_only_that_entry(mem):
+    mid = mem.add_memory("goner", app="a")
+    mem.add_memory("keeper", app="a")
+    assert mem.forget_memory(mid) is True
+    facts = [r["fact"] for r in mem.read_memory()]
+    assert facts == ["keeper"]
+    # Deleting a missing / blank id is a no-op that reports False.
+    assert mem.forget_memory(mid) is False
+    assert mem.forget_memory("") is False
+
+
+def test_forget_a_pinned_memory_frees_a_header_slot(mem):
+    """The prune the operator asked for: dropping a pinned fact lowers the pin count
+    that gates the header (only HEADER_MAX_FACTS pins fold into the prompt)."""
+    ids = [mem.add_memory(f"pin {i}", app="x", pin=True) for i in range(3)]
+    assert mem.pinned_count() == 3
+    assert mem.forget_memory(ids[0]) is True
+    assert mem.pinned_count() == 2
+
+
 def test_runbook_roundtrip(mem):
     sid = mem.save_runbook(
         "",
@@ -337,24 +383,30 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
 
     b = _Stub()
 
-    # Autonomy: local + reversible → run without prompting.
-    for name in ("remember", "search_memory"):
+    # Autonomy: local + reversible → run without prompting. list_memories is a pure
+    # read (no query, no hit bump), so it's autonomous too.
+    for name in ("remember", "search_memory", "list_memories"):
         assert b._effective_tool_autonomy(name, {}) == "autonomous"
     # save_runbook is the exception: a runbook is a procedure the agent (and every
     # console it syncs to) will later follow, so the operator approves each save.
-    # It must stay *in* _MEMORY_TOOL_NAMES though — that frozenset is also the
-    # dispatch key and the search-mode hot-kernel key.
+    # forget_memory is the other: it deletes a stored fact, so the operator agrees to
+    # each prune. Both must stay *in* _MEMORY_TOOL_NAMES though — that frozenset is
+    # also the dispatch key and the search-mode hot-kernel key.
     assert b._effective_tool_autonomy("save_runbook", {}) == "confirm"
+    assert b._effective_tool_autonomy("forget_memory", {}) == "confirm"
     from runspec_console.bridge_const import _HOT_BUILTIN_NAMES, _MEMORY_TOOL_NAMES
 
-    assert "save_runbook" in _MEMORY_TOOL_NAMES
-    assert "save_runbook" in _HOT_BUILTIN_NAMES
+    for n in ("save_runbook", "forget_memory", "list_memories"):
+        assert n in _MEMORY_TOOL_NAMES
+        assert n in _HOT_BUILTIN_NAMES
 
-    # Registration: the three always-on memory tools — load_runbook only appears
+    # Registration: the five always-on memory tools — load_runbook only appears
     # once a runbook exists to read (its runbook_id enum would otherwise be empty).
     assert {t["name"] for t in b._memory_tools()} == {
         "remember",
         "search_memory",
+        "list_memories",
+        "forget_memory",
         "save_runbook",
     }
 
@@ -373,6 +425,50 @@ def test_bridge_registers_routes_and_gates_memory_tools(tmp_path, monkeypatch):
     assert any(ev == "runspec:runbooks_changed" for ev, _ in b.dispatched)
     out = b._run_memory_tool("search_memory", {"query": "log"})
     assert "/var/log/app.log" in out
+
+
+def test_bridge_list_and_forget_memory_roundtrip(tmp_path, monkeypatch):
+    """The agent's prune flow: list_memories enumerates everything (id included), then
+    forget_memory deletes one by that id — and a bad id reports rather than raises."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    from runspec_console.bridge import Bridge
+
+    class _Stub:
+        _run_memory_tool = Bridge._run_memory_tool
+
+        def _dispatch(self, ev, payload):
+            pass
+
+    b = _Stub()
+    b._run_memory_tool(
+        "remember", {"fact": "OrderSvc log at /var/log/o.log", "app": "o"}
+    )
+    b._run_memory_tool(
+        "remember", {"fact": "Payments token rotates monthly", "app": "p"}
+    )
+
+    listed = json.loads(b._run_memory_tool("list_memories", {}))
+    assert listed["count"] == 2
+    ids = {m["id"] for m in listed["memories"]}
+    # Scoped list narrows to one app.
+    scoped = json.loads(b._run_memory_tool("list_memories", {"app": "o"}))
+    assert scoped["count"] == 1 and scoped["memories"][0]["app"] == "o"
+
+    target = scoped["memories"][0]["id"]
+    assert b._run_memory_tool("forget_memory", {"memory_id": target}) == (
+        f"Forgot memory {target}."
+    )
+    after = json.loads(b._run_memory_tool("list_memories", {}))
+    assert after["count"] == 1 and target not in {m["id"] for m in after["memories"]}
+    assert ids  # (silence unused in case the set assertion above changes)
+
+    # A blank / unknown id reports an error string instead of raising.
+    assert b._run_memory_tool("forget_memory", {}).startswith("Error:")
+    assert "already gone" in b._run_memory_tool("forget_memory", {"memory_id": "m_zzz"})
+
+    # Empty store lists cleanly (no crash, human-readable).
+    b._run_memory_tool("forget_memory", {"memory_id": after["memories"][0]["id"]})
+    assert "No memories stored" in b._run_memory_tool("list_memories", {})
 
 
 def _runbook_tool_stub(tmp_path, monkeypatch):

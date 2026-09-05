@@ -8,6 +8,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.240.0] — 2026-09-05
+
+### Added
+- **Prune agent memory: `list_memories` + `forget_memory`.** The memory feature
+  could accrue and recall facts but never remove them, so asking the agent to help
+  prune memory (e.g. because the pinned set exceeds the six that fold into the
+  prompt header) had no tool to act on. Two built-ins close the loop:
+  - `list_memories` — an autonomous, read-only enumeration of every stored fact
+    (id, app, fact, tags, whether pinned, recall count), optionally scoped to one
+    app. Unlike `search_memory` it needs no query, returns the full set newest
+    first, and never bumps recall stats — the "show me what you remember" step.
+  - `forget_memory` — deletes one fact by its id. **Confirm-gated** (like
+    `save_runbook`): the operator approves each removal, matching "remove the ones
+    I agree to". Deleting a pinned fact also frees a slot in the prompt header
+    (only the top `HEADER_MAX_FACTS` = 6 pins fold in).
+
+  Both are hot built-ins in `_MEMORY_TOOL_NAMES` (so they stay inline in
+  `tool_mode = "search"` and dispatch through `_run_memory_tool`), backed by pure
+  `memory.list_memories` / `memory.forget_memory` (the latter mirrors
+  `delete_runbook`'s read-modify-write, so forgetting one fact never disturbs the
+  others). `forget_memory` carries a `forget` confirm verb.
+  (`memory.py`, `bridge_const.py`, `bridge_autonomy.py`, `bridge_agent_tools.py`.)
+
+
 ## [0.239.2] — 2026-09-05
 
 ### Fixed

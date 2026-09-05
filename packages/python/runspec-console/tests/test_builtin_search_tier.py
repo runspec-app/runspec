@@ -129,6 +129,11 @@ def test_hot_kernel_is_pinned_exactly():
         "fetch_url",
         "remember",
         "search_memory",
+        # list_memories/forget_memory: the review-and-prune pair. Hot for the same
+        # reason as the rest of the memory kernel — the pinned-fact header references
+        # memory, so managing it shouldn't need a discovery hop.
+        "list_memories",
+        "forget_memory",
         "save_runbook",
         # run_runbook renders a runbook's steps to follow; load_runbook reads its
         # raw definition to inspect/edit. Both are hot: the folded index advertises

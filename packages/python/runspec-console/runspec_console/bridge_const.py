@@ -49,10 +49,18 @@ _BUILTIN_META_NAMES = frozenset({"describe_tool", "use_tool"})
 # Persistent-memory / runbook tools. Backed by local TOML collections (see
 # memory.py) — local and reversible, so the autonomy gate lets them run without a
 # prompt (like the read-only meta-tools), keeping the model spend on actual work.
-# (save_runbook is the exception, gated in _effective_tool_autonomy: a runbook is a
-# procedure that gets followed later, so the operator approves each write.)
+# (save_runbook and forget_memory are the exceptions, gated in
+# _effective_tool_autonomy: a runbook is a procedure that gets followed later, and a
+# forget deletes a stored fact, so the operator approves each of those writes.)
 #
-_MEMORY_TOOL_NAMES = frozenset({"remember", "search_memory", "save_runbook"})
+# list_memories (read-only) + forget_memory (delete by id) give the operator a way to
+# review and prune what's accrued — the "help me prune my memories" flow, since the
+# header only surfaces the top HEADER_MAX_FACTS pinned facts. This frozenset is the
+# dispatch key (_run_memory_tool) and the search-mode hot-kernel key, so both new
+# tools must live here.
+_MEMORY_TOOL_NAMES = frozenset(
+    {"remember", "search_memory", "list_memories", "forget_memory", "save_runbook"}
+)
 
 # load_runbook — read a runbook's *raw definition* (title/symptom/tags/steps
 # array/args table) as data, for inspecting or editing it. Distinct from
@@ -232,6 +240,7 @@ _CONFIG_TOOL_NAMES = frozenset(
 _CONFIRM_VERB_DEFAULT = "run"
 _CONFIRM_VERBS = {
     "save_runbook": "save",
+    "forget_memory": "forget",
     "create_document": "create",
     "create_schedule": "create",
     "open_url": "open",

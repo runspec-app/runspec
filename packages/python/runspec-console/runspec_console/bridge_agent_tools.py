@@ -3346,6 +3346,49 @@ class AgentToolsMixin:
                 },
             },
             {
+                "name": "list_memories",
+                "description": (
+                    "List remembered facts (id, app, fact, tags, whether pinned, and "
+                    "how often recalled) so you can review or prune them — the step "
+                    "before forget_memory. Unlike search_memory this needs no query and "
+                    "returns everything (optionally scoped to one app). Use it when the "
+                    "operator asks what you remember or wants to clean up memory: only "
+                    "the top few pinned facts fold into the prompt, so a bloated pin set "
+                    "is worth trimming."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "app": {
+                            "type": "string",
+                            "description": "Optional: restrict to one application's facts.",
+                        },
+                    },
+                    "required": [],
+                },
+            },
+            {
+                "name": "forget_memory",
+                "description": (
+                    "Delete one remembered fact by its id (from list_memories or "
+                    "search_memory). Use this to prune outdated, wrong, or duplicate "
+                    "memories — deleting a pinned fact also frees a slot in the prompt "
+                    "header. The operator approves each forget, so name the fact you're "
+                    "removing in your message first. Deletion is permanent (the fact's "
+                    "text is gone); it does not affect any other memory."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "memory_id": {
+                            "type": "string",
+                            "description": "The id of the fact to forget (e.g. m_1a2b3c4d).",
+                        },
+                    },
+                    "required": ["memory_id"],
+                },
+            },
+            {
                 "name": "save_runbook",
                 "description": (
                     "Save a reusable runbook — a named procedure (symptom + ordered "
@@ -4247,6 +4290,22 @@ class AgentToolsMixin:
             if not hits:
                 return "No matching memories."
             return json.dumps({"memories": hits})
+        if name == "list_memories":
+            app = str(ti.get("app") or "").strip() or None
+            rows = memory.list_memories(app=app)
+            if not rows:
+                return "No memories stored." + (f" (app={app})" if app else "")
+            return json.dumps({"memories": rows, "count": len(rows)})
+        if name == "forget_memory":
+            mid = str(ti.get("memory_id") or "").strip()
+            if not mid:
+                return "Error: 'memory_id' is required (get it from list_memories)."
+            removed = memory.forget_memory(mid)
+            return (
+                f"Forgot memory {mid}."
+                if removed
+                else f"No memory with id {mid} (already gone?)."
+            )
         if name == "save_runbook":
             # Create-or-update, and crucially a **partial** update: memory.save_runbook
             # replaces the whole entry, so every field the agent omits must be merged

@@ -147,6 +147,12 @@ class AutonomyMixin:
             # frozenset — the set is also the dispatch key (_run_tool_sync) and the
             # search-mode hot-kernel key, so removing it would strand the tool.
             return "confirm"
+        if tool_name == "forget_memory":
+            # Deleting a remembered fact is destructive (the content is gone), and the
+            # operator explicitly drives the prune ("remove the ones I agree to"), so
+            # each forget is confirmed. Same special-case shape as save_runbook: kept
+            # in _MEMORY_TOOL_NAMES (the dispatch + hot-kernel key), gated here.
+            return "confirm"
         if tool_name in _MEMORY_TOOL_NAMES:
             return "autonomous"  # local memory/runbook store — no model-spend gate
         if tool_name in _RUNBOOK_READ_TOOL_NAMES:
