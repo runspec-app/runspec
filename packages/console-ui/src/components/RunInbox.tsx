@@ -41,6 +41,11 @@ export interface RunInboxProps {
   emptyText?: string
   renderRowExtra?: (card: RunCard) => ReactNode
   renderDrawerExtra?: (card: RunCard) => ReactNode
+  // Rendered in the Drawer's pinned footer (below the scrolling body) so an
+  // action that must stay reachable — the Triggers approve/deny gate — is always
+  // visible instead of scrolling out of view above a long transcript. Return
+  // null/undefined for no footer.
+  renderDrawerFooter?: (card: RunCard) => ReactNode
 }
 
 export function RunInbox({
@@ -54,6 +59,7 @@ export function RunInbox({
   emptyText = 'No runs yet.',
   renderRowExtra,
   renderDrawerExtra,
+  renderDrawerFooter,
 }: RunInboxProps) {
   const isDark = useIsDark()
   const dim = textMuted(isDark)
@@ -63,6 +69,9 @@ export function RunInbox({
   const status = (card: RunCard) => (statusOf ? statusOf(card) : card.column)
   const runs = Object.values(cards).sort((a, b) => b.created_at - a.created_at)
   const selectedCard = selected ? cards[selected] : undefined
+  // Pinned footer content (e.g. the approve/deny gate) — null when none, so antd
+  // renders no empty footer bar.
+  const drawerFooter = selectedCard && renderDrawerFooter ? renderDrawerFooter(selectedCard) : null
 
   return (
     <div style={{ color: textColor(isDark) }}>
@@ -99,6 +108,8 @@ export function RunInbox({
         onClose={() => onSelect(null)}
         width="min(1040px, 94vw)"
         title={selectedCard?.summary}
+        footer={drawerFooter || undefined}
+        styles={{ footer: { padding: 0 } }}
       >
         {selectedCard && (() => {
           const card = selectedCard

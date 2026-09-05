@@ -441,8 +441,6 @@ export function TriggersView() {
           ) : null
         )}
         renderDrawerExtra={card => {
-          const p = pending[card.card_id]
-          const preview = p ? describeToolInput(p.display_name ?? p.tool_name, p.display_input ?? p.tool_input) : ''
           const draft = drafts[card.card_id]
           return (
             <>
@@ -497,43 +495,9 @@ export function TriggersView() {
                 </div>
               )}
 
-              {p && (
-                <div style={{
-                  // Pinned to the bottom of the scrolling drawer so it stays in
-                  // view as the agent transcript streams below — the gate used to
-                  // sit at the top and scroll out of sight, easy to miss. Opaque
-                  // background + shadow so streaming text doesn't bleed through.
-                  position: 'sticky', bottom: 8, zIndex: 3,
-                  background: colBg,
-                  boxShadow: `0 -6px 16px -8px ${isDark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.25)'}`,
-                  border: `1px solid ${COLUMN_COLOR.awaiting_human}`, borderRadius: 6,
-                  padding: 12, marginBottom: 16,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                    <span style={{ color: COLUMN_COLOR.awaiting_human, fontWeight: 600 }}>
-                      Approve <code>{p.display_name ?? p.tool_name}</code>?
-                    </span>
-                    {preview && <CopyButton text={preview} title="Copy" />}
-                  </div>
-                  {preview && (
-                    <div style={{
-                      maxHeight: 240, overflowY: 'auto',
-                      background: colBg, border: `1px solid ${border}`, borderRadius: 4,
-                      padding: 8, marginBottom: 10,
-                    }}>
-                      {p.tool_name === 'draft_reply' ? (
-                        <Markdown color={textColor(isDark)}>{preview}</Markdown>
-                      ) : (
-                        <div style={{ whiteSpace: 'pre-wrap' }}>{preview}</div>
-                      )}
-                    </div>
-                  )}
-                  <Space>
-                    <Button type="primary" icon={<CheckOutlined />} onClick={() => answer(card.card_id, true)}>Approve</Button>
-                    <Button danger icon={<CloseOutlined />} onClick={() => answer(card.card_id, false)}>Deny</Button>
-                  </Space>
-                </div>
-              )}
+              {/* The approve/deny gate is rendered in the drawer's pinned footer
+                  (renderDrawerFooter) so it stays reachable below the scrolling
+                  transcript instead of scrolling out of sight at the top. */}
 
               {draft && (
                 <div style={{
@@ -564,6 +528,38 @@ export function TriggersView() {
                 </div>
               )}
             </>
+          )
+        }}
+        renderDrawerFooter={card => {
+          const p = pending[card.card_id]
+          if (!p) return null
+          const preview = describeToolInput(p.display_name ?? p.tool_name, p.display_input ?? p.tool_input)
+          return (
+            <div style={{ padding: 12, borderTop: `2px solid ${COLUMN_COLOR.awaiting_human}`, background: colBg }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <span style={{ color: COLUMN_COLOR.awaiting_human, fontWeight: 600 }}>
+                  Approve <code>{p.display_name ?? p.tool_name}</code>?
+                </span>
+                {preview && <CopyButton text={preview} title="Copy" />}
+              </div>
+              {preview && (
+                <div style={{
+                  maxHeight: 200, overflowY: 'auto',
+                  background: colBg, border: `1px solid ${border}`, borderRadius: 4,
+                  padding: 8, marginBottom: 10,
+                }}>
+                  {p.tool_name === 'draft_reply' ? (
+                    <Markdown color={textColor(isDark)}>{preview}</Markdown>
+                  ) : (
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{preview}</div>
+                  )}
+                </div>
+              )}
+              <Space>
+                <Button type="primary" icon={<CheckOutlined />} onClick={() => answer(card.card_id, true)}>Approve</Button>
+                <Button danger icon={<CloseOutlined />} onClick={() => answer(card.card_id, false)}>Deny</Button>
+              </Space>
+            </div>
           )
         }}
       />

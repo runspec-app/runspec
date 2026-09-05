@@ -8,6 +8,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.239.1] — 2026-09-05
+
+### Fixed
+- **The Triggers approve/deny gate is pinned to the drawer footer.** When a run
+  needs a confirmation, the Approve/Deny card used to sit at the top of the run
+  drawer and scroll out of sight as the agent transcript streamed below, forcing
+  a scroll back to the top to act on it. It now renders in the drawer's pinned
+  footer (a new `renderDrawerFooter` slot on `RunInbox`), so it stays reachable
+  under the scrolling activity. `components/RunInbox.tsx`, `views/TriggersView.tsx`.
+- **The Triggers tab now shows a "new activity" dot when a trigger fires.** An
+  autonomous trigger run played the notification sound but lit no indicator — the
+  existing Triggers badge only counts pending human confirms / unclaimed queue
+  conversations, so a plain firing was silent visually. A blue dot now appears on
+  the Triggers nav tab on any trigger-card activity while another tab is open, and
+  clears when the tab is opened (the count badge still takes precedence when an
+  approval is waiting). `App.tsx`.
+
+
 ## [0.239.0] — 2026-09-05
 
 ### Changed

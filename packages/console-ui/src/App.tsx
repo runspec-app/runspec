@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, Suspense } from 'react'
+import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react'
 import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, message, Watermark } from 'antd'
 import {
   ThunderboltOutlined,
@@ -137,6 +137,10 @@ function BrandWatermark(
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
+  // Current tab, readable from stable event listeners (which close over the
+  // mount-time value otherwise).
+  const viewRef = useRef(view)
+  useEffect(() => { viewRef.current = view }, [view])
   // Analytics is lazy-loaded; mount it on first visit, then keep it mounted so
   // its scanned data survives tab switches (without eager-loading the chunk).
   const [analyticsVisited, setAnalyticsVisited] = useState(false)
@@ -235,6 +239,12 @@ export default function App() {
   // Triggers tab badge — pending human confirms + waiting (unclaimed) queue
   // conversations, so an approval or a new queue caller is visible from any tab.
   const [triggerAwaiting, setTriggerAwaiting] = useState(0)
+  // "New activity" dot on the Triggers tab: an autonomous trigger firing plays a
+  // sound but has no confirm/queue, so it never lit the count badge above — this
+  // marks unseen trigger-card activity while another tab is open, cleared on visit.
+  const [triggerUnseen, setTriggerUnseen] = useState(false)
+  // Clear the Triggers "new activity" dot once the operator opens that tab.
+  useEffect(() => { if (view === 'triggers') setTriggerUnseen(false) }, [view])
   // Schedules badge: how many schedule runs are currently in flight (mirrors the
   // Triggers badge). Lives here, not in SchedulesView, since that view unmounts.
   const [scheduleRunning, setScheduleRunning] = useState(0)
@@ -585,6 +595,10 @@ export default function App() {
       const c = (e as CustomEvent).detail as { card_id: string; column: string; source?: string; detail?: { state?: string } }
       cardInfo.set(c.card_id, { column: c.column, source: c.source, state: c.detail?.state })
       if (c.column !== 'awaiting_human') pending.delete(c.card_id)  // moved on
+      // Any trigger-card activity while another tab is open marks the Triggers
+      // tab as having something new to see (even an autonomous run that never
+      // needs a confirm) — the visual companion to the notification sound.
+      if (viewRef.current !== 'triggers') setTriggerUnseen(true)
       recompute()
     }
     const onConfirm = (e: Event) => {
@@ -680,7 +694,7 @@ export default function App() {
       label: 'Triggers',
       icon: triggerAwaiting > 0
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]}><BellOutlined /></Badge>
-        : <BellOutlined />,
+        : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><BellOutlined /></Badge>,
     },
     { key: 'rota'      as ViewKey, label: 'Rota',      icon: <ClockCircleOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
