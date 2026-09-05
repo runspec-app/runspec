@@ -237,6 +237,23 @@ Run summary (0.12.0): same closing-line + audit-record shape as Python 0.12.3. `
 
 ---
 
+## Console UI (frontend)
+
+The `runspec-console` desktop UI lives in `packages/console-ui/` — a React 19 +
+TypeScript + Ant Design 5 (Vite/vitest) app, built into the Python package's
+`dist/`. It has its own house conventions (the `ThemeContext` colour hierarchy
+for dark/light + white-label accent, the `--rs-*` CSS vars, the typed `bridge`
+boundary to the Python backend, colocated vitest tests with a `vi.hoisted` +
+`Proxy` bridge mock).
+
+**When adding or editing anything under `packages/console-ui/src`, use the
+`console-ui` skill** (`.claude/skills/console-ui/`) — it encodes those
+conventions and points at the source-of-truth files (`ThemeContext.tsx`,
+`index.css`, `bridge/index.ts`). Verify with `npm run typecheck` + `npm test`
+from `packages/console-ui/`.
+
+---
+
 ## Current Status
 
 Both Python and Node packages are active and published.
