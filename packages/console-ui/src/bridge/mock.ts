@@ -12,8 +12,11 @@ const MOCK_RUNNABLES: Runnable[] = [
     autonomy: 'confirm',
     runAs: 'jason',
     args: [
-      { name: 'source', type: 'path', required: true, description: 'Directory to back up' },
-      { name: 'dest', type: 'str', required: false, default: '$BACKUP_DEST', description: 'Destination path' },
+      { name: 'source', type: 'path', required: true, description: 'Directory to back up', short: 's', ui: 'directory' },
+      { name: 'dest', type: 'str', required: false, default: '$BACKUP_DEST', description: 'Destination path', env: ['BACKUP_DEST', 'DEST'] },
+      { name: 'label', type: 'str', required: false, description: 'Snapshot label', pattern: '^[a-z0-9-]+$', min_length: 3, max_length: 40, hint: 'lowercase-with-dashes' },
+      { name: 'keep', type: 'int', required: false, default: 7, range: [1, 365], description: 'Retention days' },
+      { name: 'tags', type: 'str', required: false, multiple: true, delimiter: ',', description: 'Comma-separated tags', meta: { team: 'ops' } },
       { name: 'dry-run', type: 'flag', required: false, default: false },
     ],
     rawSpec: {
@@ -732,7 +735,7 @@ export const mockApi: BridgeApi = {
     return { globs, own_venv: 'C:/venvs/console/Scripts/runspec.exe', resolved: [{ path: 'C:/venvs/console/Scripts/runspec.exe', venv_name: 'console' }] }
   },
 
-  get_tool_visibility: async () => ({ hidden_from_agent: [], hidden_from_all: [] }),
+  get_tool_visibility: async () => ({ hidden_from_agent: ['get-alerts'], hidden_from_all: ['flush-dns'] }),
   save_tool_visibility: async (payload) => {
     console.log('[mock] save_tool_visibility', payload)
     return { hidden_from_agent: payload.hidden_from_agent ?? [], hidden_from_all: payload.hidden_from_all ?? [] }

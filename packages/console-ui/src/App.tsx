@@ -1227,9 +1227,14 @@ export default function App() {
                     </Suspense>
                   </div>
                 )}
-                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && (
+                {/* Specs is a full-height master/detail inspector — its own flex
+                    block (not the shared overflow:auto one) so each pane scrolls
+                    independently. */}
+                <div className="rs-view" style={{ display: view === 'specs' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                  <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} onOpenForm={handleOpenForm} />
+                </div>
+                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'analytics' && view !== 'logs' && view !== 'specs' && (
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
-                    {view === 'specs'     && <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} />}
                     {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} />}
                     {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} />}
                     {view === 'improve'   && <ImproveView active={view === 'improve'} />}

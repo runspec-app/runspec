@@ -16,6 +16,11 @@ export interface ArgDef {
   position?: number       // 1-based positional index
   ui?: string             // form control hint
   hint?: string           // placeholder / hint text for the form field
+  pattern?: string        // regex the value must fully match (str args)
+  min_length?: number     // minimum string length (str args)
+  max_length?: number     // maximum string length (str args)
+  delimiter?: string      // splits a single value into a list
+  meta?: Record<string, unknown>  // free-form developer metadata, passed through
   inherited?: boolean     // arg inherited from an ancestor (global / parent-command) — set by discovery
 }
 

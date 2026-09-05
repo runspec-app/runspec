@@ -228,6 +228,9 @@ def _build_args(args_spec: dict[str, Any]) -> list[dict[str, Any]]:
             "ui",
             "hint",
             "env",
+            "pattern",
+            "delimiter",
+            "meta",
         ):
             if arg.get(key) is not None:
                 entry[key] = arg[key]
@@ -241,5 +244,14 @@ def _build_args(args_spec: dict[str, Any]) -> list[dict[str, Any]]:
             entry["position"] = arg["position"]
         if arg.get("autonomy"):
             entry["autonomy"] = arg["autonomy"]
+        # String-validation lengths — the CLI JSON normalises the hyphenated TOML
+        # keys to underscores, but the raw-TOML discovery path keeps the hyphen;
+        # accept both and emit a stable snake_case key for the Specs inspector.
+        min_length = arg.get("min_length", arg.get("min-length"))
+        if min_length is not None:
+            entry["min_length"] = min_length
+        max_length = arg.get("max_length", arg.get("max-length"))
+        if max_length is not None:
+            entry["max_length"] = max_length
         result.append(entry)
     return result

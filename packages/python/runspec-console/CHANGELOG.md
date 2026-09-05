@@ -8,6 +8,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.239.0] — 2026-09-05
+
+### Changed
+- **Specs tab reworked into a full-insight spec inspector.** The tab is now a
+  master/detail view — a searchable, filterable runnable list (by name/group/host/
+  args, with autonomy and visibility filters, host section headers and the group-
+  scope toggle) beside a rich, resizable inspector that surfaces *everything* in a
+  runnable's `runspec.toml` that is normally hidden behind the Forms/agent
+  surfaces. The inspector shows: settings (autonomy + reason, output, serve,
+  discoverable — dimmed when defaulted), remote execution (run_as / become /
+  runspec_env), **visibility & control** (effective agent visibility from
+  `[tool_visibility]`, `discoverable=false` internal-helper flag, and a lazy
+  per-host **denylist** check), **every argument field** (type/ui, required/default/
+  `$VAR`, options, range, pattern, min/max-length, short alias, env, multiple,
+  positional index, per-arg autonomy, deprecated, delimiter, hint, meta),
+  **argument-group constraints**, examples, nested subcommands (each with its own
+  autonomy), custom fields, and a collapsible **raw normalized-spec JSON** panel
+  with copy. An "Open in Forms" button jumps to the run dialog.
+  (`views/SpecsView.tsx`, `App.tsx` — Specs now gets its own full-height view block;
+  new `onOpenForm` prop wired to the existing `handleOpenForm`.)
+
+### Added
+- **Arg string-validation fields now reach the console.** Discovery
+  (`discovery._build_args`) previously dropped `pattern`, `min-length`,
+  `max-length`, `delimiter` and `meta`; these are now carried through (accepting
+  both the hyphenated TOML and underscore-normalised CLI-JSON spellings) and typed
+  on `ArgDef`, so the Specs inspector can display them.
+
+
 ## [0.238.1] — 2026-09-05
 
 ### Fixed
