@@ -35,7 +35,7 @@ import { SchedulesView } from './views/SchedulesView'
 import { TriggersView } from './views/TriggersView'
 import { RotaView } from './views/RotaView'
 import { DevView } from './views/DevView'
-import { FormsView, type PendingForm } from './views/FormsView'
+import { FormsView, matchRunnableForEdit, type PendingForm } from './views/FormsView'
 import { TransferModal } from './views/TransferModal'
 import { CopyKeyModal } from './views/CopyKeyModal'
 import { RunbookRunModal } from './views/RunbookRunModal'
@@ -502,19 +502,13 @@ export default function App() {
     const onEditInForm = (e: Event) => {
       const { host, runnable, args, commandPath = [] } =
         (e as CustomEvent).detail as { host: string; runnable: string; args: Record<string, unknown>; commandPath?: string[] }
-      // Human-run / history reruns carry the concrete host — match it exactly.
-      // Agent tool-call reruns may carry a venv/group prefix instead of a host
-      // (dedup mode) or no host at all (rare): fall back to matching by name where
-      // the prefix is either the host or the group, using it only when it resolves
-      // to a single host.
-      let found = runnables.find(r => r.host === host && r.name === runnable)
-      if (!found) {
-        const byName = runnables.filter(
-          r => r.name === runnable && (r.host === host || r.group === host),
-        )
-        const hosts = new Set(byName.map(r => r.host))
-        if (hosts.size === 1) found = byName[0]
-      }
+      // `runnable` may be a plain name (human run / History) or an agent tool id —
+      // a search-mode run_runnable dedup id (sanitize(group__name)) or a
+      // host__name id; `host` may be a concrete host, a venv/group, or empty.
+      // matchRunnableForEdit mirrors the backend resolver so all three resolve
+      // (name-only matching used to silently fail on a dedup id — the pencil did
+      // nothing).
+      const found = matchRunnableForEdit(runnables, runnable, host)
       if (!found) {
         const where = host ? ` on ${host}` : ''
         message.warning(`Can't open a form for "${runnable}" — it isn't currently discovered${where}.`)

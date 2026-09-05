@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter, argSpansRow } from './FormsView'
-import type { ArgDef } from '../bridge'
+import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter, argSpansRow, autonomyTagProps, dedupToolName, matchRunnableForEdit } from './FormsView'
+import type { ArgDef, Runnable } from '../bridge'
 
 const arg = (over: Partial<ArgDef>): ArgDef => ({ name: 'x', type: 'str', required: false, ...over })
 const cred = (over: Partial<{ id: string; label: string; kind: string; has_secret: boolean; username: string; username_arg: string; secret_arg: string }>) =>
@@ -167,5 +167,72 @@ describe('argSpansRow', () => {
     expect(argSpansRow(arg({ type: 'choice', options: ['a', 'b'] }))).toBe(false)
     expect(argSpansRow(arg({ type: 'flag' }))).toBe(false)
     expect(argSpansRow(arg({ type: 'str', ui: 'date' }))).toBe(false)
+  })
+})
+
+describe('autonomyTagProps', () => {
+  it('maps each level to a colour + short label', () => {
+    expect(autonomyTagProps('autonomous')).toEqual({ color: 'green', label: 'auto' })
+    expect(autonomyTagProps('supervised')).toEqual({ color: 'gold', label: 'supervised' })
+    expect(autonomyTagProps('manual')).toEqual({ color: 'red', label: 'manual' })
+    expect(autonomyTagProps('confirm')).toEqual({ color: 'default', label: 'confirm' })
+  })
+
+  it('is case-insensitive', () => {
+    expect(autonomyTagProps('AUTONOMOUS').label).toBe('auto')
+  })
+
+  it('defaults undefined / blank / unknown to confirm', () => {
+    expect(autonomyTagProps(undefined)).toEqual({ color: 'default', label: 'confirm' })
+    expect(autonomyTagProps('')).toEqual({ color: 'default', label: 'confirm' })
+    expect(autonomyTagProps('weird')).toEqual({ color: 'default', label: 'confirm' })
+  })
+})
+
+describe('dedupToolName', () => {
+  it('joins group and name, sanitising non-tool-name chars', () => {
+    expect(dedupToolName({ group: 'ops', name: 'deploy' })).toBe('ops__deploy')
+    expect(dedupToolName({ name: 'backup' })).toBe('backup')          // no group → bare name
+    expect(dedupToolName({ group: 'my.venv', name: 'sync-files' })).toBe('my_venv__sync-files')
+  })
+})
+
+describe('matchRunnableForEdit', () => {
+  const rn = (over: Partial<Runnable> & { name: string }): Runnable =>
+    ({ group: '', host: 'local', args: [], ...over } as Runnable)
+  const A = rn({ name: 'deploy', group: 'ops', host: 'web1' })
+  const B = rn({ name: 'deploy', group: 'ops', host: 'web2' })
+  const C = rn({ name: 'backup', group: '', host: 'db1' })
+  const D = rn({ name: 'sync-files', group: 'my.venv', host: 'nas' })
+  const all = [A, B, C, D]
+
+  it('resolves a plain name + concrete host (human/history path)', () => {
+    expect(matchRunnableForEdit(all, 'deploy', 'web1')).toBe(A)
+    expect(matchRunnableForEdit(all, 'backup', 'db1')).toBe(C)
+  })
+
+  it('resolves a search-mode dedup id, pinning the host', () => {
+    expect(matchRunnableForEdit(all, 'ops__deploy', 'web2')).toBe(B)
+    expect(matchRunnableForEdit(all, 'my_venv__sync-files', 'nas')).toBe(D)
+  })
+
+  it('resolves a dedup id whose host field is actually the group', () => {
+    expect(matchRunnableForEdit(all, 'ops__deploy', 'ops')).toBe(A) // group match → first
+  })
+
+  it('resolves a single-host dedup id with no host given', () => {
+    expect(matchRunnableForEdit(all, 'backup', '')).toBe(C)
+  })
+
+  it('is ambiguous (undefined) for a multi-host dedup id with no host', () => {
+    expect(matchRunnableForEdit(all, 'ops__deploy', '')).toBeUndefined()
+  })
+
+  it('resolves an explicit host__name tool id', () => {
+    expect(matchRunnableForEdit(all, 'web2__deploy', '')).toBe(B)
+  })
+
+  it('returns undefined for an unknown id', () => {
+    expect(matchRunnableForEdit(all, 'nope', 'web1')).toBeUndefined()
   })
 })

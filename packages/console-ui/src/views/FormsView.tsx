@@ -58,11 +58,83 @@ export function argSpansRow(arg: ArgDef): boolean {
   return arg.type === 'path' || arg.ui === 'directory'
 }
 
+// Anthropic tool names allow only [a-zA-Z0-9_-] (capped at 64). Mirrors the
+// backend bridge_agent_tools._sanitize_tool_name so the console can reconstruct
+// a runnable's agent tool id. Exported for tests.
+export function sanitizeToolName(raw: string): string {
+  return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
+}
+
+// The search-mode `run_runnable` `id` (and the dedup-mode tool name): a sanitised
+// `group__name`, or the bare sanitised name when the runnable has no group.
+// Mirrors bridge_agent_tools._dedup_tool_name. Exported for tests.
+export function dedupToolName(r: { group?: string; name: string }): string {
+  const g = r.group || ''
+  return sanitizeToolName(g ? `${g}__${r.name}` : r.name)
+}
+
+// Resolve an edit-and-rerun target to a discovered Runnable. `idOrName` may be a
+// plain runnable name (human run / History reruns), a search-mode `run_runnable`
+// dedup id (`sanitize(group__name)`), or a `host__name` tool id; `host` may be a
+// concrete host, a venv/group, or empty. Mirrors the backend's
+// `_runnables_for_id` / `_resolve_id_host` so the console resolves an agent tool
+// call the same way it does — the previous name-only match silently failed on a
+// dedup id, so the pencil did nothing. Exported for tests.
+export function matchRunnableForEdit(
+  runnables: Runnable[], idOrName: string, host: string,
+): Runnable | undefined {
+  const uniqueHost = (rs: Runnable[]) => (new Set(rs.map(r => r.host)).size === 1 ? rs[0] : undefined)
+  // 1. Exact host + name — the human run / History path (a real name + host).
+  const exact = runnables.find(r => r.host === host && r.name === idOrName)
+  if (exact) return exact
+  // 2. A dedup tool id (search mode): match the reconstructed group__name, then
+  //    pin the host — concrete host wins, else a group match, else a unique host.
+  const dedup = runnables.filter(r => dedupToolName(r) === idOrName)
+  if (dedup.length) {
+    return dedup.find(r => r.host === host) ?? dedup.find(r => r.group === host) ?? uniqueHost(dedup)
+  }
+  // 3. An explicit host__name id (per-host tool name).
+  const sep = idOrName.indexOf('__')
+  if (sep > 0) {
+    const hit = runnables.find(r => r.host === idOrName.slice(0, sep) && r.name === idOrName.slice(sep + 2))
+    if (hit) return hit
+  }
+  // 4. Name-only, where the given `host` is really a host or a venv/group.
+  return uniqueHost(runnables.filter(r => r.name === idOrName && (r.host === host || r.group === host)))
+}
+
+// Tag colour + short label for an autonomy level. Pure — exported for tests.
+// Undefined/blank is treated as the safe default ("confirm"), so a runnable or
+// subcommand always shows a level rather than nothing.
+export function autonomyTagProps(level?: string): { color: string; label: string } {
+  switch ((level || 'confirm').toLowerCase()) {
+    case 'autonomous': return { color: 'green', label: 'auto' }
+    case 'supervised': return { color: 'gold', label: 'supervised' }
+    case 'manual': return { color: 'red', label: 'manual' }
+    default: return { color: 'default', label: 'confirm' }
+  }
+}
+
+// The autonomy pill shown in the run dialog title and on each subcommand card.
+function AutonomyTag({ level }: { level?: string }) {
+  const { color, label } = autonomyTagProps(level)
+  return (
+    <Tooltip title={`autonomy: ${level || 'confirm'}`}>
+      <Tag color={color} style={{ fontSize: 10, margin: 0 }}>{label}</Tag>
+    </Tooltip>
+  )
+}
+
 // A single-line, ellipsised text that reveals its full content in a tooltip
 // *only* when it actually overflows its container — so short descriptions stay
 // tooltip-free and long ones become hover-readable (used for arg + subcommand
 // descriptions, which used to wrap and blow up the row height). Colour comes from
 // the theme-aware --rs-text-secondary var so it works in dark and light.
+// The tooltip triggers on hover *and* click (a click-to-see-more affordance),
+// and the cursor turns to `help` when truncated so it's discoverable. NB: for
+// truncation to actually happen the ancestor grid/flex cells must allow shrinking
+// (`min-width: 0`) — otherwise the nowrap text blows the track out and never
+// clips, so no ellipsis and no tooltip ever appear.
 export function TruncatedText({ text, style }: { text: string; style?: CSSProperties }) {
   const ref = useRef<HTMLSpanElement>(null)
   const [overflow, setOverflow] = useState(false)
@@ -70,30 +142,36 @@ export function TruncatedText({ text, style }: { text: string; style?: CSSProper
     const el = ref.current
     if (!el) return
     const measure = () => setOverflow(el.scrollWidth > el.clientWidth + 1)
-    measure()
+    // Measure after layout settles (the modal opens with an animation, so the
+    // first synchronous read can see a pre-layout width), and whenever the
+    // element resizes.
+    const raf = requestAnimationFrame(measure)
     const ro = new ResizeObserver(measure)
     ro.observe(el)
-    return () => ro.disconnect()
+    return () => { cancelAnimationFrame(raf); ro.disconnect() }
   }, [text])
   const span = (
     <span
       ref={ref}
-      style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, ...style }}
+      style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, cursor: overflow ? 'help' : undefined, ...style }}
     >
       {text}
     </span>
   )
-  return overflow ? <Tooltip title={text}>{span}</Tooltip> : span
+  return overflow ? <Tooltip title={text} trigger={['hover', 'click']}>{span}</Tooltip> : span
 }
 
-// Responsive multi-column layout for a group of arg rows: ~2 columns in the
-// widened run dialog, auto-collapsing to one when narrow. `align-items: start`
-// so a taller field (a grown textarea) doesn't stretch its row-mates.
+// Responsive multi-column layout for a group of arg rows: fills as many ~260px
+// columns as the (dynamically sized) dialog allows — 3+ when wide — and
+// collapses to one when narrow. `auto-fit` stretches the items to fill the row
+// when there are only a few, so a short form doesn't leave empty tracks.
+// `align-items: start` so a taller field (a grown textarea) doesn't stretch its
+// row-mates.
 function ArgGrid({ children }: { children: ReactNode }) {
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
       gap: 14, alignItems: 'start',
     }}>
       {children}
@@ -498,8 +576,11 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange,
   const own = args.filter(a => !a.inherited)
 
   // A grid cell for one arg — spans the full row for wide controls (path pickers).
+  // `minWidth: 0` lets the cell shrink below its content's intrinsic width;
+  // without it a grid item defaults to `min-width: auto` and a nowrap
+  // description blows the column out (never truncating, so no ellipsis/tooltip).
   const row = (arg: ArgDef) => (
-    <div key={arg.name} style={argSpansRow(arg) ? { gridColumn: '1 / -1' } : undefined}>
+    <div key={arg.name} style={{ minWidth: 0, ...(argSpansRow(arg) ? { gridColumn: '1 / -1' } : {}) }}>
       <ArgRow
         arg={arg}
         host={host}
@@ -568,24 +649,29 @@ function SubcommandPicker({ node, onSelect }: {
   const hoverBg = isDark ? '#1e1e1e' : '#f5f5f5'
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
       {commands.map(([name, cmd]) => (
         <div
           key={name}
           onClick={() => onSelect(name)}
           style={{
+            minWidth: 0,
             border: `1px solid ${border}`, borderRadius: 8, padding: '14px 16px',
             cursor: 'pointer', transition: 'background 0.15s',
           }}
           onMouseEnter={e => (e.currentTarget.style.background = hoverBg)}
           onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-            <Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{name}</Text>
-            <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-faint)' }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+              <Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{name}</Text>
+              {/* Each subcommand shows its own effective autonomy. */}
+              <AutonomyTag level={cmd.autonomy} />
+            </div>
+            <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-faint)', flexShrink: 0 }} />
           </div>
           {cmd.description && (
-            <Text type="secondary" style={{ fontSize: 12 }}>{cmd.description}</Text>
+            <TruncatedText text={cmd.description} style={{ fontSize: 12, color: 'var(--rs-text-secondary)' }} />
           )}
           {(cmd.args ?? []).filter(a => !a.inherited).length > 0 && (
             <div style={{ marginTop: 8 }}>
@@ -721,6 +807,13 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
 
   const crumbs = [rootRunnable.name, ...commandPath]
 
+  // The dialog widens for runnables that need the room — those with subcommands
+  // (which pair a picker with a form) or a lot of args — so the multi-column grid
+  // can lay out 3+ columns; a small flat form stays compact.
+  const argCount = (currentNode.args ?? []).length
+  const wideForm = hasSubcommands || argCount > 6
+  const modalWidth = wideForm ? 'min(1160px, 96vw)' : 'min(860px, 94vw)'
+
   const handleChange = (name: string, v: unknown) => {
     setValues(prev => ({ ...prev, [name]: v }))
     setErrors(prev => { const next = { ...prev }; delete next[name]; return next })
@@ -759,9 +852,11 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     <Modal
       open={true}
       onCancel={onClose}
-      width="min(880px, 94vw)"
+      width={modalWidth}
       title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        // paddingRight clears antd's absolutely-positioned close (X) button so
+        // the right-aligned autonomy pill / run-as text don't slide underneath it.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingRight: 28 }}>
           {crumbs.map((seg, i) => (
             <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               {i > 0 && <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-faint)' }} />}
@@ -778,11 +873,10 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
             </span>
           ))}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-            {rootRunnable.autonomy === 'autonomous' && (
-              <Tooltip title="autonomy: autonomous">
-                <Tag color="green" style={{ fontSize: 10, margin: 0 }}>auto</Tag>
-              </Tooltip>
-            )}
+            {/* The autonomy of the node currently in view — the root, or the
+                subcommand navigated into — not just the top-level runnable
+                (whose level a subcommand leaf overrides). */}
+            {canRunHere && <AutonomyTag level={currentNode.autonomy} />}
             {rootRunnable.runAs && (
               <Text type="secondary" style={{ fontSize: 11 }}>
                 as <Text code style={{ fontSize: 11 }}>{rootRunnable.runAs}</Text>

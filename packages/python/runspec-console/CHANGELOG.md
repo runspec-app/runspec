@@ -8,6 +8,49 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.238.1] — 2026-09-05
+
+### Fixed
+- **"Edit in a form & rerun" on an agent `run_runnable` tool card did nothing.**
+  In `[llm] tool_mode = "search"` the tool's `id` is a *dedup tool name*
+  (`sanitize(group + "__" + name)`), not the plain runnable name, so the console
+  matched it against `runnable.name`, found nothing, and silently bailed. The
+  edit-in-form resolver now mirrors the backend (`_runnables_for_id` /
+  `_dedup_tool_name`): it matches a plain name (human run / History), a
+  search-mode dedup id, or a `host__name` id, and pins the host (concrete host →
+  venv/group → unique host). New `dedupToolName` / `matchRunnableForEdit` in
+  `views/FormsView.tsx`, used by `App.tsx`'s `runspec:edit_in_form` handler.
+
+
+## [0.238.0] — 2026-09-05
+
+### Fixed
+- **Forms: long descriptions now truncate and reveal on hover.** The
+  single-line description truncation shipped in 0.237.0 never actually clipped —
+  a CSS grid cell defaults to `min-width: auto`, so a `nowrap` description blew
+  the column out to its full width and no ellipsis (and therefore no tooltip)
+  ever appeared. Grid cells now set `min-width: 0`, so a long description clips
+  to one line and its full text shows in a tooltip **on hover or click**, with a
+  `help` cursor as the affordance. (`views/FormsView.tsx`)
+- **Forms: the autonomy pill no longer hides under the close button, and shows
+  per subcommand.** The title's autonomy pill was right-aligned with
+  `margin-left: auto` and slid beneath antd's close (✕) button; the title row now
+  reserves space for it. It also reflects the **currently-viewed node's**
+  autonomy (root or the subcommand navigated into) instead of only the top-level
+  runnable — so it's no longer missing on subcommand runnables — and each
+  subcommand card in the picker now shows its own autonomy pill. New
+  `AutonomyTag` / `autonomyTagProps`. (`views/FormsView.tsx`)
+
+### Changed
+- **Forms: wider, denser multi-column layout.** The run dialog now sizes
+  dynamically — wider (`min(1160px, 96vw)`) for runnables with subcommands or
+  many args, compact otherwise — and the arg grid uses `auto-fit`
+  `minmax(260px, 1fr)` so it lays out **3+ columns** when there's room and
+  collapses to one when narrow. The subcommand picker grid is likewise responsive
+  (`auto-fit`), and its card descriptions truncate with a hover tooltip like the
+  arg descriptions. (`views/FormsView.tsx`)
+
+
 ## [0.237.0] — 2026-09-05
 
 ### Added
