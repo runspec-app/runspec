@@ -27,14 +27,53 @@ def test_download_attachments(install):
     assert kwargs["path"] == "/tmp/out"
 
 
-def test_upload_attachment(install):
-    client, _ = install(returns={"attach_file": {"id": "att1"}})
-    upload_attachment(CFG, "9", "/tmp/f.pdf", name="f.pdf", content_type="application/pdf", comment="v1")
-    args, kwargs = client.last("attach_file")
-    assert args == ("/tmp/f.pdf",)
-    assert kwargs["page_id"] == "9"
-    assert kwargs["content_type"] == "application/pdf"
-    assert kwargs["comment"] == "v1"
+def test_upload_new_attachment_posts_to_child_attachment(install, tmp_path):
+    f = tmp_path / "f.pdf"
+    f.write_bytes(b"%PDF-1.4 data")
+    client, _ = install(returns={"get_attachments_from_content": {"results": []}, "post": {"id": "att1"}})
+    upload_attachment(CFG, "9", str(f), content_type="application/pdf", comment="v1")
+    _, kwargs = client.last("post")
+    # New attachment → the create endpoint, not the /data update endpoint.
+    assert kwargs["path"] == "rest/api/content/9/child/attachment"
+    assert kwargs["headers"]["X-Atlassian-Token"] == "no-check"
+    assert kwargs["data"]["comment"] == "v1"
+    name, handle, ctype = kwargs["files"]["file"]
+    assert name == "f.pdf"
+    assert ctype == "application/pdf"
+
+
+def test_upload_existing_attachment_posts_to_data_endpoint(install, tmp_path):
+    # This is the 415 case: the file already exists, so update its data.
+    f = tmp_path / "f.pdf"
+    f.write_bytes(b"%PDF-1.4 newer")
+    client, _ = install(returns={"get_attachments_from_content": {"results": [{"id": "att42", "title": "f.pdf"}]}, "post": {"id": "att42"}})
+    upload_attachment(CFG, "9", str(f))
+    _, kwargs = client.last("post")
+    assert kwargs["path"] == "rest/api/content/9/child/attachment/att42/data"
+
+
+def test_upload_guesses_content_type_and_name(install, tmp_path):
+    f = tmp_path / "diagram.png"
+    f.write_bytes(b"\x89PNG data")
+    client, _ = install(returns={"get_attachments_from_content": {"results": []}, "post": {}})
+    upload_attachment(CFG, "9", str(f))
+    _, kwargs = client.last("post")
+    name, _handle, ctype = kwargs["files"]["file"]
+    assert name == "diagram.png"
+    assert ctype == "image/png"
+
+
+def test_upload_lookup_failure_falls_back_to_create(install, tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("hi")
+
+    def boom():
+        raise RuntimeError("listing unsupported")
+
+    client, _ = install(returns={"get_attachments_from_content": boom, "post": {}})
+    upload_attachment(CFG, "9", str(f))
+    _, kwargs = client.last("post")
+    assert kwargs["path"] == "rest/api/content/9/child/attachment"
 
 
 def test_delete_attachment(install):

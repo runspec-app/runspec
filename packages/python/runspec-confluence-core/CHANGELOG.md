@@ -2,6 +2,18 @@
 
 All notable changes to `runspec-confluence-core` are documented here.
 
+## [0.7.1] — 2026-09-05
+
+Fix **415 Unsupported Media Type when re-uploading an attachment that already
+exists** on a page. `upload_attachment` is reimplemented to call Confluence
+directly instead of `atlassian-python-api`'s `attach_file`, whose update path
+PUTs a multipart body to the JSON content endpoint (`PUT /rest/api/content/{id}`)
+and so 415s when the filename matches an existing attachment. Now: an existing
+attachment's data is updated via `POST .../child/attachment/{id}/data` (a new
+version), and a new one is created via `POST .../child/attachment`. Content type
+is guessed with stdlib `mimetypes` when not given; a lookup failure falls back to
+the create endpoint (which Confluence versions by filename anyway).
+
 ## [0.7.0] — 2026-09-04
 
 Enable HTTP retry with backoff by default. `build_client` now constructs the
