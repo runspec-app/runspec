@@ -8,6 +8,47 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.237.0] — 2026-09-05
+
+### Added
+- **Agent tool cards show the full command, and can be edited & rerun.** In the
+  Console tab and the Triggers side panel, expanding an agent tool call (e.g.
+  `run_runnable`) now reveals the **full, selectable command + args** — the
+  header's one-line summary ellipsised the rest, so the complete invocation was
+  previously unreachable. Expansion is available whenever a call has args or
+  output. Runnable tool calls also gain an **"edit in a form & rerun"** pencil
+  that opens the Forms run dialog pre-filled with the call's values (the same
+  flow the human run cards use), plus a **per-tool copy** button that copies just
+  that call and its output. The run target is derived from the tool entry across
+  all `[llm] tool_mode`s — the search-mode `run_runnable` envelope
+  (`{id, host, args, command}`) and the `<host|venv>__<name>` dedup/per_host
+  forms — with the host resolved robustly console-side (exact host, else the
+  unique host by name where the prefix matches a host or venv/group).
+  (`components/OutputPanel.tsx` `rerunFromToolEntry`; `App.tsx` `onEditInForm`)
+
+### Changed
+- **"Copy output" now captures the tool actions, not just the prose.** A chat
+  turn's Copy button (Console) and the Triggers `RunInbox` Copy button now
+  serialise the interleaved assistant text **plus every tool call and its
+  output**; previously they copied only the assistant's prose. New shared
+  `transcriptToText` helper. (`components/OutputPanel.tsx`, `components/RunInbox.tsx`)
+- **Card copy controls no longer crowd or overlap the content.** The floating
+  Copy/Ask cluster and the separately-padded Table/Raw view toggle are replaced
+  by a single right-aligned toolbar strip at the top of the card body, with the
+  view-toggle group visually separated from Copy/Ask — removing the old absolute
+  positioning that overlapped the first line of output and jammed the controls
+  together. (`components/OutputPanel.tsx`)
+- **Forms run dialog is wider and multi-column, with readable descriptions.** The
+  run dialog widens to a responsive `min(880px, 94vw)` and lays arg fields out in
+  a responsive multi-column grid (path/folder pickers span the full row),
+  collapsing to one column when narrow. Each arg and subcommand description moves
+  onto its own full-width line, single-line-truncated with a hover tooltip shown
+  only when it actually overflows — so long descriptions no longer fight the arg
+  name for a cramped single-column row. New `TruncatedText` / `argSpansRow` /
+  `ArgGrid`; the description treatment is mirrored in the Schedules / Saved-run
+  arg rows. (`views/FormsView.tsx`, `views/RunnableAction.tsx`)
+
+
 ## [0.236.8] — 2026-09-04
 
 ### Added

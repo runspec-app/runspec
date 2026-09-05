@@ -4,7 +4,7 @@ import { StopOutlined } from '@ant-design/icons'
 import { type RunCard } from '../bridge'
 import { useIsDark, textColor, textMuted } from '../ThemeContext'
 import { Markdown } from './Markdown'
-import { ChatTranscript, StructuredOutput, parseOutput, type BlockSegment } from './OutputPanel'
+import { ChatTranscript, StructuredOutput, parseOutput, transcriptToText, type BlockSegment } from './OutputPanel'
 import { StatusBadge, CopyButton, fmtTime, COLUMN_COLOR, RUNNING_STATUSES } from './runShared'
 
 // A live/finished agent transcript for one card: interleaved text + tool-call
@@ -142,7 +142,13 @@ export function RunInbox({
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <span style={{ color: dim, fontSize: 12 }}>Output</span>
-                    {body && <CopyButton text={body} title="Copy output" />}
+                    {/* When we have the rich transcript, copy the interleaved
+                        text + tool calls + their output — not just the prose body. */}
+                    {hasTranscript ? (
+                      <CopyButton text={transcriptToText(transcript!.segments, transcript!.currentText)} title="Copy output" />
+                    ) : body ? (
+                      <CopyButton text={body} title="Copy output" />
+                    ) : null}
                   </div>
                   <div style={{ marginBottom: 16 }}>
                     {hasTranscript ? (

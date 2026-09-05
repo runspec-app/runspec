@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter } from './FormsView'
+import { argNeedsValue, credEnvPrefix, credEnvNames, bindingsForArgs, initialFormValues, partitionArgs, suppressPlainEnter, argSpansRow } from './FormsView'
 import type { ArgDef } from '../bridge'
 
 const arg = (over: Partial<ArgDef>): ArgDef => ({ name: 'x', type: 'str', required: false, ...over })
@@ -151,5 +151,21 @@ describe('bindingsForArgs', () => {
       cred({ id: 'b', label: 'B', secret_arg: 'password' }),
     ], declared)
     expect(b.password).toEqual({ label: 'A', role: 'secret' })
+  })
+})
+
+describe('argSpansRow', () => {
+  it('spans the full row for path and folder pickers', () => {
+    expect(argSpansRow(arg({ type: 'path' }))).toBe(true)
+    expect(argSpansRow(arg({ type: 'path', ui: 'directory' }))).toBe(true)
+    expect(argSpansRow(arg({ type: 'str', ui: 'directory' }))).toBe(true)
+  })
+
+  it('keeps compact fields in a grid cell', () => {
+    expect(argSpansRow(arg({ type: 'str' }))).toBe(false)
+    expect(argSpansRow(arg({ type: 'int' }))).toBe(false)
+    expect(argSpansRow(arg({ type: 'choice', options: ['a', 'b'] }))).toBe(false)
+    expect(argSpansRow(arg({ type: 'flag' }))).toBe(false)
+    expect(argSpansRow(arg({ type: 'str', ui: 'date' }))).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Button, ColorPicker, Collapse, DatePicker, Input, InputNumber, Modal, Select, Slider, Switch, Tag, TimePicker, Tooltip, Typography, message } from 'antd'
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -49,6 +49,56 @@ export function partitionArgs(args: ArgDef[]): { visible: ArgDef[]; defaulted: A
     visible: args.filter(a => !hasDefault(a)),
     defaulted: args.filter(a => hasDefault(a)),
   }
+}
+
+// In the multi-column arg grid, most fields sit in a column cell, but a few need
+// the full row width to stay usable: path/folder pickers (long paths + a browse
+// button). Exported for unit tests.
+export function argSpansRow(arg: ArgDef): boolean {
+  return arg.type === 'path' || arg.ui === 'directory'
+}
+
+// A single-line, ellipsised text that reveals its full content in a tooltip
+// *only* when it actually overflows its container — so short descriptions stay
+// tooltip-free and long ones become hover-readable (used for arg + subcommand
+// descriptions, which used to wrap and blow up the row height). Colour comes from
+// the theme-aware --rs-text-secondary var so it works in dark and light.
+export function TruncatedText({ text, style }: { text: string; style?: CSSProperties }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [overflow, setOverflow] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = () => setOverflow(el.scrollWidth > el.clientWidth + 1)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [text])
+  const span = (
+    <span
+      ref={ref}
+      style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, ...style }}
+    >
+      {text}
+    </span>
+  )
+  return overflow ? <Tooltip title={text}>{span}</Tooltip> : span
+}
+
+// Responsive multi-column layout for a group of arg rows: ~2 columns in the
+// widened run dialog, auto-collapsing to one when narrow. `align-items: start`
+// so a taller field (a grown textarea) doesn't stretch its row-mates.
+function ArgGrid({ children }: { children: ReactNode }) {
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+      gap: 14, alignItems: 'start',
+    }}>
+      {children}
+    </div>
+  )
 }
 
 // Mirrors credentials.env_prefix / env_field_map in the Python bridge: a saved
@@ -390,10 +440,13 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, bin
               ? <Text style={{ fontSize: 10, color: '#fa8c16', fontFamily: 'monospace' }}>{arg.default as string}</Text>
               : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
         }
-        {arg.description && (
-          <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
-        )}
       </div>
+      {/* Description on its own full-width line, truncated with a hover tooltip —
+          so a long description no longer fights the name/tags for the row and
+          the field lays out cleanly in the multi-column grid. */}
+      {arg.description && (
+        <TruncatedText text={arg.description} style={{ fontSize: 11, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
+      )}
       <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} binding={binding} />
       {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
     </div>
@@ -412,7 +465,7 @@ function DefaultArgsCollapse({ count, children }: { count: number; children: Rea
       items={[{
         key: 'defaults',
         label: <Text type="secondary" style={{ fontSize: 11 }}>Default arguments ({count})</Text>,
-        children: <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>{children}</div>,
+        children,
       }]}
     />
   )
@@ -444,31 +497,36 @@ function ArgForm({ node, host, runnable, runAs, group, values, errors, onChange,
   const inherited = args.filter(a => a.inherited)
   const own = args.filter(a => !a.inherited)
 
+  // A grid cell for one arg — spans the full row for wide controls (path pickers).
   const row = (arg: ArgDef) => (
-    <ArgRow
-      key={arg.name}
-      arg={arg}
-      host={host}
-      runnable={runnable}
-      runAs={runAs}
-      group={group}
-      value={values[arg.name]}
-      error={errors[arg.name]}
-      onChange={v => onChange(arg.name, v)}
-      binding={boundArgs?.[arg.name]}
-    />
+    <div key={arg.name} style={argSpansRow(arg) ? { gridColumn: '1 / -1' } : undefined}>
+      <ArgRow
+        arg={arg}
+        host={host}
+        runnable={runnable}
+        runAs={runAs}
+        group={group}
+        value={values[arg.name]}
+        error={errors[arg.name]}
+        onChange={v => onChange(arg.name, v)}
+        binding={boundArgs?.[arg.name]}
+      />
+    </div>
   )
 
   // Within a group, args that carry a default collapse into a "Default arguments"
-  // row near the top; required and optional-no-default args stay visible below it.
+  // section near the top; required and optional-no-default args stay visible below
+  // it. Each set lays out in the responsive multi-column grid.
   const renderGroup = (groupArgs: ArgDef[]) => {
     const { visible, defaulted } = partitionArgs(groupArgs)
     return (
       <>
         {defaulted.length > 0 && (
-          <DefaultArgsCollapse count={defaulted.length}>{defaulted.map(row)}</DefaultArgsCollapse>
+          <DefaultArgsCollapse count={defaulted.length}>
+            <ArgGrid>{defaulted.map(row)}</ArgGrid>
+          </DefaultArgsCollapse>
         )}
-        {visible.map(row)}
+        {visible.length > 0 && <ArgGrid>{visible.map(row)}</ArgGrid>}
       </>
     )
   }
@@ -701,7 +759,7 @@ function RunModal({ state, onClose, onSubmit }: RunModalProps) {
     <Modal
       open={true}
       onCancel={onClose}
-      width={540}
+      width="min(880px, 94vw)"
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {crumbs.map((seg, i) => (

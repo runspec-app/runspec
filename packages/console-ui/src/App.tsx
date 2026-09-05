@@ -502,9 +502,22 @@ export default function App() {
     const onEditInForm = (e: Event) => {
       const { host, runnable, args, commandPath = [] } =
         (e as CustomEvent).detail as { host: string; runnable: string; args: Record<string, unknown>; commandPath?: string[] }
-      const found = runnables.find(r => r.host === host && r.name === runnable)
+      // Human-run / history reruns carry the concrete host — match it exactly.
+      // Agent tool-call reruns may carry a venv/group prefix instead of a host
+      // (dedup mode) or no host at all (rare): fall back to matching by name where
+      // the prefix is either the host or the group, using it only when it resolves
+      // to a single host.
+      let found = runnables.find(r => r.host === host && r.name === runnable)
       if (!found) {
-        message.warning(`Can't open a form for "${runnable}" — it isn't currently discovered on ${host}.`)
+        const byName = runnables.filter(
+          r => r.name === runnable && (r.host === host || r.group === host),
+        )
+        const hosts = new Set(byName.map(r => r.host))
+        if (hosts.size === 1) found = byName[0]
+      }
+      if (!found) {
+        const where = host ? ` on ${host}` : ''
+        message.warning(`Can't open a form for "${runnable}" — it isn't currently discovered${where}.`)
         return
       }
       setPendingForm({ runnable: found, commandPath, prefill: args })

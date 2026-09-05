@@ -7,7 +7,7 @@
 import { type CSSProperties, type ReactNode } from 'react'
 import { Collapse, Form, Segmented, Select, Space, Switch, Tag, Tooltip, Typography } from 'antd'
 import type { ArgDef, Credential, Host, Runnable } from '../bridge'
-import { ArgInput, bindingsForArgs, credEnvNames, partitionArgs } from './FormsView'
+import { ArgInput, bindingsForArgs, credEnvNames, partitionArgs, TruncatedText } from './FormsView'
 
 const { Text } = Typography
 
@@ -174,11 +174,13 @@ export function ArgFieldRow({ arg, error, extra, children }: {
           ? <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>required</Tag>
           : <Text type="secondary" style={{ fontSize: 10 }}>optional</Text>
         }
-        {arg.description && (
-          <Text type="secondary" style={{ fontSize: 11, marginLeft: 2 }}>{arg.description}</Text>
-        )}
         {extra && <span style={{ marginLeft: 'auto' }}>{extra}</span>}
       </div>
+      {/* Description on its own full-width line, truncated with a hover tooltip
+          (matches the Forms tab) so a long description doesn't blow up the row. */}
+      {arg.description && (
+        <TruncatedText text={arg.description} style={{ fontSize: 11, marginBottom: 5, color: 'var(--rs-text-secondary)' }} />
+      )}
       {children}
       {error && <Text style={{ fontSize: 11, color: '#ff4d4f' }}>{error}</Text>}
     </div>

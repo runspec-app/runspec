@@ -508,6 +508,73 @@ export interface InvocationBlock {
   operatorOnly?: boolean
 }
 
+/** Derive an edit-and-rerun target from an agent tool-call entry, or null when
+ *  the call isn't a runnable invocation (a built-in, an MCP tool, or a wrapper
+ *  we can't resolve). Covers the three `[llm] tool_mode` shapes:
+ *   - search   → tool named `run_runnable`, input `{ id, host, args, command? }`
+ *   - per_host → tool named `<host>__<name>`, input is the args map (+ `command`)
+ *   - dedup    → tool named `<group>__<name>`, input is the args map (+ `command`);
+ *                the prefix is a venv/group, resolved to a host App-side.
+ *  The returned `host` is the concrete host in search/per_host mode and the
+ *  venv/group prefix in dedup mode — App's `onEditInForm` resolves it either way. */
+export function rerunFromToolEntry(entry: ToolCallEntry): RerunData | null {
+  const name = entry.name
+  const input = (entry.input ?? {}) as Record<string, unknown>
+  const asArgs = (v: unknown): Record<string, unknown> =>
+    v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : {}
+  const asPath = (v: unknown): string[] =>
+    Array.isArray(v) ? (v as unknown[]).map(String) : []
+
+  // search mode: the generic `run_runnable` envelope carries everything.
+  if (name === 'run_runnable') {
+    const id = typeof input.id === 'string' ? input.id : ''
+    if (!id) return null
+    return {
+      host: typeof input.host === 'string' ? input.host : '',
+      runnable: id,
+      args: asArgs(input.args),
+      commandPath: asPath(input.command),
+    }
+  }
+  // MCP tools and built-ins are not runnable invocations.
+  if (name.startsWith('mcp_')) return null
+  // Prefixed runnable tools (dedup/per_host). Match the same `<prefix>__<name>`
+  // shape the UI uses to strip the display prefix (`/^[^_]+__/`), so a built-in
+  // with only single underscores (e.g. `run_python_sandboxed`) never matches.
+  const m = name.match(/^([^_]+)__(.+)$/)
+  if (!m) return null
+  const rest = { ...input }
+  const commandPath = asPath(rest.command)
+  delete rest.command
+  return { host: m[1], runnable: m[2], args: rest, commandPath }
+}
+
+/** Serialise a chat transcript (interleaved assistant text + tool calls) to
+ *  plain text for the clipboard, so Copy captures the tools the agent ran and
+ *  their output — not just the prose. Each tool call renders as a `▶ name args`
+ *  header line followed by its (indented-free) output block. */
+export function transcriptToText(segments: BlockSegment[], currentText?: string): string {
+  const parts: string[] = []
+  for (const seg of segments) {
+    if (seg.kind === 'text') {
+      if (seg.text) parts.push(seg.text)
+      continue
+    }
+    const e = seg.entry
+    const short = e.name.replace(/^[^_]+__/, '')
+    const args = Object.entries(e.input ?? {})
+      .map(([k, v]) => `${k}=${displayArgValue(v)}`)
+      .join(' ')
+    const header = args ? `▶ ${short} ${args}` : `▶ ${short}`
+    const body = e.output !== undefined
+      ? (e.output || '(no output)')
+      : (e.running ? '(running…)' : '(no output)')
+    parts.push(`${header}\n${body}`)
+  }
+  if (currentText) parts.push(currentText)
+  return parts.join('\n\n')
+}
+
 interface OutputPanelProps {
   blocks: InvocationBlock[]
   onRerun?: (data: RerunData) => void
@@ -787,6 +854,13 @@ function ToolCallBlock({
   const [expanded, setExpanded] = useState(false)
   const v = verb || 'run'
   const args = Object.entries(entry.input)
+  // Edit-and-rerun target when this call is a runnable invocation (search /
+  // per_host / dedup); null for built-ins / MCP tools (no affordance).
+  const rerun = !entry.running && !awaiting ? rerunFromToolEntry(entry) : null
+  // The card can expand to reveal the full command + output whenever there's
+  // output OR any args — so the full (un-ellipsised) command is always reachable,
+  // not only when the tool returned something.
+  const canExpand = entry.output !== undefined || args.length > 0
   // Args shown in the approval panel: the resolved runnable's when we have it.
   const approveArgs = resolved ? Object.entries(resolved.input) : args
   // Edit buffer: arg name → its JSON-encoded string, seeded from approveArgs and
@@ -824,10 +898,10 @@ function ToolCallBlock({
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '6px 12px',
           background: awaiting ? (c.isDark ? '#241f12' : '#fff7e6') : c.toolBg,
-          cursor: entry.output !== undefined ? 'pointer' : 'default',
+          cursor: canExpand ? 'pointer' : 'default',
           userSelect: 'none',
         }}
-        onClick={() => entry.output !== undefined && setExpanded(x => !x)}
+        onClick={() => canExpand && setExpanded(x => !x)}
       >
         {awaiting
           ? <PauseCircleOutlined style={{ color: '#e6a23c', fontSize: 12 }} />
@@ -883,10 +957,30 @@ function ToolCallBlock({
             </Text>
           </Tooltip>
         )}
-        {entry.output !== undefined && !entry.running && (
+        {canExpand && !entry.running && (
           <Text style={{ color: c.dim, fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}>
-            {expanded ? '▲ hide output' : '▼ show output'}
+            {expanded ? '▲ hide details' : '▼ show details'}
           </Text>
+        )}
+        {!awaiting && !entry.running && (
+          <Tooltip title="Copy this tool call and its output">
+            <CopyOutlined
+              onClick={(e) => { e.stopPropagation(); copyToClipboard(transcriptToText([{ kind: 'tool', entry }])) }}
+              style={{ color: c.dim, cursor: 'pointer', fontSize: 12, flexShrink: 0, marginLeft: 4 }}
+              onMouseEnter={ev => (ev.currentTarget.style.color = c.text)}
+              onMouseLeave={ev => (ev.currentTarget.style.color = c.dim)}
+            />
+          </Tooltip>
+        )}
+        {rerun && (
+          <Tooltip title="Edit in a form & rerun — opens the run dialog pre-filled with these values">
+            <EditOutlined
+              onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('runspec:edit_in_form', { detail: rerun })) }}
+              style={{ color: c.dim, cursor: 'pointer', fontSize: 12, flexShrink: 0, marginLeft: 4 }}
+              onMouseEnter={ev => (ev.currentTarget.style.color = c.text)}
+              onMouseLeave={ev => (ev.currentTarget.style.color = c.dim)}
+            />
+          </Tooltip>
         )}
       </div>
 
@@ -964,16 +1058,43 @@ function ToolCallBlock({
         </div>
       )}
 
-      {expanded && entry.output !== undefined && (
-        <pre style={{
-          margin: 0, padding: '8px 12px',
-          fontFamily: 'monospace', fontSize: 12,
-          color: c.mono, lineHeight: 1.5,
-          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-          background: c.codeBg,
-        }}>
-          {entry.output || '(no output)'}
-        </pre>
+      {expanded && (
+        <Fragment>
+          {/* Full command + args — the header line ellipsises, so this is the
+              only place the complete (selectable) invocation is visible. Values
+              render with their real newlines via displayArgValue. */}
+          {args.length > 0 && (
+            <div style={{ borderTop: `1px solid ${c.toolBorder}` }}>
+              <div style={{ padding: '6px 12px 0', fontSize: 10, color: c.dim, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                command
+              </div>
+              <pre style={{
+                margin: 0, padding: '4px 12px 8px',
+                fontFamily: 'monospace', fontSize: 12,
+                color: c.sub, lineHeight: 1.5,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                maxHeight: 260, overflowY: 'auto',
+              }}>
+                {args.map(([k, val]) => {
+                  const s = displayArgValue(val)
+                  return s.includes('\n') ? `${k} =\n${s}` : `${k} = ${s}`
+                }).join('\n')}
+              </pre>
+            </div>
+          )}
+          {entry.output !== undefined && (
+            <pre style={{
+              margin: 0, padding: '8px 12px',
+              fontFamily: 'monospace', fontSize: 12,
+              color: c.mono, lineHeight: 1.5,
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              background: c.codeBg,
+              borderTop: args.length > 0 ? `1px solid ${c.toolBorder}` : undefined,
+            }}>
+              {entry.output || '(no output)'}
+            </pre>
+          )}
+        </Fragment>
       )}
     </div>
   )
@@ -1179,10 +1300,9 @@ function BlockCard({
   const editInForm = () => window.dispatchEvent(new CustomEvent('runspec:edit_in_form', { detail: block.rerunData }))
 
   const logText = block.type === 'chat'
-    ? [
-        ...block.segments.filter((s): s is Extract<BlockSegment, { kind: 'text' }> => s.kind === 'text').map(s => s.text),
-        block.currentText,
-      ].filter(Boolean).join('\n')
+    // Interleave the assistant's prose with each tool call + its output, so Copy
+    // captures what the agent actually ran and returned — not just the prose.
+    ? transcriptToText(block.segments, block.currentText)
     : (parsed?.rawText ?? block.lines.map(l => l.line).join('\n'))
 
   const handleCopy = () => {
@@ -1423,8 +1543,32 @@ function BlockCard({
         <Fragment>
           {/* Output body */}
           <div style={{ position: 'relative' }}>
+            {/* Card toolbar — a single right-aligned strip so the Copy/Ask
+                controls never overlap the content or crowd the view toggle (the
+                old layout floated them absolutely and reserved a magic padding).
+                The Table/Raw toggle (structured run output only) sits here too,
+                separated from Copy/Ask so the two groups read as distinct. */}
             {hasContent && (
-              <div style={{ position: 'absolute', top: 5, right: 6, display: 'flex', gap: 2, zIndex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, padding: '4px 8px' }}>
+                {block.type === 'run' && !deferredPending && parsed && parsed.kind !== 'raw' && block.done && (
+                  <Fragment>
+                    <Tooltip title="Table view">
+                      <Button
+                        type="text" size="small" icon={<TableOutlined />}
+                        onClick={() => setViewRaw(false)}
+                        style={{ color: !viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
+                      />
+                    </Tooltip>
+                    <Tooltip title="Raw output">
+                      <Button
+                        type="text" size="small" icon={<CodeOutlined />}
+                        onClick={() => setViewRaw(true)}
+                        style={{ color: viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
+                      />
+                    </Tooltip>
+                    <span style={{ width: 1, alignSelf: 'stretch', margin: '2px 4px', background: c.cardBorder }} />
+                  </Fragment>
+                )}
                 <Tooltip title="Copy to clipboard">
                   <Button
                     type="text" size="small" icon={<CopyOutlined />}
@@ -1450,26 +1594,6 @@ function BlockCard({
             )}
             {block.type === 'run' && !deferredPending && (
               <Fragment>
-                {/* View toggle — only shown when structured JSON was detected */}
-                {parsed && parsed.kind !== 'raw' && block.done && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 58px 0 14px', gap: 2 }}>
-                    <Tooltip title="Table view">
-                      <Button
-                        type="text" size="small" icon={<TableOutlined />}
-                        onClick={() => setViewRaw(false)}
-                        style={{ color: !viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
-                      />
-                    </Tooltip>
-                    <Tooltip title="Raw output">
-                      <Button
-                        type="text" size="small" icon={<CodeOutlined />}
-                        onClick={() => setViewRaw(true)}
-                        style={{ color: viewRaw ? c.link : c.dim, height: 22, padding: '0 5px' }}
-                      />
-                    </Tooltip>
-                  </div>
-                )}
-
                 {/* Structured table view */}
                 {!viewRaw && parsed?.kind === 'table' && parsed.rows && (
                   <JsonTable rows={parsed.rows} />
