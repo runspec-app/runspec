@@ -270,6 +270,24 @@ def test_clean_trigger_normalises_and_round_trips(monkeypatch, tmp_path):
     assert trig.reply.draft is True
 
 
+def test_clean_trigger_persists_sound(monkeypatch, tmp_path):
+    """A trigger's `sound` survives the UI → on-disk → parsed round trip; a blank
+    one is dropped."""
+    from runspec_console.bridge import Bridge
+
+    _use_tmp(monkeypatch, tmp_path)
+    clean = Bridge._clean_trigger(
+        {"source": "outlook", "event": "new_mail", "sound": "  alarm  "}, "t"
+    )
+    assert clean["sound"] == "alarm"  # trimmed
+    assert "sound" not in Bridge._clean_trigger(
+        {"source": "outlook", "event": "new_mail", "sound": "  "}, "t2"
+    )
+    config.write_triggers([clean])
+    trig = Trigger.from_config(config.read_triggers()[0])
+    assert trig.sound == "alarm"
+
+
 def test_clean_trigger_once_per_thread_is_tri_state():
     # An explicit bool override is written; "inherit" (omitted / non-bool) is left
     # out so the trigger falls back to the mailbox default.

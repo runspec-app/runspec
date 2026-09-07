@@ -83,6 +83,16 @@ export interface SavedRun {
   argsError?: string       // set when the entry failed to validate/parse
 }
 
+// A named sound in the runspec_sounds.toml registry — an operator-added audio
+// file with a stable id, referenced by "sound:<id>" everywhere the console plays
+// cues. `exists` is false for a synced entry whose file isn't on this machine.
+export interface NamedSound {
+  id: string
+  label: string
+  file: string
+  exists?: boolean
+}
+
 export interface DirEntry {
   name: string
   type: 'directory' | 'file'
@@ -557,6 +567,9 @@ export interface Schedule {
   values?: Record<string, unknown>
   // action === 'saved_run' — the saved-run (preset) id; targeting lives on the preset.
   saved_run?: string
+  // Optional attention cue played when the schedule fires (a named sound id or a
+  // built-in cue). Empty/absent = no sound.
+  sound?: string
   nextRun?: string
 }
 
@@ -1121,6 +1134,20 @@ export interface BridgeApi {
   test_sound: (category: string, token?: string | null) => Promise<boolean>
   // Coverage report for a sound-pack folder: which categories it has files for.
   sound_pack_info: (path?: string) => Promise<{ dir: string; exists: boolean; covered: Record<string, string>; categories: string[] }>
+  // The named-sound registry (runspec_sounds.toml): operator-added audio files
+  // given a stable id + label, referenced by a "sound:<id>" token in the per-
+  // category picks, a trigger/schedule action, and the agent's play_sound tool.
+  // `exists` is false for a synced entry whose file isn't on this machine.
+  get_sounds: () => Promise<NamedSound[]>
+  // Replace the whole registry (Settings edit). Validates every entry first.
+  save_sounds: (rows: NamedSound[]) => Promise<{ ok: boolean; error?: string; sounds?: NamedSound[] }>
+  // Add a named sound: copy the picked .wav/.mp3 into the app-data store and
+  // register it under a slug id derived from `label` (or the file name).
+  import_sound: (source_path: string, label?: string) => Promise<{ ok: boolean; error?: string; sound?: NamedSound }>
+  // Remove a named sound (and its imported copy, if console-owned).
+  delete_sound: (sound_id: string) => Promise<{ ok: boolean; error?: string; sounds?: NamedSound[] }>
+  // Audition a named/built-in sound by id or token (forced past the master toggle).
+  preview_sound: (identifier: string) => Promise<boolean>
   create_schedule: (data: Record<string, unknown>) => Promise<void>
   // Replace a schedule in place (edit dialog, inline enable/disable). Keeps the id.
   update_schedule: (id: string, data: Record<string, unknown>) => Promise<void>

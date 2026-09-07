@@ -75,6 +75,59 @@ def test_resolve_target_file_tokens(token, expected):
     assert sounds.resolve_target(token) == expected
 
 
+# ── sound:<id> registry tokens (pure, injected registry) ─────────────────────
+
+
+def test_resolve_target_sound_token_uses_injected_registry():
+    reg = {"deploy-done": "C:/s/deploy.mp3", "bad": "C:/s/clip.ogg"}
+    assert sounds.resolve_target("sound:deploy-done", registry=reg) == (
+        "file",
+        "C:/s/deploy.mp3",
+    )
+    # unknown id → silent None
+    assert sounds.resolve_target("sound:missing", registry=reg) is None
+    # a registered file with an unplayable extension → None (not a crash)
+    assert sounds.resolve_target("sound:bad", registry=reg) is None
+    # an empty registry resolves nothing
+    assert sounds.resolve_target("sound:deploy-done", registry={}) is None
+
+
+def test_resolve_playable_maps_ids_and_tokens(monkeypatch):
+    from runspec_console import sounds_registry
+
+    monkeypatch.setattr(
+        sounds_registry, "registry_map", lambda: {"chime": "C:/s/chime.wav"}
+    )
+    # a registered id → sound: token
+    assert sounds.resolve_playable("chime") == "sound:chime"
+    # a bundled synth name → synth: token
+    assert sounds.resolve_playable("confirm") == "synth:confirm"
+    # a full token passes through untouched
+    assert sounds.resolve_playable("system:SystemAsterisk") == "system:SystemAsterisk"
+    assert sounds.resolve_playable("file:/x/y.mp3") == "file:/x/y.mp3"
+    # nothing matches / off / blank → None
+    assert sounds.resolve_playable("nope") is None
+    assert sounds.resolve_playable("off") is None
+    assert sounds.resolve_playable("") is None
+
+
+def test_playable_options_lists_registered_then_builtins(monkeypatch):
+    from runspec_console import sounds_registry
+
+    monkeypatch.setattr(
+        sounds_registry,
+        "list_sounds",
+        lambda: [sounds_registry.Sound(id="chime", label="My Chime", file="/x/c.wav")],
+    )
+    opts = sounds.playable_options()
+    assert opts[0] == {"id": "chime", "label": "My Chime", "kind": "registered"}
+    ids = [o["id"] for o in opts]
+    # every bundled cue is offered after the registered ones
+    for name in sounds.KNOWN_SOUNDS:
+        assert name in ids
+    assert all(o["kind"] == "builtin" for o in opts if o["id"] in sounds.KNOWN_SOUNDS)
+
+
 # ── sound packs ───────────────────────────────────────────────────────────────
 
 

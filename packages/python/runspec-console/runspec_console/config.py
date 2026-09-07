@@ -149,6 +149,25 @@ def saved_runs_path() -> Path:
     return app_dir() / "runspec_saved_runs.toml"
 
 
+def sounds_registry_path() -> Path:
+    """The named-sound registry (`runspec_sounds.toml`) — a `[[sound]]` collection
+    mapping a stable `id` + `label` to an audio `file` on this machine, so the
+    operator, a trigger/schedule, and the agent can all name a sound by id
+    (`sound:<id>`) instead of a raw path. The registry **rides Config Sync**
+    (KNOWN_FILES), merged by `id` like runbooks — but the audio files it points at
+    are binary and **machine-local** (like a `pack` folder), so a synced id
+    resolves to a cue only on a machine where that file is present, degrading
+    gracefully to silence elsewhere."""
+    return app_dir() / "runspec_sounds.toml"
+
+
+def sounds_store_dir() -> Path:
+    """Where `import_sound` copies an operator-added audio file so the registry is
+    self-contained (survives the source file moving). Under AppData — **never**
+    synced, exactly like the registry's `file` paths and a `pack` folder."""
+    return app_dir() / "sounds"
+
+
 def credentials_path() -> Path:
     return app_dir() / "runspec_credentials.toml"
 

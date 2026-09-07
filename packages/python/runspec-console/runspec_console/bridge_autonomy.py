@@ -182,6 +182,13 @@ class AutonomyMixin:
 
             q = str((tool_input or {}).get("query") or "")
             return "autonomous" if codeexec.classify_sql(q) == "read" else "confirm"
+        if tool_name == "play_sound":
+            # Playing an audio cue on the operator's own machine is benign and the
+            # whole point is an unattended alert (a trigger/schedule/agent flagging
+            # something worth hearing) — gating it behind a prompt would defeat that.
+            # It stays in _ACTION_TOOL_NAMES so a trigger's action_allow can scope
+            # it; the master [console.sounds] enabled toggle is the real off switch.
+            return "autonomous"
         if tool_name in _ACTION_TOOL_NAMES:
             return "confirm"  # side-effecting action tools — always prompt
         if tool_name in _CONFIG_TOOL_NAMES:
@@ -440,6 +447,143 @@ class AutonomyMixin:
                 "covered": {},
                 "categories": list(sounds.CATEGORIES),
             }
+
+    # ── named-sound registry (runspec_sounds.toml) ───────────────────────────
+    #
+    # A named sound is an operator-added audio file given a stable id + label, so
+    # it can be referenced by name in Settings, a trigger/schedule action, and the
+    # agent's play_sound tool. The registry rides Config Sync (merged by id); the
+    # audio files stay machine-local (copied under config.sounds_store_dir()). See
+    # sounds_registry.py.
+
+    def get_sounds(self) -> list[dict[str, Any]]:
+        """The named-sound registry for the Settings UI: ``[{id, label, file,
+        exists}]``. ``exists`` is False for a synced entry whose audio file isn't
+        present on this machine (it resolves to silence). Never raises."""
+        try:
+            from . import sounds_registry
+
+            return [
+                {
+                    "id": s.id,
+                    "label": s.label,
+                    "file": s.file,
+                    "exists": s.exists(),
+                }
+                for s in sounds_registry.list_sounds()
+            ]
+        except Exception:
+            logger.debug("get_sounds failed", exc_info=True)
+            return []
+
+    def save_sounds(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """Replace the whole named-sound registry (Settings edit). Validates every
+        entry (id/label/file) before writing; rejects the batch with a message on
+        the first bad row or a duplicate id, so a garbage save can't strand cues."""
+        from . import sounds_registry
+
+        try:
+            clean: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for raw in rows or []:
+                s = sounds_registry.parse_sound(dict(raw))
+                if s.id in seen:
+                    raise ValueError(f"duplicate sound id '{s.id}'")
+                seen.add(s.id)
+                clean.append({"id": s.id, "label": s.label, "file": s.file})
+            sounds_registry.save_rows(clean)
+            return {"ok": True, "sounds": self.get_sounds()}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("save_sounds failed", exc_info=True)
+            return {"ok": False, "error": str(exc)}
+
+    def import_sound(self, source_path: str, label: str = "") -> dict[str, Any]:
+        """Add a named sound: copy ``source_path`` (a ``.wav``/``.mp3`` the operator
+        picked) into the app-data sounds store so the registry is self-contained,
+        register it under a slug id derived from ``label`` (or the file name), and
+        return ``{ok, sound}``. The copy keeps the sound working if the original is
+        later moved/deleted, and stays machine-local (never synced)."""
+        import shutil
+        from pathlib import Path
+
+        from . import sounds_registry
+
+        try:
+            src = Path(str(source_path or "").strip())
+            if not src.is_file():
+                return {"ok": False, "error": "file not found"}
+            ext = src.suffix.lower()
+            if ext not in sounds_registry.FILE_EXTS:
+                return {
+                    "ok": False,
+                    "error": f"must be a {' or '.join(sounds_registry.FILE_EXTS)} file",
+                }
+            name = str(label or "").strip() or src.stem
+            existing = {s.id for s in sounds_registry.list_sounds()}
+            sid = sounds_registry.unique_id(name, existing)
+            store = config_mod.sounds_store_dir()
+            store.mkdir(parents=True, exist_ok=True)
+            dest = store / f"{sid}{ext}"
+            shutil.copyfile(src, dest)
+            rows = sounds_registry.load_rows()
+            rows.append({"id": sid, "label": name, "file": str(dest)})
+            sounds_registry.save_rows(rows)
+            return {
+                "ok": True,
+                "sound": {"id": sid, "label": name, "file": str(dest), "exists": True},
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("import_sound failed", exc_info=True)
+            return {"ok": False, "error": str(exc)}
+
+    def delete_sound(self, sound_id: str) -> dict[str, Any]:
+        """Remove a named sound from the registry. If its audio file lives in the
+        app-data sounds store (i.e. this console imported it), delete that file too;
+        a file the operator pointed at in place is left untouched."""
+        from pathlib import Path
+
+        from . import sounds_registry
+
+        try:
+            sid = str(sound_id or "").strip()
+            rows = sounds_registry.load_rows()
+            kept = [r for r in rows if str(r.get("id") or "") != sid]
+            removed = next((r for r in rows if str(r.get("id") or "") == sid), None)
+            sounds_registry.save_rows(kept)
+            if removed:
+                try:
+                    f = Path(str(removed.get("file") or ""))
+                    store = config_mod.sounds_store_dir().resolve()
+                    if f.is_file() and store in f.resolve().parents:
+                        f.unlink()
+                except OSError:
+                    logger.debug("delete_sound: file cleanup failed", exc_info=True)
+            return {"ok": True, "sounds": self.get_sounds()}
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("delete_sound failed", exc_info=True)
+            return {"ok": False, "error": str(exc)}
+
+    def preview_sound(self, identifier: str) -> bool:
+        """Audition a named sound / bundled cue by id or token (the Settings ▶ on a
+        registry row). Forced past the master toggle so a preview works while
+        sounds are disabled — mirrors ``test_sound``. Never raises."""
+        try:
+            return sounds.play_identifier(str(identifier or ""), force=True)
+        except Exception:
+            return False
+
+    def _play_sound_id(self, identifier: str) -> bool:
+        """Play a sound named by a registry id / bundled name / token, respecting
+        the master ``[console.sounds] enabled`` toggle (unlike ``preview_sound``).
+        The path a trigger's / schedule's ``sound`` field and the ``play_sound``
+        agent tool go through. Best-effort — never raises."""
+        try:
+            return sounds.play_identifier(str(identifier or ""), force=False)
+        except Exception:
+            logger.debug("play sound id failed (%s)", identifier, exc_info=True)
+            return False
 
     def _notify_confirm(
         self, tool_name: str, tool_input: dict[str, Any], level: str

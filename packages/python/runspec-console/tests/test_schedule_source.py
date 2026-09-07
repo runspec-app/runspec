@@ -281,6 +281,82 @@ def test_fire_runnable_selected_hosts_passed_through():
     assert ran == [("", "", [], ["web01", "web02"])]
 
 
+def test_parse_entry_reads_sound():
+    job = parse_schedule_entry(
+        {
+            "id": "s1",
+            "action": "runnable",
+            "host": "web01",
+            "runnable": "backup",
+            "sound": "alarm",
+            "when": {"every": "5m"},
+        }
+    )
+    assert job.sound == "alarm"
+
+
+def test_fire_plays_sound_then_runs():
+    """A schedule's `sound` fires (after the rota gate) before the action runs."""
+    order: list = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "s1",
+                "action": "runnable",
+                "host": "web01",
+                "runnable": "backup",
+                "sound": "sound:nightly-done",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_runnable=lambda *a: order.append("run"),
+        play_sound=lambda ident: order.append(("sound", ident)),
+    )
+    src._fire("s1")
+    assert order == [("sound", "sound:nightly-done"), "run"]
+
+
+def test_fire_no_sound_never_plays():
+    played: list = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "s1",
+                "action": "runnable",
+                "host": "web01",
+                "runnable": "backup",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_runnable=lambda *a: None,
+        play_sound=lambda ident: played.append(ident),
+    )
+    src._fire("s1")
+    assert played == []
+
+
+def test_fire_sound_gated_off_outside_rota():
+    """Outside the rota the schedule is skipped — and so is its sound cue."""
+    played: list = []
+    src = ScheduleSource(
+        [
+            {
+                "id": "s1",
+                "action": "runnable",
+                "host": "web01",
+                "runnable": "backup",
+                "sound": "alarm",
+                "when": {"every": "5m"},
+            }
+        ],
+        run_runnable=lambda *a: None,
+        play_sound=lambda ident: played.append(ident),
+        clock_ok=lambda: False,
+    )
+    src._fire("s1")
+    assert played == []  # skipped before the sound cue
+
+
 def test_fire_runnable_hosts_passed_through():
     ran: list = []
     src = ScheduleSource(

@@ -33,6 +33,7 @@ class FakeOps:
         self.group_calls: list[dict[str, Any]] = []
         self.pre_turn_calls: list[dict[str, Any]] = []
         self.chat_mirrors: list[dict[str, str]] = []
+        self.sound_calls: list[str] = []
         self._tool_output = tool_output
         self._agent_summary = agent_summary
         self._mailbox = mailbox  # what queue_mailbox_for returns for a queue event
@@ -115,6 +116,9 @@ class FakeOps:
 
     def mirror_to_chat(self, kind, label, text):
         self.chat_mirrors.append({"kind": kind, "label": label, "text": text})
+
+    def play_sound(self, identifier):
+        self.sound_calls.append(identifier)
 
 
 def _card(trigger_name="t"):
@@ -414,6 +418,48 @@ def test_handler_passes_action_allow():
     card, _ = _card()
     make_handler(ops)(card, t, Event.new("outlook", "new_mail", {}))
     assert ops.agent_calls[0]["action_allow"] == ["create_document", "outlook_draft"]
+
+
+def test_handler_plays_trigger_sound_agent_mode():
+    """An agent-mode trigger with a `sound` plays it once as the turn begins."""
+    ops = FakeOps()
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "sound": "alarm",
+        }
+    )
+    make_handler(ops)(*(_card()[0], t, Event.new("outlook", "new_mail", {})))
+    assert ops.sound_calls == ["alarm"]
+    assert len(ops.agent_calls) == 1  # the action still ran
+
+
+def test_handler_plays_trigger_sound_rule_mode():
+    """A rule-mode trigger's `sound` fires before the runnable; the run still runs."""
+    ops = FakeOps()
+    t = Trigger.from_config(
+        {
+            "name": "t",
+            "source": "outlook",
+            "event": "new_mail",
+            "mode": "rule",
+            "run": "web01__restart",
+            "sound": "sound:deploy-done",
+        }
+    )
+    make_handler(ops)(*(_card()[0], t, Event.new("outlook", "new_mail", {})))
+    assert ops.sound_calls == ["sound:deploy-done"]
+    assert ops.rule_calls[0]["tool_name"] == "web01__restart"
+
+
+def test_handler_no_sound_never_calls_play():
+    """A trigger without a `sound` never touches the audio path."""
+    ops = FakeOps()
+    t = Trigger.from_config({"name": "t", "source": "outlook", "event": "new_mail"})
+    make_handler(ops)(*(_card()[0], t, Event.new("outlook", "new_mail", {})))
+    assert ops.sound_calls == []
 
 
 def test_handler_reply_to_none_without_entry_id():

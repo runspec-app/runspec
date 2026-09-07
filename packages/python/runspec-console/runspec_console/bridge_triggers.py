@@ -161,6 +161,8 @@ class TriggersMixin:
                 # triggers honour one shared rota; plus the Schedules event-log hook.
                 clock_ok=self._build_clock_ok(),
                 on_event=self._on_schedule_event,
+                # Optional attention cue when a job fires (a named/bundled sound).
+                play_sound=self._play_sound_id,
             )
             ok, reason = src.available()
             if ok:
@@ -1656,6 +1658,7 @@ class TriggersMixin:
             {"name": "open_url", "label": "Open URL in browser"},
             {"name": "open_file", "label": "Open file (default app)"},
             {"name": "reveal_in_folder", "label": "Reveal in file manager"},
+            {"name": "play_sound", "label": "Play a sound"},
         ]
         if self._outlook_tools():
             items += [
@@ -1701,7 +1704,16 @@ class TriggersMixin:
         drop blank scalars / empty sub-tables, coerce the sub-tables (``match`` / ``map``
         / ``reply``) and the ``runnables`` list."""
         out: dict[str, Any] = {"name": name}
-        for key in ("source", "event", "mode", "autonomy", "run", "rules", "pre_turn"):
+        for key in (
+            "source",
+            "event",
+            "mode",
+            "autonomy",
+            "run",
+            "rules",
+            "pre_turn",
+            "sound",
+        ):
             val = str(trigger.get(key) or "").strip()
             if val:
                 out[key] = val

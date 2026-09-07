@@ -16,7 +16,8 @@ A *category* (e.g. ``"confirm"``) resolves to a cue in three steps:
 
 1. an explicit config token — ``"synth:<name>"`` (bundled wav),
    ``"system:<Alias>"`` (Windows system sound), ``"file:<path>"`` (an operator's
-   own ``.wav``/``.mp3``), or ``"off"``;
+   own ``.wav``/``.mp3``), ``"sound:<id>"`` (a **named sound** from the
+   ``runspec_sounds.toml`` registry — see :mod:`sounds_registry`), or ``"off"``;
 2. else a **sound pack**: ``[console.sounds] pack = "<dir>"`` names a folder of
    category-named files (``confirm.wav``, ``host_down.mp3``, …) — one folder
    pick installs a whole personality;
@@ -94,12 +95,19 @@ def available() -> tuple[bool, str]:
     return (True, "")
 
 
-def resolve_target(token: str | None) -> tuple[str, str] | None:
+def resolve_target(
+    token: str | None, *, registry: dict[str, str] | None = None
+) -> tuple[str, str] | None:
     """Parse a config token into ``("synth", name)`` / ``("system", alias)`` /
     ``("file", path)``, or ``None`` for off/blank/invalid. Pure — unit-testable
     on any OS, never raises. A ``file:`` token must carry a ``.wav``/``.mp3``
     suffix; existence is checked at play time (a missing file is a silent no-op,
-    not an error — the operator may have unplugged a drive)."""
+    not an error — the operator may have unplugged a drive).
+
+    A ``sound:<id>`` token names a registered sound; it resolves through
+    ``registry`` (``{id: path}``). ``registry`` defaults to the live
+    ``runspec_sounds.toml`` registry, but tests (and any pure caller) may inject
+    one to keep this function OS/config-free. An unknown id → ``None`` (silent)."""
     if not isinstance(token, str):
         return None
     token = token.strip()
@@ -116,7 +124,82 @@ def resolve_target(token: str | None) -> tuple[str, str] | None:
         if path and Path(path).suffix.lower() in FILE_EXTS:
             return ("file", path)
         return None
+    if token.startswith("sound:"):
+        sid = token[len("sound:") :].strip()
+        reg = registry if registry is not None else _registry_map()
+        path = reg.get(sid) or ""
+        if path and Path(path).suffix.lower() in FILE_EXTS:
+            return ("file", path)
+        return None
     return None
+
+
+def _registry_map() -> dict[str, str]:
+    """The named-sound registry (``{id: path}``), or ``{}`` on any failure —
+    isolated so ``resolve_target`` stays a pure default and never raises."""
+    try:
+        from .. import sounds_registry
+
+        return sounds_registry.registry_map()
+    except Exception:
+        return {}
+
+
+def resolve_playable(identifier: str) -> str | None:
+    """Map a friendly ``identifier`` — a registry sound id, a bundled synth name,
+    or an already-formed token (``sound:``/``synth:``/``system:``/``file:``) — to a
+    playable token, or ``None`` when nothing matches. This is what the ``play_sound``
+    agent tool, a trigger's / schedule's ``sound`` field, and the Settings preview
+    accept, so the operator/agent name a sound without the token prefix.
+
+    Precedence: a full token is used as-is; then a registry id (``sound:<id>``);
+    then a bundled synth name (``synth:<name>``). Never raises."""
+    ident = str(identifier or "").strip()
+    if not ident or ident == "off":
+        return None
+    if ident.startswith(("sound:", "synth:", "system:", "file:")):
+        return ident
+    try:
+        if ident in _registry_map():
+            return f"sound:{ident}"
+    except Exception:
+        pass
+    if ident in KNOWN_SOUNDS:
+        return f"synth:{ident}"
+    return None
+
+
+def playable_options() -> list[dict[str, str]]:
+    """The named sounds available for the agent-tool enum / UI pickers:
+    ``[{id, label, kind}]`` — every registry sound (``kind="registered"``) followed
+    by the bundled synth cues (``kind="builtin"``). Registry ids win a name clash
+    (listed first). Never raises."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    try:
+        from .. import sounds_registry
+
+        for s in sounds_registry.list_sounds():
+            if s.id in seen:
+                continue
+            seen.add(s.id)
+            out.append({"id": s.id, "label": s.label or s.id, "kind": "registered"})
+    except Exception:
+        pass
+    for name in KNOWN_SOUNDS:
+        if name not in seen:
+            out.append({"id": name, "label": f"{name} (built-in)", "kind": "builtin"})
+    return out
+
+
+def play_identifier(identifier: str, *, force: bool = False) -> bool:
+    """Play a sound named by a friendly ``identifier`` (see :func:`resolve_playable`).
+    Respects the master ``[console.sounds] enabled`` toggle unless ``force`` (the
+    Settings preview). Returns True if a sound started. Never raises."""
+    token = resolve_playable(identifier)
+    if token is None:
+        return False
+    return play("__named__", force=force, token=token)
 
 
 def pack_lookup(pack_dir: str | Path, category: str) -> Path | None:

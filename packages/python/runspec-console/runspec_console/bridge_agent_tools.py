@@ -3920,6 +3920,14 @@ class AgentToolsMixin:
                                 "(action='saved_run')."
                             ),
                         },
+                        "sound": {
+                            "type": "string",
+                            "description": (
+                                "Optional: a sound id to play when this schedule "
+                                "fires (a registered name or a built-in cue). Omit "
+                                "for no cue."
+                            ),
+                        },
                     },
                     "required": ["id", "action", "when"],
                 },
@@ -3950,6 +3958,42 @@ class AgentToolsMixin:
                 },
             }
         )
+
+        # Play an audio cue on the console machine (autonomous — a benign alert).
+        # The enum is the named sounds registered in Settings plus the bundled
+        # cues, so the agent picks one by id without knowing the token grammar.
+        from . import sounds
+
+        options = sounds.playable_options()
+        menu = ", ".join(
+            f"{o['id']} ({o['label']})" if o["kind"] == "registered" else o["id"]
+            for o in options
+        )
+        tools.append(
+            {
+                "name": "play_sound",
+                "description": (
+                    "Play a short notification sound on the operator's console "
+                    "machine to get their attention — e.g. to flag that a run you "
+                    "were asked to watch finished or failed. Pick a 'sound' by id: "
+                    "the operator's named sounds (added in Settings) or a built-in "
+                    "cue. Sounds only play on Windows and honour the operator's "
+                    "master sound toggle + volume. "
+                    f"Available: {menu}."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "sound": {
+                            "type": "string",
+                            "enum": [o["id"] for o in options],
+                            "description": "Which sound to play (a registered name or a built-in cue id).",
+                        },
+                    },
+                    "required": ["sound"],
+                },
+            }
+        )
         return tools
 
     def _run_action_tool(self, name: str, ti: dict[str, Any], chat_id: str = "") -> str:
@@ -3973,7 +4017,37 @@ class AgentToolsMixin:
             return self._action_open_file(ti, chat_id)
         if name == "reveal_in_folder":
             return self._action_reveal_in_folder(ti, chat_id)
+        if name == "play_sound":
+            return self._action_play_sound(ti)
         return f"Error: unknown tool '{name}'"
+
+    def _action_play_sound(self, ti: dict[str, Any]) -> str:
+        """Play a named/built-in sound on the console machine (autonomous). Resolves
+        the identifier through the registry + bundled cues and reports whether a
+        sound actually started — off Windows, when muted, or with an unknown id it
+        is a no-op, and the agent is told so rather than being left to assume."""
+        from . import sounds
+
+        ident = str(ti.get("sound") or "").strip()
+        if not ident:
+            return "Error: 'sound' is required."
+        if sounds.resolve_playable(ident) is None:
+            names = ", ".join(o["id"] for o in sounds.playable_options())
+            return f"Error: no sound named '{ident}'. Available: {names}."
+        ok, reason = sounds.available()
+        if not ok:
+            return f"✓ Requested '{ident}', but no sound played ({reason})."
+        if not config_mod.sound_enabled():
+            return (
+                f"✓ Requested '{ident}', but sounds are muted "
+                "([console.sounds] enabled = false)."
+            )
+        played = self._play_sound_id(ident)
+        return (
+            f"✓ Played '{ident}'."
+            if played
+            else f"✓ Requested '{ident}', but no sound played (file missing on this machine)."
+        )
 
     def _resolve_jailed_path(self, location: str, rel: str, chat_id: str = "") -> Path:
         """Resolve ``rel`` under the chosen console-owned root — the session
@@ -4217,6 +4291,7 @@ class AgentToolsMixin:
             "runbook",
             "saved_run",
             "values",
+            "sound",
         ):
             if ti.get(key) is not None:
                 data[key] = ti[key]

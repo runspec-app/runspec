@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility } from '../bridge'
+import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -78,9 +78,11 @@ const SYSTEM_SOUND_ALIASES = ['SystemAsterisk', 'SystemExclamation', 'SystemHand
 // Sentinel option value that opens the native file picker instead of being a token.
 const PICK_FILE = '__pick_file__'
 const fileBasename = (token: string) => token.slice('file:'.length).split(/[\\/]/).pop() || token
-const soundOptions = (def: string, current: string) => [
+const soundOptions = (def: string, current: string, named: NamedSound[]) => [
   { value: def, label: 'Default (synthesized)' },
   ...SYSTEM_SOUND_ALIASES.map(a => ({ value: `system:${a}`, label: `Windows: ${a}` })),
+  // Named sounds from the registry — pick one by id ("sound:<id>").
+  ...named.map(s => ({ value: `sound:${s.id}`, label: `My sound: ${s.label}` })),
   ...(current.startsWith('file:') ? [{ value: current, label: `File: ${fileBasename(current)}` }] : []),
   { value: PICK_FILE, label: 'Custom file… (.wav / .mp3)' },
   { value: 'off', label: 'Off' },
@@ -94,6 +96,8 @@ export function SoundsTab() {
   const [packInfo, setPackInfo] = useState<{ exists: boolean; covered: Record<string, string> } | null>(null)
   const [confirmNotif, setConfirmNotif] = useState(true)
   const [roomNotif, setRoomNotif] = useState(true)
+  const [named, setNamed] = useState<NamedSound[]>([])
+  const [newName, setNewName] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -124,7 +128,33 @@ export function SoundsTab() {
       setConfirmNotif(con.confirm_notifications !== false)
       setRoomNotif(con.room_notifications !== false)
     })
+    bridge.get_sounds().then(setNamed).catch(() => {})
   }, [])
+
+  // The named-sound registry is its own file (import copies bytes, delete removes
+  // them), so these persist immediately rather than batching into the main Save.
+  const addNamedSound = () => {
+    bridge.browse_sound_file().then(path => {
+      if (!path) return
+      bridge.import_sound(path, newName.trim()).then(res => {
+        if (res.ok) { setNewName(''); bridge.get_sounds().then(setNamed).catch(() => {}) }
+        else message.error(res.error || 'Could not add the sound')
+      }).catch(() => message.error('Could not add the sound'))
+    }).catch(() => {})
+  }
+  const deleteNamedSound = (id: string) => {
+    bridge.delete_sound(id).then(res => {
+      if (res.ok) setNamed(res.sounds ?? named.filter(s => s.id !== id))
+      else message.error(res.error || 'Could not remove the sound')
+    }).catch(() => message.error('Could not remove the sound'))
+  }
+  const renameNamedSound = (id: string, label: string) => {
+    const rows = named.map(s => (s.id === id ? { ...s, label } : s))
+    setNamed(rows)  // optimistic
+    bridge.save_sounds(rows.map(({ id, label, file }) => ({ id, label, file }))).then(res => {
+      if (!res.ok) message.error(res.error || 'Could not rename the sound')
+    }).catch(() => {})
+  }
 
   // A row's Select change: the "Custom file…" sentinel opens the native picker
   // (cancel keeps the previous choice); anything else is the token itself.
@@ -217,6 +247,57 @@ export function SoundsTab() {
         </Typography.Paragraph>
       )}
       <Divider style={{ margin: '8px 0' }} />
+
+      {/* Named sounds: an operator-added .wav/.mp3 saved with an id, reusable as
+          a "My sound" pick below, in a trigger/schedule action, and by the agent's
+          play_sound tool. The registry rides Config Sync; the audio files stay
+          machine-local (imported copies), so a synced entry not present here shows
+          "missing" and plays nothing. */}
+      <Typography.Text strong style={{ fontSize: 13 }}>My sounds</Typography.Text>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: 4 }}>
+        Add your own sounds and name them, then reuse a name in the picks below, in a
+        trigger or schedule action, and in what the agent can play. The registry syncs;
+        the audio files stay on this machine (a synced name plays only where its file is present).
+      </Typography.Paragraph>
+      {named.map(s => (
+        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          <Input
+            size="small"
+            value={s.label}
+            onChange={e => setNamed(prev => prev.map(x => (x.id === s.id ? { ...x, label: e.target.value } : x)))}
+            onBlur={e => renameNamedSound(s.id, e.target.value.trim() || s.id)}
+            style={{ width: 200 }}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+            sound:{s.id}
+          </Typography.Text>
+          {s.exists === false && (
+            <Tooltip title="This sound's file isn't on this machine (it came from Config Sync). It will play only where the file is present.">
+              <Tag color="warning" style={{ fontSize: 10, marginInlineEnd: 0 }}>missing</Tag>
+            </Tooltip>
+          )}
+          <span style={{ flex: 1 }} />
+          <Tooltip title="Preview this sound">
+            <Button size="small" type="text" icon={<SoundOutlined />} onClick={() => bridge.preview_sound(`sound:${s.id}`).catch(() => {})} />
+          </Tooltip>
+          <Popconfirm title={`Remove "${s.label}"?`} onConfirm={() => deleteNamedSound(s.id)} okText="Remove" okButtonProps={{ danger: true }}>
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </div>
+      ))}
+      <Space size={4} style={{ marginTop: named.length ? 2 : 0 }}>
+        <Input
+          size="small"
+          placeholder="Name (optional)"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onPressEnter={addNamedSound}
+          style={{ width: 200 }}
+        />
+        <Button size="small" icon={<PlusOutlined />} onClick={addNamedSound}>Add from file…</Button>
+      </Space>
+
+      <Divider style={{ margin: '12px 0 8px' }} />
       {SOUND_CATEGORIES.map(c => row(
         c.label,
         <Space size={4}>
@@ -225,7 +306,7 @@ export function SoundsTab() {
             disabled={!enabled}
             value={choices[c.key] ?? c.def}
             onChange={v => handleChoice(c.key, v)}
-            options={soundOptions(c.def, choices[c.key] ?? c.def)}
+            options={soundOptions(c.def, choices[c.key] ?? c.def, named)}
             popupMatchSelectWidth={false}
             style={{ width: 230 }}
           />

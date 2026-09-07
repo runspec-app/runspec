@@ -286,6 +286,11 @@ class Trigger:
     # See docs/design/email-claim-move.md.
     claim: bool = False
     claim_folder: str = ""
+    # Optional audio cue played when this trigger fires (both rule and agent
+    # modes) — a named sound id (from runspec_sounds.toml), a bundled cue name, or
+    # a full "sound:"/"synth:"/"system:"/"file:" token. Best-effort + Windows-only,
+    # so it never affects whether the action runs; resolved via sounds.play_identifier.
+    sound: str = ""
 
     # Compiled match patterns, filled in __post_init__.
     _patterns: dict[str, re.Pattern[str]] = field(default_factory=dict, repr=False)
@@ -486,6 +491,7 @@ class Trigger:
             reply=reply,
             claim=claim,
             claim_folder=claim_folder,
+            sound=str(data.get("sound") or "").strip(),
         )
 
     def matches(self, event: Event) -> bool:

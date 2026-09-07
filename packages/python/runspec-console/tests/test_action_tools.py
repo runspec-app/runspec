@@ -38,6 +38,8 @@ class _ActionBridge:
     _action_open_url = Bridge._action_open_url
     _action_open_file = Bridge._action_open_file
     _action_reveal_in_folder = Bridge._action_reveal_in_folder
+    _action_play_sound = Bridge._action_play_sound
+    _play_sound_id = Bridge._play_sound_id
     _resolve_jailed_path = Bridge._resolve_jailed_path
     _current_workspace_root = Bridge._current_workspace_root
     _run_workspace_tool = Bridge._run_workspace_tool
@@ -106,7 +108,10 @@ def test_run_runbook_tool_only_when_runbooks_exist(monkeypatch):
 
 def test_all_side_effecting_action_tools_are_confirm_gated():
     b = _ActionBridge()
-    for name in _ACTION_TOOL_NAMES - {"run_runbook"}:
+    # run_runbook returns text (autonomous); play_sound is a benign local audio cue
+    # (autonomous) — both stay in _ACTION_TOOL_NAMES only so action_allow can scope
+    # them. Everything that actually acts on the world confirm-gates.
+    for name in _ACTION_TOOL_NAMES - {"run_runbook", "play_sound"}:
         assert b._effective_tool_autonomy(name, {}) == "confirm"
 
 
@@ -129,6 +134,42 @@ def test_run_runbook_is_autonomous_but_still_action_allow_scopable():
         [{"name": "run_runbook"}, {"name": "create_document"}], ["create_document"]
     )
     assert [t["name"] for t in scoped] == ["create_document"]
+
+
+def test_play_sound_schema_offers_builtin_cues():
+    from runspec_console import sounds
+
+    b = _ActionBridge()
+    tool = next(t for t in b._action_tools() if t["name"] == "play_sound")
+    enum = tool["input_schema"]["properties"]["sound"]["enum"]
+    assert tool["input_schema"]["required"] == ["sound"]
+    # every bundled cue is a valid choice even with no registered sounds.
+    for name in sounds.KNOWN_SOUNDS:
+        assert name in enum
+
+
+def test_play_sound_is_autonomous_but_action_allow_scopable():
+    b = _ActionBridge()
+    assert b._effective_tool_autonomy("play_sound", {}) == "autonomous"
+    assert "play_sound" in _ACTION_TOOL_NAMES
+    scoped = Bridge._filter_headless_tools(
+        [{"name": "play_sound"}, {"name": "open_url"}], ["play_sound"]
+    )
+    assert [t["name"] for t in scoped] == ["play_sound"]
+
+
+def test_play_sound_dispatch_unknown_id():
+    b = _ActionBridge()
+    out = b._run_action_tool("play_sound", {"sound": "does-not-exist"})
+    assert out.startswith("Error: no sound named")
+
+
+def test_play_sound_dispatch_known_id_reports_outcome():
+    # Off Windows, sounds.available() is False, so the tool reports it requested
+    # the cue but nothing played — never an error, and it never raises.
+    b = _ActionBridge()
+    out = b._run_action_tool("play_sound", {"sound": "confirm"})
+    assert out.startswith("✓") and "confirm" in out
 
 
 def test_open_url_schema():

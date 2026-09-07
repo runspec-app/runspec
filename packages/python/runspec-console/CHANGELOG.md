@@ -8,6 +8,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.243.0] — 2026-09-07
+
+### Added
+- **Named sounds + the agent can play them.** Three things land together so a
+  sound can be *named once and reused everywhere the console plays a cue*:
+  - **Named-sound registry** (`runspec_sounds.toml`; Settings → Sounds → *My
+    sounds*). Add your own `.wav`/`.mp3`, give it a name, and it gets a stable id
+    referenced as a `sound:<id>` token — a fourth token kind alongside `synth:` /
+    `system:` / `file:`, offered in every per-category pick. Importing copies the
+    file into an app-data store so the entry is self-contained. The **registry
+    rides Config Sync** (in `KNOWN_FILES`/`COLLECTION_FILES`, merged by `id`), but
+    the audio files stay **machine-local** (like a `pack` folder) — a synced id
+    plays only where its file is present and degrades to silence elsewhere (shown
+    as `missing`). New module `sounds_registry.py`; bridge `get_sounds` /
+    `save_sounds` / `import_sound` / `delete_sound` / `preview_sound`.
+  - **`play_sound` agent action tool** — a confirm-free (benign, local) built-in
+    the chat agent (and a trigger/schedule agent turn) uses to play a named or
+    built-in cue to get the operator's attention (e.g. "play the alarm when the
+    deploy finishes"). In `_ACTION_TOOL_NAMES` so it's allowlistable per trigger
+    via `action_allow`; honours the master `[console.sounds] enabled` toggle.
+  - **`sound` field on trigger + schedule actions.** A `[triggers.<name>] sound`
+    plays when the trigger fires (rule *and* agent mode); a `[[schedule]] sound`
+    plays when the schedule fires (any action). Set them in the Triggers /
+    Schedules editors' new *Play a sound* picker (shared `SoundSelect`
+    component). Best-effort + Windows-only, so a cue never affects whether the
+    action runs. See `docs/console-reference.md` → "Notification sounds".
+
+
 ## [0.242.0] — 2026-09-07
 
 ### Added

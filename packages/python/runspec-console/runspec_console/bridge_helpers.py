@@ -195,6 +195,11 @@ class _BridgeTriggerOps:
     def expand_targets(self, run: str) -> list[str]:
         return self._bridge.expand_targets(run)
 
+    def play_sound(self, identifier: str) -> None:
+        # Best-effort attention cue for a fired trigger (respects the master
+        # [console.sounds] toggle; no-op off Windows / when the file is absent).
+        self._bridge._play_sound_id(identifier)
+
     def mirror_to_chat(self, kind: str, label: str, text: str) -> None:
         # The Console tab renders this as a finished block matching the trigger
         # mode: kind="run" → a slash-command run card, kind="chat" → an agent

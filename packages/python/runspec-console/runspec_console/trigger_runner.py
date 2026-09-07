@@ -129,6 +129,12 @@ class BridgeOps(Protocol):
         runnable output (run) or the agent's reply (chat)."""
         ...
 
+    def play_sound(self, identifier: str) -> None:
+        """Best-effort audio cue for a fired trigger — ``identifier`` is a named
+        sound id / bundled cue name / token. No-op off Windows or when muted; never
+        affects whether the action runs."""
+        ...
+
 
 def render_event(event: Event) -> str:
     """A readable rendering of an event for the agent's first user turn."""
@@ -296,6 +302,11 @@ def make_handler(
     """Build the engine handler that runs each matched trigger via ``ops``."""
 
     def handler(card: TriggerCard, trigger: Trigger, event: Event) -> None:
+        # Optional attention cue when the trigger fires — before either the rule
+        # action or the agent turn, so the operator hears it as work begins. Purely
+        # additive: a failure here never stops the action (ops.play_sound swallows).
+        if trigger.sound:
+            ops.play_sound(trigger.sound)
         if trigger.mode == "rule":
             # Optional single LLM pre-turn: interpret the event and fill action
             # params, exposed to the maps under the {{ _llm.* }} namespace. It only

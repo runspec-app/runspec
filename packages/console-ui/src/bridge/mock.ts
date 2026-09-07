@@ -710,6 +710,14 @@ export const mockApi: BridgeApi = {
   test_notification: async () => ({ toast_available: false, toast_reason: 'mock', sound_available: false, window_found: false }),
   test_sound: async () => false,
   sound_pack_info: async (path?: string) => ({ dir: path ?? '', exists: false, covered: {}, categories: [] }),
+  get_sounds: async () => [
+    { id: 'deploy-done', label: 'Deploy done', file: 'C:/sounds/deploy.mp3', exists: true },
+    { id: 'pager', label: 'Pager (from another machine)', file: 'D:/sounds/pager.wav', exists: false },
+  ],
+  save_sounds: async (rows) => ({ ok: true, sounds: rows }),
+  import_sound: async (_source_path, label) => ({ ok: true, sound: { id: (label || 'sound').toLowerCase().replace(/[^a-z0-9]+/g, '-'), label: label || 'Sound', file: 'C:/sounds/new.mp3', exists: true } }),
+  delete_sound: async () => ({ ok: true, sounds: [] }),
+  preview_sound: async () => true,
 
   get_mailbox: async () => ({ address: 'helpdesk@corp.com', folder: 'Tickets/Open', label: 'Helpdesk', once_per_thread: true }),
 

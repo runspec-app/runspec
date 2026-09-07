@@ -63,6 +63,7 @@ TOML_FENCE = re.compile(r"```toml\n(.*?)```", re.S)
 #   credential                 → console `runspec_credentials.toml` ([[credential]] metadata)
 #   repo                       → console `runspec_repos.toml` ([[repo]] registry)
 #   self_service               → console `runspec_self_service.toml`
+#   sound                      → console `runspec_sounds.toml` ([[sound]] named-sound registry)
 #   telemetry                  → console `config.toml` ([telemetry] OTLP tracing)
 #   phoenix                    → console `config.toml` ([phoenix] local trace server)
 #   mcp                        → console `config.toml` ([mcp] external MCP servers)
@@ -102,6 +103,7 @@ NON_RUNSPEC_SECTIONS = {
     "credential",
     "repo",
     "self_service",
+    "sound",
     "chat_history",
     "workspace",
     "sandbox",

@@ -5,6 +5,7 @@ import { bridge, type ArgDef, type Credential, type Host, type Runnable, type Sc
 import { useIsDark, useAccent, textMuted, textSecondary } from '../ThemeContext'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
+import { SoundSelect } from '../components/SoundSelect'
 import { initialFormValues } from './FormsView'
 import { RunbookField } from './RunbookRunModal'
 import {
@@ -221,6 +222,7 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       prompt: editing.prompt ?? '',
       runbook: editing.runbook ?? undefined,
       saved_run: editing.saved_run ?? undefined,
+      sound: editing.sound ?? '',
       fields: Object.entries(editing.fields ?? {}).map(([key, value]) => ({ key, value })),
     }
     form.setFieldsValue(fv)
@@ -394,6 +396,10 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
       base.args = args
       if (!base.id) base.id = `rs-${values.runnable}-${Date.now()}`
     }
+
+    // Optional attention cue on fire (any action). Omit the key when unset.
+    const sound = String(values.sound ?? '').trim()
+    if (sound) base.sound = sound
 
     setSubmitting(true)
     try {
@@ -675,6 +681,11 @@ function ScheduleModal({ open, hosts, runnables, defaultHost, editing, onCancel,
             )}
           </>
         )}
+
+        <Form.Item name="sound" label="Play a sound (optional)"
+          help="An attention cue played when this schedule fires — a sound you named in Settings → Sounds, or a built-in cue.">
+          <SoundSelect />
+        </Form.Item>
       </Form>
     </Modal>
   )

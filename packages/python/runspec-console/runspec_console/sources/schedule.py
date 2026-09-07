@@ -99,6 +99,10 @@ ClockFn = Callable[[], bool]
 # schedule fire and its disposition, for the Schedules-tab event log.
 ScheduleEventFn = Callable[[dict[str, Any]], None]
 
+# Optional attention cue when a schedule fires (a named sound id / bundled cue /
+# token). Best-effort — the bridge swallows failures; None means "no cue hook".
+SoundFn = Callable[[str], None]
+
 
 # ── schedule spec (pure — no apscheduler) ─────────────────────────────────────
 
@@ -162,6 +166,10 @@ class ScheduleJob:
     values: dict[str, Any] = field(default_factory=dict)
     # action == "saved_run" — the saved-run (preset) id from runspec_saved_runs.toml.
     saved_run: str = ""
+    # Optional audio cue played when this schedule fires (any action) — a named
+    # sound id, a bundled cue name, or a full token. Best-effort + Windows-only;
+    # never affects whether the action runs. Resolved via sounds.play_identifier.
+    sound: str = ""
 
 
 def _parse_every(every: str) -> dict[str, int]:
@@ -332,6 +340,7 @@ def parse_schedule_entry(data: dict[str, Any]) -> ScheduleJob:
         runbook=runbook,
         values=values,
         saved_run=saved_run,
+        sound=str(data.get("sound") or "").strip(),
     )
 
 
@@ -418,6 +427,7 @@ class ScheduleSource:
         run_saved: SavedFn | None = None,
         clock_ok: ClockFn | None = None,
         on_event: ScheduleEventFn | None = None,
+        play_sound: SoundFn | None = None,
     ) -> None:
         self._jobs: list[ScheduleJob] = []
         for raw in schedules or []:
@@ -441,6 +451,8 @@ class ScheduleSource:
         # ignore_rota) — so schedules honour the same rota as triggers.
         self._clock_ok = clock_ok
         self._on_event = on_event
+        # Best-effort attention cue when a job fires (after the rota gate passes).
+        self._play_sound = play_sound
         self._emit: EmitFn | None = None
         self._scheduler: Any | None = None
 
@@ -512,6 +524,13 @@ class ScheduleSource:
                 logger.info("schedule '%s' skipped: outside working hours", job.id)
                 self._record(job, skipped=True)
                 return
+        # Attention cue as the job fires (after the rota gate, before the action).
+        # Best-effort: a failing cue must not stop the schedule from running.
+        if job.sound and self._play_sound is not None:
+            try:
+                self._play_sound(job.sound)
+            except Exception:
+                logger.debug("schedule: sound cue failed for %r", job_id, exc_info=True)
         try:
             if job.action == "event":
                 if self._emit is not None:

@@ -64,6 +64,57 @@ Bedrock adds the standard AWS credential chain (`aws_region`,
 | `trigger_confirm_timeout` | Same, for unattended **trigger/schedule** agent turns (default 3600, longer because the operator may be away when it fires; `0` = wait indefinitely) |
 | `output_line_cap` / `output_byte_cap` | Streaming caps for direct-run output (defaults 5000 lines / 2 MB; `0` disables) |
 | `theme.*` | White-label branding — see the [walkthrough](white-label.md#theme) |
+| `confirm_notifications` | Desktop toast + taskbar flash when an agent tool-confirmation gate is waiting (default true) |
+| `room_notifications` | Toast + flash on a chat/helpdesk message while the console isn't focused (default true) |
+
+## `[console.sounds]` — notification sounds {#sounds}
+
+Audio cues so you stay aware while the console is minimized or in the background
+(Windows only; a no-op elsewhere). Edit these in **Settings → Sounds &
+Notifications**.
+
+| Key | Meaning |
+|---|---|
+| `enabled` | Master toggle for all cues (default true) |
+| `volume` | 0–100 for synthesized + file cues (default 100) |
+| `pack` | A folder of category-named files (`confirm.wav`, `host_down.mp3`, …) applied to any category left on its default — machine-local, never synced |
+| *`<category>`* | Per-event override — one key per category (`confirm`, `trigger`, `completion_success`, …) set to a **sound token** |
+
+A **sound token** is `synth:<name>` (a bundled cue), `system:<Alias>` (a Windows
+system sound), `file:<path>` (your own `.wav`/`.mp3`), `sound:<id>` (a **named
+sound**, below), or `off`.
+
+### Named sounds — add your own, reuse by name {#named-sounds}
+
+Add your own `.wav`/`.mp3` in **Settings → Sounds → My sounds**, give it a name,
+and it gets a stable id you can reuse anywhere the console plays a sound — as a
+per-category pick, on a trigger or schedule action, and by the agent's
+`play_sound` tool. Named sounds live in `runspec_sounds.toml`:
+
+```toml
+[[sound]]
+id    = "deploy-done"          # stable identity (referenced as sound:deploy-done)
+label = "Deploy done"          # shown in the UI, named by the agent
+file  = "C:/…/AppData/…/runspec-console/sounds/deploy-done.mp3"
+```
+
+The **registry rides Config Sync** (merged by `id`), but the audio files stay
+**machine-local** (the console copies an imported file into its own app-data
+store, like a `pack` folder). So a synced id plays a cue only on a machine where
+the file is present, and degrades gracefully to silence elsewhere — Settings
+flags such an entry as `missing`.
+
+**Where a named sound is used:**
+
+- A trigger plays its `sound` when it fires (rule *and* agent mode) — set it in
+  the Triggers editor's *Play a sound* field, or `sound = "deploy-done"` on the
+  `[triggers.<name>]` table.
+- A schedule plays its `sound` when it fires (any action) — the Schedules
+  modal's *Play a sound* field, or `sound = "deploy-done"` on the `[[schedule]]`
+  entry.
+- The chat agent can play one with the confirm-free **`play_sound`** action tool
+  (e.g. "play the alarm when the deploy finishes"); it's allowlistable per
+  trigger via `action_allow`. All of these respect the master `enabled` toggle.
 
 ## `[ssh]` and `[refresh]`
 

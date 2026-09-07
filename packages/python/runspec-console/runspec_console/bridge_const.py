@@ -175,6 +175,7 @@ _ACTION_TOOL_NAMES = frozenset(
         "open_url",
         "open_file",
         "reveal_in_folder",
+        "play_sound",
     }
 )
 

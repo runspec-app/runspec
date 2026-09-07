@@ -9,6 +9,7 @@ import {
   SnippetsOutlined,
 } from '@ant-design/icons'
 import { bridge, type TriggerSourceInfo, type Host, type Runnable, type ArgDef } from '../bridge'
+import { SoundSelect } from './SoundSelect'
 
 const { Text } = Typography
 
@@ -58,6 +59,9 @@ interface TriggerForm {
   match_folder?: string
   claim?: boolean
   claim_folder?: string
+  // Optional attention cue played when the trigger fires (a named sound id or a
+  // built-in cue). Empty = no sound.
+  sound?: string
 }
 
 export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
@@ -99,6 +103,7 @@ export const triggerToForm = (t: Record<string, unknown>): TriggerForm => {
     action_allow: Array.isArray(t.action_allow) ? (t.action_allow as unknown[]).map(String) : [],
     reply_draft: !!reply.draft,
     reply_style: reply.style ? String(reply.style) : '',
+    sound: typeof t.sound === 'string' ? t.sound : '',
   }
 }
 
@@ -117,6 +122,8 @@ export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
     enabled: v.enabled,
     match: matchObj,
     reply: { draft: !!v.reply_draft, style: (v.reply_style ?? '').trim() },
+    // Optional attention cue on fire (blank is dropped by the backend cleaner).
+    sound: (v.sound ?? '').trim(),
   }
   // Only an explicit override crosses the bridge; 'default' omits the key so the
   // trigger inherits the mailbox default.
@@ -810,6 +817,11 @@ export function TriggersEditor({
               </Form.Item>
             </div>
           )}
+
+          <Form.Item name="sound" label="Play a sound (optional)"
+            help="An attention cue played when this trigger fires — a sound you named in Settings → Sounds, or a built-in cue.">
+            <SoundSelect />
+          </Form.Item>
 
           <Form.Item name="enabled" valuePropName="checked" style={{ marginBottom: 8 }}>
             <Switch size="small" /> <span style={{ fontSize: 12, color: 'var(--rs-text-muted)', marginLeft: 6 }}>Enabled</span>
