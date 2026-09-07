@@ -9,6 +9,11 @@
  *   2. While streaming, the raw view renders only a bounded live tail.
  *   3. On run_end the buffer is flushed before the block is marked done, so the
  *      structured parse runs on the complete line set.
+ *
+ * Streamed chat tokens (runspec:token) are coalesced the same way — one flush per
+ * frame instead of one setBlocks per token — which (with the memoised BlockCard
+ * and the lazy Copy transcript) is what stopped a fast reply from starving the
+ * main thread and lagging the composer while it rendered.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
@@ -53,8 +58,15 @@ function runBlock(id: string): InvocationBlock {
   return { id, type: 'run', label: `/dump`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false }
 }
 
+function chatBlock(id: string): InvocationBlock {
+  return { id, type: 'chat', label: `ask`, startedAt: new Date().toISOString(), lines: [], segments: [], currentText: '', done: false }
+}
+
 function emitLine(id: string, line: string, stream: 'stdout' | 'stderr' = 'stdout') {
   window.dispatchEvent(new CustomEvent('runspec:output', { detail: { id, line, stream } }))
+}
+function emitToken(id: string, token: string) {
+  window.dispatchEvent(new CustomEvent('runspec:token', { detail: { id, token } }))
 }
 function emitEnd(id: string, exit_code = 0) {
   window.dispatchEvent(new CustomEvent('runspec:run_end', { detail: { id, exit_code, duration_ms: 5 } }))
@@ -95,6 +107,30 @@ describe('OutputPanel streaming', () => {
     expect(screen.getByText(/showing the last 500 of 1,000 lines/)).toBeTruthy()
     expect(screen.queryByText(/\bline-0\b/)).toBeNull()
     expect(screen.getByText(/line-999/)).toBeTruthy()
+  })
+
+  it('coalesces streamed chat tokens into a single flush per frame', () => {
+    const add = mount()
+    act(() => add(chatBlock('c1')))
+
+    // Several tokens without a frame stay buffered — no per-token setBlocks.
+    act(() => { emitToken('c1', 'Hel'); emitToken('c1', 'lo, '); emitToken('c1', 'world') })
+    expect(screen.queryByText(/Hello, world/)).toBeNull()
+
+    // One frame applies the whole batch as a single concatenated update.
+    act(() => flushRaf())
+    expect(screen.getByText(/Hello, world/)).toBeTruthy()
+  })
+
+  it('drains buffered tokens on run_end so the final reply is not lost', () => {
+    const add = mount()
+    act(() => add(chatBlock('c2')))
+
+    // Tokens arrive and the turn ends in the same tick, before any frame fires.
+    act(() => { emitToken('c2', 'final '); emitToken('c2', 'answer'); emitEnd('c2') })
+
+    // run_end flushes the token buffer first, so the closed turn keeps its text.
+    expect(screen.getByText(/final answer/)).toBeTruthy()
   })
 
   it('flushes buffered lines before completing so the JSON parse sees them all', () => {

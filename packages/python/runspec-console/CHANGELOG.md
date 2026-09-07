@@ -8,6 +8,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.241.0] — 2026-09-07
+
+### Fixed
+- **Streaming a long agent reply no longer lags the Console — or the composer.**
+  While a reply rendered, typing into the prompt box was delayed. The prompt box
+  holds its own state and is a sibling subtree, so this was **main-thread
+  contention**: the streaming render path re-did O(whole-transcript) work on every
+  token, starving the browser's keystroke/paint handling. Three fixes:
+  - **The Copy transcript is built on demand, not every render.** `BlockCard`
+    computed `transcriptToText(segments, currentText)` — which concatenates every
+    tool call's full output — in its render body, so it reran for every card on
+    every streamed token (O(n²) over the streaming card). It's only needed when
+    Copy/Ask fires, so it's now built there (`buildLogText`). *(This was the
+    regression introduced with tool-aware Copy in 0.237.0.)*
+  - **Streamed chat tokens are coalesced per animation frame.** `runspec:token`
+    fired one `setBlocks` per token; they now buffer into the same RAF flush that
+    already batches output lines — one state update per frame, not per token. The
+    buffer is drained on `run_end` so a closed turn keeps its final text.
+  - **`BlockCard` is memoised.** `useInvocationBlocks` keeps stable references for
+    untouched blocks, so with `React.memo` + `useCallback`-stabilised card
+    callbacks (`answerConfirm`, and ConsoleView's `handleRerun`/`handleAskLlm`/
+    `handleToggleContext`, plus the hook's own `addBlock`/`clearBlocks`/
+    `hydrateBlocks`/`setBlockInContext`) only the streaming card re-renders per
+    frame instead of the whole transcript.
+  (`components/OutputPanel.tsx`, `views/ConsoleView.tsx`.)
+
+
 ## [0.240.0] — 2026-09-05
 
 ### Added

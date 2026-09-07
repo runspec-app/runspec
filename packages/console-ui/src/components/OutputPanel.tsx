@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Checkbox, Input, Tag, Tooltip, Typography, message } from 'antd'
 import { bridge } from '../bridge'
 import { Markdown } from './Markdown'
@@ -697,7 +697,10 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
     return () => window.removeEventListener('runspec:run_end', onEnd)
   }, [])
 
-  const answerConfirm = (approved: boolean, editedInput?: Record<string, unknown>) => {
+  // Stable across renders (only the setter + module-level bridge are closed over)
+  // so it doesn't defeat the memoised BlockCard by handing each card a fresh prop
+  // on every streamed frame.
+  const answerConfirm = useCallback((approved: boolean, editedInput?: Record<string, unknown>) => {
     setPendingConfirm(prev => {
       if (prev) {
         console.log('[runspec] resolving tool_confirm', { request_id: prev.request_id, approved, edited: !!editedInput })
@@ -706,7 +709,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
       }
       return null
     })
-  }
+  }, [])
 
   const handleScroll = () => {
     const el = scrollRef.current
@@ -1193,7 +1196,15 @@ function RenderingPlaceholder({ chars, lines }: { chars: number; lines: number }
   )
 }
 
-function BlockCard({
+// Memoised: a streamed token now re-creates only the streaming block's object
+// (useInvocationBlocks' setBlocks keeps stable refs for untouched blocks), so with
+// stable callbacks every OTHER card skips re-render. Without this, a long
+// transcript re-rendered every card — each re-running its Markdown/parse — on
+// every frame of a reply, the bulk of the streaming-time jank. The callbacks it
+// receives are useCallback-stabilised (answerConfirm here; handleRerun/handleAskLlm/
+// handleToggleContext in ConsoleView) and pendingConfirm is null for every card but
+// the active one, so the shallow prop compare actually holds.
+const BlockCard = memo(function BlockCard({
   block,
   onRerun,
   onAskLlm,
@@ -1299,11 +1310,17 @@ function BlockCard({
   // discovered-runnable lookup and form open.
   const editInForm = () => window.dispatchEvent(new CustomEvent('runspec:edit_in_form', { detail: block.rerunData }))
 
-  const logText = block.type === 'chat'
-    // Interleave the assistant's prose with each tool call + its output, so Copy
-    // captures what the agent actually ran and returned — not just the prose.
-    ? transcriptToText(block.segments, block.currentText)
-    : (parsed?.rawText ?? block.lines.map(l => l.line).join('\n'))
+  // The plain-text transcript, built ON DEMAND (Copy / Ask). For a chat card this
+  // interleaves the assistant's prose with each tool call + its output — an
+  // O(transcript) string build that concatenates every tool output. Computing it
+  // in the render body reran it for every card on every streamed token (and grew
+  // O(n²) over the streaming card), which is what made the panel — and, via
+  // main-thread contention, typing into the composer — lag while a reply rendered.
+  // It's only needed when a handler fires, so build it there.
+  const buildLogText = () =>
+    block.type === 'chat'
+      ? transcriptToText(block.segments, block.currentText)
+      : (parsed?.rawText ?? block.lines.map(l => l.line).join('\n'))
 
   const handleCopy = () => {
     let text: string
@@ -1314,7 +1331,7 @@ function BlockCard({
     } else if (!viewRaw && parsed?.kind === 'object' && parsed.obj) {
       text = objectToText(parsed.obj)
     } else {
-      text = `Output from ${block.label}\n\n${logText}`
+      text = `Output from ${block.label}\n\n${buildLogText()}`
     }
 
     // execCommand fallback for WebView2 / file:// contexts where clipboard API may be absent
@@ -1340,7 +1357,7 @@ function BlockCard({
 
   const handleAskLlm = () => {
     // Always send raw JSON to LLM — structured data is more useful than formatted table
-    const raw = parsed ? parsed.rawText : logText
+    const raw = parsed ? parsed.rawText : buildLogText()
     onAskLlm?.(`Output from ${block.label}\n\n${raw}`)
   }
 
@@ -1674,7 +1691,7 @@ function BlockCard({
       )}
     </div>
   )
-}
+})
 
 export function useInvocationBlocks() {
   const [blocks, setBlocks] = useState<InvocationBlock[]>([])
@@ -1686,16 +1703,40 @@ export function useInvocationBlocks() {
     // every line, hanging the tab for minutes. We coalesce incoming lines into a
     // per-block buffer and flush them in a single setBlocks once per frame.
     const pending = new Map<string, OutputLine[]>()
+    // Streamed chat tokens are coalesced the same way as output lines: one
+    // setBlocks per animation frame, not per token. A fast reply arrives dozens
+    // of tokens/sec, and each un-batched setBlocks re-rendered the whole
+    // transcript synchronously — starving the main thread so keystrokes in the
+    // composer (a sibling subtree) couldn't paint until the render committed.
+    const pendingTokens = new Map<string, string>()
     let raf: number | null = null
 
     const flush = () => {
       raf = null
-      if (pending.size === 0) return
+      if (pending.size === 0 && pendingTokens.size === 0) return
       const drained = new Map(pending)
+      const drainedTokens = new Map(pendingTokens)
       pending.clear()
+      pendingTokens.clear()
+      // Lines and tokens for the same frame commit in ONE setBlocks so a card
+      // that received both re-renders once, not twice.
       setBlocks(prev => prev.map(b => {
+        let nb = b
         const add = drained.get(b.id)
-        return add && add.length ? { ...b, lines: [...b.lines, ...add] } : b
+        if (add && add.length) nb = { ...nb, lines: [...nb.lines, ...add] }
+        const tok = drainedTokens.get(b.id)
+        if (tok) {
+          if (nb.type === 'chat') {
+            nb = { ...nb, currentText: nb.currentText + tok }
+          } else {
+            // run block receiving tokens (unusual but handle gracefully)
+            const last = nb.lines[nb.lines.length - 1]
+            nb = last
+              ? { ...nb, lines: [...nb.lines.slice(0, -1), { ...last, line: last.line + tok }] }
+              : { ...nb, lines: [{ id: b.id, line: tok, stream: 'stdout' }] }
+          }
+        }
+        return nb
       }))
     }
 
@@ -1713,18 +1754,8 @@ export function useInvocationBlocks() {
 
     const onToken = (e: Event) => {
       const { id, token } = (e as CustomEvent).detail as { id: string; token: string }
-      setBlocks(prev => prev.map(b => {
-        if (b.id !== id) return b
-        if (b.type === 'chat') {
-          return { ...b, currentText: b.currentText + token }
-        }
-        // run block receiving tokens (unusual but handle gracefully)
-        const last = b.lines[b.lines.length - 1]
-        if (last) {
-          return { ...b, lines: [...b.lines.slice(0, -1), { ...last, line: last.line + token }] }
-        }
-        return { ...b, lines: [{ id, line: token, stream: 'stdout' }] }
-      }))
+      pendingTokens.set(id, (pendingTokens.get(id) ?? '') + token)
+      scheduleFlush()
     }
 
     const onToolStart = (e: Event) => {
@@ -1786,9 +1817,10 @@ export function useInvocationBlocks() {
     }
 
     const onEnd = (e: Event) => {
-      // Drain any buffered output first so the block is marked done with its full
-      // line set — otherwise parseOutput would run once on a short set, then again
-      // when the trailing batch flushes (a visible flash of the raw view).
+      // Drain any buffered output/tokens first so the block is marked done with its
+      // full line set + final currentText — otherwise parseOutput would run once on
+      // a short set, then again when the trailing batch flushes (a visible flash of
+      // the raw view), and trailing tokens could be lost from the closed turn.
       flush()
       const { id, exit_code, duration_ms, stopped } = (e as CustomEvent).detail as { id: string; exit_code: number; duration_ms: number; stopped?: boolean }
       setBlocks(prev => prev.map(b => {
@@ -1852,15 +1884,19 @@ export function useInvocationBlocks() {
     }
   }, [])
 
-  const addBlock = (block: InvocationBlock) => setBlocks(prev => [...prev, block])
-  const clearBlocks = () => setBlocks([])
+  // These are useCallback-stabilised (setBlocks is the only closure, and it's a
+  // stable useState setter) so a consumer can depend on them without its own
+  // handlers churning every render — which is what lets ConsoleView hand
+  // referentially-stable callbacks to the memoised BlockCard.
+  const addBlock = useCallback((block: InvocationBlock) => setBlocks(prev => [...prev, block]), [])
+  const clearBlocks = useCallback(() => setBlocks([]), [])
   // Replace the whole transcript — used to render a reopened saved conversation.
-  const hydrateBlocks = (next: InvocationBlock[]) => setBlocks(next)
+  const hydrateBlocks = useCallback((next: InvocationBlock[]) => setBlocks(next), [])
   // Toggle a card's "in context" flag (the header checkbox). Local state only;
   // the actual context effect is applied by the caller (exclude → bridge call,
   // include → staged into the next chat send).
-  const setBlockInContext = (id: string, inContext: boolean) =>
-    setBlocks(prev => prev.map(b => (b.id === id ? { ...b, inContext } : b)))
+  const setBlockInContext = useCallback((id: string, inContext: boolean) =>
+    setBlocks(prev => prev.map(b => (b.id === id ? { ...b, inContext } : b))), [])
 
   return { blocks, addBlock, clearBlocks, hydrateBlocks, setBlockInContext }
 }

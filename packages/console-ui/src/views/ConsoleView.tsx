@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Drawer, Empty, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
 import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
 import { bridge, type ChatConversation, type ConversationMeta, type InFlightRecord, type Runnable } from '../bridge'
@@ -386,22 +386,27 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
     }
   }, [pendingChat, onChatSent])
 
-  const handleRerun = (data: RerunData) => {
+  // These three are handed to the memoised BlockCard (via OutputPanel), so they
+  // are useCallback-stabilised — otherwise every streamed frame that re-renders
+  // ConsoleView would hand each card a fresh callback and defeat the memo. Their
+  // closures are all stable (window dispatch, a ref, the stabilised
+  // setBlockInContext + blocksRef).
+  const handleRerun = useCallback((data: RerunData) => {
     window.dispatchEvent(new CustomEvent('runspec:rerun', { detail: data }))
-  }
+  }, [])
 
-  const handleAskLlm = (text: string) => sendChatRef.current(text)
+  const handleAskLlm = useCallback((text: string) => sendChatRef.current(text), [])
 
   // The card's "in context" checkbox. Update local state, then apply the effect:
   // a chat card toggles the backend's context filter (reversible); a run card is
   // passive — ticking just stages its output into the next chat send.
-  const handleToggleContext = (id: string, inContext: boolean) => {
+  const handleToggleContext = useCallback((id: string, inContext: boolean) => {
     setBlockInContext(id, inContext)
     const blk = blocksRef.current.find(b => b.id === id)
     if (blk?.type === 'chat') {
       bridge.set_turn_included(id, inContext).catch(() => message.error('Could not update context'))
     }
-  }
+  }, [setBlockInContext])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
