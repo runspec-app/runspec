@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Drawer, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined } from '@ant-design/icons'
-import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility } from '../bridge'
+import { bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type Mailbox, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
 import { CopyKeyAllModal } from '../views/CopyKeyAllModal'
 import { PathInput } from '../views/PathInput'
@@ -4795,6 +4795,31 @@ function KvEditor({ rows, onChange, keyPlaceholder, valuePlaceholder }: {
   )
 }
 
+// Rows of (header name → keychain credential), for a server that needs more than
+// one secret header (e.g. a Jira PAT and a Confluence PAT). Only the header name
+// and the chosen credential's id are stored — the secret stays in the keychain and
+// is resolved at connect time (see mcp_client.apply_header_credentials).
+function McpHeaderCredEditor({ rows, options, onChange }: {
+  rows: McpHeaderCredential[]; options: McpCredentialOption[]; onChange: (rows: McpHeaderCredential[]) => void
+}) {
+  const set = (i: number, patch: Partial<McpHeaderCredential>) =>
+    onChange(rows.map((r, idx) => idx === i ? { ...r, ...patch } : r))
+  return (
+    <div>
+      {rows.map((r, i) => (
+        <Space key={i} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
+          <Input size="small" placeholder="X-Jira-PAT" value={r.header} style={{ width: 200, fontFamily: 'monospace' }} onChange={e => set(i, { header: e.target.value })} />
+          <Select size="small" placeholder="Credential" value={r.credential || undefined} style={{ width: 260 }}
+            onChange={v => set(i, { credential: v ?? '' })}
+            options={options.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))} />
+          <MinusCircleOutlined onClick={() => onChange(rows.filter((_, idx) => idx !== i))} />
+        </Space>
+      ))}
+      <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => onChange([...rows, { header: '', credential: '' }])}>Add secret header</Button>
+    </div>
+  )
+}
+
 function McpServerStatusTag({ st }: { st?: McpServerStatus }) {
   if (!st) return <Tag>unknown</Tag>
   if (st.connected) return <Tag color="green">connected · {st.tool_count} tool{st.tool_count === 1 ? '' : 's'}</Tag>
@@ -4884,6 +4909,9 @@ export function McpTab() {
       args: argsText.split('\n').map(a => a.trim()).filter(Boolean),
       env: mcpKvToObj(envRows),
       headers: mcpKvToObj(headerRows),
+      header_credentials: (draft.header_credentials ?? [])
+        .map(b => ({ header: b.header.trim(), credential: b.credential }))
+        .filter(b => b.header && b.credential),
       credential: (draft.credential ?? '').trim(),
       credential_header: (draft.credential_header ?? '').trim(),
       proxy: (draft.proxy ?? '').trim(),
@@ -5012,6 +5040,11 @@ export function McpTab() {
           {isRemote && (
             <Form.Item label="Credential header" tooltip="Send the secret raw under this header (e.g. X-API-Key) instead of Authorization: Bearer.">
               <Input placeholder="Authorization (default)" value={draft.credential_header} onChange={e => setDraft({ ...draft, credential_header: e.target.value })} />
+            </Form.Item>
+          )}
+          {isRemote && (
+            <Form.Item label="Secret headers" tooltip="For a server needing more than one secret header (e.g. a Jira PAT and a Confluence PAT). Each maps a header name to a keychain credential; only the name + id are stored, the token is resolved at connect time. A static header of the same name above wins.">
+              <McpHeaderCredEditor rows={draft.header_credentials ?? []} options={credOptions} onChange={rows => setDraft({ ...draft, header_credentials: rows })} />
             </Form.Item>
           )}
           <Form.Item label="Proxy" tooltip="Per-server HTTP CONNECT proxy — for servers on a different corporate network. Applies to http/sse; exported as *_PROXY for a stdio subprocess.">

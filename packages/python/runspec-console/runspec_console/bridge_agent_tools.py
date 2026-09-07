@@ -2670,6 +2670,19 @@ class AgentToolsMixin:
                 raise ValueError(
                     f"MCP server {name!r}: an {effective} server needs a url."
                 )
+            # Each credential-backed header needs a header name AND a credential id
+            # (the secret itself never comes through here — only the id). Validated
+            # for a clear message; config.read_mcp also drops malformed bindings.
+            for b in s.get("header_credentials") or []:
+                if (
+                    not isinstance(b, dict)
+                    or not str(b.get("header") or "").strip()
+                    or not str(b.get("credential") or "").strip()
+                ):
+                    raise ValueError(
+                        f"MCP server {name!r}: each header credential needs both a "
+                        "header name and a credential."
+                    )
         config_mod.write_mcp(
             {
                 "enabled": data.get("enabled", True),

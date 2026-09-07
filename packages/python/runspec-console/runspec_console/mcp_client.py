@@ -209,6 +209,40 @@ def apply_credential_header(
         headers["Authorization"] = f"Bearer {secret}"
 
 
+def apply_header_credentials(
+    headers: dict[str, str],
+    bindings: Any,
+    resolve: Any,
+) -> None:
+    """Set extra secret headers from ``header_credentials`` bindings, in place —
+    for an http/sse server that needs more than the single ``credential`` (e.g. a
+    Jira PAT *and* a Confluence PAT under two custom headers).
+
+    Each binding is ``{"header": name, "credential": id}``; ``resolve(id)`` returns
+    the credential material (``{"secret": …}``) or ``None``. The credential's raw
+    secret is sent under ``header`` (the operator names it, so no scheme is
+    assumed). A header already present — a literal ``headers`` entry or an
+    earlier binding — always wins (never overwritten), matching
+    ``apply_credential_header``. Best-effort: a binding whose credential can't be
+    resolved or has no secret is skipped, so one bad id can't break the connect."""
+    for b in bindings or []:
+        if not isinstance(b, dict):
+            continue
+        name = str(b.get("header") or "").strip()
+        cid = str(b.get("credential") or "").strip()
+        if not name or not cid:
+            continue
+        if any(k.lower() == name.lower() for k in headers):
+            continue  # explicit / earlier header wins
+        try:
+            cred = resolve(cid)
+        except Exception:  # noqa: BLE001 — a lookup must never break the connect
+            cred = None
+        secret = str((cred or {}).get("secret") or "")
+        if secret:
+            headers[name] = secret
+
+
 def _proxy_http_factory(proxy_url: str) -> Any:
     """An ``httpx_client_factory`` (also directly callable) that builds an httpx
     AsyncClient routed through ``proxy_url``, with MCP's SSE-friendly defaults
@@ -404,18 +438,20 @@ class McpManager:
         """Resolve this server's ``credential`` id to its secret material via the
         injected resolver (keychain-backed), or ``None``. Best-effort — a missing
         resolver / id / secret just means no credential is applied."""
-        cid = str(cfg.get("credential") or "").strip()
+        return self._resolve_credential_id(str(cfg.get("credential") or "").strip())
+
+    def _resolve_credential_id(self, cid: str) -> dict[str, Any] | None:
+        """Resolve one credential id to its secret material (keychain-backed), or
+        ``None`` — the per-id primitive behind both the single ``credential`` and
+        each ``header_credentials`` binding. Best-effort: a missing resolver / id
+        or a lookup failure returns ``None`` rather than breaking the connect."""
+        cid = str(cid or "").strip()
         if not cid or self._credential_resolver is None:
             return None
         try:
             return self._credential_resolver(cid)
         except Exception:  # noqa: BLE001 — never let a credential lookup break connect
-            logger.warning(
-                "resolving MCP credential %r for server %r failed",
-                cid,
-                cfg.get("name"),
-                exc_info=True,
-            )
+            logger.warning("resolving MCP credential %r failed", cid, exc_info=True)
             return None
 
     async def _open_streams(
@@ -453,6 +489,9 @@ class McpManager:
             return await stack.enter_async_context(stdio_client(params))
         headers = {str(k): str(v) for k, v in (cfg.get("headers") or {}).items()}
         apply_credential_header(headers, cfg, cred)
+        apply_header_credentials(
+            headers, cfg.get("header_credentials"), self._resolve_credential_id
+        )
         url = str(cfg.get("url") or "")
         if transport == "sse":
             from mcp.client.sse import sse_client

@@ -81,6 +81,7 @@ Fields:
 | `autonomy` | all | `confirm` (default), `autonomous`, or `manual` for this server's tools. |
 | `credential` | all | A named-credential id (Settings → Credentials) — see [Credentials](#credentials). |
 | `credential_header` | http, sse | Header the secret is sent under (default `Authorization`). |
+| `header_credentials` | http, sse | Array of `{ header, credential }` for a server needing **more than one** secret header — see [Multiple secret headers](#multiple-secret-headers). |
 | `proxy` | all | Per-server HTTP CONNECT proxy — see [Per-server proxy](#per-server-proxy). |
 
 ## How the tools appear
@@ -132,6 +133,37 @@ config seed in `runspec_credentials.toml`, while each install supplies the actua
 secret in its own keychain. In the Settings → MCP tab the server's `credential`
 is a dropdown populated from `mcp_credential_options()` (id + label + kind, never
 secrets).
+
+### Multiple secret headers
+
+The single `credential` fills one header. A server that needs **more than one**
+secret header — say an Atlassian MCP server wanting a Jira PAT *and* a Confluence
+PAT under two different headers — uses `header_credentials`: an array of
+`{ header, credential }` bindings, each sending its named credential's raw secret
+under that header, resolved from the keychain at connect time.
+
+```toml
+[[mcp.servers]]
+name = "atlassian"
+transport = "http"
+url = "https://mcp.atlassian.example/mcp"
+
+  [[mcp.servers.header_credentials]]
+  header = "X-Jira-PAT"
+  credential = "jira-pat"        # a keychain credential id
+
+  [[mcp.servers.header_credentials]]
+  header = "X-Confluence-PAT"
+  credential = "confluence-pat"
+```
+
+The same keychain/seed/sync guarantees apply — only the header name and the
+credential **id** are stored, never the token. A literal `headers` entry (or the
+single `credential`) of the same name always wins, and a binding whose credential
+can't be resolved is skipped rather than breaking the connect. In Settings → MCP,
+add these under **Secret headers** (a header name + a credential dropdown per
+row); the field shows for http/sse servers. http/sse only — a stdio server takes
+its secrets as env vars via `credential` instead.
 
 ## Per-server proxy
 

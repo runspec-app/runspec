@@ -809,6 +809,11 @@ export const mockApi: BridgeApi = {
     servers: [
       { name: 'files', transport: 'stdio', command: 'uvx', args: ['mcp-server-filesystem', '/srv'], enabled: true, autonomy: '' },
       { name: 'search', transport: 'http', url: 'https://mcp.example.com/mcp', credential: 'svc-prod', proxy: 'http://proxy.corp:8080', enabled: true, autonomy: 'autonomous' },
+      { name: 'atlassian', transport: 'http', url: 'https://mcp.atlassian.example/mcp', enabled: true, autonomy: 'confirm',
+        header_credentials: [
+          { header: 'X-Jira-PAT', credential: 'jira-pat' },
+          { header: 'X-Confluence-PAT', credential: 'confluence-pat' },
+        ] },
     ],
   }),
   save_mcp_config: async (payload) => { console.log('[mock] save_mcp_config', payload); return { available: true, started: true, tool_count: 3, servers: (payload.servers ?? []).map(s => ({ name: s.name, transport: s.transport, connected: true, tool_count: 2, error: '', credential: s.credential ?? '', proxy: s.proxy ?? '' })) } },
@@ -819,6 +824,8 @@ export const mockApi: BridgeApi = {
   mcp_reload: async () => ({ available: true, started: true, tool_count: 3, servers: [] }),
   mcp_credential_options: async () => [
     { id: 'svc-prod', label: 'Service account (prod)', kind: 'userpass' },
+    { id: 'jira-pat', label: 'Jira PAT', kind: 'token' },
+    { id: 'confluence-pat', label: 'Confluence PAT', kind: 'token' },
   ],
 
   get_sync_config: async () => ({

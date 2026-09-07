@@ -8,6 +8,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.242.0] — 2026-09-07
+
+### Added
+- **MCP servers can carry multiple credential-backed secret headers.** The single
+  `credential` (Settings → MCP) fills one auth header, so a server needing more
+  than one secret — e.g. an Atlassian MCP server wanting a **Jira PAT and a
+  Confluence PAT** under two different headers — had no way to supply both. A new
+  per-server **`header_credentials`** array of `{ header, credential }` bindings
+  sends each named credential's raw secret under its header, resolved from the OS
+  keychain at connect time. Only the header name + credential **id** are written
+  to config.toml (seed/sync-safe — the token never leaves the keychain); an
+  explicit literal `headers` entry (or the single `credential`) of the same name
+  wins, and a binding whose credential can't be resolved is skipped rather than
+  breaking the connect. Settings → MCP gains a **Secret headers** editor (a header
+  name + credential dropdown per row, shown for http/sse servers).
+  (`config._read_header_credentials` + `read_mcp`/`_clean_mcp_server`,
+  `mcp_client.apply_header_credentials` + `_resolve_credential_id`,
+  `bridge.save_mcp_config` validation, `SettingsDrawer` `McpHeaderCredEditor`,
+  `docs/console-mcp.md` → "Multiple secret headers".)
+
+
 ## [0.241.0] — 2026-09-07
 
 ### Fixed

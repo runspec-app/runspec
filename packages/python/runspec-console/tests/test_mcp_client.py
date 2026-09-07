@@ -190,6 +190,60 @@ def test_credential_header_noop_without_secret():
     assert headers == {}
 
 
+# ── header_credentials: multiple secret headers from the keychain ─────────────
+
+
+def _fake_resolve(store):
+    return lambda cid: {"secret": store[cid]} if cid in store else None
+
+
+def test_header_credentials_set_each_header_from_its_credential():
+    headers: dict[str, str] = {}
+    bindings = [
+        {"header": "X-Jira-PAT", "credential": "jira"},
+        {"header": "X-Confluence-PAT", "credential": "conf"},
+    ]
+    mcp_client.apply_header_credentials(
+        headers, bindings, _fake_resolve({"jira": "JPAT", "conf": "CPAT"})
+    )
+    assert headers == {"X-Jira-PAT": "JPAT", "X-Confluence-PAT": "CPAT"}
+
+
+def test_header_credentials_explicit_header_wins():
+    headers = {"X-Jira-PAT": "literal"}
+    mcp_client.apply_header_credentials(
+        headers,
+        [{"header": "x-jira-pat", "credential": "jira"}],  # case-insensitive match
+        _fake_resolve({"jira": "JPAT"}),
+    )
+    assert headers == {"X-Jira-PAT": "literal"}  # not overwritten
+
+
+def test_header_credentials_skips_unresolvable_and_partial():
+    headers: dict[str, str] = {}
+    bindings = [
+        {"header": "X-A", "credential": "missing"},  # resolves to None
+        {"header": "", "credential": "jira"},  # no header name
+        {"header": "X-B", "credential": ""},  # no credential id
+        "not-a-dict",
+        {"header": "X-C", "credential": "jira"},  # the one good binding
+    ]
+    mcp_client.apply_header_credentials(headers, bindings, _fake_resolve({"jira": "J"}))
+    assert headers == {"X-C": "J"}
+
+
+def test_header_credentials_resolver_error_never_breaks_connect():
+    headers: dict[str, str] = {}
+
+    def boom(_cid):
+        raise RuntimeError("keychain locked")
+
+    mcp_client.apply_header_credentials(
+        headers, [{"header": "X-A", "credential": "jira"}], boom
+    )
+    assert headers == {}  # skipped, no exception
+
+
 # ── manager: credential resolution ───────────────────────────────────────────
 
 
@@ -310,6 +364,60 @@ def test_read_mcp_credential_and_proxy_default_empty(monkeypatch):
     _patch_config(monkeypatch, {"servers": [{"name": "x", "url": "https://h"}]})
     (s,) = config.read_mcp()["servers"]
     assert s["credential"] == "" and s["proxy"] == "" and s["credential_header"] == ""
+    assert s["header_credentials"] == []
+
+
+def test_read_mcp_parses_header_credentials_and_drops_partial(monkeypatch):
+    _patch_config(
+        monkeypatch,
+        {
+            "servers": [
+                {
+                    "name": "atlassian",
+                    "url": "https://h/mcp",
+                    "header_credentials": [
+                        {"header": "X-Jira-PAT", "credential": "jira"},
+                        {"header": "X-Confluence-PAT", "credential": "conf"},
+                        {"header": "", "credential": "nope"},  # dropped
+                        {"header": "X-D", "credential": ""},  # dropped
+                        "not-a-table",  # dropped
+                    ],
+                }
+            ]
+        },
+    )
+    (s,) = config.read_mcp()["servers"]
+    assert s["header_credentials"] == [
+        {"header": "X-Jira-PAT", "credential": "jira"},
+        {"header": "X-Confluence-PAT", "credential": "conf"},
+    ]
+
+
+def test_header_credentials_round_trip_through_write(monkeypatch):
+    """write_mcp serialises header_credentials (only well-formed bindings), and it
+    survives a read_mcp round-trip — the id, never a secret, is what's stored."""
+    store = _patch_config_store(monkeypatch)
+    config.write_mcp(
+        {
+            "servers": [
+                {
+                    "name": "atlassian",
+                    "transport": "http",
+                    "url": "https://h/mcp",
+                    "header_credentials": [
+                        {"header": "X-Jira-PAT", "credential": "jira"},
+                        {"header": "", "credential": "drop"},  # partial → not written
+                    ],
+                }
+            ]
+        }
+    )
+    (written,) = store["mcp"]["servers"]
+    assert written["header_credentials"] == [
+        {"header": "X-Jira-PAT", "credential": "jira"}
+    ]
+    (s,) = config.read_mcp()["servers"]
+    assert s["header_credentials"] == [{"header": "X-Jira-PAT", "credential": "jira"}]
 
 
 def test_mcp_config_and_credentials_are_seed_and_sync_covered():
@@ -689,6 +797,48 @@ def test_save_mcp_config_requires_command_for_stdio(monkeypatch):
         _ConfigStub().save_mcp_config(
             {"servers": [{"name": "a", "transport": "stdio"}]}
         )
+
+
+def test_save_mcp_config_rejects_partial_header_credential(monkeypatch):
+    _patch_config_store(monkeypatch)
+    with pytest.raises(ValueError, match="header name and a credential"):
+        _ConfigStub().save_mcp_config(
+            {
+                "servers": [
+                    {
+                        "name": "atlassian",
+                        "transport": "http",
+                        "url": "https://h/mcp",
+                        "header_credentials": [{"header": "X-Jira-PAT"}],
+                    }
+                ]
+            }
+        )
+
+
+def test_save_mcp_config_keeps_valid_header_credentials(monkeypatch):
+    _patch_config_store(monkeypatch)
+    stub = _ConfigStub()
+    stub.save_mcp_config(
+        {
+            "servers": [
+                {
+                    "name": "atlassian",
+                    "transport": "http",
+                    "url": "https://h/mcp",
+                    "header_credentials": [
+                        {"header": "X-Jira-PAT", "credential": "jira"},
+                        {"header": "X-Confluence-PAT", "credential": "conf"},
+                    ],
+                }
+            ]
+        }
+    )
+    (s,) = stub.get_mcp_config()["servers"]
+    assert s["header_credentials"] == [
+        {"header": "X-Jira-PAT", "credential": "jira"},
+        {"header": "X-Confluence-PAT", "credential": "conf"},
+    ]
 
 
 def test_save_mcp_config_reloads_manager(monkeypatch):

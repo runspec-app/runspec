@@ -443,6 +443,25 @@ def read_telemetry() -> dict[str, Any]:
     }
 
 
+def _read_header_credentials(raw: Any) -> list[dict[str, str]]:
+    """Normalise a server's ``header_credentials`` — an array of
+    ``{header, credential}`` bindings that send a keychain-backed credential's
+    secret under a named HTTP header at connect time. Each entry needs both a
+    non-empty ``header`` name and a ``credential`` id; malformed/partial entries
+    are dropped. Only the id is kept here — the secret stays in the keychain."""
+    out: list[dict[str, str]] = []
+    if not isinstance(raw, list):
+        return out
+    for b in raw:
+        if not isinstance(b, dict):
+            continue
+        header = str(b.get("header") or "").strip()
+        credential = str(b.get("credential") or "").strip()
+        if header and credential:
+            out.append({"header": header, "credential": credential})
+    return out
+
+
 def read_mcp() -> dict[str, Any]:
     """The ``[mcp]`` settings — external MCP servers the chat agent connects to.
 
@@ -477,6 +496,14 @@ def read_mcp() -> dict[str, Any]:
       keychain).
     * ``credential_header`` — override the header the credential's secret is sent
       under (e.g. ``X-API-Key``); default ``Authorization`` (Bearer/Basic).
+    * ``header_credentials`` — an array of ``{header, credential}`` bindings for a
+      server that needs **more than one** secret header (the single ``credential``
+      above only fills one). Each binding sends the named credential's raw secret
+      under its ``header`` name, resolved from the keychain at connect time — so a
+      server needing e.g. a Jira PAT *and* a Confluence PAT carries two bindings
+      (``X-Jira-PAT`` → the Jira credential, ``X-Confluence-PAT`` → the Confluence
+      one) with only the ids in config.toml, never the tokens. http/sse only; an
+      explicit literal ``headers`` entry of the same name wins (never overwritten).
     * ``proxy`` — an HTTP CONNECT proxy URL (``http://proxy:8080``, scheme
       optional) this server is reached through, so servers on different corporate
       networks each get their own egress. Mirrors ``[ssh] proxy`` / Config Sync's
@@ -510,6 +537,7 @@ def read_mcp() -> dict[str, Any]:
                 if isinstance(hdr_raw, dict)
                 else {}
             )
+            header_credentials = _read_header_credentials(s.get("header_credentials"))
             autonomy = str(s.get("autonomy") or "").strip().lower()
             if autonomy not in ("autonomous", "confirm", "manual"):
                 autonomy = ""
@@ -523,6 +551,7 @@ def read_mcp() -> dict[str, Any]:
                     "cwd": str(s.get("cwd") or "").strip(),
                     "url": url,
                     "headers": headers,
+                    "header_credentials": header_credentials,
                     "enabled": bool(s.get("enabled", True)),
                     "autonomy": autonomy,
                     "credential": str(s.get("credential") or "").strip(),
@@ -573,6 +602,9 @@ def _clean_mcp_server(raw: dict[str, Any]) -> dict[str, Any]:
         }
         if headers:
             out["headers"] = headers
+        header_credentials = _read_header_credentials(raw.get("header_credentials"))
+        if header_credentials:
+            out["header_credentials"] = header_credentials
     autonomy = str(raw.get("autonomy") or "").strip().lower()
     if autonomy in ("autonomous", "confirm", "manual"):
         out["autonomy"] = autonomy

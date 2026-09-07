@@ -199,7 +199,16 @@ export interface McpServer {
   autonomy?: '' | 'autonomous' | 'confirm' | 'manual'
   credential?: string
   credential_header?: string
+  // Extra secret headers, each from a keychain-backed credential (for a server
+  // needing more than the single `credential` — e.g. a Jira PAT *and* a
+  // Confluence PAT). Only the header name + credential id are stored; the secret
+  // is resolved at connect time and never written to config.
+  header_credentials?: McpHeaderCredential[]
   proxy?: string
+}
+export interface McpHeaderCredential {
+  header: string
+  credential: string
 }
 export interface McpConfig {
   enabled: boolean

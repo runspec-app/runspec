@@ -108,6 +108,39 @@ describe('McpTab', () => {
     expect(payload.connect_timeout).toBe(45)
   })
 
+  it('edits a server\'s credential-backed secret headers and saves them', async () => {
+    // A remote server that needs two PATs, one per header, each from a credential.
+    getMcpConfig.mockReset().mockResolvedValue({
+      enabled: true, call_timeout: 60, connect_timeout: 20,
+      servers: [
+        { name: 'atlassian', transport: 'http', url: 'https://h/mcp', enabled: true, autonomy: 'confirm',
+          header_credentials: [
+            { header: 'X-Jira-PAT', credential: 'jira' },
+            { header: 'X-Confluence-PAT', credential: 'conf' },
+          ] },
+      ],
+    })
+    mcpCredentialOptions.mockReset().mockResolvedValue([
+      { id: 'jira', label: 'Jira PAT', kind: 'token' },
+      { id: 'conf', label: 'Confluence PAT', kind: 'token' },
+    ])
+    render(<McpTab />)
+    await screen.findByText('atlassian')
+    const user = userEvent.setup()
+    // Open the editor for the row and confirm the stored bindings are shown.
+    await act(async () => { await user.click(document.querySelector('.anticon-edit')!) })
+    expect(await screen.findByDisplayValue('X-Jira-PAT')).toBeTruthy()
+    expect(screen.getByDisplayValue('X-Confluence-PAT')).toBeTruthy()
+    // Save round-trips header_credentials (names + ids, no secret) to the backend.
+    await act(async () => { await user.click(document.querySelector('.ant-modal-footer .ant-btn-primary')!) })
+    await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
+    const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
+    expect(payload.servers[0].header_credentials).toEqual([
+      { header: 'X-Jira-PAT', credential: 'jira' },
+      { header: 'X-Confluence-PAT', credential: 'conf' },
+    ])
+  })
+
   it('toggling the section enable persists it', async () => {
     render(<McpTab />)
     await screen.findByText('Enable external MCP servers')
