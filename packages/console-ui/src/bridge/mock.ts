@@ -1493,7 +1493,9 @@ export const mockApi: BridgeApi = {
   get_trigger_events: async () => [
     { id: 'e1', source: 'outlook', type: 'new_mail', summary: 'Outage on web01 — site returning 503', matched: ['vip-outage-triage'], skipped: [], ts: Date.now() / 1000 - 300 },
     { id: 'e2', source: 'outlook', type: 'new_mail', summary: 'Lunch order for Friday', matched: [], skipped: [], ts: Date.now() / 1000 - 120 },
-    { id: 'e3', source: 'outlook', type: 'new_mail', summary: 'URGENT: cert expiring', matched: [], skipped: ['vip-outage-triage'], ts: Date.now() / 1000 - 60 },
+    { id: 'e3', source: 'outlook', type: 'new_mail', summary: 'URGENT: cert expiring', matched: [], skipped: ['vip-outage-triage'], skip_reasons: { 'vip-outage-triage': 'working hours' }, ts: Date.now() / 1000 - 90 },
+    { id: 'e4', source: 'outlook', type: 'new_mail', summary: 'After-hours alert from monitoring', matched: [], skipped: ['vip-outage-triage'], skip_reasons: { 'vip-outage-triage': 'screen locked' }, ts: Date.now() / 1000 - 60 },
+    { id: 'e5', source: 'outlook', type: 'new_mail', summary: 're: Outage on web01', matched: [], skipped: [], deduped: ['vip-outage-triage'], ts: Date.now() / 1000 - 30 },
   ],
   get_schedule_board: async () => [
     {

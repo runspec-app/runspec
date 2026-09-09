@@ -391,6 +391,8 @@ def test_engine_event_record_marks_rota_skip():
     engine.start()
     fake.fire("new_mail", {"subject": "x"})
     assert recs[0]["matched"] == [] and recs[0]["skipped"] == ["vip"]
+    # The reason rides the audit record so the UI can label it (rota, not lock).
+    assert recs[0]["skip_reasons"] == {"vip": "working hours"}
 
 
 def test_engine_clock_gate_skips_outside_hours():
@@ -434,6 +436,9 @@ def test_engine_lock_gate_is_absolute_even_for_ignore_rota():
     fake.fire("new_mail", {"subject": "x"})
     assert fired == []  # absolute — ignore_rota does not bypass the lock gate
     assert set(recs[-1]["skipped"]) == {"g", "a"}
+    # Both are recorded as lock skips, distinct from a rota skip, so the event
+    # log can say "screen locked" without the operator opening the log file.
+    assert recs[-1]["skip_reasons"] == {"g": "screen locked", "a": "screen locked"}
 
 
 def test_engine_lock_gate_exempts_scheduled_jobs():

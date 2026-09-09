@@ -52,6 +52,13 @@ if TYPE_CHECKING:
 # the visibility latency, not the claim's correctness — kept modest to limit COM.
 _CLAIM_POLL_INTERVAL = 25.0
 
+# How many recent event-audit records each feed (triggers / schedules) keeps in
+# memory for the tab's Event log. In-memory only — a busy shared mailbox writes
+# no disk on the event hot path, and the feed resets on restart (the durable
+# record is the audit log file). Kept generous so a busy day is scrollable; the
+# records are small dicts, so even the full ring is a few hundred KB of RAM.
+_EVENT_FEED_CAP = 1000
+
 
 class TriggersMixin:
     def start_triggers(self) -> None:
@@ -2064,12 +2071,14 @@ class TriggersMixin:
     def _on_trigger_event(self, record: dict[str, Any]) -> None:
         """Engine hook: record an event's disposition (matched / skipped / no
         match) and push it to the UI audit feed. May be called from a source
-        thread."""
+        thread. In-memory only (a busy mailbox writes no disk on this hot path);
+        the durable record is the audit log file, and the feed intentionally
+        resets on restart — like the run cards."""
         with self._lock:
             self._trigger_events.append(record)
             # Bounded ring — keep the most recent.
-            if len(self._trigger_events) > 300:
-                del self._trigger_events[: len(self._trigger_events) - 300]
+            if len(self._trigger_events) > _EVENT_FEED_CAP:
+                del self._trigger_events[: len(self._trigger_events) - _EVENT_FEED_CAP]
         self._dispatch("runspec:trigger_event", record)
 
     def _on_trigger_card(self, card: Any) -> None:
@@ -2107,8 +2116,10 @@ class TriggersMixin:
         event log. Mirrors :meth:`_on_trigger_event`; may run on a source thread."""
         with self._lock:
             self._schedule_events.append(record)
-            if len(self._schedule_events) > 300:
-                del self._schedule_events[: len(self._schedule_events) - 300]
+            if len(self._schedule_events) > _EVENT_FEED_CAP:
+                del self._schedule_events[
+                    : len(self._schedule_events) - _EVENT_FEED_CAP
+                ]
         self._dispatch("runspec:schedule_event", record)
 
     def get_schedule_board(self) -> list[dict[str, Any]]:

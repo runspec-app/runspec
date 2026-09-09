@@ -889,8 +889,11 @@ export interface PendingConfirm {
 }
 
 // runspec:trigger_event detail — every event the engine saw, with its
-// disposition: which triggers fired (matched), which matched but were gated by
-// the rota (skipped), or neither (no match).
+// disposition: which triggers fired (matched), which matched but were gated
+// (skipped, with per-trigger reasons in skip_reasons — "screen locked" /
+// "working hours"), which were a once_per_thread repeat (deduped), or neither
+// (no match). skip_reasons/deduped are optional for backward compatibility with
+// older persisted records.
 export interface TriggerEvent {
   id: string
   source: string
@@ -898,6 +901,8 @@ export interface TriggerEvent {
   summary: string
   matched: string[]
   skipped: string[]
+  skip_reasons?: Record<string, string>
+  deduped?: string[]
   ts: number
 }
 

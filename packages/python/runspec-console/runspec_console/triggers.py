@@ -893,16 +893,21 @@ class TriggerEngine:
         lock_ok = self._lock_ok() or event.source == "schedule"
         matched: list[str] = []
         skipped: list[str] = []
+        # Why each skipped trigger was gated (name → short reason), so the UI can
+        # tell a lock skip from a rota skip without the operator opening the log.
+        skip_reasons: dict[str, str] = {}
         deduped: list[str] = []
         for trigger in self._triggers:
             if not trigger.matches(event):
                 continue
             if not lock_ok:
                 skipped.append(trigger.name)
+                skip_reasons[trigger.name] = "screen locked"
                 logger.info("trigger '%s' skipped: session locked", trigger.name)
                 continue
             if not clock_ok and not trigger.ignore_rota:
                 skipped.append(trigger.name)
+                skip_reasons[trigger.name] = "working hours"
                 logger.info("trigger '%s' skipped: outside working hours", trigger.name)
                 continue
             # once_per_thread: fire for the first message in a thread, skip later
@@ -927,7 +932,7 @@ class TriggerEngine:
             last = self._dispatch(trigger, event)
         if not matched and not skipped and not deduped:
             logger.info("event %s:%s matched no triggers", event.source, event.type)
-        self._record_event(event, matched, skipped, deduped)
+        self._record_event(event, matched, skipped, deduped, skip_reasons)
         return last
 
     def _record_event(
@@ -936,6 +941,7 @@ class TriggerEngine:
         matched: list[str],
         skipped: list[str],
         deduped: list[str],
+        skip_reasons: dict[str, str] | None = None,
     ) -> None:
         """Emit the per-event audit record (every event, with its disposition)."""
         if self._on_event is None:
@@ -948,7 +954,8 @@ class TriggerEngine:
                     "type": event.type,
                     "summary": _summarize(event),
                     "matched": matched,
-                    "skipped": skipped,  # matched but gated by the rota
+                    "skipped": skipped,  # matched but gated (lock / rota)
+                    "skip_reasons": skip_reasons or {},  # skipped name → why
                     "deduped": deduped,  # matched but a once_per_thread repeat
                     "ts": event.received_at or time.time(),
                 }
