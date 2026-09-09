@@ -141,6 +141,44 @@ describe('McpTab', () => {
     ])
   })
 
+  it('unsetting a server credential saves an empty credential', async () => {
+    render(<McpTab />)
+    await screen.findByText('search')
+    const user = userEvent.setup()
+    // Open the editor for the 'search' row, which has credential 'svc'.
+    const edits = document.querySelectorAll('.anticon-edit')
+    await act(async () => { await user.click(edits[1]) })
+    // The Credential select shows the current value; clear it via the × button.
+    const selected = await screen.findByText('Service (token)')
+    const clearBtn = selected.closest('.ant-select')!.querySelector('.ant-select-clear')!
+    await act(async () => { await user.click(clearBtn) })
+    // Save round-trips an empty credential (the id is removed on the backend).
+    await act(async () => { await user.click(document.querySelector('.ant-modal-footer .ant-btn-primary')!) })
+    await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
+    const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
+    const search = payload.servers.find((s: { name: string }) => s.name === 'search')
+    expect(search.credential).toBe('')
+  })
+
+  it('offers an explicit “None” option to unset the credential', async () => {
+    render(<McpTab />)
+    await screen.findByText('search')
+    const user = userEvent.setup()
+    const edits = document.querySelectorAll('.anticon-edit')
+    await act(async () => { await user.click(edits[1]) })
+    // Open the Credential dropdown and pick the explicit blank entry.
+    const selected = await screen.findByText('Service (token)')
+    const selector = selected.closest('.ant-select')!.querySelector('.ant-select-selector')!
+    await act(async () => { await user.click(selector) })
+    const noneOption = document.querySelector('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option[title="None"]')!
+    await act(async () => { await user.click(noneOption) })
+    await act(async () => { await user.click(document.querySelector('.ant-modal-footer .ant-btn-primary')!) })
+    await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
+    const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
+    const search = payload.servers.find((s: { name: string }) => s.name === 'search')
+    expect(search.credential).toBe('')
+  })
+
   it('toggling the section enable persists it', async () => {
     render(<McpTab />)
     await screen.findByText('Enable external MCP servers')

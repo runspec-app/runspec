@@ -8,6 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.243.1] — 2026-09-09
+
+### Fixed
+- **Settings → MCP: an MCP server's credential can now be unset.** The
+  Credential dropdown (and each *Secret headers* row's credential dropdown)
+  offer an explicit **“None”** entry at the top of the list — so editing a
+  server and clearing its credential no longer forces you to pick *another*
+  credential. The clear (×) button was already present but easy to miss; the
+  blank list entry makes unsetting discoverable. Saving with no credential
+  drops the id from `config.toml` as before.
+
+
 ## [0.243.0] — 2026-09-07
 
 ### Added

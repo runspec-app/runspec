@@ -4890,9 +4890,9 @@ function McpHeaderCredEditor({ rows, options, onChange }: {
       {rows.map((r, i) => (
         <Space key={i} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
           <Input size="small" placeholder="X-Jira-PAT" value={r.header} style={{ width: 200, fontFamily: 'monospace' }} onChange={e => set(i, { header: e.target.value })} />
-          <Select size="small" placeholder="Credential" value={r.credential || undefined} style={{ width: 260 }}
+          <Select size="small" allowClear placeholder="Credential" value={r.credential || undefined} style={{ width: 260 }}
             onChange={v => set(i, { credential: v ?? '' })}
-            options={options.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))} />
+            options={[{ value: '', label: 'None' }, ...options.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />
           <MinusCircleOutlined onClick={() => onChange(rows.filter((_, idx) => idx !== i))} />
         </Space>
       ))}
@@ -5113,10 +5113,10 @@ export function McpTab() {
 
           <Divider style={{ margin: '4px 0 12px' }} />
 
-          <Form.Item label="Credential" tooltip="A Credentials-tab entry (keychain-backed). For http/sse it becomes an Authorization header (or the header below); for stdio it's injected as the credential's env vars. Only the id is stored.">
+          <Form.Item label="Credential" tooltip="A Credentials-tab entry (keychain-backed). For http/sse it becomes an Authorization header (or the header below); for stdio it's injected as the credential's env vars. Only the id is stored. Pick “None” (or the clear button) to remove it.">
             <Select allowClear placeholder="None" value={draft.credential || undefined}
               onChange={v => setDraft({ ...draft, credential: v ?? '' })}
-              options={credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))} />
+              options={[{ value: '', label: 'None' }, ...credOptions.map(c => ({ value: c.id, label: `${c.label} (${c.kind})` }))]} />
           </Form.Item>
           {isRemote && (
             <Form.Item label="Credential header" tooltip="Send the secret raw under this header (e.g. X-API-Key) instead of Authorization: Bearer.">
