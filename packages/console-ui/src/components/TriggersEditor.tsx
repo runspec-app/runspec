@@ -823,9 +823,12 @@ export function TriggersEditor({
             <SoundSelect />
           </Form.Item>
 
-          <Form.Item name="enabled" valuePropName="checked" style={{ marginBottom: 8 }}>
-            <Switch size="small" /> <span style={{ fontSize: 12, color: 'var(--rs-text-muted)', marginLeft: 6 }}>Enabled</span>
-          </Form.Item>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+            <Form.Item name="enabled" valuePropName="checked" noStyle>
+              <Switch size="small" />
+            </Form.Item>
+            <span style={{ fontSize: 12, color: 'var(--rs-text-muted)', marginLeft: 6 }}>Enabled</span>
+          </div>
 
           {err && <Alert type="error" showIcon style={{ marginBottom: 4 }} message={err} />}
         </Form>
