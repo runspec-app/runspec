@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.243.2] — 2026-09-10
+
+### Fixed
+- **Composer: pressing ↑ no longer wipes a typed prompt.** The chat
+  composer's Up-arrow history recall had no guard (unlike Down), so it
+  overwrote the input on every press: with an empty history it blanked the
+  prompt with `history[-1] ?? ''` and left the browse index at `-1`, so the
+  follow-up ↓ couldn't restore it — a long, freshly typed prompt was gone for
+  good. Up now recalls history only when *entering* browsing with the caret at
+  the very start of the input **and** there is history to recall; otherwise it
+  falls through to native caret movement, so a multi-line draft stays editable
+  and an empty history never clears it. Once you are already browsing, ↑/↓ page
+  through history as before, and stepping back to the bottom restores the
+  stashed draft. Down-arrow behaviour is unchanged.
+
+---
+
 ## [0.243.1] — 2026-09-09
 
 ### Fixed
