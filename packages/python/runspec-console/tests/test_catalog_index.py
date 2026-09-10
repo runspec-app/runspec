@@ -95,12 +95,20 @@ def test_index_enabled_by_default():
 
 def test_index_caps_with_overflow_note():
     runnables = [_rn("a", f"task-{i:03d}") for i in range(10)]
-    out = _Bridge(
-        runnables, config={"llm": {"tool_index_limit": 4}}
-    )._build_catalog_index()
+    b = _Bridge(runnables, config={"llm": {"tool_index_limit": 4}})
+    out = b._build_catalog_index()
     lines = out.splitlines()
     assert len(lines) == 5  # 4 + overflow note
     assert "and 6 more" in lines[-1]
+    # The overflow count is recorded for the context indicator ("N beyond menu").
+    assert b._catalog_overflow == 6
+
+
+def test_index_overflow_zero_when_under_cap():
+    """No truncation ⇒ overflow is 0, so the indicator shows no 'beyond menu'."""
+    b = _Bridge([_rn("a", f"task-{i}") for i in range(3)], config={"llm": {}})
+    b._build_catalog_index()
+    assert b._catalog_overflow == 0
 
 
 def test_index_empty_when_no_runnables():

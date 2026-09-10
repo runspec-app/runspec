@@ -42,9 +42,14 @@ _TRACER: Any = None
 _PROVIDER: Any = None
 _ENABLED: bool = False
 _CAPTURE_CONTENT: bool = False
+# Optional ceiling on each captured *content* attribute (prompt / completion /
+# tool arguments). 0 = no limit (the default) — capture the full text so a trace
+# is faithful, not a slice. Set from [telemetry] max_content_chars.
+_MAX_CONTENT_CHARS: int = 0
 
-# Attribute-value caps so a span never carries an unbounded blob even with
-# capture_content on. Long strings are truncated with a marker.
+# Cap for *structured* attribute values set via set_attributes / _attr_value and
+# for any single scrubbed tool-argument string — these are meant to be short
+# attributes, not the big content blobs, so they stay bounded regardless.
 _MAX_ATTR_CHARS = 4000
 
 # Argument keys whose value is replaced with «redacted» when capture_content is
@@ -143,7 +148,7 @@ def init_tracing(config: dict[str, Any] | None = None) -> bool:
     Returns ``True`` when tracing is now active. Returns ``False`` and leaves the
     module a complete no-op when telemetry is disabled, the SDK is missing, or any
     setup step fails — the failure is logged once, never raised into the caller."""
-    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT
+    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT, _MAX_CONTENT_CHARS
     if _TRACER is not None:
         return True  # already initialised
     if config is None:
@@ -177,6 +182,7 @@ def init_tracing(config: dict[str, Any] | None = None) -> bool:
         _TRACER = provider.get_tracer("runspec-console")
         _ENABLED = True
         _CAPTURE_CONTENT = bool(config.get("capture_content", False))
+        _MAX_CONTENT_CHARS = max(0, int(config.get("max_content_chars", 0) or 0))
         logger.info(
             "telemetry: OTLP tracing enabled (endpoint=%s, capture_content=%s)",
             config.get("endpoint") or "<env/default>",
@@ -203,7 +209,7 @@ def reconfigure(config: dict[str, Any] | None = None) -> bool:
     Best-effort and never raises: flushes + shuts down the current provider,
     resets to the disabled no-op state, then re-inits. Returns whatever
     ``init_tracing`` returns (``True`` when tracing is active afterwards)."""
-    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT
+    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT, _MAX_CONTENT_CHARS
     try:
         shutdown()
     except Exception:  # noqa: BLE001 — teardown must never raise into the caller
@@ -212,13 +218,16 @@ def reconfigure(config: dict[str, Any] | None = None) -> bool:
     _PROVIDER = None
     _ENABLED = False
     _CAPTURE_CONTENT = False
+    _MAX_CONTENT_CHARS = 0
     return init_tracing(config)
 
 
-def init_tracing_for_test(exporter: Any, *, capture_content: bool = False) -> None:
+def init_tracing_for_test(
+    exporter: Any, *, capture_content: bool = False, max_content_chars: int = 0
+) -> None:
     """Wire an injected span exporter (e.g. ``InMemorySpanExporter``) with a
     ``SimpleSpanProcessor`` — the network-free test seam. Resets prior state."""
-    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT
+    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT, _MAX_CONTENT_CHARS
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
@@ -228,16 +237,18 @@ def init_tracing_for_test(exporter: Any, *, capture_content: bool = False) -> No
     _TRACER = provider.get_tracer("runspec-console-test")
     _ENABLED = True
     _CAPTURE_CONTENT = capture_content
+    _MAX_CONTENT_CHARS = max(0, int(max_content_chars))
 
 
 def reset_for_test() -> None:
     """Tear the module back down to the disabled no-op state (test cleanup)."""
-    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT
+    global _TRACER, _PROVIDER, _ENABLED, _CAPTURE_CONTENT, _MAX_CONTENT_CHARS
     shutdown()
     _TRACER = None
     _PROVIDER = None
     _ENABLED = False
     _CAPTURE_CONTENT = False
+    _MAX_CONTENT_CHARS = 0
 
 
 def enabled() -> bool:
@@ -651,7 +662,7 @@ def add_prompt(messages: Any) -> None:
         safe = jsonsafe_messages(messages) if isinstance(messages, list) else messages
         span.set_attribute(
             "gen_ai.prompt",
-            _truncate(json.dumps(safe, default=str, ensure_ascii=False)),
+            _truncate_content(json.dumps(safe, default=str, ensure_ascii=False)),
         )
     except Exception:  # noqa: BLE001
         pass
@@ -666,7 +677,7 @@ def add_completion(text: str) -> None:
     if span is None:
         return
     try:
-        span.set_attribute("gen_ai.completion", _truncate(str(text)))
+        span.set_attribute("gen_ai.completion", _truncate_content(str(text)))
     except Exception:  # noqa: BLE001
         pass
 
@@ -683,7 +694,7 @@ def add_tool_arguments(span: Any, tool_input: Any) -> None:
         )
         span.set_attribute(
             "gen_ai.tool.call.arguments",
-            _truncate(json.dumps(scrubbed, default=str, ensure_ascii=False)),
+            _truncate_content(json.dumps(scrubbed, default=str, ensure_ascii=False)),
         )
     except Exception:  # noqa: BLE001
         pass
@@ -759,6 +770,17 @@ def _is_secret_key(key: str) -> bool:
 def _truncate(text: str) -> str:
     if len(text) > _MAX_ATTR_CHARS:
         return text[:_MAX_ATTR_CHARS] + "…[truncated]"
+    return text
+
+
+def _truncate_content(text: str) -> str:
+    """Cap a captured *content* value (prompt / completion / tool arguments) at
+    ``_MAX_CONTENT_CHARS``. ``0`` (the default) means no limit — the full text is
+    kept so a trace is faithful, not a 4000-char slice. Only a configured ceiling
+    truncates (with a marker)."""
+    limit = _MAX_CONTENT_CHARS
+    if limit > 0 and len(text) > limit:
+        return text[:limit] + "…[truncated]"
     return text
 
 

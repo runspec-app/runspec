@@ -67,6 +67,9 @@ interface ContextEstimate {
   history_msgs?: number
   memory_pins?: number
   memory_pins_shown?: number
+  // Runnables past [llm] tool_index_limit — not in the inline catalog menu (still
+  // reachable via search_runnables). 0/undefined = the menu lists everything.
+  catalog_overflow?: number
 }
 
 // Human label for each context bucket key the backend emits.
@@ -1054,7 +1057,8 @@ export default function App() {
                 const nudgeSearch = (ctx.tool_mode && ctx.tool_mode !== 'search') ? toolShare >= 0.30 : false
                 const canCompact = (ctx.history_msgs ?? 0) >= 24
                 const pinsOverflow = pins > pinsShown
-                const hasTips = nudgeSearch || canCompact || pinsOverflow
+                const catalogOverflow = ctx.catalog_overflow ?? 0
+                const hasTips = nudgeSearch || canCompact || pinsOverflow || catalogOverflow > 0
                 return (
                   <Popover
                     placement="topLeft"
@@ -1073,6 +1077,7 @@ export default function App() {
                                 {CTX_BUCKET_LABELS[b.key] || b.key}
                                 {b.key === 'memory' && pins > 0 && <span style={{ color: iconCol }}> · {pins} pinned</span>}
                                 {b.key === 'history' && (ctx.history_msgs ?? 0) > 0 && <span style={{ color: iconCol }}> · {ctx.history_msgs} msgs</span>}
+                                {b.key === 'catalog' && catalogOverflow > 0 && <span style={{ color: iconCol }}> · {catalogOverflow} beyond menu</span>}
                               </span>
                               <span style={{ color: iconCol, fontVariantNumeric: 'tabular-nums' }}>{fmtTokens(b.tokens)}</span>
                             </div>
@@ -1098,6 +1103,11 @@ export default function App() {
                             {pinsOverflow && (
                               <div style={{ color: iconCol }}>
                                 {pins} pinned memory facts — only the top {pinsShown} fold into the prompt. Ask the agent to unpin stale ones.
+                              </div>
+                            )}
+                            {catalogOverflow > 0 && (
+                              <div style={{ color: iconCol }}>
+                                {catalogOverflow} runnable{catalogOverflow === 1 ? '' : 's'} beyond the inline menu — the agent still finds {catalogOverflow === 1 ? 'it' : 'them'} via search. Raise <code>[llm] tool_index_limit</code> to list more, or hide some in <a onClick={() => setSettingsOpen(true)}>Agent tools</a>.
                               </div>
                             )}
                           </div>

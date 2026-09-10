@@ -46,6 +46,8 @@ Set in **Settings → Model / API**.
 | `system` | System prompt — **replaces** the built-in default wholesale (including its clarify-don't-guess guidance) |
 | `system_append` | Extra system-prompt text **added to** whichever base applies. Prefer this for site policy: you keep the built-in guidance instead of trading it away |
 | `tool_mode` | `dedup` (default — one tool per runnable with a `host` enum), `per_host`, or `search` (meta-tools + catalogue index; `tool_index_limit` caps the index) |
+| `tool_index` | Search mode only: fold the always-on one-line-per-runnable catalogue menu into the prompt (default **true**). `false` ⇒ the agent discovers purely via `search_runnables` |
+| `tool_index_limit` | Search mode only: max runnables listed in the catalogue menu (default **300**; `0` = no limit). Beyond it the agent still finds runnables via `search_runnables`; the console logs the overflow and the context gauge shows *N beyond menu*. To *reduce* the surface instead, hide runnables via `[tool_visibility] hidden_from_agent` |
 | `tool_output_cap` | Truncation cap for tool results returned to the model |
 
 Bedrock adds the standard AWS credential chain (`aws_region`,

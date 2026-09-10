@@ -1750,6 +1750,12 @@ class InvokeMixin:
                     "history_msgs": last_history_msgs,
                     "memory_pins": pins,
                     "memory_pins_shown": memory_mod.HEADER_MAX_FACTS,
+                    # Runnables past [llm] tool_index_limit — not listed in the
+                    # inline menu (still reachable via search_runnables). 0 unless
+                    # the search-mode catalog index truncated this turn.
+                    "catalog_overflow": (
+                        getattr(self, "_catalog_overflow", 0) if index_text else 0
+                    ),
                 },
             )
 

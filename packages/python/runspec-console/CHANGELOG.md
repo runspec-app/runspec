@@ -8,6 +8,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.244.0] — 2026-09-10
+
+### Added
+- **The search-mode catalogue index is no longer silent when it overflows.** When
+  more runnables exist than `[llm] tool_index_limit` (default 300), the extra ones
+  drop out of the inline menu (still reachable via `search_runnables`) — previously
+  with no operator-facing signal at all. Now the console **logs once** when the
+  overflow count changes (`catalog index: N runnables exceed tool_index_limit=… —
+  showing …, M beyond the menu`, with the levers to fix it), and the
+  **context-window gauge** shows `· M beyond menu` on the Catalog bucket plus a tip
+  pointing at `tool_index_limit` / `[tool_visibility]`. New `catalog_overflow` field
+  on the `runspec:context_estimate` event; `_build_catalog_index` records the count.
+
+### Changed
+- **Telemetry content capture is now faithful — the full prompt/completion is
+  recorded, not a 4000-char slice.** With `capture_content` on, a captured
+  `gen_ai.prompt` / `gen_ai.completion` / `gen_ai.tool.call.arguments` attribute
+  was hard-capped at 4000 characters, so in a backend like LangSmith the prompt
+  appeared truncated — dominated by the search-mode catalog index that rides the
+  first user message, with the operator's real text cut off. This was a
+  **span-attribute cap only** (the model always received the full prompt), but it
+  made traces misleading. Content attributes are now recorded in full by default;
+  a new `[telemetry] max_content_chars` sets an optional ceiling (**0 = no
+  limit**, the default) to bound span size when wanted. The 4000-char cap still
+  applies to structured attributes set via `observability.set_attributes` (they're
+  meant to be short), and per-value secret scrubbing of tool arguments is
+  unchanged. See `docs/console-telemetry.md`.
+
+### API
+- `config.read_telemetry()` gains `max_content_chars` (int, floored at 0).
+  `observability.init_tracing`/`init_tracing_for_test` honour it; new internal
+  `observability._truncate_content` gates content-attribute truncation.
+
+
 ## [0.243.2] — 2026-09-10
 
 ### Fixed

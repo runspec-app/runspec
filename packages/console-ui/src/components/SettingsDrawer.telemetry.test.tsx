@@ -16,6 +16,7 @@ const INITIAL_CONFIG: Record<string, unknown> = {
     enabled: true,
     endpoint: 'https://langsmith.internal/otel/v1/traces',
     capture_content: false,
+    max_content_chars: 8000,
     headers: { 'x-api-key': 'ls-secret' },
     api_key_command: 'keyring get langsmith key',
     api_key_header: 'x-api-key',
@@ -73,6 +74,8 @@ describe('TelemetryTab Save round-trip', () => {
     expect(saved.telemetry.enabled).toBe(true)
     expect(saved.telemetry.endpoint).toBe('https://langsmith.internal/otel/v1/traces')
     expect(saved.telemetry.capture_content).toBe(false)
+    // The content-size ceiling round-trips (0 = no limit; here a set ceiling).
+    expect(saved.telemetry.max_content_chars).toBe(8000)
     // The headers editor round-trips as a plain object keyed by header name.
     expect(saved.telemetry.headers).toEqual({ 'x-api-key': 'ls-secret' })
     // Sensible defaults are written even when the section omitted them.

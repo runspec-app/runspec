@@ -61,6 +61,19 @@ def test_read_telemetry_defaults(monkeypatch):
     assert t["service_name"] == "runspec-console"
     assert t["sample_ratio"] == 1.0
     assert t["tls_verify"] is True
+    assert t["max_content_chars"] == 0  # 0 = no limit (faithful traces)
+
+
+def test_read_telemetry_max_content_chars(monkeypatch):
+    monkeypatch.setattr(
+        config_mod, "read_config", lambda: {"telemetry": {"max_content_chars": 8000}}
+    )
+    assert config_mod.read_telemetry()["max_content_chars"] == 8000
+    # Negative / junk floors to 0 (no limit).
+    monkeypatch.setattr(
+        config_mod, "read_config", lambda: {"telemetry": {"max_content_chars": -5}}
+    )
+    assert config_mod.read_telemetry()["max_content_chars"] == 0
 
 
 def test_read_telemetry_reads_and_clamps(monkeypatch):
@@ -419,6 +432,36 @@ def test_capture_content_attaches_and_scrubs(exporter, monkeypatch):
     assert "web1" in args  # non-secret kept
     assert "sekret" not in args  # secret scrubbed
     assert "«redacted»" in args
+
+
+@otel_only
+def test_capture_content_full_by_default(exporter):
+    """No max_content_chars ⇒ the whole prompt/completion is captured, not a
+    4000-char slice — the trace is faithful (the reported LangSmith issue)."""
+    obs.init_tracing_for_test(exporter, capture_content=True)  # max_content_chars=0
+    big_user = "X" * 12000  # well past the old 4000-char attribute cap
+    with obs.llm_span(model="m") as _llm:
+        obs.add_prompt([{"role": "user", "content": big_user}])
+        obs.add_completion("Y" * 9000)
+    obs.shutdown()
+
+    llm = exporter.get_finished_spans()[0]
+    assert big_user in llm.attributes["gen_ai.prompt"]  # full prompt, no cut
+    assert "…[truncated]" not in llm.attributes["gen_ai.prompt"]
+    assert len(llm.attributes["gen_ai.completion"]) == 9000
+
+
+@otel_only
+def test_capture_content_ceiling_truncates(exporter):
+    """A configured max_content_chars caps each content value (with a marker)."""
+    obs.init_tracing_for_test(exporter, capture_content=True, max_content_chars=500)
+    with obs.llm_span(model="m") as _llm:
+        obs.add_prompt([{"role": "user", "content": "Z" * 5000}])
+    obs.shutdown()
+
+    prompt = exporter.get_finished_spans()[0].attributes["gen_ai.prompt"]
+    assert prompt.endswith("…[truncated]")
+    assert len(prompt) == 500 + len("…[truncated]")
 
 
 # ── 5. send_test_trace() — the operator's "does telemetry work" probe ─────────

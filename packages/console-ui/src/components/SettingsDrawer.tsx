@@ -4567,6 +4567,7 @@ export function TelemetryTab() {
   const [serviceName, setServiceName] = useState('runspec-console')
   const [sampleRatio, setSampleRatio] = useState<number>(1)
   const [captureContent, setCaptureContent] = useState(false)
+  const [maxContentChars, setMaxContentChars] = useState<number>(0)
   const [caBundle, setCaBundle] = useState('')
   const [tlsVerify, setTlsVerify] = useState(true)
   const [headers, setHeaders] = useState<Array<{ k: string; v: string }>>([])
@@ -4586,6 +4587,7 @@ export function TelemetryTab() {
       setServiceName(typeof t.service_name === 'string' && t.service_name ? t.service_name : 'runspec-console')
       setSampleRatio(typeof t.sample_ratio === 'number' ? t.sample_ratio : 1)
       setCaptureContent(t.capture_content === true)
+      setMaxContentChars(typeof t.max_content_chars === 'number' ? t.max_content_chars : 0)
       setCaBundle(typeof t.ca_bundle === 'string' ? t.ca_bundle : '')
       setTlsVerify(t.tls_verify !== false)
       setApiKeyCommand(typeof t.api_key_command === 'string' ? t.api_key_command : '')
@@ -4614,6 +4616,7 @@ export function TelemetryTab() {
           service_name: serviceName.trim() || 'runspec-console',
           sample_ratio: sampleRatio,
           capture_content: captureContent,
+          max_content_chars: Math.max(0, Math.floor(maxContentChars || 0)),
           ca_bundle: caBundle.trim(),
           tls_verify: tlsVerify,
           headers: headerObj,
@@ -4721,6 +4724,14 @@ export function TelemetryTab() {
         }
       />
       {row('Capture prompt / completion / argument text', <Switch checked={captureContent} onChange={setCaptureContent} disabled={!enabled} />)}
+      {row(
+        'Max captured content characters (0 = no limit)',
+        <InputNumber min={0} step={1000} value={maxContentChars} onChange={v => setMaxContentChars(typeof v === 'number' ? v : 0)} disabled={!enabled || !captureContent} />,
+      )}
+      <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: -2 }}>
+        Each captured prompt / completion / argument value is recorded in full by default, so a trace shows the
+        real prompt (including the search-mode tool menu) — not a slice. Set a ceiling only to bound span size.
+      </Typography.Paragraph>
 
       <Divider style={{ margin: '14px 0' }} />
       {row('CA bundle (private CA / TLS proxy)', <Input style={{ width: 360 }} placeholder="path to a .pem" value={caBundle} onChange={e => setCaBundle(e.target.value)} disabled={!enabled} />)}

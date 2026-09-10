@@ -919,10 +919,30 @@ class SearchMixin:
             rid = self._dedup_tool_name(r)
             desc = self._first_sentence(r.get("description") or "")
             lines.append(f"- {rid}" + (f" — {desc}" if desc else ""))
-        if len(lines) > limit > 0:
-            overflow = len(lines) - limit
+        total_count = len(lines)
+        overflow = 0
+        if total_count > limit > 0:
+            overflow = total_count - limit
             lines = lines[:limit]
             lines.append(f"- …and {overflow} more — use search_runnables to find them.")
+        # Record the overflow so the context indicator can surface "N beyond the
+        # inline menu", and log once when the count changes (a state transition,
+        # not every turn — the index is rebuilt per turn) so a fleet that outgrows
+        # the menu isn't silent.
+        self._catalog_overflow = overflow
+        if overflow != getattr(self, "_catalog_overflow_logged", None):
+            self._catalog_overflow_logged = overflow
+            if overflow > 0:
+                logger.info(
+                    "catalog index: %d runnables exceed [llm] tool_index_limit=%d "
+                    "— showing %d inline, %d beyond the menu (agent still finds them "
+                    "via search_runnables; raise tool_index_limit to list more, or "
+                    "hide some via [tool_visibility] hidden_from_agent)",
+                    total_count,
+                    limit,
+                    limit,
+                    overflow,
+                )
         # While the first discovery cycle is still running the menu is partial (or
         # empty) — tell the model so it doesn't conclude "no such runnable" from an
         # incomplete fleet and can offer to retry once loading finishes.

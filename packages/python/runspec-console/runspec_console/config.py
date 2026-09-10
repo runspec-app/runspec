@@ -431,7 +431,10 @@ def read_telemetry() -> dict[str, Any]:
     TLS-intercepting proxy. ``capture_content`` defaults **false**: with it off,
     spans carry structure only (models, token counts, tool names, decisions,
     durations) — never prompt / completion / tool-argument *text*, which may hold
-    secrets. Any value the OTel SDK also reads from a standard ``OTEL_*`` env var
+    secrets. ``max_content_chars`` bounds each captured content attribute (prompt
+    / completion / tool arguments); **0 (default) = no limit**, so a trace shows
+    the *full* prompt rather than a slice — raise a ceiling only to cap span size.
+    Any value the OTel SDK also reads from a standard ``OTEL_*`` env var
     is passed through only when set here, so config wins and env fills the gaps.
 
     ``api_key_command`` (with ``api_key_header``, default ``x-api-key``) resolves
@@ -457,6 +460,7 @@ def read_telemetry() -> dict[str, Any]:
         "ca_bundle": ca or None,
         "tls_verify": bool(cfg.get("tls_verify", True)),
         "capture_content": bool(cfg.get("capture_content", False)),
+        "max_content_chars": max(0, int(cfg.get("max_content_chars", 0) or 0)),
         "api_key_command": str(cfg.get("api_key_command") or "").strip() or None,
         "api_key_header": str(cfg.get("api_key_header") or "x-api-key").strip(),
     }

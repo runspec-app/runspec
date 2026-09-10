@@ -42,6 +42,7 @@ protocol = "http/protobuf"
 service_name = "runspec-console"
 sample_ratio = 1.0
 capture_content = false
+max_content_chars = 0   # 0 = capture full text; set a ceiling to bound span size
 # For an internal backend behind a private CA / TLS-intercepting proxy:
 # ca_bundle = "C:/certs/internal-ca.pem"
 # tls_verify = true
@@ -62,6 +63,7 @@ capture_content = false
 | `ca_bundle` | Path to a CA bundle for a private-CA / TLS-proxy endpoint. |
 | `tls_verify` | Verify the server certificate. Default true. |
 | `capture_content` | Attach prompt / completion / tool-argument **text**. Default **false** — see [Privacy](#privacy). |
+| `max_content_chars` | Ceiling on each captured content value (prompt / completion / tool args). **0 (default) = no limit** — the trace shows the *full* prompt, not a slice. Set a positive value only to bound span size. |
 
 ### Standard `OTEL_*` environment variables
 
@@ -248,11 +250,14 @@ this safe:
   reasons, durations. No prompt text, no completion text, no tool arguments.
   You still get the full shape of every turn.
 - **When you turn `capture_content` on**, prompt / completion / tool-argument
-  text is attached — and tool arguments are **scrubbed** first: values under
-  secret-looking keys (`password`, `token`, `secret`, `api_key`,
-  `authorization`, …) become `«redacted»`. Resolved credentials injected by the
-  console (the secret env channel, `sudo`/`su` credentials) live *below* the
-  tool-input layer the agent sees and never reach a span at all.
+  text is attached — **in full by default** (`max_content_chars = 0`), so a trace
+  shows the real prompt rather than a truncated slice — and tool arguments are
+  **scrubbed** first: values under secret-looking keys (`password`, `token`,
+  `secret`, `api_key`, `authorization`, …) become `«redacted»`. Resolved
+  credentials injected by the console (the secret env channel, `sudo`/`su`
+  credentials) live *below* the tool-input layer the agent sees and never reach a
+  span at all. Set `max_content_chars` to a positive value only if you want to
+  bound very large spans.
 
 Only enable content capture when your backend is trusted. An API key placed
 directly in `[telemetry.headers]` is stored in `config.toml` (like the model API
@@ -294,3 +299,12 @@ never needs OpenTelemetry as a hard dependency.
   short session's spans flush on shutdown; a crash may drop the last batch.
 - **A page behind SSH, not a backend.** Telemetry is only the tracing exporter;
   it doesn't change how the agent reaches hosts.
+- **The captured prompt starts with "What you can reach right now, by category:"**
+  That's the [search-mode](console-agent.md) **catalog index** — a compact one-line-per-runnable
+  menu the console folds into the first user message each turn so the agent knows
+  what exists without every runnable's full tool schema. It's expected (and it's
+  the *lean* path — the alternative is shipping every schema in the tool list), and
+  it's the same each turn because it's deterministic for a given fleet. If the
+  prompt looked *cut off* in your backend on an older build, that was the capture
+  attribute's old 4000-char cap, not the real request — `max_content_chars = 0`
+  (the default) now records the full prompt.
