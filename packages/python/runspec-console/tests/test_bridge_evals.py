@@ -320,6 +320,56 @@ def test_eval_telemetry_run_does_not_kill_the_shared_tracer(bridge, monkeypatch)
         obs.reset_for_test()
 
 
+def test_validate_threads_the_subcommand_into_preflight(bridge, monkeypatch):
+    # Regression: with Validate args on, a subcommand runnable bounced with
+    # "requires a command" because the eval validator called _preflight_validate
+    # with an EMPTY command path. The chosen subcommand must be threaded through
+    # (and dropped from the args), so it validates against the invoked leaf.
+    monkeypatch.setattr(
+        bridge,
+        "_visible_runnables",
+        lambda surface: [{"name": "cron", "host": "web-01"}],
+    )
+    seen: dict[str, object] = {}
+
+    def fake_preflight(cached, command_path, args):
+        seen["command_path"] = list(command_path)
+        seen["args"] = dict(args)
+        return None
+
+    monkeypatch.setattr(bridge, "_preflight_validate", fake_preflight)
+    fixture = """
+[[eval]]
+id = "cron-add"
+prompt = "add a nightly cron on web-01"
+expect_tool = "cron"
+expect_command = "add"
+expect_host = "web-01"
+"""
+    script = {
+        "cron-add": [
+            {
+                "tool_calls": [
+                    {
+                        "name": "ops__cron",
+                        "input": {
+                            "command": "add",
+                            "schedule": "@daily",
+                            "host": "web-01",
+                        },
+                    }
+                ]
+            }
+        ],
+    }
+    monkeypatch.setattr(bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(script))
+    report = bridge.run_evals(fixture_toml=fixture, validate=True)
+    c = report["cases"][0]
+    assert c["passed"] is True
+    assert seen["command_path"] == ["add"]  # threaded through, not []
+    assert seen["args"] == {"schedule": "@daily"}  # command/host dropped from args
+
+
 def test_run_evals_persists_a_report_that_lists_and_loads(bridge, monkeypatch):
     monkeypatch.setattr(
         bridge, "_get_adapter", lambda *a, **k: ReplayAdapter(_script())

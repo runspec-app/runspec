@@ -195,7 +195,10 @@ With **Validate args** on, a passing tool + args is additionally checked against
 the console's own **preflight validator** — the same structural check the live
 loop runs (required args, choices, int/float, ranges, unknown args). A would-be
 *bounce* fails the case and buckets into `missing_required` / `bad_choice` / … —
-so an eval catches "the agent would have been rejected" before it happens.
+so an eval catches "the agent would have been rejected" before it happens. For a
+subcommand runnable the check runs against the **chosen subcommand's** own arg
+set (and honours require-command), so `expect_command` and Validate args work
+together.
 
 ### Emit telemetry
 

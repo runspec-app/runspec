@@ -8,6 +8,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.246.3] — 2026-09-11
+
+### Fixed
+- **With Validate args on, a subcommand runnable always bounced "requires a
+  command".** The eval's preflight validator called
+  `bridge_search._preflight_validate(cached, [], args)` with an **empty command
+  path** — so a `require-command` runnable failed the check even though the model
+  *did* choose a subcommand (the capture showed it), and a subcommand's own args
+  would have been flagged "unknown argument(s)" against the root arg set. The
+  chosen subcommand is now threaded through the `validate` hook —
+  `validate(runnable, command, args)` — and the console binding splits it back to
+  the command path for `_preflight_validate`, so validation runs against the
+  invoked leaf. (`evals.py` `Validate` signature + `score`; `bridge_evals`
+  `_eval_validator`.) Regression test asserts the preflight receives
+  `["add"]`, not `[]`.
+
+
 ## [0.246.2] — 2026-09-11
 
 ### Fixed

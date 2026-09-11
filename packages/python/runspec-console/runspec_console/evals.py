@@ -263,7 +263,11 @@ ResolveTarget = Callable[[ToolInvocation], str]
 ResolveCommand = Callable[[ToolInvocation], str]
 ResolveArgs = Callable[[ToolInvocation], dict[str, Any]]
 ResolveAutonomy = Callable[[ToolInvocation], str]
-Validate = Callable[[str, dict[str, Any]], "str | None"]
+# validate(runnable, command, args) -> "Error: …" | None. ``command`` is the
+# chosen subcommand (space-joined for a nested path, "" for none) — the preflight
+# validates a subcommand's own arg set at that node and honours require-command,
+# so it MUST receive the command, not just the args.
+Validate = Callable[[str, str, dict[str, Any]], "str | None"]
 
 
 # ── the dry-run driver ────────────────────────────────────────────────────────
@@ -460,9 +464,11 @@ def score(
                 f"expected autonomy {want!r}, got {resolved_autonomy!r}",
             )
 
-    # Optional: assert the model's args would not bounce from the validator.
+    # Optional: assert the model's args would not bounce from the validator. Pass
+    # the chosen subcommand so require-command / per-command arg sets validate
+    # against the invoked leaf, not the top-level runnable.
     if validate is not None:
-        err = validate(target, got_args)
+        err = validate(target, resolved_command, got_args)
         if err:
             return result(False, classify_bounce(err), err)
 

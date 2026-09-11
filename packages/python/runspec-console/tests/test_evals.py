@@ -335,7 +335,7 @@ def test_resolve_readonly_is_fed_back_into_the_conversation():
 # ── validator reuse (improve.classify_bounce taxonomy) ────────────────────────
 def test_validate_hook_buckets_a_bounce():
     # Simulate bridge_search._preflight_validate returning an error string.
-    def validate(runnable, args):
+    def validate(runnable, command, args):
         if "name" not in args:
             return "Error: missing required argument(s): name."
         return None
@@ -349,7 +349,7 @@ def test_validate_hook_buckets_a_bounce():
 
 
 def test_validate_clean_passes():
-    def validate(runnable, args):
+    def validate(runnable, command, args):
         return None
 
     script = {"c1": [{"tool_calls": [_run_call("restart-service", {"name": "nginx"})]}]}

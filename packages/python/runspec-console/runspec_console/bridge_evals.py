@@ -157,12 +157,18 @@ class EvalsMixin:
             if nm and nm not in by_name:
                 by_name[nm] = r
 
-        def validate(runnable: str, args: dict[str, Any]) -> str | None:
+        def validate(runnable: str, command: str, args: dict[str, Any]) -> str | None:
             cached = by_name.get(runnable)
             if not cached:
                 return None  # unknown here — let it pass, nothing to check against
+            # The chosen subcommand rides `command` (space-joined for a nested
+            # path); split it back to the path list `_preflight_validate` walks,
+            # so a require-command runnable and a subcommand's own args validate
+            # against the invoked leaf — passing [] here bounced every subcommand
+            # runnable with "requires a command".
+            command_path = command.split() if command else []
             try:
-                return self._preflight_validate(cached, [], dict(args))  # type: ignore[attr-defined]
+                return self._preflight_validate(cached, command_path, dict(args))  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001 — preflight is best-effort in evals
                 return None
 
