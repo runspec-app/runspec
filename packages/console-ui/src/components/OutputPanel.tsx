@@ -1759,6 +1759,14 @@ export function useInvocationBlocks() {
     }
 
     const onToolStart = (e: Event) => {
+      // Drain any buffered tokens into currentText FIRST, so the text that
+      // streamed right before this tool call is committed as the pre-tool text
+      // segment — not left in the token buffer to be flushed into currentText
+      // *after* the tool segment, which split a lead-in sentence around the card
+      // (the "…first half / card / …second half" bug). Same ordering fix onEnd
+      // already applies; both flush() and the setBlocks below are functional
+      // updaters, so flush's drain runs before this reads b.currentText.
+      flush()
       const { id, tool_name, tool_input } = (e as CustomEvent).detail as {
         id: string; tool_name: string; tool_input: Record<string, unknown>
       }

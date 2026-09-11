@@ -68,8 +68,19 @@ function emitLine(id: string, line: string, stream: 'stdout' | 'stderr' = 'stdou
 function emitToken(id: string, token: string) {
   window.dispatchEvent(new CustomEvent('runspec:token', { detail: { id, token } }))
 }
+function emitToolStart(id: string, tool_name: string, tool_input: Record<string, unknown> = {}) {
+  window.dispatchEvent(new CustomEvent('runspec:tool_start', { detail: { id, tool_name, tool_input } }))
+}
+function emitToolEnd(id: string, tool_name: string, output = '') {
+  window.dispatchEvent(new CustomEvent('runspec:tool_end', { detail: { id, tool_name, output } }))
+}
 function emitEnd(id: string, exit_code = 0) {
   window.dispatchEvent(new CustomEvent('runspec:run_end', { detail: { id, exit_code, duration_ms: 5 } }))
+}
+
+// true if `a` appears before `b` in document order.
+function precedes(a: Element, b: Element): boolean {
+  return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
 }
 
 function mount(): (b: InvocationBlock) => void {
@@ -120,6 +131,29 @@ describe('OutputPanel streaming', () => {
     // One frame applies the whole batch as a single concatenated update.
     act(() => flushRaf())
     expect(screen.getByText(/Hello, world/)).toBeTruthy()
+  })
+
+  it('keeps pre-tool text before the tool card even when a tool_start races the token buffer', () => {
+    const add = mount()
+    act(() => add(chatBlock('c0')))
+
+    // Lead-in text streams, then a tool_start arrives BEFORE the token buffer's
+    // frame has flushed (no flushRaf between them) — the regression case. The
+    // pre-tool text must still land as a segment *before* the tool card, not
+    // after it (which split the sentence around the card).
+    act(() => {
+      emitToken('c0', 'Let me check the logs. ')
+      emitToolStart('c0', 'search_history')
+    })
+    act(() => { emitToolEnd('c0', 'search_history', '3 runs'); flushRaf() })
+    act(() => { emitToken('c0', 'Found 3 runs.'); emitEnd('c0') })
+
+    const lead = screen.getByText(/Let me check the logs/)
+    const tool = screen.getByText('search_history')
+    const tail = screen.getByText(/Found 3 runs/)
+    // Order: lead-in text → tool card → follow-up text.
+    expect(precedes(lead, tool)).toBe(true)
+    expect(precedes(tool, tail)).toBe(true)
   })
 
   it('drains buffered tokens on run_end so the final reply is not lost', () => {

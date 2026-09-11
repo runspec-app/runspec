@@ -8,6 +8,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ---
 
 
+## [0.244.1] — 2026-09-11
+
+### Fixed
+- **A tool call no longer splits the sentence around it.** When an agent reply
+  streamed a lead-in and then called a tool ("Let me check the logs." → tool
+  card → "Found 3 runs."), the lead-in's tail could appear *below* the tool card
+  instead of above it — the sentence read as split around the card. The
+  token-batching change in 0.241.0 buffers streamed tokens and flushes them into
+  `currentText` on the next animation frame, but `onToolStart` read `currentText`
+  synchronously, so tokens still in the buffer when a `tool_start` arrived were
+  committed *after* the tool segment. `onToolStart` now drains the token buffer
+  first (a `flush()`, mirroring `onEnd`), so pre-tool text always lands as the
+  text segment before the card. (`components/OutputPanel.tsx`.)
+
+
 ## [0.244.0] — 2026-09-10
 
 ### Added
